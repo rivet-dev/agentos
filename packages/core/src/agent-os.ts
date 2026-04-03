@@ -42,6 +42,7 @@ import {
 	generateMasterShim,
 	generateToolkitShim,
 } from "./host-tools-shims.js";
+import { createHostBinRuntime } from "./host-bin-runtime.js";
 
 /** Process tree node: extends kernel ProcessInfo with child references. */
 export interface ProcessTreeNode extends KernelProcessInfo {
@@ -713,6 +714,9 @@ export class AgentOs {
 					: undefined,
 			}),
 		);
+		if (processed.toolBinaries.size > 0) {
+			await kernel.mount(createHostBinRuntime(processed.toolBinaries));
+		}
 		await kernel.mount(createPythonRuntime());
 		finishKernelBootstrap();
 

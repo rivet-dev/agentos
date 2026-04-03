@@ -1,8 +1,5 @@
 import { AgentOs, type SoftwareInput } from "@rivet-dev/agent-os-core";
 import { coreutils } from "@rivet-dev/agent-os-common";
-import claude from "@rivet-dev/agent-os-claude";
-import codex from "@rivet-dev/agent-os-codex-agent";
-import pi from "@rivet-dev/agent-os-pi";
 import { LLMock } from "@copilotkit/llmock";
 import os from "node:os";
 
@@ -61,10 +58,36 @@ export interface Workload {
 	settleMs: number;
 }
 
+async function loadPiSoftware(): Promise<SoftwareInput[]> {
+	const { default: pi } = await import("@rivet-dev/agent-os-pi");
+	return [pi];
+}
+
+async function loadPiLiteSoftware(): Promise<SoftwareInput[]> {
+	const { default: piLite } = await import("@rivet-dev/agent-os-pi-lite");
+	return [piLite];
+}
+
+async function loadClaudeSoftware(): Promise<SoftwareInput[]> {
+	const { default: claude } = await import("@rivet-dev/agent-os-claude");
+	return [claude];
+}
+
+async function loadCodexSoftware(): Promise<SoftwareInput[]> {
+	const { default: codex } = await import("@rivet-dev/agent-os-codex-agent");
+	return [...codex];
+}
+
+async function resolveSoftware(
+	software: SoftwareInput[] | (() => Promise<SoftwareInput[]>),
+): Promise<SoftwareInput[]> {
+	return typeof software === "function" ? software() : software;
+}
+
 function makeAgentSessionWorkload(opts: {
 	agentId: string;
 	description: string;
-	software: SoftwareInput[];
+	loadSoftware: () => Promise<SoftwareInput[]>;
 	processMarker: string;
 }): Workload {
 	return {
@@ -73,7 +96,7 @@ function makeAgentSessionWorkload(opts: {
 		createVm: async () => {
 			const { port } = await ensureLlmock();
 			return AgentOs.create({
-				software: opts.software,
+				software: await opts.loadSoftware(),
 				loopbackExemptPorts: [port],
 			});
 		},
@@ -129,19 +152,25 @@ export const WORKLOADS: Record<string, Workload> = {
 	"pi-session": makeAgentSessionWorkload({
 		agentId: "pi",
 		description: "VM with PI agent session via createSession",
-		software: [pi],
+		loadSoftware: loadPiSoftware,
 		processMarker: "agent-os-pi",
+	}),
+	"pi-lite-session": makeAgentSessionWorkload({
+		agentId: "pi-lite",
+		description: "VM with PI Lite agent session via createSession",
+		loadSoftware: loadPiLiteSoftware,
+		processMarker: "agent-os-pi-lite",
 	}),
 	"claude-session": makeAgentSessionWorkload({
 		agentId: "claude",
 		description: "VM with Claude agent session via createSession",
-		software: [claude],
+		loadSoftware: loadClaudeSoftware,
 		processMarker: "agent-os-claude",
 	}),
 	"codex-session": makeAgentSessionWorkload({
 		agentId: "codex",
 		description: "VM with Codex agent session via createSession",
-		software: [...codex],
+		loadSoftware: loadCodexSoftware,
 		processMarker: "agent-os-codex-agent",
 	}),
 };
@@ -165,7 +194,7 @@ export async function createBenchVm(): Promise<AgentOs> {
  */
 export async function createAgentSessionVm(
 	agentId: string,
-	software: SoftwareInput[],
+	software: SoftwareInput[] | (() => Promise<SoftwareInput[]>),
 ): Promise<{
 	vm: AgentOs;
 	coldStartMs: number;
@@ -173,7 +202,7 @@ export async function createAgentSessionVm(
 	const { url, port } = await ensureLlmock();
 	const t0 = performance.now();
 	const vm = await AgentOs.create({
-		software,
+		software: await resolveSoftware(software),
 		loopbackExemptPorts: [port],
 	});
 	await vm.createSession(agentId, {
@@ -188,7 +217,7 @@ export async function createAgentSessionVm(
 
 /** Convenience alias for PI agent session. */
 export function createPiSessionVm() {
-	return createAgentSessionVm("pi", [pi]);
+	return createAgentSessionVm("pi", loadPiSoftware);
 }
 
 // ── Stats and formatting ────────────────────────────────────────────

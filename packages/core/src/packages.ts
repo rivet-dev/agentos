@@ -230,8 +230,35 @@ export interface ProcessedSoftware {
 	commandDirs: string[];
 	/** Host-to-VM path mappings for ModuleAccessFileSystem. */
 	softwareRoots: SoftwareRoot[];
+	/** Registered host binary commands exposed by tool software. */
+	toolBinaries: Map<string, string>;
 	/** Agent configs registered by agent software. */
 	agentConfigs: Map<string, AgentConfig>;
+}
+
+function resolvePackageBinPath(
+	hostDir: string,
+	packageName: string,
+	binName: string,
+): string {
+	const pkg = JSON.parse(
+		readFileSync(join(hostDir, "package.json"), "utf-8"),
+	) as { bin?: string | Record<string, string> };
+
+	let binEntry: string | undefined;
+	if (typeof pkg.bin === "string") {
+		binEntry = pkg.bin;
+	} else if (typeof pkg.bin === "object" && pkg.bin !== null) {
+		binEntry = pkg.bin[binName] ?? Object.values(pkg.bin)[0];
+	}
+
+	if (!binEntry) {
+		throw new Error(
+			`No bin entry "${binName}" found in ${packageName}/package.json`,
+		);
+	}
+
+	return join(hostDir, binEntry);
 }
 
 /** Check if a descriptor is a typed software descriptor (has a `type` field). */
@@ -252,6 +279,7 @@ export function processSoftware(
 ): ProcessedSoftware {
 	const commandDirs: string[] = [];
 	const softwareRoots: SoftwareRoot[] = [];
+	const toolBinaries = new Map<string, string>();
 	const agentConfigs = new Map<string, AgentConfig>();
 
 	// Flatten nested arrays (meta-packages export arrays of sub-packages).
@@ -306,12 +334,17 @@ export function processSoftware(
 					const vmDir = `/root/node_modules/${reqPkg}`;
 					softwareRoots.push({ hostPath: hostDir, vmPath: vmDir });
 				}
-				// Tool bin registration is handled by the caller (AgentOs.create)
-				// since it requires kernel access.
+				for (const [commandName, packageName] of Object.entries(pkg.bins)) {
+					const hostDir = resolvePackageDir(pkg.packageDir, packageName);
+					toolBinaries.set(
+						commandName,
+						resolvePackageBinPath(hostDir, packageName, commandName),
+					);
+				}
 				break;
 			}
 		}
 	}
 
-	return { commandDirs, softwareRoots, agentConfigs };
+	return { commandDirs, softwareRoots, toolBinaries, agentConfigs };
 }

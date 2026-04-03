@@ -1,0 +1,23 @@
+{
+  "sourceDir": "/home/nathan/misc/pi_agent_rust",
+  "sourceCommit": "6e48d3dc907ceb663cbcf011c1986f8a1c0a036f",
+  "build": {
+    "command": "cargo build --release --locked --bin pi --no-default-features",
+    "profileOverrides": {
+      "optLevel": "z",
+      "lto": "fat",
+      "codegenUnits": "1",
+      "panic": "abort",
+      "strip": "symbols",
+      "debug": "0"
+    }
+  },
+  "output": {
+    "path": "/home/nathan/a3/registry/agent/pi-lite/bin/pi-lite",
+    "sizeBytes": 20884200
+  },
+  "sqliteLibrary": {
+    "path": "/home/nathan/a3/registry/agent/pi-lite/bin/libsqlite3.so",
+    "sizeBytes": 1118856
+  }
+}

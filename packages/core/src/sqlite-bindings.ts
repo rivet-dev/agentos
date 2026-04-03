@@ -315,11 +315,12 @@ export function createSqliteBindings(kernel: Kernel): BindingTree {
 							: null;
 					try {
 						if (hostPath) {
-							if (await kernel.exists(vmPath)) {
+							const vmPathString = vmPath ?? path ?? ":memory:";
+							if (await kernel.exists(vmPathString)) {
 								mkdirSync(hostDirname(hostPath), { recursive: true });
 								writeFileSync(
 									hostPath,
-									Buffer.from(await kernel.readFile(vmPath)),
+									Buffer.from(await kernel.readFile(vmPathString)),
 								);
 							}
 						}
