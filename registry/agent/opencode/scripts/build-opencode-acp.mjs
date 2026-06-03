@@ -19,6 +19,14 @@ const SOURCE_REPOSITORY = "anomalyco/opencode";
 const SOURCE_VERSION = "1.3.13";
 const SOURCE_TARBALL_URL = `https://github.com/${SOURCE_REPOSITORY}/archive/refs/tags/v${SOURCE_VERSION}.tar.gz`;
 
+// Upstream `packages/app/package.json` pins `ghostty-web: github:anomalyco/ghostty-web#main`,
+// but the bundled bun.lock snapshots the SHA below. Because `main` is a moving ref, a fresh
+// `bun install --frozen-lockfile` resolves to whatever `main` points at *now* and fails the
+// lockfile check. Rewriting the manifest to the lockfile's SHA before install keeps frozen-
+// lockfile guarantees intact (i.e. CI still breaks loudly if either side drifts) without
+// trusting arbitrary new HEADs on the ghostty-web branch.
+const GHOSTTY_WEB_PINNED_SHA = "4af877d";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageDir = resolve(__dirname, "..");
 const distDir = resolve(packageDir, "dist");
@@ -45,6 +53,20 @@ function run(command, args, options = {}) {
 		);
 	}
 	return result;
+}
+
+function pinGhosttyWebRef(sourceRoot) {
+	const manifestPath = resolve(sourceRoot, "packages", "app", "package.json");
+	const raw = readFileSync(manifestPath, "utf-8");
+	const movingRef = '"ghostty-web": "github:anomalyco/ghostty-web#main"';
+	const pinnedRef = `"ghostty-web": "github:anomalyco/ghostty-web#${GHOSTTY_WEB_PINNED_SHA}"`;
+	if (raw.includes(pinnedRef)) return;
+	if (!raw.includes(movingRef)) {
+		throw new Error(
+			`Expected ghostty-web ref ${movingRef} in ${manifestPath}; upstream layout changed — re-audit GHOSTTY_WEB_PINNED_SHA before updating.`,
+		);
+	}
+	writeFileSync(manifestPath, raw.replace(movingRef, pinnedRef));
 }
 
 const PATCHED_SOURCE_FILES = [
@@ -3550,6 +3572,7 @@ async function main() {
 		}
 
 		run("tar", ["-xzf", tarballPath, "--strip-components=1", "-C", sourceRoot]);
+		pinGhosttyWebRef(sourceRoot);
 		run(bunBin, ["install", "--frozen-lockfile"], { cwd: sourceRoot });
 		await ensureNodeAcpPatch(sourceRoot, tarballPath);
 		await applyNodeAcpRuntimeTweaks(sourceRoot);
