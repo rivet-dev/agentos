@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/bridge",
+    "crates/client",
     "crates/kernel",
     "crates/execution",
     "crates/sidecar",
