@@ -852,6 +852,18 @@ struct UdpRemoteAddrRequest<'a, B> {
     context: &'a JavascriptSocketPathContext,
 }
 
+pub(crate) struct JavascriptSyncRpcServiceRequest<'a, B> {
+    pub(crate) bridge: &'a SharedBridge<B>,
+    pub(crate) vm_id: &'a str,
+    pub(crate) dns: &'a VmDnsConfig,
+    pub(crate) socket_paths: &'a JavascriptSocketPathContext,
+    pub(crate) kernel: &'a mut SidecarKernel,
+    pub(crate) process: &'a mut ActiveProcess,
+    pub(crate) sync_request: &'a JavascriptSyncRpcRequest,
+    pub(crate) resource_limits: &'a ResourceLimits,
+    pub(crate) network_counts: NetworkResourceCounts,
+}
+
 impl ActiveTcpSocket {
     fn connect<B>(request: ActiveTcpConnectRequest<'_, B>) -> Result<Self, SidecarError>
     where
@@ -6236,17 +6248,17 @@ where
                         let Some(child) = parent.child_processes.get_mut(child_process_id) else {
                             return Ok(Value::Null);
                         };
-                        service_javascript_sync_rpc(
-                            &self.bridge,
+                        service_javascript_sync_rpc(JavascriptSyncRpcServiceRequest {
+                            bridge: &self.bridge,
                             vm_id,
-                            &vm.dns,
-                            &socket_paths,
-                            &mut vm.kernel,
-                            child,
-                            &request,
-                            &resource_limits,
+                            dns: &vm.dns,
+                            socket_paths: &socket_paths,
+                            kernel: &mut vm.kernel,
+                            process: child,
+                            sync_request: &request,
+                            resource_limits: &resource_limits,
                             network_counts,
-                        )
+                        })
                     };
 
                     let Some(vm) = self.vms.get_mut(vm_id) else {
@@ -12881,20 +12893,23 @@ fn javascript_sync_rpc_base64_arg(
 }
 
 pub(crate) fn service_javascript_sync_rpc<B>(
-    bridge: &SharedBridge<B>,
-    vm_id: &str,
-    dns: &VmDnsConfig,
-    socket_paths: &JavascriptSocketPathContext,
-    kernel: &mut SidecarKernel,
-    process: &mut ActiveProcess,
-    request: &JavascriptSyncRpcRequest,
-    resource_limits: &ResourceLimits,
-    network_counts: NetworkResourceCounts,
+    request: JavascriptSyncRpcServiceRequest<'_, B>,
 ) -> Result<Value, SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let JavascriptSyncRpcServiceRequest {
+        bridge,
+        vm_id,
+        dns,
+        socket_paths,
+        kernel,
+        process,
+        sync_request: request,
+        resource_limits,
+        network_counts,
+    } = request;
     match request.method.as_str() {
         "_resolveModule"
         | "_resolveModuleSync"
@@ -15407,17 +15422,17 @@ where
         match event {
             ActiveExecutionEvent::JavascriptSyncRpcRequest(request) => {
                 let network_counts = process.network_resource_counts();
-                let response = service_javascript_sync_rpc(
+                let response = service_javascript_sync_rpc(JavascriptSyncRpcServiceRequest {
                     bridge,
                     vm_id,
                     dns,
                     socket_paths,
                     kernel,
                     process,
-                    &request,
+                    sync_request: &request,
                     resource_limits,
                     network_counts,
-                );
+                });
                 match response {
                     Ok(result) => process
                         .execution

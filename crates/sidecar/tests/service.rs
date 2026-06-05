@@ -38,6 +38,7 @@ mod service {
         use crate::execution::{
             clamp_javascript_net_poll_wait, format_dns_resource, format_tcp_resource,
             service_javascript_net_sync_rpc, signal_runtime_process,
+            JavascriptSyncRpcServiceRequest,
         };
         use crate::filesystem::service_javascript_fs_sync_rpc;
         use crate::plugins::s3::test_support::MockS3Server;
@@ -1698,17 +1699,17 @@ setInterval(() => {}, 1000);
                 .active_processes
                 .get_mut(process_id)
                 .expect("javascript process");
-            service_javascript_sync_rpc(
-                &bridge,
+            service_javascript_sync_rpc(JavascriptSyncRpcServiceRequest {
+                bridge: &bridge,
                 vm_id,
-                &dns,
-                &socket_paths,
-                &mut vm.kernel,
+                dns: &dns,
+                socket_paths: &socket_paths,
+                kernel: &mut vm.kernel,
                 process,
-                &request,
-                &limits,
-                counts,
-            )
+                sync_request: &request,
+                resource_limits: &limits,
+                network_counts: counts,
+            })
         }
         fn kernel_socket_queries_ignore_stale_sidecar_guest_addresses() {
             assert_node_available();
