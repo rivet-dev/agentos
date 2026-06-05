@@ -93,7 +93,7 @@ mod service {
             A, AAAA, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT,
         };
         use hickory_resolver::proto::rr::{RData, Record, RecordType};
-        use nix::fcntl::{flock, FlockArg};
+        use nix::fcntl::{Flock, FlockArg};
         use nix::libc;
         use rustls::client::danger::{
             HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
@@ -315,7 +315,7 @@ setInterval(() => {}, 1000);
         }
 
         fn acquire_sidecar_runtime_test_lock() {
-            static LOCK_FILE: OnceLock<std::fs::File> = OnceLock::new();
+            static LOCK_FILE: OnceLock<Flock<std::fs::File>> = OnceLock::new();
             let _ = LOCK_FILE.get_or_init(|| {
                 let path = std::env::temp_dir().join("agent-os-sidecar-runtime-tests.lock");
                 let file = OpenOptions::new()
@@ -326,10 +326,9 @@ setInterval(() => {}, 1000);
                     .unwrap_or_else(|error| {
                         panic!("open sidecar test runtime lock {}: {error}", path.display())
                     });
-                flock(file.as_raw_fd(), FlockArg::LockExclusive).unwrap_or_else(|error| {
+                Flock::lock(file, FlockArg::LockExclusive).unwrap_or_else(|(_, error)| {
                     panic!("lock sidecar test runtime {}: {error}", path.display())
-                });
-                file
+                })
             });
         }
 
