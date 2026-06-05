@@ -410,10 +410,8 @@ where
                     "native sidecar test set_vm_permissions outcome lock poisoned",
                 ))
             })?;
-            if let Some(outcome) = outcomes.pop_front() {
-                if let Some(error) = outcome {
-                    return Err(error);
-                }
+            if let Some(Some(error)) = outcomes.pop_front() {
+                return Err(error);
             }
         }
 
