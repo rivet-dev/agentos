@@ -841,6 +841,17 @@ struct ActiveUdpSendToRequest<'a, B> {
     contents: &'a [u8],
 }
 
+struct UdpRemoteAddrRequest<'a, B> {
+    bridge: &'a SharedBridge<B>,
+    kernel: &'a SidecarKernel,
+    vm_id: &'a str,
+    dns: &'a VmDnsConfig,
+    host: &'a str,
+    port: u16,
+    family: JavascriptUdpFamily,
+    context: &'a JavascriptSocketPathContext,
+}
+
 impl ActiveTcpSocket {
     fn connect<B>(request: ActiveTcpConnectRequest<'_, B>) -> Result<Self, SidecarError>
     where
@@ -2112,8 +2123,16 @@ impl ActiveUdpSocket {
             context,
             contents,
         } = request;
-        let remote_addr =
-            resolve_udp_addr(bridge, kernel, vm_id, dns, host, port, self.family, context)?;
+        let remote_addr = resolve_udp_addr(UdpRemoteAddrRequest {
+            bridge,
+            kernel,
+            vm_id,
+            dns,
+            host,
+            port,
+            family: self.family,
+            context,
+        })?;
         let local_addr = self.ensure_bound_for_send(kernel, kernel_pid, context)?;
         let written = if let Some(socket_id) = self.kernel_socket_id {
             if is_loopback_ip(remote_addr.ip()) && remote_addr.port() == port {
@@ -11127,20 +11146,21 @@ fn resolve_udp_bind_addr(
         })
 }
 
-fn resolve_udp_addr<B>(
-    bridge: &SharedBridge<B>,
-    kernel: &SidecarKernel,
-    vm_id: &str,
-    dns: &VmDnsConfig,
-    host: &str,
-    port: u16,
-    family: JavascriptUdpFamily,
-    context: &JavascriptSocketPathContext,
-) -> Result<SocketAddr, SidecarError>
+fn resolve_udp_addr<B>(request: UdpRemoteAddrRequest<'_, B>) -> Result<SocketAddr, SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let UdpRemoteAddrRequest {
+        bridge,
+        kernel,
+        vm_id,
+        dns,
+        host,
+        port,
+        family,
+        context,
+    } = request;
     resolve_dns_ip_addrs(
         bridge,
         kernel,
