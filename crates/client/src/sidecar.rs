@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
 use scc::HashMap as SccHashMap;
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::agent_os::AgentOs;
