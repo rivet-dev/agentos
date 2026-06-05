@@ -198,7 +198,7 @@ fn convert_root_lower_descriptor(
 fn convert_root_filesystem_entry(
     entry: &RootFilesystemEntry,
 ) -> Result<KernelFilesystemEntry, SidecarError> {
-    let mode = entry.mode.unwrap_or_else(|| match entry.kind {
+    let mode = entry.mode.unwrap_or(match entry.kind {
         RootFilesystemEntryKind::File => {
             if entry.executable {
                 0o755
