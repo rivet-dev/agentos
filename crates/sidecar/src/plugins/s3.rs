@@ -718,17 +718,19 @@ fn persist_manifest_from_snapshot(
 
     for (ino, inode) in &snapshot.inodes {
         let persisted_kind = match &inode.kind {
-            MemoryFileSystemSnapshotInodeKind::File { data } => persist_file_inode(
-                store,
-                *ino,
-                data,
-                previous_manifest.inodes.get(ino),
-                chunk_key_prefix,
-                chunk_size,
-                inline_threshold,
-                dirty_file_inodes.contains(ino),
-                &mut chunk_keys,
-            )?,
+            MemoryFileSystemSnapshotInodeKind::File { data } => {
+                persist_file_inode(PersistFileInodeRequest {
+                    store,
+                    ino: *ino,
+                    data,
+                    previous_inode: previous_manifest.inodes.get(ino),
+                    chunk_key_prefix,
+                    chunk_size,
+                    inline_threshold,
+                    data_dirty: dirty_file_inodes.contains(ino),
+                    chunk_keys: &mut chunk_keys,
+                })?
+            }
             MemoryFileSystemSnapshotInodeKind::Directory => PersistedFilesystemInodeKind::Directory,
             MemoryFileSystemSnapshotInodeKind::SymbolicLink { target } => {
                 PersistedFilesystemInodeKind::SymbolicLink {
@@ -757,17 +759,32 @@ fn persist_manifest_from_snapshot(
     ))
 }
 
-fn persist_file_inode(
-    store: &S3ObjectStore,
+struct PersistFileInodeRequest<'a> {
+    store: &'a S3ObjectStore,
     ino: u64,
-    data: &[u8],
-    previous_inode: Option<&PersistedFilesystemInode>,
-    chunk_key_prefix: &str,
+    data: &'a [u8],
+    previous_inode: Option<&'a PersistedFilesystemInode>,
+    chunk_key_prefix: &'a str,
     chunk_size: usize,
     inline_threshold: usize,
     data_dirty: bool,
-    chunk_keys: &mut BTreeSet<String>,
+    chunk_keys: &'a mut BTreeSet<String>,
+}
+
+fn persist_file_inode(
+    request: PersistFileInodeRequest<'_>,
 ) -> Result<PersistedFilesystemInodeKind, StorageError> {
+    let PersistFileInodeRequest {
+        store,
+        ino,
+        data,
+        previous_inode,
+        chunk_key_prefix,
+        chunk_size,
+        inline_threshold,
+        data_dirty,
+        chunk_keys,
+    } = request;
     if !data_dirty {
         if let Some(PersistedFilesystemInode {
             kind: PersistedFilesystemInodeKind::File { storage },
