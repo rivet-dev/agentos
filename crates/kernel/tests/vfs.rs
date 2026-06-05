@@ -27,9 +27,9 @@ fn generated_invalid_path(seed: u32) -> String {
             path.push('/');
         }
         path.push(char::from(b'a' + ((seed + segment) % 26) as u8));
-        let invalid_byte = if seed % 2 == 0 {
+        let invalid_byte = if seed.is_multiple_of(2) {
             0
-        } else if seed % 5 == 0 {
+        } else if seed.is_multiple_of(5) {
             0x7f
         } else {
             1 + ((seed + segment) % 31) as u8
