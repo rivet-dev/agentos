@@ -216,6 +216,7 @@ enum PtyEndKind {
 
 #[derive(Debug, Default)]
 struct PendingRead {
+    length: usize,
     result: Option<Option<Vec<u8>>>,
 }
 
@@ -574,7 +575,13 @@ impl PtyManager {
             } else {
                 let next = state.next_waiter_id;
                 state.next_waiter_id += 1;
-                state.waiters.insert(next, PendingRead::default());
+                state.waiters.insert(
+                    next,
+                    PendingRead {
+                        length,
+                        result: None,
+                    },
+                );
                 let Some(pty) = state.ptys.get_mut(&pty_ref.pty_id) else {
                     state.waiters.remove(&next);
                     return Err(PtyError::bad_file_descriptor("PTY not found"));
@@ -941,7 +948,13 @@ fn deliver_input(
 ) -> PtyResult<()> {
     if let Some(waiter_id) = pty.waiting_input_reads.pop_front() {
         if let Some(waiter) = waiters.get_mut(&waiter_id) {
-            waiter.result = Some(Some(data.to_vec()));
+            if data.len() <= waiter.length {
+                waiter.result = Some(Some(data.to_vec()));
+            } else {
+                let (head, tail) = data.split_at(waiter.length);
+                waiter.result = Some(Some(head.to_vec()));
+                pty.input_buffer.push_front(tail.to_vec());
+            }
             return Ok(());
         }
     }
@@ -962,7 +975,13 @@ fn deliver_output(
 ) -> PtyResult<()> {
     if let Some(waiter_id) = pty.waiting_output_reads.pop_front() {
         if let Some(waiter) = waiters.get_mut(&waiter_id) {
-            waiter.result = Some(Some(data.to_vec()));
+            if data.len() <= waiter.length {
+                waiter.result = Some(Some(data.to_vec()));
+            } else {
+                let (head, tail) = data.split_at(waiter.length);
+                waiter.result = Some(Some(head.to_vec()));
+                pty.output_buffer.push_front(tail.to_vec());
+            }
             return Ok(());
         }
     }
