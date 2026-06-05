@@ -3397,7 +3397,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("accept connected client");
-                    (value != Value::from("__secure_exec_net_timeout__")).then_some(value)
+                    (value != "__secure_exec_net_timeout__").then_some(value)
                 })
                 .expect("eventually accept connected client");
             let accepted: Value =
@@ -3538,7 +3538,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("accept connected client");
-                if value != Value::from("__secure_exec_net_timeout__") {
+                if value != "__secure_exec_net_timeout__" {
                     accepted = Some(value);
                     break;
                 }
@@ -3614,7 +3614,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("read bridged socket chunk");
-                if value != Value::from("__secure_exec_net_timeout__") {
+                if value != "__secure_exec_net_timeout__" {
                     payload = Some(value);
                     break;
                 }
@@ -3636,7 +3636,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("read bridged socket end");
-                if value != Value::from("__secure_exec_net_timeout__") {
+                if value != "__secure_exec_net_timeout__" {
                     end = Some(value);
                     break;
                 }
@@ -3752,7 +3752,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("accept connected client");
-                    (value != Value::from("__secure_exec_net_timeout__")).then_some(value)
+                    (value != "__secure_exec_net_timeout__").then_some(value)
                 })
                 .expect("eventually accept connected client");
             let accepted: Value =
@@ -3792,7 +3792,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("read upgrade socket payload");
-                if value != Value::from("__secure_exec_net_timeout__") {
+                if value != "__secure_exec_net_timeout__" {
                     payload = Some(value);
                     break;
                 }
@@ -3826,7 +3826,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("read upgrade socket EOF");
-                if value != Value::from("__secure_exec_net_timeout__") {
+                if value != "__secure_exec_net_timeout__" {
                     end = Some(value);
                     break;
                 }
@@ -4217,7 +4217,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("read TLS client payload");
-                    if value == Value::from("__secure_exec_net_timeout__") {
+                    if value == "__secure_exec_net_timeout__" {
                         thread::sleep(Duration::from_millis(10));
                         None
                     } else {
@@ -4317,7 +4317,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("accept TLS client");
-                    if value == Value::from("__secure_exec_net_timeout__") {
+                    if value == "__secure_exec_net_timeout__" {
                         thread::sleep(Duration::from_millis(10));
                         None
                     } else {
@@ -4370,7 +4370,7 @@ setInterval(() => {}, 1000);
                     let parsed: Value =
                         serde_json::from_str(value.as_str().expect("TLS client hello JSON"))
                             .expect("parse TLS client hello");
-                    if parsed["servername"] == Value::from("localhost") {
+                    if parsed["servername"] == "localhost" {
                         Some(parsed)
                     } else {
                         thread::sleep(Duration::from_millis(10));
@@ -4497,7 +4497,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("read TLS server payload");
-                    if value == Value::from("__secure_exec_net_timeout__") {
+                    if value == "__secure_exec_net_timeout__" {
                         thread::sleep(Duration::from_millis(10));
                         None
                     } else {
@@ -4568,7 +4568,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("read guest TLS client payload");
-                    if value == Value::from("__secure_exec_net_timeout__") {
+                    if value == "__secure_exec_net_timeout__" {
                         thread::sleep(Duration::from_millis(10));
                         None
                     } else {
@@ -4700,7 +4700,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("accept pending connection");
-                if value != Value::from("__secure_exec_net_timeout__") {
+                if value != "__secure_exec_net_timeout__" {
                     accepted = Some(value);
                     break;
                 }
