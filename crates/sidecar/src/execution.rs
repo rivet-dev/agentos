@@ -4988,7 +4988,6 @@ where
                         parent_pid: Some(parent_kernel_pid),
                         env: resolved.env.clone(),
                         cwd: Some(resolved.guest_cwd.clone()),
-                        ..VirtualProcessOptions::default()
                     },
                 )
                 .map_err(kernel_error)?;
