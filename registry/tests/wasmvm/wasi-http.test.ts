@@ -339,7 +339,10 @@ describeIf(hasWasmBinaries && hasOpenssl, 'wasi-http HTTPS (http-test binary)', 
     const origReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     try {
-      const result = await kernel.exec(`http-test get https://127.0.0.1:${httpsPort}/`);
+      const result = await kernel.exec(`http-test get https://127.0.0.1:${httpsPort}/`, {
+        env: { NODE_TLS_REJECT_UNAUTHORIZED: '0' },
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stdout).toContain('status: 200');
       expect(result.stdout).toContain('body: hello from https');
     } finally {

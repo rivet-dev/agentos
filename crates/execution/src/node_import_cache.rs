@@ -15,7 +15,7 @@ const NODE_IMPORT_CACHE_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_PATH";
 const NODE_IMPORT_CACHE_LOADER_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_LOADER_PATH";
 const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "46";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "47";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agent-os-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const PYODIDE_DIST_DIR: &str = "pyodide-dist";
@@ -10569,9 +10569,13 @@ const hostNetImport = {
 
     try {
       const servername = readGuestString(hostnamePtr, hostnameLen);
+      const tlsOptions = { servername };
+      if (guestEnv.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
+        tlsOptions.rejectUnauthorized = false;
+      }
       callSyncRpc('net.socket_upgrade_tls', [
         socket.socketId,
-        JSON.stringify({ servername }),
+        JSON.stringify(tlsOptions),
       ]);
       return WASI_ERRNO_SUCCESS;
     } catch {
