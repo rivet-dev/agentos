@@ -818,21 +818,33 @@ impl Write for crate::state::LoopbackTlsEndpoint {
 
 // TCP types moved to crate::state
 
+struct ActiveTcpConnectRequest<'a, B> {
+    bridge: &'a SharedBridge<B>,
+    kernel: &'a mut SidecarKernel,
+    kernel_pid: u32,
+    vm_id: &'a str,
+    dns: &'a VmDnsConfig,
+    host: &'a str,
+    port: u16,
+    context: &'a JavascriptSocketPathContext,
+}
+
 impl ActiveTcpSocket {
-    fn connect<B>(
-        bridge: &SharedBridge<B>,
-        kernel: &mut SidecarKernel,
-        kernel_pid: u32,
-        vm_id: &str,
-        dns: &VmDnsConfig,
-        host: &str,
-        port: u16,
-        context: &JavascriptSocketPathContext,
-    ) -> Result<Self, SidecarError>
+    fn connect<B>(request: ActiveTcpConnectRequest<'_, B>) -> Result<Self, SidecarError>
     where
         B: NativeSidecarBridge + Send + 'static,
         BridgeError<B>: fmt::Debug + Send + Sync + 'static,
     {
+        let ActiveTcpConnectRequest {
+            bridge,
+            kernel,
+            kernel_pid,
+            vm_id,
+            dns,
+            host,
+            port,
+            context,
+        } = request;
         let resolved = resolve_tcp_connect_addr(bridge, kernel, vm_id, dns, host, port, context)?;
         if resolved.use_kernel_loopback {
             let family = JavascriptSocketFamily::from_ip(resolved.guest_remote_addr.ip());
@@ -18178,16 +18190,16 @@ where
                     NetworkOperation::Http,
                     format_tcp_resource(host, port),
                 )?;
-                let socket = ActiveTcpSocket::connect(
+                let socket = ActiveTcpSocket::connect(ActiveTcpConnectRequest {
                     bridge,
                     kernel,
-                    process.kernel_pid,
+                    kernel_pid: process.kernel_pid,
                     vm_id,
                     dns,
                     host,
                     port,
-                    socket_paths,
-                )?;
+                    context: socket_paths,
+                })?;
                 let socket_id = process.allocate_tcp_socket_id();
                 let local_addr = socket.guest_local_addr;
                 let remote_addr = socket.guest_remote_addr;
