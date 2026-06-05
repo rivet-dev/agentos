@@ -1158,6 +1158,19 @@ export class NativeSidecarKernelProxy {
 						return;
 					}
 					if (activeForegroundProcess) {
+						const rawText =
+							typeof data === "string"
+								? data
+								: Buffer.from(data).toString("utf8");
+						if (rawText.includes("\u0003")) {
+							const [beforeInterrupt] = rawText.split("\u0003");
+							if (beforeInterrupt) {
+								writeForegroundInput(activeForegroundProcess, beforeInterrupt);
+							}
+							emitSyntheticTerminal("^C\n");
+							activeForegroundProcess.kill(2);
+							return;
+						}
 						writeForegroundInput(activeForegroundProcess, data);
 						return;
 					}
