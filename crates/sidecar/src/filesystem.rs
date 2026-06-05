@@ -1494,20 +1494,19 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                         path,
                         &mapped_host.host_path,
                     )?;
-                    let proc_path;
-                    if follow_symlinks {
+                    let proc_path = if follow_symlinks {
                         let opened = open_mapped_runtime_beneath(
                             &mapped_host,
                             "fs.utimes",
                             OFlag::O_PATH,
                             Mode::empty(),
                         )?;
-                        proc_path = opened.handle.proc_path();
+                        opened.handle.proc_path()
                     } else {
                         let parent =
                             open_mapped_runtime_parent_beneath(&mapped_host, "fs.lutimes")?;
-                        proc_path = mapped_runtime_parent_child_path(&parent);
-                    }
+                        mapped_runtime_parent_child_path(&parent)
+                    };
                     if kernel
                         .exists_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
                         .map_err(kernel_error)?
