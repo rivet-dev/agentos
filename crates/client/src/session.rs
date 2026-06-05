@@ -36,6 +36,11 @@ const LEGACY_PERMISSION_METHOD: &str = "request/permission";
 /// ACP method name for `session/request_permission` (newer ACP).
 const ACP_PERMISSION_METHOD: &str = "session/request_permission";
 
+pub type SessionEventStream = Pin<Box<dyn Stream<Item = JsonRpcNotification> + Send>>;
+pub type SessionEventSubscription = (SessionEventStream, Subscription);
+pub type PermissionRequestStream = Pin<Box<dyn Stream<Item = PermissionRequest> + Send>>;
+pub type PermissionRequestSubscription = (PermissionRequestStream, Subscription);
+
 // ---------------------------------------------------------------------------
 // Supporting types
 // ---------------------------------------------------------------------------
@@ -1891,13 +1896,7 @@ impl AgentOs {
     pub fn on_session_event(
         &self,
         session_id: &str,
-    ) -> std::result::Result<
-        (
-            Pin<Box<dyn Stream<Item = JsonRpcNotification> + Send>>,
-            Subscription,
-        ),
-        ClientError,
-    > {
+    ) -> std::result::Result<SessionEventSubscription, ClientError> {
         let (buffered, rx) = self.require_session(session_id, |entry| {
             let ring = entry.event_ring.lock();
             let buffered: VecDeque<SequencedEvent> = ring
@@ -1919,13 +1918,7 @@ impl AgentOs {
     pub fn on_permission_request(
         &self,
         session_id: &str,
-    ) -> std::result::Result<
-        (
-            Pin<Box<dyn Stream<Item = PermissionRequest> + Send>>,
-            Subscription,
-        ),
-        ClientError,
-    > {
+    ) -> std::result::Result<PermissionRequestSubscription, ClientError> {
         let rx = self.require_session(session_id, |entry| entry.permission_tx.subscribe())?;
 
         // Pass broadcast items straight through. Each item carries a cloneable
