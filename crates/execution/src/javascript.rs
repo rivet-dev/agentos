@@ -5058,7 +5058,7 @@ export default {
             .unwrap_or_else(|_| format!("\"node:{module_name}\""))
     );
     let mut exports = builtin_named_exports(module_name)
-        .into_iter()
+        .iter()
         .collect::<HashSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
