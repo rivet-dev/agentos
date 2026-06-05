@@ -313,7 +313,7 @@ pub fn run_snapshot_consolidated_checks() {
     {
         let bridge_code = "(function() { globalThis.__bridge_init = true; })();";
         let blob = create_snapshot(bridge_code).expect("snapshot creation should succeed");
-        assert!(blob.len() > 0, "snapshot blob should be non-empty");
+        assert!(!blob.is_empty(), "snapshot blob should be non-empty");
     }
 
     // --- Part 2: Restored isolate executes JS correctly ---
@@ -755,7 +755,10 @@ pub fn run_snapshot_consolidated_checks() {
             blob.is_some(),
             "snapshot creation should succeed with stub bridge functions"
         );
-        assert!(blob.unwrap().len() > 0, "snapshot blob should be non-empty");
+        assert!(
+            !blob.unwrap().is_empty(),
+            "snapshot blob should be non-empty"
+        );
     }
 
     // --- Part 15: create_snapshot() auto-registers stubs and injects defaults ---
@@ -818,7 +821,7 @@ pub fn run_snapshot_consolidated_checks() {
         let blob = create_snapshot(iife_code).expect(
             "create_snapshot should succeed with bridge code that checks stubs and defaults",
         );
-        assert!(blob.len() > 0, "snapshot blob should be non-empty");
+        assert!(!blob.is_empty(), "snapshot blob should be non-empty");
 
         // Verify the snapshot can be restored
         let mut isolate = create_isolate_from_snapshot(blob, None);
@@ -864,7 +867,7 @@ pub fn run_snapshot_consolidated_checks() {
             "#;
         let blob = create_snapshot(iife_code)
             .expect("create_snapshot should succeed with full bridge IIFE pattern");
-        assert!(blob.len() > 0);
+        assert!(!blob.is_empty());
 
         // Restore and verify default context has the bridge infrastructure
         let blob_bytes: Vec<u8> = blob.to_vec();
@@ -1168,7 +1171,7 @@ pub fn run_snapshot_consolidated_checks() {
                 let start = Instant::now();
                 match cache.get_or_create(&code) {
                     Ok(arc) => {
-                        assert!(arc.len() > 0);
+                        assert!(!arc.is_empty());
                     }
                     Err(e) => {
                         eprintln!("get_or_create failed: {}", e);
