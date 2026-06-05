@@ -3070,12 +3070,28 @@ where
         }
     }
 
+    fn signal_acp_process(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        signal: &str,
+        session_ids: &[String],
+    ) -> Result<(), SidecarError> {
+        self.kill_process_internal(vm_id, process_id, signal)?;
+        for session_id in session_ids {
+            if let Some(session) = self.acp_sessions.get_mut(session_id) {
+                session.record_activity(format!("sent signal {signal}"));
+            }
+        }
+        Ok(())
+    }
+
     async fn terminate_acp_process(
         &mut self,
         vm_id: &str,
         process_id: &str,
     ) -> Result<(), SidecarError> {
-        let Some((session_ids, _ownership)) =
+        let Some((session_ids, ownership)) =
             self.begin_acp_process_termination(vm_id, process_id)?
         else {
             return Ok(());
@@ -3086,10 +3102,68 @@ where
             .get(vm_id)
             .is_some_and(|vm| vm.active_processes.contains_key(process_id))
         {
-            self.kill_acp_process(vm_id, process_id);
-            for session_id in &session_ids {
-                if let Some(session) = self.acp_sessions.get_mut(session_id) {
-                    session.record_activity(String::from("sent signal SIGKILL"));
+            self.signal_acp_process(vm_id, process_id, "SIGTERM", &session_ids)?;
+            let deadline = Instant::now() + self.config.acp_termination_grace;
+            let mut exited = false;
+            while !exited && Instant::now() < deadline {
+                let wait = deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(10));
+                let event = {
+                    let vm = self.vms.get_mut(vm_id).ok_or_else(|| {
+                        SidecarError::InvalidState(format!("unknown sidecar VM {vm_id}"))
+                    })?;
+                    let process = vm.active_processes.get_mut(process_id).ok_or_else(|| {
+                        SidecarError::InvalidState(format!(
+                            "VM {vm_id} has no active process {process_id}"
+                        ))
+                    })?;
+                    if let Some(event) = process.pending_execution_events.pop_front() {
+                        Some(event)
+                    } else {
+                        process.execution.poll_event(wait).await?
+                    }
+                };
+                let Some(event) = event else {
+                    continue;
+                };
+                let event_exited = matches!(event, ActiveExecutionEvent::Exited(_));
+                let mut events = Vec::new();
+                let _ = self.handle_acp_process_event(
+                    vm_id,
+                    process_id,
+                    session_ids.first().map(String::as_str),
+                    &ownership,
+                    event,
+                    &mut events,
+                )?;
+                exited |= event_exited;
+                while let Some(envelope) =
+                    self.take_matching_process_event_envelope(vm_id, process_id)?
+                {
+                    let event_exited = matches!(envelope.event, ActiveExecutionEvent::Exited(_));
+                    let _ = self.handle_acp_process_event(
+                        vm_id,
+                        process_id,
+                        session_ids.first().map(String::as_str),
+                        &ownership,
+                        envelope.event,
+                        &mut events,
+                    )?;
+                    exited |= event_exited;
+                }
+            }
+            if !exited
+                && self
+                    .vms
+                    .get(vm_id)
+                    .is_some_and(|vm| vm.active_processes.contains_key(process_id))
+            {
+                self.kill_acp_process(vm_id, process_id);
+                for session_id in &session_ids {
+                    if let Some(session) = self.acp_sessions.get_mut(session_id) {
+                        session.record_activity(String::from("sent signal SIGKILL"));
+                    }
                 }
             }
         }

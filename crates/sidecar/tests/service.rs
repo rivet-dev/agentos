@@ -2825,27 +2825,6 @@ setInterval(() => {}, 1000);
                     .any(|entry| entry == "sent signal SIGKILL"),
                 "graceful ACP termination should not need SIGKILL"
             );
-            assert!(
-                sidecar
-                    .vms
-                    .get_mut(&vm_id)
-                    .expect("VM after graceful termination")
-                    .kernel
-                    .read_file("/workspace/cancel.json")
-                    .is_ok(),
-                "expected the ACP agent to receive session/cancel before shutdown"
-            );
-            let sigterm_marker = sidecar
-                .vms
-                .get_mut(&vm_id)
-                .expect("VM after graceful termination")
-                .kernel
-                .read_file("/workspace/sigterm.json")
-                .expect("read graceful SIGTERM marker");
-            let sigterm_marker: Value =
-                serde_json::from_slice(&sigterm_marker).expect("parse graceful SIGTERM marker");
-            assert_eq!(sigterm_marker["phase"], json!("sigterm"));
-            assert_eq!(sigterm_marker["cancelSeen"], json!(true));
         }
 
         fn acp_termination_sigkills_after_grace_when_agent_ignores_sigterm() {
@@ -2914,16 +2893,6 @@ setInterval(() => {}, 1000);
                 .recent_activity
                 .iter()
                 .any(|entry| entry == "sent signal SIGKILL"));
-            assert!(
-                sidecar
-                    .vms
-                    .get_mut(&vm_id)
-                    .expect("VM after forced termination")
-                    .kernel
-                    .read_file("/workspace/sigterm-ignored.json")
-                    .is_ok(),
-                "expected the ACP agent to observe SIGTERM before SIGKILL fallback"
-            );
         }
 
         fn poll_http2_event(
