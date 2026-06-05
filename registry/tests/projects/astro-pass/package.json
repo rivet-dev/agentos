@@ -7,5 +7,10 @@
 		"astro": "4.15.9",
 		"react": "18.3.1",
 		"react-dom": "18.3.1"
+	},
+	"pnpm": {
+		"overrides": {
+			"rollup": "npm:@rollup/wasm-node@4.61.0"
+		}
 	}
 }
