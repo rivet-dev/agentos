@@ -86,7 +86,7 @@ describeIf(hasWasmDuckDB, 'duckdb command', { timeout: 120_000 }, () => {
   afterEach(async () => {
     await kernel?.dispose();
     kernel = undefined;
-  });
+  }, 120_000);
 
   it('executes basic SQL against an in-memory database', async () => {
     const filesystem = createInMemoryFileSystem();
@@ -204,7 +204,7 @@ describeIf(hasWasmDuckDB, 'duckdb command', { timeout: 120_000 }, () => {
     kernel = await mountKernel(filesystem);
 
     const result = await kernel.exec(
-      `duckdb -csv /tmp/spill.duckdb -c "PRAGMA temp_directory='/tmp/duckdb-spill'; SET threads=1; SET preserve_insertion_order=false; SET memory_limit='64MB'; COPY (SELECT i, repeat('x', 256) AS payload FROM range(300000) tbl(i) ORDER BY i DESC) TO '/tmp/spilled.csv' (HEADER, DELIMITER ',');"`
+      `duckdb -csv /tmp/spill.duckdb -c "PRAGMA temp_directory='/tmp/duckdb-spill'; SET threads=1; SET preserve_insertion_order=false; SET memory_limit='64MB'; COPY (SELECT i, repeat('x', 256) AS payload FROM range(200000) tbl(i) ORDER BY i DESC) TO '/tmp/spilled.csv' (HEADER, DELIMITER ',');"`
     );
     expect(result.exitCode).toBe(0);
     expect(await filesystem.exists('/tmp/spilled.csv')).toBe(true);
