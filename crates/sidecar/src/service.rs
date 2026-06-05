@@ -1018,7 +1018,8 @@ where
         &mut self,
         request: RequestFrame,
     ) -> Result<DispatchResult, SidecarError> {
-        if matches!(request.payload, RequestPayload::DisposeVm(_)) {
+        let inside_runtime = tokio::runtime::Handle::try_current().is_ok();
+        if matches!(request.payload, RequestPayload::DisposeVm(_)) && !inside_runtime {
             return tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -1029,6 +1030,9 @@ where
         let mut future = std::pin::pin!(self.dispatch(request));
         match poll_future_once(future.as_mut()) {
             Some(result) => result,
+            None if inside_runtime => Err(SidecarError::InvalidState(String::from(
+                "dispatch_blocking cannot wait for an async sidecar request inside a Tokio runtime; use dispatch().await",
+            ))),
             None => tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
