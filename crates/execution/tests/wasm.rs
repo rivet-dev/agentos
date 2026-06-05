@@ -850,7 +850,7 @@ fn wasm_execution_stays_inside_v8_runtime_without_host_node_launches() {
         Vec::new(),
         BTreeMap::from([(
             String::from(WASM_MAX_MEMORY_BYTES_ENV),
-            String::from((2 * 65_536).to_string()),
+            (2 * 65_536).to_string(),
         )]),
         WasmPermissionTier::Full,
     );
