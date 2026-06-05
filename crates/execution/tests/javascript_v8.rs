@@ -2142,6 +2142,26 @@ const syncPiped = childProcess.spawnSync("/bin/cat", [], {
   input: Buffer.from("alpha-sync"),
 });
 const syncError = childProcess.spawnSync("/bin/cat", ["definitely-missing-agentos-file"]);
+const stdinDestroyChild = childProcess.spawn("/bin/cat", [], {
+  stdio: ["pipe", "pipe", "pipe"],
+});
+if (typeof stdinDestroyChild.stdin.destroy !== "function") {
+  throw new Error("child stdin did not expose destroy()");
+}
+if (
+  typeof stdinDestroyChild.stdout?.destroy !== "function" ||
+  typeof stdinDestroyChild.stderr?.destroy !== "function"
+) {
+  throw new Error("child output streams did not expose destroy()");
+}
+const stdinDestroyStatus = await new Promise((resolve, reject) => {
+  stdinDestroyChild.on("error", reject);
+  stdinDestroyChild.on("close", (code) => resolve(code));
+  stdinDestroyChild.stdin.destroy();
+  if (stdinDestroyChild.stdin.destroyed !== true) {
+    reject(new Error("child stdin destroy() did not mark the stream destroyed"));
+  }
+});
 
 const asyncResult = await new Promise((resolve, reject) => {
   const child = childProcess.spawn("/bin/cat", ["async-out.txt"], {
@@ -2204,6 +2224,7 @@ console.log(JSON.stringify({
   syncErrorStatus: syncError.status,
   syncErrorStdoutBase64: Buffer.from(syncError.stdout ?? []).toString("base64"),
   syncErrorStderrBase64: Buffer.from(syncError.stderr ?? []).toString("base64"),
+  stdinDestroyStatus,
   asyncCode: asyncResult.code,
   asyncSignal: asyncResult.signal,
   asyncStdoutBase64: asyncResult.stdoutBase64,
