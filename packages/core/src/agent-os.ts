@@ -208,6 +208,7 @@ import {
 	type AuthenticatedSession,
 	type CreatedVm,
 	createAgentOsSidecarClient,
+	NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
 	NativeSidecarKernelProxy,
 	NativeSidecarProcessClient,
 	type RootFilesystemEntry,
@@ -1866,7 +1867,7 @@ export class AgentOs {
 					cwd: REPO_ROOT,
 					command: ensureNativeSidecarBinary(),
 					args: [],
-					frameTimeoutMs: 60_000,
+					frameTimeoutMs: NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
 				});
 				const session = await client.authenticateAndOpenSession();
 				const sidecarPermissions = serializePermissionsForSidecar(

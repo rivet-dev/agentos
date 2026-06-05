@@ -9,6 +9,7 @@ import {
 	type AuthenticatedSession,
 	type CreatedVm,
 	type LocalCompatMount,
+	NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
 	NativeSidecarKernelProxy,
 	NativeSidecarProcessClient,
 	type RootFilesystemEntry,
@@ -2608,10 +2609,10 @@ class NativeKernel implements Kernel {
 
 		const client = NativeSidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
-			command: ensureNativeSidecarBinary(),
-			args: [],
-			frameTimeoutMs: 60_000,
-		});
+		command: ensureNativeSidecarBinary(),
+		args: [],
+		frameTimeoutMs: NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
+	});
 		const session = await client.authenticateAndOpenSession();
 		const vm = await client.createVm(session, {
 			runtime: "java_script",
