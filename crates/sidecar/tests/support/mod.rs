@@ -279,8 +279,12 @@ pub fn collect_process_output_with_timeout(
                     channel,
                     chunk,
                 }) if event_process_id == process_id => match channel {
-                    agent_os_sidecar::protocol::StreamChannel::Stdout => stdout.push_str(&chunk),
-                    agent_os_sidecar::protocol::StreamChannel::Stderr => stderr.push_str(&chunk),
+                    agent_os_sidecar::protocol::StreamChannel::Stdout => {
+                        stdout.push_str(&String::from_utf8_lossy(&chunk));
+                    }
+                    agent_os_sidecar::protocol::StreamChannel::Stderr => {
+                        stderr.push_str(&String::from_utf8_lossy(&chunk));
+                    }
                 },
                 EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
                     exit = Some((exited.exit_code, Instant::now()));

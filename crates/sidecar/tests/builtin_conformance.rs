@@ -306,7 +306,7 @@ fn write_process_stdin(
             OwnershipScope::vm(connection_id, session_id, vm_id),
             RequestPayload::WriteStdin(WriteStdinRequest {
                 process_id: process_id.to_owned(),
-                chunk: chunk.to_owned(),
+                chunk: chunk.as_bytes().to_vec(),
             }),
         ))
         .expect("write builtin conformance stdin");
@@ -1254,8 +1254,8 @@ console.log(JSON.stringify({ callbackAnswer, promiseAnswer }));
                     channel,
                     chunk,
                 }) if process_id == "proc-readline-question" => match channel {
-                    StreamChannel::Stdout => stdout.push_str(&chunk),
-                    StreamChannel::Stderr => stderr.push_str(&chunk),
+                    StreamChannel::Stdout => stdout.push_str(&String::from_utf8_lossy(&chunk)),
+                    StreamChannel::Stderr => stderr.push_str(&String::from_utf8_lossy(&chunk)),
                 },
                 EventPayload::ProcessExited(exited)
                     if exited.process_id == "proc-readline-question" =>

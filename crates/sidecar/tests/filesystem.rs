@@ -656,10 +656,10 @@ mod shadow_root {
                 EventPayload::ProcessOutput(output) if output.process_id == process_id => {
                     match output.channel {
                         agent_os_sidecar::protocol::StreamChannel::Stdout => {
-                            stdout.push_str(&output.chunk);
+                            stdout.push_str(&String::from_utf8_lossy(&output.chunk));
                         }
                         agent_os_sidecar::protocol::StreamChannel::Stderr => {
-                            stderr.push_str(&output.chunk);
+                            stderr.push_str(&String::from_utf8_lossy(&output.chunk));
                         }
                     }
                 }

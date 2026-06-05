@@ -97,7 +97,11 @@ fn concurrent_vm_processes_stay_isolated_with_vm_scoped_events() {
         match event.payload {
             EventPayload::ProcessOutput(output) => match output.channel {
                 StreamChannel::Stdout => {}
-                StreamChannel::Stderr => result.stderr.push_str(&output.chunk),
+                StreamChannel::Stderr => {
+                    result
+                        .stderr
+                        .push_str(&String::from_utf8_lossy(&output.chunk));
+                }
             },
             EventPayload::ProcessExited(exited) => {
                 assert_eq!(exited.process_id, "proc");

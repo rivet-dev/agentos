@@ -36,7 +36,9 @@ fn wait_for_process_output(
             continue;
         };
         if let EventPayload::ProcessOutput(output) = event.payload {
-            if output.process_id == process_id && output.chunk.contains(expected) {
+            if output.process_id == process_id
+                && String::from_utf8_lossy(&output.chunk).contains(expected)
+            {
                 return;
             }
         }
@@ -212,8 +214,9 @@ fn embedded_runtime_signal_routes_sigterm_and_process_kill() {
 
         match event.payload {
             EventPayload::ProcessOutput(output) if output.process_id == "signal-routing" => {
-                saw_first_sigterm |= output.chunk.contains("sigterm:1");
-                saw_second_sigterm |= output.chunk.contains("sigterm:2");
+                let chunk = String::from_utf8_lossy(&output.chunk);
+                saw_first_sigterm |= chunk.contains("sigterm:1");
+                saw_second_sigterm |= chunk.contains("sigterm:2");
             }
             EventPayload::ProcessExited(exited) if exited.process_id == "signal-routing" => {
                 exit_code = Some(exited.exit_code);
@@ -476,9 +479,10 @@ fn embedded_runtime_signal_delivers_sigchld_on_child_exit() {
         if let Some(event) = event {
             match event.payload {
                 EventPayload::ProcessOutput(output) if output.process_id == "sigchld-parent" => {
-                    saw_registered_output |= output.chunk.contains("sigchld-registered");
-                    saw_sigchld_output |= output.chunk.contains("sigchld:1");
-                    saw_final_output |= output.chunk.contains("sigchld-final:1");
+                    let chunk = String::from_utf8_lossy(&output.chunk);
+                    saw_registered_output |= chunk.contains("sigchld-registered");
+                    saw_sigchld_output |= chunk.contains("sigchld:1");
+                    saw_final_output |= chunk.contains("sigchld-final:1");
                 }
                 EventPayload::ProcessExited(exited) if exited.process_id == "sigchld-parent" => {
                     exit_code = Some(exited.exit_code);

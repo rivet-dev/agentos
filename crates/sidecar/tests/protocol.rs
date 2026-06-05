@@ -358,7 +358,7 @@ fn codec_rejects_frames_over_the_configured_limit() {
         OwnershipScope::vm("conn-1", "session-1", "vm-1"),
         RequestPayload::WriteStdin(WriteStdinRequest {
             process_id: "proc-1".to_string(),
-            chunk: "x".repeat(256),
+            chunk: "x".repeat(256).into_bytes(),
         }),
     ));
 

@@ -101,7 +101,8 @@ fn wait_for_process_output(
 
         match event.payload {
             EventPayload::ProcessOutput(output)
-                if output.process_id == process_id && output.chunk.contains(expected) =>
+                if output.process_id == process_id
+                    && String::from_utf8_lossy(&output.chunk).contains(expected) =>
             {
                 return;
             }
@@ -445,7 +446,7 @@ fn v8_guest_process_receives_sigterm_delivery() {
 
         match event.payload {
             EventPayload::ProcessOutput(output) if output.process_id == "sigterm-guest" => {
-                saw_sigterm |= output.chunk.contains("sigterm:1");
+                saw_sigterm |= String::from_utf8_lossy(&output.chunk).contains("sigterm:1");
             }
             EventPayload::ProcessExited(exited) if exited.process_id == "sigterm-guest" => {
                 exit_code = Some(exited.exit_code);

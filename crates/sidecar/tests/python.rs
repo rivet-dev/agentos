@@ -430,7 +430,7 @@ fn write_process_stdin(
             OwnershipScope::vm(connection_id, session_id, vm_id),
             RequestPayload::WriteStdin(WriteStdinRequest {
                 process_id: process_id.to_owned(),
-                chunk: chunk.to_owned(),
+                chunk: chunk.as_bytes().to_vec(),
             }),
         ))
         .expect("write python stdin");
@@ -524,7 +524,7 @@ fn wait_for_stdout_chunk(
             EventPayload::ProcessOutput(output)
                 if output.process_id == process_id
                     && output.channel == StreamChannel::Stdout
-                    && output.chunk.contains(needle) =>
+                    && String::from_utf8_lossy(&output.chunk).contains(needle) =>
             {
                 return;
             }
@@ -859,8 +859,16 @@ fn concurrent_python_processes_stay_isolated_across_vms() {
 
         match event.payload {
             EventPayload::ProcessOutput(output) => match output.channel {
-                StreamChannel::Stdout => result.stdout.push_str(&output.chunk),
-                StreamChannel::Stderr => result.stderr.push_str(&output.chunk),
+                StreamChannel::Stdout => {
+                    result
+                        .stdout
+                        .push_str(&String::from_utf8_lossy(&output.chunk));
+                }
+                StreamChannel::Stderr => {
+                    result
+                        .stderr
+                        .push_str(&String::from_utf8_lossy(&output.chunk));
+                }
             },
             EventPayload::ProcessExited(exited) => {
                 assert_eq!(exited.process_id, "proc");
