@@ -3,6 +3,7 @@ use agent_os_kernel::pty::{
     MAX_PTY_BUFFER_BYTES, SIGINT,
 };
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[test]
 fn raw_mode_delivers_bytes_and_applies_icrnl_translation() {
@@ -28,6 +29,46 @@ fn raw_mode_delivers_bytes_and_applies_icrnl_translation() {
         .expect("slave should receive data");
 
     assert_eq!(String::from_utf8(data).expect("valid utf8"), "hello\nworld");
+}
+
+#[test]
+fn raw_mode_pending_short_read_buffers_remaining_bytes() {
+    let manager = PtyManager::new();
+    let pty = manager.create_pty();
+    manager
+        .set_discipline(
+            pty.master.description.id(),
+            LineDisciplineConfig {
+                canonical: Some(false),
+                echo: Some(false),
+                isig: Some(false),
+            },
+        )
+        .expect("set raw mode");
+
+    let reader = {
+        let manager = manager.clone();
+        let slave_id = pty.slave.description.id();
+        std::thread::spawn(move || {
+            manager
+                .read_with_timeout(slave_id, 1, Some(Duration::from_secs(1)))
+                .expect("pending short read")
+                .expect("first byte should be delivered")
+        })
+    };
+
+    manager
+        .write(pty.master.description.id(), b"hello")
+        .expect("write raw input");
+
+    let first = reader.join().expect("reader thread should finish");
+    assert_eq!(first, b"h");
+
+    let remaining = manager
+        .read(pty.slave.description.id(), 64)
+        .expect("read remaining bytes")
+        .expect("remaining bytes should stay buffered");
+    assert_eq!(remaining, b"ello");
 }
 
 #[test]
