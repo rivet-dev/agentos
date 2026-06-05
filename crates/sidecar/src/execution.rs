@@ -887,6 +887,18 @@ struct JavascriptDgramSyncRpcServiceRequest<'a, B> {
     network_counts: NetworkResourceCounts,
 }
 
+struct JavascriptHttp2SyncRpcServiceRequest<'a, B> {
+    bridge: &'a SharedBridge<B>,
+    kernel: &'a SidecarKernel,
+    vm_id: &'a str,
+    dns: &'a VmDnsConfig,
+    socket_paths: &'a JavascriptSocketPathContext,
+    process: &'a mut ActiveProcess,
+    sync_request: &'a JavascriptSyncRpcRequest,
+    resource_limits: &'a ResourceLimits,
+    network_counts: NetworkResourceCounts,
+}
+
 impl ActiveTcpSocket {
     fn connect<B>(request: ActiveTcpConnectRequest<'_, B>) -> Result<Self, SidecarError>
     where
@@ -13008,17 +13020,19 @@ where
         | "net.http2_stream_close"
         | "net.http2_stream_pause"
         | "net.http2_stream_resume"
-        | "net.http2_stream_respond_with_file" => service_javascript_http2_sync_rpc(
-            bridge,
-            kernel,
-            vm_id,
-            dns,
-            socket_paths,
-            process,
-            request,
-            resource_limits,
-            network_counts,
-        ),
+        | "net.http2_stream_respond_with_file" => {
+            service_javascript_http2_sync_rpc(JavascriptHttp2SyncRpcServiceRequest {
+                bridge,
+                kernel,
+                vm_id,
+                dns,
+                socket_paths,
+                process,
+                sync_request: request,
+                resource_limits,
+                network_counts,
+            })
+        }
         "net.connect"
         | "net.listen"
         | "net.poll"
@@ -17546,20 +17560,23 @@ fn http2_stream_for_id(
 }
 
 fn service_javascript_http2_sync_rpc<B>(
-    bridge: &SharedBridge<B>,
-    kernel: &SidecarKernel,
-    vm_id: &str,
-    dns: &VmDnsConfig,
-    socket_paths: &JavascriptSocketPathContext,
-    process: &mut ActiveProcess,
-    request: &JavascriptSyncRpcRequest,
-    resource_limits: &ResourceLimits,
-    network_counts: NetworkResourceCounts,
+    request: JavascriptHttp2SyncRpcServiceRequest<'_, B>,
 ) -> Result<Value, SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let JavascriptHttp2SyncRpcServiceRequest {
+        bridge,
+        kernel,
+        vm_id,
+        dns,
+        socket_paths,
+        process,
+        sync_request: request,
+        resource_limits,
+        network_counts,
+    } = request;
     match request.method.as_str() {
         "net.http2_server_listen" => {
             check_network_resource_limit(
