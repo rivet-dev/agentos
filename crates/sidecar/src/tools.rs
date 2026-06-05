@@ -170,7 +170,7 @@ fn identify_tool_command(vm: &VmState, command: &str) -> Option<ToolCommand> {
         .map(|toolkit_name| ToolCommand::Toolkit(toolkit_name.to_owned()))
 }
 
-fn tool_command_name_from_specifier<'a>(command: &'a str) -> Option<&'a str> {
+fn tool_command_name_from_specifier(command: &str) -> Option<&str> {
     let file_name = Path::new(command).file_name()?.to_str()?;
     let normalized = normalize_path(command);
     let registered_internal_path = normalized
