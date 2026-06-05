@@ -521,11 +521,10 @@ impl AgentOs {
             }
         };
 
-        // Snapshot the SDK process registry, keyed by wire `process_id`, capturing the resolved
-        // kernel pid (if landed), the display pid, exit code, command, and args. This mirrors the TS
-        // `trackedProcessesById` lookup used to build `displayPidByKernelPid` and override fields.
+        // Snapshot the SDK process registry, keyed by wire `process_id`, capturing exit code,
+        // command, and args. This mirrors the TS `trackedProcessesById` lookup used to build
+        // `displayPidByKernelPid` and override fields.
         struct Tracked {
-            display_pid: u32,
             exit_code: Option<i32>,
             command: String,
             args: Vec<String>,
@@ -540,7 +539,6 @@ impl AgentOs {
             tracked_by_process_id.insert(
                 entry.process_id.clone(),
                 Tracked {
-                    display_pid: *display_pid,
                     exit_code,
                     command: entry.command.clone(),
                     args: entry.args.clone(),
