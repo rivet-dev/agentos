@@ -988,7 +988,9 @@ describe("native sidecar process client", () => {
 			if (stdout.payload.type !== "process_output") {
 				throw new Error("expected process_output event");
 			}
-			expect(stdout.payload.chunk).toContain("packages-core-native-sidecar-ok");
+			expect(Buffer.from(stdout.payload.chunk).toString("utf8")).toContain(
+				"packages-core-native-sidecar-ok",
+			);
 
 			const exited = await client.waitForEvent(
 				(event) =>
@@ -1197,7 +1199,9 @@ describe("native sidecar process client", () => {
 			if (stdout.payload.type !== "process_output") {
 				throw new Error("expected process_output event");
 			}
-			expect(stdout.payload.chunk).toContain("STDIN:hello through stdin");
+			expect(Buffer.from(stdout.payload.chunk).toString("utf8")).toContain(
+				"STDIN:hello through stdin",
+			);
 
 			const exited = await client.waitForEvent(
 				(event) =>
