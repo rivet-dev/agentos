@@ -59,6 +59,12 @@ const response = await vm.fetch(port, new Request("http://localhost/api/test"));
 const json = await response.json();
 console.log("Response:", json);
 
-await settleWithin(vm.waitProcess(proc.pid).catch(() => {}), 500);
-await settleWithin(vm.dispose().catch(() => {}), 500);
+await settleWithin(
+	vm.waitProcess(proc.pid).catch(() => {}),
+	500,
+);
+await settleWithin(
+	vm.dispose().catch(() => {}),
+	500,
+);
 process.exit(0);

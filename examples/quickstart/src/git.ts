@@ -1,10 +1,10 @@
 // Clone a local repository while its feature branch is the source HEAD.
 
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@rivet-dev/agent-os-common";
-import git from "@rivet-dev/agent-os-git";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
+import common from "@rivet-dev/agent-os-common";
+import { AgentOs } from "@rivet-dev/agent-os-core";
+import git from "@rivet-dev/agent-os-git";
 
 type ExecResult = {
 	stdout: string;

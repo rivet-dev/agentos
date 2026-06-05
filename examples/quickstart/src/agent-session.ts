@@ -3,11 +3,11 @@
 // NOTE: This example requires an API key for the chosen agent and a working
 // agent runtime. It may not complete in all environments.
 
-import type { SoftwareInput } from "@rivet-dev/agent-os-core";
-import { AgentOs } from "@rivet-dev/agent-os-core";
 import claude from "@rivet-dev/agent-os-claude";
 import codex from "@rivet-dev/agent-os-codex-agent";
 import common from "@rivet-dev/agent-os-common";
+import type { SoftwareInput } from "@rivet-dev/agent-os-core";
+import { AgentOs } from "@rivet-dev/agent-os-core";
 import opencode from "@rivet-dev/agent-os-opencode";
 import pi from "@rivet-dev/agent-os-pi";
 

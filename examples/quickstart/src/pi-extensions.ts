@@ -12,11 +12,11 @@
 // also set ANTHROPIC_BASE_URL and the example will write ~/.pi/agent/models.json
 // inside the VM before creating the session.
 
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
+import common from "@rivet-dev/agent-os-common";
+import { AgentOs } from "@rivet-dev/agent-os-core";
+import pi from "@rivet-dev/agent-os-pi";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
