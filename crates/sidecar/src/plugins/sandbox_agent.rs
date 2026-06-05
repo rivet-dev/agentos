@@ -283,16 +283,15 @@ impl SandboxAgentFilesystem {
             .client
             .run_process(&request)
             .map_err(|error| match error {
-                SandboxAgentClientError::Status { status, problem }
-                    if matches!(status, 404 | 405 | 501) =>
-                {
-                    ProcessFallbackError::Unsupported(
-                        problem
-                            .detail
-                            .or(problem.title)
-                            .unwrap_or_else(|| String::from("process API unavailable")),
-                    )
-                }
+                SandboxAgentClientError::Status {
+                    status: 404 | 405 | 501,
+                    problem,
+                } => ProcessFallbackError::Unsupported(
+                    problem
+                        .detail
+                        .or(problem.title)
+                        .unwrap_or_else(|| String::from("process API unavailable")),
+                ),
                 other => {
                     ProcessFallbackError::Operation(sandbox_client_error_to_vfs(op, path, other))
                 }
