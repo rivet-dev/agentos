@@ -13466,9 +13466,9 @@ fn service_javascript_crypto_cipheriv_create_sync_rpc(
     let iv = javascript_sync_rpc_base64_arg_optional(&request.args, 3, "crypto.cipherivCreate iv")?;
     let options =
         javascript_sync_rpc_json_arg_optional(&request.args, 4, "crypto.cipherivCreate options")?;
-    let auth_tag_len = javascript_crypto_requested_aead_tag_len(&algorithm, options.as_ref())?;
+    let auth_tag_len = javascript_crypto_requested_aead_tag_len(algorithm, options.as_ref())?;
     let context = javascript_crypto_build_cipher_context(
-        &algorithm,
+        algorithm,
         &key,
         iv.as_deref(),
         decrypt,
@@ -14074,9 +14074,9 @@ fn service_javascript_crypto_cipheriv_inner(
     let data = javascript_sync_rpc_base64_arg(&request.args, 3, &format!("{label} data"))?;
     let options =
         javascript_sync_rpc_json_arg_optional(&request.args, 4, &format!("{label} options"))?;
-    let auth_tag_len = javascript_crypto_requested_aead_tag_len(&algorithm, options.as_ref())?;
+    let auth_tag_len = javascript_crypto_requested_aead_tag_len(algorithm, options.as_ref())?;
     let mut context = javascript_crypto_build_cipher_context(
-        &algorithm,
+        algorithm,
         &key,
         iv.as_deref(),
         decrypt,
@@ -14099,7 +14099,7 @@ fn service_javascript_crypto_cipheriv_inner(
         String::from("data"),
         Value::String(base64::engine::general_purpose::STANDARD.encode(encrypted)),
     );
-    if javascript_crypto_is_aead(&algorithm) {
+    if javascript_crypto_is_aead(algorithm) {
         let mut auth_tag = vec![0_u8; auth_tag_len];
         context
             .get_tag(&mut auth_tag)
