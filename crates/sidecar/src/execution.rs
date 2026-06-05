@@ -24,52 +24,51 @@ use crate::service::{
     parse_javascript_child_process_spawn_request, path_is_within_root, python_error, wasm_error,
 };
 use crate::state::{
-    ActiveCipherSession, ActiveDhSession, ActiveDiffieHellmanSession, ActiveEcdhSession,
-    ActiveExecution, ActiveExecutionEvent, ActiveHttp2Server, ActiveHttp2Session,
-    ActiveHttp2Stream, ActiveHttpServer, ActiveMappedHostFd, ActiveProcess, ActiveSqliteDatabase,
-    ActiveSqliteStatement, ActiveTcpListener, ActiveTcpSocket, ActiveTlsState, ActiveTlsStream,
-    ActiveUdpSocket, ActiveUnixListener, ActiveUnixSocket, BridgeError,
-    DEFAULT_JAVASCRIPT_NET_BACKLOG, EXECUTION_DRIVER_NAME, EXECUTION_SANDBOX_ROOT_ENV,
-    ExitedProcessSnapshot, Http2BridgeEvent, Http2RuntimeSnapshot, Http2SessionCommand,
-    Http2SessionSnapshot, Http2SocketSnapshot, JAVASCRIPT_COMMAND, JavascriptSocketFamily,
+    ActiveChildProcessRedirect, ActiveCipherSession, ActiveDhSession, ActiveDiffieHellmanSession,
+    ActiveEcdhSession, ActiveExecution, ActiveExecutionEvent, ActiveHttp2Server,
+    ActiveHttp2Session, ActiveHttp2Stream, ActiveHttpServer, ActiveMappedHostFd, ActiveProcess,
+    ActiveSqliteDatabase, ActiveSqliteStatement, ActiveTcpListener, ActiveTcpSocket,
+    ActiveTlsState, ActiveTlsStream, ActiveUdpSocket, ActiveUnixListener, ActiveUnixSocket,
+    BridgeError, ExitedProcessSnapshot, Http2BridgeEvent, Http2RuntimeSnapshot,
+    Http2SessionCommand, Http2SessionSnapshot, Http2SocketSnapshot, JavascriptSocketFamily,
     JavascriptSocketPathContext, JavascriptTcpListenerEvent, JavascriptTcpSocketEvent,
     JavascriptTlsBridgeOptions, JavascriptTlsClientHello, JavascriptTlsDataValue,
     JavascriptTlsMaterial, JavascriptUdpFamily, JavascriptUdpSocketEvent,
-    JavascriptUnixListenerEvent, LOOPBACK_EXEMPT_PORTS_ENV, MAPPED_HOST_FD_START,
-    NetworkResourceCounts, PYTHON_COMMAND, PendingTcpSocket, PendingUnixSocket, ProcNetEntry,
-    ProcessEventEnvelope, ResolvedChildProcessExecution, ResolvedTcpConnectAddr, SharedBridge,
-    SharedSidecarRequestClient, SidecarKernel, SocketQueryKind, TOOL_DRIVER_NAME, ToolExecution,
+    JavascriptUnixListenerEvent, NetworkResourceCounts, PendingTcpSocket, PendingUnixSocket,
+    ProcNetEntry, ProcessEventEnvelope, ResolvedChildProcessExecution, ResolvedTcpConnectAddr,
+    SharedBridge, SharedSidecarRequestClient, SidecarKernel, SocketQueryKind, ToolExecution,
+    VmDnsConfig, VmListenPolicy, VmState, DEFAULT_JAVASCRIPT_NET_BACKLOG, EXECUTION_DRIVER_NAME,
+    EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV,
+    MAPPED_HOST_FD_START, PYTHON_COMMAND, TOOL_DRIVER_NAME,
     VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, VM_LISTEN_PORT_MAX_METADATA_KEY,
-    VM_LISTEN_PORT_MIN_METADATA_KEY, VmDnsConfig, VmListenPolicy, VmState, WASM_COMMAND,
-    WASM_STDIO_SYNC_RPC_ENV,
+    VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND, WASM_STDIO_SYNC_RPC_ENV,
 };
 use crate::tools::{
-    ToolCommandResolution, format_tool_failure_output, is_tool_command,
-    normalized_tool_command_name, resolve_tool_command,
+    format_tool_failure_output, is_tool_command, normalized_tool_command_name,
+    resolve_tool_command, ToolCommandResolution,
 };
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};
 
 use agent_os_bridge::LifecycleState;
 use agent_os_execution::wasm::{
-    WASM_MAX_FUEL_ENV, WASM_MAX_MEMORY_BYTES_ENV, WASM_MAX_STACK_BYTES_ENV, WasmExecutionError,
+    WasmExecutionError, WASM_MAX_FUEL_ENV, WASM_MAX_MEMORY_BYTES_ENV, WASM_MAX_STACK_BYTES_ENV,
 };
 use agent_os_execution::{
-    CreateJavascriptContextRequest, CreatePythonContextRequest, CreateWasmContextRequest,
-    JavascriptExecutionEvent, JavascriptSyncRpcRequest, NodeSignalDispositionAction,
-    NodeSignalHandlerRegistration, PythonExecutionEvent, PythonVfsRpcMethod, PythonVfsRpcRequest,
-    PythonVfsRpcResponsePayload, StartJavascriptExecutionRequest, StartPythonExecutionRequest,
-    StartWasmExecutionRequest, WasmExecutionEvent,
-    WasmPermissionTier as ExecutionWasmPermissionTier,
     javascript::handle_internal_bridge_call_from_host_context, v8_host::V8SessionHandle,
-    v8_runtime,
+    v8_runtime, CreateJavascriptContextRequest, CreatePythonContextRequest,
+    CreateWasmContextRequest, JavascriptExecutionEvent, JavascriptSyncRpcRequest,
+    NodeSignalDispositionAction, NodeSignalHandlerRegistration, PythonExecutionEvent,
+    PythonVfsRpcMethod, PythonVfsRpcRequest, PythonVfsRpcResponsePayload,
+    StartJavascriptExecutionRequest, StartPythonExecutionRequest, StartWasmExecutionRequest,
+    WasmExecutionEvent, WasmPermissionTier as ExecutionWasmPermissionTier,
 };
 use agent_os_kernel::dns::{
     DnsLookupPolicy, DnsRecordResolution, DnsResolutionSource as KernelDnsResolutionSource,
 };
 use agent_os_kernel::kernel::{KernelProcessHandle, SpawnOptions, VirtualProcessOptions};
 use agent_os_kernel::permissions::NetworkOperation;
-use agent_os_kernel::poll::{POLLERR, POLLHUP, POLLIN, PollEvents, PollFd, PollTargetEntry};
-use agent_os_kernel::process_table::{ProcessStatus, SIGKILL, SIGTERM, WaitPidFlags};
+use agent_os_kernel::poll::{PollEvents, PollFd, PollTargetEntry, POLLERR, POLLHUP, POLLIN};
+use agent_os_kernel::process_table::{ProcessStatus, WaitPidFlags, SIGKILL, SIGTERM};
 use agent_os_kernel::pty::LineDisciplineConfig;
 use agent_os_kernel::resource_accounting::ResourceLimits;
 use agent_os_kernel::root_fs::RootFilesystemMode;
@@ -79,14 +78,14 @@ use agent_os_kernel::socket_table::{
 };
 use base64::Engine;
 use bytes::Bytes;
-use h2::{Reason, client, server};
+use h2::{client, server, Reason};
 use hickory_resolver::proto::rr::{RData, Record, RecordType};
 use hmac::{Hmac, Mac};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, Response, Uri};
 use md5::Md5;
 use nix::libc;
-use nix::sys::signal::{Signal, kill as send_signal};
-use nix::sys::wait::{Id as WaitId, WaitPidFlag, WaitStatus, waitid as wait_on_child};
+use nix::sys::signal::{kill as send_signal, Signal};
+use nix::sys::wait::{waitid as wait_on_child, Id as WaitId, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
 use openssl::bn::{BigNum, BigNumContext};
 use openssl::derive::Deriver;
@@ -111,11 +110,11 @@ use rustls::{
     ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore, ServerConfig,
     ServerConnection, SignatureScheme,
 };
-use scrypt::{Params as ScryptParams, scrypt};
+use scrypt::{scrypt, Params as ScryptParams};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use sha1::Sha1;
-use sha2::{Sha256, Sha512, digest::Digest};
+use sha2::{digest::Digest, Sha256, Sha512};
 use socket2::{SockRef, TcpKeepalive};
 use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet};
@@ -137,7 +136,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::runtime::Builder as TokioRuntimeBuilder;
-use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use url::Url;
 
@@ -321,6 +320,7 @@ impl ActiveProcess {
             runtime,
             detached: false,
             execution,
+            child_process_redirect: None,
             guest_cwd: String::from("/"),
             env: BTreeMap::new(),
             host_cwd: PathBuf::from("/"),
@@ -376,6 +376,14 @@ impl ActiveProcess {
 
     pub(crate) fn with_detached(mut self, detached: bool) -> Self {
         self.detached = detached;
+        self
+    }
+
+    pub(crate) fn with_child_process_redirect(
+        mut self,
+        redirect: Option<ActiveChildProcessRedirect>,
+    ) -> Self {
+        self.child_process_redirect = redirect;
         self
     }
 
@@ -557,8 +565,8 @@ fn is_javascript_child_process_gone_error(error: &SidecarError) -> bool {
     )
 }
 
-fn loopback_tls_transport_registry()
--> &'static Mutex<BTreeMap<String, Weak<crate::state::LoopbackTlsTransportPair>>> {
+fn loopback_tls_transport_registry(
+) -> &'static Mutex<BTreeMap<String, Weak<crate::state::LoopbackTlsTransportPair>>> {
     static REGISTRY: OnceLock<
         Mutex<BTreeMap<String, Weak<crate::state::LoopbackTlsTransportPair>>>,
     > = OnceLock::new();
@@ -4880,6 +4888,13 @@ where
         process_id: &str,
         request: JavascriptChildProcessSpawnRequest,
     ) -> Result<Value, SidecarError> {
+        let redirect = self.direct_shell_redirect_for_javascript_child_process(
+            vm_id,
+            process_id,
+            &[],
+            &request,
+        )?;
+        let request = javascript_child_process_request_for_redirect(request, redirect.as_ref());
         let resolved = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let parent = vm
@@ -5094,7 +5109,8 @@ where
                 .with_detached(request.options.detached)
                 .with_guest_cwd(resolved.guest_cwd.clone())
                 .with_env(resolved.env.clone())
-                .with_host_cwd(resolved.host_cwd.clone()),
+                .with_host_cwd(resolved.host_cwd.clone())
+                .with_child_process_redirect(active_child_process_redirect(redirect.as_ref())),
         );
         if let Some(kernel_stdin_writer_fd) = kernel_stdin_writer_fd {
             process
@@ -5122,7 +5138,14 @@ where
         request: JavascriptChildProcessSpawnRequest,
         max_buffer: Option<usize>,
     ) -> Result<Value, SidecarError> {
+        let redirect = self.direct_shell_redirect_for_javascript_child_process(
+            vm_id,
+            process_id,
+            &[],
+            &request,
+        )?;
         let sync_input = javascript_child_process_sync_input_bytes(request.options.input.as_ref())?;
+        let request = javascript_child_process_request_for_redirect(request, redirect.as_ref());
         let spawned = self.spawn_javascript_child_process(vm_id, process_id, request)?;
         let child_process_id = spawned
             .get("childId")
@@ -5134,7 +5157,21 @@ where
             })?
             .to_owned();
 
-        if let Some(input) = sync_input.as_deref() {
+        let (parent_kernel_pid, child_guest_cwd) =
+            self.javascript_child_process_sync_context(vm_id, process_id, &[], &child_process_id)?;
+        let redirect_input = if let Some(redirect) = redirect.as_ref() {
+            self.javascript_child_process_redirect_stdin(
+                vm_id,
+                parent_kernel_pid,
+                &child_guest_cwd,
+                redirect,
+            )?
+        } else {
+            None
+        };
+        let sync_input = redirect_input.as_ref().or(sync_input.as_ref());
+
+        if let Some(input) = sync_input.map(Vec::as_slice) {
             self.write_javascript_child_process_stdin(vm_id, process_id, &child_process_id, input)?;
         }
         self.close_javascript_child_process_stdin(vm_id, process_id, &child_process_id)?;
@@ -5200,12 +5237,135 @@ where
             }
         };
 
+        self.apply_javascript_child_process_redirect_stdout(
+            vm_id,
+            parent_kernel_pid,
+            &child_guest_cwd,
+            redirect.as_ref(),
+            &mut stdout,
+        )?;
+
         Ok(json!({
             "stdout": String::from_utf8_lossy(&stdout),
             "stderr": String::from_utf8_lossy(&stderr),
             "code": exit_code,
             "maxBufferExceeded": max_buffer_exceeded,
         }))
+    }
+
+    fn direct_shell_redirect_for_javascript_child_process(
+        &self,
+        _vm_id: &str,
+        _process_id: &str,
+        _current_process_path: &[&str],
+        request: &JavascriptChildProcessSpawnRequest,
+    ) -> Result<Option<SimpleShellRedirectCommand>, SidecarError> {
+        let shell_script = if request.options.shell {
+            request.command.as_str()
+        } else if is_shell_command(&request.command)
+            && request.args.len() == 2
+            && request.args.first().is_some_and(|arg| arg == "-c")
+        {
+            request.args[1].as_str()
+        } else {
+            return Ok(None);
+        };
+
+        let Some(parsed) = parse_simple_shell_redirect_command(shell_script) else {
+            return Ok(None);
+        };
+        if !parsed.has_redirects() || is_posix_shell_builtin(&parsed.command) {
+            return Ok(None);
+        }
+        Ok(Some(parsed))
+    }
+
+    fn javascript_child_process_sync_context(
+        &self,
+        vm_id: &str,
+        process_id: &str,
+        current_process_path: &[&str],
+        child_process_id: &str,
+    ) -> Result<(u32, String), SidecarError> {
+        let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
+        let root = vm
+            .active_processes
+            .get(process_id)
+            .ok_or_else(|| missing_process_error(vm_id, process_id))?;
+        let parent = Self::active_process_by_path(root, current_process_path).ok_or_else(|| {
+            SidecarError::InvalidState(format!(
+                "unknown child process path {} during spawn_sync context lookup",
+                Self::child_process_path_label(process_id, current_process_path)
+            ))
+        })?;
+        let child = parent
+            .child_processes
+            .get(child_process_id)
+            .ok_or_else(|| javascript_child_process_gone_error(process_id, &[child_process_id]))?;
+        Ok((parent.kernel_pid, child.guest_cwd.clone()))
+    }
+
+    fn javascript_child_process_redirect_stdin(
+        &mut self,
+        vm_id: &str,
+        parent_kernel_pid: u32,
+        child_guest_cwd: &str,
+        redirect: &SimpleShellRedirectCommand,
+    ) -> Result<Option<Vec<u8>>, SidecarError> {
+        let Some(stdin_path) = redirect.stdin_path.as_deref() else {
+            return Ok(None);
+        };
+        let guest_path = resolve_shell_redirect_guest_path(child_guest_cwd, stdin_path);
+        let vm = self
+            .vms
+            .get_mut(vm_id)
+            .ok_or_else(|| missing_vm_error(vm_id))?;
+        vm.kernel
+            .read_file_for_process(EXECUTION_DRIVER_NAME, parent_kernel_pid, &guest_path)
+            .map(Some)
+            .map_err(kernel_error)
+    }
+
+    fn apply_javascript_child_process_redirect_stdout(
+        &mut self,
+        vm_id: &str,
+        parent_kernel_pid: u32,
+        child_guest_cwd: &str,
+        redirect: Option<&SimpleShellRedirectCommand>,
+        stdout: &mut Vec<u8>,
+    ) -> Result<(), SidecarError> {
+        let Some(redirect) = redirect else {
+            return Ok(());
+        };
+        let Some(stdout_path) = redirect.stdout_path.as_deref() else {
+            return Ok(());
+        };
+        let guest_path = resolve_shell_redirect_guest_path(child_guest_cwd, stdout_path);
+        let vm = self
+            .vms
+            .get_mut(vm_id)
+            .ok_or_else(|| missing_vm_error(vm_id))?;
+        let contents = if redirect.append_stdout {
+            let mut existing = vm
+                .kernel
+                .read_file_for_process(EXECUTION_DRIVER_NAME, parent_kernel_pid, &guest_path)
+                .unwrap_or_default();
+            existing.extend_from_slice(stdout);
+            existing
+        } else {
+            stdout.clone()
+        };
+        vm.kernel
+            .write_file_for_process(
+                EXECUTION_DRIVER_NAME,
+                parent_kernel_pid,
+                &guest_path,
+                contents,
+                None,
+            )
+            .map_err(kernel_error)?;
+        stdout.clear();
+        Ok(())
     }
 
     fn spawn_descendant_javascript_child_process(
@@ -5217,6 +5377,13 @@ where
     ) -> Result<Value, SidecarError> {
         let current_process_label =
             Self::child_process_path_label(process_id, current_process_path);
+        let redirect = self.direct_shell_redirect_for_javascript_child_process(
+            vm_id,
+            process_id,
+            current_process_path,
+            &request,
+        )?;
+        let request = javascript_child_process_request_for_redirect(request, redirect.as_ref());
         let (resolved, parent_kernel_pid) = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let root = vm
@@ -5448,7 +5615,8 @@ where
                 .with_detached(request.options.detached)
                 .with_guest_cwd(resolved.guest_cwd.clone())
                 .with_env(resolved.env.clone())
-                .with_host_cwd(resolved.host_cwd.clone()),
+                .with_host_cwd(resolved.host_cwd.clone())
+                .with_child_process_redirect(active_child_process_redirect(redirect.as_ref())),
         );
         if let Some(kernel_stdin_writer_fd) = kernel_stdin_writer_fd {
             parent
@@ -5477,7 +5645,14 @@ where
         request: JavascriptChildProcessSpawnRequest,
         max_buffer: Option<usize>,
     ) -> Result<Value, SidecarError> {
+        let redirect = self.direct_shell_redirect_for_javascript_child_process(
+            vm_id,
+            process_id,
+            current_process_path,
+            &request,
+        )?;
         let sync_input = javascript_child_process_sync_input_bytes(request.options.input.as_ref())?;
+        let request = javascript_child_process_request_for_redirect(request, redirect.as_ref());
         let spawned = self.spawn_descendant_javascript_child_process(
             vm_id,
             process_id,
@@ -5494,7 +5669,25 @@ where
             })?
             .to_owned();
 
-        if let Some(input) = sync_input.as_deref() {
+        let (parent_kernel_pid, child_guest_cwd) = self.javascript_child_process_sync_context(
+            vm_id,
+            process_id,
+            current_process_path,
+            &child_process_id,
+        )?;
+        let redirect_input = if let Some(redirect) = redirect.as_ref() {
+            self.javascript_child_process_redirect_stdin(
+                vm_id,
+                parent_kernel_pid,
+                &child_guest_cwd,
+                redirect,
+            )?
+        } else {
+            None
+        };
+        let sync_input = redirect_input.as_ref().or(sync_input.as_ref());
+
+        if let Some(input) = sync_input.map(Vec::as_slice) {
             self.write_descendant_javascript_child_process_stdin(
                 vm_id,
                 process_id,
@@ -5577,6 +5770,14 @@ where
                 _ => {}
             }
         };
+
+        self.apply_javascript_child_process_redirect_stdout(
+            vm_id,
+            parent_kernel_pid,
+            &child_guest_cwd,
+            redirect.as_ref(),
+            &mut stdout,
+        )?;
 
         Ok(json!({
             "stdout": String::from_utf8_lossy(&stdout),
@@ -5767,6 +5968,30 @@ where
 
             match event {
                 ActiveExecutionEvent::Stdout(chunk) => {
+                    let redirected = {
+                        let Some(vm) = self.vms.get_mut(vm_id) else {
+                            return Ok(Value::Null);
+                        };
+                        let Some(parent) = Self::descendant_parent_process_mut(
+                            vm,
+                            process_id,
+                            current_process_path,
+                        ) else {
+                            return Err(child_gone_error());
+                        };
+                        let Some(child) = parent.child_processes.get_mut(child_process_id) else {
+                            return Err(child_gone_error());
+                        };
+                        if let Some(redirect) = child.child_process_redirect.as_mut() {
+                            redirect.stdout.extend_from_slice(&chunk);
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if redirected {
+                        continue;
+                    }
                     return Ok(json!({
                         "type": "stdout",
                         "data": javascript_sync_rpc_bytes_value(&chunk),
@@ -5845,13 +6070,19 @@ where
                             }
                         })
                     };
-                    let (parent_runtime_pid, parent_v8_signal_session, should_signal_parent) = {
+                    let (
+                        parent_kernel_pid,
+                        parent_runtime_pid,
+                        parent_v8_signal_session,
+                        should_signal_parent,
+                    ) = {
                         let Some(parent) =
                             Self::descendant_parent_process(vm, process_id, current_process_path)
                         else {
                             return Ok(Value::Null);
                         };
                         (
+                            parent.kernel_pid,
                             parent.execution.child_pid(),
                             parent.execution.javascript_v8_session_handle().filter(|_| {
                                 matches!(
@@ -5880,6 +6111,11 @@ where
                         Self::child_process_path_label(process_id, &child_path);
                     let detached_children =
                         Self::adopt_detached_child_processes(&child_process_label, &mut child);
+                    apply_active_child_process_redirect_stdout(
+                        &mut vm.kernel,
+                        parent_kernel_pid,
+                        &mut child,
+                    )?;
                     sync_process_host_writes_to_kernel(vm, &child)?;
                     terminate_child_process_tree(&mut vm.kernel, &mut child);
                     child.kernel_handle.finish(exit_code);
@@ -8070,9 +8306,9 @@ mod runtime_guest_path_mapping_tests {
 #[cfg(test)]
 mod kernel_poll_sync_rpc_tests {
     use super::{
-        ActiveExecution, ActiveProcess, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND,
+        service_javascript_kernel_poll_sync_rpc, ActiveExecution, ActiveProcess,
         JavascriptSyncRpcRequest, KernelPollFdResponse, SidecarKernel, ToolExecution,
-        service_javascript_kernel_poll_sync_rpc,
+        EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND,
     };
     use agent_os_kernel::command_registry::CommandDriver;
     use agent_os_kernel::kernel::{KernelVmConfig, SpawnOptions};
@@ -8080,7 +8316,7 @@ mod kernel_poll_sync_rpc_tests {
     use agent_os_kernel::permissions::Permissions;
     use agent_os_kernel::poll::{POLLHUP, POLLIN};
     use agent_os_kernel::vfs::MemoryFileSystem;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
     #[test]
     fn javascript_kernel_poll_sync_rpc_reports_multiple_kernel_fds() {
         let mut config = KernelVmConfig::new("vm-js-kernel-poll");
@@ -9887,6 +10123,247 @@ fn resolve_wasm_permission_tier(
         .unwrap_or(WasmPermissionTier::Full)
 }
 
+#[derive(Debug)]
+struct SimpleShellRedirectCommand {
+    command: String,
+    args: Vec<String>,
+    stdin_path: Option<String>,
+    stdout_path: Option<String>,
+    append_stdout: bool,
+}
+
+impl SimpleShellRedirectCommand {
+    fn has_redirects(&self) -> bool {
+        self.stdin_path.is_some() || self.stdout_path.is_some()
+    }
+}
+
+fn javascript_child_process_request_for_redirect(
+    request: JavascriptChildProcessSpawnRequest,
+    redirect: Option<&SimpleShellRedirectCommand>,
+) -> JavascriptChildProcessSpawnRequest {
+    let Some(redirect) = redirect else {
+        return request;
+    };
+    let mut options = request.options;
+    options.shell = false;
+    JavascriptChildProcessSpawnRequest {
+        command: redirect.command.clone(),
+        args: redirect.args.clone(),
+        options,
+    }
+}
+
+fn active_child_process_redirect(
+    redirect: Option<&SimpleShellRedirectCommand>,
+) -> Option<ActiveChildProcessRedirect> {
+    let redirect = redirect?;
+    Some(ActiveChildProcessRedirect {
+        stdout_path: redirect.stdout_path.clone()?,
+        append_stdout: redirect.append_stdout,
+        stdout: Vec::new(),
+    })
+}
+
+fn apply_active_child_process_redirect_stdout(
+    kernel: &mut SidecarKernel,
+    parent_kernel_pid: u32,
+    child: &mut ActiveProcess,
+) -> Result<(), SidecarError> {
+    let Some(redirect) = child.child_process_redirect.take() else {
+        return Ok(());
+    };
+    let guest_path = resolve_shell_redirect_guest_path(&child.guest_cwd, &redirect.stdout_path);
+    let contents = if redirect.append_stdout {
+        let mut existing = kernel
+            .read_file_for_process(EXECUTION_DRIVER_NAME, parent_kernel_pid, &guest_path)
+            .unwrap_or_default();
+        existing.extend_from_slice(&redirect.stdout);
+        existing
+    } else {
+        redirect.stdout
+    };
+    kernel
+        .write_file_for_process(
+            EXECUTION_DRIVER_NAME,
+            parent_kernel_pid,
+            &guest_path,
+            contents,
+            None,
+        )
+        .map_err(kernel_error)
+}
+
+fn resolve_shell_redirect_guest_path(child_guest_cwd: &str, redirect_path: &str) -> String {
+    if redirect_path.starts_with('/') {
+        normalize_path(redirect_path)
+    } else {
+        normalize_path(&format!("{child_guest_cwd}/{redirect_path}"))
+    }
+}
+
+fn parse_simple_shell_redirect_command(command: &str) -> Option<SimpleShellRedirectCommand> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+
+    let mut characters = command.chars().peekable();
+    while let Some(character) = characters.next() {
+        if quote.is_none() {
+            if escaped {
+                current.push(character);
+                escaped = false;
+                continue;
+            }
+            if character == '\\' {
+                escaped = true;
+                continue;
+            }
+            if character == '\'' || character == '"' {
+                quote = Some(character);
+                continue;
+            }
+            if character.is_whitespace() {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+                continue;
+            }
+            if character == '<' {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+                tokens.push(String::from("<"));
+                continue;
+            }
+            if character == '>' {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+                if characters.next_if_eq(&'>').is_some() {
+                    tokens.push(String::from(">>"));
+                } else {
+                    tokens.push(String::from(">"));
+                }
+                continue;
+            }
+            if matches!(
+                character,
+                '|' | '&'
+                    | ';'
+                    | '('
+                    | ')'
+                    | '$'
+                    | '`'
+                    | '*'
+                    | '?'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '~'
+                    | '!'
+            ) {
+                return None;
+            }
+            current.push(character);
+            continue;
+        }
+
+        if quote == Some('\'') {
+            if character == '\'' {
+                quote = None;
+            } else {
+                current.push(character);
+            }
+            continue;
+        }
+
+        if escaped {
+            append_double_quoted_shell_escape(&mut current, character);
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if character == '"' {
+            quote = None;
+            continue;
+        }
+        if character == '$' || character == '`' {
+            return None;
+        }
+        current.push(character);
+    }
+
+    if quote.is_some() || escaped {
+        return None;
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    if tokens.is_empty() {
+        return None;
+    }
+
+    let mut command_name = None;
+    let mut args = Vec::new();
+    let mut stdin_path = None;
+    let mut stdout_path = None;
+    let mut append_stdout = false;
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if token == "<" || token == ">" || token == ">>" {
+            let redirect_path = tokens.get(index + 1)?;
+            if redirect_path == "<" || redirect_path == ">" || redirect_path == ">>" {
+                return None;
+            }
+            if token == "<" {
+                if stdin_path.is_some() {
+                    return None;
+                }
+                stdin_path = Some(redirect_path.clone());
+            } else {
+                if stdout_path.is_some() {
+                    return None;
+                }
+                stdout_path = Some(redirect_path.clone());
+                append_stdout = token == ">>";
+            }
+            index += 2;
+            continue;
+        }
+
+        if command_name.is_none() {
+            command_name = Some(token.clone());
+        } else {
+            args.push(token.clone());
+        }
+        index += 1;
+    }
+
+    Some(SimpleShellRedirectCommand {
+        command: command_name?,
+        args,
+        stdin_path,
+        stdout_path,
+        append_stdout,
+    })
+}
+
+fn append_double_quoted_shell_escape(current: &mut String, character: char) {
+    if matches!(character, '$' | '`' | '"' | '\\') {
+        current.push(character);
+    } else if character != '\n' {
+        current.push('\\');
+        current.push(character);
+    }
+}
+
 fn tokenize_shell_free_command(command: &str) -> Vec<String> {
     command
         .split_whitespace()
@@ -11563,9 +12040,10 @@ fn sqlite_exec_database(
         .map_err(sqlite_error)?;
     mark_sqlite_mutation(database, sql);
     sqlite_sync_database(kernel, kernel_pid, database)?;
-    Ok(json!(
-        database.connection.total_changes().saturating_sub(before)
-    ))
+    Ok(json!(database
+        .connection
+        .total_changes()
+        .saturating_sub(before)))
 }
 
 fn sqlite_query_database(
@@ -13037,11 +13515,9 @@ fn service_javascript_crypto_verify_sync_rpc(
     verifier
         .update(&data)
         .map_err(javascript_crypto_openssl_error)?;
-    Ok(json!(
-        verifier
-            .verify(&signature)
-            .map_err(javascript_crypto_openssl_error)?
-    ))
+    Ok(json!(verifier
+        .verify(&signature)
+        .map_err(javascript_crypto_openssl_error)?))
 }
 
 fn service_javascript_crypto_asymmetric_op_sync_rpc(
@@ -18693,7 +19169,7 @@ pub(crate) fn ignore_stale_javascript_sync_rpc_response(
 
 #[cfg(test)]
 mod error_code_tests {
-    use super::{SidecarError, guest_errno_code, javascript_sync_rpc_error_code};
+    use super::{guest_errno_code, javascript_sync_rpc_error_code, SidecarError};
 
     #[test]
     fn guest_errno_code_rejects_guest_controlled_errno_segments() {

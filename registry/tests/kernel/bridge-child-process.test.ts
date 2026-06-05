@@ -8,9 +8,10 @@
  * Gracefully skipped when the WASM binary is not built.
  */
 
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   COMMANDS_DIR,
@@ -20,11 +21,33 @@ import {
   describeIf,
   createIntegrationKernel,
   NodeFileSystem,
-  skipUnlessWasmBuilt,
 } from './helpers.ts';
 import type { IntegrationKernelResult } from './helpers.ts';
 
-const skipReason = skipUnlessWasmBuilt();
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PACKAGED_COREUTILS_COMMANDS_DIR = resolve(
+  __dirname,
+  '../../software/coreutils/wasm',
+);
+const BRIDGE_COMMAND_DIRS = [
+  COMMANDS_DIR,
+  PACKAGED_COREUTILS_COMMANDS_DIR,
+].filter((commandDir, index, allDirs) => {
+  return (
+    existsSync(join(commandDir, 'sh')) && allDirs.indexOf(commandDir) === index
+  );
+});
+const skipReason =
+  BRIDGE_COMMAND_DIRS.length === 0
+    ? `WASM shell command not found at ${COMMANDS_DIR} or ${PACKAGED_COREUTILS_COMMANDS_DIR}`
+    : false;
+
+function createBridgeIntegrationKernel(): Promise<IntegrationKernelResult> {
+  return createIntegrationKernel({
+    runtimes: ['wasmvm', 'node'],
+    commandDirs: BRIDGE_COMMAND_DIRS,
+  });
+}
 
 describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   let ctx: IntegrationKernelResult;
@@ -38,7 +61,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('execSync("echo hello") routes through kernel to WasmVM shell', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
 
     const chunks: Uint8Array[] = [];
     const proc = ctx.kernel.spawn('node', ['-e', `
@@ -57,7 +80,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('child_process.spawn("ls") resolves to WasmVM runtime', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
     await ctx.vfs.writeFile('/tmp/test-file.txt', 'content');
 
     const chunks: Uint8Array[] = [];
@@ -77,7 +100,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('spawned processes get proper PIDs from kernel process table', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
 
     // The Node process itself gets a PID from the kernel
     const proc = ctx.kernel.spawn('node', ['-e', 'console.log("pid-test")']);
@@ -87,7 +110,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('stdout from spawned child processes pipes back to Node caller', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
 
     const chunks: Uint8Array[] = [];
     const proc = ctx.kernel.spawn('node', ['-e', `
@@ -106,7 +129,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('async child_process.spawn("sh") can stream output and exit cleanly', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
 
     const chunks: Uint8Array[] = [];
     const proc = ctx.kernel.spawn('node', ['-e', `
@@ -128,7 +151,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('child_process.spawn with shell:true preserves shell builtin exit codes', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
 
     const chunks: Uint8Array[] = [];
     const proc = ctx.kernel.spawn('node', ['-e', `
@@ -150,7 +173,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('stderr from spawned child processes pipes back to Node caller', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
 
     const chunks: Uint8Array[] = [];
     const proc = ctx.kernel.spawn('node', ['-e', `
@@ -172,7 +195,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('commands not in the registry return ENOENT-like error', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
 
     const chunks: Uint8Array[] = [];
     const proc = ctx.kernel.spawn('node', ['-e', `
@@ -196,7 +219,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('execSync with env passes environment through kernel', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
 
     const chunks: Uint8Array[] = [];
     const proc = ctx.kernel.spawn('node', ['-e', `
@@ -218,7 +241,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('cat reads VFS file through kernel child_process', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
     await ctx.vfs.writeFile('/tmp/bridge-test.txt', 'hello from vfs');
 
     const chunks: Uint8Array[] = [];
@@ -235,6 +258,29 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
 
     const output = chunks.map(c => new TextDecoder().decode(c)).join('');
     expect(output).toContain('hello from vfs');
+  });
+
+  it('execSync shell redirection writes command stdout into the kernel VFS', async () => {
+    ctx = await createBridgeIntegrationKernel();
+
+    const chunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+    const proc = ctx.kernel.spawn('node', ['-e', `
+      const { execSync } = require('child_process');
+      execSync("printf 'bash-ok' > bash-output.txt", { encoding: 'utf-8' });
+      console.log(execSync('cat /tmp/bash-output.txt', { encoding: 'utf-8' }));
+    `], {
+      cwd: '/tmp',
+      onStdout: (data) => chunks.push(data),
+      onStderr: (data) => stderrChunks.push(data),
+    });
+
+    const code = await proc.wait();
+    const output = chunks.map(c => new TextDecoder().decode(c)).join('');
+    const stderr = stderrChunks.map(c => new TextDecoder().decode(c)).join('');
+    expect(code, `stdout:\n${output}\nstderr:\n${stderr}`).toBe(0);
+    expect(output).toContain('bash-ok');
+    expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/bash-output.txt'))).toBe('bash-ok');
   });
 
   it('execFileSync on node_modules/.bin shell shims unwraps to the node entrypoint', async () => {
@@ -266,7 +312,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
     const kernel = createKernel({
       filesystem: new NodeFileSystem({ root: projectRoot }),
     });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: BRIDGE_COMMAND_DIRS }));
     await kernel.mount(createNodeRuntime());
     ctx = {
       kernel,
@@ -325,7 +371,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
     const kernel = createKernel({
       filesystem: new NodeFileSystem({ root: projectRoot }),
     });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: BRIDGE_COMMAND_DIRS }));
     await kernel.mount(createNodeRuntime());
     ctx = {
       kernel,
@@ -364,7 +410,7 @@ describeIf(!skipReason, 'bridge child_process exploit/abuse paths', () => {
   });
 
   it('child_process cannot escape to host shell', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
 
     // Use a command that produces different output in sandbox vs host:
     // /etc/hostname exists on the host but not in the kernel VFS
@@ -392,7 +438,7 @@ describeIf(!skipReason, 'bridge child_process exploit/abuse paths', () => {
   });
 
   it('child_process cannot read host filesystem', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
 
     const chunks: Uint8Array[] = [];
     const proc = ctx.kernel.spawn('node', ['-e', `
@@ -415,7 +461,7 @@ describeIf(!skipReason, 'bridge child_process exploit/abuse paths', () => {
   });
 
   it('child_process write goes to kernel VFS not host', async () => {
-    ctx = await createIntegrationKernel({ runtimes: ['wasmvm', 'node'] });
+    ctx = await createBridgeIntegrationKernel();
 
     const chunks: Uint8Array[] = [];
     const proc = ctx.kernel.spawn('node', ['-e', `

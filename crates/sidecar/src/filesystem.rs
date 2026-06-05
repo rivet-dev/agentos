@@ -1126,26 +1126,10 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     if recursive {
                         ensure_mapped_runtime_parent_dirs(&mapped_host, "fs.mkdir")?;
                         let parent = open_mapped_runtime_parent_beneath(&mapped_host, "fs.mkdir")?;
-                        fs::create_dir(mapped_runtime_parent_child_path(&parent)).map_err(
-                            |error| {
-                                SidecarError::Io(format!(
-                                    "failed to create mapped guest directory {} -> {}: {error}",
-                                    path,
-                                    parent.host_path.join(&parent.child_name).display()
-                                ))
-                            },
-                        )?;
+                        create_mapped_runtime_directory(&parent, path, true)?;
                     } else {
                         let parent = open_mapped_runtime_parent_beneath(&mapped_host, "fs.mkdir")?;
-                        fs::create_dir(mapped_runtime_parent_child_path(&parent)).map_err(
-                            |error| {
-                                SidecarError::Io(format!(
-                                    "failed to create mapped guest directory {} -> {}: {error}",
-                                    path,
-                                    parent.host_path.join(&parent.child_name).display()
-                                ))
-                            },
-                        )?;
+                        create_mapped_runtime_directory(&parent, path, false)?;
                     }
                     return Ok(Value::Null);
                 }
@@ -2008,6 +1992,37 @@ fn mapped_runtime_host_path_from_fd(
 
 fn mapped_runtime_parent_child_path(parent: &MappedRuntimeParentPath) -> PathBuf {
     parent.directory.proc_path().join(&parent.child_name)
+}
+
+fn create_mapped_runtime_directory(
+    parent: &MappedRuntimeParentPath,
+    guest_path: &str,
+    recursive: bool,
+) -> Result<(), SidecarError> {
+    let child_path = mapped_runtime_parent_child_path(parent);
+    match fs::create_dir(&child_path) {
+        Ok(()) => Ok(()),
+        Err(error) if recursive && error.kind() == std::io::ErrorKind::AlreadyExists => {
+            match fs::symlink_metadata(&child_path) {
+                Ok(metadata) if metadata.is_dir() => Ok(()),
+                Ok(_) => Err(SidecarError::Io(format!(
+                    "failed to create mapped guest directory {} -> {}: file exists and is not a directory",
+                    guest_path,
+                    parent.host_path.join(&parent.child_name).display()
+                ))),
+                Err(metadata_error) => Err(SidecarError::Io(format!(
+                    "failed to inspect existing mapped guest directory {} -> {}: {metadata_error}",
+                    guest_path,
+                    parent.host_path.join(&parent.child_name).display()
+                ))),
+            }
+        }
+        Err(error) => Err(SidecarError::Io(format!(
+            "failed to create mapped guest directory {} -> {}: {error}",
+            guest_path,
+            parent.host_path.join(&parent.child_name).display()
+        ))),
+    }
 }
 
 fn ensure_mapped_runtime_parent_dirs(
@@ -2952,8 +2967,9 @@ fn ensure_guest_parent_dir(vm: &mut VmState, guest_path: &str) -> Result<(), Sid
 #[cfg(test)]
 mod tests {
     use super::{
-        mapped_runtime_relative_path, open_mapped_runtime_parent_beneath, rename_mapped_host_path,
-        MappedRuntimeHostAccess, MappedRuntimeHostPath, SidecarError,
+        create_mapped_runtime_directory, mapped_runtime_relative_path,
+        open_mapped_runtime_parent_beneath, rename_mapped_host_path, MappedRuntimeHostAccess,
+        MappedRuntimeHostPath, SidecarError,
     };
     use crate::execution::javascript_sync_rpc_error_code;
     use std::fs;
@@ -3027,5 +3043,36 @@ mod tests {
             .expect("open mapped parent for root child");
         assert_eq!(parent.host_path, host_root);
         assert_eq!(parent.child_name.to_string_lossy(), "workspace");
+    }
+
+    #[test]
+    fn recursive_mapped_directory_create_accepts_existing_directory() {
+        let host_root = std::env::temp_dir().join(format!(
+            "agent-os-sidecar-fs-existing-dir-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        ));
+        let existing_dir = host_root.join("workspace");
+        fs::create_dir_all(&existing_dir).expect("create existing mapped directory");
+        let mapped = MappedRuntimeHostPath {
+            guest_path: String::from("/workspace"),
+            host_root: host_root.clone(),
+            host_path: existing_dir,
+        };
+
+        let parent = open_mapped_runtime_parent_beneath(&mapped, "test")
+            .expect("open mapped parent for root child");
+        create_mapped_runtime_directory(&parent, "/workspace", true)
+            .expect("recursive mkdir should accept an existing directory");
+        let non_recursive_error = create_mapped_runtime_directory(&parent, "/workspace", false)
+            .expect_err("non-recursive mkdir should keep EEXIST behavior");
+        assert!(
+            matches!(non_recursive_error, SidecarError::Io(ref message) if message.contains("File exists")),
+            "expected File exists error, got {non_recursive_error:?}"
+        );
+
+        fs::remove_dir_all(&host_root).expect("remove mapped host root");
     }
 }

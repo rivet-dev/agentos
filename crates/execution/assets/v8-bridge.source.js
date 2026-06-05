@@ -9299,6 +9299,134 @@ var __bridge = (() => {
     }
     return tokens.length > 0 ? tokens : null;
   }
+  function appendDoubleQuotedShellEscape(current, character) {
+    if (character === '"' || character === "\\" || character === "$" || character === "`") {
+      return current + character;
+    }
+    if (character === "\n") {
+      return current;
+    }
+    return current + "\\" + character;
+  }
+  function parseSimpleExecCommandWithRedirects(command) {
+    const tokens = [];
+    let current = "";
+    let quote = null;
+    let escaped = false;
+    const flushCurrent = () => {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+    };
+    for (let index = 0; index < String(command).length; index += 1) {
+      const character = String(command)[index];
+      if (quote === null) {
+        if (escaped) {
+          current += character;
+          escaped = false;
+          continue;
+        }
+        if (character === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (character === "'" || character === '"') {
+          quote = character;
+          continue;
+        }
+        if (/\s/.test(character)) {
+          flushCurrent();
+          continue;
+        }
+        if (character === "<") {
+          flushCurrent();
+          tokens.push("<");
+          continue;
+        }
+        if (character === ">") {
+          flushCurrent();
+          if (String(command)[index + 1] === ">") {
+            tokens.push(">>");
+            index += 1;
+          } else {
+            tokens.push(">");
+          }
+          continue;
+        }
+        if ("|&;()$`*?[]{}~!".includes(character)) {
+          return null;
+        }
+        current += character;
+        continue;
+      }
+      if (quote === "'") {
+        if (character === "'") {
+          quote = null;
+        } else {
+          current += character;
+        }
+        continue;
+      }
+      if (escaped) {
+        current = appendDoubleQuotedShellEscape(current, character);
+        escaped = false;
+        continue;
+      }
+      if (character === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (character === '"') {
+        quote = null;
+        continue;
+      }
+      if (character === "$" || character === "`") {
+        return null;
+      }
+      current += character;
+    }
+    if (quote !== null || escaped) {
+      return null;
+    }
+    flushCurrent();
+    if (tokens.length === 0) {
+      return null;
+    }
+    let commandName;
+    const args = [];
+    let stdinPath;
+    let stdoutPath;
+    let appendStdout = false;
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      if (token === "<" || token === ">" || token === ">>") {
+        const redirectPath = tokens[index + 1];
+        if (!redirectPath || redirectPath === "<" || redirectPath === ">" || redirectPath === ">>") {
+          return null;
+        }
+        if (token === "<") {
+          if (stdinPath !== undefined) return null;
+          stdinPath = redirectPath;
+        } else {
+          if (stdoutPath !== undefined) return null;
+          stdoutPath = redirectPath;
+          appendStdout = token === ">>";
+        }
+        index += 1;
+        continue;
+      }
+      if (!commandName) {
+        commandName = token;
+      } else {
+        args.push(token);
+      }
+    }
+    return commandName ? { command: commandName, args, stdinPath, stdoutPath, appendStdout } : null;
+  }
+  function resolveChildProcessRedirectPath(cwd, targetPath) {
+    return targetPath.startsWith("/") ? pathStdlibModuleNs.posix.normalize(targetPath) : pathStdlibModuleNs.posix.normalize(pathStdlibModuleNs.posix.join(cwd, targetPath));
+  }
   function resolveExecShellInvocation(command) {
     const parsed = parseSimpleExecCommand(command);
     if (parsed && (parsed[0] === "sh" || parsed[0] === "/bin/sh") && parsed[1] === "-c" && parsed.length === 3) {
@@ -9407,6 +9535,59 @@ var __bridge = (() => {
     }
     const effectiveCwd = opts.cwd ?? (typeof process !== "undefined" ? process.cwd() : "/");
     const maxBuffer = opts.maxBuffer ?? 1024 * 1024;
+    const redirect = parseSimpleExecCommandWithRedirects(command);
+    if (redirect?.stdoutPath) {
+      const stdoutPath = resolveChildProcessRedirectPath(effectiveCwd, redirect.stdoutPath);
+      const runOptions = {
+        cwd: effectiveCwd,
+        env: opts.env,
+        input: redirect.stdinPath != null ? fs_default.readFileSync(resolveChildProcessRedirectPath(effectiveCwd, redirect.stdinPath)) : opts.input,
+        maxBuffer,
+        shell: false
+      };
+      const jsonResult = _childProcessSpawnSync.applySyncPromise(void 0, [
+        redirect.command,
+        JSON.stringify(redirect.args),
+        JSON.stringify({
+          cwd: runOptions.cwd,
+          env: runOptions.env,
+          input: runOptions.input == null ? null : encodeBridgeBytes(runOptions.input),
+          maxBuffer: runOptions.maxBuffer,
+          shell: false
+        })
+      ]);
+      const result = typeof jsonResult === "string" ? JSON.parse(jsonResult) : jsonResult;
+      if (result.maxBufferExceeded) {
+        const err = new Error("stdout maxBuffer length exceeded");
+        err.code = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+        err.stdout = result.stdout;
+        err.stderr = result.stderr;
+        throw err;
+      }
+      if (result.code !== 0) {
+        const err = new Error("Command failed: " + command);
+        err.status = result.code;
+        err.stdout = result.stdout;
+        err.stderr = result.stderr;
+        err.output = [null, result.stdout, result.stderr];
+        throw err;
+      }
+      const redirectedStdout = typeof Buffer !== "undefined" ? Buffer.from(result.stdout) : result.stdout;
+      if (redirect.appendStdout) {
+        let existing = typeof Buffer !== "undefined" ? Buffer.from("") : "";
+        try {
+          existing = fs_default.readFileSync(stdoutPath);
+        } catch {
+        }
+        fs_default.writeFileSync(stdoutPath, typeof Buffer !== "undefined" ? Buffer.concat([Buffer.from(existing), redirectedStdout]) : `${existing}${redirectedStdout}`);
+      } else {
+        fs_default.writeFileSync(stdoutPath, redirectedStdout);
+      }
+      if (opts.encoding === "buffer" || !opts.encoding) {
+        return typeof Buffer !== "undefined" ? Buffer.from("") : "";
+      }
+      return "";
+    }
     const invocation = resolveExecShellInvocation(command);
     const shellExitMatch = invocation.shellScript?.trim().match(/^exit(?:\s+(-?\d+))?$/);
     if (shellExitMatch) {

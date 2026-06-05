@@ -15,7 +15,7 @@ const NODE_IMPORT_CACHE_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_PATH";
 const NODE_IMPORT_CACHE_LOADER_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_LOADER_PATH";
 const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "43";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "44";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agent-os-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const PYODIDE_DIST_DIR: &str = "pyodide-dist";
@@ -3773,6 +3773,144 @@ function createRpcBackedChildProcessModule(fromGuestDir = '/') {
     }
     return { args, options, callback };
   };
+  const appendDoubleQuotedShellEscape = (current, character) => {
+    if (character === '"' || character === '\\' || character === '$' || character === '`') {
+      return current + character;
+    }
+    if (character === '\n') {
+      return current;
+    }
+    return current + '\\' + character;
+  };
+  const parseSimpleExecCommandWithRedirects = (command) => {
+    const tokens = [];
+    let current = '';
+    let quote = null;
+    let escaped = false;
+    const flushCurrent = () => {
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
+    };
+
+    for (let index = 0; index < command.length; index += 1) {
+      const character = command[index];
+      if (quote === null) {
+        if (escaped) {
+          current += character;
+          escaped = false;
+          continue;
+        }
+        if (character === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (character === "'" || character === '"') {
+          quote = character;
+          continue;
+        }
+        if (/\s/.test(character)) {
+          flushCurrent();
+          continue;
+        }
+        if (character === '<') {
+          flushCurrent();
+          tokens.push('<');
+          continue;
+        }
+        if (character === '>') {
+          flushCurrent();
+          if (command[index + 1] === '>') {
+            tokens.push('>>');
+            index += 1;
+          } else {
+            tokens.push('>');
+          }
+          continue;
+        }
+        if ('|&;()$`*?[]{}~!'.includes(character)) {
+          return null;
+        }
+        current += character;
+        continue;
+      }
+
+      if (quote === "'") {
+        if (character === "'") {
+          quote = null;
+        } else {
+          current += character;
+        }
+        continue;
+      }
+
+      if (escaped) {
+        current = appendDoubleQuotedShellEscape(current, character);
+        escaped = false;
+        continue;
+      }
+      if (character === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (character === '"') {
+        quote = null;
+        continue;
+      }
+      if (character === '$' || character === '`') {
+        return null;
+      }
+      current += character;
+    }
+
+    if (quote !== null || escaped) {
+      return null;
+    }
+    flushCurrent();
+    if (tokens.length === 0) {
+      return null;
+    }
+
+    let commandName;
+    const args = [];
+    let stdinPath;
+    let stdoutPath;
+    let appendStdout = false;
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      if (token === '<' || token === '>' || token === '>>') {
+        const redirectPath = tokens[index + 1];
+        if (!redirectPath || redirectPath === '<' || redirectPath === '>' || redirectPath === '>>') {
+          return null;
+        }
+        if (token === '<') {
+          if (stdinPath !== undefined) {
+            return null;
+          }
+          stdinPath = redirectPath;
+        } else {
+          if (stdoutPath !== undefined) {
+            return null;
+          }
+          stdoutPath = redirectPath;
+          appendStdout = token === '>>';
+        }
+        index += 1;
+        continue;
+      }
+      if (!commandName) {
+        commandName = token;
+      } else {
+        args.push(token);
+      }
+    }
+    return commandName ? { command: commandName, args, stdinPath, stdoutPath, appendStdout } : null;
+  };
+  const resolveChildProcessRedirectPath = (cwd, targetPath) =>
+    targetPath.startsWith('/')
+      ? path.posix.normalize(targetPath)
+      : path.posix.normalize(path.posix.join(cwd, targetPath));
   const normalizeChildProcessSignal = (value) =>
     typeof value === 'string' && value.length > 0 ? value : 'SIGTERM';
   const normalizeChildProcessEncoding = (options) =>
@@ -4271,6 +4409,55 @@ function createRpcBackedChildProcessModule(fromGuestDir = '/') {
       return child;
     },
     execSync(command, options) {
+      const redirect = parseSimpleExecCommandWithRedirects(String(command));
+      if (redirect?.stdoutPath) {
+        const normalizedOptions = normalizeChildProcessOptions(options, true);
+        const fs = createRpcBackedFsModule(normalizedOptions.cwd);
+        const stdoutPath = resolveChildProcessRedirectPath(
+          normalizedOptions.cwd,
+          redirect.stdoutPath,
+        );
+        const runOptions = {
+          ...options,
+          cwd: normalizedOptions.cwd,
+          input:
+            redirect.stdinPath !== undefined
+              ? fs.readFileSync(
+                  resolveChildProcessRedirectPath(normalizedOptions.cwd, redirect.stdinPath),
+                )
+              : options?.input,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        };
+        delete runOptions.encoding;
+        const result = runChildProcessSync(redirect.command, redirect.args, runOptions, false);
+        if (result.error) {
+          throw result.error;
+        }
+        if (result.status !== 0 || result.signal != null) {
+          throw createChildProcessExecError(
+            'child_process.execSync',
+            result.status,
+            result.signal,
+            result.stdout,
+            result.stderr,
+          );
+        }
+        const redirectedStdout = Buffer.isBuffer(result.stdout)
+          ? result.stdout
+          : Buffer.from(String(result.stdout));
+        if (redirect.appendStdout) {
+          let existing = Buffer.alloc(0);
+          try {
+            existing = Buffer.from(fs.readFileSync(stdoutPath));
+          } catch {
+            // Appending to a nonexistent file should create it.
+          }
+          fs.writeFileSync(stdoutPath, Buffer.concat([existing, redirectedStdout]));
+        } else {
+          fs.writeFileSync(stdoutPath, redirectedStdout);
+        }
+        return options?.encoding === 'buffer' || !options?.encoding ? Buffer.from('') : '';
+      }
       const result = runChildProcessSync(command, [], {
         ...options,
         stdio: ['pipe', 'pipe', 'pipe'],

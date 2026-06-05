@@ -338,6 +338,30 @@ function parseSimpleExecCommandWithRedirects(
 	};
 }
 
+function concatUint8Chunks(chunks: Uint8Array[]): Uint8Array {
+	const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+	const combined = new Uint8Array(totalLength);
+	let offset = 0;
+	for (const chunk of chunks) {
+		combined.set(chunk, offset);
+		offset += chunk.length;
+	}
+	return combined;
+}
+
+function resolveRedirectPath(cwd: string, targetPath: string): string {
+	return targetPath.startsWith("/")
+		? posixPath.normalize(targetPath)
+		: posixPath.normalize(posixPath.join(cwd, targetPath));
+}
+
+function canUseDirectExec(
+	driver: string | undefined,
+	commandName: string | undefined,
+): boolean {
+	return driver === "wasmvm" || (driver === "node" && commandName === "node");
+}
+
 function shellSingleQuote(value: string): string {
 	if (value.length === 0) {
 		return "''";
@@ -425,6 +449,15 @@ interface TrackedProcessEntry {
 	waitWithFallbackPromise: Promise<number> | null;
 	hostExitObservedAt: number | null;
 	outputGeneration: number;
+	redirect: TrackedProcessRedirect | null;
+	redirectFlushPromise: Promise<void> | null;
+}
+
+interface TrackedProcessRedirect {
+	stdinPath?: string;
+	stdoutPath: string;
+	appendStdout: boolean;
+	stdoutChunks: Uint8Array[];
 }
 
 interface NativeSidecarKernelProxyOptions {
@@ -811,6 +844,45 @@ export class NativeSidecarKernelProxy {
 		args: string[],
 		options?: KernelSpawnOptions,
 	): ManagedProcess {
+		let spawnCommand = command;
+		let spawnArgs = [...args];
+		let redirect: TrackedProcessRedirect | null = null;
+		const shellOption = (options as ({ shell?: unknown } & KernelSpawnOptions) | undefined)
+			?.shell;
+		const parsedRedirectCommand =
+			(shellOption === true || typeof shellOption === "string") &&
+			spawnArgs.length === 0
+				? parseSimpleExecCommandWithRedirects(command)
+				: null;
+		const parsedRedirectCommandDriver = parsedRedirectCommand
+			? this.commands.get(parsedRedirectCommand.command)
+			: undefined;
+		if (
+			parsedRedirectCommand &&
+			parsedRedirectCommand.stdoutPath !== undefined &&
+			canUseDirectExec(
+				parsedRedirectCommandDriver,
+				parsedRedirectCommand.command,
+			)
+		) {
+			if (parsedRedirectCommandDriver === "wasmvm") {
+				this.onWasmCommandResolved?.(parsedRedirectCommand.command);
+			}
+			const effectiveCwd = options?.cwd ?? this.cwd;
+			spawnCommand = parsedRedirectCommand.command;
+			spawnArgs = parsedRedirectCommand.args;
+			redirect = {
+				stdinPath: parsedRedirectCommand.stdinPath
+					? resolveRedirectPath(effectiveCwd, parsedRedirectCommand.stdinPath)
+					: undefined,
+				stdoutPath: resolveRedirectPath(
+					effectiveCwd,
+					parsedRedirectCommand.stdoutPath,
+				),
+				appendStdout: parsedRedirectCommand.appendStdout,
+				stdoutChunks: [],
+			};
+		}
 		const pid = this.nextSyntheticPid++;
 		const processId = `proc-${pid}`;
 		let resolveWait!: (exitCode: number) => void;
@@ -823,9 +895,9 @@ export class NativeSidecarKernelProxy {
 		const entry: TrackedProcessEntry = {
 			pid,
 			processId,
-			command,
-			args: [...args],
-			driver: command === "node" ? "node" : "wasmvm",
+			command: spawnCommand,
+			args: spawnArgs,
+			driver: spawnCommand === "node" ? "node" : "wasmvm",
 			cwd: options?.cwd ?? this.cwd,
 			env: {
 				...(options?.env ?? {}),
@@ -849,6 +921,8 @@ export class NativeSidecarKernelProxy {
 			waitWithFallbackPromise: null,
 			hostExitObservedAt: null,
 			outputGeneration: 0,
+			redirect,
+			redirectFlushPromise: null,
 		};
 		this.trackedProcesses.set(pid, entry);
 		this.trackedProcessesById.set(processId, entry);
@@ -1579,6 +1653,11 @@ export class NativeSidecarKernelProxy {
 		void this.refreshProcessSnapshot().catch(() => {});
 		await this.refreshSignalState(entry);
 
+		if (entry.redirect?.stdinPath) {
+			entry.pendingStdin.push(await this.readFile(entry.redirect.stdinPath));
+			entry.pendingCloseStdin = true;
+		}
+
 		void this.flushPendingStdin(entry).catch((error) => {
 			this.handleBackgroundProcessError(entry, error);
 		});
@@ -1615,6 +1694,13 @@ export class NativeSidecarKernelProxy {
 						await this.signalRefreshes.get(entry.pid);
 					}
 					const chunk = event.payload.chunk;
+					if (
+						event.payload.channel === "stdout" &&
+						entry.redirect?.stdoutPath
+					) {
+						entry.redirect.stdoutChunks.push(chunk);
+						continue;
+					}
 					const listeners =
 						event.payload.channel === "stdout"
 							? entry.onStdout
@@ -1664,12 +1750,20 @@ export class NativeSidecarKernelProxy {
 		entry.exitCode = exitCode;
 		entry.exitTime = Date.now();
 		this.updateTrackedProcessSnapshot(entry);
-		entry.resolveWait(exitCode);
+		entry.redirectFlushPromise = this.flushTrackedRedirect(entry).catch((error) => {
+			this.handleBackgroundProcessError(entry, error);
+		});
+		void entry.redirectFlushPromise.finally(() => {
+			entry.resolveWait(exitCode);
+		});
 	}
 
 	private waitForTrackedProcess(entry: TrackedProcessEntry): Promise<number> {
 		if (entry.exitCode !== null) {
-			return Promise.resolve(entry.exitCode);
+			const exitCode = entry.exitCode;
+			return entry.redirectFlushPromise
+				? entry.redirectFlushPromise.then(() => exitCode)
+				: Promise.resolve(exitCode);
 		}
 		if (entry.waitWithFallbackPromise !== null) {
 			return entry.waitWithFallbackPromise;
@@ -1730,6 +1824,32 @@ export class NativeSidecarKernelProxy {
 		});
 
 		return entry.waitWithFallbackPromise;
+	}
+
+	private async flushTrackedRedirect(entry: TrackedProcessEntry): Promise<void> {
+		const redirect = entry.redirect;
+		if (!redirect?.stdoutPath) {
+			return;
+		}
+		const redirectedStdout = concatUint8Chunks(redirect.stdoutChunks);
+		redirect.stdoutChunks = [];
+		if (redirect.appendStdout) {
+			let existing = new Uint8Array(0);
+			try {
+				existing = new Uint8Array(await this.readFile(redirect.stdoutPath));
+			} catch {
+				// Appending to a nonexistent file should create it.
+			}
+			const combined = new Uint8Array(
+				existing.length + redirectedStdout.length,
+			);
+			combined.set(existing);
+			combined.set(redirectedStdout, existing.length);
+			await this.writeFile(redirect.stdoutPath, combined);
+		} else {
+			await this.writeFile(redirect.stdoutPath, redirectedStdout);
+		}
+		entry.redirect = null;
 	}
 
 	private async signalProcess(

@@ -532,6 +532,7 @@ function toRecord(value: unknown): Record<string, unknown> {
 
 const ACP_SESSION_EVENT_RETENTION_LIMIT = 1024;
 const CLOSED_SESSION_ID_RETENTION_LIMIT = 2048;
+const CLOSED_SHELL_ID_RETENTION_LIMIT = 2048;
 
 class BoundedSet<T> {
 	readonly limit: number;
@@ -1712,6 +1713,9 @@ export class AgentOs {
 		}
 	>();
 	private _shells = new Map<string, ShellEntry>();
+	private _closedShellIds = new BoundedSet<string>(
+		CLOSED_SHELL_ID_RETENTION_LIMIT,
+	);
 	private _pendingShellExitPromises = new Set<Promise<void>>();
 	private _shellCounter = 0;
 	private _acpTerminals = new Map<string, AcpTerminalEntry>();
@@ -2393,6 +2397,7 @@ export class AgentOs {
 
 	openShell(options?: OpenShellOptions): { shellId: string } {
 		const shellId = `shell-${++this._shellCounter}`;
+		this._closedShellIds.delete(shellId);
 		const dataHandlers = new Set<(data: Uint8Array) => void>();
 
 		const handle = this.#kernel.openShell(options);
@@ -2413,6 +2418,7 @@ export class AgentOs {
 			this._pendingShellExitPromises.delete(entry.exitPromise);
 			if (this._shells.get(shellId) === entry) {
 				this._shells.delete(shellId);
+				this._closedShellIds.add(shellId);
 			}
 		});
 		this._pendingShellExitPromises.add(entry.exitPromise);
@@ -2454,9 +2460,15 @@ export class AgentOs {
 	/** Kill a shell process and remove it from tracking. */
 	closeShell(shellId: string): void {
 		const entry = this._shells.get(shellId);
-		if (!entry) throw new Error(`Shell not found: ${shellId}`);
+		if (!entry) {
+			if (this._closedShellIds.has(shellId)) {
+				return;
+			}
+			throw new Error(`Shell not found: ${shellId}`);
+		}
 		entry.handle.kill();
 		this._shells.delete(shellId);
+		this._closedShellIds.add(shellId);
 	}
 
 	private _resolveVmPathToHostPath(vmPath: string): string | null {

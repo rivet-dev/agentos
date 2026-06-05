@@ -4813,7 +4813,7 @@ setInterval(() => {}, 1000);
                     OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                     RequestPayload::WriteStdin(WriteStdinRequest {
                         process_id: String::from("proc-js-stdin"),
-                        chunk: String::from("hello from stdin"),
+                        chunk: b"hello from stdin".to_vec(),
                     }),
                 ))
                 .expect("write stdin");

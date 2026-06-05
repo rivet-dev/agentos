@@ -56,6 +56,7 @@ export interface IntegrationKernelResult {
 export interface IntegrationKernelOptions {
   runtimes?: ("wasmvm" | "node")[];
   loopbackExemptPorts?: number[];
+  commandDirs?: string[];
 }
 
 /**
@@ -76,7 +77,9 @@ export async function createIntegrationKernel(
   });
 
   if (runtimes.includes("wasmvm")) {
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [COMMANDS_DIR] }));
+    await kernel.mount(
+      createWasmVmRuntime({ commandDirs: options?.commandDirs ?? [COMMANDS_DIR] }),
+    );
   }
   if (runtimes.includes("node")) {
     await kernel.mount(createNodeRuntime());

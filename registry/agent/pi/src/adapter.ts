@@ -35,6 +35,7 @@ import type {
 import type {
 	AgentSessionEvent,
 } from "@mariozechner/pi-coding-agent";
+import { spawn } from "node:child_process";
 import {
 	existsSync,
 	readFileSync,
@@ -80,6 +81,19 @@ type PiBashSpawnContext = {
 type PiBashSpawnHook = (
 	context: PiBashSpawnContext,
 ) => PiBashSpawnContext;
+
+type PiBashOperations = {
+	exec(
+		command: string,
+		cwd: string,
+		options: {
+			onData: (data: Buffer) => void;
+			signal?: AbortSignal;
+			timeout?: number;
+			env?: NodeJS.ProcessEnv;
+		},
+	): Promise<{ exitCode: number | null }>;
+};
 
 type ModelLike = {
 	id: string;
@@ -254,6 +268,7 @@ type PiSdkRuntime = {
 		options?: {
 			read?: { autoResizeImages?: boolean };
 			bash?: {
+				operations?: PiBashOperations;
 				commandPrefix?: string;
 				spawnHook?: PiBashSpawnHook;
 			};
@@ -264,6 +279,7 @@ type PiSdkRuntime = {
 		options?: {
 			read?: { autoResizeImages?: boolean };
 			bash?: {
+				operations?: PiBashOperations;
 				commandPrefix?: string;
 				spawnHook?: PiBashSpawnHook;
 			};
@@ -342,6 +358,7 @@ class MinimalPiSession implements PiSessionLike {
 				autoResizeImages: this.settingsManager.getImageAutoResize(),
 			},
 			bash: {
+				operations: createAgentOsBashOperations(),
 				commandPrefix: this.settingsManager.getShellCommandPrefix(),
 				spawnHook: createAgentOsBashSpawnHook(),
 			},
@@ -377,6 +394,73 @@ function createAgentOsBashSpawnHook(): PiBashSpawnHook {
 		...context,
 		env: stripPiAgentBinFromPath(context.env),
 	});
+}
+
+function createAgentOsBashOperations(): PiBashOperations {
+	return {
+		exec: (command, cwd, options) =>
+			new Promise((resolve, reject) => {
+				if (!existsSync(cwd)) {
+					reject(
+						new Error(
+							`Working directory does not exist: ${cwd}\nCannot execute bash commands.`,
+						),
+					);
+					return;
+				}
+
+				const child = spawn(command, [], {
+					cwd,
+					env: options.env,
+					shell: true,
+					stdio: ["ignore", "pipe", "pipe"],
+				});
+
+				let timedOut = false;
+				let timeoutHandle: NodeJS.Timeout | undefined;
+				const onAbort = () => child.kill("SIGKILL");
+				const cleanup = () => {
+					if (timeoutHandle) {
+						clearTimeout(timeoutHandle);
+					}
+					options.signal?.removeEventListener("abort", onAbort);
+				};
+
+				if (options.timeout !== undefined && options.timeout > 0) {
+					timeoutHandle = setTimeout(() => {
+						timedOut = true;
+						child.kill("SIGKILL");
+					}, options.timeout * 1000);
+				}
+
+				child.stdout?.on("data", options.onData);
+				child.stderr?.on("data", options.onData);
+				child.on("error", (error) => {
+					cleanup();
+					reject(error);
+				});
+				child.on("close", (code) => {
+					cleanup();
+					if (options.signal?.aborted) {
+						reject(new Error("aborted"));
+						return;
+					}
+					if (timedOut) {
+						reject(new Error(`timeout:${options.timeout}`));
+						return;
+					}
+					resolve({ exitCode: code });
+				});
+
+				if (options.signal) {
+					if (options.signal.aborted) {
+						onAbort();
+					} else {
+						options.signal.addEventListener("abort", onAbort, { once: true });
+					}
+				}
+			}),
+	};
 }
 
 function stripPiAgentBinFromPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -415,6 +499,7 @@ function installAgentOsToolOverrides(
 			autoResizeImages: settingsManager.getImageAutoResize(),
 		},
 		bash: {
+			operations: createAgentOsBashOperations(),
 			commandPrefix: settingsManager.getShellCommandPrefix(),
 			spawnHook: createAgentOsBashSpawnHook(),
 		},
