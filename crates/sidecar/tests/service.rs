@@ -14706,32 +14706,22 @@ console.log(JSON.stringify({
                     event: ActiveExecutionEvent::Stdout(b"queued-but-undeliverable".to_vec()),
                 });
 
-            let mut poll_loop_terminated = false;
-            for attempt in 0..3 {
-                let error = sidecar
-                    .poll_javascript_child_process(&vm_id, "proc-js-child-gone", "ghost-child", 0)
-                    .expect_err("missing child should surface ECHILD");
-                match error {
-                    SidecarError::Execution(message) => {
-                        assert!(
-                            message.starts_with("ECHILD:"),
-                            "expected ECHILD code, got {message}"
-                        );
-                        assert!(
-                            message.contains("proc-js-child-gone/ghost-child"),
-                            "expected child label in error, got {message}"
-                        );
-                        assert_eq!(
-                            attempt, 0,
-                            "poll loop should stop on first ECHILD instead of retrying"
-                        );
-                        poll_loop_terminated = true;
-                        break;
-                    }
-                    other => panic!("expected execution error, got {other}"),
+            let error = sidecar
+                .poll_javascript_child_process(&vm_id, "proc-js-child-gone", "ghost-child", 0)
+                .expect_err("missing child should surface ECHILD");
+            match error {
+                SidecarError::Execution(message) => {
+                    assert!(
+                        message.starts_with("ECHILD:"),
+                        "expected ECHILD code, got {message}"
+                    );
+                    assert!(
+                        message.contains("proc-js-child-gone/ghost-child"),
+                        "expected child label in error, got {message}"
+                    );
                 }
+                other => panic!("expected execution error, got {other}"),
             }
-            assert!(poll_loop_terminated, "poll loop should terminate on ECHILD");
 
             let queued = sidecar
                 .pending_process_events
