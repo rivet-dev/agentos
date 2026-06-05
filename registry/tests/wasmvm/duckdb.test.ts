@@ -37,12 +37,14 @@ const hasWasmHttpGet = existsSync(resolve(C_BUILD_DIR, 'http_get'));
 
 async function mountKernel(
   filesystem: ReturnType<typeof createInMemoryFileSystem>,
+  options: { loopbackExemptPorts?: number[] } = {},
 ) {
   const kernel = createKernel({
     filesystem,
     cwd: '/tmp',
     permissions: allowAll,
     hostNetworkAdapter: createNodeHostNetworkAdapter(),
+    loopbackExemptPorts: options.loopbackExemptPorts,
   });
   const commandDirs = existsSync(COMMANDS_DIR) ? [C_BUILD_DIR, COMMANDS_DIR] : [C_BUILD_DIR];
   await kernel.mount(
@@ -217,7 +219,6 @@ describeIf(hasWasmDuckDB, 'duckdb command', { timeout: 120_000 }, () => {
     async () => {
       const filesystem = createInMemoryFileSystem();
       await filesystem.mkdir('/tmp');
-      kernel = await mountKernel(filesystem);
 
       const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         if (req.url === '/' || req.url === '/remote.csv') {
@@ -237,6 +238,9 @@ describeIf(hasWasmDuckDB, 'duckdb command', { timeout: 120_000 }, () => {
         if (!address || typeof address === 'string') {
           throw new Error('failed to bind test HTTP server');
         }
+        kernel = await mountKernel(filesystem, {
+          loopbackExemptPorts: [address.port],
+        });
 
         let result;
         if (hasWasmHttpGet) {
