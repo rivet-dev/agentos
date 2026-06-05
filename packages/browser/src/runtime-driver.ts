@@ -9,9 +9,7 @@ import type {
 	RuntimeDriverOptions,
 	StdioHook,
 	TimingMitigation,
-	VirtualDirEntry,
 	VirtualFileSystem,
-	VirtualStat,
 } from "./runtime.js";
 import {
 	createFsStub,
@@ -348,7 +346,7 @@ export class BrowserRuntimeDriver implements NodeRuntimeDriver {
 	private disposed = false;
 
 	constructor(
-		private readonly options: RuntimeDriverOptions,
+		options: RuntimeDriverOptions,
 		factoryOptions: BrowserRuntimeDriverFactoryOptions = {},
 	) {
 		if (typeof Worker === "undefined") {
