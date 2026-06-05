@@ -29,9 +29,7 @@ use crate::json_rpc::{
     JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcResponse, SequencedEvent,
 };
 use crate::stream::{subscribe_with_replay, Subscription};
-use crate::{
-    ACP_SESSION_EVENT_RETENTION_LIMIT, CLOSED_SESSION_ID_RETENTION_LIMIT, PERMISSION_TIMEOUT_MS,
-};
+use crate::{ACP_SESSION_EVENT_RETENTION_LIMIT, CLOSED_SESSION_ID_RETENTION_LIMIT};
 
 /// ACP method name for legacy permission requests/responses.
 const LEGACY_PERMISSION_METHOD: &str = "request/permission";
@@ -451,8 +449,8 @@ impl PermissionResponder {
 /// A permission request delivered to a subscriber. Carries a Clone-able one-shot responder.
 ///
 /// The TS handler is `(request) => void`; in Rust this is the request/responder pattern: the
-/// subscriber resolves the request by calling [`PermissionResponder::respond`], or the 120s timeout
-/// / no-subscriber path auto-rejects.
+/// subscriber can call [`PermissionResponder::respond`], while the reachable notification path sends
+/// replies with [`AgentOs::respond_permission`].
 #[derive(Clone)]
 pub struct PermissionRequest {
     pub permission_id: String,
@@ -478,71 +476,6 @@ pub enum PermissionReply {
     Once,
     Always,
     Reject,
-}
-
-/// Resolve the ACP `optionId` for a permission `reply`, scanning the agent-provided `options`
-/// (`params.options[]`) for a matching `optionId`/`kind`, then falling back to the canonical id.
-/// Mirrors `_normalizeAcpPermissionOptionId`. Always returns a `Some` (the TS `null` branch is never
-/// reachable since each reply has a non-empty fallback).
-fn normalize_acp_permission_option_id(
-    options: Option<&Vec<Value>>,
-    reply: PermissionReply,
-) -> String {
-    let (option_ids, kinds): (&[&str], &[&str]) = match reply {
-        PermissionReply::Always => (&["always", "allow_always"], &["allow_always"]),
-        PermissionReply::Once => (&["once", "allow_once"], &["allow_once"]),
-        PermissionReply::Reject => (&["reject", "reject_once"], &["reject_once"]),
-    };
-
-    let matched = options.and_then(|options| {
-        options.iter().find_map(|option| {
-            let option_id = option.get("optionId").and_then(Value::as_str);
-            let kind = option.get("kind").and_then(Value::as_str);
-            let hit = option_id
-                .map(|id| option_ids.contains(&id))
-                .unwrap_or(false)
-                || kind.map(|kind| kinds.contains(&kind)).unwrap_or(false);
-            if hit {
-                option_id.map(str::to_string)
-            } else {
-                None
-            }
-        })
-    });
-
-    matched.unwrap_or_else(|| {
-        match reply {
-            PermissionReply::Always => "allow_always",
-            PermissionReply::Once => "allow_once",
-            PermissionReply::Reject => "reject_once",
-        }
-        .to_string()
-    })
-}
-
-/// Build the ACP permission result (`{ outcome: { outcome: "selected", optionId } }`) for a `reply`,
-/// reading agent-provided options from `params.options[]`. Mirrors `_buildAcpPermissionResult`.
-/// Because `normalize_acp_permission_option_id` always yields an id, the `cancelled` outcome branch
-/// is never taken (matching the TS fallbacks).
-fn build_acp_permission_result(reply: PermissionReply, params: &Value) -> Value {
-    let options: Option<Vec<Value>> =
-        params
-            .get("options")
-            .and_then(Value::as_array)
-            .map(|array| {
-                array
-                    .iter()
-                    .filter(|option| option.is_object())
-                    .cloned()
-                    .collect()
-            });
-    let option_id = normalize_acp_permission_option_id(options.as_ref(), reply);
-    json!({
-        "outcome": {
-            "outcome": "selected",
-            "optionId": option_id,
-        }
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -724,9 +657,7 @@ fn record_session_notification(
     // `_recordSessionNotification`). When a recorded notification is a legacy `request/permission`
     // or ACP `session/request_permission` with a string/number `permissionId`, deliver a
     // [`PermissionRequest`] to subscribers. This is the notification path: it broadcasts the request
-    // (params verbatim, as TS does here) WITHOUT registering a `pending_permission_replies` slot or
-    // arming the 120s timeout. The request/responder reply slot + timeout wiring is the separate
-    // ACP/sidecar request path handled by [`AgentOs::deliver_permission_request`].
+    // with params verbatim, as TS does here, and replies are sent through `respond_permission`.
     if notification.method == LEGACY_PERMISSION_METHOD
         || notification.method == ACP_PERMISSION_METHOD
     {
@@ -752,63 +683,6 @@ fn record_session_notification(
             let _ = entry.permission_tx.send(request);
         }
     }
-}
-
-/// Build a [`PermissionRequest`] from a legacy/ACP permission notification for the request/responder
-/// (sidecar-request / ACP-request) path. Mirrors the request construction in
-/// `_handleAcpPermissionRequest` / `_handlePermissionSidecarRequest`.
-///
-/// For the ACP path (`session/request_permission`) the delivered params are enriched with
-/// `permissionId` and `_acpMethod` (matching `permissionParams = { ...params, permissionId,
-/// _acpMethod: request.method }`). The enriched params are also returned so the caller can build the
-/// ACP outcome result via [`build_acp_permission_result`]. The legacy path delivers params verbatim.
-fn build_permission_request(
-    notification: &JsonRpcNotification,
-) -> Option<(
-    String,
-    PermissionRequest,
-    Value,
-    tokio::sync::oneshot::Receiver<PermissionReply>,
-)> {
-    let raw_params = notification.params.clone().unwrap_or(Value::Null);
-    let permission_id = match raw_params.get("permissionId") {
-        Some(Value::String(id)) => id.clone(),
-        Some(Value::Number(num)) => num.to_string(),
-        _ => return None,
-    };
-
-    // ACP path enriches params with `permissionId` and `_acpMethod`; legacy path uses params as-is.
-    let delivered_params = if notification.method == ACP_PERMISSION_METHOD {
-        let mut object = match raw_params {
-            Value::Object(existing) => existing,
-            _ => serde_json::Map::new(),
-        };
-        object.insert(
-            "permissionId".to_string(),
-            Value::String(permission_id.clone()),
-        );
-        object.insert(
-            "_acpMethod".to_string(),
-            Value::String(notification.method.clone()),
-        );
-        Value::Object(object)
-    } else {
-        raw_params
-    };
-
-    let description = delivered_params
-        .get("description")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-
-    let (responder, receiver) = PermissionResponder::new();
-    let request = PermissionRequest {
-        permission_id: permission_id.clone(),
-        description,
-        params: delivered_params.clone(),
-        responder,
-    };
-    Some((permission_id, request, delivered_params, receiver))
 }
 
 /// Apply the local cache mutations of `_syncSessionState`: modes, config options, capabilities,
@@ -2051,13 +1925,9 @@ impl AgentOs {
         Ok((Box::pin(mapped), Subscription::noop()))
     }
 
-    /// Subscribe to a session's permission requests (request/responder). No subscribers -> auto
-    /// reject; 120s timeout; both `request/permission` (legacy) and `session/request_permission`
-    /// (ACP) method names are handled; the host answers via `respond_permission`.
-    ///
-    /// Each emitted [`PermissionRequest`] carries a `responder` oneshot. The matching
-    /// `pending_permission_replies` slot is registered with a 120s timeout that auto-removes the
-    /// entry on expiry. The constant is [`PERMISSION_TIMEOUT_MS`].
+    /// Subscribe to recorded session permission notifications. Both `request/permission` (legacy)
+    /// and `session/request_permission` (ACP) method names are handled; the host answers via
+    /// `respond_permission`.
     pub fn on_permission_request(
         &self,
         session_id: &str,
@@ -2070,10 +1940,9 @@ impl AgentOs {
     > {
         let rx = self.require_session(session_id, |entry| entry.permission_tx.subscribe())?;
 
-        // Pass broadcast items straight through. Each item carries a Clone-able
-        // [`PermissionResponder`]; the reply slot + 120s timeout are armed by
-        // [`AgentOs::deliver_permission_request`] at ingestion time, and `respond_permission`
-        // resolves the same slot.
+        // Pass broadcast items straight through. Each item carries a cloneable
+        // [`PermissionResponder`] for API parity, while reachable replies are sent with
+        // `respond_permission`.
         let stream = futures::stream::unfold(rx, move |mut rx| async move {
             loop {
                 match rx.recv().await {
@@ -2086,101 +1955,14 @@ impl AgentOs {
 
         Ok((Box::pin(stream), Subscription::noop()))
     }
-
-    /// Deliver an inbound permission request to a session's subscribers, registering its reply slot
-    /// into `pending_permission_replies` with a 120s ([`PERMISSION_TIMEOUT_MS`]) timeout that
-    /// auto-rejects on expiry. When there are no subscribers the request auto-rejects immediately.
-    ///
-    /// Invoked by the sidecar event/request handler for both `request/permission` (legacy) and
-    /// `session/request_permission` (ACP). The returned [`PermissionDelivery`] carries the settled
-    /// [`PermissionReply`] and the path-appropriate handler `result`:
-    /// - ACP path (`session/request_permission`) returns `_buildAcpPermissionResult(reply, params)`
-    ///   = `{ outcome: { outcome: "selected", optionId } }`, mirroring `_handleAcpPermissionRequest`.
-    /// - legacy path (`request/permission`) returns the bare `{ reply }`, mirroring
-    ///   `_handlePermissionSidecarRequest`'s `{ reply }`.
-    ///
-    /// On the no-subscriber / timeout path the reply is `Reject`, and the ACP result is built from
-    /// `reject` (mirroring `_buildAcpPermissionResult("reject", ...)`).
-    pub(crate) async fn deliver_permission_request(
-        &self,
-        session_id: &str,
-        notification: &JsonRpcNotification,
-    ) -> PermissionDelivery {
-        let is_acp = notification.method == ACP_PERMISSION_METHOD;
-        let Some((permission_id, request, delivered_params, responder_rx)) =
-            build_permission_request(notification)
-        else {
-            return PermissionDelivery::new(PermissionReply::Reject, is_acp, &Value::Null);
-        };
-
-        // Register the reply slot so `respond_permission` can resolve it directly.
-        let (slot_tx, slot_rx) = tokio::sync::oneshot::channel::<PermissionReply>();
-        let registered = self.require_session(session_id, |entry| {
-            // No subscribers -> auto-reject (mirrors `permissionHandlers.size === 0`).
-            if entry.permission_tx.receiver_count() == 0 {
-                return false;
-            }
-            let _ = entry
-                .pending_permission_replies
-                .insert(permission_id.clone(), slot_tx);
-            let _ = entry.permission_tx.send(request);
-            true
-        });
-
-        match registered {
-            Ok(true) => {}
-            Ok(false) | Err(_) => {
-                return PermissionDelivery::new(PermissionReply::Reject, is_acp, &delivered_params)
-            }
-        }
-
-        // Bridge the subscriber's `responder.respond(..)` into the same reply slot.
-        let this = self.clone();
-        let session_owned = session_id.to_string();
-        let permission_owned = permission_id.clone();
-        tokio::spawn(async move {
-            if let Ok(reply) = responder_rx.await {
-                let _ = this
-                    .respond_permission(&session_owned, &permission_owned, reply)
-                    .await;
-            }
-        });
-
-        // Await the host reply, the subscriber responder (via the bridge above), or the 120s
-        // timeout, whichever fires first.
-        let timeout = tokio::time::sleep(std::time::Duration::from_millis(PERMISSION_TIMEOUT_MS));
-        tokio::pin!(timeout);
-        let reply = tokio::select! {
-            reply = slot_rx => reply.unwrap_or(PermissionReply::Reject),
-            _ = &mut timeout => {
-                let _ = self.require_session(session_id, |entry| {
-                    let _ = entry.pending_permission_replies.remove(&permission_id);
-                });
-                PermissionReply::Reject
-            }
-        };
-        PermissionDelivery::new(reply, is_acp, &delivered_params)
-    }
 }
 
-/// The settled outcome of [`AgentOs::deliver_permission_request`], carrying both the resolved
-/// [`PermissionReply`] and the path-appropriate JSON-RPC handler `result` (the ACP `outcome` object
-/// for the ACP path, or the bare `{ reply }` for the legacy sidecar path).
+/// A settled permission outcome carrying both the resolved [`PermissionReply`] and a JSON-RPC
+/// handler result.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PermissionDelivery {
-    /// The settled reply (host answer, or `Reject` on no-subscriber / timeout).
+    /// The settled reply.
     pub reply: PermissionReply,
     /// The handler result to return on the wire (ACP outcome vs bare `{ reply }`).
     pub result: Value,
-}
-
-impl PermissionDelivery {
-    fn new(reply: PermissionReply, is_acp: bool, params: &Value) -> Self {
-        let result = if is_acp {
-            build_acp_permission_result(reply, params)
-        } else {
-            json!({ "reply": reply })
-        };
-        Self { reply, result }
-    }
 }
