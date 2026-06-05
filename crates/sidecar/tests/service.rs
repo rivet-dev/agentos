@@ -37,6 +37,7 @@ mod service {
         use crate::bridge::{bridge_permissions, HostFilesystem, ScopedHostFilesystem};
         use crate::execution::{
             clamp_javascript_net_poll_wait, format_dns_resource, format_tcp_resource,
+            runtime_child_is_alive,
             service_javascript_net_sync_rpc as service_javascript_net_sync_rpc_inner,
             signal_runtime_process, JavascriptNetSyncRpcServiceRequest,
             JavascriptSyncRpcServiceRequest,
@@ -68,7 +69,8 @@ mod service {
             VM_LISTEN_PORT_MAX_METADATA_KEY, VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND,
             WASM_STDIO_SYNC_RPC_ENV,
         };
-        use agent_os_bridge::{FileKind, SymlinkRequest};
+        use crate::state::{NetworkResourceCounts, VmDnsConfig};
+        use agent_os_bridge::SymlinkRequest;
         use agent_os_execution::{
             CreateJavascriptContextRequest, CreatePythonContextRequest, CreateWasmContextRequest,
             JavascriptSyncRpcRequest, PythonVfsRpcMethod, PythonVfsRpcRequest,
@@ -80,14 +82,14 @@ mod service {
         use agent_os_kernel::mount_table::{MountEntry, MountOptions, MountTable};
         use agent_os_kernel::permissions::{FsAccessRequest, FsOperation, Permissions};
         use agent_os_kernel::poll::{PollTargetEntry, POLLIN};
-        use agent_os_kernel::process_table::SIGTERM;
+        use agent_os_kernel::process_table::{SIGKILL, SIGTERM};
         use agent_os_kernel::resource_accounting::ResourceLimits;
         use agent_os_kernel::vfs::{
-            MemoryFileSystem, VfsError, VirtualDirEntry, VirtualFileSystem, VirtualStat,
+            MemoryFileSystem, VirtualDirEntry, VirtualFileSystem, VirtualStat,
         };
         use base64::Engine;
         use bridge_support::RecordingBridge;
-        use hickory_resolver::proto::op::{Message, OpCode, Query};
+        use hickory_resolver::proto::op::{Message, Query};
         use hickory_resolver::proto::rr::domain::Name;
         use hickory_resolver::proto::rr::rdata::{
             A, AAAA, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT,
@@ -105,13 +107,11 @@ mod service {
             ServerConnection, SignatureScheme,
         };
         use serde_json::{json, Map, Value};
-        use socket2::SockRef;
         use std::collections::BTreeMap;
         use std::fs;
         use std::fs::OpenOptions;
         use std::io::{BufReader, Read, Write};
-        use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
-        use std::os::fd::AsRawFd;
+        use std::net::{SocketAddr, TcpListener, UdpSocket};
         use std::path::{Path, PathBuf};
         use std::process::Command;
         use std::sync::{
