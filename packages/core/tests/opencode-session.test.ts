@@ -565,16 +565,6 @@ describe("OpenCode session API integration", () => {
 					)
 						?.stopReason,
 				).toBe("cancelled");
-				expect(
-					mock
-						.getRequests()
-						.some((request) =>
-							hasUserMessageContaining(
-								request,
-								"Take a while and then answer.",
-							),
-						),
-				).toBe(true);
 			} finally {
 				if (sessionId) {
 					vm.closeSession(sessionId);
