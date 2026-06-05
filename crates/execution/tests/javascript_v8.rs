@@ -910,6 +910,60 @@ process.stdin.once("data", (chunk) => {
     );
 }
 
+fn javascript_execution_process_exit_ignores_live_interval_handles() {
+    let temp = tempdir().expect("create temp dir");
+    let mut engine = JavascriptExecutionEngine::default();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            inline_code: Some(String::from(
+                r#"
+process.stdout.write("before exit\n");
+setInterval(() => {
+  process.stdout.write("interval tick\n");
+}, 1000);
+process.exit(7);
+process.stdout.write("after exit\n");
+"#,
+            )),
+        })
+        .expect("start JavaScript execution");
+
+    let mut stdout = Vec::new();
+    let exit_code = loop {
+        match execution
+            .poll_event_blocking(Duration::from_secs(5))
+            .expect("poll JavaScript execution event")
+        {
+            Some(JavascriptExecutionEvent::Stdout(chunk)) => stdout.extend(chunk),
+            Some(JavascriptExecutionEvent::Stderr(chunk)) => {
+                panic!("unexpected stderr: {}", String::from_utf8_lossy(&chunk));
+            }
+            Some(JavascriptExecutionEvent::SignalState { .. }) => {}
+            Some(JavascriptExecutionEvent::SyncRpcRequest(request)) => {
+                panic!("unexpected pending sync RPC request: {}", request.id);
+            }
+            Some(JavascriptExecutionEvent::Exited(code)) => break code,
+            None => panic!("JavaScript execution timed out while awaiting process.exit"),
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&stdout);
+    assert_eq!(exit_code, 7, "stdout:\n{stdout}");
+    assert!(stdout.contains("before exit"), "stdout:\n{stdout}");
+    assert!(!stdout.contains("after exit"), "stdout:\n{stdout}");
+}
+
 fn javascript_execution_live_stdin_replays_end_after_late_listener_registration() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = JavascriptExecutionEngine::default();
@@ -3657,6 +3711,7 @@ fn javascript_v8_suite() {
     javascript_execution_stream_consumers_text_reads_live_stdin();
     javascript_execution_process_stdin_async_iterator_finishes_with_live_stdin();
     javascript_execution_process_exit_from_live_stdin_listener_exits_without_waiting_for_eof();
+    javascript_execution_process_exit_ignores_live_interval_handles();
     javascript_execution_live_stdin_replays_end_after_late_listener_registration();
     javascript_execution_file_url_to_path_accepts_guest_absolute_paths();
     javascript_execution_imports_node_events_without_hanging();
