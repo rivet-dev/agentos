@@ -353,11 +353,10 @@ mod shadow_root {
     use std::collections::BTreeMap;
     use std::fs;
     use std::fs::OpenOptions;
-    use std::os::fd::AsRawFd;
     use std::sync::OnceLock;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use nix::fcntl::{flock, FlockArg};
+    use nix::fcntl::{Flock, FlockArg};
 
     const TEST_AUTH_TOKEN: &str = "sidecar-test-token";
 
@@ -370,7 +369,7 @@ mod shadow_root {
     }
 
     fn acquire_sidecar_runtime_test_lock() {
-        static LOCK_FILE: OnceLock<std::fs::File> = OnceLock::new();
+        static LOCK_FILE: OnceLock<Flock<std::fs::File>> = OnceLock::new();
         let _ = LOCK_FILE.get_or_init(|| {
             let path = std::env::temp_dir().join("agent-os-sidecar-runtime-tests.lock");
             let file = OpenOptions::new()
@@ -381,10 +380,9 @@ mod shadow_root {
                 .unwrap_or_else(|error| {
                     panic!("open sidecar test runtime lock {}: {error}", path.display())
                 });
-            flock(file.as_raw_fd(), FlockArg::LockExclusive).unwrap_or_else(|error| {
+            Flock::lock(file, FlockArg::LockExclusive).unwrap_or_else(|(_, error)| {
                 panic!("lock sidecar test runtime {}: {error}", path.display())
-            });
-            file
+            })
         });
     }
 

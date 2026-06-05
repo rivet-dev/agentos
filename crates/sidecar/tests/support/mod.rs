@@ -10,11 +10,10 @@ use agent_os_sidecar::protocol::{
 };
 use agent_os_sidecar::{DispatchResult, NativeSidecar, NativeSidecarConfig};
 pub use bridge_support::RecordingBridge;
-use nix::fcntl::{flock, FlockArg};
+use nix::fcntl::{Flock, FlockArg};
 use std::collections::BTreeMap;
 use std::fs;
 use std::fs::OpenOptions;
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -23,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const TEST_AUTH_TOKEN: &str = "sidecar-test-token";
 
 pub fn acquire_sidecar_runtime_test_lock() {
-    static LOCK_FILE: OnceLock<std::fs::File> = OnceLock::new();
+    static LOCK_FILE: OnceLock<Flock<std::fs::File>> = OnceLock::new();
     let _ = LOCK_FILE.get_or_init(|| {
         let path = std::env::temp_dir().join("agent-os-sidecar-runtime-tests.lock");
         let file = OpenOptions::new()
@@ -34,10 +33,9 @@ pub fn acquire_sidecar_runtime_test_lock() {
             .unwrap_or_else(|error| {
                 panic!("open sidecar test runtime lock {}: {error}", path.display())
             });
-        flock(file.as_raw_fd(), FlockArg::LockExclusive).unwrap_or_else(|error| {
+        Flock::lock(file, FlockArg::LockExclusive).unwrap_or_else(|(_, error)| {
             panic!("lock sidecar test runtime {}: {error}", path.display())
-        });
-        file
+        })
     });
 }
 
