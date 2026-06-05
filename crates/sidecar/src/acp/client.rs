@@ -670,12 +670,7 @@ async fn handle_inbound_request(inner: Arc<AcpClientInner>, request: JsonRpcRequ
         }
     };
 
-    if write_with_inner(&inner, JsonRpcMessage::Response(response))
-        .await
-        .is_err()
-    {
-        return;
-    }
+    let _ = write_with_inner(&inner, JsonRpcMessage::Response(response)).await;
 }
 
 #[cfg(test)]
