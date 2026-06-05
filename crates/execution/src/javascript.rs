@@ -1150,19 +1150,24 @@ impl JavascriptExecution {
     ) -> Result<Option<JavascriptExecutionEvent>, JavascriptExecutionError> {
         let deadline = Instant::now() + timeout;
         loop {
-            let mut events = self.events.blocking_lock();
-            match events.try_recv() {
-                Ok(event) => return Ok(Some(event)),
-                Err(TokioTryRecvError::Disconnected) => {
-                    return Err(JavascriptExecutionError::EventChannelClosed);
-                }
-                Err(TokioTryRecvError::Empty) => {
-                    if Instant::now() >= deadline {
-                        return Ok(None);
+            if let Ok(mut events) = self.events.try_lock() {
+                match events.try_recv() {
+                    Ok(event) => return Ok(Some(event)),
+                    Err(TokioTryRecvError::Disconnected) => {
+                        return Err(JavascriptExecutionError::EventChannelClosed);
                     }
-                    thread::sleep(Duration::from_millis(1));
+                    Err(TokioTryRecvError::Empty) => {
+                        if Instant::now() >= deadline {
+                            return Ok(None);
+                        }
+                    }
                 }
             }
+
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            thread::sleep(Duration::from_millis(1));
         }
     }
 
