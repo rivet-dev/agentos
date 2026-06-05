@@ -37,7 +37,8 @@ mod service {
         use crate::bridge::{bridge_permissions, HostFilesystem, ScopedHostFilesystem};
         use crate::execution::{
             clamp_javascript_net_poll_wait, format_dns_resource, format_tcp_resource,
-            service_javascript_net_sync_rpc, signal_runtime_process,
+            service_javascript_net_sync_rpc as service_javascript_net_sync_rpc_inner,
+            signal_runtime_process, JavascriptNetSyncRpcServiceRequest,
             JavascriptSyncRpcServiceRequest,
         };
         use crate::filesystem::service_javascript_fs_sync_rpc;
@@ -1794,6 +1795,36 @@ setInterval(() => {}, 1000);
                 network_counts: counts,
             })
         }
+
+        #[allow(clippy::too_many_arguments)]
+        fn service_javascript_net_sync_rpc<B>(
+            bridge: &SharedBridge<B>,
+            vm_id: &str,
+            dns: &VmDnsConfig,
+            socket_paths: &JavascriptSocketPathContext,
+            kernel: &mut SidecarKernel,
+            process: &mut ActiveProcess,
+            request: &JavascriptSyncRpcRequest,
+            resource_limits: &ResourceLimits,
+            network_counts: NetworkResourceCounts,
+        ) -> Result<Value, SidecarError>
+        where
+            B: NativeSidecarBridge + Send + 'static,
+            BridgeError<B>: fmt::Debug + Send + Sync + 'static,
+        {
+            service_javascript_net_sync_rpc_inner(JavascriptNetSyncRpcServiceRequest {
+                bridge,
+                vm_id,
+                dns,
+                socket_paths,
+                kernel,
+                process,
+                sync_request: request,
+                resource_limits,
+                network_counts,
+            })
+        }
+
         fn kernel_socket_queries_ignore_stale_sidecar_guest_addresses() {
             assert_node_available();
 
