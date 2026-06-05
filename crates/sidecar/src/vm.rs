@@ -1314,109 +1314,6 @@ fn normalize_guest_path(path: &str) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        bootstrap_shadow_root, materialize_shadow_root_snapshot_entries, shadow_path_for_guest,
-    };
-    use crate::protocol::{
-        RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
-        RootFilesystemLowerDescriptor,
-    };
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn bootstrap_shadow_root_seeds_standard_directories() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be monotonic")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("agent-os-sidecar-shadow-test-{unique}"));
-        fs::create_dir_all(&root).expect("temp shadow root should be created");
-
-        bootstrap_shadow_root(&root).expect("shadow bootstrap should succeed");
-
-        let tmp = shadow_path_for_guest(&root, "/tmp");
-        let etc_agentos = shadow_path_for_guest(&root, "/etc/agentos");
-        let usr_local_bin = shadow_path_for_guest(&root, "/usr/local/bin");
-
-        assert!(tmp.is_dir(), "/tmp should exist in the shadow root");
-        assert!(
-            etc_agentos.is_dir(),
-            "/etc/agentos should exist in the shadow root"
-        );
-        assert!(
-            usr_local_bin.is_dir(),
-            "/usr/local/bin should exist in the shadow root"
-        );
-        assert_eq!(
-            fs::metadata(&tmp)
-                .expect("/tmp metadata should be readable")
-                .permissions()
-                .mode()
-                & 0o7777,
-            0o1777,
-            "/tmp should preserve its sticky-bit mode in the shadow root"
-        );
-
-        fs::remove_dir_all(&root).expect("temp shadow root should be removed");
-    }
-
-    #[test]
-    fn materialize_shadow_root_snapshot_entries_copies_custom_snapshot_files() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be monotonic")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("agent-os-sidecar-shadow-snapshot-{unique}"));
-        fs::create_dir_all(&root).expect("temp shadow root should be created");
-        bootstrap_shadow_root(&root).expect("shadow bootstrap should succeed");
-
-        let descriptor = RootFilesystemDescriptor {
-            lowers: vec![RootFilesystemLowerDescriptor::Snapshot {
-                entries: vec![
-                    RootFilesystemEntry {
-                        path: String::from("/"),
-                        kind: RootFilesystemEntryKind::Directory,
-                        mode: Some(0o755),
-                        uid: Some(0),
-                        gid: Some(0),
-                        content: None,
-                        encoding: None,
-                        target: None,
-                        executable: false,
-                    },
-                    RootFilesystemEntry {
-                        path: String::from("/hello.txt"),
-                        kind: RootFilesystemEntryKind::File,
-                        mode: Some(0o644),
-                        uid: Some(0),
-                        gid: Some(0),
-                        content: Some(String::from("hello from snapshot\n")),
-                        encoding: Some(crate::protocol::RootFilesystemEntryEncoding::Utf8),
-                        target: None,
-                        executable: false,
-                    },
-                ],
-            }],
-            ..RootFilesystemDescriptor::default()
-        };
-
-        materialize_shadow_root_snapshot_entries(&root, &descriptor, None)
-            .expect("snapshot entries should materialize into the shadow root");
-
-        assert_eq!(
-            fs::read_to_string(shadow_path_for_guest(&root, "/hello.txt"))
-                .expect("shadow file should be readable"),
-            "hello from snapshot\n"
-        );
-
-        fs::remove_dir_all(&root).expect("temp shadow root should be removed");
-    }
-}
-
 pub(crate) fn extract_guest_env(metadata: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     metadata
         .iter()
@@ -1658,4 +1555,107 @@ fn prune_kernel_command_stub(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        bootstrap_shadow_root, materialize_shadow_root_snapshot_entries, shadow_path_for_guest,
+    };
+    use crate::protocol::{
+        RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
+        RootFilesystemLowerDescriptor,
+    };
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn bootstrap_shadow_root_seeds_standard_directories() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("agent-os-sidecar-shadow-test-{unique}"));
+        fs::create_dir_all(&root).expect("temp shadow root should be created");
+
+        bootstrap_shadow_root(&root).expect("shadow bootstrap should succeed");
+
+        let tmp = shadow_path_for_guest(&root, "/tmp");
+        let etc_agentos = shadow_path_for_guest(&root, "/etc/agentos");
+        let usr_local_bin = shadow_path_for_guest(&root, "/usr/local/bin");
+
+        assert!(tmp.is_dir(), "/tmp should exist in the shadow root");
+        assert!(
+            etc_agentos.is_dir(),
+            "/etc/agentos should exist in the shadow root"
+        );
+        assert!(
+            usr_local_bin.is_dir(),
+            "/usr/local/bin should exist in the shadow root"
+        );
+        assert_eq!(
+            fs::metadata(&tmp)
+                .expect("/tmp metadata should be readable")
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o1777,
+            "/tmp should preserve its sticky-bit mode in the shadow root"
+        );
+
+        fs::remove_dir_all(&root).expect("temp shadow root should be removed");
+    }
+
+    #[test]
+    fn materialize_shadow_root_snapshot_entries_copies_custom_snapshot_files() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("agent-os-sidecar-shadow-snapshot-{unique}"));
+        fs::create_dir_all(&root).expect("temp shadow root should be created");
+        bootstrap_shadow_root(&root).expect("shadow bootstrap should succeed");
+
+        let descriptor = RootFilesystemDescriptor {
+            lowers: vec![RootFilesystemLowerDescriptor::Snapshot {
+                entries: vec![
+                    RootFilesystemEntry {
+                        path: String::from("/"),
+                        kind: RootFilesystemEntryKind::Directory,
+                        mode: Some(0o755),
+                        uid: Some(0),
+                        gid: Some(0),
+                        content: None,
+                        encoding: None,
+                        target: None,
+                        executable: false,
+                    },
+                    RootFilesystemEntry {
+                        path: String::from("/hello.txt"),
+                        kind: RootFilesystemEntryKind::File,
+                        mode: Some(0o644),
+                        uid: Some(0),
+                        gid: Some(0),
+                        content: Some(String::from("hello from snapshot\n")),
+                        encoding: Some(crate::protocol::RootFilesystemEntryEncoding::Utf8),
+                        target: None,
+                        executable: false,
+                    },
+                ],
+            }],
+            ..RootFilesystemDescriptor::default()
+        };
+
+        materialize_shadow_root_snapshot_entries(&root, &descriptor, None)
+            .expect("snapshot entries should materialize into the shadow root");
+
+        assert_eq!(
+            fs::read_to_string(shadow_path_for_guest(&root, "/hello.txt"))
+                .expect("shadow file should be readable"),
+            "hello from snapshot\n"
+        );
+
+        fs::remove_dir_all(&root).expect("temp shadow root should be removed");
+    }
 }
