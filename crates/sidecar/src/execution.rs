@@ -3478,10 +3478,8 @@ where
                 }
             }
             KillBehavior::SharedV8DispatchOrTerminate => {
-                if signal != 0 {
-                    if !dispatch_v8_process_signal(process, signal)? {
-                        process.execution.terminate()?;
-                    }
+                if signal != 0 && !dispatch_v8_process_signal(process, signal)? {
+                    process.execution.terminate()?;
                 }
             }
             KillBehavior::Noop => {}
