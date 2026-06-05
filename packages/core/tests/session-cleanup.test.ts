@@ -713,7 +713,10 @@ async function createHangingAnthropicServer(): Promise<{
 	const pendingResponses = new Set<ServerResponse>();
 	const requestSignal = createDeferredSignal();
 	const server = createServer(async (req, res) => {
-		if (req.method !== "POST" || req.url !== "/v1/messages") {
+		const pathname = req.url
+			? new URL(req.url, "http://127.0.0.1").pathname
+			: "";
+		if (req.method !== "POST" || pathname !== "/v1/messages") {
 			writeJsonError(res, 404, { error: "not_found" });
 			return;
 		}
