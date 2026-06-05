@@ -219,14 +219,14 @@ impl AsyncWrite for FailOnWrite {
     }
 }
 
-fn new_client_with_failing_writer(
-    options: AcpClientOptions,
-) -> (
+type FailingWriterClient = (
     AcpClient,
     tokio::io::Lines<BufReader<tokio::io::ReadHalf<DuplexStream>>>,
     tokio::io::WriteHalf<DuplexStream>,
     Arc<AtomicBool>,
-) {
+);
+
+fn new_client_with_failing_writer(options: AcpClientOptions) -> FailingWriterClient {
     let (client_stream, server_stream) = tokio::io::duplex(8 * 1024);
     let (client_reader, client_writer) = split(client_stream);
     let (server_reader, server_writer) = split(server_stream);
