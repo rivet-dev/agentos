@@ -4192,42 +4192,9 @@ where
                 Ok(None)
             }
             ActiveExecutionEvent::Exited(exit_code) => {
-                let became_idle = {
-                    let Some(vm) = self.vms.get_mut(vm_id) else {
-                        return Ok(None);
-                    };
-                    prune_exited_process_snapshots(vm);
-                    let process_table = vm.kernel.list_processes();
-                    let Some(mut process) = vm.active_processes.remove(process_id) else {
-                        return Ok(None);
-                    };
-                    if let Some(info) = process_table.get(&process.kernel_pid) {
-                        vm.exited_process_snapshots
-                            .push_back(ExitedProcessSnapshot {
-                                captured_at: Instant::now(),
-                                process: build_process_snapshot_entry(
-                                    process_id,
-                                    &process,
-                                    info,
-                                    Some(exit_code),
-                                ),
-                            });
-                    }
-                    let detached_children =
-                        Self::adopt_detached_child_processes(process_id, &mut process);
-                    sync_process_host_writes_to_kernel(vm, &process)?;
-                    terminate_child_process_tree(&mut vm.kernel, &mut process);
-                    process.kernel_handle.finish(exit_code);
-                    let _ = vm.kernel.wait_and_reap(process.kernel_pid);
-                    vm.signal_states.remove(process_id);
-                    for (detached_process_id, detached_child) in detached_children {
-                        vm.detached_child_processes
-                            .insert(detached_process_id.clone());
-                        vm.active_processes
-                            .insert(detached_process_id, detached_child);
-                    }
-                    vm.active_processes.is_empty()
-                };
+                let became_idle = self
+                    .finish_active_process_exit(vm_id, process_id, exit_code)?
+                    .unwrap_or(false);
 
                 if became_idle {
                     self.bridge.emit_lifecycle(vm_id, LifecycleState::Ready)?;
@@ -4242,6 +4209,54 @@ where
                 )))
             }
         }
+    }
+
+    pub(crate) fn finish_active_process_exit(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        exit_code: i32,
+    ) -> Result<Option<bool>, SidecarError> {
+        let Some(vm) = self.vms.get_mut(vm_id) else {
+            log_stale_process_event(&self.bridge, vm_id, process_id, "process exit cleanup");
+            return Ok(None);
+        };
+        if !vm.active_processes.contains_key(process_id) {
+            log_stale_process_event(&self.bridge, vm_id, process_id, "process exit cleanup");
+            return Ok(None);
+        }
+
+        prune_exited_process_snapshots(vm);
+        let process_table = vm.kernel.list_processes();
+        let Some(mut process) = vm.active_processes.remove(process_id) else {
+            return Ok(None);
+        };
+        if let Some(info) = process_table.get(&process.kernel_pid) {
+            vm.exited_process_snapshots
+                .push_back(ExitedProcessSnapshot {
+                    captured_at: Instant::now(),
+                    process: build_process_snapshot_entry(
+                        process_id,
+                        &process,
+                        info,
+                        Some(exit_code),
+                    ),
+                });
+        }
+        let detached_children = Self::adopt_detached_child_processes(process_id, &mut process);
+        sync_process_host_writes_to_kernel(vm, &process)?;
+        terminate_child_process_tree(&mut vm.kernel, &mut process);
+        process.kernel_handle.finish(exit_code);
+        let _ = vm.kernel.wait_and_reap(process.kernel_pid);
+        vm.signal_states.remove(process_id);
+        for (detached_process_id, detached_child) in detached_children {
+            vm.detached_child_processes
+                .insert(detached_process_id.clone());
+            vm.active_processes
+                .insert(detached_process_id, detached_child);
+        }
+
+        Ok(Some(vm.active_processes.is_empty()))
     }
 
     pub(crate) fn drain_process_events_blocking(
