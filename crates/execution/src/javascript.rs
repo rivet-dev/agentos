@@ -14,7 +14,6 @@ use getrandom::getrandom;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::fs::{self, File};
@@ -1002,7 +1001,7 @@ impl std::error::Error for JavascriptExecutionError {}
 pub struct JavascriptExecution {
     execution_id: String,
     child_pid: u32,
-    events: RefCell<UnboundedReceiver<JavascriptExecutionEvent>>,
+    events: tokio::sync::Mutex<UnboundedReceiver<JavascriptExecutionEvent>>,
     pending_sync_rpc: Arc<Mutex<Option<PendingSyncRpcState>>>,
     kernel_stdin: Arc<LocalKernelStdinBridge>,
     _import_cache_guard: Arc<NodeImportCacheCleanup>,
@@ -1127,7 +1126,8 @@ impl JavascriptExecution {
         timeout: Duration,
     ) -> Result<Option<JavascriptExecutionEvent>, JavascriptExecutionError> {
         if timeout.is_zero() {
-            return match self.events.borrow_mut().try_recv() {
+            let mut events = self.events.lock().await;
+            return match events.try_recv() {
                 Ok(event) => Ok(Some(event)),
                 Err(TokioTryRecvError::Empty) => Ok(None),
                 Err(TokioTryRecvError::Disconnected) => {
@@ -1136,7 +1136,7 @@ impl JavascriptExecution {
             };
         }
 
-        let mut events = self.events.borrow_mut();
+        let mut events = self.events.lock().await;
         match time::timeout(timeout, events.recv()).await {
             Ok(Some(event)) => Ok(Some(event)),
             Ok(None) => Err(JavascriptExecutionError::EventChannelClosed),
@@ -1150,7 +1150,8 @@ impl JavascriptExecution {
     ) -> Result<Option<JavascriptExecutionEvent>, JavascriptExecutionError> {
         let deadline = Instant::now() + timeout;
         loop {
-            match self.events.borrow_mut().try_recv() {
+            let mut events = self.events.blocking_lock();
+            match events.try_recv() {
                 Ok(event) => return Ok(Some(event)),
                 Err(TokioTryRecvError::Disconnected) => {
                     return Err(JavascriptExecutionError::EventChannelClosed);
@@ -1168,10 +1169,9 @@ impl JavascriptExecution {
     pub fn wait(mut self) -> Result<JavascriptExecutionResult, JavascriptExecutionError> {
         self.close_stdin()?;
         let mut events = std::mem::replace(
-            &mut self.events,
-            RefCell::new(tokio::sync::mpsc::unbounded_channel().1),
-        )
-        .into_inner();
+            self.events.get_mut(),
+            tokio::sync::mpsc::unbounded_channel().1,
+        );
         let execution_id = std::mem::take(&mut self.execution_id);
 
         let mut stdout = Vec::new();
@@ -1502,7 +1502,7 @@ impl JavascriptExecutionEngine {
         Ok(JavascriptExecution {
             execution_id,
             child_pid: v8_host.child_pid(),
-            events: RefCell::new(events),
+            events: tokio::sync::Mutex::new(events),
             pending_sync_rpc,
             kernel_stdin,
             _import_cache_guard: import_cache_guard,
