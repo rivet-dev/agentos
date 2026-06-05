@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
-import { AgentOs } from "@rivet-dev/agent-os-core";
 import codex from "@rivet-dev/agent-os-codex";
 // Software packages — uses npm-published versions which include pre-built
 // WASM binaries. Workspace copies have empty wasm/ dirs since the native
 // build (Rust nightly + wasi-sdk) is not run locally.
 // curl, wget, sqlite3 are excluded (not yet published, need patched wasi-libc).
 import common from "@rivet-dev/agent-os-common";
+import { AgentOs } from "@rivet-dev/agent-os-core";
 import fd from "@rivet-dev/agent-os-fd";
 import file from "@rivet-dev/agent-os-file";
 import jq from "@rivet-dev/agent-os-jq";
