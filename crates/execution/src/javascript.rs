@@ -5140,7 +5140,14 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "randomUUID",
             "subtle",
         ],
-        "diagnostics_channel" => &["channel", "hasSubscribers", "subscribe", "unsubscribe"],
+        "diagnostics_channel" => &[
+            "Channel",
+            "channel",
+            "hasSubscribers",
+            "subscribe",
+            "tracingChannel",
+            "unsubscribe",
+        ],
         "events" => &[
             "EventEmitter",
             "addAbortListener",
