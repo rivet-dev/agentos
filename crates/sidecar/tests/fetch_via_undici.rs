@@ -60,7 +60,7 @@ fn javascript_fetch_uses_guest_undici_over_kernel_tcp_socket() {
 
     write_fixture(
         &entry,
-        &format!(
+        format!(
             r#"
 console.log("before-fetch");
 console.log(JSON.stringify({{
@@ -192,7 +192,7 @@ fn javascript_fetch_honors_abortsignal_timeout_and_manual_abort() {
 
     write_fixture(
         &entry,
-        &format!(
+        format!(
             r#"
 async function expectAbort(label, promiseFactory, expectedReason) {{
   try {{
