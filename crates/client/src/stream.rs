@@ -23,6 +23,9 @@ use tokio_util::sync::ReusableBoxFuture;
 
 use crate::json_rpc::SequencedEvent;
 
+type ByteRecvResult = Result<Vec<u8>, broadcast::error::RecvError>;
+type ByteRecvState = (ByteRecvResult, broadcast::Receiver<Vec<u8>>);
+
 /// RAII guard returned by `on_*` register methods. Dropping it deregisters the subscription.
 ///
 /// For broadcast/watch-backed subscriptions, dropping the returned stream/receiver is itself the
@@ -72,13 +75,7 @@ impl Drop for Subscription {
 ///
 /// Lagged messages are skipped. Closing the sender ends the stream.
 pub struct ByteStream {
-    inner: ReusableBoxFuture<
-        'static,
-        (
-            Result<Vec<u8>, broadcast::error::RecvError>,
-            broadcast::Receiver<Vec<u8>>,
-        ),
-    >,
+    inner: ReusableBoxFuture<'static, ByteRecvState>,
 }
 
 impl ByteStream {
@@ -90,12 +87,7 @@ impl ByteStream {
     }
 }
 
-async fn recv_bytes(
-    mut rx: broadcast::Receiver<Vec<u8>>,
-) -> (
-    Result<Vec<u8>, broadcast::error::RecvError>,
-    broadcast::Receiver<Vec<u8>>,
-) {
+async fn recv_bytes(mut rx: broadcast::Receiver<Vec<u8>>) -> ByteRecvState {
     let result = rx.recv().await;
     (result, rx)
 }
