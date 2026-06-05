@@ -1286,24 +1286,13 @@ where
     })
 }
 
+#[derive(Default)]
 pub struct JavascriptExecutionEngine {
     next_context_id: usize,
     next_execution_id: usize,
     contexts: BTreeMap<String, JavascriptContext>,
     import_caches: BTreeMap<String, NodeImportCache>,
     v8_host: Option<V8RuntimeHost>,
-}
-
-impl Default for JavascriptExecutionEngine {
-    fn default() -> Self {
-        Self {
-            next_context_id: 0,
-            next_execution_id: 0,
-            contexts: BTreeMap::new(),
-            import_caches: BTreeMap::new(),
-            v8_host: None,
-        }
-    }
 }
 
 impl std::fmt::Debug for JavascriptExecutionEngine {
