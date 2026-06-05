@@ -8893,10 +8893,17 @@ function buildPreopens() {
           : typeof process.env.PWD === 'string' && process.env.PWD.startsWith('/')
             ? path.posix.normalize(process.env.PWD)
             : null;
-      const preopens = {
-        '.': createPreopen(HOST_CWD),
-      };
-      const seen = new Set(Object.keys(preopens));
+      const preopens = {};
+      const seen = new Set();
+      const rootMapping = GUEST_PATH_MAPPINGS.find(
+        (mapping) => mapping && mapping.guestPath === '/',
+      );
+      if (rootMapping) {
+        preopens['/'] = createPreopen(rootMapping.hostPath);
+        seen.add('/');
+      }
+      preopens['.'] = createPreopen(HOST_CWD);
+      seen.add('.');
       for (const mapping of GUEST_PATH_MAPPINGS) {
         if (!mapping || typeof mapping.guestPath !== 'string' || typeof mapping.hostPath !== 'string') {
           continue;
@@ -13085,7 +13092,9 @@ fn write_file_if_changed(path: &Path, contents: &str) -> Result<(), io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NodeImportCache, NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS};
+    use super::{
+        NodeImportCache, NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS, NODE_WASM_RUNNER_SOURCE,
+    };
     use crate::host_node::node_binary;
     use serde_json::Value;
     use std::collections::BTreeSet;
@@ -14045,6 +14054,18 @@ export async function loadPyodide(options) {
         assert!(dns_promises_asset.contains("__agentOsBuiltinDns.promises"));
         assert!(dns_promises_asset.contains("export const Resolver = mod.Resolver"));
         assert!(dns_promises_asset.contains("export const resolve4 = mod.resolve4"));
+    }
+
+    #[test]
+    fn wasm_runner_preopens_root_before_dot() {
+        let root_index = NODE_WASM_RUNNER_SOURCE
+            .find("preopens['/'] = createPreopen(rootMapping.hostPath);")
+            .expect("runner should preopen the guest root");
+        let dot_index = NODE_WASM_RUNNER_SOURCE
+            .find("preopens['.'] = createPreopen(HOST_CWD);")
+            .expect("runner should preopen the current directory");
+
+        assert!(root_index < dot_index);
     }
 
     #[test]
