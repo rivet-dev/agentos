@@ -52,6 +52,7 @@ describe("zodToJsonSchema", () => {
 				mode: z.union([z.literal("fast"), z.literal("safe")]),
 				note: z.string().nullable(),
 			}),
+			env: z.record(z.string(), z.string()).optional(),
 		});
 
 		expect(zodToJsonSchema(schema)).toEqual({
@@ -75,6 +76,11 @@ describe("zodToJsonSchema", () => {
 						},
 					},
 					required: ["mode", "note"],
+				},
+				env: {
+					type: "object",
+					propertyNames: { type: "string" },
+					additionalProperties: { type: "string" },
 				},
 			},
 			required: ["tags", "options"],
@@ -102,7 +108,9 @@ describe("zodToJsonSchema", () => {
 			{
 				path: "$.value",
 				type: "record",
-				schema: z.object({ value: z.record(z.string(), z.string()) }),
+				schema: z.object({
+					value: z.record(z.string().min(1), z.string()),
+				}),
 			},
 			{
 				path: "$.value",

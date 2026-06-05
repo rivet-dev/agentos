@@ -15,7 +15,6 @@ const UNSUPPORTED_TYPES = new Set([
 	"intersection",
 	"pipeline",
 	"pipe",
-	"record",
 	"tuple",
 ]);
 
@@ -205,6 +204,29 @@ function validateSchema(schema: ZodType, path: string) {
 			);
 		}
 		validateSchema(itemSchema, `${path}[]`);
+		return;
+	}
+
+	if (typeName === "record") {
+		const def = getSchemaDef(schema);
+		const keySchema = def.keyType as ZodType | undefined;
+		const valueSchema = def.valueType as ZodType | undefined;
+		if (!keySchema || !valueSchema) {
+			throw new HostToolSchemaConversionError(
+				path,
+				displayTypeName(typeName),
+				"record schema is missing its key or value schema",
+			);
+		}
+		const keyTypeName = normalizeTypeName(keySchema);
+		if (keyTypeName !== "string" || getChecks(keySchema).length > 0) {
+			throw new HostToolSchemaConversionError(
+				path,
+				displayTypeName(typeName),
+				"record keys must be unconstrained strings",
+			);
+		}
+		validateSchema(valueSchema, `${path}<record-value>`);
 		return;
 	}
 
