@@ -118,6 +118,7 @@ fn execute_inline_python(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_inline_python_with_env(
     sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
     request_id: RequestId,
@@ -161,6 +162,7 @@ fn execute_python_entrypoint(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_python_entrypoint_with_env(
     sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
     request_id: RequestId,
@@ -196,6 +198,7 @@ fn execute_python_entrypoint_with_env(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_javascript_with_env(
     sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
     request_id: RequestId,
@@ -263,6 +266,7 @@ fn create_vm_with_root_filesystem(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_vm_with_metadata_and_permissions(
     sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
     request_id: RequestId,

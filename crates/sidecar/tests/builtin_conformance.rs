@@ -100,6 +100,7 @@ fn run_guest_probe(case_name: &str, cwd: &Path, entrypoint: &Path) -> Value {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_vm_with_metadata_and_permissions(
     sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
     request_id: i64,
@@ -194,6 +195,7 @@ fn run_guest_probe_with_config(
     serde_json::from_str(stdout.trim()).expect("parse guest probe JSON")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_guest_probe_in_existing_session(
     sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
     request_id_base: i64,

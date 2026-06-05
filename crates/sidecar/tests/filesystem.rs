@@ -558,6 +558,7 @@ mod shadow_root {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_command(
         sidecar: &mut NativeSidecar<RecordingBridge>,
         connection_id: &str,
