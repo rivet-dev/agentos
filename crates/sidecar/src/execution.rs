@@ -864,6 +864,18 @@ pub(crate) struct JavascriptSyncRpcServiceRequest<'a, B> {
     pub(crate) network_counts: NetworkResourceCounts,
 }
 
+pub(crate) struct JavascriptNetSyncRpcServiceRequest<'a, B> {
+    pub(crate) bridge: &'a SharedBridge<B>,
+    pub(crate) vm_id: &'a str,
+    pub(crate) dns: &'a VmDnsConfig,
+    pub(crate) socket_paths: &'a JavascriptSocketPathContext,
+    pub(crate) kernel: &'a mut SidecarKernel,
+    pub(crate) process: &'a mut ActiveProcess,
+    pub(crate) sync_request: &'a JavascriptSyncRpcRequest,
+    pub(crate) resource_limits: &'a ResourceLimits,
+    pub(crate) network_counts: NetworkResourceCounts,
+}
+
 struct LoopbackHttpResponseWaitRequest<'a, B> {
     bridge: &'a SharedBridge<B>,
     vm_id: &'a str,
@@ -12987,17 +12999,17 @@ where
             service_javascript_dns_sync_rpc(bridge, kernel, vm_id, dns, request)
         }
         "net.http_listen" | "net.http_close" | "net.http_wait" | "net.http_respond" => {
-            service_javascript_net_sync_rpc(
+            service_javascript_net_sync_rpc(JavascriptNetSyncRpcServiceRequest {
                 bridge,
                 vm_id,
                 dns,
                 socket_paths,
                 kernel,
                 process,
-                request,
+                sync_request: request,
                 resource_limits,
                 network_counts,
-            )
+            })
         }
         "net.http2_server_listen"
         | "net.http2_server_poll"
@@ -13053,17 +13065,19 @@ where
         | "net.shutdown"
         | "net.destroy"
         | "net.server_close"
-        | "tls.get_ciphers" => service_javascript_net_sync_rpc(
-            bridge,
-            vm_id,
-            dns,
-            socket_paths,
-            kernel,
-            process,
-            request,
-            resource_limits,
-            network_counts,
-        ),
+        | "tls.get_ciphers" => {
+            service_javascript_net_sync_rpc(JavascriptNetSyncRpcServiceRequest {
+                bridge,
+                vm_id,
+                dns,
+                socket_paths,
+                kernel,
+                process,
+                sync_request: request,
+                resource_limits,
+                network_counts,
+            })
+        }
         "dgram.createSocket"
         | "dgram.bind"
         | "dgram.send"
@@ -18130,20 +18144,23 @@ pub(crate) fn clamp_javascript_net_poll_wait(wait_ms: u64) -> Duration {
 }
 
 pub(crate) fn service_javascript_net_sync_rpc<B>(
-    bridge: &SharedBridge<B>,
-    vm_id: &str,
-    dns: &VmDnsConfig,
-    socket_paths: &JavascriptSocketPathContext,
-    kernel: &mut SidecarKernel,
-    process: &mut ActiveProcess,
-    request: &JavascriptSyncRpcRequest,
-    resource_limits: &ResourceLimits,
-    network_counts: NetworkResourceCounts,
+    request: JavascriptNetSyncRpcServiceRequest<'_, B>,
 ) -> Result<Value, SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let JavascriptNetSyncRpcServiceRequest {
+        bridge,
+        vm_id,
+        dns,
+        socket_paths,
+        kernel,
+        process,
+        sync_request: request,
+        resource_limits,
+        network_counts,
+    } = request;
     match request.method.as_str() {
         "net.http_listen" => {
             check_network_resource_limit(
