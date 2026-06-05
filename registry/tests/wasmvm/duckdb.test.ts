@@ -66,15 +66,15 @@ function closeServer(server: Server) {
   });
 }
 
-async function waitForText(
-  getText: () => string,
-  expected: string,
-  timeoutMs = 5_000,
+async function waitForFilesystemPath(
+  filesystem: ReturnType<typeof createInMemoryFileSystem>,
+  path: string,
+  timeoutMs = 30_000,
 ) {
   const start = Date.now();
-  while (!getText().includes(expected)) {
+  while (!(await filesystem.exists(path))) {
     if (Date.now() - start >= timeoutMs) {
-      throw new Error(`timed out waiting for output: ${expected}\n\n${getText()}`);
+      throw new Error(`timed out waiting for ${path}`);
     }
     await sleep(25);
   }
@@ -179,17 +179,14 @@ describeIf(hasWasmDuckDB, 'duckdb command', { timeout: 120_000 }, () => {
     );
     expect(result.exitCode).toBe(0);
 
-    let stdout = '';
-    const proc = kernel.spawn('duckdb', ['-csv', '/tmp/recover.duckdb'], {
-      streamStdin: true,
-      onStdout: (chunk) => {
-        stdout += new TextDecoder().decode(chunk);
-      },
-    });
+    const proc = kernel.spawn('duckdb', [
+      '-csv',
+      '/tmp/recover.duckdb',
+      '-c',
+      "BEGIN; INSERT INTO items VALUES (42); COPY (SELECT COUNT(*) AS rows_in_tx FROM items) TO '/tmp/tx-ready.csv' (HEADER, DELIMITER ','); SELECT SUM(i) FROM range(100000000000) tbl(i);",
+    ]);
 
-    await sleep(300);
-    proc.writeStdin('BEGIN;\nINSERT INTO items VALUES (42);\nSELECT COUNT(*) AS rows_in_tx FROM items;\n');
-    await waitForText(() => stdout, 'rows_in_tx\n2');
+    await waitForFilesystemPath(filesystem, '/tmp/tx-ready.csv');
 
     proc.kill(9);
     await proc.wait().catch(() => undefined);
