@@ -737,7 +737,7 @@ fn session_thread(
                         // are visible yet — the module body may have registered
                         // timers, stdin listeners, or child_process handles that
                         // need event loop pumping to deliver their callbacks.
-                        let should_enter_event_loop = pending.len() > 0
+                        let should_enter_event_loop = !pending.is_empty()
                             || execution::has_pending_module_evaluation()
                             || execution::has_pending_script_evaluation()
                             || !deferred_queue.lock().unwrap().is_empty();
@@ -812,7 +812,7 @@ fn session_thread(
                             }
 
                             // Phase 2: pump event loop for active handles
-                            if pending.len() > 0
+                            if !pending.is_empty()
                                 || execution::has_pending_script_evaluation()
                                 || !deferred_queue.lock().unwrap().is_empty()
                             {
@@ -1163,7 +1163,7 @@ pub fn run_event_loop(
     abort_rx: Option<&crossbeam_channel::Receiver<()>>,
     deferred: Option<&DeferredQueue>,
 ) -> EventLoopStatus {
-    while pending.len() > 0
+    while !pending.is_empty()
         || execution::pending_module_evaluation_needs_wait(scope)
         || execution::pending_script_evaluation_needs_wait(scope)
         || pending_guest_timer_count(scope) > 0
@@ -1182,7 +1182,7 @@ pub fn run_event_loop(
                     return status;
                 }
             }
-            if pending.len() == 0
+            if pending.is_empty()
                 && !execution::pending_module_evaluation_needs_wait(scope)
                 && !execution::pending_script_evaluation_needs_wait(scope)
                 && pending_guest_timer_count(scope) == 0
@@ -1207,7 +1207,7 @@ pub fn run_event_loop(
 
         // Re-check exit conditions after microtask flush — the microtask may
         // have resolved all pending promises or registered new handles.
-        if pending.len() == 0
+        if pending.is_empty()
             && !execution::pending_module_evaluation_needs_wait(scope)
             && !execution::pending_script_evaluation_needs_wait(scope)
             && pending_guest_timer_count(scope) == 0
@@ -1253,7 +1253,7 @@ pub fn run_event_loop(
                 }
             }
             // Check if we should exit
-            if pending.len() == 0
+            if pending.is_empty()
                 && !execution::pending_module_evaluation_needs_wait(scope)
                 && !execution::pending_script_evaluation_needs_wait(scope)
                 && pending_guest_timer_count(scope) == 0
