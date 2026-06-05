@@ -918,7 +918,7 @@ fn vm_run_script_in_context<'s>(
                         .expect("vm failure message");
                     let thrown = tc
                         .exception()
-                        .unwrap_or_else(|| v8::Exception::error(tc, failure_message).into());
+                        .unwrap_or_else(|| v8::Exception::error(tc, failure_message));
                     exception = Some(vm_apply_script_origin_to_error(
                         crate::execution::extract_error_info(tc, thrown),
                         options,
@@ -930,7 +930,7 @@ fn vm_run_script_in_context<'s>(
                     .expect("vm failure message");
                 let thrown = tc
                     .exception()
-                    .unwrap_or_else(|| v8::Exception::error(tc, failure_message).into());
+                    .unwrap_or_else(|| v8::Exception::error(tc, failure_message));
                 exception = Some(vm_apply_script_origin_to_error(
                     crate::execution::extract_error_info(tc, thrown),
                     options,

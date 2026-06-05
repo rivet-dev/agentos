@@ -45,7 +45,6 @@ pub fn dispatch_stream_event(scope: &mut v8::HandleScope, event_type: &str, payl
                     None => match std::str::from_utf8(payload) {
                         Ok(text) => match v8::String::new(scope, text) {
                             Some(json_text) => v8::json::parse(scope, json_text)
-                                .map(|value| value.into())
                                 .unwrap_or_else(|| json_text.into()),
                             None => v8::null(scope).into(),
                         },
