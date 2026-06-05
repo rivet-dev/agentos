@@ -60,14 +60,30 @@ impl SidecarState {
 }
 
 /// Where a sidecar lives.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Parity: TypeScript `AgentOsSidecarPlacement` is `{ kind: "shared"; pool?: string }` or
+/// `{ kind: "explicit"; sidecarId: string }`. The serde `tag`/`rename` attributes reproduce that
+/// JSON shape, including omitting `pool` when it is `None` (matching the `...(pool ? { pool } : {})`
+/// spread in `getSharedAgentOsSidecarInternal`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
 pub enum AgentOsSidecarPlacement {
-    Shared { pool: Option<String> },
-    Explicit { sidecar_id: String },
+    Shared {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pool: Option<String>,
+    },
+    Explicit {
+        #[serde(rename = "sidecarId")]
+        sidecar_id: String,
+    },
 }
 
 /// A sync, deep-clone snapshot of a sidecar's state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Parity: serializes to the TypeScript `AgentOsSidecarDescription` JSON shape
+/// (`{ sidecarId, placement, state, activeVmCount }`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentOsSidecarDescription {
     pub sidecar_id: String,
     pub placement: AgentOsSidecarPlacement,
@@ -247,10 +263,18 @@ impl AgentOs {
             }
         }
 
+        // Parity: TypeScript builds placement `{ kind: "shared", ...(pool ? { pool } : {}) }`, so an
+        // empty-string pool (a non-nullish value that survives `?? "default"`) is OMITTED from the
+        // placement. The `sharedPool` field used for cache cleanup still carries the raw pool value.
+        let placement_pool = if pool.is_empty() {
+            None
+        } else {
+            Some(pool.clone())
+        };
         let sidecar = Arc::new(AgentOsSidecar::new(
             format!("agent-os-shared-sidecar:{pool}"),
             AgentOsSidecarPlacement::Shared {
-                pool: Some(pool.clone()),
+                pool: placement_pool,
             },
             Some(pool.clone()),
         ));
