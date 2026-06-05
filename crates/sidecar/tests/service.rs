@@ -1430,19 +1430,16 @@ setInterval(() => {}, 1000);
             for _ in 0..64 {
                 let next_event = {
                     let vm = sidecar.vms.get_mut(vm_id).expect("active vm");
-                    vm.active_processes
-                        .get_mut(process_id)
-                        .map(|process| {
-                            if let Some(event) = process.pending_execution_events.pop_front() {
-                                Some(event)
-                            } else {
-                                process
-                                    .execution
-                                    .poll_event_blocking(Duration::from_secs(5))
-                                    .expect("poll process event")
-                            }
-                        })
-                        .flatten()
+                    vm.active_processes.get_mut(process_id).and_then(|process| {
+                        if let Some(event) = process.pending_execution_events.pop_front() {
+                            Some(event)
+                        } else {
+                            process
+                                .execution
+                                .poll_event_blocking(Duration::from_secs(5))
+                                .expect("poll process event")
+                        }
+                    })
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -7645,7 +7642,7 @@ setInterval(() => {}, 1000);
                     let vm = sidecar.vms.get_mut(&vm_id).expect("active vm");
                     vm.active_processes
                         .get_mut("proc-wasm-pty")
-                        .map(|process| {
+                        .and_then(|process| {
                             if let Some(event) = process.pending_execution_events.pop_front() {
                                 Some(event)
                             } else {
@@ -7655,7 +7652,6 @@ setInterval(() => {}, 1000);
                                     .expect("poll wasm pty process event")
                             }
                         })
-                        .flatten()
                 };
                 let Some(event) = next_event else {
                     break;
@@ -9354,13 +9350,12 @@ console.log(
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-fd")
-                        .map(|process| {
+                        .and_then(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll javascript fd rpc event")
                         })
-                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -10692,13 +10687,12 @@ console.log(JSON.stringify({ lookup, resolve4 }));
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-dns")
-                        .map(|process| {
+                        .and_then(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll javascript dns rpc event")
                         })
-                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -10879,13 +10873,12 @@ process.exit(0);
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-ssrf-protection")
-                        .map(|process| {
+                        .and_then(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll javascript ssrf event")
                         })
-                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -11576,13 +11569,12 @@ console.log(JSON.stringify(summary));
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-tls")
-                        .map(|process| {
+                        .and_then(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll javascript tls rpc event")
                         })
-                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -14415,13 +14407,12 @@ console.log(JSON.stringify({
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-child")
-                        .map(|process| {
+                        .and_then(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll javascript child_process event")
                         })
-                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -14624,13 +14615,12 @@ console.log(JSON.stringify({
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-nested-sigchld")
-                        .map(|process| {
+                        .and_then(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll nested SIGCHLD event")
                         })
-                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
