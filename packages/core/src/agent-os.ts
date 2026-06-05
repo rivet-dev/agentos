@@ -3165,41 +3165,6 @@ export class AgentOs {
 		session.pendingPermissionReplies.clear();
 	}
 
-	private _tryForceCloseSessionProcess(sessionId: string): void {
-		const session = this._sessions.get(sessionId);
-		if (!session?.pid) {
-			return;
-		}
-		const sharedPidUsers = [...this._sessions.values()].filter(
-			(candidate) =>
-				candidate.sessionId !== sessionId && candidate.pid === session.pid,
-		);
-		if (sharedPidUsers.length > 0) {
-			return;
-		}
-		// Session processes live entirely inside the VM, so the only safe
-		// force-close is the sidecar `kill_process` RPC, which targets the guest
-		// process by its in-VM handle (`session.processId`).
-		//
-		// NEVER fall back to host `process.kill()` here. `session.pid` is a
-		// guest/kernel display PID, not a host PID. Passing it to the host signal
-		// API SIGKILLs whatever unrelated host process happens to share that
-		// number -- and a negative PID kills the entire host process *group* with
-		// that id. In practice that has killed the host tmux session, the test
-		// launcher, and even the user systemd manager. `close_agent_session`
-		// remains the authoritative teardown path if this RPC cannot run.
-		if (this.#kernel instanceof NativeSidecarKernelProxy && session.processId) {
-			void this._sidecarClient
-				.killProcess(
-					this._sidecarSession,
-					this._sidecarVm,
-					session.processId,
-					"SIGKILL",
-				)
-				.catch(() => {});
-		}
-	}
-
 	private async _closeSessionInternal(sessionId: string): Promise<void> {
 		const closing = this._sessionClosePromises.get(sessionId);
 		if (closing) {
@@ -3209,13 +3174,8 @@ export class AgentOs {
 			return;
 		}
 
-		const hasPendingRequests =
-			(this._pendingSessionRequestResolvers.get(sessionId)?.size ?? 0) > 0;
 		this._abortPendingSessionRequests(sessionId);
 		this._rejectPendingPermissionReplies(sessionId);
-		if (hasPendingRequests) {
-			this._tryForceCloseSessionProcess(sessionId);
-		}
 
 		this._requireSession(sessionId);
 		this._removeSession(sessionId);
