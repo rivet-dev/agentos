@@ -3587,7 +3587,7 @@ where
                 Ok(None)
             }
             ActiveExecutionEvent::PythonVfsRpcRequest(request) => {
-                self.handle_python_vfs_rpc_request(vm_id, process_id, request)?;
+                self.handle_python_vfs_rpc_request(vm_id, process_id, *request)?;
                 Ok(None)
             }
             ActiveExecutionEvent::SignalState {

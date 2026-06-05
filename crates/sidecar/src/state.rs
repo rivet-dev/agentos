@@ -922,7 +922,7 @@ pub(crate) enum ActiveExecutionEvent {
     Stdout(Vec<u8>),
     Stderr(Vec<u8>),
     JavascriptSyncRpcRequest(JavascriptSyncRpcRequest),
-    PythonVfsRpcRequest(PythonVfsRpcRequest),
+    PythonVfsRpcRequest(Box<PythonVfsRpcRequest>),
     SignalState {
         signal: u32,
         registration: SignalHandlerRegistration,
