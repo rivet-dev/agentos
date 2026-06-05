@@ -10845,7 +10845,7 @@ console.log(JSON.stringify({ lookup, resolve4 }));
             let cwd = temp_dir("agent-os-sidecar-js-ssrf-protection-cwd");
             write_fixture(
                 &cwd.join("entry.mjs"),
-                &format!(
+                format!(
                     r#"
 import dns from "node:dns";
 import net from "node:net";
@@ -11337,7 +11337,7 @@ console.log(JSON.stringify(data));
             let cwd = temp_dir("agent-os-sidecar-js-network-permission-callbacks");
             write_fixture(
                 &cwd.join("entry.mjs"),
-                &format!(
+                format!(
                     r#"
 import dns from "node:dns";
 import net from "node:net";
