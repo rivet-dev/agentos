@@ -5570,10 +5570,7 @@ fn split_package_request(request: &str) -> Option<(&str, &str)> {
         let subpath = parts.next().unwrap_or("");
         Some((package_name, subpath))
     } else {
-        request
-            .split_once('/')
-            .map(|(package, subpath)| (package, subpath))
-            .or(Some((request, "")))
+        request.split_once('/').or(Some((request, "")))
     }
 }
 
