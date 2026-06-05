@@ -20,13 +20,14 @@ import type { MockS3ServerHandle } from "../../../packages/core/src/test/mock-s3
 import { startMockS3Server } from "../../../packages/core/src/test/mock-s3.js";
 
 let bucket = process.env.S3_BUCKET;
-let region = process.env.S3_REGION ?? "us-east-1";
+const region = process.env.S3_REGION ?? "us-east-1";
 let prefix = process.env.S3_PREFIX ?? "quickstart-s3-filesystem";
 let accessKeyId = process.env.S3_ACCESS_KEY_ID;
 let secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
 let endpoint = process.env.S3_ENDPOINT;
 let localHarness: MockS3ServerHandle | null = null;
-const previousAllowLocalS3Endpoints = process.env.AGENT_OS_ALLOW_LOCAL_S3_ENDPOINTS;
+const previousAllowLocalS3Endpoints =
+	process.env.AGENT_OS_ALLOW_LOCAL_S3_ENDPOINTS;
 
 if (!bucket || !accessKeyId || !secretAccessKey) {
 	localHarness = await startMockS3Server();
