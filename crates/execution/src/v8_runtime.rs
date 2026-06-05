@@ -372,41 +372,6 @@ pub fn map_bridge_method(method: &str) -> (&str, bool) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::map_bridge_method;
-
-    #[test]
-    fn audited_bridge_methods_map_to_named_handlers() {
-        for method in [
-            "_cryptoHashDigest",
-            "_cryptoSubtle",
-            "_networkHttp2ServerListenRaw",
-            "_networkHttp2SessionConnectRaw",
-            "_networkHttp2StreamRespondRaw",
-            "_upgradeSocketWriteRaw",
-            "_netSocketSetNoDelayRaw",
-            "_kernelStdioWriteRaw",
-            "_kernelPollRaw",
-            "_netSocketUpgradeTlsRaw",
-            "_tlsGetCiphersRaw",
-            "_dgramSocketAddressRaw",
-            "_dgramSocketSetBufferSizeRaw",
-        ] {
-            let (mapped, _) = map_bridge_method(method);
-            assert_ne!(mapped, method, "missing bridge-method mapping for {method}");
-        }
-    }
-
-    #[test]
-    fn http_request_bridge_shortcut_is_not_mapped() {
-        assert_eq!(
-            map_bridge_method("_networkHttpRequestRaw"),
-            ("_networkHttpRequestRaw", false)
-        );
-    }
-}
-
 /// Deserialize a CBOR payload into a JSON array of arguments.
 /// The V8 bridge serializes bridge call args as a CBOR array.
 pub fn cbor_payload_to_json_args(payload: &[u8]) -> io::Result<Vec<Value>> {
@@ -526,7 +491,7 @@ pub fn base64_encode_pub(data: &[u8]) -> String {
 
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
@@ -580,4 +545,39 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
         }
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_bridge_method;
+
+    #[test]
+    fn audited_bridge_methods_map_to_named_handlers() {
+        for method in [
+            "_cryptoHashDigest",
+            "_cryptoSubtle",
+            "_networkHttp2ServerListenRaw",
+            "_networkHttp2SessionConnectRaw",
+            "_networkHttp2StreamRespondRaw",
+            "_upgradeSocketWriteRaw",
+            "_netSocketSetNoDelayRaw",
+            "_kernelStdioWriteRaw",
+            "_kernelPollRaw",
+            "_netSocketUpgradeTlsRaw",
+            "_tlsGetCiphersRaw",
+            "_dgramSocketAddressRaw",
+            "_dgramSocketSetBufferSizeRaw",
+        ] {
+            let (mapped, _) = map_bridge_method(method);
+            assert_ne!(mapped, method, "missing bridge-method mapping for {method}");
+        }
+    }
+
+    #[test]
+    fn http_request_bridge_shortcut_is_not_mapped() {
+        assert_eq!(
+            map_bridge_method("_networkHttpRequestRaw"),
+            ("_networkHttpRequestRaw", false)
+        );
+    }
 }
