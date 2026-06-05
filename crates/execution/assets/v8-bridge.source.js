@@ -9898,6 +9898,8 @@ var __bridge = (() => {
       const effectiveCwd = opts.cwd ?? (typeof process !== "undefined" ? process.cwd() : "/");
       const maxBuffer = opts.maxBuffer;
       const useBufferOutput = opts.encoding == null || opts.encoding === "buffer";
+      const timeout = Number.isInteger(opts.timeout) && opts.timeout > 0 ? opts.timeout : null;
+      const killSignal = normalizeChildProcessSignal(opts.killSignal).signalCode ?? "SIGTERM";
       const jsonResult = _childProcessSpawnSync.applySyncPromise(void 0, [
         command,
         JSON.stringify(argsArray),
@@ -9906,12 +9908,27 @@ var __bridge = (() => {
           env: opts.env,
           input: opts.input == null ? null : encodeBridgeBytes(opts.input),
           maxBuffer,
-          shell: opts.shell === true || typeof opts.shell === "string"
+          shell: opts.shell === true || typeof opts.shell === "string",
+          timeout,
+          killSignal
         })
       ]);
       const result = typeof jsonResult === "string" ? JSON.parse(jsonResult) : jsonResult;
       const stdoutValue = useBufferOutput && typeof Buffer !== "undefined" ? Buffer.from(result.stdout) : result.stdout;
       const stderrValue = useBufferOutput && typeof Buffer !== "undefined" ? Buffer.from(result.stderr) : result.stderr;
+      if (result.timedOut) {
+        const err = new Error(`spawnSync ${command} ETIMEDOUT`);
+        err.code = "ETIMEDOUT";
+        return {
+          pid: _nextChildPid++,
+          output: [null, stdoutValue, stderrValue],
+          stdout: stdoutValue,
+          stderr: stderrValue,
+          status: null,
+          signal: result.signal ?? killSignal,
+          error: err
+        };
+      }
       if (result.maxBufferExceeded) {
         const err = new Error("stdout maxBuffer length exceeded");
         err.code = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";

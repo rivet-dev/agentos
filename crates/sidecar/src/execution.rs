@@ -4584,6 +4584,8 @@ where
                             String::from("pipe"),
                             String::from("pipe"),
                         ],
+                        timeout: None,
+                        kill_signal: None,
                     },
                 },
                 request.max_buffer,
@@ -5271,6 +5273,15 @@ where
         )?;
         let sync_input = javascript_child_process_sync_input_bytes(request.options.input.as_ref())?;
         let request = javascript_child_process_request_for_redirect(request, redirect.as_ref());
+        let timeout_deadline = request
+            .options
+            .timeout
+            .map(|timeout_ms| Instant::now() + Duration::from_millis(timeout_ms));
+        let timeout_signal = request
+            .options
+            .kill_signal
+            .clone()
+            .unwrap_or_else(|| String::from("SIGTERM"));
         let spawned = self.spawn_javascript_child_process(vm_id, process_id, request)?;
         let child_process_id = spawned
             .get("childId")
@@ -5306,10 +5317,32 @@ where
         let mut stderr = Vec::new();
         let mut max_buffer_exceeded = false;
         let mut kill_sent = false;
+        let mut timed_out = false;
 
         let exit_code = loop {
+            let wait_ms = if let Some(deadline) = timeout_deadline {
+                let now = Instant::now();
+                if now >= deadline {
+                    if !kill_sent {
+                        timed_out = true;
+                        self.kill_javascript_child_process(
+                            vm_id,
+                            process_id,
+                            &child_process_id,
+                            &timeout_signal,
+                        )?;
+                        kill_sent = true;
+                    }
+                    0
+                } else {
+                    u64::try_from(deadline.saturating_duration_since(now).as_millis().min(50))
+                        .unwrap_or(50)
+                }
+            } else {
+                50
+            };
             let event =
-                self.poll_javascript_child_process(vm_id, process_id, &child_process_id, 50)?;
+                self.poll_javascript_child_process(vm_id, process_id, &child_process_id, wait_ms)?;
             if event.is_null() {
                 continue;
             }
@@ -5374,6 +5407,8 @@ where
             "stdout": String::from_utf8_lossy(&stdout),
             "stderr": String::from_utf8_lossy(&stderr),
             "code": exit_code,
+            "signal": if timed_out { Value::String(timeout_signal) } else { Value::Null },
+            "timedOut": timed_out,
             "maxBufferExceeded": max_buffer_exceeded,
         }))
     }
@@ -5777,6 +5812,15 @@ where
         )?;
         let sync_input = javascript_child_process_sync_input_bytes(request.options.input.as_ref())?;
         let request = javascript_child_process_request_for_redirect(request, redirect.as_ref());
+        let timeout_deadline = request
+            .options
+            .timeout
+            .map(|timeout_ms| Instant::now() + Duration::from_millis(timeout_ms));
+        let timeout_signal = request
+            .options
+            .kill_signal
+            .clone()
+            .unwrap_or_else(|| String::from("SIGTERM"));
         let spawned = self.spawn_descendant_javascript_child_process(
             vm_id,
             process_id,
@@ -5832,14 +5876,37 @@ where
         let mut stderr = Vec::new();
         let mut max_buffer_exceeded = false;
         let mut kill_sent = false;
+        let mut timed_out = false;
 
         let exit_code = loop {
+            let wait_ms = if let Some(deadline) = timeout_deadline {
+                let now = Instant::now();
+                if now >= deadline {
+                    if !kill_sent {
+                        timed_out = true;
+                        self.kill_descendant_javascript_child_process(
+                            vm_id,
+                            process_id,
+                            current_process_path,
+                            &child_process_id,
+                            &timeout_signal,
+                        )?;
+                        kill_sent = true;
+                    }
+                    0
+                } else {
+                    u64::try_from(deadline.saturating_duration_since(now).as_millis().min(50))
+                        .unwrap_or(50)
+                }
+            } else {
+                50
+            };
             let event = self.poll_descendant_javascript_child_process(
                 vm_id,
                 process_id,
                 current_process_path,
                 &child_process_id,
-                50,
+                wait_ms,
             )?;
             if event.is_null() {
                 continue;
@@ -5907,6 +5974,8 @@ where
             "stdout": String::from_utf8_lossy(&stdout),
             "stderr": String::from_utf8_lossy(&stderr),
             "code": exit_code,
+            "signal": if timed_out { Value::String(timeout_signal) } else { Value::Null },
+            "timedOut": timed_out,
             "maxBufferExceeded": max_buffer_exceeded,
         }))
     }

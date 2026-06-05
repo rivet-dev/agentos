@@ -15,7 +15,7 @@ use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
 /*
@@ -86,6 +86,10 @@ struct TestJavascriptChildProcessSpawnOptions {
     internal_bootstrap_env: BTreeMap<String, String>,
     #[serde(default)]
     shell: bool,
+    #[serde(default)]
+    timeout: Option<u64>,
+    #[serde(default, rename = "killSignal")]
+    kill_signal: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,6 +120,10 @@ struct TestLegacyJavascriptChildProcessSpawnOptions {
     shell: bool,
     #[serde(default, rename = "maxBuffer")]
     max_buffer: Option<usize>,
+    #[serde(default)]
+    timeout: Option<u64>,
+    #[serde(default, rename = "killSignal")]
+    kill_signal: Option<String>,
 }
 
 enum HostChildOutputEvent {
@@ -329,6 +337,36 @@ impl HostChildProcessHarness {
         }
         child.stdin.take();
 
+        if let Some(timeout_ms) = request.options.timeout {
+            let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+            loop {
+                match child
+                    .try_wait()
+                    .map_err(|error| format!("try_wait for {} failed: {error}", request.command))?
+                {
+                    Some(_) => break,
+                    None if Instant::now() >= deadline => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        let signal = request
+                            .options
+                            .kill_signal
+                            .clone()
+                            .unwrap_or_else(|| String::from("SIGTERM"));
+                        return Ok(json!({
+                            "stdout": "",
+                            "stderr": "",
+                            "code": 1,
+                            "signal": signal,
+                            "timedOut": true,
+                            "maxBufferExceeded": false,
+                        }));
+                    }
+                    None => thread::sleep(Duration::from_millis(5)),
+                }
+            }
+        }
+
         let output = child
             .wait_with_output()
             .map_err(|error| format!("wait_with_output for {} failed: {error}", request.command))?;
@@ -343,6 +381,8 @@ impl HostChildProcessHarness {
             "stdout": stdout,
             "stderr": stderr,
             "code": output.status.code().unwrap_or(1),
+            "signal": Value::Null,
+            "timedOut": false,
             "maxBufferExceeded": max_buffer_exceeded,
         }))
     }
@@ -557,6 +597,8 @@ fn parse_test_child_process_spawn_request(
             env: parsed_options.env,
             internal_bootstrap_env: BTreeMap::new(),
             shell: parsed_options.shell,
+            timeout: parsed_options.timeout,
+            kill_signal: parsed_options.kill_signal,
         },
     })
 }
@@ -2356,6 +2398,11 @@ const syncPiped = childProcess.spawnSync("/bin/cat", [], {
   input: Buffer.from("alpha-sync"),
 });
 const syncError = childProcess.spawnSync("/bin/cat", ["definitely-missing-agentos-file"]);
+const syncTimeout = childProcess.spawnSync("/bin/sh", ["-c", "sleep 2"], {
+  timeout: 50,
+  killSignal: "SIGTERM",
+  encoding: "utf8",
+});
 const stdinDestroyChild = childProcess.spawn("/bin/cat", [], {
   stdio: ["pipe", "pipe", "pipe"],
 });
@@ -2478,6 +2525,12 @@ console.log(JSON.stringify({
   syncErrorStatus: syncError.status,
   syncErrorStdoutBase64: Buffer.from(syncError.stdout ?? []).toString("base64"),
   syncErrorStderrBase64: Buffer.from(syncError.stderr ?? []).toString("base64"),
+  syncTimeoutStatus: syncTimeout.status,
+  syncTimeoutSignal: syncTimeout.signal,
+  syncTimeoutErrorCode: syncTimeout.error?.code,
+  syncTimeoutErrorMessage: syncTimeout.error?.message,
+  syncTimeoutStdout: syncTimeout.stdout,
+  syncTimeoutStderr: syncTimeout.stderr,
   stdinDestroyStatus,
   stdinCallbackCode: stdinCallbackResult.code,
   stdinCallbackSignal: stdinCallbackResult.signal,

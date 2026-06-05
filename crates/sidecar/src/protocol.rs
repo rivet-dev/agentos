@@ -3338,6 +3338,10 @@ pub struct JavascriptChildProcessSpawnOptions {
     pub detached: bool,
     #[serde(default)]
     pub stdio: Vec<String>,
+    #[serde(default)]
+    pub timeout: Option<u64>,
+    #[serde(rename = "killSignal", default)]
+    pub kill_signal: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

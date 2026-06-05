@@ -4055,6 +4055,11 @@ function createRpcBackedChildProcessModule(fromGuestDir = '/') {
     }
     return error;
   };
+  const createSpawnSyncTimeoutError = (command) => {
+    const error = new Error(`spawnSync ${command} ETIMEDOUT`);
+    error.code = 'ETIMEDOUT';
+    return error;
+  };
   const createSpawnSyncResult = (pid, stdout, stderr, exitCode, signal, error, encoding) => {
     const encodedStdout = encodeChildProcessOutput(stdout, encoding);
     const encodedStderr = encodeChildProcessOutput(stderr, encoding);
@@ -4099,12 +4104,16 @@ function createRpcBackedChildProcessModule(fromGuestDir = '/') {
     const startedAt = Date.now();
     let exitCode = null;
     let signal = null;
+    let error = null;
     while (exitCode == null && signal == null) {
       if (
         normalizedOptions.timeout != null &&
         Date.now() - startedAt > normalizedOptions.timeout
       ) {
         callKill(child.childId, normalizedOptions.killSignal);
+        signal = normalizedOptions.killSignal;
+        error = createSpawnSyncTimeoutError(command);
+        break;
       }
 
       const event = callPoll(child.childId, RPC_POLL_WAIT_MS);
@@ -4131,7 +4140,7 @@ function createRpcBackedChildProcessModule(fromGuestDir = '/') {
       stderrBuffer,
       exitCode,
       signal,
-      null,
+      error,
       encoding,
     );
   };

@@ -109,6 +109,10 @@ struct LegacyJavascriptChildProcessSpawnOptions {
     stdio: Vec<String>,
     #[serde(default, rename = "maxBuffer")]
     max_buffer: Option<usize>,
+    #[serde(default)]
+    timeout: Option<u64>,
+    #[serde(default, rename = "killSignal")]
+    kill_signal: Option<String>,
 }
 
 #[derive(Debug)]
@@ -181,6 +185,8 @@ pub(crate) fn parse_javascript_child_process_spawn_request(
                 shell: parsed_options.shell,
                 detached: parsed_options.detached,
                 stdio: parsed_options.stdio,
+                timeout: parsed_options.timeout,
+                kill_signal: parsed_options.kill_signal,
             },
         },
         parsed_options.max_buffer,
