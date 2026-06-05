@@ -21109,10 +21109,12 @@ ${headerLines}\r
     return emitEventRecords(emitter, metaEvent, args);
   }
   function cloneEventListeners(emitter, event) {
+    ensureEventEmitterInitialized(emitter);
     const listeners = emitter._events[event];
     return Array.isArray(listeners) ? listeners.slice() : [];
   }
   function removeEventListenerRecord(emitter, event, listener, onceOnly = false) {
+    ensureEventEmitterInitialized(emitter);
     const listeners = emitter._events[event];
     if (!Array.isArray(listeners) || listeners.length === 0) {
       return emitter;
@@ -21248,6 +21250,18 @@ ${headerLines}\r
     target._maxListeners = eventsDefaultMaxListeners;
     target._maxListenersWarned = /* @__PURE__ */ new Set();
   }
+  function ensureEventEmitterInitialized(target) {
+    if (!target || (typeof target !== "object" && typeof target !== "function")) {
+      return;
+    }
+    if (typeof target._events === "undefined") {
+      initializeEventEmitter(target);
+      return;
+    }
+    if (!(target._maxListenersWarned instanceof Set)) {
+      target._maxListenersWarned = /* @__PURE__ */ new Set();
+    }
+  }
   function createMaxListenersExceededWarning(emitter, event, total) {
     const maxListeners = Number.isFinite(emitter._maxListeners) ? emitter._maxListeners : eventsDefaultMaxListeners;
     const warning = new Error(
@@ -21260,6 +21274,7 @@ ${headerLines}\r
     return warning;
   }
   function maybeWarnEventEmitterListeners(emitter, event, total) {
+    ensureEventEmitterInitialized(emitter);
     if (!(emitter._maxListenersWarned instanceof Set)) {
       emitter._maxListenersWarned = /* @__PURE__ */ new Set();
     }
@@ -21277,6 +21292,7 @@ ${headerLines}\r
     }
   }
   function addEventListenerRecord(emitter, event, record, prepend = false) {
+    ensureEventEmitterInitialized(emitter);
     const listeners = emitter._events[event] ?? [];
     if (prepend) {
       listeners.unshift(record);
@@ -21346,6 +21362,7 @@ ${headerLines}\r
     return removeEventListenerRecord(this, String(event), listener);
   };
   EventEmitter.prototype.removeAllListeners = function(event) {
+    ensureEventEmitterInitialized(this);
     if (typeof event === "undefined") {
       for (const key of Object.keys(this._events)) {
         if (key === "removeListener") {
@@ -21380,13 +21397,16 @@ ${headerLines}\r
     return topLevelEventListenerCount(this, String(event));
   };
   EventEmitter.prototype.eventNames = function() {
+    ensureEventEmitterInitialized(this);
     return Object.keys(this._events);
   };
   EventEmitter.prototype.setMaxListeners = function(n) {
+    ensureEventEmitterInitialized(this);
     this._maxListeners = Number(n);
     return this;
   };
   EventEmitter.prototype.getMaxListeners = function() {
+    ensureEventEmitterInitialized(this);
     return Number.isFinite(this._maxListeners) ? this._maxListeners : eventsDefaultMaxListeners;
   };
   EventEmitter.once = once;
