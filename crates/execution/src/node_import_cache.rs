@@ -3148,6 +3148,52 @@ function invokeFsCallback(callback, error, ...results) {
   queueMicrotask(() => callback(error, ...results));
 }
 
+function readKernelStdinForFs(target, buffer, callback) {
+  if (target.length === 0) {
+    invokeFsCallback(callback, null, 0, buffer);
+    return;
+  }
+
+  let idleDelayMs = 1;
+  const attempt = () => {
+    requireFsSyncRpcBridge()
+      .call('__kernel_stdin_read', [target.length, 5])
+      .then(
+        (payload) => {
+          if (payload == null) {
+            const nextDelayMs = idleDelayMs;
+            idleDelayMs = Math.min(idleDelayMs * 2, 25);
+            setTimeout(attempt, nextDelayMs);
+            return;
+          }
+          if (payload && payload.done === true) {
+            invokeFsCallback(callback, null, 0, buffer);
+            return;
+          }
+          const dataBase64 =
+            payload &&
+            typeof payload === 'object' &&
+            typeof payload.dataBase64 === 'string'
+              ? payload.dataBase64
+              : '';
+          if (!dataBase64) {
+            const nextDelayMs = idleDelayMs;
+            idleDelayMs = Math.min(idleDelayMs * 2, 25);
+            setTimeout(attempt, nextDelayMs);
+            return;
+          }
+          idleDelayMs = 1;
+          const chunk = Buffer.from(dataBase64, 'base64');
+          const bytesRead = Math.min(target.length, chunk.byteLength);
+          chunk.copy(target.target, target.offset, 0, bytesRead);
+          invokeFsCallback(callback, null, bytesRead, buffer);
+        },
+        (error) => invokeFsCallback(callback, error),
+      );
+  };
+  attempt();
+}
+
 function createFsWatchUnavailableError(methodName) {
   const error = new Error(
     `Agent OS ${methodName} is unavailable because the kernel has no file-watching API`,
@@ -3214,10 +3260,16 @@ function createRpcBackedFsCallbacks(fromGuestDir = '/') {
 
       const done = requireFsCallback(callback, 'fs.read');
       const target = normalizeFsReadTarget(buffer, offset, length);
+      const normalizedFd = normalizeFsFd(fd);
+      const normalizedPosition = normalizeFsPosition(position);
+      if (normalizedFd === 0 && normalizedPosition == null) {
+        readKernelStdinForFs(target, buffer, done);
+        return;
+      }
       call('fs.read', [
-        normalizeFsFd(fd),
+        normalizedFd,
         target.length,
-        normalizeFsPosition(position),
+        normalizedPosition,
       ]).then(
         (payload) => {
           const chunk = decodeFsBytesPayload(payload, 'fs.read result');
@@ -4034,9 +4086,9 @@ function createRpcBackedChildProcessModule(fromGuestDir = '/') {
   const callKill = (childId, signal) =>
     bridge().callSync('child_process.kill', [childId, normalizeChildProcessSignal(signal)]);
   const callWriteStdin = (childId, chunk) =>
-    bridge().call('child_process.write_stdin', [childId, toGuestBufferView(chunk, 'stdin chunk')]);
+    bridge().callSync('child_process.write_stdin', [childId, toGuestBufferView(chunk, 'stdin chunk')]);
   const callCloseStdin = (childId) =>
-    bridge().call('child_process.close_stdin', [childId]);
+    bridge().callSync('child_process.close_stdin', [childId]);
   const encodeChildProcessOutput = (buffer, encoding) =>
     encoding ? buffer.toString(encoding) : buffer;
   const createChildProcessExecError = (subject, exitCode, signal, stdout, stderr) => {
@@ -4156,17 +4208,21 @@ function createRpcBackedChildProcessModule(fromGuestDir = '/') {
     }
 
     _write(chunk, encoding, callback) {
-      callWriteStdin(this.childId, chunk).then(
-        () => callback(),
-        (error) => callback(error),
-      );
+      try {
+        callWriteStdin(this.childId, chunk);
+        callback();
+      } catch (error) {
+        callback(error);
+      }
     }
 
     _final(callback) {
-      callCloseStdin(this.childId).then(
-        () => callback(),
-        (error) => callback(error),
-      );
+      try {
+        callCloseStdin(this.childId);
+        callback();
+      } catch (error) {
+        callback(error);
+      }
     }
   }
 

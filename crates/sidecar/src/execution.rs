@@ -6097,6 +6097,8 @@ where
         let mut child_path = current_process_path.to_vec();
         child_path.push(child_process_id);
         let child_gone_error = || javascript_child_process_gone_error(process_id, &child_path);
+        let deadline = Instant::now() + Duration::from_millis(wait_ms);
+        let mut polled_once = false;
 
         loop {
             self.drain_queued_descendant_javascript_child_process_events(
@@ -6107,7 +6109,13 @@ where
             enum ChildPollResult {
                 Event(Box<Option<ActiveExecutionEvent>>),
                 RecoverRuntimeExit,
+                Timeout,
             }
+            let wait = if wait_ms == 0 {
+                Duration::ZERO
+            } else {
+                deadline.saturating_duration_since(Instant::now())
+            };
             let poll_result = {
                 let Some(vm) = self.vms.get_mut(vm_id) else {
                     return Ok(Value::Null);
@@ -6122,11 +6130,11 @@ where
                 };
                 if let Some(event) = child.pending_execution_events.pop_front() {
                     ChildPollResult::Event(Box::new(Some(event)))
+                } else if polled_once && wait.is_zero() {
+                    ChildPollResult::Timeout
                 } else {
-                    match child
-                        .execution
-                        .poll_event_blocking(Duration::from_millis(wait_ms))
-                    {
+                    polled_once = true;
+                    match child.execution.poll_event_blocking(wait) {
                         Ok(Some(event)) => ChildPollResult::Event(Box::new(Some(event))),
                         Ok(None) => ChildPollResult::RecoverRuntimeExit,
                         Err(SidecarError::Execution(message))
@@ -6145,13 +6153,14 @@ where
             };
             let event = match poll_result {
                 ChildPollResult::Event(event) => *event,
+                ChildPollResult::Timeout => return Ok(Value::Null),
                 ChildPollResult::RecoverRuntimeExit => self
                     .recover_descendant_runtime_child_process_event(
                         vm_id,
                         process_id,
                         current_process_path,
                         child_process_id,
-                        wait_ms,
+                        wait.as_millis().try_into().unwrap_or(u64::MAX),
                     )?,
             };
 
@@ -13050,7 +13059,14 @@ where
         | "_loadPolyfill"
         | "__load_polyfill"
         | "_moduleFormat" => service_javascript_internal_bridge_sync_rpc(process, request),
-        "__kernel_stdin_read" => service_javascript_kernel_stdin_sync_rpc(kernel, process, request),
+        "__kernel_stdin_read" => match &process.execution {
+            ActiveExecution::Javascript(execution) => execution
+                .read_kernel_stdin_sync_rpc(request)
+                .map_err(|error| SidecarError::Execution(error.to_string())),
+            ActiveExecution::Python(_) | ActiveExecution::Wasm(_) | ActiveExecution::Tool(_) => {
+                service_javascript_kernel_stdin_sync_rpc(kernel, process, request)
+            }
+        },
         "__kernel_stdio_write" => {
             service_javascript_kernel_stdio_write_sync_rpc(kernel, process, request)
         }
@@ -15615,6 +15631,9 @@ pub(crate) fn write_kernel_process_stdin(
     process: &mut ActiveProcess,
     chunk: &[u8],
 ) -> Result<(), SidecarError> {
+    if process.runtime == GuestRuntimeKind::JavaScript {
+        return Ok(());
+    }
     let Some(writer_fd) = process.kernel_stdin_writer_fd else {
         return Ok(());
     };

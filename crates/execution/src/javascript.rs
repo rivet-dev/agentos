@@ -1083,6 +1083,17 @@ impl JavascriptExecution {
         self.kernel_stdin.close();
     }
 
+    pub fn read_kernel_stdin_sync_rpc(
+        &self,
+        request: &JavascriptSyncRpcRequest,
+    ) -> Result<Value, JavascriptExecutionError> {
+        if request.method != "__kernel_stdin_read" {
+            return Ok(Value::Null);
+        }
+
+        Ok(self.kernel_stdin.read(&request.args))
+    }
+
     pub(crate) fn handle_kernel_stdin_sync_rpc(
         &mut self,
         request: &JavascriptSyncRpcRequest,
