@@ -1734,7 +1734,7 @@ console.log(JSON.stringify({
             (String::from("resource.cpu_count"), String::from("2")),
             (
                 String::from("resource.max_wasm_memory_bytes"),
-                String::from((64_u64 * 1024 * 1024).to_string()),
+                (64_u64 * 1024 * 1024).to_string(),
             ),
         ]),
     );
@@ -1750,7 +1750,7 @@ console.log(JSON.stringify({
             (String::from("resource.cpu_count"), String::from("5")),
             (
                 String::from("resource.max_wasm_memory_bytes"),
-                String::from((256_u64 * 1024 * 1024).to_string()),
+                (256_u64 * 1024 * 1024).to_string(),
             ),
         ]),
     );
