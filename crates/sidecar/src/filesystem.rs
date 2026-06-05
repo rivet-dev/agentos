@@ -1321,7 +1321,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     let parent = open_mapped_runtime_parent_beneath(&mapped_host, "fs.symlink")?;
                     let host_path = parent.host_path.join(&parent.child_name);
                     remove_shadow_path_if_exists(&host_path, link_path)?;
-                    symlink(&target, mapped_runtime_parent_child_path(&parent)).map_err(
+                    symlink(target, mapped_runtime_parent_child_path(&parent)).map_err(
                         |error| {
                             SidecarError::Io(format!(
                             "failed to create mapped guest symlink {} -> {} ({target}): {error}",
