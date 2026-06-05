@@ -864,6 +864,17 @@ pub(crate) struct JavascriptSyncRpcServiceRequest<'a, B> {
     pub(crate) network_counts: NetworkResourceCounts,
 }
 
+struct LoopbackHttpResponseWaitRequest<'a, B> {
+    bridge: &'a SharedBridge<B>,
+    vm_id: &'a str,
+    dns: &'a VmDnsConfig,
+    socket_paths: &'a JavascriptSocketPathContext,
+    kernel: &'a mut SidecarKernel,
+    process: &'a mut ActiveProcess,
+    resource_limits: &'a ResourceLimits,
+    request_key: (u64, u64),
+}
+
 impl ActiveTcpSocket {
     fn connect<B>(request: ActiveTcpConnectRequest<'_, B>) -> Result<Self, SidecarError>
     where
@@ -3320,16 +3331,16 @@ where
                 "request": request_json,
             }),
         )?;
-        let response_json = wait_for_loopback_http_response(
-            &self.bridge,
-            &vm_id,
-            &vm.dns,
-            &socket_paths,
-            &mut vm.kernel,
+        let response_json = wait_for_loopback_http_response(LoopbackHttpResponseWaitRequest {
+            bridge: &self.bridge,
+            vm_id: &vm_id,
+            dns: &vm.dns,
+            socket_paths: &socket_paths,
+            kernel: &mut vm.kernel,
             process,
-            &resource_limits,
-            (server_id, request_id),
-        )?;
+            resource_limits: &resource_limits,
+            request_key: (server_id, request_id),
+        })?;
 
         Ok(DispatchResult {
             response: self.respond(
@@ -15380,19 +15391,22 @@ fn issue_outbound_http_request(
 }
 
 fn wait_for_loopback_http_response<B>(
-    bridge: &SharedBridge<B>,
-    vm_id: &str,
-    dns: &VmDnsConfig,
-    socket_paths: &JavascriptSocketPathContext,
-    kernel: &mut SidecarKernel,
-    process: &mut ActiveProcess,
-    resource_limits: &ResourceLimits,
-    request_key: (u64, u64),
+    request: LoopbackHttpResponseWaitRequest<'_, B>,
 ) -> Result<String, SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let LoopbackHttpResponseWaitRequest {
+        bridge,
+        vm_id,
+        dns,
+        socket_paths,
+        kernel,
+        process,
+        resource_limits,
+        request_key,
+    } = request;
     let deadline = Instant::now() + HTTP_LOOPBACK_REQUEST_TIMEOUT;
     loop {
         if let Some(response) = process
