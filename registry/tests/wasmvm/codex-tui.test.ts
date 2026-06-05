@@ -198,8 +198,11 @@ describeIf(hasWasmBinaries, 'codex TUI (WasmVM) - interactive', { timeout: 30_00
     await harness.type('codex\n');
     await harness.waitFor('Welcome to Codex', 1, 10_000);
 
-    // Type characters — they should appear in the input area
-    await harness.type('hello');
+    // Type characters as individual keystrokes so this exercises terminal input,
+    // not paste buffering.
+    for (const character of 'hello') {
+      await harness.type(character);
+    }
     await harness.waitFor('hello');
 
     const screen = harness.screenshotTrimmed();
