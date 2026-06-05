@@ -14121,10 +14121,315 @@ fn service_javascript_crypto_subtle_sync_rpc(
                 })?,
             ))
         }
+        "generateKey" => {
+            let algorithm = parsed.get("algorithm").ok_or_else(|| {
+                SidecarError::InvalidState(String::from(
+                    "crypto.subtle.generateKey missing algorithm",
+                ))
+            })?;
+            let name =
+                javascript_crypto_subtle_algorithm_name(algorithm, "crypto.subtle.generateKey")?;
+            if !matches!(name, "AES-GCM" | "AES-CBC" | "AES-CTR" | "AES-KW") {
+                return Err(SidecarError::InvalidState(format!(
+                    "Unsupported key algorithm: {name}"
+                )));
+            }
+            let length_bits = algorithm
+                .get("length")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    SidecarError::InvalidState(String::from(
+                        "crypto.subtle.generateKey AES algorithm requires length",
+                    ))
+                })?;
+            if length_bits % 8 != 0 {
+                return Err(SidecarError::InvalidState(String::from(
+                    "crypto.subtle.generateKey length must be byte-aligned",
+                )));
+            }
+            let length_bytes = usize::try_from(length_bits / 8).map_err(|_| {
+                SidecarError::InvalidState(String::from(
+                    "crypto.subtle.generateKey length is too large",
+                ))
+            })?;
+            let mut raw = vec![0_u8; length_bytes];
+            rand_bytes(&mut raw).map_err(javascript_crypto_openssl_error)?;
+            let key = javascript_crypto_serialize_subtle_secret_key(
+                &raw,
+                javascript_crypto_normalize_subtle_secret_algorithm(algorithm.clone(), &raw)?,
+                parsed
+                    .get("extractable")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                parsed.get("usages").cloned().unwrap_or_else(|| json!([])),
+            )?;
+            Ok(Value::String(
+                serde_json::to_string(&json!({ "key": key })).map_err(|error| {
+                    SidecarError::InvalidState(format!(
+                        "serialize crypto.subtle generated key: {error}"
+                    ))
+                })?,
+            ))
+        }
+        "importKey" => {
+            let format = parsed
+                .get("format")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    SidecarError::InvalidState(String::from(
+                        "crypto.subtle.importKey missing format",
+                    ))
+                })?;
+            if format != "raw" {
+                return Err(SidecarError::InvalidState(format!(
+                    "Unsupported import format: {format}"
+                )));
+            }
+            let key_data = parsed
+                .get("keyData")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    SidecarError::InvalidState(String::from(
+                        "crypto.subtle.importKey missing keyData",
+                    ))
+                })?;
+            let raw = base64::engine::general_purpose::STANDARD
+                .decode(key_data)
+                .map_err(|error| {
+                    SidecarError::InvalidState(format!(
+                        "crypto.subtle.importKey keyData base64: {error}"
+                    ))
+                })?;
+            let algorithm = parsed.get("algorithm").ok_or_else(|| {
+                SidecarError::InvalidState(String::from(
+                    "crypto.subtle.importKey missing algorithm",
+                ))
+            })?;
+            let key = javascript_crypto_serialize_subtle_secret_key(
+                &raw,
+                javascript_crypto_normalize_subtle_secret_algorithm(algorithm.clone(), &raw)?,
+                parsed
+                    .get("extractable")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                parsed.get("usages").cloned().unwrap_or_else(|| json!([])),
+            )?;
+            Ok(Value::String(
+                serde_json::to_string(&json!({ "key": key })).map_err(|error| {
+                    SidecarError::InvalidState(format!(
+                        "serialize crypto.subtle imported key: {error}"
+                    ))
+                })?,
+            ))
+        }
+        "exportKey" => {
+            let format = parsed
+                .get("format")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    SidecarError::InvalidState(String::from(
+                        "crypto.subtle.exportKey missing format",
+                    ))
+                })?;
+            if format != "raw" {
+                return Err(SidecarError::InvalidState(format!(
+                    "Unsupported export format: {format}"
+                )));
+            }
+            let raw = javascript_crypto_subtle_key_raw(
+                parsed.get("key").ok_or_else(|| {
+                    SidecarError::InvalidState(String::from("crypto.subtle.exportKey missing key"))
+                })?,
+                "crypto.subtle.exportKey key",
+            )?;
+            Ok(Value::String(
+                serde_json::to_string(&json!({
+                    "data": base64::engine::general_purpose::STANDARD.encode(raw),
+                }))
+                .map_err(|error| {
+                    SidecarError::InvalidState(format!("serialize crypto.subtle export: {error}"))
+                })?,
+            ))
+        }
+        "encrypt" | "decrypt" => service_javascript_crypto_subtle_aes_crypt_sync_rpc(op, &parsed),
         _ => Err(SidecarError::InvalidState(format!(
             "Unsupported subtle operation: {op}"
         ))),
     }
+}
+
+fn javascript_crypto_subtle_algorithm_name<'a>(
+    algorithm: &'a Value,
+    label: &str,
+) -> Result<&'a str, SidecarError> {
+    if let Some(name) = algorithm.as_str() {
+        return Ok(name);
+    }
+    algorithm
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| SidecarError::InvalidState(format!("{label} algorithm missing name")))
+}
+
+fn javascript_crypto_normalize_subtle_secret_algorithm(
+    algorithm: Value,
+    raw: &[u8],
+) -> Result<Value, SidecarError> {
+    let mut object = match algorithm {
+        Value::String(name) => {
+            let mut object = Map::new();
+            object.insert(String::from("name"), Value::String(name));
+            object
+        }
+        Value::Object(object) => object,
+        _ => {
+            return Err(SidecarError::InvalidState(String::from(
+                "crypto.subtle secret algorithm must be a string or object",
+            )));
+        }
+    };
+    let name = object
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            SidecarError::InvalidState(String::from("crypto.subtle secret algorithm missing name"))
+        })?
+        .to_string();
+    if matches!(name.as_str(), "AES-GCM" | "AES-CBC" | "AES-CTR" | "AES-KW")
+        && !object.contains_key("length")
+    {
+        object.insert(String::from("length"), json!(raw.len() * 8));
+    }
+    Ok(Value::Object(object))
+}
+
+fn javascript_crypto_serialize_subtle_secret_key(
+    raw: &[u8],
+    algorithm: Value,
+    extractable: bool,
+    usages: Value,
+) -> Result<Value, SidecarError> {
+    let raw_base64 = base64::engine::general_purpose::STANDARD.encode(raw);
+    let source_key_object_data = javascript_crypto_serialize_sandbox_key_object(
+        &JavascriptCryptoKeyMaterial::Secret(raw.to_vec()),
+    )?;
+    Ok(json!({
+        "type": "secret",
+        "algorithm": algorithm,
+        "extractable": extractable,
+        "usages": usages,
+        "_raw": raw_base64,
+        "_sourceKeyObjectData": source_key_object_data,
+    }))
+}
+
+fn javascript_crypto_subtle_key_raw(key: &Value, label: &str) -> Result<Vec<u8>, SidecarError> {
+    let raw = key.get("_raw").and_then(Value::as_str).ok_or_else(|| {
+        SidecarError::InvalidState(format!("{label} must be a raw secret CryptoKey"))
+    })?;
+    base64::engine::general_purpose::STANDARD
+        .decode(raw)
+        .map_err(|error| SidecarError::InvalidState(format!("{label} raw base64: {error}")))
+}
+
+fn service_javascript_crypto_subtle_aes_crypt_sync_rpc(
+    op: &str,
+    parsed: &Value,
+) -> Result<Value, SidecarError> {
+    let algorithm = parsed.get("algorithm").ok_or_else(|| {
+        SidecarError::InvalidState(format!("crypto.subtle.{op} missing algorithm"))
+    })?;
+    let name = javascript_crypto_subtle_algorithm_name(algorithm, &format!("crypto.subtle.{op}"))?;
+    if name != "AES-GCM" {
+        return Err(SidecarError::InvalidState(format!(
+            "Unsupported subtle AES operation algorithm: {name}"
+        )));
+    }
+    let key = javascript_crypto_subtle_key_raw(
+        parsed
+            .get("key")
+            .ok_or_else(|| SidecarError::InvalidState(format!("crypto.subtle.{op} missing key")))?,
+        &format!("crypto.subtle.{op} key"),
+    )?;
+    let iv = algorithm.get("iv").and_then(Value::as_str).ok_or_else(|| {
+        SidecarError::InvalidState(format!("crypto.subtle.{op} AES-GCM missing iv"))
+    })?;
+    let iv = base64::engine::general_purpose::STANDARD
+        .decode(iv)
+        .map_err(|error| {
+            SidecarError::InvalidState(format!("crypto.subtle.{op} iv base64: {error}"))
+        })?;
+    let data = parsed
+        .get("data")
+        .and_then(Value::as_str)
+        .ok_or_else(|| SidecarError::InvalidState(format!("crypto.subtle.{op} missing data")))?;
+    let mut data = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|error| {
+            SidecarError::InvalidState(format!("crypto.subtle.{op} data base64: {error}"))
+        })?;
+    let tag_len = javascript_crypto_subtle_aes_gcm_tag_len(algorithm)?;
+    let mut options = Map::new();
+    options.insert(String::from("authTagLength"), json!(tag_len));
+    if let Some(additional_data) = algorithm.get("additionalData").and_then(Value::as_str) {
+        options.insert(
+            String::from("aad"),
+            Value::String(additional_data.to_string()),
+        );
+    }
+    let decrypt = op == "decrypt";
+    if decrypt {
+        if data.len() < tag_len {
+            return Err(SidecarError::InvalidState(String::from(
+                "crypto.subtle.decrypt AES-GCM data shorter than auth tag",
+            )));
+        }
+        let auth_tag = data.split_off(data.len() - tag_len);
+        options.insert(
+            String::from("authTag"),
+            Value::String(base64::engine::general_purpose::STANDARD.encode(auth_tag)),
+        );
+    }
+    let cipher_name = format!("aes-{}-gcm", key.len() * 8);
+    let mut context = javascript_crypto_build_cipher_context(
+        &cipher_name,
+        &key,
+        Some(&iv),
+        decrypt,
+        Some(&Value::Object(options)),
+    )?;
+    let mut output = javascript_crypto_cipher_update(&mut context, &data)?;
+    output.extend(javascript_crypto_cipher_finalize(&mut context)?);
+    if !decrypt {
+        let mut auth_tag = vec![0_u8; tag_len];
+        context
+            .get_tag(&mut auth_tag)
+            .map_err(javascript_crypto_openssl_error)?;
+        output.extend(auth_tag);
+    }
+    Ok(Value::String(
+        serde_json::to_string(&json!({
+            "data": base64::engine::general_purpose::STANDARD.encode(output),
+        }))
+        .map_err(|error| {
+            SidecarError::InvalidState(format!("serialize crypto.subtle {op}: {error}"))
+        })?,
+    ))
+}
+
+fn javascript_crypto_subtle_aes_gcm_tag_len(algorithm: &Value) -> Result<usize, SidecarError> {
+    let tag_bits = algorithm
+        .get("tagLength")
+        .and_then(Value::as_u64)
+        .unwrap_or(128);
+    if !tag_bits.is_multiple_of(8) {
+        return Err(SidecarError::InvalidState(String::from(
+            "crypto.subtle AES-GCM tagLength must be byte-aligned",
+        )));
+    }
+    usize::try_from(tag_bits / 8).map_err(|_| {
+        SidecarError::InvalidState(String::from("crypto.subtle AES-GCM tagLength too large"))
+    })
 }
 
 fn service_javascript_crypto_cipheriv_inner(
