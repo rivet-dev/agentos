@@ -3794,7 +3794,7 @@ where
             if child_path.is_empty() {
                 loop {
                     enum ProcessPollResult {
-                        Event(Option<ActiveExecutionEvent>),
+                        Event(Box<Option<ActiveExecutionEvent>>),
                         RecoverClosedChannel,
                     }
                     let poll_result = {
@@ -3805,10 +3805,10 @@ where
                             break;
                         };
                         if let Some(event) = process.pending_execution_events.pop_front() {
-                            ProcessPollResult::Event(Some(event))
+                            ProcessPollResult::Event(Box::new(Some(event)))
                         } else {
                             match process.execution.poll_event_blocking(Duration::ZERO) {
-                                Ok(event) => ProcessPollResult::Event(event),
+                                Ok(event) => ProcessPollResult::Event(Box::new(event)),
                                 Err(SidecarError::Execution(message))
                                     if (process.runtime == GuestRuntimeKind::JavaScript
                                         && closed_javascript_event_channel(&message))
@@ -3824,7 +3824,7 @@ where
                         }
                     };
                     let event = match poll_result {
-                        ProcessPollResult::Event(event) => event,
+                        ProcessPollResult::Event(event) => *event,
                         ProcessPollResult::RecoverClosedChannel => {
                             self.recover_closed_root_runtime_process_event(vm_id, &root_process_id)?
                         }
