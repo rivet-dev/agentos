@@ -1472,7 +1472,7 @@ fn python_runtime_blocks_mapped_pyodide_cache_symlink_swap_toctou_escape() {
     let flapper = thread::spawn(move || {
         let mut swap_index = 0usize;
         while !flapper_stop.load(Ordering::Relaxed) {
-            let next_target = if swap_index % 2 == 0 {
+            let next_target = if swap_index.is_multiple_of(2) {
                 &flapper_outside_root
             } else {
                 &flapper_safe_pkg_dir
