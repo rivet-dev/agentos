@@ -5402,6 +5402,7 @@ setInterval(() => {}, 1000);
                             atime_ms: None,
                             mtime_ms: None,
                             len: None,
+                            offset: None,
                         }),
                     ))
                     .expect("dispatch stale guest filesystem request");
@@ -5514,6 +5515,7 @@ setInterval(() => {}, 1000);
                             atime_ms: None,
                             mtime_ms: None,
                             len: None,
+                            offset: None,
                         }),
                     ))
                     .expect("dispatch live guest filesystem write");
@@ -5543,6 +5545,7 @@ setInterval(() => {}, 1000);
                             atime_ms: None,
                             mtime_ms: None,
                             len: None,
+                            offset: None,
                         }),
                     ))
                     .expect("dispatch live guest filesystem read");
@@ -6957,6 +6960,7 @@ setInterval(() => {}, 1000);
                         atime_ms: None,
                         mtime_ms: None,
                         len: None,
+                        offset: None,
                     },
                 ),
                 (
@@ -6975,6 +6979,7 @@ setInterval(() => {}, 1000);
                         atime_ms: None,
                         mtime_ms: None,
                         len: None,
+                        offset: None,
                     },
                 ),
                 (
@@ -6993,6 +6998,7 @@ setInterval(() => {}, 1000);
                         atime_ms: None,
                         mtime_ms: None,
                         len: None,
+                        offset: None,
                     },
                 ),
                 (
@@ -7011,6 +7017,7 @@ setInterval(() => {}, 1000);
                         atime_ms: None,
                         mtime_ms: None,
                         len: Some(5),
+                        offset: None,
                     },
                 ),
                 (
@@ -7029,6 +7036,7 @@ setInterval(() => {}, 1000);
                         atime_ms: Some(1_700_000_000_000),
                         mtime_ms: Some(1_710_000_000_000),
                         len: None,
+                        offset: None,
                     },
                 ),
             ] {

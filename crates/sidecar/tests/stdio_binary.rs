@@ -339,6 +339,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ),
     );
@@ -371,6 +372,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ),
     );
@@ -403,6 +405,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ),
     );
@@ -434,6 +437,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ),
     );
@@ -466,6 +470,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ),
     );
@@ -498,6 +503,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ),
     );
@@ -530,6 +536,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: Some(5),
+                offset: None,
             }),
         ),
     );
@@ -562,6 +569,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 atime_ms: Some(1_700_000_000_000),
                 mtime_ms: Some(1_710_000_000_000),
                 len: None,
+                offset: None,
             }),
         ),
     );
@@ -594,6 +602,7 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ),
     );
@@ -815,6 +824,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ),
     );
@@ -898,6 +908,7 @@ fn native_sidecar_binary_supports_js_bridge_host_filesystem_access() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ),
     );

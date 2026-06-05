@@ -328,6 +328,35 @@ where
                 target: None,
             }
         }
+        GuestFilesystemOperation::Pread => {
+            sync_active_shadow_path_to_kernel(vm, &payload.path)?;
+            let offset = payload.offset.ok_or_else(|| {
+                SidecarError::InvalidState(String::from("guest filesystem pread requires offset"))
+            })?;
+            let len = payload.len.ok_or_else(|| {
+                SidecarError::InvalidState(String::from("guest filesystem pread requires len"))
+            })?;
+            let length = usize::try_from(len).map_err(|_| {
+                SidecarError::InvalidState(String::from(
+                    "guest filesystem pread len must fit within usize",
+                ))
+            })?;
+            let bytes = vm
+                .kernel
+                .pread_file(&payload.path, offset, length)
+                .map_err(kernel_error)?;
+            let (content, encoding) = encode_guest_filesystem_content(bytes);
+            GuestFilesystemResultResponse {
+                operation: payload.operation,
+                path: payload.path,
+                content: Some(content),
+                encoding: Some(encoding),
+                entries: None,
+                stat: None,
+                exists: None,
+                target: None,
+            }
+        }
         GuestFilesystemOperation::WriteFile => {
             let bytes = decode_guest_filesystem_content(
                 &payload.path,

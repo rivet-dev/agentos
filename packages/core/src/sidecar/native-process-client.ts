@@ -161,7 +161,8 @@ type GuestFilesystemOperation =
 	| "chmod"
 	| "chown"
 	| "utimes"
-	| "truncate";
+	| "truncate"
+	| "pread";
 
 export interface SidecarRegisteredToolExample {
 	description: string;
@@ -294,6 +295,7 @@ type RequestPayload =
 			atime_ms?: number;
 			mtime_ms?: number;
 			len?: number;
+			offset?: number;
 	  }
 	| {
 			type: "execute";
@@ -1799,6 +1801,22 @@ export class NativeSidecarProcessClient {
 		return decodeGuestFilesystemContent(response);
 	}
 
+	async pread(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		path: string,
+		offset: number,
+		length: number,
+	): Promise<Uint8Array> {
+		const response = await this.guestFilesystemCall(session, vm, {
+			operation: "pread",
+			path,
+			offset,
+			len: length,
+		});
+		return decodeGuestFilesystemContent(response);
+	}
+
 	async writeFile(
 		session: AuthenticatedSession,
 		vm: CreatedVm,
@@ -2919,6 +2937,7 @@ const BARE_GUEST_FILESYSTEM_OPERATION =
 		["chown", 17],
 		["utimes", 18],
 		["truncate", 19],
+		["pread", 20],
 	]);
 const BARE_PERMISSION_MODE = createBareEnumCodec<SidecarPermissionMode>([
 	["allow", 1],
@@ -3605,6 +3624,7 @@ function encodeRequestPayload(
 			writer.writeOptional(payload.atime_ms, (value) => writer.writeU64(value));
 			writer.writeOptional(payload.mtime_ms, (value) => writer.writeU64(value));
 			writer.writeOptional(payload.len, (value) => writer.writeU64(value));
+			writer.writeOptional(payload.offset, (value) => writer.writeU64(value));
 			return;
 		case "snapshot_root_filesystem":
 			writer.writeVarUint(18);
