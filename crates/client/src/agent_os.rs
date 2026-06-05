@@ -6,7 +6,7 @@
 //! and never introduce new struct fields.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -118,8 +118,6 @@ pub(crate) struct AgentOsInner {
     pub(crate) session_id: String,
     pub(crate) vm_id: String,
     pub(crate) request_counter: AtomicI64,
-    pub(crate) sidecar_request_counter: AtomicI64,
-    pub(crate) max_frame_bytes: AtomicUsize,
 
     // Process registries.
     pub(crate) processes: SccHashMap<u32, ProcessEntry>,
@@ -182,7 +180,7 @@ impl AgentOs {
             }
             None => AgentOs::get_shared_sidecar(None).await?,
         };
-        let (transport, connection_id, max_frame_bytes) = sidecar.ensure_connection().await?;
+        let (transport, connection_id, _) = sidecar.ensure_connection().await?;
 
         // 2. Open a session for this VM (connection scope) on the shared connection.
         let session = match transport
@@ -329,8 +327,6 @@ impl AgentOs {
             session_id,
             vm_id,
             request_counter: AtomicI64::new(1),
-            sidecar_request_counter: AtomicI64::new(-1),
-            max_frame_bytes: AtomicUsize::new(max_frame_bytes),
             processes: SccHashMap::new(),
             process_counter: AtomicU64::new(1),
             synthetic_pid_counter: AtomicU64::new(SYNTHETIC_PID_BASE),
