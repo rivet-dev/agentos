@@ -1091,9 +1091,7 @@ fn sandbox_client_error_to_vfs(
                 "ENOENT"
             } else if detail.contains("path is not a file") {
                 "EISDIR"
-            } else if detail.contains("destination already exists") {
-                "EEXIST"
-            } else if status == 409 {
+            } else if detail.contains("destination already exists") || status == 409 {
                 "EEXIST"
             } else if status == 400 {
                 "EINVAL"
