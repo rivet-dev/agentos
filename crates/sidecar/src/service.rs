@@ -21,8 +21,10 @@ pub(crate) use crate::execution::{
     javascript_sync_rpc_bytes_value, javascript_sync_rpc_encoding, javascript_sync_rpc_error_code,
     javascript_sync_rpc_option_bool, javascript_sync_rpc_option_u32, parse_signal,
     sanitize_javascript_child_process_internal_bootstrap_env, service_javascript_sync_rpc,
-    vm_network_resource_counts, write_kernel_process_stdin, JavascriptSyncRpcServiceRequest,
+    vm_network_resource_counts, write_kernel_process_stdin,
 };
+#[cfg(test)]
+pub(crate) use crate::execution::{runtime_child_is_alive, signal_runtime_process};
 use crate::filesystem::guest_filesystem_call as filesystem_guest_filesystem_call;
 use crate::protocol::{
     AgentSessionClosedResponse, AuthenticatedResponse, CloseAgentSessionRequest,
@@ -37,6 +39,8 @@ use crate::protocol::{
     SidecarResponseTracker, SidecarResponseTrackerError, SignalDispositionAction,
     SignalHandlerRegistration, StructuredEvent, VmLifecycleEvent, VmLifecycleState,
 };
+#[cfg(test)]
+use crate::state::ActiveExecution;
 use crate::state::{
     ActiveExecutionEvent, BridgeError, ConnectionState, JavascriptSocketFamily,
     JavascriptSocketPathContext, ProcessEventEnvelope, SessionState, SharedBridge,
@@ -59,6 +63,8 @@ use agent_os_kernel::permissions::{
     permission_glob_matches, CommandAccessRequest, EnvAccessRequest, EnvironmentOperation,
     NetworkAccessRequest, NetworkOperation, PermissionDecision,
 };
+#[cfg(test)]
+use agent_os_kernel::process_table::SIGKILL;
 // root_fs types moved to crate::vm
 use agent_os_kernel::vfs::VfsError;
 use serde::Deserialize;
@@ -215,7 +221,6 @@ where
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn queue_set_vm_permissions_result(
         &self,
         result: Result<(), SidecarError>,
@@ -410,8 +415,10 @@ where
                     "native sidecar test set_vm_permissions outcome lock poisoned",
                 ))
             })?;
-            if let Some(Some(error)) = outcomes.pop_front() {
-                return Err(error);
+            if let Some(outcome) = outcomes.pop_front() {
+                if let Some(error) = outcome {
+                    return Err(error);
+                }
             }
         }
 
@@ -1018,8 +1025,7 @@ where
         &mut self,
         request: RequestFrame,
     ) -> Result<DispatchResult, SidecarError> {
-        let inside_runtime = tokio::runtime::Handle::try_current().is_ok();
-        if matches!(request.payload, RequestPayload::DisposeVm(_)) && !inside_runtime {
+        if matches!(request.payload, RequestPayload::DisposeVm(_)) {
             return tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -1030,9 +1036,6 @@ where
         let mut future = std::pin::pin!(self.dispatch(request));
         match poll_future_once(future.as_mut()) {
             Some(result) => result,
-            None if inside_runtime => Err(SidecarError::InvalidState(String::from(
-                "dispatch_blocking cannot wait for an async sidecar request inside a Tokio runtime; use dispatch().await",
-            ))),
             None => tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -2140,17 +2143,17 @@ where
                     );
                     return Ok(());
                 };
-                service_javascript_sync_rpc(JavascriptSyncRpcServiceRequest {
-                    bridge: &self.bridge,
+                service_javascript_sync_rpc(
+                    &self.bridge,
                     vm_id,
-                    dns: &vm.dns,
-                    socket_paths: &socket_paths,
-                    kernel: &mut vm.kernel,
+                    &vm.dns,
+                    &socket_paths,
+                    &mut vm.kernel,
                     process,
-                    sync_request: &request,
-                    resource_limits: &resource_limits,
+                    &request,
+                    &resource_limits,
                     network_counts,
-                })
+                )
             }
         };
 
@@ -3611,7 +3614,7 @@ where
                 Ok(None)
             }
             ActiveExecutionEvent::PythonVfsRpcRequest(request) => {
-                self.handle_python_vfs_rpc_request(vm_id, process_id, *request)?;
+                self.handle_python_vfs_rpc_request(vm_id, process_id, request)?;
                 Ok(None)
             }
             ActiveExecutionEvent::SignalState {
