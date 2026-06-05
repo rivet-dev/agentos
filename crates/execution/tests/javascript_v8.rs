@@ -97,6 +97,12 @@ struct TestJavascriptChildProcessSpawnRequest {
     options: TestJavascriptChildProcessSpawnOptions,
 }
 
+type TestJavascriptChildProcessSpawnSyncRequest = (
+    TestJavascriptChildProcessSpawnRequest,
+    Option<usize>,
+    Option<Vec<u8>>,
+);
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct TestLegacyJavascriptChildProcessSpawnOptions {
@@ -557,14 +563,7 @@ fn parse_test_child_process_spawn_request(
 
 fn parse_test_child_process_spawn_sync_request(
     args: &[Value],
-) -> Result<
-    (
-        TestJavascriptChildProcessSpawnRequest,
-        Option<usize>,
-        Option<Vec<u8>>,
-    ),
-    String,
-> {
+) -> Result<TestJavascriptChildProcessSpawnSyncRequest, String> {
     let request = parse_test_child_process_spawn_request(args)?;
     let parsed_options = args
         .get(2)
