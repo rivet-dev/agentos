@@ -2570,7 +2570,7 @@ impl ActiveExecution {
                             ActiveExecutionEvent::JavascriptSyncRpcRequest(request)
                         }
                         PythonExecutionEvent::VfsRpcRequest(request) => {
-                            ActiveExecutionEvent::PythonVfsRpcRequest(*request)
+                            ActiveExecutionEvent::PythonVfsRpcRequest(request)
                         }
                         PythonExecutionEvent::Exited(code) => ActiveExecutionEvent::Exited(code),
                     })
@@ -2645,7 +2645,7 @@ impl ActiveExecution {
                             ActiveExecutionEvent::JavascriptSyncRpcRequest(request)
                         }
                         PythonExecutionEvent::VfsRpcRequest(request) => {
-                            ActiveExecutionEvent::PythonVfsRpcRequest(*request)
+                            ActiveExecutionEvent::PythonVfsRpcRequest(request)
                         }
                         PythonExecutionEvent::Exited(code) => ActiveExecutionEvent::Exited(code),
                     })
@@ -3960,7 +3960,7 @@ where
                             )?;
                         }
                         ActiveExecutionEvent::PythonVfsRpcRequest(request) => {
-                            self.handle_python_vfs_rpc_request(vm_id, &root_process_id, request)?;
+                            self.handle_python_vfs_rpc_request(vm_id, &root_process_id, *request)?;
                         }
                         ActiveExecutionEvent::SignalState {
                             signal,
@@ -4172,7 +4172,7 @@ where
                 Ok(None)
             }
             ActiveExecutionEvent::PythonVfsRpcRequest(request) => {
-                self.handle_python_vfs_rpc_request(vm_id, process_id, request)?;
+                self.handle_python_vfs_rpc_request(vm_id, process_id, *request)?;
                 Ok(None)
             }
             ActiveExecutionEvent::SignalState {
