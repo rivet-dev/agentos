@@ -338,30 +338,6 @@ fn normalize_permission_result(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn seen_inbound_request_ids_evict_oldest_entry_after_retention_window() {
-        let mut seen = SeenInboundRequestIds::new(2);
-        let first = JsonRpcId::Number(1);
-        let second = JsonRpcId::Number(2);
-        let third = JsonRpcId::Number(3);
-
-        seen.insert(first.clone());
-        seen.insert(second.clone());
-        assert!(seen.contains(&first));
-        assert!(seen.contains(&second));
-
-        seen.insert(third.clone());
-        assert_eq!(seen.len(), 2);
-        assert!(!seen.contains(&first));
-        assert!(seen.contains(&second));
-        assert!(seen.contains(&third));
-    }
-}
-
 fn resolve_permission_option_id(
     options: &Option<Vec<Map<String, Value>>>,
     reply: Option<&str>,
@@ -399,5 +375,29 @@ pub(crate) fn to_record(value: Option<Value>) -> Map<String, Value> {
     match value {
         Some(Value::Object(map)) => map,
         _ => Map::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seen_inbound_request_ids_evict_oldest_entry_after_retention_window() {
+        let mut seen = SeenInboundRequestIds::new(2);
+        let first = JsonRpcId::Number(1);
+        let second = JsonRpcId::Number(2);
+        let third = JsonRpcId::Number(3);
+
+        seen.insert(first.clone());
+        seen.insert(second.clone());
+        assert!(seen.contains(&first));
+        assert!(seen.contains(&second));
+
+        seen.insert(third.clone());
+        assert_eq!(seen.len(), 2);
+        assert!(!seen.contains(&first));
+        assert!(seen.contains(&second));
+        assert!(seen.contains(&third));
     }
 }
