@@ -147,8 +147,9 @@ describeIf(!skipReason(), 'wasi-spawn: WasiChild host_process integration', { ti
     expect(result.stdout).toContain('PASS');
   });
 
-  it('codex spawns echo and captures output', async () => {
-    const result = await kernel.exec('codex echo hello');
-    expect(result.stdout).toContain('hello');
+  it('codex-exec headless prompt mode exits cleanly', async () => {
+    const result = await kernel.exec('codex-exec echo hello');
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain('prompt: echo hello');
   });
 });
