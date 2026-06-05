@@ -54,6 +54,7 @@ pub(crate) const PYTHON_VFS_RPC_GUEST_ROOT: &str = "/workspace";
 pub(crate) const EXECUTION_SANDBOX_ROOT_ENV: &str = "AGENT_OS_SANDBOX_ROOT";
 pub(crate) const WASM_STDIO_SYNC_RPC_ENV: &str = "AGENT_OS_WASI_STDIO_SYNC_RPC";
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) const HOST_REALPATH_MAX_SYMLINK_DEPTH: usize = 40;
 pub(crate) const DISPOSE_VM_SIGTERM_GRACE: std::time::Duration =
     std::time::Duration::from_millis(100);

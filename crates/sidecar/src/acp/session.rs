@@ -313,7 +313,7 @@ impl AcpSessionState {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) fn state_response(&self) -> Result<SessionStateResponse, AcpSessionStateError> {
         self.state_response_with_additional_events(std::iter::empty())
     }

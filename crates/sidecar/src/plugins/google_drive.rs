@@ -1003,6 +1003,8 @@ fn storage_error_to_vfs(error: StorageError) -> VfsError {
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    #![allow(dead_code)]
+
     use serde::Deserialize;
     use serde_json::json;
     use std::collections::BTreeMap;
