@@ -193,7 +193,7 @@ pub enum McpServerConfig {
 }
 
 /// Options for `create_session`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CreateSessionOptions {
     /// Default `"/home/user"`.
     pub cwd: Option<String>,
@@ -203,18 +203,6 @@ pub struct CreateSessionOptions {
     /// Default false.
     pub skip_os_instructions: bool,
     pub additional_instructions: Option<String>,
-}
-
-impl Default for CreateSessionOptions {
-    fn default() -> Self {
-        Self {
-            cwd: None,
-            env: BTreeMap::new(),
-            mcp_servers: Vec::new(),
-            skip_os_instructions: false,
-            additional_instructions: None,
-        }
-    }
 }
 
 /// The id returned by `create_session` / `resume_session`.
