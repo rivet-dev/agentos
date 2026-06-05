@@ -4141,6 +4141,9 @@ var __bridge = (() => {
     }
   }
   function _waitForActiveHandles() {
+    if (typeof _exited !== "undefined" && _exited) {
+      return Promise.resolve();
+    }
     const getPendingTimerCount = globalThis._getPendingTimerCount;
     const waitForTimerDrain = globalThis._waitForTimerDrain;
     const hasHandles = _getActiveHandles().length > 0;
@@ -24180,6 +24183,9 @@ ${headerLines}\r
   var _timerEntries = /* @__PURE__ */ new Map();
   var _timerDrainResolvers = [];
   function getRefedTimerCount() {
+    if (typeof _exited !== "undefined" && _exited) {
+      return 0;
+    }
     let count = 0;
     for (const entry of _timerEntries.values()) {
       if (entry.handle?.hasRef?.() !== false) {
@@ -24257,6 +24263,10 @@ ${headerLines}\r
       if (!outcome.handled && outcome.rethrow !== null) {
         throw outcome.rethrow;
       }
+      return;
+    }
+    if (typeof _exited !== "undefined" && _exited) {
+      checkTimerDrain();
       return;
     }
     if (entry.repeat && _timerEntries.has(timerId)) {
