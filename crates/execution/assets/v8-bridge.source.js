@@ -21458,11 +21458,12 @@ ${headerLines}\r
     };
   }
   var config2 = readProcessConfig();
+  var processClockNow = typeof performance !== "undefined" && performance && typeof performance.now === "function" ? performance.now.bind(performance) : Date.now;
   function getNowMs() {
     if (config2.timingMitigation === "freeze" && typeof config2.frozenTimeMs === "number") {
       return config2.frozenTimeMs;
     }
-    return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    return processClockNow();
   }
   var _processStartTime = getNowMs();
   var BUFFER_MAX_LENGTH = typeof import_buffer2.Buffer.kMaxLength === "number" ? import_buffer2.Buffer.kMaxLength : 2147483647;

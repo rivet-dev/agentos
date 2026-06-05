@@ -1146,6 +1146,21 @@ import { performance } from "node:perf_hooks";
 if (typeof performance?.now !== "function") {
   throw new Error("node:perf_hooks did not expose performance.now()");
 }
+const replacementPerformance = {
+  now() {
+    const [seconds, nanoseconds] = process.hrtime();
+    return seconds * 1000 + nanoseconds / 1e6;
+  },
+};
+globalThis.performance = replacementPerformance;
+
+const elapsed = process.hrtime(process.hrtime());
+if (!Array.isArray(elapsed) || elapsed.length !== 2) {
+  throw new Error("process.hrtime returned an invalid delta");
+}
+if (typeof process.hrtime.bigint() !== "bigint") {
+  throw new Error("process.hrtime.bigint did not return a bigint");
+}
 "#,
             )),
         })
