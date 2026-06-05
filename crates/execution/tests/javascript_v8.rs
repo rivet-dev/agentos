@@ -792,6 +792,41 @@ process.stderr.write(Buffer.from([0xfe, 0x00, 0x42]));
     assert_eq!(result.stderr, vec![0xfe, 0x00, 0x42]);
 }
 
+fn javascript_execution_intl_number_format_does_not_require_host_icu() {
+    let temp = tempdir().expect("create temp dir");
+    let mut engine = JavascriptExecutionEngine::default();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            inline_code: Some(String::from(
+                r#"
+const formatter = new Intl.NumberFormat("en", {
+  maximumFractionDigits: 2,
+  minimumFractionDigits: 2,
+});
+console.log(formatter.format(1234.5));
+"#,
+            )),
+        })
+        .expect("start JavaScript execution");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(result.exit_code, 0, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert_eq!(stdout, "1,234.50\n");
+}
+
 fn javascript_execution_stream_consumers_text_reads_live_stdin() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = JavascriptExecutionEngine::default();
@@ -3881,6 +3916,7 @@ fn javascript_v8_suite() {
     javascript_execution_uses_v8_runtime_without_spawning_guest_node_binary();
     javascript_execution_virtualizes_process_metadata_for_inline_v8_code();
     javascript_execution_preserves_binary_process_stdio_writes();
+    javascript_execution_intl_number_format_does_not_require_host_icu();
     javascript_execution_stream_consumers_text_reads_live_stdin();
     javascript_execution_process_stdin_async_iterator_finishes_with_live_stdin();
     javascript_execution_process_exit_from_live_stdin_listener_exits_without_waiting_for_eof();

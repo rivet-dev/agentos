@@ -25719,9 +25719,71 @@ ${headerLines}\r
       return typeof locales === "string" ? [locales] : [];
     }
   }
-  function installSafeIntlDateTimeFormat(target) {
+  function normalizeFractionDigitOption(value, fallback) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return fallback;
+    return Math.min(20, Math.max(0, Math.trunc(number)));
+  }
+  function applySafeNumberGrouping(value) {
+    const [integer, fraction] = value.split(".");
+    const sign = integer.startsWith("-") ? "-" : "";
+    const digits = sign ? integer.slice(1) : integer;
+    const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return fraction === void 0 ? `${sign}${grouped}` : `${sign}${grouped}.${fraction}`;
+  }
+  class SafeNumberFormat {
+    constructor(locales = "en-US", options = {}) {
+      this.locales = locales;
+      this.options = options && typeof options === "object" ? { ...options } : {};
+      this.format = this.format.bind(this);
+    }
+    format(value) {
+      const number = Number(value);
+      if (Number.isNaN(number)) return "NaN";
+      if (number === Infinity) return "∞";
+      if (number === -Infinity) return "-∞";
+      const minimumFractionDigits = normalizeFractionDigitOption(this.options.minimumFractionDigits, 0);
+      const maximumFractionDigits = Math.max(
+        minimumFractionDigits,
+        normalizeFractionDigitOption(this.options.maximumFractionDigits, Math.max(minimumFractionDigits, 3))
+      );
+      let formatted = number.toFixed(maximumFractionDigits);
+      if (maximumFractionDigits > minimumFractionDigits) {
+        formatted = formatted.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+        const fractionLength = formatted.includes(".") ? formatted.length - formatted.indexOf(".") - 1 : 0;
+        if (fractionLength < minimumFractionDigits) {
+          formatted += `${fractionLength === 0 ? "." : ""}${"0".repeat(minimumFractionDigits - fractionLength)}`;
+        }
+      }
+      if (this.options.useGrouping === false) return formatted;
+      return applySafeNumberGrouping(formatted);
+    }
+    formatToParts(value) {
+      return [{ type: "literal", value: this.format(value) }];
+    }
+    resolvedOptions() {
+      const locale = Array.isArray(this.locales) ? this.locales.find((entry) => typeof entry === "string") || "en-US" : typeof this.locales === "string" ? this.locales : "en-US";
+      return {
+        locale,
+        numberingSystem: "latn",
+        style: "decimal",
+        minimumFractionDigits: normalizeFractionDigitOption(this.options.minimumFractionDigits, 0),
+        maximumFractionDigits: normalizeFractionDigitOption(this.options.maximumFractionDigits, 3),
+        useGrouping: this.options.useGrouping !== false,
+        ...this.options
+      };
+    }
+    static supportedLocalesOf(locales) {
+      if (Array.isArray(locales)) {
+        return locales.filter((entry) => typeof entry === "string");
+      }
+      return typeof locales === "string" ? [locales] : [];
+    }
+  }
+  function installSafeIntlFormatters(target) {
     const existingIntl = target.Intl && typeof target.Intl === "object" ? target.Intl : {};
     existingIntl.DateTimeFormat = SafeDateTimeFormat;
+    existingIntl.NumberFormat = SafeNumberFormat;
     target.Intl = existingIntl;
     Date.prototype.toLocaleString = function(locales, options) {
       return new target.Intl.DateTimeFormat(locales, options).format(this);
@@ -25736,6 +25798,9 @@ ${headerLines}\r
         second: "2-digit",
         ...(options || {})
       }).format(this);
+    };
+    Number.prototype.toLocaleString = function(locales, options) {
+      return new target.Intl.NumberFormat(locales, options).format(this.valueOf());
     };
   }
   function encodeFilePathSegment(value) {
@@ -25918,7 +25983,7 @@ ${headerLines}\r
     g.Headers = UndiciHeaders;
     g.Request = UndiciRequest;
     g.Response = UndiciResponse;
-    installSafeIntlDateTimeFormat(g);
+    installSafeIntlFormatters(g);
   }
 
   // .agent/recovery/secure-exec/nodejs/src/bridge/module.ts
