@@ -23,8 +23,6 @@ pub(crate) use crate::execution::{
     sanitize_javascript_child_process_internal_bootstrap_env, service_javascript_sync_rpc,
     vm_network_resource_counts, write_kernel_process_stdin,
 };
-#[cfg(test)]
-pub(crate) use crate::execution::{runtime_child_is_alive, signal_runtime_process};
 use crate::filesystem::guest_filesystem_call as filesystem_guest_filesystem_call;
 use crate::protocol::{
     AgentSessionClosedResponse, AuthenticatedResponse, CloseAgentSessionRequest,
@@ -39,8 +37,6 @@ use crate::protocol::{
     SidecarResponseTracker, SidecarResponseTrackerError, SignalDispositionAction,
     SignalHandlerRegistration, StructuredEvent, VmLifecycleEvent, VmLifecycleState,
 };
-#[cfg(test)]
-use crate::state::ActiveExecution;
 use crate::state::{
     ActiveExecutionEvent, BridgeError, ConnectionState, JavascriptSocketFamily,
     JavascriptSocketPathContext, ProcessEventEnvelope, SessionState, SharedBridge,
@@ -63,8 +59,6 @@ use agent_os_kernel::permissions::{
     permission_glob_matches, CommandAccessRequest, EnvAccessRequest, EnvironmentOperation,
     NetworkAccessRequest, NetworkOperation, PermissionDecision,
 };
-#[cfg(test)]
-use agent_os_kernel::process_table::SIGKILL;
 // root_fs types moved to crate::vm
 use agent_os_kernel::vfs::VfsError;
 use serde::Deserialize;
