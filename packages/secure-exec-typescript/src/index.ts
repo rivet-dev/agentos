@@ -392,11 +392,9 @@ function mapRequestToHostPaths(
 					cwd: request.options.cwd
 						? toHostPath(tempRoot, request.options.cwd)
 						: request.options.cwd,
-					configFilePath:
-						request.options.configFilePath &&
-						request.options.configFilePath.startsWith("/")
-							? toHostPath(tempRoot, request.options.configFilePath)
-							: request.options.configFilePath,
+					configFilePath: request.options.configFilePath?.startsWith("/")
+						? toHostPath(tempRoot, request.options.configFilePath)
+						: request.options.configFilePath,
 				},
 			};
 		case "typecheckSource":
@@ -408,15 +406,12 @@ function mapRequestToHostPaths(
 					cwd: request.options.cwd
 						? toHostPath(tempRoot, request.options.cwd)
 						: request.options.cwd,
-					filePath:
-						request.options.filePath && request.options.filePath.startsWith("/")
-							? toHostPath(tempRoot, request.options.filePath)
-							: request.options.filePath,
-					configFilePath:
-						request.options.configFilePath &&
-						request.options.configFilePath.startsWith("/")
-							? toHostPath(tempRoot, request.options.configFilePath)
-							: request.options.configFilePath,
+					filePath: request.options.filePath?.startsWith("/")
+						? toHostPath(tempRoot, request.options.filePath)
+						: request.options.filePath,
+					configFilePath: request.options.configFilePath?.startsWith("/")
+						? toHostPath(tempRoot, request.options.configFilePath)
+						: request.options.configFilePath,
 					compilerOptions: mapCompilerOptionsToHost(
 						tempRoot,
 						request.options.compilerOptions,
