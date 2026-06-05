@@ -756,9 +756,11 @@ impl WasmExecutionEngine {
             &javascript_context_id,
             &resolved_module,
             &request,
-            frozen_time_ms,
-            false,
-            warmup_metrics.as_deref(),
+            WasmJavascriptExecutionOptions {
+                frozen_time_ms,
+                prewarm_only: false,
+                warmup_metrics: warmup_metrics.as_deref(),
+            },
         )?;
         let child_pid = javascript_execution.child_pid();
         let guest_path_mappings = wasm_guest_path_mappings(&request);
@@ -1598,19 +1600,28 @@ fn parse_wasm_signal_state_line(
     }))
 }
 
+struct WasmJavascriptExecutionOptions<'a> {
+    frozen_time_ms: u128,
+    prewarm_only: bool,
+    warmup_metrics: Option<&'a [u8]>,
+}
+
 fn start_wasm_javascript_execution(
     javascript_engine: &mut JavascriptExecutionEngine,
     import_cache: &NodeImportCache,
     javascript_context_id: &str,
     resolved_module: &ResolvedWasmModule,
     request: &StartWasmExecutionRequest,
-    frozen_time_ms: u128,
-    prewarm_only: bool,
-    warmup_metrics: Option<&[u8]>,
+    options: WasmJavascriptExecutionOptions<'_>,
 ) -> Result<JavascriptExecution, WasmExecutionError> {
-    let internal_env =
-        build_wasm_internal_env(resolved_module, request, frozen_time_ms, prewarm_only);
-    let inline_code = build_wasm_runner_module_source(import_cache, &internal_env, warmup_metrics)?;
+    let internal_env = build_wasm_internal_env(
+        resolved_module,
+        request,
+        options.frozen_time_ms,
+        options.prewarm_only,
+    );
+    let inline_code =
+        build_wasm_runner_module_source(import_cache, &internal_env, options.warmup_metrics)?;
     let mut env = request.env.clone();
     env.extend(
         internal_env
@@ -3761,9 +3772,11 @@ fn prewarm_wasm_path(
         javascript_context_id,
         resolved_module,
         request,
-        frozen_time_ms,
-        true,
-        None,
+        WasmJavascriptExecutionOptions {
+            frozen_time_ms,
+            prewarm_only: true,
+            warmup_metrics: None,
+        },
     )
     .map_err(|error| match error {
         WasmExecutionError::Spawn(err) => WasmExecutionError::WarmupSpawn(err),
