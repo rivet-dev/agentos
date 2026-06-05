@@ -15,7 +15,7 @@ const NODE_IMPORT_CACHE_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_PATH";
 const NODE_IMPORT_CACHE_LOADER_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_LOADER_PATH";
 const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "48";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "49";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agent-os-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const PYODIDE_DIST_DIR: &str = "pyodide-dist";
@@ -8595,6 +8595,7 @@ const WASI_OFLAGS_CREAT = 1;
 const WASI_OFLAGS_DIRECTORY = 2;
 const WASI_OFLAGS_EXCL = 4;
 const WASI_OFLAGS_TRUNC = 8;
+const WASI_FDFLAGS_APPEND = 1;
 const WASM_PAGE_BYTES = 65536;
 const DEFAULT_VIRTUAL_UID = 0;
 const DEFAULT_VIRTUAL_GID = 0;
@@ -9093,11 +9094,15 @@ if (prewarmOnly) {
   process.exit(0);
 }
 
+const WASI_PREOPENS = buildPreopens();
+const WASI_PREOPEN_FD_BASE = 3;
+const WASI_PREOPEN_ENTRIES = Object.entries(WASI_PREOPENS);
+
 const wasi = new WASI({
   version: 'preview1',
   args: guestArgv,
   env: guestEnv,
-  preopens: buildPreopens(),
+  preopens: WASI_PREOPENS,
   returnOnExit: true,
 });
 
@@ -9196,6 +9201,14 @@ function hasWriteRights(rights) {
   }
 }
 
+function hasReadRights(rights) {
+  try {
+    return (BigInt(rights) & WASI_RIGHT_FD_READ) !== 0n;
+  } catch {
+    return true;
+  }
+}
+
 function hasMutationOpenFlags(oflags) {
   const normalized = Number(oflags) >>> 0;
   return (
@@ -9209,11 +9222,142 @@ function denyReadOnlyMutation() {
   return WASI_ERRNO_ACCES;
 }
 
+function guestPathForPreopenKey(key) {
+  if (key === '.') {
+    return HOST_FS_GUEST_CWD;
+  }
+  return path.posix.normalize(key);
+}
+
+function resolvePathOpenGuestPath(fd, pathPtr, pathLen) {
+  const target = readGuestString(pathPtr, pathLen);
+  if (target.startsWith('/')) {
+    return path.posix.normalize(target);
+  }
+
+  const handle = lookupFdHandle(fd);
+  if (handle && typeof handle.guestPath === 'string') {
+    return path.posix.resolve(handle.guestPath, target);
+  }
+
+  const preopenIndex = (Number(fd) >>> 0) - WASI_PREOPEN_FD_BASE;
+  const preopen = WASI_PREOPEN_ENTRIES[preopenIndex];
+  if (preopen) {
+    return path.posix.resolve(guestPathForPreopenKey(preopen[0]), target);
+  }
+
+  return null;
+}
+
+function precreatePathOpenTarget(fd, pathPtr, pathLen, oflags) {
+  const normalizedOflags = Number(oflags) >>> 0;
+  if ((normalizedOflags & WASI_OFLAGS_CREAT) === 0) {
+    return null;
+  }
+
+  const guestPath = resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+  if (typeof guestPath !== 'string') {
+    return null;
+  }
+
+  if (!fsModule.existsSync(guestPath)) {
+    fsModule.writeFileSync(guestPath, Buffer.alloc(0));
+  }
+  return guestPath;
+}
+
+function fsOpenFlagForPathOpen(oflags, rightsBase, fdflags) {
+  const normalizedOflags = Number(oflags) >>> 0;
+  const normalizedFdflags = Number(fdflags) >>> 0;
+  const wantsRead = hasReadRights(rightsBase);
+  const wantsWrite = hasWriteRights(rightsBase);
+  const wantsExclusive = (normalizedOflags & WASI_OFLAGS_EXCL) !== 0;
+  const wantsAppend = (normalizedFdflags & WASI_FDFLAGS_APPEND) !== 0;
+  const wantsTruncate = (normalizedOflags & WASI_OFLAGS_TRUNC) !== 0;
+
+  if (!wantsWrite) {
+    return 'r';
+  }
+
+  if (wantsAppend) {
+    if (wantsExclusive) {
+      return wantsRead ? 'ax+' : 'ax';
+    }
+    return wantsRead ? 'a+' : 'a';
+  }
+
+  if (wantsTruncate) {
+    if (wantsExclusive) {
+      return wantsRead ? 'wx+' : 'wx';
+    }
+    return wantsRead ? 'w+' : 'w';
+  }
+
+  return 'r+';
+}
+
+function allocateSyntheticFd() {
+  let fd = nextSyntheticFd;
+  while (
+    syntheticFdEntries.has(fd) ||
+    passthroughHandles.has(fd) ||
+    delegateManagedFdRefCounts.has(fd)
+  ) {
+    fd += 1;
+  }
+  nextSyntheticFd = fd + 1;
+  return fd;
+}
+
+function openGuestFileForPathOpen(fd, pathPtr, pathLen, oflags, rightsBase, fdflags, openedFdPtr) {
+  const guestPath = precreatePathOpenTarget(fd, pathPtr, pathLen, oflags);
+  if (typeof guestPath !== 'string') {
+    return null;
+  }
+
+  const targetFd = fsModule.openSync(
+    guestPath,
+    fsOpenFlagForPathOpen(oflags, rightsBase, fdflags),
+    0o666,
+  );
+  const openedFd = allocateSyntheticFd();
+  syntheticFdEntries.set(openedFd, {
+    kind: 'guest-file',
+    targetFd,
+    displayFd: openedFd,
+    refCount: 1,
+    open: true,
+    guestPath,
+  });
+  return writeGuestUint32(openedFdPtr, openedFd);
+}
+
+function retainPathOpenDelegateFd(openedFdPtr, guestPath) {
+  if (!(instanceMemory instanceof WebAssembly.Memory)) {
+    return WASI_ERRNO_SUCCESS;
+  }
+
+  try {
+    const openedFd = new DataView(instanceMemory.buffer).getUint32(Number(openedFdPtr), true);
+    retainDelegateFd(openedFd);
+    if (openedFd > 2 && !passthroughHandles.has(openedFd)) {
+      passthroughHandles.set(openedFd, {
+        kind: 'passthrough',
+        targetFd: openedFd,
+        displayFd: openedFd,
+        refCount: 0,
+        open: true,
+        ...(typeof guestPath === 'string' ? { guestPath } : {}),
+      });
+    }
+    return WASI_ERRNO_SUCCESS;
+  } catch {
+    return WASI_ERRNO_FAULT;
+  }
+}
+
 function writeGuestUint32(ptr, value) {
   if (!(instanceMemory instanceof WebAssembly.Memory)) {
-    try {
-      process.stderr.write(`[agent-os-wasi] writeGuestUint32 no memory ptr=${Number(ptr)} value=${Number(value) >>> 0}\n`);
-    } catch {}
     return WASI_ERRNO_FAULT;
   }
 
@@ -9221,9 +9365,6 @@ function writeGuestUint32(ptr, value) {
     new DataView(instanceMemory.buffer).setUint32(Number(ptr), Number(value) >>> 0, true);
     return WASI_ERRNO_SUCCESS;
   } catch {
-    try {
-      process.stderr.write(`[agent-os-wasi] writeGuestUint32 fault ptr=${Number(ptr)} value=${Number(value) >>> 0} mem=${instanceMemory.buffer.byteLength}\n`);
-    } catch {}
     return WASI_ERRNO_FAULT;
   }
 }
@@ -9346,6 +9487,15 @@ function releaseFdHandle(handle) {
       typeof delegateManagedFdClose === 'function'
     ) {
       delegateManagedFdClose(handle.targetFd);
+    }
+    return;
+  }
+
+  if (handle.kind === 'guest-file') {
+    handle.refCount = Math.max(0, handle.refCount - 1);
+    if (handle.refCount === 0 && handle.open) {
+      handle.open = false;
+      fsModule.closeSync(handle.targetFd);
     }
     return;
   }
@@ -11155,7 +11305,8 @@ if (delegatePathOpen) {
       return denyReadOnlyMutation();
     }
 
-    const result = delegatePathOpen(
+    const guestPath = resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+    let result = delegatePathOpen(
       fd,
       dirflags,
       pathPtr,
@@ -11166,22 +11317,42 @@ if (delegatePathOpen) {
       fdflags,
       openedFdPtr,
     );
-    if (result === WASI_ERRNO_SUCCESS && instanceMemory instanceof WebAssembly.Memory) {
+
+    if (result !== WASI_ERRNO_SUCCESS && (Number(oflags) & WASI_OFLAGS_CREAT) !== 0) {
       try {
-        const openedFd = new DataView(instanceMemory.buffer).getUint32(Number(openedFdPtr), true);
-        retainDelegateFd(openedFd);
-        if (openedFd > 2 && !passthroughHandles.has(openedFd)) {
-          passthroughHandles.set(openedFd, {
-            kind: 'passthrough',
-            targetFd: openedFd,
-            displayFd: openedFd,
-            refCount: 0,
-            open: true,
-          });
+        precreatePathOpenTarget(fd, pathPtr, pathLen, oflags);
+        result = delegatePathOpen(
+          fd,
+          dirflags,
+          pathPtr,
+          pathLen,
+          oflags,
+          rightsBase,
+          rightsInheriting,
+          fdflags,
+          openedFdPtr,
+        );
+        if (result !== WASI_ERRNO_SUCCESS) {
+          const fallbackResult = openGuestFileForPathOpen(
+            fd,
+            pathPtr,
+            pathLen,
+            oflags,
+            rightsBase,
+            fdflags,
+            openedFdPtr,
+          );
+          if (fallbackResult != null) {
+            return fallbackResult;
+          }
         }
       } catch {
         return WASI_ERRNO_FAULT;
       }
+    }
+
+    if (result === WASI_ERRNO_SUCCESS) {
+      return retainPathOpenDelegateFd(openedFdPtr, guestPath);
     }
     return result;
   };
@@ -11284,6 +11455,29 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
     }
   }
 
+  if (handle?.kind === 'guest-file') {
+    try {
+      const requestedLength = (() => {
+        if (!(instanceMemory instanceof WebAssembly.Memory)) {
+          return 0;
+        }
+        const view = new DataView(instanceMemory.buffer);
+        let total = 0;
+        for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {
+          const entryOffset = (Number(iovs) >>> 0) + index * 8;
+          total += view.getUint32(entryOffset + 4, true);
+        }
+        return total >>> 0;
+      })();
+      const buffer = Buffer.alloc(requestedLength);
+      const bytesRead = fsModule.readSync(handle.targetFd, buffer, 0, requestedLength, null);
+      const written = writeBytesToGuestIovs(iovs, iovsLen, buffer.subarray(0, bytesRead));
+      return writeGuestUint32(nreadPtr, written);
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  }
+
   if (numericFd === 0) {
     const sidecarManagedProcess =
       typeof process?.env?.AGENT_OS_SANDBOX_ROOT === 'string' &&
@@ -11327,6 +11521,35 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
 
 wasiImport.fd_pread = (fd, iovs, iovsLen, offset, nreadPtr) => {
   const handle = lookupFdHandle(fd);
+  if (handle?.kind === 'guest-file') {
+    try {
+      const requestedLength = (() => {
+        if (!(instanceMemory instanceof WebAssembly.Memory)) {
+          return 0;
+        }
+        const view = new DataView(instanceMemory.buffer);
+        let total = 0;
+        for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {
+          const entryOffset = (Number(iovs) >>> 0) + index * 8;
+          total += view.getUint32(entryOffset + 4, true);
+        }
+        return total >>> 0;
+      })();
+      const buffer = Buffer.alloc(requestedLength);
+      const bytesRead = fsModule.readSync(
+        handle.targetFd,
+        buffer,
+        0,
+        requestedLength,
+        Number(offset),
+      );
+      const written = writeBytesToGuestIovs(iovs, iovsLen, buffer.subarray(0, bytesRead));
+      return writeGuestUint32(nreadPtr, written);
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  }
+
   if (handle?.kind === 'passthrough') {
     return delegateFdPread
       ? delegateFdPread(handle.targetFd, iovs, iovsLen, offset, nreadPtr)
@@ -11340,6 +11563,10 @@ wasiImport.fd_pread = (fd, iovs, iovsLen, offset, nreadPtr) => {
 
 wasiImport.fd_sync = (fd) => {
   const handle = lookupFdHandle(fd);
+  if (handle?.kind === 'guest-file') {
+    return WASI_ERRNO_SUCCESS;
+  }
+
   if (handle?.kind === 'passthrough') {
     return delegateFdSync ? delegateFdSync(handle.targetFd) : WASI_ERRNO_SUCCESS;
   }
@@ -11356,6 +11583,16 @@ wasiImport.fd_write = (fd, iovs, iovsLen, nwrittenPtr) => {
       enqueuePipeBytes(handle.pipe, bytes);
       flushPipeConsumers(handle.pipe);
       return writeGuestUint32(nwrittenPtr, bytes.length);
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  }
+
+  if (handle?.kind === 'guest-file') {
+    try {
+      const bytes = collectGuestIovBytes(iovs, iovsLen);
+      const written = fsModule.writeSync(handle.targetFd, bytes, 0, bytes.length, null);
+      return writeGuestUint32(nwrittenPtr, written);
     } catch {
       return WASI_ERRNO_FAULT;
     }
