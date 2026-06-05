@@ -1071,9 +1071,8 @@ impl BenchmarkComparison {
         let baseline_only_scenarios = baseline
             .scenarios
             .iter()
-            .filter_map(|scenario| {
-                (!current_ids.contains_key(scenario.id.as_str())).then(|| scenario.id.clone())
-            })
+            .filter(|scenario| !current_ids.contains_key(scenario.id.as_str()))
+            .map(|scenario| scenario.id.clone())
             .collect::<Vec<_>>();
 
         let largest_wall_improvement = scenario_deltas
