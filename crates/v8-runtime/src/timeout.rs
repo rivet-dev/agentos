@@ -35,6 +35,7 @@ impl TimeoutGuard {
         })
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     pub(crate) fn with_execution_abort(
         timeout_ms: u32,
         isolate_handle: v8::IsolateHandle,
