@@ -9948,8 +9948,11 @@ await new Promise(() => {});
                 )
                 .expect("cipherivFinal"),
             );
-            assert!(update.as_str().expect("update string").len() > 0);
-            assert!(final_payload["data"].as_str().expect("final data").len() > 0);
+            assert!(!update.as_str().expect("update string").is_empty());
+            assert!(!final_payload["data"]
+                .as_str()
+                .expect("final data")
+                .is_empty());
 
             let rsa = openssl::rsa::Rsa::generate(2048).expect("generate rsa");
             let private_key = openssl::pkey::PKey::from_rsa(rsa).expect("private pkey from rsa");
