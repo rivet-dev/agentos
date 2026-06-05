@@ -2374,6 +2374,56 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       return null;
     }}
 
+    _descriptorPreopenName(entry) {{
+      if (!entry) {{
+        return null;
+      }}
+      const guestPath = typeof entry.guestPath === "string" ? entry.guestPath : null;
+      if (guestPath === ".") {{
+        return ".";
+      }}
+      if (typeof guestPath === "string" && guestPath.length > 0) {{
+        return __agentOsPath().posix.normalize(guestPath);
+      }}
+      return null;
+    }}
+
+    _currentDirectoryPreopen() {{
+      for (const entry of this.fdTable.values()) {{
+        if (entry?.kind === "preopen" && entry.guestPath === ".") {{
+          return entry;
+        }}
+      }}
+      return null;
+    }}
+
+    _descriptorPathBase(entry, target) {{
+      const baseGuestPath = this._descriptorGuestPath(entry);
+      if (typeof baseGuestPath !== "string") {{
+        return null;
+      }}
+      if (!String(target).startsWith("/") && baseGuestPath === "/") {{
+        const cwdEntry = this._currentDirectoryPreopen();
+        const cwdGuestPath = this._descriptorGuestPath(cwdEntry);
+        if (
+          cwdEntry &&
+          typeof cwdEntry.hostPath === "string" &&
+          typeof cwdGuestPath === "string"
+        ) {{
+          return {{
+            entry: cwdEntry,
+            guestPath: cwdGuestPath,
+            hostPath: cwdEntry.hostPath,
+          }};
+        }}
+      }}
+      return {{
+        entry,
+        guestPath: baseGuestPath,
+        hostPath: typeof entry?.hostPath === "string" ? entry.hostPath : null,
+      }};
+    }}
+
     _resolveHostPathForGuestPath(guestPath) {{
       const normalized = __agentOsPath().posix.normalize(guestPath);
       const mappings = [];
@@ -2416,14 +2466,14 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       if (!entry) {{
         return {{ error: __agentOsWasiErrnoBadf }};
       }}
-      const baseGuestPath = this._descriptorGuestPath(entry);
-      if (typeof baseGuestPath !== "string") {{
+      const target = this._readString(pathPtr, pathLen);
+      const base = this._descriptorPathBase(entry, target);
+      if (!base || typeof base.guestPath !== "string") {{
         return {{ error: __agentOsWasiErrnoBadf }};
       }}
-      const target = this._readString(pathPtr, pathLen);
       const guestPath = target.startsWith("/")
         ? __agentOsPath().posix.normalize(target)
-        : __agentOsPath().posix.resolve(baseGuestPath, target);
+        : __agentOsPath().posix.resolve(base.guestPath, target);
       const hostPath = this._resolveHostPathForGuestPath(guestPath);
       if (typeof hostPath !== "string") {{
         return {{ error: __agentOsWasiErrnoNoent }};
@@ -2992,7 +3042,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         if (!entry || entry.kind !== "preopen") {{
           return __agentOsWasiErrnoBadf;
         }}
-        const guestPath = this._descriptorGuestPath(entry);
+        const guestPath = this._descriptorPreopenName(entry);
         if (typeof guestPath !== "string") {{
           return __agentOsWasiErrnoBadf;
         }}
@@ -3012,7 +3062,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         if (!entry || entry.kind !== "preopen") {{
           return __agentOsWasiErrnoBadf;
         }}
-        const guestPath = this._descriptorGuestPath(entry);
+        const guestPath = this._descriptorPreopenName(entry);
         if (typeof guestPath !== "string") {{
           return __agentOsWasiErrnoBadf;
         }}
@@ -3106,20 +3156,22 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
     _pathOpen(fd, _dirflags, pathPtr, pathLen, oflags, rightsBase, rightsInheriting, _fdflags, openedFdPtr) {{
       try {{
         const entry = this._descriptorEntry(fd);
-        const baseGuestPath = this._descriptorGuestPath(entry);
         if (
           !entry ||
           (entry.kind !== "preopen" && entry.kind !== "directory") ||
-          typeof entry.hostPath !== "string" ||
-          typeof baseGuestPath !== "string"
+          typeof entry.hostPath !== "string"
         ) {{
           return __agentOsWasiErrnoBadf;
         }}
         const target = this._readString(pathPtr, pathLen);
+        const base = this._descriptorPathBase(entry, target);
+        if (!base || typeof base.hostPath !== "string") {{
+          return __agentOsWasiErrnoBadf;
+        }}
         const guestPath = target.startsWith("/")
           ? __agentOsPath().posix.normalize(target)
-          : __agentOsPath().posix.resolve(baseGuestPath, target);
-        const baseHostPath = __agentOsPath().resolve(entry.hostPath);
+          : __agentOsPath().posix.resolve(base.guestPath, target);
+        const baseHostPath = __agentOsPath().resolve(base.hostPath);
         const hostPath = __agentOsPath().resolve(baseHostPath, target);
         const hostSuffix = __agentOsPath().relative(baseHostPath, hostPath);
         if (
@@ -4853,6 +4905,15 @@ mod tests {
 
         assert!(bootstrap.contains("if (guestPath === \".\") {"));
         assert!(!bootstrap.contains("if (guestPath === \".\" || guestPath === \"/\") {"));
+    }
+
+    #[test]
+    fn wasm_runner_bootstrap_reports_dot_preopen_to_wasi() {
+        let bootstrap = build_wasm_runner_bootstrap(&BTreeMap::new(), None);
+
+        assert!(bootstrap.contains("_descriptorPreopenName(entry)"));
+        assert!(bootstrap.contains("if (guestPath === \".\") {\n        return \".\";"));
+        assert!(bootstrap.contains("const guestPath = this._descriptorPreopenName(entry);"));
     }
 
     #[test]
