@@ -62,6 +62,7 @@ pub(crate) type DeferredQueue = Arc<Mutex<VecDeque<SessionMessage>>>;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ExecutionAbortReason {
     Terminated,
+    #[cfg_attr(test, allow(dead_code))]
     TimedOut,
 }
 
