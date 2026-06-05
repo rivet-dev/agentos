@@ -1413,7 +1413,7 @@ pub fn dynamic_import_callback<'a>(
                 exception
             } else {
                 let msg = v8::String::new(tc, "Cannot dynamically import module").unwrap();
-                v8::Exception::error(tc, msg).into()
+                v8::Exception::error(tc, msg)
             };
             return rejected_promise(tc, reason);
         }
@@ -1429,7 +1429,7 @@ pub fn dynamic_import_callback<'a>(
         } else {
             let msg =
                 v8::String::new(tc, "Cannot instantiate dynamically imported module").unwrap();
-            v8::Exception::error(tc, msg).into()
+            v8::Exception::error(tc, msg)
         };
         return rejected_promise(tc, reason);
     }
@@ -1443,7 +1443,7 @@ pub fn dynamic_import_callback<'a>(
     if module.get_status() == v8::ModuleStatus::Evaluated {
         let namespace = v8::Global::new(tc, module.get_module_namespace());
         let namespace = v8::Local::new(tc, &namespace);
-        return resolved_promise(tc, namespace.into());
+        return resolved_promise(tc, namespace);
     }
 
     let eval_result = match module.evaluate(tc) {
@@ -1454,7 +1454,7 @@ pub fn dynamic_import_callback<'a>(
             } else {
                 let msg =
                     v8::String::new(tc, "Cannot evaluate dynamically imported module").unwrap();
-                v8::Exception::error(tc, msg).into()
+                v8::Exception::error(tc, msg)
             };
             return rejected_promise(tc, reason);
         }
@@ -1465,7 +1465,7 @@ pub fn dynamic_import_callback<'a>(
     if eval_result.is_promise() {
         let eval_promise = v8::Local::<v8::Promise>::try_from(eval_result).ok()?;
         let on_fulfilled = v8::FunctionTemplate::builder(dynamic_import_namespace_callback)
-            .data(namespace.into())
+            .data(namespace)
             .build(tc)
             .get_function(tc)?;
         let on_rejected = v8::FunctionTemplate::builder(dynamic_import_reject_callback)
@@ -1474,7 +1474,7 @@ pub fn dynamic_import_callback<'a>(
         return eval_promise.then2(tc, on_fulfilled, on_rejected);
     }
 
-    resolved_promise(tc, namespace.into())
+    resolved_promise(tc, namespace)
 }
 
 fn resolve_dynamic_import_referrer_name(
