@@ -192,7 +192,7 @@ async fn handle_protocol_frame(
 ) -> Result<(), Box<dyn Error>> {
     match frame {
         ProtocolFrame::Request(request) => {
-            let dispatch =
+            let (dispatch, extra_responses) =
                 dispatch_with_prompt_interrupt(sidecar, request.clone(), stdin_rx, pending_frame)
                     .await?;
             track_session_state(
@@ -204,6 +204,13 @@ async fn handle_protocol_frame(
             write_tx
                 .send(ProtocolFrame::Response(dispatch.response))
                 .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))?;
+            for response in extra_responses {
+                write_tx
+                    .send(ProtocolFrame::Response(response))
+                    .map_err(|error| {
+                        io::Error::new(io::ErrorKind::BrokenPipe, error.to_string())
+                    })?;
+            }
             for event in dispatch.events {
                 write_tx
                     .send(ProtocolFrame::Event(event))
@@ -233,25 +240,30 @@ async fn dispatch_with_prompt_interrupt(
     request: RequestFrame,
     stdin_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Result<Option<ProtocolFrame>, String>>,
     pending_frame: &mut Option<ProtocolFrame>,
-) -> Result<DispatchResult, Box<dyn Error>> {
+) -> Result<(DispatchResult, Vec<ResponseFrame>), Box<dyn Error>> {
     if !is_session_prompt_request(&request) {
-        return Ok(sidecar.dispatch(request).await?);
+        return Ok((sidecar.dispatch(request).await?, Vec::new()));
     }
 
     let mut dispatch = Box::pin(sidecar.dispatch(request.clone()));
     tokio::select! {
-        result = dispatch.as_mut() => Ok(result?),
+        result = dispatch.as_mut() => Ok((result?, Vec::new())),
         maybe_frame = stdin_rx.recv() => {
             let frame = decode_stdin_frame(maybe_frame)?;
             if let Some(frame) = frame {
                 if interrupts_session_prompt(&request, &frame) {
                     drop(dispatch);
-                    *pending_frame = Some(frame);
-                    return Ok(interrupted_prompt_dispatch(&request));
+                    let mut extra_responses = Vec::new();
+                    if let Some(response) = interrupted_cancel_response(&request, &frame) {
+                        extra_responses.push(response);
+                    } else {
+                        *pending_frame = Some(frame);
+                    }
+                    return Ok((interrupted_prompt_dispatch(&request), extra_responses));
                 }
                 *pending_frame = Some(frame);
             }
-            Ok(dispatch.await?)
+            Ok((dispatch.await?, Vec::new()))
         }
     }
 }
@@ -316,6 +328,42 @@ fn interrupted_prompt_dispatch(request: &RequestFrame) -> DispatchResult {
         ),
         events: Vec::new(),
     }
+}
+
+fn interrupted_cancel_response(
+    prompt_request: &RequestFrame,
+    frame: &ProtocolFrame,
+) -> Option<ResponseFrame> {
+    let RequestPayload::SessionRequest(prompt_payload) = &prompt_request.payload else {
+        return None;
+    };
+    let ProtocolFrame::Request(request) = frame else {
+        return None;
+    };
+    let RequestPayload::SessionRequest(payload) = &request.payload else {
+        return None;
+    };
+    if payload.session_id != prompt_payload.session_id || payload.method != "session/cancel" {
+        return None;
+    }
+
+    let response = JsonRpcResponse::success(
+        JsonRpcId::Null,
+        json!({
+            "cancelled": true,
+            "requested": true,
+            "via": "prompt-interrupt",
+        }),
+    );
+    Some(ResponseFrame::new(
+        request.request_id,
+        request.ownership.clone(),
+        ResponsePayload::SessionRpc(SessionRpcResponse {
+            session_id: payload.session_id.clone(),
+            response: serde_json::to_value(response)
+                .expect("serialize interrupted cancel response"),
+        }),
+    ))
 }
 
 async fn cleanup_connections(
@@ -522,6 +570,41 @@ mod tests {
         };
         assert_eq!(response.session_id, "agent-session-1");
         assert_eq!(response.response["result"]["stopReason"], "cancelled");
+    }
+
+    #[test]
+    fn session_cancel_interrupt_gets_synthetic_response() {
+        let ownership = OwnershipScope::vm("conn-1", "session-1", "vm-1");
+        let prompt = RequestFrame::new(
+            10,
+            ownership.clone(),
+            RequestPayload::SessionRequest(SessionRequest {
+                session_id: "agent-session-1".to_string(),
+                method: "session/prompt".to_string(),
+                params: None,
+            }),
+        );
+        let cancel = ProtocolFrame::Request(RequestFrame::new(
+            11,
+            ownership,
+            RequestPayload::SessionRequest(SessionRequest {
+                session_id: "agent-session-1".to_string(),
+                method: "session/cancel".to_string(),
+                params: None,
+            }),
+        ));
+
+        let response =
+            interrupted_cancel_response(&prompt, &cancel).expect("cancel should get a response");
+
+        assert_eq!(response.request_id, 11);
+        let ResponsePayload::SessionRpc(response) = response.payload else {
+            panic!("expected session rpc response");
+        };
+        assert_eq!(response.session_id, "agent-session-1");
+        assert_eq!(response.response["result"]["cancelled"], true);
+        assert_eq!(response.response["result"]["requested"], true);
+        assert_eq!(response.response["result"]["via"], "prompt-interrupt");
     }
 }
 
