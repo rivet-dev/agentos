@@ -18,7 +18,9 @@ import type { Kernel } from '../helpers.js';
 import { createServer as createHttpServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Check if openssl CLI is available for generating test certs
 let hasOpenssl = false;
@@ -26,6 +28,28 @@ try {
   execSync('openssl version', { stdio: 'pipe' });
   hasOpenssl = true;
 } catch { /* openssl not available */ }
+
+function generateSelfSignedCert(): { key: string; cert: string } {
+  const keyPath = join(tmpdir(), `wasi-http-test-key-${process.pid}-${Date.now()}.pem`);
+  try {
+    const key = execSync(
+      'openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null',
+      { encoding: 'utf8' },
+    );
+    writeFileSync(keyPath, key);
+    const cert = execSync(
+      `openssl req -new -x509 -key "${keyPath}" -days 1 -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>/dev/null`,
+      { encoding: 'utf8' },
+    );
+    return { key, cert };
+  } finally {
+    try {
+      unlinkSync(keyPath);
+    } catch {
+      // Best effort cleanup for test temp files.
+    }
+  }
+}
 
 // Minimal in-memory VFS for kernel tests
 class SimpleVFS {
@@ -272,8 +296,6 @@ describeIf(hasWasmBinaries && hasOpenssl, 'wasi-http HTTPS (http-test binary)', 
   let kernel: Kernel;
   let httpsServer: HttpsServer;
   let httpsPort: number;
-  let certKey: string;
-  let certPem: string;
 
   function createHttpsKernel(loopbackPort: number): Kernel {
     const vfs = new SimpleVFS();
@@ -284,18 +306,9 @@ describeIf(hasWasmBinaries && hasOpenssl, 'wasi-http HTTPS (http-test binary)', 
   }
 
   beforeAll(async () => {
-    // Generate self-signed cert for testing
-    const certResult = execSync(
-      'openssl req -x509 -newkey rsa:2048 -keyout /dev/stdout -out /dev/stdout -days 1 -nodes -subj "/CN=localhost" 2>/dev/null',
-      { encoding: 'utf8' },
-    );
-    // Extract key and cert from combined output
-    const keyMatch = certResult.match(/-----BEGIN PRIVATE KEY-----[\s\S]+?-----END PRIVATE KEY-----/);
-    const certMatch = certResult.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
-    certKey = keyMatch![0];
-    certPem = certMatch![0];
+    const tlsCert = generateSelfSignedCert();
 
-    httpsServer = createHttpsServer({ key: certKey, cert: certPem }, (req, res) => {
+    httpsServer = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert }, (req, res) => {
       if (req.url === '/' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('hello from https');
@@ -309,7 +322,9 @@ describeIf(hasWasmBinaries && hasOpenssl, 'wasi-http HTTPS (http-test binary)', 
   });
 
   afterAll(async () => {
-    await new Promise<void>((resolve) => httpsServer.close(() => resolve()));
+    if (httpsServer) {
+      await new Promise<void>((resolve) => httpsServer.close(() => resolve()));
+    }
   });
 
   afterEach(async () => {
