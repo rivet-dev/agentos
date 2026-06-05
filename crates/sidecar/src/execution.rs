@@ -15456,7 +15456,7 @@ where
                         .execution
                         .respond_javascript_sync_rpc_error(
                             request.id,
-                            &javascript_sync_rpc_error_code(&error),
+                            javascript_sync_rpc_error_code(&error),
                             error.to_string(),
                         )
                         .or_else(ignore_stale_javascript_sync_rpc_response)?,
