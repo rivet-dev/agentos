@@ -5,9 +5,9 @@
 //! and defines NO wire types. Framing: 4-byte big-endian length prefix via
 //! [`protocol::NativeFrameCodec`], payload codec pinned to [`protocol::NativePayloadCodec::Bare`].
 //!
-//! Request-id direction is load-bearing: host-initiated `Request`/`Response` frames use POSITIVE ids
-//! (counter starts at 1, increments); sidecar-initiated `SidecarRequest`/`SidecarResponse` callbacks
-//! use NEGATIVE ids (counter starts at -1, decrements).
+//! Request-id direction is load-bearing: host-initiated `Request`/`Response` frames use positive ids
+//! allocated by this transport, while sidecar-initiated `SidecarRequest`/`SidecarResponse` callbacks
+//! echo the id allocated by the sidecar.
 
 use std::process::Stdio;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
@@ -53,8 +53,6 @@ pub struct SidecarTransport {
     pub(crate) pending: SccHashMap<protocol::RequestId, oneshot::Sender<ResponsePayload>>,
     /// Host request-id counter (positive, starts at 1).
     pub(crate) request_counter: AtomicI64,
-    /// Sidecar callback request-id counter (negative, starts at -1).
-    pub(crate) sidecar_request_counter: AtomicI64,
     /// Negotiated max frame size.
     pub(crate) max_frame_bytes: AtomicUsize,
     /// Structured-event fan-out for `Event` frames.
@@ -104,7 +102,6 @@ impl SidecarTransport {
             child: parking_lot::Mutex::new(Some(child)),
             pending: SccHashMap::new(),
             request_counter: AtomicI64::new(1),
-            sidecar_request_counter: AtomicI64::new(-1),
             max_frame_bytes: AtomicUsize::new(DEFAULT_MAX_FRAME_BYTES),
             event_tx,
             callbacks: SccHashMap::new(),
@@ -120,11 +117,6 @@ impl SidecarTransport {
     /// Allocate the next positive host request id.
     pub(crate) fn next_request_id(&self) -> protocol::RequestId {
         self.request_counter.fetch_add(1, Ordering::SeqCst)
-    }
-
-    /// Allocate the next negative sidecar-callback request id.
-    pub(crate) fn next_sidecar_request_id(&self) -> protocol::RequestId {
-        self.sidecar_request_counter.fetch_sub(1, Ordering::SeqCst)
     }
 
     /// Issue a host request and await its response payload.
