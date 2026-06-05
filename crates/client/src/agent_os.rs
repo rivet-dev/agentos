@@ -15,12 +15,14 @@ use tokio::sync::{broadcast, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use agent_os_sidecar::protocol::{
-    AuthenticateRequest, ConfigureVmRequest, CreateVmRequest, DisposeReason, DisposeVmRequest,
-    EventPayload, GuestRuntimeKind, OpenSessionRequest, OwnershipScope, PermissionsPolicy,
-    RequestPayload, ResponsePayload, RootFilesystemDescriptor, SidecarPlacement, VmLifecycleState,
+    ConfigureVmRequest, CreateVmRequest, DisposeReason, DisposeVmRequest, EventPayload,
+    GuestRuntimeKind, OpenSessionRequest, OwnershipScope, PermissionsPolicy, RegisterToolkitRequest,
+    RegisteredToolDefinition, RequestPayload, ResponsePayload, RootFilesystemDescriptor,
+    SidecarPlacement, SidecarRequestPayload, SidecarResponsePayload, SoftwareDescriptor,
+    ToolInvocationRequest, ToolInvocationResultResponse, VmLifecycleState,
 };
 
-use crate::config::{AgentOsConfig, TimerScheduleDriver};
+use crate::config::{AgentOsConfig, HostTool, TimerScheduleDriver};
 use crate::cron::CronManager;
 use crate::error::ClientError;
 use crate::json_rpc::SequencedEvent;
@@ -30,7 +32,9 @@ use crate::session::{
     SessionModeState,
 };
 use crate::sidecar::{AgentOsSidecar, AgentOsSidecarPlacement, AgentOsSidecarVmLease};
-use crate::transport::SidecarTransport;
+use crate::transport::{SidecarCallback, SidecarTransport};
+
+use once_cell::sync::OnceCell;
 
 // ---------------------------------------------------------------------------
 // Registry entries
@@ -166,38 +170,25 @@ impl AgentOs {
     /// (default [`crate::config::TimerScheduleDriver`]).
     pub async fn create(options: AgentOsConfig) -> Result<AgentOs, ClientError> {
         let config = Arc::new(options);
-        let transport = SidecarTransport::spawn().await?;
 
-        // 1. Authenticate (connection scope with the canonical "client-hint" placeholder; the real
-        //    connection id is assigned by the sidecar).
-        let authed = match transport
-            .request(
-                OwnershipScope::connection("client-hint"),
-                RequestPayload::Authenticate(AuthenticateRequest {
-                    client_name: "agent-os-client".to_string(),
-                    auth_token: "agent-os-client".to_string(),
-                    bridge_version: agent_os_bridge::bridge_contract().version,
-                }),
-            )
-            .await?
-        {
-            ResponsePayload::Authenticated(authed) => authed,
-            ResponsePayload::Rejected(rejected) => return Err(rejected_to_error(rejected)),
-            _ => return Err(ClientError::Sidecar("unexpected authenticate response".to_string())),
+        // 1. Resolve the sidecar handle (shared "default" pool unless configured otherwise) and
+        //    establish/reuse its shared process + authenticated connection. A shared sidecar hosts
+        //    multiple VMs in one process, each opening its own session + VM below.
+        let sidecar = match &config.sidecar {
+            Some(crate::config::AgentOsSidecarConfig::Explicit { handle }) => handle.clone(),
+            Some(crate::config::AgentOsSidecarConfig::Shared { pool }) => {
+                AgentOs::get_shared_sidecar(pool.clone()).await?
+            }
+            None => AgentOs::get_shared_sidecar(None).await?,
         };
-        let connection_id = authed.connection_id;
-        let max_frame_bytes = authed.max_frame_bytes as usize;
-        transport.max_frame_bytes.store(max_frame_bytes, Ordering::SeqCst);
+        let (transport, connection_id, max_frame_bytes) = sidecar.ensure_connection().await?;
 
-        // 2. Open a session (connection scope). Default placement: shared "default" pool.
-        let pool = "default".to_string();
+        // 2. Open a session for this VM (connection scope) on the shared connection.
         let session = match transport
             .request(
                 OwnershipScope::connection(&connection_id),
                 RequestPayload::OpenSession(OpenSessionRequest {
-                    placement: SidecarPlacement::Shared {
-                        pool: Some(pool.clone()),
-                    },
+                    placement: sidecar_wire_placement(&sidecar),
                     metadata: BTreeMap::new(),
                 }),
             )
@@ -234,13 +225,18 @@ impl AgentOs {
         // 5. Wait for the VM to reach `ready` (bounded by VM_READY_TIMEOUT_MS).
         wait_for_vm_ready(&mut events, &vm_id, crate::VM_READY_TIMEOUT_MS).await?;
 
+        // Resolve software packages to host roots (port of TS `processSoftware` for the
+        // ConfigureVm descriptors). Each `package` is resolved under `module_access_cwd/node_modules`;
+        // an unresolvable package is an explicit error rather than a silent no-op.
+        let software = resolve_software(&config)?;
+
         // 6. Configure the VM (vm scope).
         match transport
             .request(
                 OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                 RequestPayload::ConfigureVm(ConfigureVmRequest {
                     mounts: Vec::new(),
-                    software: Vec::new(),
+                    software,
                     permissions: Some(PermissionsPolicy::allow_all()),
                     module_access_cwd: config.module_access_cwd.clone(),
                     instructions: config
@@ -261,14 +257,51 @@ impl AgentOs {
             _ => return Err(ClientError::Sidecar("unexpected configure_vm response".to_string())),
         }
 
-        // 7. Build the sidecar handle, lease, cron manager, and assemble the client.
-        let sidecar = Arc::new(AgentOsSidecar::new(
-            authed.sidecar_id.clone(),
-            AgentOsSidecarPlacement::Shared {
-                pool: Some(pool.clone()),
-            },
-            Some(pool),
-        ));
+        // 6b. Register host tool kits (if any): forward each tool definition via `register_toolkit`,
+        //     record the host execute callbacks in the per-VM registry, and install the shared
+        //     tool-invocation callback that routes guest tool calls back to the host by VM.
+        if !config.tool_kits.is_empty() {
+            let mut tool_map: std::collections::HashMap<String, HostTool> =
+                std::collections::HashMap::new();
+            for kit in &config.tool_kits {
+                let mut tools = BTreeMap::new();
+                for tool in &kit.tools {
+                    tools.insert(
+                        tool.name.clone(),
+                        RegisteredToolDefinition {
+                            description: tool.description.clone(),
+                            input_schema: tool.input_schema.clone(),
+                            timeout_ms: tool.timeout_ms,
+                            examples: Vec::new(),
+                        },
+                    );
+                    tool_map.insert(format!("{}:{}", kit.name, tool.name), tool.clone());
+                }
+                match transport
+                    .request(
+                        OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                        RequestPayload::RegisterToolkit(RegisterToolkitRequest {
+                            name: kit.name.clone(),
+                            description: kit.description.clone(),
+                            tools,
+                        }),
+                    )
+                    .await?
+                {
+                    ResponsePayload::ToolkitRegistered(_) => {}
+                    ResponsePayload::Rejected(rejected) => return Err(rejected_to_error(rejected)),
+                    _ => {
+                        return Err(ClientError::Sidecar(
+                            "unexpected register_toolkit response".to_string(),
+                        ))
+                    }
+                }
+            }
+            let _ = vm_tools().insert(vm_id.clone(), Arc::new(tool_map));
+            transport.register_callback("tool_invocation", tool_invocation_callback());
+        }
+
+        // 7. Lease this VM on the (possibly shared) sidecar, build cron, and assemble the client.
         sidecar.active_vm_count.fetch_add(1, Ordering::SeqCst);
         let lease = AgentOsSidecarVmLease {
             vm_id: vm_id.clone(),
@@ -355,8 +388,9 @@ impl AgentOs {
             .await;
         }
 
-        // 6-7. Release the VM (DisposeVm best-effort), release the lease, then kill the sidecar
-        //      child (kill_on_drop also covers the no-shutdown path).
+        // 6-7. Release this VM (DisposeVm best-effort) and its lease. The transport is shared across
+        //      VMs on the same sidecar, so it is only torn down when this was the last VM (matching
+        //      the TS lease/shared-sidecar lifecycle); otherwise sibling VMs keep using it.
         let lease = self.inner.sidecar_lease.lock().take();
         let _ = self
             .transport()
@@ -371,11 +405,14 @@ impl AgentOs {
                 }),
             )
             .await;
+        let _ = vm_tools().remove(&self.inner.vm_id);
+        let sidecar = self.inner.sidecar.clone();
         if let Some(lease) = lease {
             lease.dispose().await?;
         }
-        if let Some(mut child) = self.transport().child.lock().take() {
-            let _ = child.start_kill();
+        if sidecar.active_vm_count.load(Ordering::SeqCst) == 0 {
+            sidecar.kill_connection().await;
+            let _ = sidecar.dispose().await;
         }
 
         Ok(())
@@ -409,6 +446,22 @@ impl AgentOs {
 
     pub(crate) fn cron(&self) -> &Arc<CronManager> {
         &self.inner.cron
+    }
+
+    /// The (possibly shared) sidecar handle backing this VM. Public for parity with TS
+    /// `AgentOs.sidecar` (e.g. `describe()` reports `active_vm_count` across VMs sharing a pool).
+    pub fn sidecar(&self) -> Arc<AgentOsSidecar> {
+        self.inner.sidecar.clone()
+    }
+}
+
+/// Convert a sidecar's client-side placement into the wire `SidecarPlacement` for OpenSession.
+fn sidecar_wire_placement(sidecar: &AgentOsSidecar) -> SidecarPlacement {
+    match &sidecar.placement {
+        AgentOsSidecarPlacement::Shared { pool } => SidecarPlacement::Shared { pool: pool.clone() },
+        AgentOsSidecarPlacement::Explicit { sidecar_id } => SidecarPlacement::Explicit {
+            sidecar_id: sidecar_id.clone(),
+        },
     }
 }
 
@@ -447,6 +500,112 @@ async fn wait_for_vm_ready(
         .map_err(|_| {
             ClientError::Sidecar("timed out waiting for the VM to become ready".to_string())
         })?
+}
+
+/// Process-global per-VM host-tool registry (vm_id -> tools keyed by `<toolkit>:<tool>`). The shared
+/// transport's single tool-invocation callback routes to the right VM's tools by frame ownership.
+static VM_TOOLS: OnceCell<SccHashMap<String, Arc<std::collections::HashMap<String, HostTool>>>> =
+    OnceCell::new();
+
+fn vm_tools() -> &'static SccHashMap<String, Arc<std::collections::HashMap<String, HostTool>>> {
+    VM_TOOLS.get_or_init(SccHashMap::new)
+}
+
+/// The transport callback that answers guest tool invocations by running the matching host tool.
+fn tool_invocation_callback() -> SidecarCallback {
+    Arc::new(|payload, ownership| {
+        Box::pin(async move {
+            let request = match payload {
+                SidecarRequestPayload::ToolInvocation(request) => request,
+                _ => {
+                    return Ok(SidecarResponsePayload::ToolInvocationResult(
+                        ToolInvocationResultResponse {
+                            invocation_id: "unknown".to_string(),
+                            result: None,
+                            error: Some(
+                                "tool-invocation callback received a non-tool request".to_string(),
+                            ),
+                        },
+                    ));
+                }
+            };
+            Ok(SidecarResponsePayload::ToolInvocationResult(
+                run_tool_invocation(&ownership, request).await,
+            ))
+        })
+    })
+}
+
+/// Run a single tool invocation against the per-VM host-tool registry, honoring the timeout. Mirrors
+/// TS `handleToolInvocation` (unknown-tool + timeout + error shapes).
+async fn run_tool_invocation(
+    ownership: &OwnershipScope,
+    request: ToolInvocationRequest,
+) -> ToolInvocationResultResponse {
+    let vm_id = ownership_vm_id(ownership).unwrap_or("");
+    let tool = vm_tools()
+        .read(vm_id, |_, map| map.clone())
+        .and_then(|map| map.get(&request.tool_key).cloned());
+    let Some(tool) = tool else {
+        return ToolInvocationResultResponse {
+            invocation_id: request.invocation_id,
+            result: None,
+            error: Some(format!("Unknown tool \"{}\"", request.tool_key)),
+        };
+    };
+    let timeout = Duration::from_millis(request.timeout_ms.max(1));
+    match tokio::time::timeout(timeout, (tool.execute)(request.input)).await {
+        Ok(Ok(value)) => ToolInvocationResultResponse {
+            invocation_id: request.invocation_id,
+            result: Some(value),
+            error: None,
+        },
+        Ok(Err(error)) => ToolInvocationResultResponse {
+            invocation_id: request.invocation_id,
+            result: None,
+            error: Some(error),
+        },
+        Err(_) => ToolInvocationResultResponse {
+            invocation_id: request.invocation_id,
+            result: None,
+            error: Some(format!(
+                "Tool \"{}\" timed out after {}ms",
+                request.tool_key, request.timeout_ms
+            )),
+        },
+    }
+}
+
+/// Resolve `config.software` package inputs to `SoftwareDescriptor`s, each rooted at its host
+/// `node_modules` directory under `module_access_cwd` (default `.`). Mirrors the TS `processSoftware`
+/// mapping for the ConfigureVm descriptors. An unresolvable package is an explicit error, not a
+/// silent no-op.
+fn resolve_software(config: &AgentOsConfig) -> Result<Vec<SoftwareDescriptor>, ClientError> {
+    if config.software.is_empty() {
+        return Ok(Vec::new());
+    }
+    let module_access_cwd = config
+        .module_access_cwd
+        .clone()
+        .unwrap_or_else(|| ".".to_string());
+    let mut descriptors = Vec::with_capacity(config.software.len());
+    for input in &config.software {
+        let root = std::path::Path::new(&module_access_cwd)
+            .join("node_modules")
+            .join(&input.package);
+        if !root.exists() {
+            return Err(ClientError::Sidecar(format!(
+                "software package not found: {} (looked in {})",
+                input.package,
+                root.display()
+            )));
+        }
+        descriptors.push(SoftwareDescriptor {
+            package_name: input.package.clone(),
+            root: root.to_string_lossy().into_owned(),
+        });
+    }
+    Ok(descriptors)
 }
 
 /// Extract the `vm_id` from an ownership scope, if it is VM-scoped.

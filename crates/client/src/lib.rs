@@ -61,10 +61,10 @@ pub use stream::{ByteStream, Subscription};
 
 pub use config::{
     AgentOsConfig, AgentOsConfigBuilder, AgentOsSidecarConfig, FsPermissionRule, FsPermissions,
-    MountConfig, MountPlugin, OverlayMountConfig, PatternPermissionRule, PatternPermissions,
-    PermissionMode, Permissions, RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode,
-    RootLowerInput, RulePermissions, ScheduleCallback, ScheduleDriver, ScheduleEntry,
-    ScheduleHandle, SoftwareInput, TimerScheduleDriver, ToolKit,
+    HostTool, MountConfig, MountPlugin, OverlayMountConfig, PatternPermissionRule,
+    PatternPermissions, PermissionMode, Permissions, RootFilesystemConfig, RootFilesystemKind,
+    RootFilesystemMode, RootLowerInput, RulePermissions, ScheduleCallback, ScheduleDriver,
+    ScheduleEntry, ScheduleHandle, SoftwareInput, TimerScheduleDriver, ToolCallback, ToolKit,
 };
 
 pub use process::{

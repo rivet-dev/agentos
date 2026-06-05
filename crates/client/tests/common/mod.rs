@@ -39,3 +39,12 @@ pub async fn new_vm() -> AgentOs {
         .await
         .expect("create VM against real sidecar")
 }
+
+/// Probe whether WASM-backed commands resolve in the VM (a trivial `exec`). Returns false when the
+/// registry WASM command packages are absent (the common case in unbuilt trees), so the
+/// process/shell/fetch suites can gate cleanly without each re-implementing the probe.
+pub async fn wasm_commands_available(os: &AgentOs) -> bool {
+    os.exec("sh", agent_os_client::ExecOptions::default())
+        .await
+        .is_ok()
+}

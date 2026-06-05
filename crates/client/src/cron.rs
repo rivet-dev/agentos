@@ -380,7 +380,9 @@ pub(crate) fn resolve_next_run(
 
 /// Decide whether a schedule string looks like a one-shot ISO-8601-ish timestamp rather than a cron
 /// expression. Mirrors TS `looksLikeOneShotSchedule` /
-/// `^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?)?$`.
+/// `^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?)?$`, with the
+/// fractional-seconds group widened to accept any number of digits so a Rust-produced RFC-3339
+/// timestamp (up to 9 fractional digits) is recognized as a one-shot.
 fn looks_like_one_shot(schedule: &str) -> bool {
     let bytes = schedule.as_bytes();
     let mut i = 0usize;
@@ -594,6 +596,8 @@ pub(crate) struct CronExpr {
     dow_restricted: bool,
     /// Day-of-month `L` (last day of month).
     dom_last: bool,
+    /// Day-of-month `LW` (last weekday, Mon-Fri, on or before the last day of the month).
+    dom_last_weekday: bool,
     /// Day-of-month `<n>W` (nearest weekday to day `n`).
     dom_nearest_weekday: Option<u32>,
     /// Day-of-week `<weekday>L` (last given weekday of the month).
@@ -643,8 +647,14 @@ impl CronExpr {
         let hours = parse_field(hour, 0, 23, FieldKind::Plain)?;
 
         let mut dom_last = false;
+        let mut dom_last_weekday = false;
         let mut dom_nearest_weekday = None;
-        let days_of_month = parse_dom_field(dom, &mut dom_last, &mut dom_nearest_weekday)?;
+        let days_of_month = parse_dom_field(
+            dom,
+            &mut dom_last,
+            &mut dom_last_weekday,
+            &mut dom_nearest_weekday,
+        )?;
 
         let months = parse_field(month, 1, 12, FieldKind::Month)?;
 
@@ -672,6 +682,7 @@ impl CronExpr {
             dom_restricted,
             dow_restricted,
             dom_last,
+            dom_last_weekday,
             dom_nearest_weekday,
             dow_last,
             dow_nth,
@@ -753,6 +764,13 @@ impl CronExpr {
         let dom = dt.day();
         if self.dom_last && dom == last_day_of_month(dt.year(), dt.month()) {
             return true;
+        }
+        if self.dom_last_weekday {
+            // Last weekday (Mon-Fri) on or before the last day of the month: the nearest-weekday
+            // resolution of the last day handles the Saturday/Sunday shift back into the month.
+            if is_nearest_weekday(dt, last_day_of_month(dt.year(), dt.month())) {
+                return true;
+            }
         }
         if let Some(target) = self.dom_nearest_weekday {
             if is_nearest_weekday(dt, target) {
@@ -873,17 +891,23 @@ fn parse_field(
     Ok(values)
 }
 
-/// Parse the day-of-month field, recognizing `L` (last day) and `<n>W` (nearest weekday) in addition
-/// to the standard grammar.
+/// Parse the day-of-month field, recognizing `L` (last day), `LW` (last weekday), and `<n>W` (nearest
+/// weekday to day `n`) in addition to the standard grammar. Mirrors croner: `W` must be preceded by
+/// `L` or a single day-of-month value in `1..=31` (`W` alone, `0W`, and `32W` are rejected).
 fn parse_dom_field(
     field: &str,
     dom_last: &mut bool,
+    dom_last_weekday: &mut bool,
     dom_nearest_weekday: &mut Option<u32>,
 ) -> std::result::Result<Vec<u32>, ()> {
     let upper = field.to_ascii_uppercase();
     if upper == "L" {
         *dom_last = true;
         // No fixed numeric days; matching handled by `dom_last`.
+        return Ok(Vec::new());
+    }
+    if upper == "LW" {
+        *dom_last_weekday = true;
         return Ok(Vec::new());
     }
     if let Some(stripped) = upper.strip_suffix('W') {
@@ -893,9 +917,6 @@ fn parse_dom_field(
         }
         *dom_nearest_weekday = Some(day);
         return Ok(Vec::new());
-    }
-    if upper == "?" || upper == "*" {
-        return parse_field(field, 1, 31, FieldKind::Plain);
     }
     parse_field(field, 1, 31, FieldKind::Plain)
 }
@@ -1008,12 +1029,13 @@ fn parse_field_part(
         let hi = parse_value_token(hi, kind)?;
         (lo, hi)
     } else {
-        let v = parse_value_token(range_spec, kind)?;
-        match step {
-            // A bare value with a step (`a/n`) ranges from the value to the field max.
-            Some(_) => (v, max),
-            None => (v, v),
+        // A bare numeric value may not carry a step. croner rejects `5/15` / `0/5`
+        // ("stepping with numeric prefix"); only `*` or an explicit range may precede `/`.
+        if step.is_some() {
+            return Err(());
         }
+        let v = parse_value_token(range_spec, kind)?;
+        (v, v)
     };
 
     if start < min || end > max || start > end {
