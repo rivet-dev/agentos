@@ -1457,9 +1457,9 @@ pub(crate) mod test_support {
     fn parse_query(raw: &str) -> BTreeMap<String, String> {
         raw.split('&')
             .filter(|pair| !pair.is_empty())
-            .filter_map(|pair| {
+            .map(|pair| {
                 let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-                Some((decode_component(name), decode_component(value)))
+                (decode_component(name), decode_component(value))
             })
             .collect()
     }
