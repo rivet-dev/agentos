@@ -4429,10 +4429,8 @@ where
                 hostname,
             )?;
             if let Some(family) = request.family {
-                addresses.retain(|address| match (family, address) {
-                    (4, IpAddr::V4(_)) => true,
-                    (6, IpAddr::V6(_)) => true,
-                    _ => false,
+                addresses.retain(|address| {
+                    matches!((family, address), (4, IpAddr::V4(_)) | (6, IpAddr::V6(_)))
                 });
             }
             Ok(PythonVfsRpcResponsePayload::DnsLookup {
