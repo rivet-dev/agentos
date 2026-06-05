@@ -8,7 +8,6 @@
 //! only and become `Arc<dyn ...>` trait objects; they cannot cross the wire and are gated exactly as
 //! the actor layer gates them.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -512,9 +511,4 @@ impl ScheduleDriver for TimerScheduleDriver {
         self.timers.scan(|_, cancel| cancel.cancel());
         self.timers.clear();
     }
-}
-
-/// Metadata helpers reused when building sidecar requests.
-pub(crate) fn empty_metadata() -> BTreeMap<String, String> {
-    BTreeMap::new()
 }
