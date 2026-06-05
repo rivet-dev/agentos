@@ -5136,6 +5136,7 @@ fn builtin_named_exports(module_name: &str) -> &'static [&'static str] {
             "getHashes",
             "getRandomValues",
             "randomBytes",
+            "randomFillSync",
             "randomUUID",
             "subtle",
         ],
