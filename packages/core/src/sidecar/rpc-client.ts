@@ -2222,9 +2222,11 @@ export class NativeSidecarKernelProxy {
 					includeLocalMounts,
 				),
 			pread: async (path, offset, length) => {
-				const bytes =
-					await this.createFilesystemView(includeLocalMounts).readFile(path);
-				return bytes.subarray(offset, offset + length);
+				const local = includeLocalMounts ? this.resolveLocalMount(path) : null;
+				if (local) {
+					return local.mount.fs.pread(local.relativePath, offset, length);
+				}
+				return this.client.pread(this.session, this.vm, path, offset, length);
 			},
 			pwrite: async (path, offset, data) => {
 				const bytes =

@@ -748,6 +748,7 @@ mod shadow_root {
                     atime_ms: None,
                     mtime_ms: None,
                     len: None,
+                    offset: None,
                 }
             },
         );
@@ -775,6 +776,7 @@ mod shadow_root {
                     atime_ms: None,
                     mtime_ms: None,
                     len: None,
+                    offset: None,
                 }
             },
         );
@@ -832,6 +834,7 @@ mod shadow_root {
                     atime_ms: None,
                     mtime_ms: None,
                     len: None,
+                    offset: None,
                 }
             },
         );
@@ -889,6 +892,7 @@ mod shadow_root {
                     atime_ms: None,
                     mtime_ms: None,
                     len: None,
+                    offset: None,
                 }
             },
         );
@@ -928,6 +932,7 @@ try {
                     atime_ms: None,
                     mtime_ms: None,
                     len: None,
+                    offset: None,
                 }
             },
         );

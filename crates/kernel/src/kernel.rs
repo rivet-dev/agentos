@@ -691,6 +691,16 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.read_file_internal(None, path)
     }
 
+    pub fn pread_file(&mut self, path: &str, offset: u64, length: usize) -> KernelResult<Vec<u8>> {
+        self.assert_not_terminated()?;
+        Ok(VirtualFileSystem::pread(
+            &mut self.filesystem,
+            path,
+            offset,
+            length,
+        )?)
+    }
+
     pub fn read_file_for_process(
         &mut self,
         requester_driver: &str,

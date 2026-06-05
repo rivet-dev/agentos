@@ -191,6 +191,7 @@ fn json_codec_round_trips_guest_filesystem_requests_with_optional_fields() {
             atime_ms: Some(1_700_000_000_000),
             mtime_ms: Some(1_710_000_000_000),
             len: Some(5),
+            offset: None,
         }),
     ));
 
@@ -224,6 +225,7 @@ fn bare_codec_round_trips_guest_filesystem_requests_with_optional_fields() {
             atime_ms: Some(1_700_000_000_000),
             mtime_ms: Some(1_710_000_000_000),
             len: Some(5),
+            offset: None,
         }),
     ));
 

@@ -125,6 +125,7 @@ fn filesystem_permission_denials_emit_security_audit_events() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ))
         .expect("write blocked file");
@@ -151,6 +152,7 @@ fn filesystem_permission_denials_emit_security_audit_events() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ))
         .expect("dispatch denied read");

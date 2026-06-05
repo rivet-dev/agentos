@@ -375,6 +375,7 @@ fn guest_write_file_utf8(
             atime_ms: None,
             mtime_ms: None,
             len: None,
+            offset: None,
         },
     );
 
@@ -410,6 +411,7 @@ fn guest_read_file_utf8(
             atime_ms: None,
             mtime_ms: None,
             len: None,
+            offset: None,
         },
     );
 

@@ -416,6 +416,7 @@ fn create_vm_root_filesystem_composes_multiple_lowers_with_bootstrap_upper() {
                     atime_ms: None,
                     mtime_ms: None,
                     len: None,
+                    offset: None,
                 }),
             ))
             .expect("read layered file");
@@ -495,6 +496,7 @@ fn vm_layer_rpcs_and_module_access_mounts_are_scoped_per_vm() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ))
         .expect("read module access file");

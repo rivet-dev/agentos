@@ -634,6 +634,7 @@ pub enum GuestFilesystemOperation {
     Chown,
     Utimes,
     Truncate,
+    Pread,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1083,6 +1084,8 @@ pub struct GuestFilesystemCallRequest {
     pub mtime_ms: Option<u64>,
     #[serde(default)]
     pub len: Option<u64>,
+    #[serde(default)]
+    pub offset: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1682,6 +1685,7 @@ impl_bare_string_enum!(GuestFilesystemOperation {
     Chown => ("chown", 17),
     Utimes => ("utimes", 18),
     Truncate => ("truncate", 19),
+    Pread => ("pread", 20),
 });
 
 impl_bare_string_enum!(PermissionMode {

@@ -406,6 +406,7 @@ fn dispose_vm_surfaces_s3_flush_failures_as_structured_events() {
                 atime_ms: None,
                 mtime_ms: None,
                 len: None,
+                offset: None,
             }),
         ))
         .expect("write pending s3 file");

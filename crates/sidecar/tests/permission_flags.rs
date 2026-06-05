@@ -70,6 +70,7 @@ fn mkdir_request(path: &str, recursive: bool) -> GuestFilesystemCallRequest {
         atime_ms: None,
         mtime_ms: None,
         len: None,
+        offset: None,
     }
 }
 
