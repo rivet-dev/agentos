@@ -13284,7 +13284,7 @@ console.log(JSON.stringify(summary));
                     tokio::task::yield_now().await;
                     let mut sidecar = dispose_sidecar.borrow_mut();
                     let response = sidecar
-                        .dispatch(request(
+                        .dispatch_blocking(request(
                             4,
                             OwnershipScope::vm(
                                 &dispose_connection_id,
@@ -13295,7 +13295,6 @@ console.log(JSON.stringify(summary));
                                 reason: DisposeReason::Requested,
                             }),
                         ))
-                        .await
                         .expect("dispose second vm while first net.poll waits");
                     match response.response.payload {
                         ResponsePayload::VmDisposed(_) => {}
