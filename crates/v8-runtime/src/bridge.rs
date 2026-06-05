@@ -315,6 +315,12 @@ impl SessionBuffers {
     }
 }
 
+impl Default for SessionBuffers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Data attached to each sync bridge function via v8::External.
 /// BridgeFnStore keeps these heap allocations alive for the session.
 struct SyncBridgeFnData {
@@ -373,6 +379,17 @@ impl PendingPromises {
     /// Number of pending promises.
     pub fn len(&self) -> usize {
         self.map.borrow().len()
+    }
+
+    /// Whether there are no pending promises.
+    pub fn is_empty(&self) -> bool {
+        self.map.borrow().is_empty()
+    }
+}
+
+impl Default for PendingPromises {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
