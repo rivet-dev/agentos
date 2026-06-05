@@ -4495,28 +4495,26 @@ where
                 },
                 request.max_buffer,
             )
-            .and_then(|payload| {
-                Ok(PythonVfsRpcResponsePayload::SubprocessRun {
-                    exit_code: payload
-                        .get("code")
-                        .and_then(Value::as_i64)
-                        .map(|value| value as i32)
-                        .unwrap_or(1),
-                    stdout: payload
-                        .get("stdout")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                    stderr: payload
-                        .get("stderr")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                    max_buffer_exceeded: payload
-                        .get("maxBufferExceeded")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                })
+            .map(|payload| PythonVfsRpcResponsePayload::SubprocessRun {
+                exit_code: payload
+                    .get("code")
+                    .and_then(Value::as_i64)
+                    .map(|value| value as i32)
+                    .unwrap_or(1),
+                stdout: payload
+                    .get("stdout")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                stderr: payload
+                    .get("stderr")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                max_buffer_exceeded: payload
+                    .get("maxBufferExceeded")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             });
 
         self.respond_python_rpc(vm_id, process_id, request.id, response)
