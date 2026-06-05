@@ -116,7 +116,7 @@ async function prepareFixtureProject(fixture: FixtureProject): Promise<PreparedF
   const cacheDir = path.join(CACHE_ROOT, `${fixture.name}-${cacheKey}`);
   const readyMarker = path.join(cacheDir, CACHE_READY_MARKER);
 
-  if (await pathExists(readyMarker)) {
+  if (await pathExists(readyMarker) && await cacheHasRequiredInstallArtifacts(fixture, cacheDir)) {
     return { cacheHit: true, cacheKey, projectDir: cacheDir };
   }
 
@@ -210,6 +210,35 @@ async function createFixtureCacheKey(fixture: FixtureProject): Promise<string> {
   }
 
   return hash.digest('hex').slice(0, 16);
+}
+
+async function cacheHasRequiredInstallArtifacts(
+  fixture: FixtureProject,
+  cacheDir: string,
+): Promise<boolean> {
+  if (!(await fixtureDeclaresDependencies(fixture))) {
+    return true;
+  }
+  return pathExists(path.join(cacheDir, 'node_modules'));
+}
+
+async function fixtureDeclaresDependencies(fixture: FixtureProject): Promise<boolean> {
+  const packageJson = JSON.parse(
+    await readFile(path.join(fixture.sourceDir, 'package.json'), 'utf8'),
+  ) as Record<string, unknown>;
+  return [
+    'dependencies',
+    'devDependencies',
+    'optionalDependencies',
+    'peerDependencies',
+  ].some((key) => {
+    const value = packageJson[key];
+    return (
+      value !== null &&
+      typeof value === 'object' &&
+      Object.keys(value).length > 0
+    );
+  });
 }
 
 async function createWorkingFixtureProject(
