@@ -2465,7 +2465,7 @@ impl ActiveExecution {
                             ActiveExecutionEvent::JavascriptSyncRpcRequest(request)
                         }
                         PythonExecutionEvent::VfsRpcRequest(request) => {
-                            ActiveExecutionEvent::PythonVfsRpcRequest(request)
+                            ActiveExecutionEvent::PythonVfsRpcRequest(*request)
                         }
                         PythonExecutionEvent::Exited(code) => ActiveExecutionEvent::Exited(code),
                     })
@@ -2540,7 +2540,7 @@ impl ActiveExecution {
                             ActiveExecutionEvent::JavascriptSyncRpcRequest(request)
                         }
                         PythonExecutionEvent::VfsRpcRequest(request) => {
-                            ActiveExecutionEvent::PythonVfsRpcRequest(request)
+                            ActiveExecutionEvent::PythonVfsRpcRequest(*request)
                         }
                         PythonExecutionEvent::Exited(code) => ActiveExecutionEvent::Exited(code),
                     })
