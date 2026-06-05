@@ -320,6 +320,7 @@ setInterval(() => {}, 1000);
                 let path = std::env::temp_dir().join("agent-os-sidecar-runtime-tests.lock");
                 let file = OpenOptions::new()
                     .create(true)
+                    .truncate(false)
                     .read(true)
                     .write(true)
                     .open(&path)
