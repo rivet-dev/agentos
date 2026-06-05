@@ -206,7 +206,7 @@ pub enum PythonExecutionEvent {
     Stdout(Vec<u8>),
     Stderr(Vec<u8>),
     JavascriptSyncRpcRequest(JavascriptSyncRpcRequest),
-    VfsRpcRequest(PythonVfsRpcRequest),
+    VfsRpcRequest(Box<PythonVfsRpcRequest>),
     Exited(i32),
 }
 
@@ -627,7 +627,7 @@ impl PythonExecution {
                         self.pending_vfs_rpc.clone(),
                         self.v8_session.clone(),
                     );
-                    Ok(Some(PythonExecutionEvent::VfsRpcRequest(request)))
+                    Ok(Some(PythonExecutionEvent::VfsRpcRequest(Box::new(request))))
                 } else {
                     if let Some(action) =
                         python_javascript_sync_rpc_action(&self.pyodide_dist_path, &request)?
