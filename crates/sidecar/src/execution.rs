@@ -6735,10 +6735,12 @@ fn javascript_child_process_sync_input_bytes(
     match value {
         Value::Null => Ok(None),
         Value::String(text) => Ok(Some(text.as_bytes().to_vec())),
-        other => {
-            javascript_sync_rpc_bytes_arg(&[other.clone()], 0, "child_process.spawn_sync input")
-                .map(Some)
-        }
+        other => javascript_sync_rpc_bytes_arg(
+            std::slice::from_ref(other),
+            0,
+            "child_process.spawn_sync input",
+        )
+        .map(Some),
     }
 }
 
