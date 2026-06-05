@@ -875,6 +875,18 @@ struct LoopbackHttpResponseWaitRequest<'a, B> {
     request_key: (u64, u64),
 }
 
+struct JavascriptDgramSyncRpcServiceRequest<'a, B> {
+    bridge: &'a SharedBridge<B>,
+    kernel: &'a mut SidecarKernel,
+    vm_id: &'a str,
+    dns: &'a VmDnsConfig,
+    socket_paths: &'a JavascriptSocketPathContext,
+    process: &'a mut ActiveProcess,
+    sync_request: &'a JavascriptSyncRpcRequest,
+    resource_limits: &'a ResourceLimits,
+    network_counts: NetworkResourceCounts,
+}
+
 impl ActiveTcpSocket {
     fn connect<B>(request: ActiveTcpConnectRequest<'_, B>) -> Result<Self, SidecarError>
     where
@@ -13045,17 +13057,19 @@ where
         | "dgram.close"
         | "dgram.address"
         | "dgram.setBufferSize"
-        | "dgram.getBufferSize" => service_javascript_dgram_sync_rpc(
-            bridge,
-            kernel,
-            vm_id,
-            dns,
-            socket_paths,
-            process,
-            request,
-            resource_limits,
-            network_counts,
-        ),
+        | "dgram.getBufferSize" => {
+            service_javascript_dgram_sync_rpc(JavascriptDgramSyncRpcServiceRequest {
+                bridge,
+                kernel,
+                vm_id,
+                dns,
+                socket_paths,
+                process,
+                sync_request: request,
+                resource_limits,
+                network_counts,
+            })
+        }
         "sqlite.constants"
         | "sqlite.open"
         | "sqlite.close"
@@ -15570,20 +15584,23 @@ where
 }
 
 fn service_javascript_dgram_sync_rpc<B>(
-    bridge: &SharedBridge<B>,
-    kernel: &mut SidecarKernel,
-    vm_id: &str,
-    dns: &VmDnsConfig,
-    socket_paths: &JavascriptSocketPathContext,
-    process: &mut ActiveProcess,
-    request: &JavascriptSyncRpcRequest,
-    resource_limits: &ResourceLimits,
-    network_counts: NetworkResourceCounts,
+    request: JavascriptDgramSyncRpcServiceRequest<'_, B>,
 ) -> Result<Value, SidecarError>
 where
     B: NativeSidecarBridge + Send + 'static,
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
+    let JavascriptDgramSyncRpcServiceRequest {
+        bridge,
+        kernel,
+        vm_id,
+        dns,
+        socket_paths,
+        process,
+        sync_request: request,
+        resource_limits,
+        network_counts,
+    } = request;
     match request.method.as_str() {
         "dgram.createSocket" => {
             check_network_resource_limit(
