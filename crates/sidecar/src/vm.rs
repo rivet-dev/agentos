@@ -1141,8 +1141,7 @@ fn bootstrap_shadow_root(root: &Path) -> Result<(), SidecarError> {
         })?;
         fs::set_permissions(&host_path, fs::Permissions::from_mode(*mode)).map_err(|error| {
             SidecarError::Io(format!(
-                "failed to set shadow directory mode {} on {}: {error}",
-                format!("{mode:o}"),
+                "failed to set shadow directory mode {mode:o} on {}: {error}",
                 host_path.display()
             ))
         })?;
