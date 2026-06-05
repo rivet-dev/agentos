@@ -10167,6 +10167,120 @@ await new Promise(() => {});
                 decode_base64(subtle_digest["data"].as_str().expect("subtle digest")),
                 decode_base64("wkLEOhPrUj7AK7HeNtPUZ5R3kOPwBet6nO//NXylQQE=")
             );
+
+            let subtle_generated_key = parse_json_string(
+                crate::execution::service_javascript_crypto_sync_rpc(
+                    &mut create_crypto_test_process(),
+                    &JavascriptSyncRpcRequest {
+                        id: 30,
+                        method: String::from("crypto.subtle"),
+                        args: vec![json!(serde_json::to_string(&json!({
+                            "op": "generateKey",
+                            "algorithm": { "name": "AES-GCM", "length": 256 },
+                            "extractable": true,
+                            "usages": ["encrypt", "decrypt"],
+                        }))
+                        .expect("serialize subtle generateKey request"))],
+                    },
+                )
+                .expect("crypto.subtle generateKey"),
+            )["key"]
+                .clone();
+            assert_eq!(subtle_generated_key["type"], json!("secret"));
+            assert_eq!(subtle_generated_key["algorithm"]["name"], json!("AES-GCM"));
+            assert_eq!(subtle_generated_key["algorithm"]["length"], json!(256));
+
+            let subtle_exported_key = parse_json_string(
+                crate::execution::service_javascript_crypto_sync_rpc(
+                    &mut create_crypto_test_process(),
+                    &JavascriptSyncRpcRequest {
+                        id: 31,
+                        method: String::from("crypto.subtle"),
+                        args: vec![json!(serde_json::to_string(&json!({
+                            "op": "exportKey",
+                            "format": "raw",
+                            "key": subtle_generated_key,
+                        }))
+                        .expect("serialize subtle exportKey request"))],
+                    },
+                )
+                .expect("crypto.subtle exportKey"),
+            );
+            let exported_key_bytes =
+                decode_base64(subtle_exported_key["data"].as_str().expect("exported key"));
+            assert_eq!(exported_key_bytes.len(), 32);
+
+            let subtle_imported_key = parse_json_string(
+                crate::execution::service_javascript_crypto_sync_rpc(
+                    &mut create_crypto_test_process(),
+                    &JavascriptSyncRpcRequest {
+                        id: 32,
+                        method: String::from("crypto.subtle"),
+                        args: vec![json!(serde_json::to_string(&json!({
+                            "op": "importKey",
+                            "format": "raw",
+                            "keyData": subtle_exported_key["data"],
+                            "algorithm": { "name": "AES-GCM" },
+                            "extractable": true,
+                            "usages": ["encrypt", "decrypt"],
+                        }))
+                        .expect("serialize subtle importKey request"))],
+                    },
+                )
+                .expect("crypto.subtle importKey"),
+            )["key"]
+                .clone();
+            assert_eq!(subtle_imported_key["algorithm"]["length"], json!(256));
+
+            let subtle_encrypted = parse_json_string(
+                crate::execution::service_javascript_crypto_sync_rpc(
+                    &mut create_crypto_test_process(),
+                    &JavascriptSyncRpcRequest {
+                        id: 33,
+                        method: String::from("crypto.subtle"),
+                        args: vec![json!(serde_json::to_string(&json!({
+                            "op": "encrypt",
+                            "algorithm": {
+                                "name": "AES-GCM",
+                                "iv": "AAAAAAAAAAAAAAAA",
+                            },
+                            "key": subtle_imported_key,
+                            "data": "aGVsbG8=",
+                        }))
+                        .expect("serialize subtle encrypt request"))],
+                    },
+                )
+                .expect("crypto.subtle encrypt"),
+            );
+            assert!(
+                decode_base64(subtle_encrypted["data"].as_str().expect("encrypted data")).len()
+                    > b"hello".len()
+            );
+
+            let subtle_decrypted = parse_json_string(
+                crate::execution::service_javascript_crypto_sync_rpc(
+                    &mut create_crypto_test_process(),
+                    &JavascriptSyncRpcRequest {
+                        id: 34,
+                        method: String::from("crypto.subtle"),
+                        args: vec![json!(serde_json::to_string(&json!({
+                            "op": "decrypt",
+                            "algorithm": {
+                                "name": "AES-GCM",
+                                "iv": "AAAAAAAAAAAAAAAA",
+                            },
+                            "key": subtle_imported_key,
+                            "data": subtle_encrypted["data"],
+                        }))
+                        .expect("serialize subtle decrypt request"))],
+                    },
+                )
+                .expect("crypto.subtle decrypt"),
+            );
+            assert_eq!(
+                decode_base64(subtle_decrypted["data"].as_str().expect("decrypted data")),
+                b"hello"
+            );
         }
         fn javascript_sqlite_sync_rpcs_round_trip_and_persist_vm_files() {
             let mut sidecar = create_test_sidecar();
