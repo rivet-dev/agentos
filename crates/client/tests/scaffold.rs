@@ -16,6 +16,6 @@ fn constants_are_exported() {
     assert_eq!(PERMISSION_TIMEOUT_MS, 120_000);
     assert_eq!(ACP_SESSION_EVENT_RETENTION_LIMIT, 1024);
     assert_eq!(CLOSED_SESSION_ID_RETENTION_LIMIT, 2048);
-    assert!(SHELL_DISPOSE_TIMEOUT_MS > 0);
+    assert_eq!(SHELL_DISPOSE_TIMEOUT_MS, 5_000);
     assert_eq!(VM_READY_TIMEOUT_MS, 10_000);
 }
