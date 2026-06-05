@@ -1104,9 +1104,9 @@ pub fn run_snapshot_consolidated_checks() {
     // --- Part 19b: bundled bridge installs fetch globals before snapshot restore ---
     {
         let bridge_code = concat!(
-            include_str!("../../execution/assets/v8-bridge.js"),
+            include_str!(concat!(env!("OUT_DIR"), "/v8-bridge.js")),
             "\n",
-            include_str!("../../execution/assets/v8-bridge-zlib.js")
+            include_str!(concat!(env!("OUT_DIR"), "/v8-bridge-zlib.js"))
         );
         let blob = create_snapshot(bridge_code).expect("snapshot creation");
         let mut isolate = create_isolate_from_snapshot(blob, None);

@@ -1,1 +1,1 @@
-/workspace/packages/playground/node_modules/typescript/lib/typescript.js
+../node_modules/typescript/lib/typescript.js

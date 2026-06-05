@@ -3,7 +3,7 @@
  * can serve them as static files without a CDN proxy.
  */
 import { mkdir, readdir, readlink, symlink, unlink } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const playgroundDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -46,9 +46,10 @@ async function main(): Promise<void> {
 	await mkdir(vendorDir, { recursive: true });
 	await removeStaleSymlinks();
 	await Promise.all(
-		LINKS.map(({ name, target }) =>
-			ensureSymlink(resolve(vendorDir, name), target),
-		),
+		LINKS.map(({ name, target }) => {
+			const linkPath = resolve(vendorDir, name);
+			return ensureSymlink(linkPath, relative(vendorDir, target));
+		}),
 	);
 }
 

@@ -2,6 +2,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "../build-support/v8_bridge_build.rs"]
+mod v8_bridge_build;
+
 fn cargo_home() -> PathBuf {
     if let Some(home) = env::var_os("CARGO_HOME") {
         return PathBuf::from(home);
@@ -77,6 +80,8 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", lock_path.display());
     println!("cargo:rerun-if-changed=build.rs");
+
+    v8_bridge_build::build_v8_bridge(&manifest_dir, &out_dir);
 
     let v8_version = read_v8_version(&lock_path);
     let icu_data = find_v8_icu_data(&v8_version);

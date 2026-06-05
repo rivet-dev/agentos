@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Native execution plane scaffold for Agent OS"
+build = "build.rs"
 
 [lib]
 doctest = false

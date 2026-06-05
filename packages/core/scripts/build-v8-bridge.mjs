@@ -1,6 +1,6 @@
 import { build } from "esbuild";
 import { createRequire } from "node:module";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import stdLibBrowser from "node-stdlib-browser";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,25 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(scriptDir, "..");
 const workspaceRoot = path.resolve(packageRoot, "..", "..");
 const require = createRequire(import.meta.url);
+
+function parseArgs(argv) {
+	const options = {};
+	for (let index = 0; index < argv.length; index++) {
+		const arg = argv[index];
+		if (arg === "--out-dir" || arg === "--bridge-out" || arg === "--zlib-out") {
+			const value = argv[++index];
+			if (!value) {
+				throw new Error(`${arg} requires a path`);
+			}
+			options[arg.slice(2)] = path.resolve(value);
+			continue;
+		}
+		throw new Error(`Unknown argument: ${arg}`);
+	}
+	return options;
+}
+
+const options = parseArgs(process.argv.slice(2));
 const bridgeSource = path.join(
 	workspaceRoot,
 	"crates",
@@ -16,20 +35,33 @@ const bridgeSource = path.join(
 	"assets",
 	"v8-bridge.source.js",
 );
-const bridgeOutput = path.join(
+const defaultBridgeOutput = path.join(
 	workspaceRoot,
 	"crates",
 	"execution",
 	"assets",
 	"v8-bridge.js",
 );
-const zlibBridgeOutput = path.join(
+const defaultZlibBridgeOutput = path.join(
 	workspaceRoot,
 	"crates",
 	"execution",
 	"assets",
 	"v8-bridge-zlib.js",
 );
+const bridgeOutput =
+	options["bridge-out"] ??
+	(options["out-dir"]
+		? path.join(options["out-dir"], "v8-bridge.js")
+		: defaultBridgeOutput);
+const zlibBridgeOutput =
+	options["zlib-out"] ??
+	(options["out-dir"]
+		? path.join(options["out-dir"], "v8-bridge-zlib.js")
+		: defaultZlibBridgeOutput);
+const tempSuffix = `.tmp-${process.pid}-${Date.now()}`;
+const bridgeTempOutput = `${bridgeOutput}${tempSuffix}`;
+const zlibBridgeTempOutput = `${zlibBridgeOutput}${tempSuffix}`;
 const undiciShimDir = path.join(
 	workspaceRoot,
 	"crates",
@@ -95,6 +127,9 @@ const mainBundleAlias = {
 	zlib: path.join(undiciShimDir, "zlib.js"),
 	"node:zlib": path.join(undiciShimDir, "zlib.js"),
 };
+
+await mkdir(path.dirname(bridgeOutput), { recursive: true });
+await mkdir(path.dirname(zlibBridgeOutput), { recursive: true });
 
 let bridgeSourceText = await readFile(bridgeSource, "utf8");
 bridgeSourceText = bridgeSourceText.replace(/\n\s*rationale:\s*"[^"]*",?/g, "");
@@ -461,7 +496,7 @@ const result = await build({
 		loader: "js",
 	},
 	bundle: true,
-	outfile: bridgeOutput,
+	outfile: bridgeTempOutput,
 	write: true,
 	format: "iife",
 	platform: "browser",
@@ -509,7 +544,7 @@ const zlibResult = await build({
 		loader: "js",
 	},
 	bundle: true,
-	outfile: zlibBridgeOutput,
+	outfile: zlibBridgeTempOutput,
 	write: true,
 	format: "iife",
 	platform: "browser",
@@ -544,11 +579,13 @@ if (zlibResult.errors.length > 0) {
 }
 
 const webStreamsPrelude = await buildWebStreamsPrelude();
-await prependBundlePrelude(bridgeOutput, webStreamsPrelude);
-await rewriteUndiciRuntimeFeaturesBundle(bridgeOutput, { required: true });
-await rewriteUnsupportedUtilTypesBundle(bridgeOutput, { required: true });
-await rewriteUndiciRuntimeFeaturesBundle(zlibBridgeOutput);
-await rewriteUnsupportedUtilTypesBundle(zlibBridgeOutput);
+await prependBundlePrelude(bridgeTempOutput, webStreamsPrelude);
+await rewriteUndiciRuntimeFeaturesBundle(bridgeTempOutput, { required: true });
+await rewriteUnsupportedUtilTypesBundle(bridgeTempOutput, { required: true });
+await rewriteUndiciRuntimeFeaturesBundle(zlibBridgeTempOutput);
+await rewriteUnsupportedUtilTypesBundle(zlibBridgeTempOutput);
+await rename(bridgeTempOutput, bridgeOutput);
+await rename(zlibBridgeTempOutput, zlibBridgeOutput);
 
 console.log(
 	`Built ${path.relative(workspaceRoot, bridgeOutput)} (${result.outputFiles?.[0]?.text?.length ?? "written"} bytes)`,

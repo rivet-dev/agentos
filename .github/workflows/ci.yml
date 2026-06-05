@@ -28,7 +28,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cargo/.rusty_v8
-          key: ${{ runner.os }}-rusty-v8-${{ hashFiles('Cargo.lock', 'crates/v8-runtime/Cargo.toml', 'crates/v8-runtime/build.rs') }}
+          key: ${{ runner.os }}-rusty-v8-${{ hashFiles('Cargo.lock', 'crates/v8-runtime/Cargo.toml', 'crates/v8-runtime/build.rs', 'crates/build-support/v8_bridge_build.rs', 'packages/core/scripts/build-v8-bridge.mjs') }}
           restore-keys: |
             ${{ runner.os }}-rusty-v8-
       - run: pnpm install --frozen-lockfile

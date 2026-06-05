@@ -241,13 +241,12 @@ These files are checked-in guest assets that support the runtime surface but are
 
 Relevant files:
 - `crates/execution/assets/v8-bridge.source.js`
-- `crates/execution/assets/v8-bridge.js`
-- `crates/execution/assets/v8-bridge-zlib.js`
 - `crates/execution/assets/polyfill-registry.json`
 - `crates/execution/assets/undici-shims/*`
+- `crates/build-support/v8_bridge_build.rs`
 
 What lives here:
-- The bundled guest bridge code that is loaded into the V8 runtime.
+- The bridge source and shim inputs used to generate the bundled guest bridge into Cargo `OUT_DIR`.
 - The runtime-loadable builtin registry.
 - The fetch, undici, stream, web-stream, HTTP, HTTPS, TLS, and related compatibility shims used by the guest runtime.
 
