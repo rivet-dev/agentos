@@ -761,6 +761,37 @@ if (process.ppid !== 41) throw new Error(`ppid=${process.ppid}`);
     assert!(result.stderr.is_empty(), "unexpected stderr: {stderr}");
 }
 
+fn javascript_execution_preserves_binary_process_stdio_writes() {
+    let temp = tempdir().expect("create temp dir");
+    let mut engine = JavascriptExecutionEngine::default();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            inline_code: Some(String::from(
+                r#"
+process.stdout.write(Buffer.from([0x00, 0xbc, 0xff, 0x41]));
+process.stderr.write(Buffer.from([0xfe, 0x00, 0x42]));
+"#,
+            )),
+        })
+        .expect("start JavaScript execution");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, vec![0x00, 0xbc, 0xff, 0x41]);
+    assert_eq!(result.stderr, vec![0xfe, 0x00, 0x42]);
+}
+
 fn javascript_execution_stream_consumers_text_reads_live_stdin() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = JavascriptExecutionEngine::default();
@@ -3849,6 +3880,7 @@ fn javascript_v8_suite() {
     javascript_contexts_preserve_vm_and_bootstrap_configuration();
     javascript_execution_uses_v8_runtime_without_spawning_guest_node_binary();
     javascript_execution_virtualizes_process_metadata_for_inline_v8_code();
+    javascript_execution_preserves_binary_process_stdio_writes();
     javascript_execution_stream_consumers_text_reads_live_stdin();
     javascript_execution_process_stdin_async_iterator_finishes_with_live_stdin();
     javascript_execution_process_exit_from_live_stdin_listener_exits_without_waiting_for_eof();

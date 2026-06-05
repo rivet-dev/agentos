@@ -489,6 +489,10 @@ pub fn base64_encode_pub(data: &[u8]) -> String {
     base64_encode(data)
 }
 
+pub fn base64_decode_pub(input: &str) -> Option<Vec<u8>> {
+    base64_decode(input).ok()
+}
+
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
