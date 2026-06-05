@@ -1516,7 +1516,7 @@ fn translate_wasm_signal_state_sync_rpc_request(
         .args
         .get(2)
         .and_then(Value::as_str)
-        .map(|value| serde_json::from_str::<Vec<u32>>(value))
+        .map(serde_json::from_str::<Vec<u32>>)
         .transpose()
         .map_err(|error| WasmExecutionError::RpcResponse(error.to_string()))?
         .unwrap_or_default();
