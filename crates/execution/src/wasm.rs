@@ -2380,7 +2380,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       }}
       const guestPath = typeof entry.guestPath === "string" ? entry.guestPath : null;
       if (guestPath === ".") {{
-        return ".";
+        return this._descriptorGuestPath(entry);
       }}
       if (typeof guestPath === "string" && guestPath.length > 0) {{
         return __agentOsPath().posix.normalize(guestPath);
@@ -2402,26 +2402,20 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       if (typeof baseGuestPath !== "string") {{
         return null;
       }}
-      if (!String(target).startsWith("/") && baseGuestPath === "/") {{
-        const cwdEntry = this._currentDirectoryPreopen();
-        const cwdGuestPath = this._descriptorGuestPath(cwdEntry);
-        if (
-          cwdEntry &&
-          typeof cwdEntry.hostPath === "string" &&
-          typeof cwdGuestPath === "string"
-        ) {{
-          return {{
-            entry: cwdEntry,
-            guestPath: cwdGuestPath,
-            hostPath: cwdEntry.hostPath,
-          }};
-        }}
-      }}
       return {{
         entry,
         guestPath: baseGuestPath,
         hostPath: typeof entry?.hostPath === "string" ? entry.hostPath : null,
       }};
+    }}
+
+    _hostPathExists(hostPath) {{
+      try {{
+        __agentOsFs().statSync(hostPath);
+        return true;
+      }} catch {{
+        return false;
+      }}
     }}
 
     _resolveHostPathForGuestPath(guestPath) {{
@@ -2461,7 +2455,39 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       return null;
     }}
 
-    _resolveDescriptorPath(fd, pathPtr, pathLen) {{
+    _resolveRootRelativePath(target, preferCreateParent = false) {{
+      const cwdEntry = this._currentDirectoryPreopen();
+      const cwdGuestPath = this._descriptorGuestPath(cwdEntry);
+      const rootGuestPath = __agentOsPath().posix.resolve("/", target);
+      const rootHostPath = this._resolveHostPathForGuestPath(rootGuestPath);
+      if (
+        !cwdEntry ||
+        typeof cwdGuestPath !== "string" ||
+        typeof rootHostPath !== "string"
+      ) {{
+        return {{ guestPath: rootGuestPath, hostPath: rootHostPath }};
+      }}
+
+      const cwdGuestTarget = __agentOsPath().posix.resolve(cwdGuestPath, target);
+      const cwdHostPath = this._resolveHostPathForGuestPath(cwdGuestTarget);
+      if (typeof cwdHostPath !== "string") {{
+        return {{ guestPath: rootGuestPath, hostPath: rootHostPath }};
+      }}
+
+      if (this._hostPathExists(cwdHostPath)) {{
+        return {{ guestPath: cwdGuestTarget, hostPath: cwdHostPath }};
+      }}
+      if (
+        preferCreateParent &&
+        this._hostPathExists(__agentOsPath().dirname(cwdHostPath))
+      ) {{
+        return {{ guestPath: cwdGuestTarget, hostPath: cwdHostPath }};
+      }}
+
+      return {{ guestPath: rootGuestPath, hostPath: rootHostPath }};
+    }}
+
+    _resolveDescriptorPath(fd, pathPtr, pathLen, options = {{}}) {{
       const entry = this._descriptorEntry(fd);
       if (!entry) {{
         return {{ error: __agentOsWasiErrnoBadf }};
@@ -2474,13 +2500,23 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       const guestPath = target.startsWith("/")
         ? __agentOsPath().posix.normalize(target)
         : __agentOsPath().posix.resolve(base.guestPath, target);
-      const hostPath = this._resolveHostPathForGuestPath(guestPath);
+      const mapped =
+        base.guestPath === "/" && !target.startsWith("/")
+          ? this._resolveRootRelativePath(
+              target,
+              options.preferCreateParent === true,
+            )
+          : {{
+              guestPath,
+              hostPath: this._resolveHostPathForGuestPath(guestPath),
+            }};
+      const hostPath = mapped.hostPath;
       if (typeof hostPath !== "string") {{
         return {{ error: __agentOsWasiErrnoNoent }};
       }}
       return {{
         error: __agentOsWasiErrnoSuccess,
-        guestPath,
+        guestPath: mapped.guestPath,
         hostPath,
       }};
     }}
@@ -3163,30 +3199,19 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         ) {{
           return __agentOsWasiErrnoBadf;
         }}
-        const target = this._readString(pathPtr, pathLen);
-        const base = this._descriptorPathBase(entry, target);
-        if (!base || typeof base.hostPath !== "string") {{
-          return __agentOsWasiErrnoBadf;
-        }}
-        const guestPath = target.startsWith("/")
-          ? __agentOsPath().posix.normalize(target)
-          : __agentOsPath().posix.resolve(base.guestPath, target);
-        const baseHostPath = __agentOsPath().resolve(base.hostPath);
-        const hostPath = __agentOsPath().resolve(baseHostPath, target);
-        const hostSuffix = __agentOsPath().relative(baseHostPath, hostPath);
-        if (
-          hostPath !== baseHostPath &&
-          (hostSuffix === ".." ||
-            hostSuffix.startsWith(`..${{__agentOsPath().sep}}`) ||
-            __agentOsPath().isAbsolute(hostSuffix))
-        ) {{
-          return __agentOsWasiErrnoNoent;
-        }}
         const requestedFlags = Number(oflags) >>> 0;
-        const openDirectory = (requestedFlags & __agentOsWasiOpenDirectory) !== 0;
         const createOrTruncate =
           (requestedFlags & __agentOsWasiOpenCreate) !== 0 ||
           (requestedFlags & __agentOsWasiOpenTruncate) !== 0;
+        const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen, {{
+          preferCreateParent: createOrTruncate,
+        }});
+        if (resolved.error !== __agentOsWasiErrnoSuccess) {{
+          return resolved.error;
+        }}
+        const guestPath = resolved.guestPath;
+        const hostPath = resolved.hostPath;
+        const openDirectory = (requestedFlags & __agentOsWasiOpenDirectory) !== 0;
         const allowedRightsBase = this._descriptorRightsBase(entry);
         const allowedRightsInheriting = this._descriptorRightsInheriting(entry);
         const requestedRightsBase = this._normalizeRights(rightsBase, allowedRightsInheriting);
@@ -4912,8 +4937,21 @@ mod tests {
         let bootstrap = build_wasm_runner_bootstrap(&BTreeMap::new(), None);
 
         assert!(bootstrap.contains("_descriptorPreopenName(entry)"));
-        assert!(bootstrap.contains("if (guestPath === \".\") {\n        return \".\";"));
+        assert!(bootstrap.contains(
+            "if (guestPath === \".\") {\n        return this._descriptorGuestPath(entry);"
+        ));
         assert!(bootstrap.contains("const guestPath = this._descriptorPreopenName(entry);"));
+    }
+
+    #[test]
+    fn wasm_runner_path_open_uses_guest_mapping_for_absolute_paths() {
+        let bootstrap = build_wasm_runner_bootstrap(&BTreeMap::new(), None);
+
+        assert!(bootstrap
+            .contains("const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen, {"));
+        assert!(
+            !bootstrap.contains("const hostPath = __agentOsPath().resolve(baseHostPath, target);")
+        );
     }
 
     #[test]
