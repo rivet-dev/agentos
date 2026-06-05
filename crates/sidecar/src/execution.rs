@@ -2601,7 +2601,7 @@ impl ActiveExecution {
     }
 }
 
-fn spawn_tool_process_events(
+struct ToolProcessEventRequest {
     sender: tokio::sync::mpsc::UnboundedSender<ProcessEventEnvelope>,
     sidecar_requests: SharedSidecarRequestClient,
     connection_id: String,
@@ -2610,7 +2610,19 @@ fn spawn_tool_process_events(
     process_id: String,
     tool_resolution: ToolCommandResolution,
     cancelled: Arc<AtomicBool>,
-) {
+}
+
+fn spawn_tool_process_events(request: ToolProcessEventRequest) {
+    let ToolProcessEventRequest {
+        sender,
+        sidecar_requests,
+        connection_id,
+        session_id,
+        vm_id,
+        process_id,
+        tool_resolution,
+        cancelled,
+    } = request;
     std::thread::spawn(move || match tool_resolution {
         ToolCommandResolution::Immediate {
             stdout,
@@ -2809,16 +2821,16 @@ where
                     .with_host_cwd(resolve_vm_guest_path_to_host(vm, &guest_cwd)),
                 );
                 self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy)?;
-                spawn_tool_process_events(
-                    self.process_event_sender.clone(),
-                    self.sidecar_requests.clone(),
-                    connection_id.clone(),
-                    session_id.clone(),
-                    vm_id.clone(),
-                    payload.process_id.clone(),
+                spawn_tool_process_events(ToolProcessEventRequest {
+                    sender: self.process_event_sender.clone(),
+                    sidecar_requests: self.sidecar_requests.clone(),
+                    connection_id: connection_id.clone(),
+                    session_id: session_id.clone(),
+                    vm_id: vm_id.clone(),
+                    process_id: payload.process_id.clone(),
                     tool_resolution,
                     cancelled,
-                );
+                });
 
                 return Ok(DispatchResult {
                     response: self.respond(
@@ -4989,16 +5001,16 @@ where
             let kernel_pid = kernel_handle.pid();
             let tool_execution = ToolExecution::default();
             let cancelled = tool_execution.cancelled.clone();
-            spawn_tool_process_events(
-                process_event_sender.clone(),
-                sidecar_requests.clone(),
-                vm.connection_id.clone(),
-                vm.session_id.clone(),
-                vm_id.to_owned(),
-                child_runtime_process_id.clone(),
+            spawn_tool_process_events(ToolProcessEventRequest {
+                sender: process_event_sender.clone(),
+                sidecar_requests: sidecar_requests.clone(),
+                connection_id: vm.connection_id.clone(),
+                session_id: vm.session_id.clone(),
+                vm_id: vm_id.to_owned(),
+                process_id: child_runtime_process_id.clone(),
                 tool_resolution,
                 cancelled,
-            );
+            });
             (
                 kernel_pid,
                 kernel_handle,
@@ -5490,16 +5502,16 @@ where
             let kernel_pid = kernel_handle.pid();
             let tool_execution = ToolExecution::default();
             let cancelled = tool_execution.cancelled.clone();
-            spawn_tool_process_events(
-                process_event_sender.clone(),
-                sidecar_requests.clone(),
-                vm.connection_id.clone(),
-                vm.session_id.clone(),
-                vm_id.to_owned(),
-                child_runtime_process_id.clone(),
+            spawn_tool_process_events(ToolProcessEventRequest {
+                sender: process_event_sender.clone(),
+                sidecar_requests: sidecar_requests.clone(),
+                connection_id: vm.connection_id.clone(),
+                session_id: vm.session_id.clone(),
+                vm_id: vm_id.to_owned(),
+                process_id: child_runtime_process_id.clone(),
                 tool_resolution,
                 cancelled,
-            );
+            });
             (
                 kernel_pid,
                 kernel_handle,
