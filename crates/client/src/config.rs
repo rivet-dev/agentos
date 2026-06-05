@@ -121,12 +121,35 @@ pub struct SoftwareInput {
     pub version: Option<String>,
 }
 
-/// A registered tool kit (in-process; tool implementations stay host-side).
+/// A host-side tool execute callback. Receives the validated JSON input, returns a JSON result or an
+/// error string. Stays host-side (never crosses to the guest); the guest invokes it by name via the
+/// sidecar tool-invocation callback channel.
+pub type ToolCallback = Arc<
+    dyn Fn(serde_json::Value) -> futures::future::BoxFuture<'static, Result<serde_json::Value, String>>
+        + Send
+        + Sync,
+>;
+
+/// A single host tool within a [`ToolKit`].
+#[derive(Clone)]
+pub struct HostTool {
+    pub name: String,
+    pub description: String,
+    /// JSON Schema for the tool input (forwarded to the sidecar `register_toolkit` definition).
+    pub input_schema: serde_json::Value,
+    pub timeout_ms: Option<u64>,
+    /// Host-side implementation, invoked when the guest calls `<toolkit>:<tool>`.
+    pub execute: ToolCallback,
+}
+
+/// A registered tool kit (in-process; tool implementations stay host-side). Tools are exposed to the
+/// guest as `<toolkit>:<tool>` and dispatched back to [`HostTool::execute`] via the sidecar
+/// tool-invocation callback channel.
 #[derive(Clone)]
 pub struct ToolKit {
     pub name: String,
     pub description: String,
-    // TODO(parity: model tool definitions + host invocation callbacks).
+    pub tools: Vec<HostTool>,
 }
 
 // ---------------------------------------------------------------------------

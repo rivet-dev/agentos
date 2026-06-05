@@ -13,8 +13,20 @@ use scc::HashMap as SccHashMap;
 use serde::Serialize;
 use uuid::Uuid;
 
+use agent_os_sidecar::protocol::{
+    AuthenticateRequest, OwnershipScope, RequestPayload, ResponsePayload,
+};
+
 use crate::agent_os::AgentOs;
 use crate::error::ClientError;
+use crate::transport::SidecarTransport;
+
+/// The lazily-established shared sidecar process + authenticated connection. Multiple VMs in the same
+/// (shared) sidecar reuse this single process/connection, each opening its own session + VM on it.
+pub(crate) struct SharedConnection {
+    pub(crate) transport: Arc<SidecarTransport>,
+    pub(crate) connection_id: String,
+}
 
 /// Sidecar lifecycle state, encoded as a `u8` for `AtomicU8`.
 ///
@@ -98,7 +110,9 @@ pub struct AgentOsSidecar {
     pub(crate) shared_pool: Option<String>,
     pub(crate) state: AtomicU8,
     pub(crate) active_vm_count: AtomicU32,
-    // TODO(parity: hold the transport handle / vm-admin registry once create_vm lands).
+    /// The shared sidecar process + authenticated connection, established on the first VM `create`
+    /// against this sidecar and reused by every subsequent VM in the same (shared) sidecar.
+    pub(crate) connection: tokio::sync::Mutex<Option<SharedConnection>>,
 }
 
 impl AgentOsSidecar {
@@ -114,6 +128,66 @@ impl AgentOsSidecar {
             shared_pool,
             state: AtomicU8::new(SidecarState::Ready.as_u8()),
             active_vm_count: AtomicU32::new(0),
+            connection: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// Get (or lazily establish) the shared sidecar process + authenticated connection. The first
+    /// caller spawns the `agent-os-sidecar` child and runs the `Authenticate` handshake; subsequent
+    /// callers reuse the same transport + connection id. This is what makes a shared sidecar host
+    /// multiple VMs in one process.
+    pub(crate) async fn ensure_connection(
+        &self,
+    ) -> Result<(Arc<SidecarTransport>, String, usize), ClientError> {
+        let mut guard = self.connection.lock().await;
+        if let Some(existing) = guard.as_ref() {
+            let max_frame = existing.transport.max_frame_bytes.load(Ordering::SeqCst);
+            return Ok((
+                existing.transport.clone(),
+                existing.connection_id.clone(),
+                max_frame,
+            ));
+        }
+
+        let transport = SidecarTransport::spawn().await?;
+        let authed = match transport
+            .request(
+                OwnershipScope::connection("client-hint"),
+                RequestPayload::Authenticate(AuthenticateRequest {
+                    client_name: "agent-os-client".to_string(),
+                    auth_token: "agent-os-client".to_string(),
+                    bridge_version: agent_os_bridge::bridge_contract().version,
+                }),
+            )
+            .await?
+        {
+            ResponsePayload::Authenticated(authed) => authed,
+            ResponsePayload::Rejected(rejected) => {
+                return Err(ClientError::Kernel {
+                    code: rejected.code,
+                    message: rejected.message,
+                });
+            }
+            _ => return Err(ClientError::Sidecar("unexpected authenticate response".to_string())),
+        };
+        let max_frame = authed.max_frame_bytes as usize;
+        transport.max_frame_bytes.store(max_frame, Ordering::SeqCst);
+
+        *guard = Some(SharedConnection {
+            transport: transport.clone(),
+            connection_id: authed.connection_id.clone(),
+        });
+        Ok((transport, authed.connection_id, max_frame))
+    }
+
+    /// Kill the shared sidecar child process if a connection was established. Used when the last VM
+    /// on a shared sidecar shuts down, so the sidecar process does not leak (process-global pool
+    /// entries are never dropped, so `kill_on_drop` alone would not fire at process exit).
+    pub(crate) async fn kill_connection(&self) {
+        if let Some(connection) = self.connection.lock().await.take() {
+            if let Some(mut child) = connection.transport.child.lock().take() {
+                let _ = child.start_kill();
+            }
         }
     }
 
@@ -170,7 +244,17 @@ impl AgentOsSidecar {
         if errors.is_empty() {
             Ok(())
         } else {
-            Err(ClientError::Sidecar(errors.join("; ")))
+            // Parity: TypeScript throws `new Error(errors.map(e => e.message).join("; "))`, a bare
+            // joined message with NO prefix. The aggregated text is built here verbatim.
+            //
+            // Constraint: `ClientError` (error.rs, owned by another agent) currently has no
+            // transparent/no-prefix variant, so the only generic carrier is `ClientError::Sidecar`,
+            // whose `Display` prepends `"sidecar error: "`. To surface the joined string byte-for-byte
+            // identical to TS, error.rs must grow a transparent variant (e.g.
+            // `#[error("{0}")] Aggregate(String)`); this site should switch to it once it exists. The
+            // joined string is constructed here so that wiring is a one-line variant swap.
+            let aggregated = errors.join("; ");
+            Err(ClientError::Sidecar(aggregated))
         }
     }
 }

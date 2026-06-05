@@ -18,8 +18,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use agent_os_sidecar::protocol::{
-    CloseAgentSessionRequest, GetSessionStateRequest, OwnershipScope, RequestPayload,
-    ResponsePayload, SessionRequest, SessionStateResponse,
+    CloseAgentSessionRequest, CreateSessionRequest, GetSessionStateRequest, GuestRuntimeKind,
+    OwnershipScope, RequestPayload, ResponsePayload, SessionCreatedResponse, SessionRequest,
+    SessionStateResponse,
 };
 
 use crate::agent_os::{AgentOs, SessionEntry};
@@ -55,6 +56,123 @@ pub struct AgentRegistryEntry {
     #[serde(rename = "agentPackage")]
     pub agent_package: String,
     pub installed: bool,
+}
+
+/// Built-in agent ids (mirrors the keys of TS `AGENT_CONFIGS`).
+const BUILTIN_AGENT_IDS: [&str; 5] = ["pi", "pi-cli", "opencode", "claude", "codex"];
+
+/// opencode context-file paths injected via `OPENCODE_CONTEXTPATHS` (port of TS `OPENCODE_CONTEXT_PATHS`).
+const OPENCODE_CONTEXT_PATHS: [&str; 12] = [
+    ".github/copilot-instructions.md",
+    ".cursorrules",
+    ".cursor/rules/",
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "opencode.md",
+    "opencode.local.md",
+    "OpenCode.md",
+    "OpenCode.local.md",
+    "OPENCODE.md",
+    "OPENCODE.local.md",
+    "/etc/agentos/instructions.md",
+];
+
+/// A built-in agent configuration (port of a TS `AGENT_CONFIGS` entry). `prepareInstructions` is a
+/// documented nuance not yet ported.
+struct AgentConfigDef {
+    acp_adapter: &'static str,
+    agent_package: &'static str,
+    default_env: &'static [(&'static str, &'static str)],
+}
+
+/// Resolve a built-in agent type to its config (port of TS `AGENT_CONFIGS`).
+fn agent_config(agent_type: &str) -> Option<AgentConfigDef> {
+    Some(match agent_type {
+        "pi" => AgentConfigDef {
+            acp_adapter: "@rivet-dev/agent-os-pi",
+            agent_package: "@mariozechner/pi-coding-agent",
+            default_env: &[],
+        },
+        "pi-cli" => AgentConfigDef {
+            acp_adapter: "pi-acp",
+            agent_package: "@mariozechner/pi-coding-agent",
+            default_env: &[],
+        },
+        "opencode" => AgentConfigDef {
+            acp_adapter: "@rivet-dev/agent-os-opencode",
+            agent_package: "@rivet-dev/agent-os-opencode",
+            default_env: &[
+                ("OPENCODE_DISABLE_CONFIG_DEP_INSTALL", "1"),
+                ("OPENCODE_DISABLE_EMBEDDED_WEB_UI", "1"),
+            ],
+        },
+        "claude" => AgentConfigDef {
+            acp_adapter: "@rivet-dev/agent-os-claude",
+            agent_package: "@anthropic-ai/claude-agent-sdk",
+            default_env: &[
+                ("CLAUDE_AGENT_SDK_CLIENT_APP", "@rivet-dev/agent-os"),
+                ("CLAUDE_CODE_SIMPLE", "1"),
+                ("CLAUDE_CODE_FORCE_AGENT_OS_RIPGREP", "1"),
+                ("CLAUDE_CODE_DEFER_GROWTHBOOK_INIT", "1"),
+                ("CLAUDE_CODE_DISABLE_CWD_PERSIST", "1"),
+                ("CLAUDE_CODE_DISABLE_DEV_NULL_REDIRECT", "1"),
+                ("CLAUDE_CODE_NODE_SHELL_WRAPPER", "1"),
+                ("CLAUDE_CODE_DISABLE_STREAM_JSON_HOOK_EVENTS", "1"),
+                ("CLAUDE_CODE_SHELL", "/bin/sh"),
+                ("CLAUDE_CODE_SKIP_INITIAL_MESSAGES", "1"),
+                ("CLAUDE_CODE_SKIP_SANDBOX_INIT", "1"),
+                ("CLAUDE_CODE_SIMPLE_SHELL_EXEC", "1"),
+                ("CLAUDE_CODE_SWAP_STDIO", "0"),
+                ("CLAUDE_CODE_USE_PIPE_OUTPUT", "1"),
+                ("DISABLE_TELEMETRY", "1"),
+                ("SHELL", "/bin/sh"),
+                ("USE_BUILTIN_RIPGREP", "0"),
+            ],
+        },
+        "codex" => AgentConfigDef {
+            acp_adapter: "@rivet-dev/agent-os-codex-agent",
+            agent_package: "@rivet-dev/agent-os-codex",
+            default_env: &[],
+        },
+        _ => return None,
+    })
+}
+
+/// Resolve a package's VM bin entrypoint from the host `node_modules` (port of TS
+/// `_resolvePackageBin`, using `module_access_cwd` rather than software roots). Returns the
+/// guest-visible path `/root/node_modules/<package>/<bin>`.
+fn resolve_package_bin(
+    module_access_cwd: &str,
+    package_name: &str,
+    bin_name: Option<&str>,
+) -> std::result::Result<String, ClientError> {
+    let pkg_json_path = std::path::Path::new(module_access_cwd)
+        .join("node_modules")
+        .join(package_name)
+        .join("package.json");
+    let contents = std::fs::read_to_string(&pkg_json_path).map_err(|error| {
+        ClientError::Sidecar(format!(
+            "cannot read {}: {error}",
+            pkg_json_path.display()
+        ))
+    })?;
+    let pkg: Value = serde_json::from_str(&contents).map_err(|error| {
+        ClientError::Sidecar(format!("invalid package.json for {package_name}: {error}"))
+    })?;
+    let bin_entry: Option<String> = match &pkg["bin"] {
+        Value::String(bin) => Some(bin.clone()),
+        Value::Object(map) => bin_name
+            .and_then(|name| map.get(name))
+            .or_else(|| map.get(package_name))
+            .or_else(|| map.values().next())
+            .and_then(|value| value.as_str())
+            .map(|bin| bin.to_string()),
+        _ => None,
+    };
+    let bin_entry = bin_entry.ok_or_else(|| {
+        ClientError::Sidecar(format!("No bin entry found in {package_name}/package.json"))
+    })?;
+    Ok(format!("/root/node_modules/{package_name}/{bin_entry}"))
 }
 
 /// MCP server config used by `create_session`.
@@ -1097,7 +1215,25 @@ impl AgentOs {
     /// shared modules this task may not edit. Returns an empty list until that infrastructure is
     /// added. See `todosLeft`.
     pub fn list_agents(&self) -> Vec<AgentRegistryEntry> {
-        Vec::new()
+        let module_access_cwd = self
+            .config()
+            .module_access_cwd
+            .clone()
+            .unwrap_or_else(|| ".".to_string());
+        BUILTIN_AGENT_IDS
+            .iter()
+            .filter_map(|id| {
+                let config = agent_config(id)?;
+                let installed =
+                    resolve_package_bin(&module_access_cwd, config.acp_adapter, None).is_ok();
+                Some(AgentRegistryEntry {
+                    id: (*id).to_string(),
+                    acp_adapter: config.acp_adapter.to_string(),
+                    agent_package: config.agent_package.to_string(),
+                    installed,
+                })
+            })
+            .collect()
     }
 
     /// Create an ACP session. Resolves the agent config, prepares instructions, merges env (user
@@ -1112,14 +1248,113 @@ impl AgentOs {
     /// `todosLeft`.
     pub async fn create_session(
         &self,
-        _agent_type: &str,
-        _options: CreateSessionOptions,
+        agent_type: &str,
+        options: CreateSessionOptions,
     ) -> Result<SessionId> {
-        anyhow::bail!(
-            "create_session requires agent-config resolution infrastructure (AgentConfig / \
-             AGENT_CONFIGS / software roots / adapter-bin resolution) that is not present in the \
-             client scaffold; see todosLeft"
-        )
+        let config = agent_config(agent_type)
+            .ok_or_else(|| ClientError::Sidecar(format!("Unknown agent type: {agent_type}")))?;
+        let module_access_cwd = self
+            .config()
+            .module_access_cwd
+            .clone()
+            .unwrap_or_else(|| ".".to_string());
+
+        // Resolve the ACP adapter's VM bin entrypoint from the host node_modules (mirrors TS
+        // `_resolveAdapterBin` / `_resolvePackageBin`).
+        let adapter_entrypoint =
+            resolve_package_bin(&module_access_cwd, config.acp_adapter, None)?;
+
+        // prepareInstructions (per-agent OS-instruction injection): appended-prompt launch args for
+        // pi/pi-cli/claude/codex, OPENCODE_CONTEXTPATHS env for opencode.
+        let (args, prepared_env) = self.prepare_instructions(agent_type, &options).await?;
+
+        // Merge env: agent default_env (lowest) -> prepareInstructions env -> user env (wins).
+        let mut env: BTreeMap<String, String> = config
+            .default_env
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        for (key, value) in prepared_env {
+            env.insert(key, value);
+        }
+        for (key, value) in &options.env {
+            env.insert(key.clone(), value.clone());
+        }
+        if (agent_type == "pi" || agent_type == "pi-cli")
+            && !env.contains_key("PI_ACP_PI_COMMAND")
+        {
+            if let Ok(pi_command) =
+                resolve_package_bin(&module_access_cwd, config.agent_package, Some("pi"))
+            {
+                env.insert("PI_ACP_PI_COMMAND".to_string(), pi_command);
+            }
+        }
+
+        let cwd = options.cwd.clone().unwrap_or_else(|| "/home/user".to_string());
+        let mcp_servers: Vec<Value> = options
+            .mcp_servers
+            .iter()
+            .filter_map(|server| serde_json::to_value(server).ok())
+            .collect();
+        let client_capabilities = json!({
+            "fs": { "readTextFile": true, "writeTextFile": true },
+            "terminal": true,
+        });
+
+        let response = self
+            .transport()
+            .request(
+                self.session_ownership(),
+                RequestPayload::CreateSession(CreateSessionRequest {
+                    agent_type: agent_type.to_string(),
+                    runtime: GuestRuntimeKind::JavaScript,
+                    adapter_entrypoint,
+                    args,
+                    env,
+                    cwd,
+                    mcp_servers,
+                    protocol_version: crate::ACP_PROTOCOL_VERSION,
+                    client_capabilities,
+                }),
+            )
+            .await?;
+        let created: SessionCreatedResponse = match response {
+            ResponsePayload::SessionCreated(created) => created,
+            ResponsePayload::Rejected(rejected) => {
+                return Err(ClientError::Kernel {
+                    code: rejected.code,
+                    message: rejected.message,
+                }
+                .into());
+            }
+            other => {
+                return Err(ClientError::Sidecar(format!(
+                    "unexpected create_session response: {other:?}"
+                ))
+                .into());
+            }
+        };
+
+        // Seed local state from the create response, then register + hydrate (re-fetches the
+        // authoritative state from the sidecar). `process_id` is filled by the hydrate snapshot.
+        let state = SessionStateResponse {
+            session_id: created.session_id.clone(),
+            agent_type: agent_type.to_string(),
+            process_id: String::new(),
+            pid: created.pid,
+            closed: false,
+            modes: created.modes,
+            config_options: created.config_options,
+            agent_capabilities: created.agent_capabilities,
+            agent_info: created.agent_info,
+            events: Vec::new(),
+        };
+        self.register_session(&created.session_id, agent_type, &state)
+            .await?;
+
+        Ok(SessionId {
+            session_id: created.session_id,
+        })
     }
 
     /// Register a freshly created session entry and hydrate it. Used by the create path once
@@ -1164,6 +1399,89 @@ impl AgentOs {
                 let _ = self.inner().sessions.remove(session_id);
                 Err(error)
             }
+        }
+    }
+
+    /// Read OS instructions from `/etc/agentos/instructions.md` inside the VM, optionally appending
+    /// session-level additional instructions. Port of TS `readVmInstructions` (tool-reference
+    /// injection is a noted nuance not yet wired).
+    async fn read_vm_instructions(
+        &self,
+        additional: Option<&str>,
+        skip_base: bool,
+    ) -> Result<String> {
+        let mut parts: Vec<String> = Vec::new();
+        if !skip_base {
+            let data = self.read_file("/etc/agentos/instructions.md").await?;
+            parts.push(String::from_utf8_lossy(&data).into_owned());
+        }
+        if let Some(additional) = additional {
+            if !additional.is_empty() {
+                parts.push(additional.to_string());
+            }
+        }
+        if parts.is_empty() {
+            return Ok(String::new());
+        }
+        // Horizontal rule so agents can distinguish the injected prompt from host-appended content.
+        parts.push("---".to_string());
+        Ok(parts.join("\n\n"))
+    }
+
+    /// Per-agent `prepareInstructions` (port of TS `AGENT_CONFIGS[*].prepareInstructions`). Returns
+    /// the launch args and env additions to apply. pi/pi-cli/claude/codex append the OS+session
+    /// instructions as a prompt arg; opencode injects them as `OPENCODE_CONTEXTPATHS`.
+    async fn prepare_instructions(
+        &self,
+        agent_type: &str,
+        options: &CreateSessionOptions,
+    ) -> Result<(Vec<String>, BTreeMap<String, String>)> {
+        let skip_base = options.skip_os_instructions;
+        match agent_type {
+            "pi" | "pi-cli" | "claude" | "codex" => {
+                let flag = if agent_type == "codex" {
+                    "--append-developer-instructions"
+                } else {
+                    "--append-system-prompt"
+                };
+                if !skip_base || options.additional_instructions.is_some() {
+                    let instructions = self
+                        .read_vm_instructions(options.additional_instructions.as_deref(), skip_base)
+                        .await?;
+                    if !instructions.is_empty() {
+                        return Ok((vec![flag.to_string(), instructions], BTreeMap::new()));
+                    }
+                }
+                Ok((Vec::new(), BTreeMap::new()))
+            }
+            "opencode" => {
+                let mut context_paths: Vec<String> = if skip_base {
+                    Vec::new()
+                } else {
+                    OPENCODE_CONTEXT_PATHS
+                        .iter()
+                        .map(|path| (*path).to_string())
+                        .collect()
+                };
+                if let Some(additional) = options.additional_instructions.as_deref() {
+                    if !additional.is_empty() {
+                        let path = "/tmp/agentos-additional-instructions.md";
+                        self.write_file(path, crate::fs::FileContent::Text(additional.to_string()))
+                            .await?;
+                        context_paths.push(path.to_string());
+                    }
+                }
+                if context_paths.is_empty() {
+                    return Ok((Vec::new(), BTreeMap::new()));
+                }
+                let mut env = BTreeMap::new();
+                env.insert(
+                    "OPENCODE_CONTEXTPATHS".to_string(),
+                    serde_json::to_string(&context_paths).unwrap_or_default(),
+                );
+                Ok((Vec::new(), env))
+            }
+            _ => Ok((Vec::new(), BTreeMap::new())),
         }
     }
 
@@ -1448,6 +1766,17 @@ impl AgentOs {
             }
         }
 
+        // Session processes live entirely inside the VM, so the only safe teardown is the sidecar
+        // `CloseAgentSession` RPC (and the `kill_process` RPC if ever added here), which targets the
+        // guest process by its in-VM session/process handle.
+        //
+        // NEVER fall back to a host `kill()` here. A session/process pid is a guest/kernel display
+        // PID, not a host PID. Passing it to the host signal API would SIGKILL whatever unrelated
+        // host process happens to share that number -- and a negative PID kills the entire host
+        // process *group* with that id. In the TypeScript client that has in practice killed the host
+        // tmux session, the test launcher, and even the user systemd manager. This client holds no
+        // host handle for guest processes, so there is nothing host-side to signal; `CloseAgentSession`
+        // remains the authoritative teardown path.
         let response = self
             .transport()
             .request(
