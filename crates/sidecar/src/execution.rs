@@ -5943,7 +5943,7 @@ where
                 &child_path,
             )?;
             enum ChildPollResult {
-                Event(Option<ActiveExecutionEvent>),
+                Event(Box<Option<ActiveExecutionEvent>>),
                 RecoverRuntimeExit,
             }
             let poll_result = {
@@ -5959,13 +5959,13 @@ where
                     return Err(child_gone_error());
                 };
                 if let Some(event) = child.pending_execution_events.pop_front() {
-                    ChildPollResult::Event(Some(event))
+                    ChildPollResult::Event(Box::new(Some(event)))
                 } else {
                     match child
                         .execution
                         .poll_event_blocking(Duration::from_millis(wait_ms))
                     {
-                        Ok(Some(event)) => ChildPollResult::Event(Some(event)),
+                        Ok(Some(event)) => ChildPollResult::Event(Box::new(Some(event))),
                         Ok(None) => ChildPollResult::RecoverRuntimeExit,
                         Err(SidecarError::Execution(message))
                             if (child.runtime == GuestRuntimeKind::JavaScript
@@ -5982,7 +5982,7 @@ where
                 }
             };
             let event = match poll_result {
-                ChildPollResult::Event(event) => event,
+                ChildPollResult::Event(event) => *event,
                 ChildPollResult::RecoverRuntimeExit => self
                     .recover_descendant_runtime_child_process_event(
                         vm_id,
