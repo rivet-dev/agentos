@@ -3208,8 +3208,7 @@ where
                     .map_err(AcpRequestError::Sidecar)?;
                 process
                     .execution
-                    .poll_event(Duration::from_millis(10))
-                    .await
+                    .poll_event_blocking(Duration::ZERO)
                     .map_err(AcpRequestError::Sidecar)?
             };
 
@@ -3253,6 +3252,8 @@ where
                     ));
                 }
             }
+
+            tokio::task::yield_now().await;
 
             if Instant::now() >= deadline {
                 let session = session_id
