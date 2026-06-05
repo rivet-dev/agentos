@@ -26549,7 +26549,7 @@ ${headerLines}\r
     const module = new Module(resolved, { path: parentPath });
     _moduleCache[resolved] = module;
     try {
-      const extension = resolved.endsWith(".json") ? ".json" : ".js";
+      const extension = resolved.endsWith(".json") ? ".json" : resolved.endsWith(".node") ? ".node" : ".js";
       const loader = Module._extensions[extension] ?? Module._extensions[".js"];
       loader(module, resolved);
       module.loaded = true;

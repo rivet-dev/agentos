@@ -1448,6 +1448,51 @@ require("./nested/check.cjs");
     );
 }
 
+fn javascript_execution_rejects_native_node_addons() {
+    let temp = tempdir().expect("create temp dir");
+    write_fixture(&temp.path().join("addon.node"), "not a native addon\n");
+
+    let mut engine = JavascriptExecutionEngine::default();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.js")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            inline_code: Some(String::from(
+                r#"
+let rejected = false;
+try {
+  require("./addon.node");
+} catch (error) {
+  rejected =
+    String(error?.message ?? "").includes(".node extensions are not supported") ||
+    String(error?.message ?? "").includes("native addon loading");
+}
+if (!rejected) {
+  throw new Error("native .node addon should be rejected");
+}
+"#,
+            )),
+        })
+        .expect("start JavaScript execution");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        result.stderr.is_empty(),
+        "unexpected stderr: {:?}",
+        result.stderr
+    );
+}
+
 fn javascript_execution_surfaces_sync_rpc_requests_from_v8_modules() {
     let temp = tempdir().expect("create temp dir");
     write_fixture(
@@ -3585,6 +3630,7 @@ fn javascript_v8_suite() {
     javascript_execution_exposes_compatibility_shims_and_denies_escape_builtins();
     javascript_execution_provides_async_hooks_and_diagnostics_channel_stubs();
     javascript_execution_supports_require_resolve_for_guest_code();
+    javascript_execution_rejects_native_node_addons();
     javascript_execution_surfaces_sync_rpc_requests_from_v8_modules();
     javascript_execution_v8_dgram_bridge_matches_sidecar_rpc_shapes();
     javascript_execution_strips_hashbang_from_module_entrypoints();
