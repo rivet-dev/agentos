@@ -21,7 +21,7 @@ pub(crate) use crate::execution::{
     javascript_sync_rpc_bytes_value, javascript_sync_rpc_encoding, javascript_sync_rpc_error_code,
     javascript_sync_rpc_option_bool, javascript_sync_rpc_option_u32, parse_signal,
     sanitize_javascript_child_process_internal_bootstrap_env, service_javascript_sync_rpc,
-    vm_network_resource_counts, write_kernel_process_stdin,
+    vm_network_resource_counts, write_kernel_process_stdin, JavascriptSyncRpcServiceRequest,
 };
 use crate::filesystem::guest_filesystem_call as filesystem_guest_filesystem_call;
 use crate::protocol::{
@@ -2138,17 +2138,17 @@ where
                     );
                     return Ok(());
                 };
-                service_javascript_sync_rpc(
-                    &self.bridge,
+                service_javascript_sync_rpc(JavascriptSyncRpcServiceRequest {
+                    bridge: &self.bridge,
                     vm_id,
-                    &vm.dns,
-                    &socket_paths,
-                    &mut vm.kernel,
+                    dns: &vm.dns,
+                    socket_paths: &socket_paths,
+                    kernel: &mut vm.kernel,
                     process,
-                    &request,
-                    &resource_limits,
+                    sync_request: &request,
+                    resource_limits: &resource_limits,
                     network_counts,
-                )
+                })
             }
         };
 
