@@ -13,6 +13,7 @@ export interface WorkerHandle {
 	terminate(): void;
 }
 
+// biome-ignore lint/complexity/noStaticOnlyClass: This class is part of the public browser package API.
 export class BrowserWorkerAdapter {
 	/**
 	 * Spawn a Web Worker for the given script URL.

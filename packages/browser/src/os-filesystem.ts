@@ -36,13 +36,13 @@ function normalizePath(path: string): string {
 			resolved.push(part);
 		}
 	}
-	return "/" + resolved.join("/") || "/";
+	return `/${resolved.join("/")}` || "/";
 }
 
 function dirname(path: string): string {
 	const parts = normalizePath(path).split("/").filter(Boolean);
 	if (parts.length <= 1) return "/";
-	return "/" + parts.slice(0, -1).join("/");
+	return `/${parts.slice(0, -1).join("/")}`;
 }
 
 interface FileEntry {
@@ -125,7 +125,7 @@ export class InMemoryFileSystem implements VirtualFileSystem {
 			throw this.enoent("scandir", path);
 		}
 
-		const prefix = resolved === "/" ? "/" : resolved + "/";
+		const prefix = resolved === "/" ? "/" : `${resolved}/`;
 		const names = new Map<string, VirtualDirEntry>();
 
 		for (const [entryPath, entry] of this.entries) {
@@ -194,7 +194,7 @@ export class InMemoryFileSystem implements VirtualFileSystem {
 			const parts = normalized.split("/").filter(Boolean);
 			let current = "";
 			for (const part of parts) {
-				current += "/" + part;
+				current += `/${part}`;
 				if (!this.entries.has(current)) {
 					this.entries.set(current, this.newDir());
 				}
@@ -239,7 +239,7 @@ export class InMemoryFileSystem implements VirtualFileSystem {
 		}
 
 		// Check if empty
-		const prefix = resolved + "/";
+		const prefix = `${resolved}/`;
 		for (const key of this.entries.keys()) {
 			if (key.startsWith(prefix)) {
 				throw new Error(`ENOTEMPTY: directory not empty, rmdir '${path}'`);
@@ -270,7 +270,7 @@ export class InMemoryFileSystem implements VirtualFileSystem {
 		}
 
 		// Move directory and all children
-		const prefix = oldResolved + "/";
+		const prefix = `${oldResolved}/`;
 		const toMove: [string, Entry][] = [];
 		for (const [key, val] of this.entries) {
 			if (key === oldResolved || key.startsWith(prefix)) {
@@ -435,7 +435,7 @@ export class InMemoryFileSystem implements VirtualFileSystem {
 		if (entry.type === "symlink") {
 			const target = entry.target.startsWith("/")
 				? entry.target
-				: dirname(normalized) + "/" + entry.target;
+				: `${dirname(normalized)}/${entry.target}`;
 			return this.resolvePath(target, depth + 1);
 		}
 		return normalized;
