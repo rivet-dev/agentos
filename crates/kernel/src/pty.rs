@@ -898,7 +898,7 @@ fn process_input(
             if byte == b'\n' {
                 pty.line_buffer.push(b'\n');
                 if pty.termios.echo {
-                    deliver_output(pty, waiters, &[b'\r', b'\n'], true)?;
+                    deliver_output(pty, waiters, b"\r\n", true)?;
                 }
                 let line = pty.line_buffer.clone();
                 deliver_input(pty, waiters, &line)?;
