@@ -15,7 +15,7 @@ const NODE_IMPORT_CACHE_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_PATH";
 const NODE_IMPORT_CACHE_LOADER_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_LOADER_PATH";
 const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "47";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "48";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agent-os-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const PYODIDE_DIST_DIR: &str = "pyodide-dist";
@@ -9822,8 +9822,8 @@ function routeChunkToDelegateFd(fd, bytes) {
 function finalizeChildExit(record, exitCode, signal) {
   const status =
     signal == null
-      ? ((Number(exitCode ?? 1) & 0xff) << 8)
-      : (signalNumberFromName(signal) & 0x7f);
+      ? (Number(exitCode ?? 1) & 0xff)
+      : 128 + (signalNumberFromName(signal) & 0x7f);
   record.exitStatus = status;
   for (const fd of record.delegateRetainedFds ?? []) {
     if (releaseDelegateFd(fd) && typeof delegateManagedFdClose === 'function') {
