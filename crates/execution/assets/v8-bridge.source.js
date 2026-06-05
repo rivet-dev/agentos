@@ -8921,16 +8921,23 @@ var __bridge = (() => {
     spawnargs = [];
     stdin;
     stdout;
-    stderr;
-    stdio;
+        stderr;
+        stdio;
     constructor() {
       this.stdin = {
         writable: true,
+        destroyed: false,
         write(_data) {
           return true;
         },
         end() {
           this.writable = false;
+        },
+        destroy() {
+          this.writable = false;
+          this.destroyed = true;
+          this.emit("close");
+          return this;
         },
         on() {
           return this;
@@ -8945,6 +8952,7 @@ var __bridge = (() => {
       this.stdout = {
         readable: true,
         isTTY: false,
+        destroyed: false,
         _listeners: {},
         _onceListeners: {},
         _bufferedChunks: [],
@@ -9024,6 +9032,13 @@ var __bridge = (() => {
           return this;
         },
         resume() {
+          return this;
+        },
+        destroy() {
+          this.readable = false;
+          this._ended = true;
+          this.destroyed = true;
+          this.emit("close");
           return this;
         },
         [Symbol.asyncIterator]() {
@@ -9033,6 +9048,7 @@ var __bridge = (() => {
       this.stderr = {
         readable: true,
         isTTY: false,
+        destroyed: false,
         _listeners: {},
         _onceListeners: {},
         _bufferedChunks: [],
@@ -9112,6 +9128,13 @@ var __bridge = (() => {
           return this;
         },
         resume() {
+          return this;
+        },
+        destroy() {
+          this.readable = false;
+          this._ended = true;
+          this.destroyed = true;
+          this.emit("close");
           return this;
         },
         [Symbol.asyncIterator]() {
@@ -9702,6 +9725,12 @@ var __bridge = (() => {
           _childProcessStdinClose.applySync(void 0, [sessionId]);
         }
         child.stdin.writable = false;
+      };
+      child.stdin.destroy = () => {
+        child.stdin.end();
+        child.stdin.destroyed = true;
+        child.stdin.emit("close");
+        return child.stdin;
       };
       child.kill = (signal) => {
         if (typeof _childProcessKill === "undefined") return false;
