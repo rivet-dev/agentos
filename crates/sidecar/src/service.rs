@@ -3083,12 +3083,6 @@ where
             return Ok(());
         };
 
-        let cancel_flush_grace =
-            Self::ACP_CANCEL_FLUSH_GRACE.min(self.config.acp_termination_grace);
-        let cancel_deadline = Instant::now() + cancel_flush_grace;
-        self.wait_for_acp_process_termination_deadline(vm_id, process_id, cancel_deadline)
-            .await;
-
         if self
             .vms
             .get(vm_id)
@@ -3108,28 +3102,6 @@ where
             vm.signal_states.remove(process_id);
         }
         Ok(())
-    }
-
-    async fn wait_for_acp_process_termination_deadline(
-        &self,
-        vm_id: &str,
-        process_id: &str,
-        deadline: Instant,
-    ) {
-        while self
-            .vms
-            .get(vm_id)
-            .is_some_and(|vm| vm.active_processes.contains_key(process_id))
-            && Instant::now() < deadline
-        {
-            let remaining = deadline
-                .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(10));
-            if remaining.is_zero() {
-                break;
-            }
-            time::sleep(remaining).await;
-        }
     }
 
     fn session_timeout_diagnostics(
