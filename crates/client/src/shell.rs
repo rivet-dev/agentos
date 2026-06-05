@@ -203,13 +203,14 @@ impl AgentOs {
 
             // Record the real kernel pid on the entry (TS `ShellHandle.pid`) and release the write
             // gate so any queued `write_shell`/`close_shell` proceed against the live spawn.
-            if let ResponsePayload::ProcessStarted(ProcessStartedResponse { pid, .. }) = response {
-                if let Some(pid) = pid {
-                    agent
-                        .inner()
-                        .shells
-                        .update(&exit_shell_id, |_, existing| existing.pid = pid);
-                }
+            if let ResponsePayload::ProcessStarted(ProcessStartedResponse {
+                pid: Some(pid), ..
+            }) = response
+            {
+                agent
+                    .inner()
+                    .shells
+                    .update(&exit_shell_id, |_, existing| existing.pid = pid);
             }
             let _ = spawned_tx.send(true);
 
