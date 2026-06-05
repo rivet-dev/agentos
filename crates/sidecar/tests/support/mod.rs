@@ -197,6 +197,7 @@ pub fn create_vm_with_metadata(
     (vm_id, result)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn execute(
     sidecar: &mut NativeSidecar<RecordingBridge>,
     request_id: RequestId,
