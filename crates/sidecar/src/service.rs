@@ -880,8 +880,6 @@ where
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     const ACP_REQUEST_TIMEOUT_MS: u64 = 120_000;
-    const ACP_CANCEL_FLUSH_GRACE: Duration = Duration::from_millis(50);
-
     pub fn new(bridge: B) -> Result<Self, SidecarError> {
         Self::with_config(bridge, NativeSidecarConfig::default())
     }
