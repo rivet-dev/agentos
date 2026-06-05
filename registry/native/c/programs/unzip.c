@@ -317,11 +317,6 @@ static int simple_extract_archive(const char *archive, const char *outdir) {
         free(data);
         return 1;
     }
-    if (outdir && chdir(outdir) != 0) {
-        fprintf(stderr, "unzip: cannot enter directory '%s': %s\n", outdir, strerror(errno));
-        free(data);
-        return 1;
-    }
 
     for (uint16_t i = 0; i < entries; i++) {
         uint16_t method;
@@ -358,7 +353,7 @@ static int simple_extract_archive(const char *archive, const char *outdir) {
         name = (const char *)(data + pos + 46);
         safe_name = entry_output_name(name);
         snprintf(outpath, sizeof(outpath), "%s%s%.*s",
-                 outdir ? "" : "", outdir ? "" : "", (int)(name_len - (safe_name - name)), safe_name);
+                 outdir ? outdir : "", outdir ? "/" : "", (int)(name_len - (safe_name - name)), safe_name);
         pos += 46 + name_len + extra_len + comment_len;
 
         if (outpath[strlen(outpath) - 1] == '/') {
