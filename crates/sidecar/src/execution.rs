@@ -829,6 +829,18 @@ struct ActiveTcpConnectRequest<'a, B> {
     context: &'a JavascriptSocketPathContext,
 }
 
+struct ActiveUdpSendToRequest<'a, B> {
+    bridge: &'a SharedBridge<B>,
+    kernel: &'a mut SidecarKernel,
+    kernel_pid: u32,
+    vm_id: &'a str,
+    dns: &'a VmDnsConfig,
+    host: &'a str,
+    port: u16,
+    context: &'a JavascriptSocketPathContext,
+    contents: &'a [u8],
+}
+
 impl ActiveTcpSocket {
     fn connect<B>(request: ActiveTcpConnectRequest<'_, B>) -> Result<Self, SidecarError>
     where
@@ -2083,20 +2095,23 @@ impl ActiveUdpSocket {
 
     fn send_to<B>(
         &mut self,
-        bridge: &SharedBridge<B>,
-        kernel: &mut SidecarKernel,
-        kernel_pid: u32,
-        vm_id: &str,
-        dns: &VmDnsConfig,
-        host: &str,
-        port: u16,
-        context: &JavascriptSocketPathContext,
-        contents: &[u8],
+        request: ActiveUdpSendToRequest<'_, B>,
     ) -> Result<(usize, SocketAddr), SidecarError>
     where
         B: NativeSidecarBridge + Send + 'static,
         BridgeError<B>: fmt::Debug + Send + Sync + 'static,
     {
+        let ActiveUdpSendToRequest {
+            bridge,
+            kernel,
+            kernel_pid,
+            vm_id,
+            dns,
+            host,
+            port,
+            context,
+            contents,
+        } = request;
         let remote_addr =
             resolve_udp_addr(bridge, kernel, vm_id, dns, host, port, self.family, context)?;
         let local_addr = self.ensure_bound_for_send(kernel, kernel_pid, context)?;
@@ -15603,17 +15618,17 @@ where
             let socket = process.udp_sockets.get_mut(socket_id).ok_or_else(|| {
                 SidecarError::InvalidState(format!("unknown UDP socket {socket_id}"))
             })?;
-            let (written, local_addr) = socket.send_to(
+            let (written, local_addr) = socket.send_to(ActiveUdpSendToRequest {
                 bridge,
                 kernel,
-                process.kernel_pid,
+                kernel_pid: process.kernel_pid,
                 vm_id,
                 dns,
-                payload.address.as_deref().unwrap_or("localhost"),
-                payload.port,
-                socket_paths,
-                &chunk,
-            )?;
+                host: payload.address.as_deref().unwrap_or("localhost"),
+                port: payload.port,
+                context: socket_paths,
+                contents: &chunk,
+            })?;
             Ok(json!({
                 "bytes": written,
                 "localAddress": local_addr.ip().to_string(),
