@@ -863,10 +863,10 @@ impl JavascriptUdpFamily {
     }
 
     pub(crate) fn matches_addr(self, addr: &SocketAddr) -> bool {
-        match (self, addr) {
-            (Self::Ipv4, SocketAddr::V4(_)) | (Self::Ipv6, SocketAddr::V6(_)) => true,
-            _ => false,
-        }
+        matches!(
+            (self, addr),
+            (Self::Ipv4, SocketAddr::V4(_)) | (Self::Ipv6, SocketAddr::V6(_))
+        )
     }
 }
 
