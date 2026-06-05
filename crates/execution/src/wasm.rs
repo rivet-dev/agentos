@@ -4300,7 +4300,7 @@ fn validate_module_limits(
     };
 
     let resolved_path = &resolved_module.resolved_path;
-    let metadata = fs::metadata(&resolved_path).map_err(|error| {
+    let metadata = fs::metadata(resolved_path).map_err(|error| {
         WasmExecutionError::InvalidModule(format!(
             "failed to stat {}: {error}",
             resolved_path.display()
@@ -4313,7 +4313,7 @@ fn validate_module_limits(
             MAX_WASM_MODULE_FILE_BYTES
         )));
     }
-    let bytes = fs::read(&resolved_path).map_err(|error| {
+    let bytes = fs::read(resolved_path).map_err(|error| {
         WasmExecutionError::InvalidModule(format!(
             "failed to read {}: {error}",
             resolved_path.display()
