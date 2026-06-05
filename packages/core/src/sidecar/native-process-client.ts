@@ -14,6 +14,7 @@ const BRIDGE_CONTRACT_VERSION = 1;
 
 const SIDECAR_GRACEFUL_EXIT_MS = 5_000;
 const SIDECAR_FORCE_EXIT_MS = 2_000;
+export const NATIVE_SIDECAR_FRAME_TIMEOUT_MS = 120_000;
 const DEFAULT_EVENT_BUFFER_CAPACITY = 4_096;
 const ANY_BUFFERED_EVENT_KEY = "*";
 
@@ -1252,7 +1253,7 @@ export class NativeSidecarProcessClient {
 		);
 		return new NativeSidecarProcessClient(
 			child,
-			options.frameTimeoutMs ?? 60_000,
+			options.frameTimeoutMs ?? NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
 			options.eventBufferCapacity ?? DEFAULT_EVENT_BUFFER_CAPACITY,
 			options.payloadCodec ?? "bare",
 		);
