@@ -8583,6 +8583,7 @@ const WASI_ERRNO_SPIPE = 70;
 const WASI_ERRNO_SRCH = 71;
 const WASI_ERRNO_FAULT = 21;
 const WASI_RIGHT_FD_WRITE = 64n;
+const WASI_FILETYPE_REGULAR_FILE = 4;
 const WASI_OFLAGS_CREAT = 1;
 const WASI_OFLAGS_DIRECTORY = 2;
 const WASI_OFLAGS_EXCL = 4;
@@ -9388,6 +9389,49 @@ function writeGuestUint64(ptr, value) {
     return WASI_ERRNO_SUCCESS;
   } catch {
     return WASI_ERRNO_FAULT;
+  }
+}
+
+function statTimestampNs(value) {
+  const numeric = Number(value);
+  return BigInt(Math.trunc((Number.isFinite(numeric) ? numeric : 0) * 1000000));
+}
+
+function writeGuestFilestat(ptr, stats, filetype = WASI_FILETYPE_REGULAR_FILE) {
+  if (!(instanceMemory instanceof WebAssembly.Memory)) {
+    return WASI_ERRNO_FAULT;
+  }
+
+  try {
+    const view = new DataView(instanceMemory.buffer);
+    const offset = Number(ptr) >>> 0;
+    view.setBigUint64(offset, 0n, true);
+    view.setBigUint64(offset + 8, BigInt(stats?.ino ?? 0), true);
+    view.setUint8(offset + 16, Number(filetype) >>> 0);
+    view.setBigUint64(offset + 24, BigInt(stats?.nlink ?? 1), true);
+    view.setBigUint64(offset + 32, BigInt(stats?.size ?? 0), true);
+    view.setBigUint64(offset + 40, statTimestampNs(stats?.atimeMs), true);
+    view.setBigUint64(offset + 48, statTimestampNs(stats?.mtimeMs), true);
+    view.setBigUint64(offset + 56, statTimestampNs(stats?.ctimeMs), true);
+    return WASI_ERRNO_SUCCESS;
+  } catch {
+    return WASI_ERRNO_FAULT;
+  }
+}
+
+function mapSyntheticFsError(error) {
+  switch (error?.code) {
+    case 'EBADF':
+      return WASI_ERRNO_BADF;
+    case 'EACCES':
+    case 'EPERM':
+      return WASI_ERRNO_ACCES;
+    case 'EINVAL':
+      return WASI_ERRNO_INVAL;
+    case 'EROFS':
+      return WASI_ERRNO_ROFS;
+    default:
+      return WASI_ERRNO_FAULT;
   }
 }
 
@@ -11479,6 +11523,14 @@ const delegateManagedFdTell =
   typeof wasiImport.fd_tell === 'function'
     ? wasiImport.fd_tell.bind(wasiImport)
     : null;
+const delegateManagedFdFilestatGet =
+  typeof wasiImport.fd_filestat_get === 'function'
+    ? wasiImport.fd_filestat_get.bind(wasiImport)
+    : null;
+const delegateManagedFdFilestatSetSize =
+  typeof wasiImport.fd_filestat_set_size === 'function'
+    ? wasiImport.fd_filestat_set_size.bind(wasiImport)
+    : null;
 const delegateManagedFdClose =
   typeof wasiImport.fd_close === 'function'
     ? wasiImport.fd_close.bind(wasiImport)
@@ -11732,6 +11784,53 @@ wasiImport.fd_tell = (fd, offsetPtr) => {
 
   return delegateManagedFdTell
     ? delegateManagedFdTell(fd, offsetPtr)
+    : WASI_ERRNO_BADF;
+};
+
+wasiImport.fd_filestat_get = (fd, statPtr) => {
+  const handle = lookupFdHandle(fd);
+  if (handle?.kind === 'guest-file') {
+    try {
+      return writeGuestFilestat(statPtr, fsModule.fstatSync(handle.targetFd));
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  }
+
+  if (handle?.kind === 'passthrough') {
+    return delegateManagedFdFilestatGet
+      ? delegateManagedFdFilestatGet(handle.targetFd, statPtr)
+      : WASI_ERRNO_BADF;
+  }
+
+  return delegateManagedFdFilestatGet
+    ? delegateManagedFdFilestatGet(fd, statPtr)
+    : WASI_ERRNO_BADF;
+};
+
+wasiImport.fd_filestat_set_size = (fd, size) => {
+  const handle = lookupFdHandle(fd);
+  if (handle?.kind === 'guest-file') {
+    try {
+      const nextSize = Number(size);
+      fsModule.ftruncateSync(handle.targetFd, nextSize);
+      if ((handle.position ?? 0) > nextSize) {
+        handle.position = nextSize;
+      }
+      return WASI_ERRNO_SUCCESS;
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  }
+
+  if (handle?.kind === 'passthrough') {
+    return delegateManagedFdFilestatSetSize
+      ? delegateManagedFdFilestatSetSize(handle.targetFd, size)
+      : WASI_ERRNO_BADF;
+  }
+
+  return delegateManagedFdFilestatSetSize
+    ? delegateManagedFdFilestatSetSize(fd, size)
     : WASI_ERRNO_BADF;
 };
 
