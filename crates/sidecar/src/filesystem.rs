@@ -1079,16 +1079,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     path,
                     &mapped_host.host_path,
                 )?;
-                let parent = open_mapped_runtime_parent_beneath(&mapped_host, "fs.lstat")?;
-                let host_path = parent.host_path.join(&parent.child_name);
-                let metadata = fs::symlink_metadata(mapped_runtime_parent_child_path(&parent))
-                    .map_err(|error| {
-                        SidecarError::Io(format!(
-                            "failed to lstat mapped guest path {} -> {}: {error}",
-                            path,
-                            host_path.display()
-                        ))
-                    })?;
+                let metadata = mapped_runtime_symlink_metadata(&mapped_host, "fs.lstat")?;
                 return Ok(javascript_sync_rpc_host_stat_value(&metadata));
             }
             kernel
@@ -2008,6 +1999,32 @@ fn open_mapped_runtime_parent_beneath(
         directory: directory.handle,
         host_path: directory.host_path,
         child_name: child_name.to_os_string(),
+    })
+}
+
+fn mapped_runtime_symlink_metadata(
+    mapped: &MappedRuntimeHostPath,
+    operation: &str,
+) -> Result<fs::Metadata, SidecarError> {
+    let relative = mapped_runtime_relative_path(mapped)?;
+    if relative == Path::new(".") {
+        return fs::symlink_metadata(&mapped.host_path).map_err(|error| {
+            SidecarError::Io(format!(
+                "failed to lstat mapped guest path {} -> {}: {error}",
+                mapped.guest_path,
+                mapped.host_path.display()
+            ))
+        });
+    }
+
+    let parent = open_mapped_runtime_parent_beneath(mapped, operation)?;
+    let host_path = parent.host_path.join(&parent.child_name);
+    fs::symlink_metadata(mapped_runtime_parent_child_path(&parent)).map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to lstat mapped guest path {} -> {}: {error}",
+            mapped.guest_path,
+            host_path.display()
+        ))
     })
 }
 
@@ -3035,8 +3052,9 @@ fn ensure_guest_parent_dir(vm: &mut VmState, guest_path: &str) -> Result<(), Sid
 mod tests {
     use super::{
         create_mapped_runtime_directory, create_mapped_runtime_root_directory,
-        mapped_runtime_relative_path, open_mapped_runtime_parent_beneath, rename_mapped_host_path,
-        MappedRuntimeHostAccess, MappedRuntimeHostPath, SidecarError,
+        mapped_runtime_relative_path, mapped_runtime_symlink_metadata,
+        open_mapped_runtime_parent_beneath, rename_mapped_host_path, MappedRuntimeHostAccess,
+        MappedRuntimeHostPath, SidecarError,
     };
     use crate::execution::javascript_sync_rpc_error_code;
     use std::fs;
@@ -3110,6 +3128,28 @@ mod tests {
             .expect("open mapped parent for root child");
         assert_eq!(parent.host_path, host_root);
         assert_eq!(parent.child_name.to_string_lossy(), "workspace");
+    }
+
+    #[test]
+    fn mapped_runtime_root_lstat_uses_root_metadata_without_parent_basename() {
+        let host_root = std::env::temp_dir().join(format!(
+            "agent-os-sidecar-fs-root-lstat-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&host_root).expect("create mapped host root");
+        let mapped = MappedRuntimeHostPath {
+            guest_path: String::from("/node_modules"),
+            host_root: host_root.clone(),
+            host_path: host_root.clone(),
+        };
+
+        let metadata = mapped_runtime_symlink_metadata(&mapped, "test").expect("lstat mapped root");
+        assert!(metadata.is_dir(), "expected mapped root directory metadata");
+
+        fs::remove_dir_all(&host_root).expect("remove mapped host root");
     }
 
     #[test]
