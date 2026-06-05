@@ -61,6 +61,7 @@ use agent_os_kernel::permissions::{
 };
 // root_fs types moved to crate::vm
 use agent_os_kernel::vfs::VfsError;
+use nix::libc;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -3064,10 +3065,7 @@ where
     fn kill_acp_process(&mut self, vm_id: &str, process_id: &str) {
         let _ = self.kill_process_internal(vm_id, process_id, "SIGKILL");
         self.acp_process_stdout_buffers.remove(process_id);
-        if let Some(vm) = self.vms.get_mut(vm_id) {
-            vm.active_processes.remove(process_id);
-            vm.signal_states.remove(process_id);
-        }
+        let _ = self.finish_active_process_exit(vm_id, process_id, 128 + libc::SIGKILL);
     }
 
     fn signal_acp_process(
@@ -3628,6 +3626,12 @@ where
                         session.closed = true;
                         session.exit_code = Some(exit_code);
                     }
+                }
+                if self
+                    .finish_active_process_exit(vm_id, process_id, exit_code)?
+                    .unwrap_or(false)
+                {
+                    self.bridge.emit_lifecycle(vm_id, LifecycleState::Ready)?;
                 }
                 Ok(None)
             }
