@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 mod google_drive {
     include!("../src/plugins/google_drive.rs");
 
