@@ -290,7 +290,7 @@ export async function loadPyodide() {
         .parse::<u64>()
         .expect("parse heap limit");
     assert!(
-        heap_limit >= 16 * 1024 * 1024 && heap_limit < 256 * 1024 * 1024,
+        (16 * 1024 * 1024..256 * 1024 * 1024).contains(&heap_limit),
         "expected configured Python heap limit to shape the V8 isolate, got {heap_limit} bytes",
     );
 }
