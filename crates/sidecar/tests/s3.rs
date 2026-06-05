@@ -1,5 +1,6 @@
 mod support;
 
+#[allow(dead_code)]
 mod s3 {
     include!("../src/plugins/s3.rs");
 

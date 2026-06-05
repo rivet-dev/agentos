@@ -1,5 +1,7 @@
+#[allow(dead_code, unused_imports)]
 #[path = "../src/acp/mod.rs"]
 mod acp;
+#[allow(dead_code, unused_imports, clippy::enum_variant_names)]
 #[path = "../src/protocol.rs"]
 mod protocol;
 

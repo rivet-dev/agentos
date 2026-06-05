@@ -1,24 +1,33 @@
 pub trait NativeSidecarBridge: agent_os_bridge::HostBridge {}
 impl<T> NativeSidecarBridge for T where T: agent_os_bridge::HostBridge {}
 
+#[allow(dead_code, unused_imports)]
 #[path = "../src/acp/mod.rs"]
 mod acp;
+#[allow(dead_code)]
 #[path = "../src/bootstrap.rs"]
 mod bootstrap;
 #[path = "../src/bridge.rs"]
 mod bridge;
+#[allow(dead_code)]
 #[path = "../src/execution.rs"]
 mod execution;
+#[allow(dead_code)]
 #[path = "../src/filesystem.rs"]
 mod filesystem;
+#[allow(dead_code)]
 #[path = "../src/plugins/mod.rs"]
 mod plugins;
+#[allow(dead_code, clippy::enum_variant_names)]
 #[path = "../src/protocol.rs"]
 mod protocol;
+#[allow(dead_code)]
 #[path = "../src/state.rs"]
 mod state;
+#[allow(dead_code)]
 #[path = "../src/tools.rs"]
 mod tools;
+#[allow(dead_code)]
 #[path = "../src/vm.rs"]
 mod vm;
 
