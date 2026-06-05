@@ -25,9 +25,13 @@ use agent_os_sidecar::protocol::{
 
 use crate::agent_os::{AgentOs, SessionEntry};
 use crate::error::ClientError;
-use crate::json_rpc::{JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcResponse, SequencedEvent};
+use crate::json_rpc::{
+    JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcResponse, SequencedEvent,
+};
 use crate::stream::{subscribe_with_replay, Subscription};
-use crate::{ACP_SESSION_EVENT_RETENTION_LIMIT, CLOSED_SESSION_ID_RETENTION_LIMIT, PERMISSION_TIMEOUT_MS};
+use crate::{
+    ACP_SESSION_EVENT_RETENTION_LIMIT, CLOSED_SESSION_ID_RETENTION_LIMIT, PERMISSION_TIMEOUT_MS,
+};
 
 /// ACP method name for legacy permission requests/responses.
 const LEGACY_PERMISSION_METHOD: &str = "request/permission";
@@ -411,9 +415,17 @@ pub struct SessionConfigOption {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(default, rename = "currentValue", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "currentValue",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub current_value: Option<String>,
-    #[serde(default, rename = "allowedValues", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "allowedValues",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub allowed_values: Option<Vec<ConfigAllowedValue>>,
     #[serde(default, rename = "readOnly", skip_serializing_if = "Option::is_none")]
     pub read_only: Option<bool>,
@@ -424,7 +436,11 @@ pub struct SessionConfigOption {
 pub struct PromptCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<bool>,
-    #[serde(default, rename = "embeddedContext", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "embeddedContext",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub embedded_context: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<bool>,
@@ -441,27 +457,55 @@ pub struct AgentCapabilities {
     pub plan_mode: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub questions: Option<bool>,
-    #[serde(default, rename = "tool_calls", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "tool_calls",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub tool_calls: Option<bool>,
-    #[serde(default, rename = "text_messages", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "text_messages",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub text_messages: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<bool>,
-    #[serde(default, rename = "file_attachments", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "file_attachments",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub file_attachments: Option<bool>,
-    #[serde(default, rename = "session_lifecycle", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "session_lifecycle",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub session_lifecycle: Option<bool>,
-    #[serde(default, rename = "error_events", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "error_events",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub error_events: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<bool>,
-    #[serde(default, rename = "streaming_deltas", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "streaming_deltas",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub streaming_deltas: Option<bool>,
     #[serde(default, rename = "mcp_tools", skip_serializing_if = "Option::is_none")]
     pub mcp_tools: Option<bool>,
-    #[serde(default, rename = "promptCapabilities", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "promptCapabilities",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub prompt_capabilities: Option<PromptCapabilities>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -484,7 +528,11 @@ pub struct AgentInfo {
 pub struct SessionInitData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modes: Option<SessionModeState>,
-    #[serde(default, rename = "configOptions", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "configOptions",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub config_options: Option<Vec<SessionConfigOption>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<AgentCapabilities>,
@@ -500,7 +548,8 @@ pub struct SessionInitData {
 /// and resolves it. Subsequent calls (or other broadcast clones) are no-ops.
 #[derive(Clone)]
 pub struct PermissionResponder {
-    inner: std::sync::Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<PermissionReply>>>>,
+    inner:
+        std::sync::Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<PermissionReply>>>>,
 }
 
 impl PermissionResponder {
@@ -573,7 +622,9 @@ fn normalize_acp_permission_option_id(
         options.iter().find_map(|option| {
             let option_id = option.get("optionId").and_then(Value::as_str);
             let kind = option.get("kind").and_then(Value::as_str);
-            let hit = option_id.map(|id| option_ids.contains(&id)).unwrap_or(false)
+            let hit = option_id
+                .map(|id| option_ids.contains(&id))
+                .unwrap_or(false)
                 || kind.map(|kind| kinds.contains(&kind)).unwrap_or(false);
             if hit {
                 option_id.map(str::to_string)
@@ -598,13 +649,17 @@ fn normalize_acp_permission_option_id(
 /// Because `normalize_acp_permission_option_id` always yields an id, the `cancelled` outcome branch
 /// is never taken (matching the TS fallbacks).
 fn build_acp_permission_result(reply: PermissionReply, params: &Value) -> Value {
-    let options: Option<Vec<Value>> = params.get("options").and_then(Value::as_array).map(|array| {
-        array
-            .iter()
-            .filter(|option| option.is_object())
-            .cloned()
-            .collect()
-    });
+    let options: Option<Vec<Value>> =
+        params
+            .get("options")
+            .and_then(Value::as_array)
+            .map(|array| {
+                array
+                    .iter()
+                    .filter(|option| option.is_object())
+                    .cloned()
+                    .collect()
+            });
     let option_id = normalize_acp_permission_option_id(options.as_ref(), reply);
     json!({
         "outcome": {
@@ -664,7 +719,10 @@ fn merge_sequenced_events(ring: &mut VecDeque<SequencedEvent>, incoming: Vec<Seq
 }
 
 /// Compute the next highest acknowledged sequence number. Mirrors `nextHighestSequenceNumber`.
-fn next_highest_sequence_number(current: Option<i64>, ring: &VecDeque<SequencedEvent>) -> Option<i64> {
+fn next_highest_sequence_number(
+    current: Option<i64>,
+    ring: &VecDeque<SequencedEvent>,
+) -> Option<i64> {
     let Some(latest) = ring.back().map(|event| event.sequence_number) else {
         return current;
     };
@@ -712,9 +770,9 @@ fn apply_session_update(entry: &SessionEntry, notification: &JsonRpcNotification
         Some("config_option_update") | Some("config_options_update")
     ) {
         if let Some(config_options) = update.get("configOptions").and_then(Value::as_array) {
-            if let Ok(parsed) =
-                serde_json::from_value::<Vec<SessionConfigOption>>(Value::Array(config_options.clone()))
-            {
+            if let Ok(parsed) = serde_json::from_value::<Vec<SessionConfigOption>>(Value::Array(
+                config_options.clone(),
+            )) {
                 *entry.config_options.lock() = parsed;
             }
         }
@@ -849,7 +907,10 @@ fn build_permission_request(
             Value::Object(existing) => existing,
             _ => serde_json::Map::new(),
         };
-        object.insert("permissionId".to_string(), Value::String(permission_id.clone()));
+        object.insert(
+            "permissionId".to_string(),
+            Value::String(permission_id.clone()),
+        );
         object.insert(
             "_acpMethod".to_string(),
             Value::String(notification.method.clone()),
@@ -950,7 +1011,11 @@ fn unsupported_config_response(agent_type: &str, category: &str) -> JsonRpcRespo
 /// Apply the codex config fallback: record overrides, re-apply, synthesize a negative-seq
 /// `config_option_update`, and return a `via: "codex-config-fallback"` response. Mirrors
 /// `_applyCodexConfigFallback`.
-fn apply_codex_config_fallback(entry: &SessionEntry, category: &str, value: &str) -> JsonRpcResponse {
+fn apply_codex_config_fallback(
+    entry: &SessionEntry,
+    category: &str,
+    value: &str,
+) -> JsonRpcResponse {
     {
         let options = entry.config_options.lock();
         let matching_id = options
@@ -1086,7 +1151,10 @@ impl AgentOs {
 
     /// Re-hydrate cached session state from the sidecar `GetSessionState` snapshot, acknowledging the
     /// highest seen sequence number. Mirrors `_hydrateSessionState`.
-    async fn hydrate_session_state(&self, session_id: &str) -> std::result::Result<(), ClientError> {
+    async fn hydrate_session_state(
+        &self,
+        session_id: &str,
+    ) -> std::result::Result<(), ClientError> {
         let acknowledged = self.require_session(session_id, |entry| {
             let highest = entry.highest_sequence_number.load(Ordering::SeqCst);
             if highest >= 0 {
@@ -1137,7 +1205,9 @@ impl AgentOs {
         params: Option<Value>,
     ) -> std::result::Result<JsonRpcResponse, ClientError> {
         let request_params = if method == "session/prompt" {
-            self.require_session(session_id, |entry| augment_prompt_params(entry, params.clone()))?
+            self.require_session(session_id, |entry| {
+                augment_prompt_params(entry, params.clone())
+            })?
         } else {
             params
         };
@@ -1147,10 +1217,11 @@ impl AgentOs {
         // cancel -> `{stopReason: cancelled}`); whichever completes first wins. Mirrors the TS
         // resolver `{ method, resolve: (response) => void }`.
         let resolver_id = self.inner().request_counter.fetch_add(1, Ordering::SeqCst);
-        let (resolve_tx, resolve_rx) =
-            tokio::sync::oneshot::channel::<JsonRpcResponse>();
+        let (resolve_tx, resolve_rx) = tokio::sync::oneshot::channel::<JsonRpcResponse>();
         self.require_session(session_id, |entry| {
-            let _ = entry.pending_prompt_resolvers.insert(resolver_id, resolve_tx);
+            let _ = entry
+                .pending_prompt_resolvers
+                .insert(resolver_id, resolve_tx);
             // Track the method so prompt-fallback can target only `session/prompt` resolvers.
             entry
                 .config_overrides
@@ -1237,7 +1308,8 @@ impl AgentOs {
     ) -> std::result::Result<(), ClientError> {
         self.require_session(session_id, |entry| {
             if method == "session/set_mode" {
-                if let Some(mode_id) = params.and_then(|p| p.get("modeId")).and_then(Value::as_str) {
+                if let Some(mode_id) = params.and_then(|p| p.get("modeId")).and_then(Value::as_str)
+                {
                     let mut modes = entry.modes.lock();
                     if let Some(modes) = modes.as_mut() {
                         modes.current_mode_id = mode_id.to_string();
@@ -1245,7 +1317,9 @@ impl AgentOs {
                 }
             }
             if method == "session/set_config_option" {
-                let config_id = params.and_then(|p| p.get("configId")).and_then(Value::as_str);
+                let config_id = params
+                    .and_then(|p| p.get("configId"))
+                    .and_then(Value::as_str);
                 let value = params.and_then(|p| p.get("value")).and_then(Value::as_str);
                 if let (Some(config_id), Some(value)) = (config_id, value) {
                     let mut options = entry.config_options.lock();
@@ -1382,8 +1456,7 @@ impl AgentOs {
 
         // Resolve the ACP adapter's VM bin entrypoint from the host node_modules (mirrors TS
         // `_resolveAdapterBin` / `_resolvePackageBin`).
-        let adapter_entrypoint =
-            resolve_package_bin(&module_access_cwd, config.acp_adapter, None)?;
+        let adapter_entrypoint = resolve_package_bin(&module_access_cwd, config.acp_adapter, None)?;
 
         // prepareInstructions (per-agent OS-instruction injection): appended-prompt launch args for
         // pi/pi-cli/claude/codex, OPENCODE_CONTEXTPATHS env for opencode.
@@ -1401,8 +1474,7 @@ impl AgentOs {
         for (key, value) in &options.env {
             env.insert(key.clone(), value.clone());
         }
-        if (agent_type == "pi" || agent_type == "pi-cli")
-            && !env.contains_key("PI_ACP_PI_COMMAND")
+        if (agent_type == "pi" || agent_type == "pi-cli") && !env.contains_key("PI_ACP_PI_COMMAND")
         {
             if let Ok(pi_command) =
                 resolve_package_bin(&module_access_cwd, config.agent_package, Some("pi"))
@@ -1411,7 +1483,10 @@ impl AgentOs {
             }
         }
 
-        let cwd = options.cwd.clone().unwrap_or_else(|| "/home/user".to_string());
+        let cwd = options
+            .cwd
+            .clone()
+            .unwrap_or_else(|| "/home/user".to_string());
         let mcp_servers: Vec<Value> = options
             .mcp_servers
             .iter()
@@ -1492,7 +1567,8 @@ impl AgentOs {
             closed.retain(|id| id != session_id);
         }
 
-        let (event_tx, _) = tokio::sync::broadcast::channel(ACP_SESSION_EVENT_RETENTION_LIMIT.max(1));
+        let (event_tx, _) =
+            tokio::sync::broadcast::channel(ACP_SESSION_EVENT_RETENTION_LIMIT.max(1));
         let (permission_tx, _) = tokio::sync::broadcast::channel(64);
         let entry = SessionEntry {
             agent_type: agent_type.to_string(),
@@ -1509,10 +1585,7 @@ impl AgentOs {
             pending_prompt_resolvers: scc::HashMap::new(),
         };
         sync_session_state(&entry, state);
-        let _ = self
-            .inner()
-            .sessions
-            .insert(session_id.to_string(), entry);
+        let _ = self.inner().sessions.insert(session_id.to_string(), entry);
 
         match self.hydrate_session_state(session_id).await {
             Ok(()) => Ok(()),
@@ -1815,9 +1888,7 @@ impl AgentOs {
     fn abort_pending_session_requests(&self, session_id: &str) {
         let _ = self.require_session(session_id, |entry| {
             let mut ids = Vec::new();
-            entry
-                .pending_prompt_resolvers
-                .scan(|id, _| ids.push(*id));
+            entry.pending_prompt_resolvers.scan(|id, _| ids.push(*id));
             for id in ids {
                 if let Some((_, resolver)) = entry.pending_prompt_resolvers.remove(&id) {
                     // Mirrors `_abortPendingSessionRequests`: resolve EVERY pending resolver
@@ -2088,7 +2159,9 @@ impl AgentOs {
         method: &str,
         params: Option<Value>,
     ) -> Result<JsonRpcResponse> {
-        Ok(self.send_session_request(session_id, method, params).await?)
+        Ok(self
+            .send_session_request(session_id, method, params)
+            .await?)
     }
 
     /// Thin alias for `raw_session_send`.
@@ -2108,7 +2181,10 @@ impl AgentOs {
         &self,
         session_id: &str,
     ) -> std::result::Result<
-        (Pin<Box<dyn Stream<Item = JsonRpcNotification> + Send>>, Subscription),
+        (
+            Pin<Box<dyn Stream<Item = JsonRpcNotification> + Send>>,
+            Subscription,
+        ),
         ClientError,
     > {
         let (buffered, rx) = self.require_session(session_id, |entry| {
@@ -2137,7 +2213,10 @@ impl AgentOs {
         &self,
         session_id: &str,
     ) -> std::result::Result<
-        (Pin<Box<dyn Stream<Item = PermissionRequest> + Send>>, Subscription),
+        (
+            Pin<Box<dyn Stream<Item = PermissionRequest> + Send>>,
+            Subscription,
+        ),
         ClientError,
     > {
         let rx = self.require_session(session_id, |entry| entry.permission_tx.subscribe())?;
@@ -2220,8 +2299,7 @@ impl AgentOs {
 
         // Await the host reply, the subscriber responder (via the bridge above), or the 120s
         // timeout, whichever fires first.
-        let timeout =
-            tokio::time::sleep(std::time::Duration::from_millis(PERMISSION_TIMEOUT_MS));
+        let timeout = tokio::time::sleep(std::time::Duration::from_millis(PERMISSION_TIMEOUT_MS));
         tokio::pin!(timeout);
         let reply = tokio::select! {
             reply = slot_rx => reply.unwrap_or(PermissionReply::Reject),
@@ -2257,4 +2335,3 @@ impl PermissionDelivery {
         Self { reply, result }
     }
 }
-

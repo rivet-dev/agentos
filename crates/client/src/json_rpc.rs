@@ -49,7 +49,11 @@ pub struct AcpTimeoutErrorData {
     pub exit_code: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub killed: Option<bool>,
-    #[serde(default, rename = "transportState", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "transportState",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub transport_state: Option<String>,
     #[serde(rename = "recentActivity")]
     pub recent_activity: Vec<String>,

@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use agent_os_sidecar::protocol::{
@@ -338,7 +338,9 @@ impl AgentOs {
     }
 
     /// Runs the safe guard, then rejects writes to read-only paths (`/proc`, `/proc/*`).
-    pub(crate) fn assert_writable_absolute_path(path: &str) -> std::result::Result<(), ClientError> {
+    pub(crate) fn assert_writable_absolute_path(
+        path: &str,
+    ) -> std::result::Result<(), ClientError> {
         Self::assert_safe_absolute_path(path)?;
         if path == "/proc" || path.starts_with("/proc/") {
             return Err(ClientError::PathReadOnly(path.to_string()));
@@ -468,9 +470,9 @@ impl AgentOs {
         let result = self
             .guest_fs_call(Self::fs_request(GuestFilesystemOperation::ReadFile, path))
             .await?;
-        let content = result.content.with_context(|| {
-            format!("sidecar returned no file content for {path}")
-        })?;
+        let content = result
+            .content
+            .with_context(|| format!("sidecar returned no file content for {path}"))?;
         match result.encoding {
             Some(RootFilesystemEntryEncoding::Base64) => BASE64
                 .decode(content.as_bytes())
@@ -485,9 +487,10 @@ impl AgentOs {
     async fn kernel_write_file(&self, path: &str, content: &FileContent) -> Result<()> {
         let (encoded, encoding) = match content {
             FileContent::Text(text) => (text.clone(), None),
-            FileContent::Bytes(bytes) => {
-                (BASE64.encode(bytes), Some(RootFilesystemEntryEncoding::Base64))
-            }
+            FileContent::Bytes(bytes) => (
+                BASE64.encode(bytes),
+                Some(RootFilesystemEntryEncoding::Base64),
+            ),
         };
         let mut request = Self::fs_request(GuestFilesystemOperation::WriteFile, path);
         request.content = Some(encoded);
@@ -525,9 +528,7 @@ impl AgentOs {
         let result = self
             .guest_fs_call(Self::fs_request(GuestFilesystemOperation::Stat, path))
             .await?;
-        let stat = result
-            .stat
-            .context("stat response missing stat payload")?;
+        let stat = result.stat.context("stat response missing stat payload")?;
         Ok(Self::virtual_stat_from(stat))
     }
 
@@ -535,9 +536,7 @@ impl AgentOs {
         let result = self
             .guest_fs_call(Self::fs_request(GuestFilesystemOperation::Lstat, path))
             .await?;
-        let stat = result
-            .stat
-            .context("lstat response missing stat payload")?;
+        let stat = result.stat.context("lstat response missing stat payload")?;
         Ok(Self::virtual_stat_from(stat))
     }
 

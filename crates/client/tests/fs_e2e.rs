@@ -45,7 +45,10 @@ async fn filesystem_surface_round_trips() {
     os.write_file("/tmp/a.txt", FileContent::Text("hello".to_string()))
         .await
         .expect("write text");
-    assert_eq!(os.read_file("/tmp/a.txt").await.expect("read text"), b"hello");
+    assert_eq!(
+        os.read_file("/tmp/a.txt").await.expect("read text"),
+        b"hello"
+    );
 
     // Binary write/read with non-UTF-8 bytes. This proves the `chunk: str` -> BARE `data` fix end to
     // end: a lossy UTF-8 path would corrupt these bytes.

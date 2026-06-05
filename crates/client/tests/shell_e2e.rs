@@ -33,15 +33,24 @@ async fn shell_surface_open_write_data_resize_close() {
         "write_shell(unknown) must return ShellNotFound"
     );
     assert!(
-        matches!(os.resize_shell("shell-missing", 80, 24), Err(ClientError::ShellNotFound(_))),
+        matches!(
+            os.resize_shell("shell-missing", 80, 24),
+            Err(ClientError::ShellNotFound(_))
+        ),
         "resize_shell(unknown) must return ShellNotFound"
     );
     assert!(
-        matches!(os.close_shell("shell-missing"), Err(ClientError::ShellNotFound(_))),
+        matches!(
+            os.close_shell("shell-missing"),
+            Err(ClientError::ShellNotFound(_))
+        ),
         "close_shell(unknown) must return ShellNotFound"
     );
     assert!(
-        matches!(os.on_shell_data("shell-missing"), Err(ClientError::ShellNotFound(_))),
+        matches!(
+            os.on_shell_data("shell-missing"),
+            Err(ClientError::ShellNotFound(_))
+        ),
         "on_shell_data(unknown) must return ShellNotFound"
     );
 

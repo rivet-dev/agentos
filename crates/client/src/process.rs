@@ -226,7 +226,9 @@ impl AgentOs {
         let timeout_deadline = options
             .timeout
             .filter(|ms| ms.is_finite() && *ms >= 0.0)
-            .map(|ms| tokio::time::Instant::now() + std::time::Duration::from_secs_f64(ms / 1000.0));
+            .map(|ms| {
+                tokio::time::Instant::now() + std::time::Duration::from_secs_f64(ms / 1000.0)
+            });
         let mut killed_for_timeout = false;
 
         let mut stdout = Vec::<u8>::new();
@@ -552,7 +554,8 @@ impl AgentOs {
         });
 
         let now_ms = epoch_ms_now();
-        let mut seen_display_pids: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        let mut seen_display_pids: std::collections::BTreeSet<u32> =
+            std::collections::BTreeSet::new();
         let mut out: Vec<ProcessInfo> = Vec::new();
 
         for entry in snapshot.processes {
@@ -991,7 +994,10 @@ fn stdin_to_bytes(input: StdinInput) -> Vec<u8> {
 /// Drive a caller-supplied output callback from a fresh subscription on the given broadcast channel.
 /// Each chunk delivered to the channel is forwarded to `callback` as raw bytes. The task ends when
 /// the channel closes (process exit), matching the TS handler-set lifetime.
-pub(crate) fn install_output_callback(tx: broadcast::Sender<Vec<u8>>, mut callback: OutputCallback) {
+pub(crate) fn install_output_callback(
+    tx: broadcast::Sender<Vec<u8>>,
+    mut callback: OutputCallback,
+) {
     let mut rx = tx.subscribe();
     tokio::spawn(async move {
         loop {

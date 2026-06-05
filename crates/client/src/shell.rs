@@ -246,12 +246,9 @@ impl AgentOs {
             // The `.finally` equivalent: remove from both the tracking set and the shells map (only
             // if it is still our entry, matching the TS identity check).
             agent.inner().pending_shell_exits.remove(&exit_key);
-            agent
-                .inner()
-                .shells
-                .remove_if(&exit_shell_id, |existing| {
-                    existing.process_id == route_process_id
-                });
+            agent.inner().shells.remove_if(&exit_shell_id, |existing| {
+                existing.process_id == route_process_id
+            });
             // remove_if takes `&mut V`; the comparison only reads, which is fine.
         });
 
@@ -385,10 +382,7 @@ impl AgentOs {
     /// Subscribe to a shell's stdout data. SYNC register; multi-handler; dropping the returned stream
     /// is the unsubscribe. Carries stdout ONLY (stderr is on `on_shell_stderr`). Errors with
     /// [`ClientError::ShellNotFound`].
-    pub fn on_shell_data(
-        &self,
-        shell_id: &str,
-    ) -> std::result::Result<ByteStream, ClientError> {
+    pub fn on_shell_data(&self, shell_id: &str) -> std::result::Result<ByteStream, ClientError> {
         self.inner()
             .shells
             .read(shell_id, |_, entry| entry.data_tx.subscribe())
@@ -399,10 +393,7 @@ impl AgentOs {
     /// Subscribe to a shell's stderr. SYNC register; multi-handler; dropping the returned stream is
     /// the unsubscribe. This is the dedicated stderr channel backing the TS `onStderr` option; stderr
     /// is never fanned into `on_shell_data`. Errors with [`ClientError::ShellNotFound`].
-    pub fn on_shell_stderr(
-        &self,
-        shell_id: &str,
-    ) -> std::result::Result<ByteStream, ClientError> {
+    pub fn on_shell_stderr(&self, shell_id: &str) -> std::result::Result<ByteStream, ClientError> {
         self.inner()
             .shells
             .read(shell_id, |_, entry| entry.stderr_tx.subscribe())

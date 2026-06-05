@@ -174,7 +174,11 @@ impl AgentOsSidecar {
                     message: rejected.message,
                 });
             }
-            _ => return Err(ClientError::Sidecar("unexpected authenticate response".to_string())),
+            _ => {
+                return Err(ClientError::Sidecar(
+                    "unexpected authenticate response".to_string(),
+                ))
+            }
         };
         let max_frame = authed.max_frame_bytes as usize;
         transport.max_frame_bytes.store(max_frame, Ordering::SeqCst);
@@ -325,7 +329,8 @@ impl AgentOs {
     pub async fn create_sidecar(
         sidecar_id: Option<String>,
     ) -> Result<Arc<AgentOsSidecar>, ClientError> {
-        let sidecar_id = sidecar_id.unwrap_or_else(|| format!("agent-os-sidecar-{}", Uuid::new_v4()));
+        let sidecar_id =
+            sidecar_id.unwrap_or_else(|| format!("agent-os-sidecar-{}", Uuid::new_v4()));
         let placement = AgentOsSidecarPlacement::Explicit {
             sidecar_id: sidecar_id.clone(),
         };
