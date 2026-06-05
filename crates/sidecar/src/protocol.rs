@@ -1847,6 +1847,7 @@ impl_bare_newtype_union_enum!(
 impl_bare_newtype_union_enum!(
     SidecarResponsePayload,
     JsonSidecarResponsePayload,
+    #[allow(clippy::enum_variant_names)]
     #[serde(tag = "type", rename_all = "snake_case")]
     {
         ToolInvocationResult(ToolInvocationResultResponse) = 1,
@@ -2895,10 +2896,10 @@ enum ExpectedResponseKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedSidecarResponseKind {
-    ToolInvocationResult,
-    PermissionRequestResult,
-    AcpRequestResult,
-    JsBridgeResult,
+    ToolInvocation,
+    PermissionRequest,
+    AcpRequest,
+    JsBridge,
 }
 
 impl ExpectedResponseKind {
@@ -2950,10 +2951,10 @@ impl ExpectedResponseKind {
 impl ExpectedSidecarResponseKind {
     fn as_str(self) -> &'static str {
         match self {
-            Self::ToolInvocationResult => "tool_invocation_result",
-            Self::PermissionRequestResult => "permission_request_result",
-            Self::AcpRequestResult => "acp_request_result",
-            Self::JsBridgeResult => "js_bridge_result",
+            Self::ToolInvocation => "tool_invocation_result",
+            Self::PermissionRequest => "permission_request_result",
+            Self::AcpRequest => "acp_request_result",
+            Self::JsBridge => "js_bridge_result",
         }
     }
 
@@ -3044,10 +3045,10 @@ impl SidecarRequestPayload {
 
     fn expected_response(&self) -> ExpectedSidecarResponseKind {
         match self {
-            Self::ToolInvocation(_) => ExpectedSidecarResponseKind::ToolInvocationResult,
-            Self::PermissionRequest(_) => ExpectedSidecarResponseKind::PermissionRequestResult,
-            Self::AcpRequest(_) => ExpectedSidecarResponseKind::AcpRequestResult,
-            Self::JsBridgeCall(_) => ExpectedSidecarResponseKind::JsBridgeResult,
+            Self::ToolInvocation(_) => ExpectedSidecarResponseKind::ToolInvocation,
+            Self::PermissionRequest(_) => ExpectedSidecarResponseKind::PermissionRequest,
+            Self::AcpRequest(_) => ExpectedSidecarResponseKind::AcpRequest,
+            Self::JsBridgeCall(_) => ExpectedSidecarResponseKind::JsBridge,
         }
     }
 }
