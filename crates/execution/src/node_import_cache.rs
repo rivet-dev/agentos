@@ -13151,33 +13151,120 @@ fn render_diagnostics_channel_builtin_asset_source(init_counter_key: &str) -> St
     let init_counter_key = format!("{init_counter_key:?}");
 
     format!(
-        "const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
-globalThis[{init_counter_key}] = initCount;\n\
-\n\
-function channel(name = '') {{\n\
-  const channelName = String(name);\n\
-  return {{\n\
-    name: channelName,\n\
-    hasSubscribers: false,\n\
-    publish() {{}},\n\
-    subscribe() {{}},\n\
-    unsubscribe() {{}},\n\
-  }};\n\
-}}\n\
-\n\
-function hasSubscribers() {{\n\
-  return false;\n\
-}}\n\
-\n\
-function subscribe() {{}}\n\
-\n\
-function unsubscribe() {{}}\n\
-\n\
-const mod = {{ channel, hasSubscribers, subscribe, unsubscribe }};\n\
-\n\
-export const __agentOsInitCount = initCount;\n\
-export default mod;\n\
-export {{ channel, hasSubscribers, subscribe, unsubscribe }};\n"
+        r#"const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;
+globalThis[{init_counter_key}] = initCount;
+
+class Channel {{
+  constructor(name = '') {{
+    this.name = String(name);
+    this._subscribers = new Set();
+  }}
+
+  get hasSubscribers() {{
+    return this._subscribers.size > 0;
+  }}
+
+  publish(message) {{
+    for (const subscriber of Array.from(this._subscribers)) {{
+      subscriber(message, this.name);
+    }}
+  }}
+
+  subscribe(subscriber) {{
+    if (typeof subscriber === 'function') {{
+      this._subscribers.add(subscriber);
+    }}
+  }}
+
+  unsubscribe(subscriber) {{
+    return this._subscribers.delete(subscriber);
+  }}
+
+  runStores(context, callback, thisArg, ...args) {{
+    if (typeof callback !== 'function') {{
+      return callback;
+    }}
+    return callback.apply(thisArg, args);
+  }}
+}}
+
+const channelCache = new Map();
+
+function channel(name = '') {{
+  const channelName = String(name);
+  let existing = channelCache.get(channelName);
+  if (!existing) {{
+    existing = new Channel(channelName);
+    channelCache.set(channelName, existing);
+  }}
+  return existing;
+}}
+
+function hasSubscribers(name = '') {{
+  return channel(name).hasSubscribers;
+}}
+
+function subscribe(name = '', subscriber) {{
+  return channel(name).subscribe(subscriber);
+}}
+
+function unsubscribe(name = '', subscriber) {{
+  return channel(name).unsubscribe(subscriber);
+}}
+
+function tracingChannel(name = '') {{
+  const channelName = String(name);
+  const tracing = {{
+    start: channel(`tracing:${{channelName}}:start`),
+    end: channel(`tracing:${{channelName}}:end`),
+    asyncStart: channel(`tracing:${{channelName}}:asyncStart`),
+    asyncEnd: channel(`tracing:${{channelName}}:asyncEnd`),
+    error: channel(`tracing:${{channelName}}:error`),
+    subscribe() {{}},
+    unsubscribe() {{
+      return true;
+    }},
+    traceSync(fn, context, thisArg, ...args) {{
+      if (typeof fn !== 'function') {{
+        return fn;
+      }}
+      return fn.apply(thisArg, args);
+    }},
+    tracePromise(fn, context, thisArg, ...args) {{
+      if (typeof fn !== 'function') {{
+        return Promise.resolve(fn);
+      }}
+      return Promise.resolve(fn.apply(thisArg, args));
+    }},
+    traceCallback(fn, position, context, thisArg, ...args) {{
+      if (typeof fn !== 'function') {{
+        return fn;
+      }}
+      return fn.apply(thisArg, args);
+    }},
+  }};
+  Object.defineProperty(tracing, 'hasSubscribers', {{
+    get() {{
+      return (
+        tracing.start.hasSubscribers ||
+        tracing.end.hasSubscribers ||
+        tracing.asyncStart.hasSubscribers ||
+        tracing.asyncEnd.hasSubscribers ||
+        tracing.error.hasSubscribers
+      );
+    }},
+    enumerable: false,
+    configurable: true,
+  }});
+  return tracing;
+}}
+
+const mod = {{ Channel, channel, hasSubscribers, subscribe, tracingChannel, unsubscribe }};
+
+export const __agentOsInitCount = initCount;
+export default mod;
+export {{ Channel, channel, hasSubscribers, subscribe, tracingChannel, unsubscribe }};
+"#
     )
 }
 
@@ -14462,7 +14549,8 @@ export async function loadPyodide(options) {
         assert!(async_hooks_asset.contains("class AsyncLocalStorage"));
         assert!(async_hooks_asset.contains("function createHook()"));
         assert!(diagnostics_asset.contains("function channel(name = '')"));
-        assert!(diagnostics_asset.contains("function hasSubscribers()"));
+        assert!(diagnostics_asset.contains("class Channel"));
+        assert!(diagnostics_asset.contains("function tracingChannel(name = '')"));
     }
 
     #[test]

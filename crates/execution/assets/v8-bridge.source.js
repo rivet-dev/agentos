@@ -23816,26 +23816,97 @@ ${headerLines}\r
     error.code = "ERR_ACCESS_DENIED";
     return error;
   }
-  var builtinDiagnosticsChannelModule = {
-    channel(name = "") {
-      const channelName = String(name);
-      return {
-        name: channelName,
-        hasSubscribers: false,
-        publish() {
-        },
-        subscribe() {
-        },
-        unsubscribe() {
+  class DiagnosticsChannel {
+    constructor(name = "") {
+      this.name = String(name);
+      this._subscribers = /* @__PURE__ */ new Set();
+    }
+    get hasSubscribers() {
+      return this._subscribers.size > 0;
+    }
+    publish(message) {
+      for (const subscriber of Array.from(this._subscribers)) {
+        subscriber(message, this.name);
+      }
+    }
+    subscribe(subscriber) {
+      if (typeof subscriber === "function") {
+        this._subscribers.add(subscriber);
+      }
+    }
+    unsubscribe(subscriber) {
+      return this._subscribers.delete(subscriber);
+    }
+    runStores(context, callback, thisArg, ...args) {
+      if (typeof callback !== "function") {
+        return callback;
+      }
+      return callback.apply(thisArg, args);
+    }
+  }
+  var diagnosticsChannelCache = /* @__PURE__ */ new Map();
+  function getDiagnosticsChannel(name = "") {
+    const channelName = String(name);
+    let existing = diagnosticsChannelCache.get(channelName);
+    if (!existing) {
+      existing = new DiagnosticsChannel(channelName);
+      diagnosticsChannelCache.set(channelName, existing);
+    }
+    return existing;
+  }
+  function createDiagnosticsTracingChannel(name = "") {
+    const channelName = String(name);
+    const tracing = {
+      start: getDiagnosticsChannel(`tracing:${channelName}:start`),
+      end: getDiagnosticsChannel(`tracing:${channelName}:end`),
+      asyncStart: getDiagnosticsChannel(`tracing:${channelName}:asyncStart`),
+      asyncEnd: getDiagnosticsChannel(`tracing:${channelName}:asyncEnd`),
+      error: getDiagnosticsChannel(`tracing:${channelName}:error`),
+      subscribe() {
+      },
+      unsubscribe() {
+        return true;
+      },
+      traceSync(fn, context, thisArg, ...args) {
+        if (typeof fn !== "function") {
+          return fn;
         }
-      };
+        return fn.apply(thisArg, args);
+      },
+      tracePromise(fn, context, thisArg, ...args) {
+        if (typeof fn !== "function") {
+          return Promise.resolve(fn);
+        }
+        return Promise.resolve(fn.apply(thisArg, args));
+      },
+      traceCallback(fn, position, context, thisArg, ...args) {
+        if (typeof fn !== "function") {
+          return fn;
+        }
+        return fn.apply(thisArg, args);
+      }
+    };
+    Object.defineProperty(tracing, "hasSubscribers", {
+      get() {
+        return tracing.start.hasSubscribers || tracing.end.hasSubscribers || tracing.asyncStart.hasSubscribers || tracing.asyncEnd.hasSubscribers || tracing.error.hasSubscribers;
+      },
+      enumerable: false,
+      configurable: true
+    });
+    return tracing;
+  }
+  var builtinDiagnosticsChannelModule = {
+    Channel: DiagnosticsChannel,
+    channel: getDiagnosticsChannel,
+    hasSubscribers(name = "") {
+      return getDiagnosticsChannel(name).hasSubscribers;
     },
-    hasSubscribers() {
-      return false;
+    subscribe(name = "", subscriber) {
+      return getDiagnosticsChannel(name).subscribe(subscriber);
     },
-    subscribe() {
-    },
-    unsubscribe() {
+    tracingChannel: createDiagnosticsTracingChannel,
+    unsubscribe(name = "", subscriber) {
+      return getDiagnosticsChannel(name).unsubscribe(subscriber);
     }
   };
   var asyncLocalStorageInstances = /* @__PURE__ */ new Set();

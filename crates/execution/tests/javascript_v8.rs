@@ -1256,6 +1256,7 @@ fn javascript_execution_provides_async_hooks_and_diagnostics_channel_stubs() {
             inline_code: Some(String::from(
                 r#"
 import { createRequire } from "node:module";
+import { Channel, tracingChannel as importedTracingChannel } from "node:diagnostics_channel";
 
 const require = createRequire(import.meta.url);
 const asyncHooks = require("node:async_hooks");
@@ -1284,6 +1285,48 @@ if (channel.hasSubscribers !== false) {
 }
 if (diagnosticsChannel.hasSubscribers("undici:request:create") !== false) {
   throw new Error("diagnostics_channel.hasSubscribers should be false");
+}
+if (typeof diagnosticsChannel.tracingChannel !== "function") {
+  throw new Error("diagnostics_channel.tracingChannel is missing");
+}
+if (typeof importedTracingChannel !== "function") {
+  throw new Error("diagnostics_channel ESM tracingChannel export is missing");
+}
+if (typeof Channel !== "function") {
+  throw new Error("diagnostics_channel ESM Channel export is missing");
+}
+
+const constructedChannel = new Channel("constructed");
+if (constructedChannel.name !== "constructed" || constructedChannel.hasSubscribers !== false) {
+  throw new Error("diagnostics_channel Channel constructor returned unexpected state");
+}
+
+const tracing = diagnosticsChannel.tracingChannel("agent.test");
+if (tracing.hasSubscribers !== false || tracing.start.hasSubscribers !== false) {
+  throw new Error("diagnostics tracing channel should start without subscribers");
+}
+if (tracing.start.name !== "tracing:agent.test:start") {
+  throw new Error(`unexpected tracing start channel name: ${String(tracing.start.name)}`);
+}
+const runStoresResult = tracing.start.runStores({ token: 1 }, (left, right) => `${left}:${right}`, undefined, "ok", 42);
+if (runStoresResult !== "ok:42") {
+  throw new Error(`diagnostics tracing channel runStores returned ${String(runStoresResult)}`);
+}
+
+let published = null;
+function onPublish(message, name) {
+  published = { message, name };
+}
+tracing.start.subscribe(onPublish);
+if (tracing.hasSubscribers !== true || tracing.start.hasSubscribers !== true) {
+  throw new Error("diagnostics tracing channel did not track subscribers");
+}
+tracing.start.publish({ value: 7 });
+if (published?.name !== "tracing:agent.test:start" || published?.message?.value !== 7) {
+  throw new Error("diagnostics tracing channel did not publish to subscribers");
+}
+if (tracing.start.unsubscribe(onPublish) !== true || tracing.hasSubscribers !== false) {
+  throw new Error("diagnostics tracing channel did not unsubscribe");
 }
 "#,
             )),
