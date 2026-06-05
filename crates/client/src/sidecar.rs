@@ -1,9 +1,8 @@
 //! `AgentOsSidecar` (public transport handle) + placement/description + the process-global shared
-//! pool + internal lease/vm-admin.
+//! pool + internal lease accounting.
 //!
-//! Ported from `packages/core/src/agent-os.ts` (`AgentOsSidecar`) and the internal vm-admin layer.
-//! The shared-sidecar pool is a process-global map (default pool `"default"`); `create_vm` /
-//! `get_vm_admin` / `dispose_vm` are internal and never public on `AgentOs`.
+//! Ported from `packages/core/src/agent-os.ts` (`AgentOsSidecar`). The shared-sidecar pool is a
+//! process-global map (default pool `"default"`).
 
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
@@ -236,11 +235,8 @@ impl AgentOsSidecar {
         let errors: Vec<String> = Vec::new();
 
         // Parity note: TypeScript iterates `state.activeLeases` here and aggregates per-lease
-        // disposal errors. Active leases are owned by `AgentOs` (via
-        // `AgentOsInner.sidecar_lease`) and are released through `AgentOsSidecarVmLease::dispose`
-        // during `AgentOs::shutdown`. The shared active-lease registry is part of the
-        // create_vm / vm-admin transport layer, which is not yet wired (see the `SidecarVmAdmin`
-        // TODO above). Once that lands, drain it here and push any disposal errors into `errors`.
+        // disposal errors. Active leases are owned by `AgentOs` and are released through
+        // `AgentOsSidecarVmLease::dispose` during `AgentOs::shutdown`.
         self.active_vm_count.store(0, Ordering::SeqCst);
         self.state
             .store(SidecarState::Disposed.as_u8(), Ordering::SeqCst);
@@ -269,16 +265,9 @@ impl AgentOsSidecar {
     }
 }
 
-/// Internal VM admin held behind a lease. Not public.
-pub(crate) trait SidecarVmAdmin: Send + Sync {
-    // TODO(parity: model the vm-admin surface: kernel/rootView/mounts/sidecar session, etc.).
-}
-
-/// A lease over a VM admin; released on `AgentOs` dispose.
+/// A lease over a VM; released on `AgentOs` dispose.
 pub(crate) struct AgentOsSidecarVmLease {
-    pub(crate) vm_id: String,
     pub(crate) sidecar: Arc<AgentOsSidecar>,
-    // TODO(parity: hold the admin + release wiring).
 }
 
 impl AgentOsSidecarVmLease {
@@ -290,9 +279,6 @@ impl AgentOsSidecarVmLease {
     /// cannot be disposed twice). The active-vm count is decremented (saturating at 0) to mirror
     /// `state.description.activeVmCount = state.activeLeases.size`.
     ///
-    /// Parity note: the underlying session/transport `client.dispose()` is part of the create_vm /
-    /// vm-admin transport layer, which is not yet wired (see the `SidecarVmAdmin` TODO above). Once
-    /// that lands, dispose the held admin/client here and surface any error.
     pub(crate) async fn dispose(self) -> Result<(), ClientError> {
         let sidecar = self.sidecar;
         // Mirror `activeVmCount = activeLeases.size` by decrementing, never underflowing past 0.

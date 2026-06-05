@@ -312,7 +312,6 @@ impl AgentOs {
         // 7. Lease this VM on the (possibly shared) sidecar, build cron, and assemble the client.
         sidecar.active_vm_count.fetch_add(1, Ordering::SeqCst);
         let lease = AgentOsSidecarVmLease {
-            vm_id: vm_id.clone(),
             sidecar: sidecar.clone(),
         };
 
