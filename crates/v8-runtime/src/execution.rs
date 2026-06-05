@@ -1773,6 +1773,446 @@ fn throw_module_error(scope: &mut v8::HandleScope, message: &str) {
     scope.throw_exception(exc);
 }
 
+/// Detect if source code is likely CommonJS (not ESM).
+/// Checks for module.exports, exports.X, or require() patterns without ESM import/export.
+fn build_module_source(
+    scope: &mut v8::HandleScope,
+    raw_source: &str,
+    resolved_path: &str,
+    module_format: Option<ResolvedModuleFormat>,
+) -> String {
+    let normalized_path = resolved_path.to_ascii_lowercase();
+    if normalized_path.ends_with(".json") || module_format == Some(ResolvedModuleFormat::Json) {
+        return build_json_esm_shim(resolved_path);
+    }
+    if module_format == Some(ResolvedModuleFormat::Commonjs)
+        || is_likely_cjs(raw_source, resolved_path, module_format)
+    {
+        return build_cjs_esm_shim(scope, raw_source, resolved_path);
+    }
+    add_esm_runtime_prelude(raw_source)
+}
+
+fn build_json_esm_shim(resolved_path: &str) -> String {
+    format!(
+        "const _jsonModule = globalThis._requireFrom({}, \"/\");\nexport default _jsonModule;\n",
+        quoted_module_path(resolved_path)
+    )
+}
+
+fn build_cjs_esm_shim(
+    scope: &mut v8::HandleScope,
+    raw_source: &str,
+    resolved_path: &str,
+) -> String {
+    use std::collections::HashSet;
+
+    let mut names = extract_cjs_export_names(raw_source)
+        .into_iter()
+        .collect::<HashSet<_>>();
+    if names.is_empty() {
+        names.extend(extract_runtime_cjs_export_names(scope, resolved_path));
+    }
+
+    let mut exports = names.into_iter().collect::<Vec<_>>();
+    exports.sort();
+
+    let mut shim = format!(
+        "const _cjsModule = globalThis._requireFrom({}, \"/\");\nexport default _cjsModule;\n",
+        quoted_module_path(resolved_path)
+    );
+    for name in exports {
+        shim.push_str(&format!(
+            "export const {} = _cjsModule[\"{}\"];\n",
+            name, name
+        ));
+    }
+    shim
+}
+
+fn extract_runtime_cjs_export_names(
+    scope: &mut v8::HandleScope,
+    resolved_path: &str,
+) -> Vec<String> {
+    let tc = &mut v8::TryCatch::new(scope);
+    let context = tc.get_current_context();
+    let global = context.global(tc);
+
+    let require_key = match v8::String::new(tc, "_requireFrom") {
+        Some(key) => key,
+        None => return Vec::new(),
+    };
+    let require_fn = match global
+        .get(tc, require_key.into())
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
+    {
+        Some(function) => function,
+        None => return Vec::new(),
+    };
+
+    let module_path = match v8::String::new(tc, resolved_path) {
+        Some(path) => path,
+        None => return Vec::new(),
+    };
+    let root = match v8::String::new(tc, "/") {
+        Some(path) => path,
+        None => return Vec::new(),
+    };
+    let require_args = [module_path.into(), root.into()];
+    let receiver = v8::undefined(tc).into();
+    let required_module = match require_fn.call(tc, receiver, &require_args) {
+        Some(value) => value,
+        None => return Vec::new(),
+    };
+    if required_module.is_null_or_undefined() || !required_module.is_object() {
+        return Vec::new();
+    }
+
+    let object_key = match v8::String::new(tc, "Object") {
+        Some(key) => key,
+        None => return Vec::new(),
+    };
+    let object_ctor = match global
+        .get(tc, object_key.into())
+        .and_then(|value| v8::Local::<v8::Object>::try_from(value).ok())
+    {
+        Some(object) => object,
+        None => return Vec::new(),
+    };
+
+    let keys_key = match v8::String::new(tc, "keys") {
+        Some(key) => key,
+        None => return Vec::new(),
+    };
+    let keys_fn = match object_ctor
+        .get(tc, keys_key.into())
+        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
+    {
+        Some(function) => function,
+        None => return Vec::new(),
+    };
+
+    let keys_args = [required_module];
+    let keys = match keys_fn
+        .call(tc, object_ctor.into(), &keys_args)
+        .and_then(|value| v8::Local::<v8::Array>::try_from(value).ok())
+    {
+        Some(array) => array,
+        None => return Vec::new(),
+    };
+
+    let mut names = Vec::new();
+    for index in 0..keys.length() {
+        let Some(value) = keys.get_index(tc, index) else {
+            continue;
+        };
+        if !value.is_string() {
+            continue;
+        }
+        let name = value.to_rust_string_lossy(tc);
+        if is_valid_js_ident(&name) && name != "default" && name != "__esModule" {
+            names.push(name);
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn quoted_module_path(resolved_path: &str) -> String {
+    format!(
+        "\"{}\"",
+        resolved_path.replace('\\', "\\\\").replace('"', "\\\"")
+    )
+}
+
+fn is_likely_cjs(
+    source: &str,
+    resolved_path: &str,
+    module_format: Option<ResolvedModuleFormat>,
+) -> bool {
+    let normalized_path = resolved_path.to_ascii_lowercase();
+    if normalized_path.ends_with(".mjs") || normalized_path.ends_with(".mts") {
+        return false;
+    }
+    if normalized_path.ends_with(".cjs") || normalized_path.ends_with(".cts") {
+        return true;
+    }
+    if module_format == Some(ResolvedModuleFormat::Module) {
+        return false;
+    }
+    if has_probable_esm_syntax(source) {
+        return false;
+    }
+    // CJS indicators
+    source.contains("module.exports") || source.contains("exports.") || source.contains("require(")
+}
+
+fn has_probable_esm_syntax(source: &str) -> bool {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum ScanState {
+        Code,
+        LineComment,
+        BlockComment,
+        SingleQuote,
+        DoubleQuote,
+        Template,
+    }
+
+    let bytes = source.as_bytes();
+    let mut state = ScanState::Code;
+    let mut index = 0usize;
+    let mut brace_depth = 0u32;
+    let mut paren_depth = 0u32;
+    let mut bracket_depth = 0u32;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        let next = bytes.get(index + 1).copied();
+
+        match state {
+            ScanState::Code => {
+                if index == 0 && byte == b'#' && next == Some(b'!') {
+                    state = ScanState::LineComment;
+                    index += 2;
+                    continue;
+                }
+                if byte == b'/' && next == Some(b'/') {
+                    state = ScanState::LineComment;
+                    index += 2;
+                    continue;
+                }
+                if byte == b'/' && next == Some(b'*') {
+                    state = ScanState::BlockComment;
+                    index += 2;
+                    continue;
+                }
+                if byte == b'\'' {
+                    state = ScanState::SingleQuote;
+                    index += 1;
+                    continue;
+                }
+                if byte == b'"' {
+                    state = ScanState::DoubleQuote;
+                    index += 1;
+                    continue;
+                }
+                if byte == b'`' {
+                    state = ScanState::Template;
+                    index += 1;
+                    continue;
+                }
+
+                match byte {
+                    b'{' => brace_depth = brace_depth.saturating_add(1),
+                    b'}' => brace_depth = brace_depth.saturating_sub(1),
+                    b'(' => paren_depth = paren_depth.saturating_add(1),
+                    b')' => paren_depth = paren_depth.saturating_sub(1),
+                    b'[' => bracket_depth = bracket_depth.saturating_add(1),
+                    b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                    _ => {}
+                }
+
+                if brace_depth == 0
+                    && paren_depth == 0
+                    && bracket_depth == 0
+                    && is_js_ident_start(byte)
+                {
+                    let start = index;
+                    index += 1;
+                    while index < bytes.len() && is_js_ident_continue(bytes[index]) {
+                        index += 1;
+                    }
+
+                    let token = &source[start..index];
+                    if token == "export" {
+                        return true;
+                    }
+                    if token == "import" {
+                        let mut cursor = index;
+                        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                            cursor += 1;
+                        }
+                        if bytes.get(cursor).copied() != Some(b'(') {
+                            return true;
+                        }
+                    }
+
+                    continue;
+                }
+
+                index += 1;
+            }
+            ScanState::LineComment => {
+                if byte == b'\n' {
+                    state = ScanState::Code;
+                }
+                index += 1;
+            }
+            ScanState::BlockComment => {
+                if byte == b'*' && next == Some(b'/') {
+                    state = ScanState::Code;
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+            }
+            ScanState::SingleQuote => {
+                if byte == b'\\' {
+                    index += 2;
+                } else if byte == b'\'' {
+                    state = ScanState::Code;
+                    index += 1;
+                } else {
+                    index += 1;
+                }
+            }
+            ScanState::DoubleQuote => {
+                if byte == b'\\' {
+                    index += 2;
+                } else if byte == b'"' {
+                    state = ScanState::Code;
+                    index += 1;
+                } else {
+                    index += 1;
+                }
+            }
+            ScanState::Template => {
+                if byte == b'\\' {
+                    index += 2;
+                } else if byte == b'`' {
+                    state = ScanState::Code;
+                    index += 1;
+                } else {
+                    index += 1;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn is_js_ident_start(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$'
+}
+
+fn is_js_ident_continue(byte: u8) -> bool {
+    is_js_ident_start(byte) || byte.is_ascii_digit()
+}
+
+/// Extract named export names from CJS source by scanning for `exports.X =` and
+/// `module.exports = { X: ... }` patterns. Returns a list of valid JS identifiers.
+fn extract_cjs_export_names(source: &str) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut names = HashSet::new();
+
+    // Pattern 1: exports.NAME = ...
+    for line in source.lines() {
+        let trimmed = line.trim();
+        for prefix in ["exports.", "module.exports."] {
+            if let Some(rest) = trimmed.strip_prefix(prefix) {
+                if let Some(eq_pos) = rest.find('=') {
+                    let name = rest[..eq_pos].trim();
+                    if is_valid_js_ident(name) && name != "default" {
+                        names.insert(name.to_string());
+                    }
+                }
+            }
+        }
+        // Pattern 2: Object.defineProperty(exports, "NAME", ...)
+        if trimmed.contains("Object.defineProperty(exports") {
+            if let Some(start) = trimmed.find('"').or_else(|| trimmed.find('\'')) {
+                let rest = &trimmed[start + 1..];
+                if let Some(end) = rest.find('"').or_else(|| rest.find('\'')) {
+                    let name = &rest[..end];
+                    if is_valid_js_ident(name) && name != "default" && name != "__esModule" {
+                        names.insert(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut result: Vec<String> = names.into_iter().collect();
+    result.sort();
+    result
+}
+
+fn add_esm_runtime_prelude(source: &str) -> String {
+    let mut prelude = String::new();
+
+    if source.contains("require(")
+        && !source.contains("createRequire(import.meta.url)")
+        && !source.contains("createRequire(")
+        && !source.contains("const require =")
+        && !source.contains("let require =")
+        && !source.contains("var require =")
+        && !source.contains("function require(")
+    {
+        prelude
+            .push_str("const require = globalThis._moduleModule.createRequire(import.meta.url);\n");
+    }
+
+    for (name, triggers) in [
+        ("fetch", &["fetch("][..]),
+        ("Headers", &["Headers", "new Headers("][..]),
+        ("Request", &["Request", "new Request("][..]),
+        ("Response", &["Response", "new Response("][..]),
+        ("Blob", &["Blob", "new Blob("][..]),
+        ("File", &["File", "new File("][..]),
+        ("FormData", &["FormData", "new FormData("][..]),
+    ] {
+        if needs_esm_global_alias(source, name, triggers) {
+            prelude.push_str(&format!("const {name} = globalThis.{name};\n"));
+        }
+    }
+
+    if prelude.is_empty() {
+        source.to_owned()
+    } else {
+        format!("{prelude}{source}")
+    }
+}
+
+fn needs_esm_global_alias(source: &str, name: &str, triggers: &[&str]) -> bool {
+    if !triggers.iter().any(|trigger| source.contains(trigger)) {
+        return false;
+    }
+
+    for pattern in [
+        format!("const {name}"),
+        format!("let {name}"),
+        format!("var {name}"),
+        format!("function {name}"),
+        format!("class {name}"),
+        format!("import {{ {name}"),
+        format!("import {{{name}"),
+        format!(", {name} }}"),
+        format!(",{name}}}"),
+        format!("import {name} from"),
+        format!("import * as {name}"),
+    ] {
+        if source.contains(&pattern) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn is_valid_js_ident(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let mut chars = s.chars();
+    let first = chars.next().unwrap();
+    if !first.is_alphabetic() && first != '_' && first != '$' {
+        return false;
+    }
+    chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5633,444 +6073,4 @@ mod tests {
             assert!(final_cap >= bufs.ser_buf.len(), "capacity >= len");
         }
     }
-}
-
-/// Detect if source code is likely CommonJS (not ESM).
-/// Checks for module.exports, exports.X, or require() patterns without ESM import/export.
-fn build_module_source(
-    scope: &mut v8::HandleScope,
-    raw_source: &str,
-    resolved_path: &str,
-    module_format: Option<ResolvedModuleFormat>,
-) -> String {
-    let normalized_path = resolved_path.to_ascii_lowercase();
-    if normalized_path.ends_with(".json") || module_format == Some(ResolvedModuleFormat::Json) {
-        return build_json_esm_shim(resolved_path);
-    }
-    if module_format == Some(ResolvedModuleFormat::Commonjs)
-        || is_likely_cjs(raw_source, resolved_path, module_format)
-    {
-        return build_cjs_esm_shim(scope, raw_source, resolved_path);
-    }
-    add_esm_runtime_prelude(raw_source)
-}
-
-fn build_json_esm_shim(resolved_path: &str) -> String {
-    format!(
-        "const _jsonModule = globalThis._requireFrom({}, \"/\");\nexport default _jsonModule;\n",
-        quoted_module_path(resolved_path)
-    )
-}
-
-fn build_cjs_esm_shim(
-    scope: &mut v8::HandleScope,
-    raw_source: &str,
-    resolved_path: &str,
-) -> String {
-    use std::collections::HashSet;
-
-    let mut names = extract_cjs_export_names(raw_source)
-        .into_iter()
-        .collect::<HashSet<_>>();
-    if names.is_empty() {
-        names.extend(extract_runtime_cjs_export_names(scope, resolved_path));
-    }
-
-    let mut exports = names.into_iter().collect::<Vec<_>>();
-    exports.sort();
-
-    let mut shim = format!(
-        "const _cjsModule = globalThis._requireFrom({}, \"/\");\nexport default _cjsModule;\n",
-        quoted_module_path(resolved_path)
-    );
-    for name in exports {
-        shim.push_str(&format!(
-            "export const {} = _cjsModule[\"{}\"];\n",
-            name, name
-        ));
-    }
-    shim
-}
-
-fn extract_runtime_cjs_export_names(
-    scope: &mut v8::HandleScope,
-    resolved_path: &str,
-) -> Vec<String> {
-    let tc = &mut v8::TryCatch::new(scope);
-    let context = tc.get_current_context();
-    let global = context.global(tc);
-
-    let require_key = match v8::String::new(tc, "_requireFrom") {
-        Some(key) => key,
-        None => return Vec::new(),
-    };
-    let require_fn = match global
-        .get(tc, require_key.into())
-        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
-    {
-        Some(function) => function,
-        None => return Vec::new(),
-    };
-
-    let module_path = match v8::String::new(tc, resolved_path) {
-        Some(path) => path,
-        None => return Vec::new(),
-    };
-    let root = match v8::String::new(tc, "/") {
-        Some(path) => path,
-        None => return Vec::new(),
-    };
-    let require_args = [module_path.into(), root.into()];
-    let receiver = v8::undefined(tc).into();
-    let required_module = match require_fn.call(tc, receiver, &require_args) {
-        Some(value) => value,
-        None => return Vec::new(),
-    };
-    if required_module.is_null_or_undefined() || !required_module.is_object() {
-        return Vec::new();
-    }
-
-    let object_key = match v8::String::new(tc, "Object") {
-        Some(key) => key,
-        None => return Vec::new(),
-    };
-    let object_ctor = match global
-        .get(tc, object_key.into())
-        .and_then(|value| v8::Local::<v8::Object>::try_from(value).ok())
-    {
-        Some(object) => object,
-        None => return Vec::new(),
-    };
-
-    let keys_key = match v8::String::new(tc, "keys") {
-        Some(key) => key,
-        None => return Vec::new(),
-    };
-    let keys_fn = match object_ctor
-        .get(tc, keys_key.into())
-        .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
-    {
-        Some(function) => function,
-        None => return Vec::new(),
-    };
-
-    let keys_args = [required_module];
-    let keys = match keys_fn
-        .call(tc, object_ctor.into(), &keys_args)
-        .and_then(|value| v8::Local::<v8::Array>::try_from(value).ok())
-    {
-        Some(array) => array,
-        None => return Vec::new(),
-    };
-
-    let mut names = Vec::new();
-    for index in 0..keys.length() {
-        let Some(value) = keys.get_index(tc, index) else {
-            continue;
-        };
-        if !value.is_string() {
-            continue;
-        }
-        let name = value.to_rust_string_lossy(tc);
-        if is_valid_js_ident(&name) && name != "default" && name != "__esModule" {
-            names.push(name);
-        }
-    }
-    names.sort();
-    names.dedup();
-    names
-}
-
-fn quoted_module_path(resolved_path: &str) -> String {
-    format!(
-        "\"{}\"",
-        resolved_path.replace('\\', "\\\\").replace('"', "\\\"")
-    )
-}
-
-fn is_likely_cjs(
-    source: &str,
-    resolved_path: &str,
-    module_format: Option<ResolvedModuleFormat>,
-) -> bool {
-    let normalized_path = resolved_path.to_ascii_lowercase();
-    if normalized_path.ends_with(".mjs") || normalized_path.ends_with(".mts") {
-        return false;
-    }
-    if normalized_path.ends_with(".cjs") || normalized_path.ends_with(".cts") {
-        return true;
-    }
-    if module_format == Some(ResolvedModuleFormat::Module) {
-        return false;
-    }
-    if has_probable_esm_syntax(source) {
-        return false;
-    }
-    // CJS indicators
-    source.contains("module.exports") || source.contains("exports.") || source.contains("require(")
-}
-
-fn has_probable_esm_syntax(source: &str) -> bool {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum ScanState {
-        Code,
-        LineComment,
-        BlockComment,
-        SingleQuote,
-        DoubleQuote,
-        Template,
-    }
-
-    let bytes = source.as_bytes();
-    let mut state = ScanState::Code;
-    let mut index = 0usize;
-    let mut brace_depth = 0u32;
-    let mut paren_depth = 0u32;
-    let mut bracket_depth = 0u32;
-
-    while index < bytes.len() {
-        let byte = bytes[index];
-        let next = bytes.get(index + 1).copied();
-
-        match state {
-            ScanState::Code => {
-                if index == 0 && byte == b'#' && next == Some(b'!') {
-                    state = ScanState::LineComment;
-                    index += 2;
-                    continue;
-                }
-                if byte == b'/' && next == Some(b'/') {
-                    state = ScanState::LineComment;
-                    index += 2;
-                    continue;
-                }
-                if byte == b'/' && next == Some(b'*') {
-                    state = ScanState::BlockComment;
-                    index += 2;
-                    continue;
-                }
-                if byte == b'\'' {
-                    state = ScanState::SingleQuote;
-                    index += 1;
-                    continue;
-                }
-                if byte == b'"' {
-                    state = ScanState::DoubleQuote;
-                    index += 1;
-                    continue;
-                }
-                if byte == b'`' {
-                    state = ScanState::Template;
-                    index += 1;
-                    continue;
-                }
-
-                match byte {
-                    b'{' => brace_depth = brace_depth.saturating_add(1),
-                    b'}' => brace_depth = brace_depth.saturating_sub(1),
-                    b'(' => paren_depth = paren_depth.saturating_add(1),
-                    b')' => paren_depth = paren_depth.saturating_sub(1),
-                    b'[' => bracket_depth = bracket_depth.saturating_add(1),
-                    b']' => bracket_depth = bracket_depth.saturating_sub(1),
-                    _ => {}
-                }
-
-                if brace_depth == 0
-                    && paren_depth == 0
-                    && bracket_depth == 0
-                    && is_js_ident_start(byte)
-                {
-                    let start = index;
-                    index += 1;
-                    while index < bytes.len() && is_js_ident_continue(bytes[index]) {
-                        index += 1;
-                    }
-
-                    let token = &source[start..index];
-                    if token == "export" {
-                        return true;
-                    }
-                    if token == "import" {
-                        let mut cursor = index;
-                        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-                            cursor += 1;
-                        }
-                        if bytes.get(cursor).copied() != Some(b'(') {
-                            return true;
-                        }
-                    }
-
-                    continue;
-                }
-
-                index += 1;
-            }
-            ScanState::LineComment => {
-                if byte == b'\n' {
-                    state = ScanState::Code;
-                }
-                index += 1;
-            }
-            ScanState::BlockComment => {
-                if byte == b'*' && next == Some(b'/') {
-                    state = ScanState::Code;
-                    index += 2;
-                } else {
-                    index += 1;
-                }
-            }
-            ScanState::SingleQuote => {
-                if byte == b'\\' {
-                    index += 2;
-                } else if byte == b'\'' {
-                    state = ScanState::Code;
-                    index += 1;
-                } else {
-                    index += 1;
-                }
-            }
-            ScanState::DoubleQuote => {
-                if byte == b'\\' {
-                    index += 2;
-                } else if byte == b'"' {
-                    state = ScanState::Code;
-                    index += 1;
-                } else {
-                    index += 1;
-                }
-            }
-            ScanState::Template => {
-                if byte == b'\\' {
-                    index += 2;
-                } else if byte == b'`' {
-                    state = ScanState::Code;
-                    index += 1;
-                } else {
-                    index += 1;
-                }
-            }
-        }
-    }
-
-    false
-}
-
-fn is_js_ident_start(byte: u8) -> bool {
-    byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$'
-}
-
-fn is_js_ident_continue(byte: u8) -> bool {
-    is_js_ident_start(byte) || byte.is_ascii_digit()
-}
-
-/// Extract named export names from CJS source by scanning for `exports.X =` and
-/// `module.exports = { X: ... }` patterns. Returns a list of valid JS identifiers.
-fn extract_cjs_export_names(source: &str) -> Vec<String> {
-    use std::collections::HashSet;
-    let mut names = HashSet::new();
-
-    // Pattern 1: exports.NAME = ...
-    for line in source.lines() {
-        let trimmed = line.trim();
-        for prefix in ["exports.", "module.exports."] {
-            if let Some(rest) = trimmed.strip_prefix(prefix) {
-                if let Some(eq_pos) = rest.find('=') {
-                    let name = rest[..eq_pos].trim();
-                    if is_valid_js_ident(name) && name != "default" {
-                        names.insert(name.to_string());
-                    }
-                }
-            }
-        }
-        // Pattern 2: Object.defineProperty(exports, "NAME", ...)
-        if trimmed.contains("Object.defineProperty(exports") {
-            if let Some(start) = trimmed.find('"').or_else(|| trimmed.find('\'')) {
-                let rest = &trimmed[start + 1..];
-                if let Some(end) = rest.find('"').or_else(|| rest.find('\'')) {
-                    let name = &rest[..end];
-                    if is_valid_js_ident(name) && name != "default" && name != "__esModule" {
-                        names.insert(name.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    let mut result: Vec<String> = names.into_iter().collect();
-    result.sort();
-    result
-}
-
-fn add_esm_runtime_prelude(source: &str) -> String {
-    let mut prelude = String::new();
-
-    if source.contains("require(")
-        && !source.contains("createRequire(import.meta.url)")
-        && !source.contains("createRequire(")
-        && !source.contains("const require =")
-        && !source.contains("let require =")
-        && !source.contains("var require =")
-        && !source.contains("function require(")
-    {
-        prelude
-            .push_str("const require = globalThis._moduleModule.createRequire(import.meta.url);\n");
-    }
-
-    for (name, triggers) in [
-        ("fetch", &["fetch("][..]),
-        ("Headers", &["Headers", "new Headers("][..]),
-        ("Request", &["Request", "new Request("][..]),
-        ("Response", &["Response", "new Response("][..]),
-        ("Blob", &["Blob", "new Blob("][..]),
-        ("File", &["File", "new File("][..]),
-        ("FormData", &["FormData", "new FormData("][..]),
-    ] {
-        if needs_esm_global_alias(source, name, triggers) {
-            prelude.push_str(&format!("const {name} = globalThis.{name};\n"));
-        }
-    }
-
-    if prelude.is_empty() {
-        source.to_owned()
-    } else {
-        format!("{prelude}{source}")
-    }
-}
-
-fn needs_esm_global_alias(source: &str, name: &str, triggers: &[&str]) -> bool {
-    if !triggers.iter().any(|trigger| source.contains(trigger)) {
-        return false;
-    }
-
-    for pattern in [
-        format!("const {name}"),
-        format!("let {name}"),
-        format!("var {name}"),
-        format!("function {name}"),
-        format!("class {name}"),
-        format!("import {{ {name}"),
-        format!("import {{{name}"),
-        format!(", {name} }}"),
-        format!(",{name}}}"),
-        format!("import {name} from"),
-        format!("import * as {name}"),
-    ] {
-        if source.contains(&pattern) {
-            return false;
-        }
-    }
-
-    true
-}
-
-fn is_valid_js_ident(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-    let mut chars = s.chars();
-    let first = chars.next().unwrap();
-    if !first.is_alphabetic() && first != '_' && first != '$' {
-        return false;
-    }
-    chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
 }
