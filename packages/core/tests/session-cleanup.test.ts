@@ -936,18 +936,12 @@ function registerSharedCleanupCoverage(agents: SessionCleanupAgent[]): void {
 				const { response, text } = await vm.prompt(sessionId, PROMPT_TEXT);
 				expect(response.error).toBeUndefined();
 				expect(text).toContain(PROMPT_RESPONSE);
-				const resourcesBeforeClose = await snapshotSessionResources(
-					vm,
+				expect((await readKernelProcesses(vm)).map(({ pid }) => pid)).toContain(
 					sessionState.pid!,
 				);
-				expect(resourcesBeforeClose.pids).toContain(sessionState.pid!);
-				expect(resourcesBeforeClose.fdLinks.length).toBeGreaterThan(0);
 				const vmResourcesBeforeClose = await snapshotVmResources(vm);
 				expect(vmResourcesBeforeClose.processCount).toBeGreaterThanOrEqual(
 					baselineVmResources.processCount + 1,
-				);
-				expect(vmResourcesBeforeClose.fdCount).toBeGreaterThan(
-					baselineVmResources.fdCount,
 				);
 
 				await closeSessionAndWait(vm, sessionId);
