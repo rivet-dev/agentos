@@ -459,7 +459,7 @@ fn wasm_stdout_chunks_module(chunks: &[&str]) -> Vec<u8> {
         data_offset += chunk_len as u32;
     }
 
-    wat::parse_str(&format!(
+    wat::parse_str(format!(
         r#"
 (module
   (type $fd_write_t (func (param i32 i32 i32 i32) (result i32)))
@@ -593,7 +593,7 @@ fn wasm_write_nested_file_module() -> Vec<u8> {
 }
 
 fn wasm_expect_write_open_errno_module(expected_errno: u32) -> Vec<u8> {
-    wat::parse_str(&format!(
+    wat::parse_str(format!(
         r#"
 (module
   (type $path_open_t (func (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
