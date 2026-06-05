@@ -1,5 +1,7 @@
 //! Host bridge filesystem and permission plumbing extracted from service.rs.
 
+#![cfg_attr(test, allow(dead_code))]
+
 use crate::plugins::register_native_mount_plugins;
 use crate::service::{
     audit_fields, emit_security_audit_event, filesystem_permission_capability, plugin_error,

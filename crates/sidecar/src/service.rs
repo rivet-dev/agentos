@@ -215,6 +215,7 @@ where
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn queue_set_vm_permissions_result(
         &self,
         result: Result<(), SidecarError>,

@@ -956,6 +956,8 @@ fn storage_error_to_vfs(error: StorageError) -> VfsError {
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    #![allow(dead_code)]
+
     use std::collections::BTreeMap;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};

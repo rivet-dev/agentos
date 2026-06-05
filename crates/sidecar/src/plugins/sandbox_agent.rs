@@ -1393,6 +1393,8 @@ const NODE_TRUNCATE_SCRIPT: &str = r#"const fs = require("node:fs/promises");
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    #![allow(dead_code)]
+
     use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;
     use std::fs;
