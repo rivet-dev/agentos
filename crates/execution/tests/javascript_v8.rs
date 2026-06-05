@@ -1306,6 +1306,60 @@ for (const builtin of ["inspector", "cluster"]) {
     );
 }
 
+fn javascript_execution_v8_util_format_with_options_matches_node() {
+    let temp = tempdir().expect("create temp dir");
+    write_fixture(
+        &temp.path().join("entry.mjs"),
+        r#"
+import { createRequire } from "node:module";
+import { formatWithOptions as namedFormatWithOptions } from "node:util";
+
+const require = createRequire(import.meta.url);
+const util = require("node:util");
+const circular = {};
+circular.self = circular;
+
+console.log(JSON.stringify({
+  type: typeof util.formatWithOptions,
+  namedType: typeof namedFormatWithOptions,
+  basic: util.formatWithOptions({}, "hello %s %d %j %%", "world", 4, { ok: true }),
+  extra: util.formatWithOptions({ colors: false }, "value", { alpha: 1 }, "tail"),
+  object: util.formatWithOptions({ colors: false, depth: 1 }, "%O", { nested: { value: 1 } }),
+  circular: util.formatWithOptions({}, "%j", circular),
+}));
+"#,
+    );
+
+    let host = run_host_node_json(temp.path(), &temp.path().join("entry.mjs"));
+
+    let mut engine = JavascriptExecutionEngine::default();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            inline_code: None,
+        })
+        .expect("start JavaScript execution");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(result.exit_code, 0, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+
+    let guest: Value = serde_json::from_slice(&result.stdout).expect("parse stdout JSON");
+    assert_eq!(guest, host);
+}
+
 fn javascript_execution_provides_async_hooks_and_diagnostics_channel_stubs() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = JavascriptExecutionEngine::default();
@@ -3719,6 +3773,7 @@ fn javascript_v8_suite() {
     javascript_execution_imports_node_fs_promises_without_hanging();
     javascript_execution_imports_node_perf_hooks_without_hanging();
     javascript_execution_exposes_compatibility_shims_and_denies_escape_builtins();
+    javascript_execution_v8_util_format_with_options_matches_node();
     javascript_execution_provides_async_hooks_and_diagnostics_channel_stubs();
     javascript_execution_supports_require_resolve_for_guest_code();
     javascript_execution_rejects_native_node_addons();

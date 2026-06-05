@@ -12807,6 +12807,7 @@ fn render_builtin_asset_source(asset: &BuiltinAsset) -> String {
         "https" => render_https_builtin_asset_source(asset.init_counter_key),
         "tls" => render_tls_builtin_asset_source(asset.init_counter_key),
         "os" => render_os_builtin_asset_source(asset.init_counter_key),
+        "util" => render_util_builtin_asset_source(asset.init_counter_key),
         "v8" => render_v8_builtin_asset_source(asset.init_counter_key),
         "vm" => render_vm_builtin_asset_source(asset.init_counter_key),
         "worker-threads" => render_worker_threads_builtin_asset_source(asset.init_counter_key),
@@ -12831,6 +12832,21 @@ const builtin = namespace.default ?? namespace;\n\n\
 export const __agentOsInitCount = initCount;\n\
 export default builtin;\n\
 export * from {module_specifier};\n"
+    )
+}
+
+fn render_util_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "import * as namespace from \"node:util\";\n\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+const builtin = namespace.default ?? namespace;\n\n\
+export const __agentOsInitCount = initCount;\n\
+export default builtin;\n\
+export const formatWithOptions = builtin.formatWithOptions;\n\
+export * from \"node:util\";\n"
     )
 }
 

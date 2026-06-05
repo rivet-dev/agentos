@@ -25624,6 +25624,63 @@ ${headerLines}\r
     }
     return pathname;
   }
+  function installBuiltinUtilFormatWithOptions(builtinUtilModule) {
+    if (!builtinUtilModule || typeof builtinUtilModule.formatWithOptions === "function") {
+      return builtinUtilModule;
+    }
+    builtinUtilModule.formatWithOptions = function formatWithOptions(inspectOptions, format, ...args) {
+      const inspectValue = (value) => {
+        if (typeof builtinUtilModule.inspect === "function") {
+          return builtinUtilModule.inspect(value, inspectOptions);
+        }
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return String(value);
+        }
+      };
+      const formatValue = (value) => typeof value === "string" ? value : inspectValue(value);
+      if (typeof format !== "string") {
+        return [format, ...args].map(formatValue).join(" ");
+      }
+      let index = 0;
+      const formatted = format.replace(/%[sdifjoO%]/g, (token) => {
+        if (token === "%%") {
+          return "%";
+        }
+        if (index >= args.length) {
+          return token;
+        }
+        const value = args[index++];
+        switch (token) {
+          case "%s":
+            return String(value);
+          case "%d":
+            return Number(value).toString();
+          case "%i":
+            return Number.parseInt(value, 10).toString();
+          case "%f":
+            return Number.parseFloat(value).toString();
+          case "%j":
+            try {
+              return JSON.stringify(value);
+            } catch {
+              return "[Circular]";
+            }
+          case "%o":
+          case "%O":
+            return inspectValue(value);
+          default:
+            return token;
+        }
+      });
+      if (index >= args.length) {
+        return formatted;
+      }
+      return [formatted, ...args.slice(index).map(formatValue)].join(" ");
+    };
+    return builtinUtilModule;
+  }
   function setupGlobals() {
     const g = globalThis;
     g.process = process2;
@@ -25668,6 +25725,7 @@ ${headerLines}\r
     if (builtinUtilModule?.types) {
       builtinUtilModule.types.isProxy = () => false;
     }
+    installBuiltinUtilFormatWithOptions(builtinUtilModule);
     if (typeof g.atob === "undefined" || typeof g.btoa === "undefined") {
       const base64 = require_base64_js();
       if (typeof g.atob === "undefined") {
@@ -26514,11 +26572,11 @@ ${headerLines}\r
       case "url":
         return builtinUrlStdlibModule;
       case "sys":
-        return globalThis.__agentOsBuiltinUtilModule;
+        return installBuiltinUtilFormatWithOptions(globalThis.__agentOsBuiltinUtilModule);
       case "util":
-        return globalThis.__agentOsBuiltinUtilModule;
+        return installBuiltinUtilFormatWithOptions(globalThis.__agentOsBuiltinUtilModule);
       case "util/types":
-        return globalThis.__agentOsBuiltinUtilModule.types;
+        return installBuiltinUtilFormatWithOptions(globalThis.__agentOsBuiltinUtilModule).types;
       case "child_process":
         return _childProcessModule;
       case "console":
