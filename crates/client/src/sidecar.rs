@@ -17,7 +17,13 @@ use crate::agent_os::AgentOs;
 use crate::error::ClientError;
 
 /// Sidecar lifecycle state, encoded as a `u8` for `AtomicU8`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Parity: TypeScript `describe()` returns a JSON-serializable description whose `state` is exactly
+/// `"ready" | "disposing" | "disposed"`. The `#[serde(rename_all = "lowercase")]` attribute and the
+/// matching [`SidecarState::as_str`] reproduce that wire string so [`AgentOsSidecarDescription`]
+/// serializes to the same JSON shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SidecarState {
     Ready,
     Disposing,
@@ -25,6 +31,15 @@ pub enum SidecarState {
 }
 
 impl SidecarState {
+    /// The TypeScript wire string for this state (`"ready" | "disposing" | "disposed"`).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            SidecarState::Ready => "ready",
+            SidecarState::Disposing => "disposing",
+            SidecarState::Disposed => "disposed",
+        }
+    }
+
     pub(crate) const fn as_u8(self) -> u8 {
         match self {
             SidecarState::Ready => 0,
