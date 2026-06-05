@@ -531,6 +531,19 @@ function toRecord(value: unknown): Record<string, unknown> {
 		: {};
 }
 
+function isLocalCancelledPromptResponse(
+	method: string,
+	response: JsonRpcResponse,
+): boolean {
+	const result = toRecord(response.result);
+	return (
+		method === "session/prompt" &&
+		response.id === null &&
+		response.error === undefined &&
+		result.stopReason === "cancelled"
+	);
+}
+
 const ACP_SESSION_EVENT_RETENTION_LIMIT = 1024;
 const CLOSED_SESSION_ID_RETENTION_LIMIT = 2048;
 const CLOSED_SHELL_ID_RETENTION_LIMIT = 2048;
@@ -3021,7 +3034,7 @@ export class AgentOs {
 				});
 		});
 		const liveSession = this._sessions.get(sessionId);
-		if (liveSession) {
+		if (liveSession && !isLocalCancelledPromptResponse(method, response)) {
 			await this._hydrateSessionState(liveSession).catch(() => {});
 		}
 		if (!response.error) {
