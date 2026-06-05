@@ -881,7 +881,6 @@ where
 {
     const ACP_REQUEST_TIMEOUT_MS: u64 = 120_000;
     const ACP_CANCEL_FLUSH_GRACE: Duration = Duration::from_millis(50);
-    const ACP_KILL_WAIT_GRACE: Duration = Duration::from_secs(5);
 
     pub fn new(bridge: B) -> Result<Self, SidecarError> {
         Self::with_config(bridge, NativeSidecarConfig::default())
@@ -3018,6 +3017,7 @@ where
             .filter(|(_, session)| session.vm_id == vm_id && session.process_id == process_id)
             .map(|(session_id, _)| session_id.clone())
             .collect::<Vec<_>>();
+        let ownership = self.vm_ownership(vm_id)?;
         for session_id in &session_ids {
             if let Some(session) = self.acp_sessions.get_mut(session_id) {
                 session.mark_termination_requested();
@@ -3036,7 +3036,6 @@ where
             return Ok(None);
         }
 
-        let ownership = self.vm_ownership(vm_id)?;
         for session_id in &session_ids {
             let acp_session_id = self
                 .acp_sessions
@@ -3078,7 +3077,7 @@ where
         vm_id: &str,
         process_id: &str,
     ) -> Result<(), SidecarError> {
-        let Some((session_ids, ownership)) =
+        let Some((session_ids, _ownership)) =
             self.begin_acp_process_termination(vm_id, process_id)?
         else {
             return Ok(());
@@ -3087,68 +3086,19 @@ where
         let cancel_flush_grace =
             Self::ACP_CANCEL_FLUSH_GRACE.min(self.config.acp_termination_grace);
         let cancel_deadline = Instant::now() + cancel_flush_grace;
-        while self
-            .vms
-            .get(vm_id)
-            .is_some_and(|vm| vm.active_processes.contains_key(process_id))
-            && Instant::now() < cancel_deadline
-        {
-            let remaining = cancel_deadline
-                .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(10));
-            let _ = self.poll_event(&ownership, remaining).await?;
-        }
+        self.wait_for_acp_process_termination_deadline(vm_id, process_id, cancel_deadline)
+            .await;
 
         if self
             .vms
             .get(vm_id)
             .is_some_and(|vm| vm.active_processes.contains_key(process_id))
         {
-            let _ = self.kill_process_internal(vm_id, process_id, "SIGTERM");
-            for session_id in &session_ids {
-                if let Some(session) = self.acp_sessions.get_mut(session_id) {
-                    session.record_activity(String::from("sent signal SIGTERM"));
-                }
-            }
-        }
-
-        let deadline = Instant::now() + self.config.acp_termination_grace;
-
-        while self
-            .vms
-            .get(vm_id)
-            .is_some_and(|vm| vm.active_processes.contains_key(process_id))
-            && Instant::now() < deadline
-        {
-            let remaining = deadline
-                .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(10));
-            let _ = self.poll_event(&ownership, remaining).await?;
-        }
-
-        if self
-            .vms
-            .get(vm_id)
-            .is_some_and(|vm| vm.active_processes.contains_key(process_id))
-        {
-            let _ = self.kill_process_internal(vm_id, process_id, "SIGKILL");
+            self.kill_acp_process(vm_id, process_id);
             for session_id in &session_ids {
                 if let Some(session) = self.acp_sessions.get_mut(session_id) {
                     session.record_activity(String::from("sent signal SIGKILL"));
                 }
-            }
-
-            let kill_deadline = Instant::now() + Self::ACP_KILL_WAIT_GRACE;
-            while self
-                .vms
-                .get(vm_id)
-                .is_some_and(|vm| vm.active_processes.contains_key(process_id))
-                && Instant::now() < kill_deadline
-            {
-                let remaining = kill_deadline
-                    .saturating_duration_since(Instant::now())
-                    .min(Duration::from_millis(10));
-                let _ = self.poll_event(&ownership, remaining).await?;
             }
         }
 
@@ -3158,6 +3108,28 @@ where
             vm.signal_states.remove(process_id);
         }
         Ok(())
+    }
+
+    async fn wait_for_acp_process_termination_deadline(
+        &self,
+        vm_id: &str,
+        process_id: &str,
+        deadline: Instant,
+    ) {
+        while self
+            .vms
+            .get(vm_id)
+            .is_some_and(|vm| vm.active_processes.contains_key(process_id))
+            && Instant::now() < deadline
+        {
+            let remaining = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(10));
+            if remaining.is_zero() {
+                break;
+            }
+            time::sleep(remaining).await;
+        }
     }
 
     fn session_timeout_diagnostics(
