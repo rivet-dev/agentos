@@ -199,7 +199,7 @@ fn procfs_exposes_linux_like_identity_and_system_files() {
 
     thread::sleep(Duration::from_millis(20));
     let uptime = read_utf8(&mut kernel, "/proc/uptime");
-    let uptime_parts = uptime.trim().split_whitespace().collect::<Vec<_>>();
+    let uptime_parts = uptime.split_whitespace().collect::<Vec<_>>();
     assert_eq!(uptime_parts.len(), 2);
     let uptime_seconds = uptime_parts[0].parse::<f64>().expect("uptime seconds");
     let idle_seconds = uptime_parts[1].parse::<f64>().expect("idle seconds");
