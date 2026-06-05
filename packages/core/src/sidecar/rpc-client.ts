@@ -995,7 +995,9 @@ export class NativeSidecarKernelProxy {
 			!["sh", "/bin/sh", "bash"].includes(command);
 		const promptText = "sh-0.4$ ";
 		const textEncoder = new TextEncoder();
+		const textDecoder = new TextDecoder();
 		const execCommand = this.exec.bind(this);
+		const spawnCommand = this.spawn.bind(this);
 		const sanitizeSyntheticShellText = (value: string) =>
 			value
 				.replace(/\u001b\[[0-9;]*m/g, "")
@@ -1003,6 +1005,7 @@ export class NativeSidecarKernelProxy {
 				.replace(/^ProcessExitError:.*\n(?:\s+at .*\n)*/gm, "");
 		let bufferedInput = "";
 		let bufferedCommand = "";
+		let activeForegroundProcess: ManagedProcess | null = null;
 		let shellEnv = { ...(options?.env ?? {}) };
 		let shellCwd = options?.cwd ?? this.cwd;
 		let syntheticCommandQueue = Promise.resolve();
@@ -1114,6 +1117,32 @@ export class NativeSidecarKernelProxy {
 				emitPrompt();
 			}, delayMs);
 		};
+		const parseForegroundCommand = (source: string) => {
+			const parsed = parseSimpleExecCommand(source);
+			const driver = parsed ? this.commands.get(parsed[0]) : undefined;
+			if (
+				!parsed ||
+				!canUseDirectExec(driver, parsed[0]) ||
+				(driver === "wasmvm" && parsed[0] === "pwd")
+			) {
+				return null;
+			}
+			return parsed;
+		};
+		const writeForegroundInput = (
+			proc: ManagedProcess,
+			data: string | Uint8Array,
+		) => {
+			if (typeof data === "string") {
+				for (const character of data) {
+					proc.writeStdin(character);
+				}
+				return;
+			}
+			for (const byte of data) {
+				proc.writeStdin(new Uint8Array([byte]));
+			}
+		};
 
 		let onData: ((data: Uint8Array) => void) | null = null;
 		stdoutHandlers.add((data) => onData?.(data));
@@ -1126,6 +1155,10 @@ export class NativeSidecarKernelProxy {
 				pid: syntheticPid,
 				write(data) {
 					if (syntheticExitCode !== null) {
+						return;
+					}
+					if (activeForegroundProcess) {
+						writeForegroundInput(activeForegroundProcess, data);
 						return;
 					}
 					const rawText =
@@ -1197,6 +1230,32 @@ export class NativeSidecarKernelProxy {
 									shellCwd = target.startsWith("/")
 										? posixPath.normalize(target)
 										: posixPath.normalize(posixPath.join(shellCwd, target));
+									emitPrompt();
+									return;
+								}
+								const foregroundCommand = parseForegroundCommand(trimmed);
+								if (foregroundCommand) {
+									const proc = spawnCommand(
+										foregroundCommand[0],
+										foregroundCommand.slice(1),
+										{
+											env: shellEnv,
+											cwd: shellCwd,
+											streamStdin: true,
+											onStdout: (chunk) =>
+												emitSyntheticTerminal(textDecoder.decode(chunk)),
+											onStderr: (chunk) =>
+												emitSyntheticTerminal(textDecoder.decode(chunk)),
+										},
+									);
+									activeForegroundProcess = proc;
+									try {
+										await proc.wait();
+									} finally {
+										if (activeForegroundProcess === proc) {
+											activeForegroundProcess = null;
+										}
+									}
 									emitPrompt();
 									return;
 								}
