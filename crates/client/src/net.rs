@@ -94,10 +94,9 @@ impl AgentOs {
                 return Err(ClientError::Kernel { code, message }.into());
             }
             other => {
-                return Err(ClientError::Sidecar(format!(
-                    "fetch: unexpected response {other:?}"
-                ))
-                .into());
+                return Err(
+                    ClientError::Sidecar(format!("fetch: unexpected response {other:?}")).into(),
+                );
             }
         };
 
@@ -130,7 +129,9 @@ impl AgentOs {
         // `statusText` has no slot in `http::Response`; carry it on the extensions so a caller can
         // recover it, matching the TS `Response.statusText`.
         if let Some(status_text) = payload.status_text {
-            http_response.extensions_mut().insert(FetchStatusText(status_text));
+            http_response
+                .extensions_mut()
+                .insert(FetchStatusText(status_text));
         }
 
         Ok(http_response)

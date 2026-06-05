@@ -38,7 +38,8 @@ pub(crate) type SidecarCallback = Arc<
     dyn Fn(
             SidecarRequestPayload,
             OwnershipScope,
-        ) -> futures::future::BoxFuture<'static, Result<SidecarResponsePayload, ClientError>>
+        )
+            -> futures::future::BoxFuture<'static, Result<SidecarResponsePayload, ClientError>>
         + Send
         + Sync,
 >;
@@ -164,16 +165,17 @@ impl SidecarTransport {
     /// and `SidecarRequest` frames.
     async fn handle_frame(&self, frame: ProtocolFrame) {
         match frame {
-            ProtocolFrame::Response(response) => {
-                match self.pending.remove(&response.request_id) {
-                    Some((_, tx)) => {
-                        let _ = tx.send(response.payload);
-                    }
-                    None => {
-                        tracing::warn!(request_id = response.request_id, "response for unknown request id")
-                    }
+            ProtocolFrame::Response(response) => match self.pending.remove(&response.request_id) {
+                Some((_, tx)) => {
+                    let _ = tx.send(response.payload);
                 }
-            }
+                None => {
+                    tracing::warn!(
+                        request_id = response.request_id,
+                        "response for unknown request id"
+                    )
+                }
+            },
             ProtocolFrame::Event(event) => {
                 let _ = self.event_tx.send((event.ownership, event.payload));
             }

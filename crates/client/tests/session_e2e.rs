@@ -55,11 +55,17 @@ async fn session_surface_create_prompt_events_close() {
         "list_agents must include the pi agent config"
     );
     assert!(
-        matches!(os.resume_session("nope"), Err(ClientError::SessionNotFound(_))),
+        matches!(
+            os.resume_session("nope"),
+            Err(ClientError::SessionNotFound(_))
+        ),
         "resume_session(unknown) must return SessionNotFound"
     );
     assert!(
-        matches!(os.close_session("nope"), Err(ClientError::SessionNotFound(_))),
+        matches!(
+            os.close_session("nope"),
+            Err(ClientError::SessionNotFound(_))
+        ),
         "close_session(unknown) must return SessionNotFound"
     );
     assert!(
@@ -82,7 +88,9 @@ async fn session_surface_create_prompt_events_close() {
 
     // --- list_sessions: the new session is registered --------------------------------------------
     assert!(
-        os.list_sessions().iter().any(|s| s.session_id == session_id),
+        os.list_sessions()
+            .iter()
+            .any(|s| s.session_id == session_id),
         "created session must appear in list_sessions"
     );
 

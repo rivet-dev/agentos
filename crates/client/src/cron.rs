@@ -505,7 +505,11 @@ fn parse_one_shot(schedule: &str) -> Option<DateTime<Utc>> {
     let normalized = schedule.replacen(' ', "T", 1);
 
     // Date + time without a timezone: ECMAScript treats this as LOCAL time.
-    for fmt in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"] {
+    for fmt in [
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+    ] {
         if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&normalized, fmt) {
             return match Local.from_local_datetime(&naive) {
                 chrono::LocalResult::Single(dt) => Some(dt.with_timezone(&Utc)),
@@ -626,7 +630,9 @@ impl CronExpr {
             &str,
             Option<&str>,
         ) = match fields.len() {
-            5 => ("0", fields[0], fields[1], fields[2], fields[3], fields[4], None),
+            5 => (
+                "0", fields[0], fields[1], fields[2], fields[3], fields[4], None,
+            ),
             6 => (
                 fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], None,
             ),
@@ -1089,7 +1095,9 @@ impl AgentOs {
         // Validate before any state mutation, matching TS `validateScheduleForRegistration`.
         let next_run = validate_schedule(&options.schedule, now)?;
 
-        let id = options.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let id = options
+            .id
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let overlap = options.overlap.unwrap_or_default();
 
         // Build the driver callback that runs one job execution, mirroring TS

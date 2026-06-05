@@ -16,10 +16,10 @@ use tokio::task::JoinHandle;
 
 use agent_os_sidecar::protocol::{
     ConfigureVmRequest, CreateVmRequest, DisposeReason, DisposeVmRequest, EventPayload,
-    GuestRuntimeKind, OpenSessionRequest, OwnershipScope, PermissionsPolicy, RegisterToolkitRequest,
-    RegisteredToolDefinition, RequestPayload, ResponsePayload, RootFilesystemDescriptor,
-    SidecarPlacement, SidecarRequestPayload, SidecarResponsePayload, SoftwareDescriptor,
-    ToolInvocationRequest, ToolInvocationResultResponse, VmLifecycleState,
+    GuestRuntimeKind, OpenSessionRequest, OwnershipScope, PermissionsPolicy,
+    RegisterToolkitRequest, RegisteredToolDefinition, RequestPayload, ResponsePayload,
+    RootFilesystemDescriptor, SidecarPlacement, SidecarRequestPayload, SidecarResponsePayload,
+    SoftwareDescriptor, ToolInvocationRequest, ToolInvocationResultResponse, VmLifecycleState,
 };
 
 use crate::config::{AgentOsConfig, HostTool, TimerScheduleDriver};
@@ -97,7 +97,8 @@ pub(crate) struct SessionEntry {
     /// the abort/cancel site: abort-on-close resolves with the `-32000` `Session closed: <id>` error,
     /// while prompt-cancel resolves with `{ result: { stopReason: "cancelled" } }`. The shape is NOT
     /// re-derived from the method downstream.
-    pub pending_prompt_resolvers: SccHashMap<i64, oneshot::Sender<crate::json_rpc::JsonRpcResponse>>,
+    pub pending_prompt_resolvers:
+        SccHashMap<i64, oneshot::Sender<crate::json_rpc::JsonRpcResponse>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +197,11 @@ impl AgentOs {
         {
             ResponsePayload::SessionOpened(opened) => opened,
             ResponsePayload::Rejected(rejected) => return Err(rejected_to_error(rejected)),
-            _ => return Err(ClientError::Sidecar("unexpected open_session response".to_string())),
+            _ => {
+                return Err(ClientError::Sidecar(
+                    "unexpected open_session response".to_string(),
+                ))
+            }
         };
         let session_id = session.session_id;
 
@@ -218,7 +223,11 @@ impl AgentOs {
         {
             ResponsePayload::VmCreated(created) => created,
             ResponsePayload::Rejected(rejected) => return Err(rejected_to_error(rejected)),
-            _ => return Err(ClientError::Sidecar("unexpected create_vm response".to_string())),
+            _ => {
+                return Err(ClientError::Sidecar(
+                    "unexpected create_vm response".to_string(),
+                ))
+            }
         };
         let vm_id = vm.vm_id;
 
@@ -239,11 +248,7 @@ impl AgentOs {
                     software,
                     permissions: Some(PermissionsPolicy::allow_all()),
                     module_access_cwd: config.module_access_cwd.clone(),
-                    instructions: config
-                        .additional_instructions
-                        .clone()
-                        .into_iter()
-                        .collect(),
+                    instructions: config.additional_instructions.clone().into_iter().collect(),
                     projected_modules: Vec::new(),
                     command_permissions: BTreeMap::new(),
                     allowed_node_builtins: config.allowed_node_builtins.clone().unwrap_or_default(),
@@ -254,7 +259,11 @@ impl AgentOs {
         {
             ResponsePayload::VmConfigured(_) => {}
             ResponsePayload::Rejected(rejected) => return Err(rejected_to_error(rejected)),
-            _ => return Err(ClientError::Sidecar("unexpected configure_vm response".to_string())),
+            _ => {
+                return Err(ClientError::Sidecar(
+                    "unexpected configure_vm response".to_string(),
+                ))
+            }
         }
 
         // 6b. Register host tool kits (if any): forward each tool definition via `register_toolkit`,

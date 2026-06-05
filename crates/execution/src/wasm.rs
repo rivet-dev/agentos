@@ -12,7 +12,7 @@ use crate::signal::{NodeSignalDispositionAction, NodeSignalHandlerRegistration};
 use crate::v8_host::V8SessionHandle;
 use crate::v8_runtime;
 use base64::Engine as _;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::fs;
@@ -4556,11 +4556,11 @@ fn resolve_path_like_specifier(cwd: &Path, specifier: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        StartWasmExecutionRequest, WASM_MAX_FUEL_ENV, WASM_MAX_MEMORY_BYTES_ENV, WASM_PAGE_BYTES,
-        WASM_PREWARM_TIMEOUT_MS_ENV, WASM_SANDBOX_ROOT_ENV, WasmInternalSyncRpc,
-        WasmPermissionTier, build_wasm_runner_bootstrap, resolve_wasm_execution_timeout,
-        resolve_wasm_prewarm_timeout, resolved_module_path, translate_wasm_guest_path,
-        wasm_guest_module_paths, wasm_memory_limit_pages, wasm_sandbox_root,
+        build_wasm_runner_bootstrap, resolve_wasm_execution_timeout, resolve_wasm_prewarm_timeout,
+        resolved_module_path, translate_wasm_guest_path, wasm_guest_module_paths,
+        wasm_memory_limit_pages, wasm_sandbox_root, StartWasmExecutionRequest, WasmInternalSyncRpc,
+        WasmPermissionTier, WASM_MAX_FUEL_ENV, WASM_MAX_MEMORY_BYTES_ENV, WASM_PAGE_BYTES,
+        WASM_PREWARM_TIMEOUT_MS_ENV, WASM_SANDBOX_ROOT_ENV,
     };
     use std::collections::{BTreeMap, VecDeque};
     use std::fs;
@@ -4826,11 +4826,9 @@ mod tests {
             ]),
         ));
 
-        assert!(
-            mappings
-                .iter()
-                .any(|mapping| { mapping.guest_path == "/" && mapping.host_path == sandbox_root })
-        );
+        assert!(mappings
+            .iter()
+            .any(|mapping| { mapping.guest_path == "/" && mapping.host_path == sandbox_root }));
         assert!(mappings.iter().any(|mapping| {
             mapping.guest_path == "/home/user" && mapping.host_path == host_cwd
         }));

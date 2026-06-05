@@ -45,10 +45,7 @@ async fn shared_sidecar_pooling_reuses_one_process() {
         1,
         "active_vm_count should drop to 1 after one VM releases"
     );
-    assert_eq!(
-        b.read_file("/tmp/who").await.expect("B still live"),
-        b"B"
-    );
+    assert_eq!(b.read_file("/tmp/who").await.expect("B still live"), b"B");
 
     b.shutdown().await.expect("shutdown B");
 }

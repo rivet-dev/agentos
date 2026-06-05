@@ -72,7 +72,13 @@ impl Drop for Subscription {
 ///
 /// Lagged messages are skipped. Closing the sender ends the stream.
 pub struct ByteStream {
-    inner: ReusableBoxFuture<'static, (Result<Vec<u8>, broadcast::error::RecvError>, broadcast::Receiver<Vec<u8>>)>,
+    inner: ReusableBoxFuture<
+        'static,
+        (
+            Result<Vec<u8>, broadcast::error::RecvError>,
+            broadcast::Receiver<Vec<u8>>,
+        ),
+    >,
 }
 
 impl ByteStream {
@@ -86,7 +92,10 @@ impl ByteStream {
 
 async fn recv_bytes(
     mut rx: broadcast::Receiver<Vec<u8>>,
-) -> (Result<Vec<u8>, broadcast::error::RecvError>, broadcast::Receiver<Vec<u8>>) {
+) -> (
+    Result<Vec<u8>, broadcast::error::RecvError>,
+    broadcast::Receiver<Vec<u8>>,
+) {
     let result = rx.recv().await;
     (result, rx)
 }

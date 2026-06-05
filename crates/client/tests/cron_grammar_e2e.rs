@@ -37,16 +37,16 @@ async fn cron_grammar_matches_croner() {
 
     // Accepted by croner (and therefore by us).
     let valid = [
-        "* * * * *",            // 5-field
-        "*/30 * * * * *",       // 6-field (with seconds)
-        "0 0 * * MON",          // named weekday
-        "0 0 1 JAN *",          // named month
-        "0 0 1 * ?",            // `?` day-of-week
-        "0 0 L * *",            // last day of month
-        "0 0 LW * *",           // last weekday of month
-        "0 0 * * 1#2",          // 2nd Monday
-        "0 0 1,15 * *",         // list
-        "0 9-17 * * *",         // range
+        "* * * * *",      // 5-field
+        "*/30 * * * * *", // 6-field (with seconds)
+        "0 0 * * MON",    // named weekday
+        "0 0 1 JAN *",    // named month
+        "0 0 1 * ?",      // `?` day-of-week
+        "0 0 L * *",      // last day of month
+        "0 0 LW * *",     // last weekday of month
+        "0 0 * * 1#2",    // 2nd Monday
+        "0 0 1,15 * *",   // list
+        "0 9-17 * * *",   // range
     ];
     for expr in valid {
         assert!(
@@ -57,13 +57,13 @@ async fn cron_grammar_matches_croner() {
 
     // Rejected by croner (and therefore by us) -> InvalidSchedule.
     let invalid = [
-        "* * * *",              // too few fields
-        "60 * * * *",           // minute out of range
-        "0 0 32 * *",           // day-of-month out of range
-        "0 0 * * 8",            // day-of-week out of range
-        "5/15 * * * *",         // numeric-prefix stepping (croner rejects)
-        "not a schedule",       // garbage
-        "",                     // empty
+        "* * * *",        // too few fields
+        "60 * * * *",     // minute out of range
+        "0 0 32 * *",     // day-of-month out of range
+        "0 0 * * 8",      // day-of-week out of range
+        "5/15 * * * *",   // numeric-prefix stepping (croner rejects)
+        "not a schedule", // garbage
+        "",               // empty
     ];
     for expr in invalid {
         match try_schedule(&os, expr) {

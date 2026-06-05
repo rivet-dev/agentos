@@ -63,23 +63,38 @@ async fn process_surface_exec_spawn_and_snapshot() {
         "write_process_stdin(unknown) must return ProcessNotFound"
     );
     assert!(
-        matches!(os.close_process_stdin(MISSING_PID), Err(ClientError::ProcessNotFound(_))),
+        matches!(
+            os.close_process_stdin(MISSING_PID),
+            Err(ClientError::ProcessNotFound(_))
+        ),
         "close_process_stdin(unknown) must return ProcessNotFound"
     );
     assert!(
-        matches!(os.stop_process(MISSING_PID), Err(ClientError::ProcessNotFound(_))),
+        matches!(
+            os.stop_process(MISSING_PID),
+            Err(ClientError::ProcessNotFound(_))
+        ),
         "stop_process(unknown) must return ProcessNotFound"
     );
     assert!(
-        matches!(os.kill_process(MISSING_PID), Err(ClientError::ProcessNotFound(_))),
+        matches!(
+            os.kill_process(MISSING_PID),
+            Err(ClientError::ProcessNotFound(_))
+        ),
         "kill_process(unknown) must return ProcessNotFound"
     );
     assert!(
-        matches!(os.on_process_stdout(MISSING_PID), Err(ClientError::ProcessNotFound(_))),
+        matches!(
+            os.on_process_stdout(MISSING_PID),
+            Err(ClientError::ProcessNotFound(_))
+        ),
         "on_process_stdout(unknown) must return ProcessNotFound"
     );
     assert!(
-        matches!(os.wait_process(MISSING_PID).await, Err(ClientError::ProcessNotFound(_))),
+        matches!(
+            os.wait_process(MISSING_PID).await,
+            Err(ClientError::ProcessNotFound(_))
+        ),
         "wait_process(unknown) must return ProcessNotFound"
     );
     // Kernel-wide process snapshot is always obtainable (no WASM required).
