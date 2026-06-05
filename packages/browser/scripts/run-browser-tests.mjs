@@ -14,6 +14,12 @@ const libraryDirs = [
 	path.join(extractedDir, "usr", "lib", "x86_64-linux-gnu"),
 	path.join(extractedDir, "lib", "x86_64-linux-gnu"),
 ];
+const systemLibraryDirs = [
+	"/usr/lib/x86_64-linux-gnu",
+	"/lib/x86_64-linux-gnu",
+	"/usr/lib",
+	"/lib",
+];
 
 const linuxRuntimePackages = [
 	{ debPrefix: "libatk1.0-0t64_", specs: ["libatk1.0-0t64"] },
@@ -84,8 +90,16 @@ function tryRun(command, args, options = {}) {
 	});
 }
 
-function libraryPresent(name) {
-	return libraryDirs.some((dir) => existsSync(path.join(dir, name)));
+function libraryPresentInDirs(name, dirs) {
+	return dirs.some((dir) => existsSync(path.join(dir, name)));
+}
+
+function cachedLibraryPresent(name) {
+	return libraryPresentInDirs(name, libraryDirs);
+}
+
+function systemLibraryPresent(name) {
+	return libraryPresentInDirs(name, systemLibraryDirs);
 }
 
 function headlessShellPresent() {
@@ -127,7 +141,10 @@ function ensureBrowserRuntimeLibraries() {
 	if (process.platform !== "linux") {
 		return [];
 	}
-	if (requiredLibraries.every(libraryPresent)) {
+	if (requiredLibraries.every(systemLibraryPresent)) {
+		return [];
+	}
+	if (requiredLibraries.every(cachedLibraryPresent)) {
 		return libraryDirs.filter(existsSync);
 	}
 
@@ -160,7 +177,7 @@ function ensureBrowserRuntimeLibraries() {
 		run("dpkg-deb", ["-x", path.join(debDir, debFile), extractedDir], { stdio: "inherit" });
 	}
 
-	const missing = requiredLibraries.filter((library) => !libraryPresent(library));
+	const missing = requiredLibraries.filter((library) => !cachedLibraryPresent(library));
 	if (missing.length > 0) {
 		throw new Error(`Missing extracted browser runtime libraries: ${missing.join(", ")}`);
 	}
