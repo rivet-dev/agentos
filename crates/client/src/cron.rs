@@ -445,10 +445,13 @@ fn looks_like_one_shot(schedule: &str) -> bool {
         if !take_digits(bytes, &mut i, 2) {
             return false;
         }
-        // Optional .fff (1-3 digits)
+        // Optional fractional seconds. The TS regex caps this at `\.\d{1,3}`, but a Rust-produced
+        // one-shot from `chrono::DateTime::to_rfc3339()` emits up to 9 fractional digits, so a valid
+        // near-future RFC-3339 timestamp must not be misclassified as a cron expression. Accept any
+        // run of one or more fractional digits.
         if take_lit(bytes, &mut i, b'.') {
             let mut frac = 0;
-            while frac < 3 && matches!(bytes.get(i), Some(&b) if is_digit(b)) {
+            while matches!(bytes.get(i), Some(&b) if is_digit(b)) {
                 i += 1;
                 frac += 1;
             }

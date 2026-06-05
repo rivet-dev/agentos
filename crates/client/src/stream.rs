@@ -110,21 +110,76 @@ impl Stream for ByteStream {
     }
 }
 
+/// Per-subscriber state driving a replay-on-subscribe session-event stream.
+///
+/// The state machine first drains `buffered` (the snapshot of the bounded event ring), then reads
+/// from the live broadcast `rx`. A single `last_delivered` cursor spans both phases so an event
+/// present in both the snapshot and the live channel is delivered exactly once: the snapshot wins,
+/// and the matching live re-delivery is filtered out because its sequence number is not strictly
+/// greater than the cursor.
+struct ReplayState {
+    /// Remaining buffered events to replay, in ascending sequence order (front = oldest).
+    buffered: VecDeque<SequencedEvent>,
+    /// Live receiver, read after the buffered snapshot is exhausted.
+    rx: broadcast::Receiver<SequencedEvent>,
+    /// Highest sequence number delivered so far. Only events with `sequence_number >
+    /// last_delivered` are emitted, guaranteeing no duplicates and a monotonic sequence.
+    last_delivered: i64,
+}
+
 /// Subscribe to a session's `session/update` events with replay-on-subscribe semantics.
 ///
 /// `buffered` is a snapshot of the bounded event ring taken under a brief guard by the caller; it is
 /// yielded first (in sequence order), then the live `rx` is chained with a per-subscriber
 /// `last_delivered` cursor so no event is duplicated or dropped across the snapshot/live boundary.
 ///
-/// When `replay` is false (internal `prompt` accumulation), `buffered` should be empty and
-/// `start_after` set to the current highest sequence number.
+/// `start_after` seeds the cursor: buffered or live events with `sequence_number <= start_after` are
+/// skipped. When `replay` is false (internal `prompt` accumulation) `buffered` should be empty and
+/// `start_after` set to the current highest sequence number, so only future events are delivered.
+/// When `replay` is true the caller passes `i64::MIN` so the entire snapshot replays.
 ///
-/// TODO(parity: implement replay-on-subscribe stream chaining + per-subscriber cursor).
+/// `buffered` is consumed when `replay` is false (the no-replay mode drops the snapshot entirely),
+/// matching `_subscribeSessionEvents(..., { replayBuffered: false })`.
 pub fn subscribe_with_replay(
-    _buffered: VecDeque<SequencedEvent>,
-    _rx: broadcast::Receiver<SequencedEvent>,
-    _start_after: i64,
-    _replay: bool,
+    buffered: VecDeque<SequencedEvent>,
+    rx: broadcast::Receiver<SequencedEvent>,
+    start_after: i64,
+    replay: bool,
 ) -> impl Stream<Item = SequencedEvent> + Send {
-    futures::stream::empty()
+    let buffered = if replay { buffered } else { VecDeque::new() };
+    let state = ReplayState {
+        buffered,
+        rx,
+        last_delivered: start_after,
+    };
+
+    futures::stream::unfold(state, |mut state| async move {
+        // Phase 1: drain the buffered snapshot in ascending order, advancing the cursor. Events at
+        // or below the cursor (already delivered, or below `start_after`) are skipped.
+        while let Some(event) = state.buffered.pop_front() {
+            if event.sequence_number <= state.last_delivered {
+                continue;
+            }
+            state.last_delivered = event.sequence_number;
+            return Some((event, state));
+        }
+
+        // Phase 2: read live events, filtering to `sequence_number > last_delivered` so the
+        // snapshot/live boundary neither duplicates an already-replayed event nor leaves a gap.
+        loop {
+            match state.rx.recv().await {
+                Ok(event) => {
+                    if event.sequence_number <= state.last_delivered {
+                        continue;
+                    }
+                    state.last_delivered = event.sequence_number;
+                    return Some((event, state));
+                }
+                // A lagged subscriber lost intermediate events; the cursor still guards against
+                // out-of-order or duplicate re-delivery, so resume from the next received event.
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    })
 }
