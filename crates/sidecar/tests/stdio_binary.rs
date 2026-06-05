@@ -181,8 +181,12 @@ fn collect_process_events(
             ProtocolFrame::Event(event) => match event.payload {
                 EventPayload::ProcessOutput(output) if output.process_id == process_id => {
                     match output.channel {
-                        StreamChannel::Stdout => stdout_text.push_str(&output.chunk),
-                        StreamChannel::Stderr => stderr_text.push_str(&output.chunk),
+                        StreamChannel::Stdout => {
+                            stdout_text.push_str(&String::from_utf8_lossy(&output.chunk));
+                        }
+                        StreamChannel::Stderr => {
+                            stderr_text.push_str(&String::from_utf8_lossy(&output.chunk));
+                        }
                     }
                 }
                 EventPayload::ProcessExited(exited) if exited.process_id == process_id => {

@@ -131,7 +131,7 @@ fn sidecar_rejects_oversized_request_frames_before_dispatch() {
             OwnershipScope::vm(&connection_id, &session_id, &vm_id),
             RequestPayload::WriteStdin(WriteStdinRequest {
                 process_id: String::from("proc-1"),
-                chunk: "x".repeat(1024),
+                chunk: "x".repeat(1024).into_bytes(),
             }),
         ))
         .expect("dispatch oversized request");

@@ -108,8 +108,16 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
 
         match event.payload {
             EventPayload::ProcessOutput(output) => match output.channel {
-                StreamChannel::Stdout => result.stdout.push_str(&output.chunk),
-                StreamChannel::Stderr => result.stderr.push_str(&output.chunk),
+                StreamChannel::Stdout => {
+                    result
+                        .stdout
+                        .push_str(&String::from_utf8_lossy(&output.chunk));
+                }
+                StreamChannel::Stderr => {
+                    result
+                        .stderr
+                        .push_str(&String::from_utf8_lossy(&output.chunk));
+                }
             },
             EventPayload::ProcessExited(exited) => {
                 result.exit_code = Some(exited.exit_code);
