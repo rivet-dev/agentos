@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
 import type { Stats } from "node:fs";
+import { existsSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -103,7 +103,6 @@ function prepareKernelInvocation(
 	command: string,
 	args: string[],
 	piCliPath: string | undefined,
-	cwd?: string,
 ): {
 	command: string;
 	args: string[];
@@ -349,12 +348,7 @@ function wrapKernel(
 			args: string[],
 			options?: Parameters<Kernel["spawn"]>[2],
 		) {
-			const translated = prepareKernelInvocation(
-				command,
-				args,
-				piCliPath,
-				options?.cwd,
-			);
+			const translated = prepareKernelInvocation(command, args, piCliPath);
 			try {
 				if (
 					translated.execCommand !== undefined &&
@@ -389,11 +383,11 @@ function wrapKernel(
 							closeStdin() {},
 							kill() {},
 							wait() {
-									if (waitPromise !== null) {
-										return waitPromise;
-									}
-									waitPromise = wrappedKernel
-										.exec(execCommand, execOptions)
+								if (waitPromise !== null) {
+									return waitPromise;
+								}
+								waitPromise = wrappedKernel
+									.exec(execCommand, execOptions)
 									.then((result) => {
 										if (result.stdout.length > 0) {
 											options?.onStdout?.(Buffer.from(result.stdout, "utf8"));
@@ -465,14 +459,13 @@ function wrapKernel(
 			const requestedCommand = options?.command ?? "sh";
 			const requestedArgs =
 				options?.args ??
-				((requestedCommand === "bash" || requestedCommand === "sh")
+				(requestedCommand === "bash" || requestedCommand === "sh"
 					? ["-i"]
 					: []);
 			const translated = prepareKernelInvocation(
 				requestedCommand,
 				requestedArgs,
 				piCliPath,
-				options?.cwd,
 			);
 			const handle = kernel.openShell({
 				...options,
@@ -500,14 +493,13 @@ function wrapKernel(
 			const requestedCommand = options?.command ?? "sh";
 			const requestedArgs =
 				options?.args ??
-				((requestedCommand === "bash" || requestedCommand === "sh")
+				(requestedCommand === "bash" || requestedCommand === "sh"
 					? ["-i"]
 					: []);
 			const translated = prepareKernelInvocation(
 				requestedCommand,
 				requestedArgs,
 				piCliPath,
-				options?.cwd,
 			);
 			logger.info(
 				{
@@ -641,19 +633,28 @@ export async function createDevShellKernel(
 				workDirInTmpMount,
 			);
 			if (isWithinVirtualPath(env.XDG_CONFIG_HOME, workDir)) {
-				await sessionTmpFileSystem.mkdir(env.XDG_CONFIG_HOME.slice("/tmp".length), {
-					recursive: true,
-				});
+				await sessionTmpFileSystem.mkdir(
+					env.XDG_CONFIG_HOME.slice("/tmp".length),
+					{
+						recursive: true,
+					},
+				);
 			}
 			if (isWithinVirtualPath(env.XDG_CACHE_HOME, workDir)) {
-				await sessionTmpFileSystem.mkdir(env.XDG_CACHE_HOME.slice("/tmp".length), {
-					recursive: true,
-				});
+				await sessionTmpFileSystem.mkdir(
+					env.XDG_CACHE_HOME.slice("/tmp".length),
+					{
+						recursive: true,
+					},
+				);
 			}
 			if (isWithinVirtualPath(env.XDG_DATA_HOME, workDir)) {
-				await sessionTmpFileSystem.mkdir(env.XDG_DATA_HOME.slice("/tmp".length), {
-					recursive: true,
-				});
+				await sessionTmpFileSystem.mkdir(
+					env.XDG_DATA_HOME.slice("/tmp".length),
+					{
+						recursive: true,
+					},
+				);
 			}
 		}
 
@@ -705,7 +706,9 @@ export async function createDevShellKernel(
 		}
 
 		const filteredCommands = Array.from(new Set(loadedCommands))
-			.filter((command) => command.trim().length > 0 && !command.startsWith("_"))
+			.filter(
+				(command) => command.trim().length > 0 && !command.startsWith("_"),
+			)
 			.sort();
 		logger.info({ loadedCommands: filteredCommands }, "dev-shell ready");
 		const wrappedKernel = wrapKernel(kernel, logger, piCliPath);

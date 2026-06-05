@@ -50,11 +50,15 @@ function resolveExecutable(binaryName: string): string | undefined {
 function createDevShellWrapperProcess(args: string[]) {
 	const justBinary = resolveExecutable("just");
 	if (justBinary) {
-		return spawn(justBinary, ["--justfile", justfilePath, "dev-shell", ...args], {
-			cwd: workspaceRoot,
-			env: process.env,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
+		return spawn(
+			justBinary,
+			["--justfile", justfilePath, "dev-shell", ...args],
+			{
+				cwd: workspaceRoot,
+				env: process.env,
+				stdio: ["ignore", "pipe", "pipe"],
+			},
+		);
 	}
 
 	const justfileContents = readFileSync(justfilePath, "utf8");
