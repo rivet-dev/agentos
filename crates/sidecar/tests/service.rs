@@ -7859,9 +7859,7 @@ setInterval(() => {}, 1000);
                 "PATH should prioritize mounted command root: {path}"
             );
             assert!(
-                path_entries
-                    .iter()
-                    .any(|entry| *entry == "/__agentos/commands/0"),
+                path_entries.contains(&"/__agentos/commands/0"),
                 "PATH should include mounted command root: {path}"
             );
 
