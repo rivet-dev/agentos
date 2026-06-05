@@ -758,9 +758,11 @@ impl PythonExecutionEngine {
             &javascript_context_id,
             &context,
             &request,
-            frozen_time_ms,
-            false,
-            warmup_metrics.as_deref(),
+            PythonJavascriptExecutionOptions {
+                frozen_time_ms,
+                prewarm_only: false,
+                warmup_metrics: warmup_metrics.as_deref(),
+            },
         )?;
         let pending_vfs_rpc = Arc::new(Mutex::new(None));
         let vfs_rpc_timeout = python_vfs_rpc_timeout(&request);
@@ -830,20 +832,29 @@ fn map_javascript_error(error: JavascriptExecutionError) -> PythonExecutionError
     }
 }
 
+struct PythonJavascriptExecutionOptions<'a> {
+    frozen_time_ms: u128,
+    prewarm_only: bool,
+    warmup_metrics: Option<&'a [u8]>,
+}
+
 fn start_python_javascript_execution(
     javascript_engine: &mut JavascriptExecutionEngine,
     import_cache: &NodeImportCache,
     javascript_context_id: &str,
     context: &PythonContext,
     request: &StartPythonExecutionRequest,
-    frozen_time_ms: u128,
-    prewarm_only: bool,
-    warmup_metrics: Option<&[u8]>,
+    options: PythonJavascriptExecutionOptions<'_>,
 ) -> Result<JavascriptExecution, PythonExecutionError> {
-    let internal_env =
-        build_python_internal_env(import_cache, context, request, frozen_time_ms, prewarm_only);
+    let internal_env = build_python_internal_env(
+        import_cache,
+        context,
+        request,
+        options.frozen_time_ms,
+        options.prewarm_only,
+    );
     let inline_code =
-        build_python_runner_module_source(import_cache, &internal_env, warmup_metrics)?;
+        build_python_runner_module_source(import_cache, &internal_env, options.warmup_metrics)?;
     let mut env = request.env.clone();
     env.extend(internal_env);
 
@@ -1211,9 +1222,11 @@ fn prewarm_python_path(
         javascript_context_id,
         context,
         request,
-        frozen_time_ms,
-        true,
-        None,
+        PythonJavascriptExecutionOptions {
+            frozen_time_ms,
+            prewarm_only: true,
+            warmup_metrics: None,
+        },
     )?;
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
