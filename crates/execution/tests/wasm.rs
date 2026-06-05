@@ -117,7 +117,7 @@ fn parse_warmup_metrics(stderr: &str) -> WasmWarmupMetrics {
     let metrics_line = stderr
         .lines()
         .filter_map(|line| line.strip_prefix(WASM_WARMUP_METRICS_PREFIX))
-        .last()
+        .next_back()
         .expect("warmup metrics line");
 
     WasmWarmupMetrics {
