@@ -13,9 +13,14 @@ use agent_os_bridge::{
 };
 use agent_os_sidecar::protocol::{
     AuthenticatedResponse, NativeFrameCodec, NativePayloadCodec, ProtocolCodecError, ProtocolFrame,
-    RequestId, ResponsePayload, SessionOpenedResponse, SidecarRequestFrame, SidecarResponseFrame,
+    RequestFrame, RequestId, RequestPayload, ResponseFrame, ResponsePayload, SessionOpenedResponse,
+    SessionRpcResponse, SidecarRequestFrame, SidecarResponseFrame,
 };
-use agent_os_sidecar::{NativeSidecar, NativeSidecarConfig, SidecarError, SidecarRequestTransport};
+use agent_os_sidecar::{
+    acp::{JsonRpcId, JsonRpcResponse},
+    DispatchResult, NativeSidecar, NativeSidecarConfig, SidecarError, SidecarRequestTransport,
+};
+use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -97,8 +102,23 @@ async fn run_async() -> Result<(), Box<dyn Error>> {
     });
 
     flush_sidecar_requests(&mut sidecar, &write_tx)?;
+    let mut pending_frame: Option<ProtocolFrame> = None;
 
     loop {
+        if let Some(frame) = pending_frame.take() {
+            handle_protocol_frame(
+                frame,
+                &mut sidecar,
+                &mut stdin_rx,
+                &mut pending_frame,
+                &write_tx,
+                &mut active_sessions,
+                &mut active_connections,
+            )
+            .await?;
+            continue;
+        }
+
         tokio::select! {
             maybe_frame = stdin_rx.recv() => {
                 let Some(frame) = maybe_frame else {
@@ -107,36 +127,15 @@ async fn run_async() -> Result<(), Box<dyn Error>> {
                 let Some(frame) = frame.map_err(io::Error::other)? else {
                     break;
                 };
-                match frame {
-                    ProtocolFrame::Request(request) => {
-                        let dispatch = sidecar.dispatch(request.clone()).await?;
-                        track_session_state(
-                            &dispatch.response.payload,
-                            &mut active_sessions,
-                            &mut active_connections,
-                        );
-
-                        write_tx.send(ProtocolFrame::Response(dispatch.response)).map_err(|error| {
-                            io::Error::new(io::ErrorKind::BrokenPipe, error.to_string())
-                        })?;
-                        for event in dispatch.events {
-                            write_tx.send(ProtocolFrame::Event(event)).map_err(|error| {
-                                io::Error::new(io::ErrorKind::BrokenPipe, error.to_string())
-                            })?;
-                        }
-                        flush_sidecar_requests(&mut sidecar, &write_tx)?;
-                    }
-                    ProtocolFrame::SidecarResponse(response) => {
-                        sidecar.accept_sidecar_response(response)?;
-                        flush_sidecar_requests(&mut sidecar, &write_tx)?;
-                    }
-                    other => {
-                        return Err(format!(
-                            "expected request or sidecar_response frame on stdin, received {}",
-                            frame_kind(&other)
-                        ).into());
-                    }
-                }
+                handle_protocol_frame(
+                    frame,
+                    &mut sidecar,
+                    &mut stdin_rx,
+                    &mut pending_frame,
+                    &write_tx,
+                    &mut active_sessions,
+                    &mut active_connections,
+                ).await?;
             }
             maybe_ready = event_ready_rx.recv() => {
                 let Some(()) = maybe_ready else {
@@ -180,6 +179,143 @@ async fn run_async() -> Result<(), Box<dyn Error>> {
 
     cleanup_connections(&mut sidecar, &active_connections).await;
     Ok(())
+}
+
+async fn handle_protocol_frame(
+    frame: ProtocolFrame,
+    sidecar: &mut NativeSidecar<LocalBridge>,
+    stdin_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Result<Option<ProtocolFrame>, String>>,
+    pending_frame: &mut Option<ProtocolFrame>,
+    write_tx: &mpsc::Sender<ProtocolFrame>,
+    active_sessions: &mut BTreeSet<SessionScope>,
+    active_connections: &mut BTreeSet<String>,
+) -> Result<(), Box<dyn Error>> {
+    match frame {
+        ProtocolFrame::Request(request) => {
+            let dispatch =
+                dispatch_with_prompt_interrupt(sidecar, request.clone(), stdin_rx, pending_frame)
+                    .await?;
+            track_session_state(
+                &dispatch.response.payload,
+                active_sessions,
+                active_connections,
+            );
+
+            write_tx
+                .send(ProtocolFrame::Response(dispatch.response))
+                .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))?;
+            for event in dispatch.events {
+                write_tx
+                    .send(ProtocolFrame::Event(event))
+                    .map_err(|error| {
+                        io::Error::new(io::ErrorKind::BrokenPipe, error.to_string())
+                    })?;
+            }
+            flush_sidecar_requests(sidecar, write_tx)?;
+        }
+        ProtocolFrame::SidecarResponse(response) => {
+            sidecar.accept_sidecar_response(response)?;
+            flush_sidecar_requests(sidecar, write_tx)?;
+        }
+        other => {
+            return Err(format!(
+                "expected request or sidecar_response frame on stdin, received {}",
+                frame_kind(&other)
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+async fn dispatch_with_prompt_interrupt(
+    sidecar: &mut NativeSidecar<LocalBridge>,
+    request: RequestFrame,
+    stdin_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Result<Option<ProtocolFrame>, String>>,
+    pending_frame: &mut Option<ProtocolFrame>,
+) -> Result<DispatchResult, Box<dyn Error>> {
+    if !is_session_prompt_request(&request) {
+        return Ok(sidecar.dispatch(request).await?);
+    }
+
+    let mut dispatch = Box::pin(sidecar.dispatch(request.clone()));
+    tokio::select! {
+        result = dispatch.as_mut() => Ok(result?),
+        maybe_frame = stdin_rx.recv() => {
+            let frame = decode_stdin_frame(maybe_frame)?;
+            if let Some(frame) = frame {
+                if interrupts_session_prompt(&request, &frame) {
+                    drop(dispatch);
+                    *pending_frame = Some(frame);
+                    return Ok(interrupted_prompt_dispatch(&request));
+                }
+                *pending_frame = Some(frame);
+            }
+            Ok(dispatch.await?)
+        }
+    }
+}
+
+fn decode_stdin_frame(
+    maybe_frame: Option<Result<Option<ProtocolFrame>, String>>,
+) -> Result<Option<ProtocolFrame>, Box<dyn Error>> {
+    let Some(frame) = maybe_frame else {
+        return Ok(None);
+    };
+    Ok(frame.map_err(io::Error::other)?)
+}
+
+fn is_session_prompt_request(request: &RequestFrame) -> bool {
+    matches!(
+        &request.payload,
+        RequestPayload::SessionRequest(payload) if payload.method == "session/prompt"
+    )
+}
+
+fn interrupts_session_prompt(prompt_request: &RequestFrame, frame: &ProtocolFrame) -> bool {
+    let RequestPayload::SessionRequest(prompt_payload) = &prompt_request.payload else {
+        return false;
+    };
+    match frame {
+        ProtocolFrame::Request(request) if request.ownership == prompt_request.ownership => {
+            match &request.payload {
+                RequestPayload::CloseAgentSession(payload) => {
+                    payload.session_id == prompt_payload.session_id
+                }
+                RequestPayload::SessionRequest(payload) => {
+                    payload.session_id == prompt_payload.session_id
+                        && payload.method == "session/cancel"
+                }
+                RequestPayload::KillProcess(_) => true,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+fn interrupted_prompt_dispatch(request: &RequestFrame) -> DispatchResult {
+    let RequestPayload::SessionRequest(payload) = &request.payload else {
+        unreachable!("interrupted prompt dispatch requires session_request payload");
+    };
+    let response = JsonRpcResponse::success(
+        JsonRpcId::Null,
+        json!({
+            "stopReason": "cancelled",
+        }),
+    );
+    DispatchResult {
+        response: ResponseFrame::new(
+            request.request_id,
+            request.ownership.clone(),
+            ResponsePayload::SessionRpc(SessionRpcResponse {
+                session_id: payload.session_id.clone(),
+                response: serde_json::to_value(response)
+                    .expect("serialize interrupted prompt response"),
+            }),
+        ),
+        events: Vec::new(),
+    }
 }
 
 async fn cleanup_connections(
@@ -306,7 +442,8 @@ fn default_compile_cache_root() -> PathBuf {
 mod tests {
     use super::*;
     use agent_os_sidecar::protocol::{
-        AuthenticateRequest, OwnershipScope, RequestFrame, RequestPayload, DEFAULT_MAX_FRAME_BYTES,
+        AuthenticateRequest, CloseAgentSessionRequest, OwnershipScope, RequestFrame,
+        RequestPayload, SessionRequest, DEFAULT_MAX_FRAME_BYTES,
     };
     use std::io::Cursor;
 
@@ -354,6 +491,37 @@ mod tests {
             *transport_codec.lock().expect("codec lock"),
             Some(NativePayloadCodec::Bare)
         );
+    }
+
+    #[test]
+    fn close_agent_session_interrupts_matching_prompt() {
+        let ownership = OwnershipScope::vm("conn-1", "session-1", "vm-1");
+        let prompt = RequestFrame::new(
+            10,
+            ownership.clone(),
+            RequestPayload::SessionRequest(SessionRequest {
+                session_id: "agent-session-1".to_string(),
+                method: "session/prompt".to_string(),
+                params: None,
+            }),
+        );
+        let close = ProtocolFrame::Request(RequestFrame::new(
+            11,
+            ownership,
+            RequestPayload::CloseAgentSession(CloseAgentSessionRequest {
+                session_id: "agent-session-1".to_string(),
+            }),
+        ));
+
+        assert!(interrupts_session_prompt(&prompt, &close));
+
+        let dispatch = interrupted_prompt_dispatch(&prompt);
+        assert_eq!(dispatch.response.request_id, 10);
+        let ResponsePayload::SessionRpc(response) = dispatch.response.payload else {
+            panic!("expected session rpc response");
+        };
+        assert_eq!(response.session_id, "agent-session-1");
+        assert_eq!(response.response["result"]["stopReason"], "cancelled");
     }
 }
 
