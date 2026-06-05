@@ -12253,10 +12253,6 @@ fn render_patched_pyodide_mjs() -> String {
             r#"async function fe(e){if(e.startsWith("file://")&&(e=e.slice(7)),e.includes("://")){let t=await(await fetch(e)).text();await import(`data:text/javascript;base64,${$e(t)}`);return}await import(e.startsWith("/")?e:$.pathToFileURL(e).href)}o(fe,"nodeLoadScript");"#,
         )
         .replace(
-            r#"function ce(e,t){return e.startsWith("file://")&&(e=e.slice(7)),e.includes("://")?{response:fetch(e)}:{binary:L.readFile(e).then(n=>new Uint8Array(n.buffer,n.byteOffset,n.byteLength))}}o(ce,"node_getBinaryResponse");"#,
-            r#"function ce(e,t){return e.startsWith("file://")&&(e=e.slice(7)),e.includes("://")?{response:fetch(e)}:{binary:L.readFile(e).then(n=>new Uint8Array(n.buffer,n.byteOffset,n.byteLength))}}o(ce,"node_getBinaryResponse");"#,
-        )
-        .replace(
             r#"function Ne(e){if(typeof WasmOffsetConverter<"u")return;let{binary:t,response:n}=R(e+"pyodide.asm.wasm"),i=K();return function(s,r){return async function(){s.sentinel=await i;try{let a;if(n){a=await WebAssembly.instantiateStreaming(n,s);}else{let l=await t;a=await WebAssembly.instantiate(l,s);}let{instance:l,module:c}=a;r(l,c);}catch(a){console.warn("wasm instantiation failed!"),console.warn(a)}}(),{}}}o(Ne,"getInstantiateWasmFunc");"#,
             r#"function Ne(e){if(typeof WasmOffsetConverter<"u")return;let{binary:t,response:n}=R(e+"pyodide.asm.wasm"),i=K();return function(s,r){return async function(){s.sentinel=await i;try{let a;if(n){a=await WebAssembly.instantiateStreaming(n,s);}else{let l=await t;a=await WebAssembly.instantiate(l,s);}let{instance:l,module:c}=a;r(l,c);}catch(a){console.warn("wasm instantiation failed!"),console.warn(a);throw a}}(),{}}}o(Ne,"getInstantiateWasmFunc");"#,
         )
