@@ -964,6 +964,46 @@ process.stdout.write("after exit\n");
     assert!(!stdout.contains("after exit"), "stdout:\n{stdout}");
 }
 
+fn javascript_execution_process_exit_bypasses_promise_catch_handlers() {
+    let temp = tempdir().expect("create temp dir");
+    let mut engine = JavascriptExecutionEngine::default();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            inline_code: Some(String::from(
+                r#"
+Promise.resolve()
+  .then(() => {
+    process.stdout.write("before exit\n");
+    process.exit(7);
+  })
+  .catch(() => {
+    process.stdout.write("catch handler ran\n");
+    process.exit(2);
+  });
+"#,
+            )),
+        })
+        .expect("start JavaScript execution");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(result.exit_code, 7, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(stdout.contains("before exit"), "stdout:\n{stdout}");
+    assert!(!stdout.contains("catch handler ran"), "stdout:\n{stdout}");
+}
+
 fn javascript_execution_live_stdin_replays_end_after_late_listener_registration() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = JavascriptExecutionEngine::default();
@@ -2271,6 +2311,46 @@ const stdinDestroyStatus = await new Promise((resolve, reject) => {
   }
 });
 
+const stdinCallbackResult = await new Promise((resolve, reject) => {
+  const child = childProcess.spawn("/bin/cat", [], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const timer = setTimeout(() => {
+    reject(new Error("spawn(/bin/cat) stdin callback probe did not close within 2s"));
+  }, 2000);
+  const stdout = [];
+  const stderr = [];
+  let writeCallbackError = null;
+  let writeCallbackCalled = false;
+  let endCallbackCalled = false;
+  child.stdout.on("data", (chunk) => {
+    stdout.push(Buffer.from(chunk));
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr.push(Buffer.from(chunk));
+  });
+  child.on("error", reject);
+  child.on("close", (code, signal) => {
+    clearTimeout(timer);
+    resolve({
+      code,
+      signal,
+      writeCallbackCalled,
+      writeCallbackError,
+      endCallbackCalled,
+      stdoutBase64: Buffer.concat(stdout).toString("base64"),
+      stderrBase64: Buffer.concat(stderr).toString("base64"),
+    });
+  });
+  child.stdin.write(Buffer.from("callback:gamma"), (error) => {
+    writeCallbackCalled = true;
+    writeCallbackError = error ? String(error?.message ?? error) : null;
+    child.stdin.end(() => {
+      endCallbackCalled = true;
+    });
+  });
+});
+
 const asyncResult = await new Promise((resolve, reject) => {
   const child = childProcess.spawn("/bin/cat", ["async-out.txt"], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -2333,6 +2413,13 @@ console.log(JSON.stringify({
   syncErrorStdoutBase64: Buffer.from(syncError.stdout ?? []).toString("base64"),
   syncErrorStderrBase64: Buffer.from(syncError.stderr ?? []).toString("base64"),
   stdinDestroyStatus,
+  stdinCallbackCode: stdinCallbackResult.code,
+  stdinCallbackSignal: stdinCallbackResult.signal,
+  stdinCallbackWriteCallbackCalled: stdinCallbackResult.writeCallbackCalled,
+  stdinCallbackWriteCallbackError: stdinCallbackResult.writeCallbackError,
+  stdinCallbackEndCallbackCalled: stdinCallbackResult.endCallbackCalled,
+  stdinCallbackStdoutBase64: stdinCallbackResult.stdoutBase64,
+  stdinCallbackStderrBase64: stdinCallbackResult.stderrBase64,
   asyncCode: asyncResult.code,
   asyncSignal: asyncResult.signal,
   asyncStdoutBase64: asyncResult.stdoutBase64,
@@ -3766,6 +3853,7 @@ fn javascript_v8_suite() {
     javascript_execution_process_stdin_async_iterator_finishes_with_live_stdin();
     javascript_execution_process_exit_from_live_stdin_listener_exits_without_waiting_for_eof();
     javascript_execution_process_exit_ignores_live_interval_handles();
+    javascript_execution_process_exit_bypasses_promise_catch_handlers();
     javascript_execution_live_stdin_replays_end_after_late_listener_registration();
     javascript_execution_file_url_to_path_accepts_guest_absolute_paths();
     javascript_execution_imports_node_events_without_hanging();

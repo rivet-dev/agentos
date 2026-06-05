@@ -8758,6 +8758,7 @@ var __bridge = (() => {
     }
   };
   exposeCustomGlobal("_childProcessDispatch", childProcessDispatch);
+  var CHILD_PROCESS_POLL_DRAIN_LIMIT = 64;
   function scheduleChildProcessPoll(sessionId, delayMs = 0) {
     const child = childProcessInstances.get(sessionId);
     if (!child || typeof _childProcessPoll === "undefined" || child._pollScheduled) {
@@ -8770,19 +8771,20 @@ var __bridge = (() => {
       if (!childProcessInstances.has(sessionId)) {
         return;
       }
-      consumeDetachedChildBootstrapPoll(child);
-      const next = normalizeChildProcessBridgePayload(
-        _childProcessPoll.applySync(void 0, [sessionId, 10])
-      );
-      if (!next || typeof next !== "object") {
-        scheduleChildProcessPoll(sessionId, 5);
-        return;
-      }
-      if (dispatchChildProcessPollResult(sessionId, next)) {
-        if (next.type !== "exit") {
-          scheduleChildProcessPoll(sessionId, 0);
+      let drained = 0;
+      while (drained < CHILD_PROCESS_POLL_DRAIN_LIMIT && childProcessInstances.has(sessionId)) {
+        consumeDetachedChildBootstrapPoll(child);
+        const next = normalizeChildProcessBridgePayload(
+          _childProcessPoll.applySync(void 0, [sessionId, drained === 0 ? 10 : 0])
+        );
+        if (!next || typeof next !== "object") {
+          scheduleChildProcessPoll(sessionId, drained === 0 ? 5 : 0);
+          return;
         }
-        return;
+        drained += 1;
+        if (dispatchChildProcessPollResult(sessionId, next) && next.type === "exit") {
+          return;
+        }
       }
       scheduleChildProcessPoll(sessionId, 0);
     }, delayMs);
@@ -8930,11 +8932,21 @@ var __bridge = (() => {
       this.stdin = {
         writable: true,
         destroyed: false,
-        write(_data) {
+        _listeners: {},
+        _onceListeners: {},
+        write(_data, encodingOrCallback, callback) {
+          const done = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+          if (done) {
+            queueMicrotask(() => done(null));
+          }
           return true;
         },
-        end() {
+        end(dataOrCallback, encodingOrCallback, callback) {
+          const done = typeof dataOrCallback === "function" ? dataOrCallback : typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
           this.writable = false;
+          if (done) {
+            queueMicrotask(() => done());
+          }
         },
         destroy() {
           this.writable = false;
@@ -8942,14 +8954,46 @@ var __bridge = (() => {
           this.emit("close");
           return this;
         },
-        on() {
+        on(event, listener) {
+          if (!this._listeners[event]) this._listeners[event] = [];
+          this._listeners[event].push(listener);
           return this;
         },
-        once() {
+        once(event, listener) {
+          if (!this._onceListeners[event]) this._onceListeners[event] = [];
+          this._onceListeners[event].push(listener);
           return this;
         },
-        emit() {
-          return false;
+        off(event, listener) {
+          if (this._listeners[event]) {
+            const idx = this._listeners[event].indexOf(listener);
+            if (idx !== -1) this._listeners[event].splice(idx, 1);
+          }
+          if (this._onceListeners[event]) {
+            const idx = this._onceListeners[event].indexOf(listener);
+            if (idx !== -1) this._onceListeners[event].splice(idx, 1);
+          }
+          return this;
+        },
+        removeListener(event, listener) {
+          return this.off(event, listener);
+        },
+        emit(event, ...args) {
+          let handled = false;
+          if (this._listeners[event]) {
+            this._listeners[event].forEach((fn) => {
+              fn(...args);
+              handled = true;
+            });
+          }
+          if (this._onceListeners[event]) {
+            this._onceListeners[event].forEach((fn) => {
+              fn(...args);
+              handled = true;
+            });
+            this._onceListeners[event] = [];
+          }
+          return handled;
         }
       };
       this.stdout = {
@@ -9717,17 +9761,46 @@ var __bridge = (() => {
         _registerHandle(child._handleId, child._handleDescription);
         child._handleRefed = true;
       }
-      child.stdin.write = (data) => {
+      child.stdin.write = (data, encodingOrCallback, callback) => {
+        const done = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
         if (typeof _childProcessStdinWrite === "undefined") return false;
         const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
-        _childProcessStdinWrite.applySync(void 0, [sessionId, bytes]);
+        try {
+          _childProcessStdinWrite.applySync(void 0, [sessionId, bytes]);
+        } catch (error) {
+          if (done) {
+            queueMicrotask(() => done(error));
+            return false;
+          }
+          child.stdin.emit("error", error);
+          return false;
+        }
+        if (done) {
+          queueMicrotask(() => done(null));
+        }
         return true;
       };
-      child.stdin.end = () => {
+      child.stdin.end = (dataOrCallback, encodingOrCallback, callback) => {
+        const done = typeof dataOrCallback === "function" ? dataOrCallback : typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+        if (dataOrCallback != null && typeof dataOrCallback !== "function") {
+          child.stdin.write(dataOrCallback, typeof encodingOrCallback === "string" ? encodingOrCallback : void 0);
+        }
         if (typeof _childProcessStdinClose !== "undefined") {
-          _childProcessStdinClose.applySync(void 0, [sessionId]);
+          try {
+            _childProcessStdinClose.applySync(void 0, [sessionId]);
+          } catch (error) {
+            if (done) {
+              queueMicrotask(() => done(error));
+              return;
+            }
+            child.stdin.emit("error", error);
+            return;
+          }
         }
         child.stdin.writable = false;
+        if (done) {
+          queueMicrotask(() => done());
+        }
       };
       child.stdin.destroy = () => {
         child.stdin.end();
@@ -24099,10 +24172,16 @@ ${headerLines}\r
     const nativePromiseThen = Promise.prototype.then;
     Promise.prototype.then = function(onFulfilled, onRejected) {
       const snapshot = snapshotAsyncLocalStorageStores();
+      const wrappedRejected = typeof onRejected === "function" ? (error) => {
+        if (isProcessExitError(error)) {
+          throw error;
+        }
+        return onRejected(error);
+      } : onRejected;
       return nativePromiseThen.call(
         this,
         wrapAsyncLocalStorageCallback(onFulfilled, snapshot),
-        wrapAsyncLocalStorageCallback(onRejected, snapshot)
+        wrapAsyncLocalStorageCallback(wrappedRejected, snapshot)
       );
     };
     Object.defineProperty(Promise.prototype, "__agentOsAsyncLocalStoragePatched", {
