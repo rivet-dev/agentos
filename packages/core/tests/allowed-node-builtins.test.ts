@@ -94,7 +94,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		});
 	});
 
-	test("exec forwards shell commands to the guest sh driver without TypeScript parsing", async () => {
+	test("exec forwards simple node commands to the guest node driver", async () => {
 		fixtureRoot = mkdtempSync(join(tmpdir(), "agent-os-shell-exec-"));
 		const { client, execute } = createMockClient();
 
@@ -118,8 +118,8 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 		});
 		expect(execute).toHaveBeenCalledTimes(1);
 		expect(execute.mock.calls[0]?.[2]).toMatchObject({
-			command: "sh",
-			args: ["-c", "node /workspace/entry.mjs --flag"],
+			command: "node",
+			args: ["/workspace/entry.mjs", "--flag"],
 			cwd: "/workspace",
 		});
 	});
