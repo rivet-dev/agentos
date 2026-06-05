@@ -7541,12 +7541,50 @@ var __bridge = (() => {
     read(fd, buffer, offset, length, position, callback) {
       if (callback) {
         const cb = callback;
-        try {
-          const bytesRead = fs.readSync(fd, buffer, offset, length, position);
-          queueMicrotask(() => cb(null, bytesRead, buffer));
-        } catch (e) {
-          queueMicrotask(() => cb(e));
+        if (fd === 0 && (position === null || position === void 0) && typeof _kernelStdinRead !== "undefined") {
+          const target = new Uint8Array(buffer.buffer, buffer.byteOffset + offset, length);
+          const attemptKernelStdinRead = () => {
+            _kernelStdinRead.apply(void 0, [length, 100], {
+              result: { promise: true }
+            }).then((next) => {
+              if (next == null) {
+                setTimeout(attemptKernelStdinRead, 1);
+                return;
+              }
+              if (next?.done) {
+                queueMicrotask(() => cb(null, 0, buffer));
+                return;
+              }
+              const dataBase64 = String(next?.dataBase64 ?? "");
+              if (!dataBase64) {
+                setTimeout(attemptKernelStdinRead, 1);
+                return;
+              }
+              const bytes = import_buffer.Buffer.from(dataBase64, "base64");
+              const bytesRead = Math.min(length, bytes.length);
+              target.set(bytes.subarray(0, bytesRead), 0);
+              queueMicrotask(() => cb(null, bytesRead, buffer));
+            }, (error) => {
+              queueMicrotask(() => cb(error));
+            });
+          };
+          attemptKernelStdinRead();
+          return;
         }
+        const attemptRead = () => {
+          try {
+            const bytesRead = fs.readSync(fd, buffer, offset, length, position);
+            queueMicrotask(() => cb(null, bytesRead, buffer));
+          } catch (e) {
+            const msg = e?.message ?? String(e);
+            if (msg.includes("EAGAIN")) {
+              setTimeout(attemptRead, 1);
+              return;
+            }
+            queueMicrotask(() => cb(e));
+          }
+        };
+        attemptRead();
       } else {
         return Promise.resolve(fs.readSync(fd, buffer, offset, length, position));
       }
@@ -21870,11 +21908,10 @@ ${headerLines}\r
         if (idx !== -1) onceListeners[event].splice(idx, 1);
       }
     };
-    const decoder = new TextDecoder();
     const stream = {
       write(data, encodingOrCallback, callback) {
         if (data instanceof Uint8Array || typeof import_buffer2.Buffer !== "undefined" && import_buffer2.Buffer.isBuffer(data)) {
-          options.write(decoder.decode(data));
+          options.write(data);
         } else {
           options.write(String(data));
         }
@@ -22598,11 +22635,34 @@ ${headerLines}\r
     if (eventType !== "stdin" || getStdinEnded()) {
       return;
     }
-    const chunk = typeof payload === "string" ? payload : payload == null ? "" : import_buffer2.Buffer.from(payload).toString("utf8");
+    let chunk;
+    let binary = false;
+    if (payload && typeof payload === "object" && typeof payload.dataBase64 === "string") {
+      const bytes = import_buffer2.Buffer.from(payload.dataBase64, "base64");
+      if (bytes.length === 0) {
+        return;
+      }
+      if (!_stdin.encoding && getStdinFlowMode()) {
+        emitStdinListeners("data", bytes);
+        maybeEmitLiveStdinTerminalEvents();
+        return;
+      }
+      chunk = _stdin.encoding ? bytes.toString(_stdin.encoding) : bytes.toString("latin1");
+      binary = !_stdin.encoding;
+    } else {
+      chunk = typeof payload === "string" ? payload : payload == null ? "" : import_buffer2.Buffer.from(payload).toString("utf8");
+    }
     if (!chunk) {
       return;
     }
     _stdinLiveBuffer += chunk;
+    if (binary && !_stdin.encoding && getStdinFlowMode()) {
+      const buffered = _stdinLiveBuffer;
+      _stdinLiveBuffer = "";
+      emitStdinListeners("data", import_buffer2.Buffer.from(buffered, "latin1"));
+      maybeEmitLiveStdinTerminalEvents();
+      return;
+    }
     flushLiveStdinBuffer();
   }
   var _stdin = {

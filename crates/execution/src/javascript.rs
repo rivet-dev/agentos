@@ -932,6 +932,39 @@ fn translate_legacy_bridge_value_to_v8(value: &Value) -> Value {
     }
 }
 
+fn decode_bridge_output_arg(value: &Value) -> Vec<u8> {
+    match value {
+        Value::String(s) => s.as_bytes().to_vec(),
+        Value::Object(map)
+            if map.get("__type").and_then(Value::as_str) == Some("Buffer")
+                || map.get("__agentOsType").and_then(Value::as_str) == Some("bytes") =>
+        {
+            let base64_value = map
+                .get("data")
+                .or_else(|| map.get("base64"))
+                .and_then(Value::as_str);
+            if let Some(base64_value) = base64_value {
+                if let Some(bytes) = v8_runtime::base64_decode_pub(base64_value) {
+                    return bytes;
+                }
+            }
+            value.to_string().into_bytes()
+        }
+        other => other.to_string().into_bytes(),
+    }
+}
+
+fn decode_bridge_output_args(args: &[Value]) -> Vec<u8> {
+    let mut output = Vec::new();
+    for (index, arg) in args.iter().enumerate() {
+        if index > 0 {
+            output.push(b' ');
+        }
+        output.extend(decode_bridge_output_arg(arg));
+    }
+    output
+}
+
 #[derive(Debug)]
 pub enum JavascriptExecutionError {
     EmptyArgv,
@@ -1027,9 +1060,10 @@ impl JavascriptExecution {
 
     pub fn write_stdin(&mut self, chunk: &[u8]) -> Result<(), JavascriptExecutionError> {
         self.kernel_stdin.write(chunk);
-        let payload =
-            v8_runtime::json_to_cbor_payload(&Value::String(String::from_utf8_lossy(chunk).into()))
-                .map_err(JavascriptExecutionError::Stdin)?;
+        let payload = v8_runtime::json_to_cbor_payload(&json!({
+            "dataBase64": v8_runtime::base64_encode_pub(chunk),
+        }))
+        .map_err(JavascriptExecutionError::Stdin)?;
         self.v8_session
             .send_stream_event("stdin", payload)
             .map_err(JavascriptExecutionError::Stdin)
@@ -2187,14 +2221,7 @@ fn spawn_v8_event_bridge(
 
                     // Handle logging locally (produce stdout/stderr events)
                     if method == "_log" || method == "_error" {
-                        let msg = args
-                            .iter()
-                            .map(|a| match a {
-                                Value::String(s) => s.clone(),
-                                other => other.to_string(),
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" ");
+                        let output = decode_bridge_output_args(&args);
                         // Respond to the bridge call
                         let _ = v8_session.send_bridge_response(
                             call_id,
@@ -2202,9 +2229,9 @@ fn spawn_v8_event_bridge(
                             v8_runtime::json_to_cbor_payload(&Value::Null).unwrap_or_default(),
                         );
                         if method == "_log" {
-                            let _ = sender.send(JavascriptExecutionEvent::Stdout(msg.into_bytes()));
+                            let _ = sender.send(JavascriptExecutionEvent::Stdout(output));
                         } else {
-                            let _ = sender.send(JavascriptExecutionEvent::Stderr(msg.into_bytes()));
+                            let _ = sender.send(JavascriptExecutionEvent::Stderr(output));
                         }
                         continue;
                     }
