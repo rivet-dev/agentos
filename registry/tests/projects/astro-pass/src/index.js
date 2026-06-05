@@ -13,15 +13,15 @@ function ensureBuild() {
 	} catch (e) {
 		// Build output missing — run build
 	}
-	var execSync = require("child_process").execSync;
-	var astroBin = path.join(projectDir, "node_modules", ".bin", "astro");
+	var execFileSync = require("child_process").execFileSync;
+	var astroBin = path.join(projectDir, "node_modules", "astro", "astro.js");
 	var buildEnv = Object.assign({}, process.env);
 	if (!buildEnv.PATH) {
 		buildEnv.PATH =
 			"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 	}
 	buildEnv.ASTRO_TELEMETRY_DISABLED = "1";
-	execSync(astroBin + " build", {
+	execFileSync(process.execPath, [astroBin, "build"], {
 		cwd: projectDir,
 		stdio: "pipe",
 		timeout: 60000,
