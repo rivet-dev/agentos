@@ -437,8 +437,8 @@ fn response_tracker_rejects_kind_and_ownership_mismatches() {
         )),
         Err(ResponseTrackerError::OwnershipMismatch {
             request_id: 90,
-            expected: OwnershipScope::session("conn-1", "session-1"),
-            actual: OwnershipScope::session("conn-1", "session-2"),
+            expected: Box::new(OwnershipScope::session("conn-1", "session-1")),
+            actual: Box::new(OwnershipScope::session("conn-1", "session-2")),
         }),
     );
 

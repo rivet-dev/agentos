@@ -2489,8 +2489,8 @@ impl ResponseTracker {
         if pending.ownership != response.ownership {
             return Err(ResponseTrackerError::OwnershipMismatch {
                 request_id: response.request_id,
-                expected: pending.ownership,
-                actual: response.ownership.clone(),
+                expected: Box::new(pending.ownership),
+                actual: Box::new(response.ownership.clone()),
             });
         }
 
@@ -2574,8 +2574,8 @@ impl SidecarResponseTracker {
         if pending.ownership != response.ownership {
             return Err(SidecarResponseTrackerError::OwnershipMismatch {
                 request_id: response.request_id,
-                expected: pending.ownership,
-                actual: response.ownership.clone(),
+                expected: Box::new(pending.ownership),
+                actual: Box::new(response.ownership.clone()),
             });
         }
 
@@ -2698,8 +2698,8 @@ pub enum ResponseTrackerError {
     },
     OwnershipMismatch {
         request_id: RequestId,
-        expected: OwnershipScope,
-        actual: OwnershipScope,
+        expected: Box<OwnershipScope>,
+        actual: Box<OwnershipScope>,
     },
     ResponseKindMismatch {
         request_id: RequestId,
@@ -2759,8 +2759,8 @@ pub enum SidecarResponseTrackerError {
     },
     OwnershipMismatch {
         request_id: RequestId,
-        expected: OwnershipScope,
-        actual: OwnershipScope,
+        expected: Box<OwnershipScope>,
+        actual: Box<OwnershipScope>,
     },
     ResponseKindMismatch {
         request_id: RequestId,
