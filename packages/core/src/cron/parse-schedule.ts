@@ -12,6 +12,8 @@ export type ParsedSchedule =
 
 const ONE_SHOT_SCHEDULE_PATTERN =
 	/^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/;
+const DATE_TIME_WITHOUT_ZONE_PATTERN =
+	/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/;
 
 export class InvalidScheduleError extends Error {
 	readonly schedule: string;
@@ -39,10 +41,19 @@ function looksLikeOneShotSchedule(schedule: string): boolean {
 	return ONE_SHOT_SCHEDULE_PATTERN.test(schedule);
 }
 
+function normalizeOneShotScheduleForDateParse(schedule: string): string {
+	const dateParseSchedule = schedule.replace(" ", "T");
+	return DATE_TIME_WITHOUT_ZONE_PATTERN.test(schedule)
+		? `${dateParseSchedule}Z`
+		: dateParseSchedule;
+}
+
 export function parseSchedule(schedule: string): ParsedSchedule {
 	const normalizedSchedule = schedule.trim();
 	if (looksLikeOneShotSchedule(normalizedSchedule)) {
-		const parsedTime = Date.parse(normalizedSchedule);
+		const parsedTime = Date.parse(
+			normalizeOneShotScheduleForDateParse(normalizedSchedule),
+		);
 		if (!Number.isFinite(parsedTime)) {
 			throw new InvalidScheduleError(schedule);
 		}
