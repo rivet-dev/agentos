@@ -2354,19 +2354,36 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       return null;
     }}
 
+    _sidecarManagedProcess() {{
+      if (
+        typeof __agentOsWasmInternalEnv?.AGENT_OS_SANDBOX_ROOT === "string" &&
+        __agentOsWasmInternalEnv.AGENT_OS_SANDBOX_ROOT.length > 0
+      ) {{
+        return true;
+      }}
+      return (
+        typeof process?.env?.AGENT_OS_SANDBOX_ROOT === "string" &&
+        process.env.AGENT_OS_SANDBOX_ROOT.length > 0
+      );
+    }}
+
+    _descriptorDirectoryFsPath(entry) {{
+      if (
+        (entry?.kind === "preopen" || entry?.kind === "directory") &&
+        this._sidecarManagedProcess()
+      ) {{
+        return this._descriptorGuestPath(entry);
+      }}
+      return this._descriptorFsPath(entry);
+    }}
+
     _descriptorGuestPath(entry) {{
       if (!entry) {{
         return null;
       }}
       const guestPath = typeof entry.guestPath === "string" ? entry.guestPath : null;
       if (guestPath === ".") {{
-        const pwd =
-          typeof this.env?.PWD === "string" && this.env.PWD.startsWith("/")
-            ? this.env.PWD
-            : typeof this.env?.HOME === "string" && this.env.HOME.startsWith("/")
-              ? this.env.HOME
-              : "/";
-        return __agentOsPath().posix.normalize(pwd);
+        return this._currentGuestCwd();
       }}
       if (typeof guestPath === "string" && guestPath.length > 0) {{
         return __agentOsPath().posix.normalize(guestPath);
@@ -2418,6 +2435,16 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       }}
     }}
 
+    _currentGuestCwd() {{
+      const pwd =
+        typeof this.env?.PWD === "string" && this.env.PWD.startsWith("/")
+          ? this.env.PWD
+          : typeof this.env?.HOME === "string" && this.env.HOME.startsWith("/")
+            ? this.env.HOME
+            : "/";
+      return __agentOsPath().posix.normalize(pwd);
+    }}
+
     _resolveHostPathForGuestPath(guestPath) {{
       const normalized = __agentOsPath().posix.normalize(guestPath);
       const mappings = [];
@@ -2455,35 +2482,47 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       return null;
     }}
 
+    _rootRelativeTargetPrefersCwd(target) {{
+      const normalizedTarget = __agentOsPath().posix.normalize(target || ".");
+      if (normalizedTarget !== ".") {{
+        return false;
+      }}
+      return !this._rootRelativeTargetMatchesAbsoluteArg(target);
+    }}
+
+    _rootRelativeTargetMatchesAbsoluteArg(target) {{
+      const rootGuestPath = __agentOsPath().posix.resolve("/", target);
+      return this.args
+        .slice(1)
+        .some(
+          (arg) =>
+            typeof arg === "string" &&
+            arg.startsWith("/") &&
+            __agentOsPath().posix.normalize(arg) === rootGuestPath,
+        );
+    }}
+
     _resolveRootRelativePath(target, preferCreateParent = false) {{
-      const cwdEntry = this._currentDirectoryPreopen();
-      const cwdGuestPath = this._descriptorGuestPath(cwdEntry);
       const rootGuestPath = __agentOsPath().posix.resolve("/", target);
       const rootHostPath = this._resolveHostPathForGuestPath(rootGuestPath);
-      if (
-        !cwdEntry ||
-        typeof cwdGuestPath !== "string" ||
-        typeof rootHostPath !== "string"
-      ) {{
-        return {{ guestPath: rootGuestPath, hostPath: rootHostPath }};
+      const cwdGuestPath = this._currentGuestCwd();
+      if (cwdGuestPath !== "/") {{
+        const cwdGuestTarget = __agentOsPath().posix.resolve(cwdGuestPath, target);
+        const cwdHostTarget = this._resolveHostPathForGuestPath(cwdGuestTarget);
+        if (
+          typeof cwdHostTarget === "string" &&
+          (
+            (preferCreateParent && !this._rootRelativeTargetMatchesAbsoluteArg(target)) ||
+            this._rootRelativeTargetPrefersCwd(target) ||
+            (
+              this._hostPathExists(cwdHostTarget) &&
+              !(typeof rootHostPath === "string" && this._hostPathExists(rootHostPath))
+            )
+          )
+        ) {{
+          return {{ guestPath: cwdGuestTarget, hostPath: cwdHostTarget }};
+        }}
       }}
-
-      const cwdGuestTarget = __agentOsPath().posix.resolve(cwdGuestPath, target);
-      const cwdHostPath = this._resolveHostPathForGuestPath(cwdGuestTarget);
-      if (typeof cwdHostPath !== "string") {{
-        return {{ guestPath: rootGuestPath, hostPath: rootHostPath }};
-      }}
-
-      if (this._hostPathExists(cwdHostPath)) {{
-        return {{ guestPath: cwdGuestTarget, hostPath: cwdHostPath }};
-      }}
-      if (
-        preferCreateParent &&
-        this._hostPathExists(__agentOsPath().dirname(cwdHostPath))
-      ) {{
-        return {{ guestPath: cwdGuestTarget, hostPath: cwdHostPath }};
-      }}
-
       return {{ guestPath: rootGuestPath, hostPath: rootHostPath }};
     }}
 
@@ -3115,7 +3154,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
     _fdReaddir(fd, bufPtr, bufLen, cookie, bufUsedPtr) {{
       try {{
         const entry = this._descriptorEntry(fd);
-        const fsPath = this._descriptorFsPath(entry);
+        const fsPath = this._descriptorDirectoryFsPath(entry);
         if (
           !entry ||
           (entry.kind !== "preopen" && entry.kind !== "directory") ||
@@ -4951,6 +4990,30 @@ mod tests {
             .contains("const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen, {"));
         assert!(
             !bootstrap.contains("const hostPath = __agentOsPath().resolve(baseHostPath, target);")
+        );
+    }
+
+    #[test]
+    fn wasm_runner_root_preopen_relative_paths_preserve_cwd_fallback() {
+        let bootstrap = build_wasm_runner_bootstrap(&BTreeMap::new(), None);
+
+        assert!(bootstrap
+            .contains("const rootGuestPath = __agentOsPath().posix.resolve(\"/\", target);"));
+        assert!(bootstrap.contains(
+            "const cwdGuestTarget = __agentOsPath().posix.resolve(cwdGuestPath, target);"
+        ));
+        assert!(bootstrap.contains("_rootRelativeTargetPrefersCwd(target)"));
+        assert!(bootstrap.contains("_rootRelativeTargetMatchesAbsoluteArg(target)"));
+        assert!(bootstrap.contains("__agentOsPath().posix.normalize(arg) === rootGuestPath"));
+    }
+
+    #[test]
+    fn wasm_runner_readdir_uses_guest_preopen_path_in_sidecar() {
+        let bootstrap = build_wasm_runner_bootstrap(&BTreeMap::new(), None);
+
+        assert!(bootstrap.contains("const fsPath = this._descriptorDirectoryFsPath(entry);"));
+        assert!(
+            bootstrap.contains("(entry?.kind === \"preopen\" || entry?.kind === \"directory\")")
         );
     }
 

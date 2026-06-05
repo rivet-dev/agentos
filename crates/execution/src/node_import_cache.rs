@@ -15,7 +15,7 @@ const NODE_IMPORT_CACHE_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_PATH";
 const NODE_IMPORT_CACHE_LOADER_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_LOADER_PATH";
 const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "44";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "46";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agent-os-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const PYODIDE_DIST_DIR: &str = "pyodide-dist";
@@ -8885,6 +8885,8 @@ function buildPreopens() {
             : null;
       const preopens = {};
       const seen = new Set();
+      preopens['.'] = createPreopen(HOST_CWD);
+      seen.add('.');
       const rootMapping = GUEST_PATH_MAPPINGS.find(
         (mapping) => mapping && mapping.guestPath === '/',
       );
@@ -8892,8 +8894,6 @@ function buildPreopens() {
         preopens['/'] = createPreopen(rootMapping.hostPath);
         seen.add('/');
       }
-      preopens['.'] = createPreopen(HOST_CWD);
-      seen.add('.');
       for (const mapping of GUEST_PATH_MAPPINGS) {
         if (!mapping || typeof mapping.guestPath !== 'string' || typeof mapping.hostPath !== 'string') {
           continue;
@@ -14047,15 +14047,15 @@ export async function loadPyodide(options) {
     }
 
     #[test]
-    fn wasm_runner_preopens_root_before_dot() {
-        let root_index = NODE_WASM_RUNNER_SOURCE
-            .find("preopens['/'] = createPreopen(rootMapping.hostPath);")
-            .expect("runner should preopen the guest root");
+    fn wasm_runner_preopens_dot_before_root() {
         let dot_index = NODE_WASM_RUNNER_SOURCE
             .find("preopens['.'] = createPreopen(HOST_CWD);")
             .expect("runner should preopen the current directory");
+        let root_index = NODE_WASM_RUNNER_SOURCE
+            .find("preopens['/'] = createPreopen(rootMapping.hostPath);")
+            .expect("runner should preopen the guest root");
 
-        assert!(root_index < dot_index);
+        assert!(dot_index < root_index);
     }
 
     #[test]
