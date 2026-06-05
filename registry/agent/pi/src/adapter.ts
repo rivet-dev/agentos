@@ -239,6 +239,8 @@ type PiSdkRuntime = {
 		agentDir?: string;
 		settingsManager?: SettingsManagerInstanceLike;
 		appendSystemPrompt?: string;
+		extensionFactories?: ExtensionFactoryLike[];
+		noExtensions?: boolean;
 	}) => MinimalResourceLoaderLike;
 	DEFAULT_THINKING_LEVEL: string;
 	ModelRegistry: new (authStorage: unknown, modelsPath?: string) => {
@@ -557,23 +559,9 @@ function discoverAutoExtensionPaths(cwd: string, agentDir: string): string[] {
 	return [...discovered].sort();
 }
 
-async function loadExtensionFactoryFromPath(
+function readCommonJsExtensionFactory(
 	extensionPath: string,
-): Promise<ExtensionFactoryLike | undefined> {
-	try {
-		const module = await import(extensionPath);
-		if (typeof module.default === "function") {
-			return module.default as ExtensionFactoryLike;
-		}
-		if (typeof module === "function") {
-			return module as ExtensionFactoryLike;
-		}
-	} catch (error) {
-		if (!extensionPath.endsWith(".cjs")) {
-			throw error;
-		}
-	}
-
+): ExtensionFactoryLike | undefined {
 	const required = require(extensionPath);
 	if (typeof required === "function") {
 		return required as ExtensionFactoryLike;
@@ -582,6 +570,55 @@ async function loadExtensionFactoryFromPath(
 		return required.default as ExtensionFactoryLike;
 	}
 	return undefined;
+}
+
+function readInlineDefaultExportFactory(
+	extensionPath: string,
+): ExtensionFactoryLike | undefined {
+	const source = readFileSync(extensionPath, "utf8");
+	if (!/\bexport\s+default\b/.test(source)) {
+		return undefined;
+	}
+
+	const module = { exports: {} as { default?: unknown } };
+	const transformed = source.replace(
+		/\bexport\s+default\b/,
+		"module.exports.default =",
+	);
+	new Function("module", "exports", "require", transformed)(
+		module,
+		module.exports,
+		require,
+	);
+
+	return typeof module.exports.default === "function"
+		? (module.exports.default as ExtensionFactoryLike)
+		: undefined;
+}
+
+async function loadExtensionFactoryFromPath(
+	extensionPath: string,
+): Promise<ExtensionFactoryLike | undefined> {
+	if (extensionPath.endsWith(".cjs")) {
+		return readCommonJsExtensionFactory(extensionPath);
+	}
+
+	if (extensionPath.endsWith(".mjs")) {
+		const module = await import(extensionPath);
+		return typeof module.default === "function"
+			? (module.default as ExtensionFactoryLike)
+			: undefined;
+	}
+
+	try {
+		return readCommonJsExtensionFactory(extensionPath);
+	} catch (error) {
+		const inlineFactory = readInlineDefaultExportFactory(extensionPath);
+		if (inlineFactory) {
+			return inlineFactory;
+		}
+		throw error;
+	}
 }
 
 async function loadDiscoveredExtensionFactories(
