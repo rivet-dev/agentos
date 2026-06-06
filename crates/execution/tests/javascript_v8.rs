@@ -3168,6 +3168,9 @@ let output = "";
 pass.on("data", (chunk) => {
   output += Buffer.from(chunk).toString("utf8");
 });
+if (!isReadable(pass) || !isWritable(pass)) {
+  throw new Error("stream helpers misreported passthrough readability");
+}
 pass.end("hello");
 await new Promise((resolve, reject) => {
   pass.once("close", resolve);
@@ -3177,8 +3180,32 @@ await new Promise((resolve, reject) => {
 if (output !== "hello") {
   throw new Error(`unexpected passthrough output: ${output}`);
 }
-if (!isReadable(pass) || !isWritable(pass)) {
-  throw new Error("stream helpers misreported passthrough readability");
+
+const lifecycle = [];
+let writableOutput = "";
+const writable = new Writable({
+  write(chunk, _encoding, callback) {
+    lifecycle.push("write");
+    writableOutput += Buffer.from(chunk).toString("utf8");
+    callback();
+  },
+  destroy(_error, callback) {
+    lifecycle.push("destroy");
+    callback();
+  },
+});
+writable.on("finish", () => lifecycle.push("finish"));
+writable.end("hi");
+await new Promise((resolve, reject) => {
+  writable.once("close", resolve);
+  writable.once("error", reject);
+});
+
+if (writableOutput !== "hi") {
+  throw new Error(`unexpected writable output: ${writableOutput}`);
+}
+if (lifecycle.join(",") !== "write,finish,destroy") {
+  throw new Error(`unexpected writable lifecycle: ${lifecycle.join(",")}`);
 }
 "#,
     );

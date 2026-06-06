@@ -4164,11 +4164,15 @@ class Readable extends Stream {
 }
 
 class Writable extends Stream {
-  constructor() {
+  constructor(options = undefined) {
     super();
     this.writable = true;
     this.writableEnded = false;
     this.destroyed = false;
+    this._writeOption =
+      options && typeof options.write === "function" ? options.write : null;
+    this._destroyOption =
+      options && typeof options.destroy === "function" ? options.destroy : null;
   }
 
   write(chunk, encodingOrCallback, callback) {
@@ -4184,7 +4188,41 @@ class Writable extends Stream {
   }
 
   _write(_chunk, callback) {
-    queueResult(callback);
+    if (!this._writeOption) {
+      queueResult(callback);
+      return;
+    }
+    try {
+      this._writeOption.call(this, _chunk, "buffer", callback);
+    } catch (error) {
+      queueResult(callback, error);
+    }
+  }
+
+  _destroy(error, callback) {
+    if (!this._destroyOption) {
+      queueResult(callback, error);
+      return;
+    }
+    try {
+      this._destroyOption.call(this, error ?? null, callback);
+    } catch (destroyError) {
+      queueResult(callback, destroyError);
+    }
+  }
+
+  destroy(error) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    this._destroy(error ?? null, (destroyError) => {
+      const finalError = destroyError ?? error;
+      if (finalError) {
+        this.errored = finalError;
+        this.emit("error", finalError);
+      }
+      this.emit("close");
+    });
+    return this;
   }
 
   end(chunk, encodingOrCallback, callback) {
@@ -4200,7 +4238,7 @@ class Writable extends Stream {
     queueMicrotask(() => {
       queueResult(done);
       this.emit("finish");
-      this.emit("close");
+      this.destroy();
     });
     return this;
   }
