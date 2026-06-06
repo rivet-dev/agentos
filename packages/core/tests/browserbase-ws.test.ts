@@ -249,7 +249,8 @@ console.log("BROWSERBASE_PAGES:" + pages);
 const DIRECT_STAGEHAND_INIT_SCRIPT = String.raw`
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const browsePath = "/root/node_modules/@browserbasehq/browse-cli/dist/index.js";
@@ -259,10 +260,11 @@ if (!existsSync(browsePath)) {
 }
 
 const browseDir = dirname(dirname(browsePath));
-const stagehandPath = require.resolve("@browserbasehq/stagehand", {
+const stagehandPackagePath = require.resolve("@browserbasehq/stagehand/package.json", {
   paths: [browseDir],
 });
-const { V3 } = require(stagehandPath);
+const stagehandPath = join(dirname(stagehandPackagePath), "dist/esm/index.js");
+const { V3 } = await import(pathToFileURL(stagehandPath).href);
 
 const steps = [];
 function note(step) {
