@@ -436,6 +436,7 @@ impl AgentOs {
             atime_ms: None,
             mtime_ms: None,
             len: None,
+            offset: None,
         }
     }
 
