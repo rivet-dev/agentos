@@ -232,7 +232,10 @@ describeIf(hasWasmBinaries, 'codex TUI (WasmVM) - interactive', { timeout: 30_00
 
     // Ctrl+C should quit TUI and return to shell
     await harness.type('\x03');
-    await harness.waitFor(PROMPT, 2, 10_000);
+    await harness.waitFor(PROMPT, 1, 10_000);
+
+    await harness.type('echo tui-alive\n');
+    await harness.waitFor('tui-alive', 1, 10_000);
   });
 
   it('--model flag accepts model selection in TUI header', async () => {
