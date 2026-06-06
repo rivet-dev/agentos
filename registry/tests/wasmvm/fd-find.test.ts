@@ -93,13 +93,18 @@ class SimpleVFS {
       this.files.delete(oldPath);
     }
   }
-  async pread(path: string, buffer: Uint8Array, offset: number, length: number, position: number): Promise<number> {
+  async pread(path: string, offset: number, length: number): Promise<Uint8Array> {
     const data = this.files.get(path);
     if (!data) throw new Error(`ENOENT: ${path}`);
-    const available = Math.min(length, data.length - position);
-    if (available <= 0) return 0;
-    buffer.set(data.subarray(position, position + available), offset);
-    return available;
+    return data.slice(offset, offset + length);
+  }
+  async pwrite(path: string, offset: number, content: Uint8Array): Promise<void> {
+    const data = this.files.get(path);
+    if (!data) throw new Error(`ENOENT: ${path}`);
+    const next = new Uint8Array(Math.max(data.length, offset + content.length));
+    next.set(data);
+    next.set(content, offset);
+    this.files.set(path, next);
   }
 }
 
