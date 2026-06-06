@@ -676,6 +676,7 @@ export async function createDevShellKernel(
 			cwd: workDir,
 			logger,
 			mounts,
+			syncFilesystemOnDispose: false,
 		});
 
 		const loadedCommands: string[] = [];
