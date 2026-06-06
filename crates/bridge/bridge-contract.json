@@ -17,7 +17,7 @@
       "convention": "syncPromise",
       "argumentTypes": ["specifier: string", "fromDir: string", "mode?: \"require\" | \"import\""],
       "returnType": "string | null",
-      "names": ["_resolveModule", "_loadFile", "_resolveModuleSync", "_loadFileSync"]
+      "names": ["_resolveModule", "_loadFile", "_resolveModuleSync", "_loadFileSync", "_moduleFormat"]
     },
     {
       "convention": "syncPromise",

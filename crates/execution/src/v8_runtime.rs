@@ -246,6 +246,7 @@ pub fn map_bridge_method(method: &str) -> (&str, bool) {
         "_resolveModule" | "_resolveModuleSync" => ("__resolve_module", false),
         "_loadFile" | "_loadFileSync" => ("fs.readFileSync", false),
         "_loadPolyfill" => ("__load_polyfill", false),
+        "_moduleFormat" => ("__module_format", false),
         "_batchResolveModules" => ("__batch_resolve_modules", false),
 
         // Crypto operations (handled by the sidecar or locally)

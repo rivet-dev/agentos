@@ -3204,6 +3204,11 @@ var __bridge = (() => {
       rationale: "Host synchronous file-loading bridge reference."
     },
     {
+      name: "_moduleFormat",
+      classification: "hardened",
+      rationale: "Host module-format bridge reference used to enforce CommonJS and ESM boundaries."
+    },
+    {
       name: "_scheduleTimer",
       classification: "hardened",
       rationale: "Host timer bridge reference used by process timers."
@@ -26319,6 +26324,20 @@ ${headerLines}\r
     requireFn.extensions = defaultRequireExtensions;
     return requireFn;
   }
+  function createRequireEsmError(filename) {
+    const error = new Error(`require() of ES Module ${filename} is not supported.`);
+    error.code = "ERR_REQUIRE_ESM";
+    return error;
+  }
+  function assertCommonjsLoadable(filename) {
+    if (typeof _moduleFormat === "undefined") {
+      return;
+    }
+    const format = _moduleFormat.applySyncPromise(void 0, [filename]);
+    if (format === "module") {
+      throw createRequireEsmError(filename);
+    }
+  }
   function createRequire(filename) {
     if (typeof filename !== "string" && !(filename instanceof URL)) {
       throw new TypeError("filename must be a string or URL");
@@ -26394,6 +26413,7 @@ ${headerLines}\r
     static _extensions = {
       ...defaultRequireExtensions,
       ".js": function(module, filename) {
+        assertCommonjsLoadable(filename);
         const content = typeof _loadFile !== "undefined" ? _loadFile.applySyncPromise(void 0, [
           filename
         ]) : _requireFrom("fs", "/").readFileSync(filename, "utf8");
@@ -27109,6 +27129,7 @@ ${headerLines}\r
     if (Object.prototype.hasOwnProperty.call(_moduleCache, resolved)) {
       return _moduleCache[resolved].exports;
     }
+    assertCommonjsLoadable(resolved);
     const module = new Module(resolved, { path: parentPath });
     _moduleCache[resolved] = module;
     try {

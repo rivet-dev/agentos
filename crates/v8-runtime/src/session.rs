@@ -967,6 +967,7 @@ pub(crate) const SYNC_BRIDGE_FNS: &[&str] = &[
     // Sync module loading (bypass _loadPolyfill dispatch, used by CJS require)
     "_resolveModuleSync",
     "_loadFileSync",
+    "_moduleFormat",
     "_batchResolveModules",
     // Crypto
     "_cryptoRandomFill",

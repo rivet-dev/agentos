@@ -476,6 +476,42 @@ try {
     }
 }
 
+fn runtime_require_type_module_js_main_throws_require_esm() {
+    let fixture = Fixture::new();
+    fixture.write_json(
+        "node_modules/pkg/package.json",
+        json!({
+            "type": "module",
+            "main": "./dist/index.js"
+        }),
+    );
+    fixture.write("node_modules/pkg/dist/index.js", "export const value = 42;");
+    fixture.write(
+        "entry.cjs",
+        r#"
+try {
+  require("pkg");
+  console.log(JSON.stringify({ mode: "loaded" }));
+} catch (error) {
+  console.log(JSON.stringify({
+    mode: "error",
+    code: error && error.code ? error.code : null,
+    message: String(error && error.message ? error.message : error)
+  }));
+}
+"#,
+    );
+
+    let output = run_guest_json(&fixture, "./entry.cjs");
+    assert_eq!(output.get("mode"), Some(&json!("error")));
+    assert_eq!(output.get("code"), Some(&json!("ERR_REQUIRE_ESM")));
+    let message = output
+        .get("message")
+        .and_then(Value::as_str)
+        .expect("error message");
+    assert!(message.contains("require() of ES Module"));
+}
+
 fn runtime_type_module_export_subpaths_keep_js_files_in_esm_mode() {
     let fixture = Fixture::new();
     fixture.write_json(
@@ -1146,6 +1182,7 @@ fn cjs_esm_interop_suite() {
     runtime_cjs_reexport_preserves_named_esm_imports_via_runtime_fallback();
     runtime_export_star_reexport_with_own_static_exports_exposes_all_named_esm_imports();
     runtime_require_of_esm_only_packages_either_loads_or_throws_clearly();
+    runtime_require_type_module_js_main_throws_require_esm();
     runtime_type_module_export_subpaths_keep_js_files_in_esm_mode();
     runtime_require_of_dual_packages_uses_the_cjs_entrypoint();
     runtime_two_module_circular_require_exposes_partial_exports();
