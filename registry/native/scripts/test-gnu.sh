@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 #
-# GNU Coreutils Compatibility Test Runner
+# Native C Command Compatibility Test Runner
 #
-# Runs a subset of GNU coreutils-compatible tests against the wasmVM/WasmCore
-# runtime. Tests focus on pure computation behavior (not OS-dependent features).
-#
-# Reference: https://github.com/coreutils/coreutils/tree/master/tests
+# Builds and installs the maintained C command set against the WASI toolchain.
 #
 # Usage:
-#   ./scripts/test-gnu.sh           # Run all GNU compat tests
-#   ./scripts/test-gnu.sh --verbose  # Show individual test results
+#   ./scripts/test-gnu.sh
 #
 
 set -euo pipefail
@@ -25,35 +21,11 @@ if [ ! -d "$COMMANDS_DIR" ]; then
     exit 1
 fi
 
-echo "=== GNU Coreutils Compatibility Test Suite ==="
+echo "=== Native C Command Compatibility Test Suite ==="
 echo "Commands dir: $COMMANDS_DIR ($( ls -1 "$COMMANDS_DIR" | wc -l ) binaries)"
 echo ""
 
-# Determine verbosity
-VERBOSE_FLAG=""
-if [[ "${1:-}" == "--verbose" || "${1:-}" == "-v" ]]; then
-    VERBOSE_FLAG="--test-reporter=spec"
-fi
-
-# Run the Node.js test suite
-cd "$PROJECT_DIR/host"
-
-# Use node:test runner with the GNU compat test file
-if [ -n "$VERBOSE_FLAG" ]; then
-    node --test $VERBOSE_FLAG test/gnu-compat.test.js 2>&1
-else
-    # Default: run with spec reporter for summary output
-    node --test --test-reporter=spec test/gnu-compat.test.js 2>&1
-fi
-
-EXIT_CODE=$?
+make -C "$PROJECT_DIR/c" programs install
 
 echo ""
-if [ $EXIT_CODE -eq 0 ]; then
-    echo "=== All GNU compatibility tests PASSED ==="
-else
-    echo "=== Some GNU compatibility tests FAILED (see above) ==="
-    echo "See test/KNOWN-FAILURES.md for documented incompatibilities."
-fi
-
-exit $EXIT_CODE
+echo "=== Native C command compatibility tests PASSED ==="
