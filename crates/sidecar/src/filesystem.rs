@@ -1319,16 +1319,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
         "fs.readlinkSync" | "fs.promises.readlink" => {
             let path = javascript_sync_rpc_arg_str(&request.args, 0, "filesystem readlink path")?;
             if let Some(mapped_host) = mapped_runtime_host_path_for_read(process, path) {
-                let parent = open_mapped_runtime_parent_beneath(&mapped_host, "fs.readlink")?;
-                let host_path = parent.host_path.join(&parent.child_name);
-                let target =
-                    fs::read_link(mapped_runtime_parent_child_path(&parent)).map_err(|error| {
-                        SidecarError::Io(format!(
-                            "failed to read mapped guest symlink {} -> {}: {error}",
-                            path,
-                            host_path.display()
-                        ))
-                    })?;
+                let target = read_mapped_runtime_link(&mapped_host, path, "fs.readlink")?;
                 return Ok(Value::String(target.to_string_lossy().into_owned()));
             }
             kernel
@@ -2023,6 +2014,32 @@ fn mapped_runtime_symlink_metadata(
         SidecarError::Io(format!(
             "failed to lstat mapped guest path {} -> {}: {error}",
             mapped.guest_path,
+            host_path.display()
+        ))
+    })
+}
+
+fn read_mapped_runtime_link(
+    mapped: &MappedRuntimeHostPath,
+    guest_path: &str,
+    operation: &str,
+) -> Result<PathBuf, SidecarError> {
+    if mapped_runtime_relative_path(mapped)? == Path::new(".") {
+        return fs::read_link(&mapped.host_path).map_err(|error| {
+            SidecarError::Io(format!(
+                "failed to read mapped guest symlink {} -> {}: {error}",
+                guest_path,
+                mapped.host_path.display()
+            ))
+        });
+    }
+
+    let parent = open_mapped_runtime_parent_beneath(mapped, operation)?;
+    let host_path = parent.host_path.join(&parent.child_name);
+    fs::read_link(mapped_runtime_parent_child_path(&parent)).map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to read mapped guest symlink {} -> {}: {error}",
+            guest_path,
             host_path.display()
         ))
     })
@@ -3053,8 +3070,8 @@ mod tests {
     use super::{
         create_mapped_runtime_directory, create_mapped_runtime_root_directory,
         mapped_runtime_relative_path, mapped_runtime_symlink_metadata,
-        open_mapped_runtime_parent_beneath, rename_mapped_host_path, MappedRuntimeHostAccess,
-        MappedRuntimeHostPath, SidecarError,
+        open_mapped_runtime_parent_beneath, read_mapped_runtime_link, rename_mapped_host_path,
+        MappedRuntimeHostAccess, MappedRuntimeHostPath, SidecarError,
     };
     use crate::execution::javascript_sync_rpc_error_code;
     use std::fs;
@@ -3150,6 +3167,31 @@ mod tests {
         assert!(metadata.is_dir(), "expected mapped root directory metadata");
 
         fs::remove_dir_all(&host_root).expect("remove mapped host root");
+    }
+
+    #[test]
+    fn mapped_runtime_root_readlink_uses_root_path_without_parent_basename() {
+        let host_parent = std::env::temp_dir().join(format!(
+            "agent-os-sidecar-fs-root-readlink-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        ));
+        let host_target = host_parent.join("target");
+        let host_link = host_parent.join("link");
+        fs::create_dir_all(&host_target).expect("create mapped host target");
+        std::os::unix::fs::symlink(&host_target, &host_link).expect("create mapped host link");
+        let mapped = MappedRuntimeHostPath {
+            guest_path: String::from("/"),
+            host_root: host_link.clone(),
+            host_path: host_link,
+        };
+
+        let target = read_mapped_runtime_link(&mapped, "/", "test").expect("read mapped root link");
+        assert_eq!(target, host_target);
+
+        fs::remove_dir_all(&host_parent).expect("remove mapped host parent");
     }
 
     #[test]

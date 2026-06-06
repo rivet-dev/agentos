@@ -19674,7 +19674,10 @@ pub(crate) fn javascript_sync_rpc_error_code(error: &SidecarError) -> String {
     if lower.contains("permission denied") {
         return String::from("EACCES");
     }
-    if lower.contains("already exists") || lower.contains("already registered") {
+    if lower.contains("already exists")
+        || lower.contains("already registered")
+        || lower.contains("file exists")
+    {
         return String::from("EEXIST");
     }
     if lower.contains("invalid argument") {
@@ -19750,6 +19753,14 @@ mod error_code_tests {
             "ERR_AGENT_OS_NODE_SYNC_RPC: EACCES: permission denied on /foo",
         ));
         assert_eq!(javascript_sync_rpc_error_code(&error), "EACCES");
+    }
+
+    #[test]
+    fn javascript_sync_rpc_error_code_maps_file_exists_messages() {
+        let error = SidecarError::Io(String::from(
+            "failed to create mapped guest directory /.next/server: File exists (os error 17)",
+        ));
+        assert_eq!(javascript_sync_rpc_error_code(&error), "EEXIST");
     }
 
     #[test]
