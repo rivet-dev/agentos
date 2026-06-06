@@ -74,6 +74,7 @@
 		"@anthropic-ai/claude-code": "^2.1.86",
 		"@browserbasehq/browse-cli": "0.5.0",
 		"@browserbasehq/cli": "0.5.4",
+		"@browserbasehq/sdk": "2.10.0",
 		"@copilotkit/llmock": "^1.6.0",
 		"@rivet-dev/agent-os-git": "link:../../registry/software/git",
 		"@rivet-dev/agent-os-s3": "link:../../registry/file-system/s3",

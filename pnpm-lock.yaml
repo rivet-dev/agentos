@@ -201,6 +201,9 @@ importers:
       '@browserbasehq/cli':
         specifier: 0.5.4
         version: 0.5.4
+      '@browserbasehq/sdk':
+        specifier: 2.10.0
+        version: 2.10.0
       '@copilotkit/llmock':
         specifier: ^1.6.0
         version: 1.6.0

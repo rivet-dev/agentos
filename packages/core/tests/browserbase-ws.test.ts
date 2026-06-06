@@ -309,15 +309,10 @@ try {
 `;
 
 const BROWSERBASE_SDK_SCRIPT = String.raw`
-import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const sdkPath = "/root/node_modules/.pnpm/@browserbasehq+sdk@2.10.0/node_modules/@browserbasehq/sdk/index.js";
-
-if (!existsSync(sdkPath)) {
-  throw new Error("missing browserbase sdk path");
-}
+const sdkPath = require.resolve("@browserbasehq/sdk");
 
 const Browserbase = require(sdkPath).default;
 const bb = new Browserbase({ apiKey: process.env.BROWSERBASE_API_KEY });
