@@ -53,6 +53,13 @@ if [ -d "$PATCH_DIR" ]; then
   done < <(find "$PATCH_DIR" -name '*.patch' -type f | sort)
 fi
 
+if [ -f "$DUCKDB_BUILD_DIR/CMakeCache.txt" ]; then
+  if ! grep -Fx "CMAKE_HOME_DIRECTORY:INTERNAL=$DUCKDB_SRC_DIR" "$DUCKDB_BUILD_DIR/CMakeCache.txt" >/dev/null; then
+    echo "removing stale DuckDB CMake cache at $DUCKDB_BUILD_DIR" >&2
+    rm -rf "$DUCKDB_BUILD_DIR"
+  fi
+fi
+
 mkdir -p "$DUCKDB_BUILD_DIR"
 mkdir -p "$SHIM_BUILD_DIR"
 
