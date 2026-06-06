@@ -23,6 +23,9 @@ export default {
 		},
 	},
 	test: {
+		// Registry integration tests spawn many sidecars and WASM runtimes.
+		// Running files concurrently exhausts host process and thread limits.
+		fileParallelism: false,
 		exclude: [
 			"**/node_modules/**",
 			"**/dist/**",
