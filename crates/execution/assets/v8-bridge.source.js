@@ -17584,6 +17584,7 @@ ${headerLines}\r
     _loopbackServer = null;
     _loopbackBuffer = Buffer.alloc(0);
     _loopbackDispatchRunning = false;
+    _loopbackDispatchPending = false;
     _loopbackReadableEnded = false;
     _loopbackEventQueue = Promise.resolve();
     _encoding;
@@ -18192,12 +18193,22 @@ ${headerLines}\r
       }
     }
     _dispatchLoopbackHttpRequest() {
-      if (!this._loopbackServer || this._loopbackDispatchRunning || this.destroyed) {
+      if (!this._loopbackServer || this.destroyed) {
+        return;
+      }
+      if (this._loopbackDispatchRunning) {
+        this._loopbackDispatchPending = true;
         return;
       }
       this._loopbackDispatchRunning = true;
       void this._processLoopbackHttpRequests().finally(() => {
         this._loopbackDispatchRunning = false;
+        if (this._loopbackDispatchPending && this._loopbackBuffer.length > 0) {
+          this._loopbackDispatchPending = false;
+          this._dispatchLoopbackHttpRequest();
+        } else {
+          this._loopbackDispatchPending = false;
+        }
       });
     }
     async _processLoopbackHttpRequests() {

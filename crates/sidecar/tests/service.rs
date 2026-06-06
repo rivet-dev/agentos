@@ -12761,6 +12761,85 @@ console.log(JSON.stringify(summary));
                 "stdout: {stdout}"
             );
         }
+        fn javascript_fetch_posts_to_guest_loopback_http_server() {
+            assert_node_available();
+
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+            let cwd = temp_dir("agent-os-sidecar-js-fetch-loopback-cwd");
+            write_fixture(
+                &cwd.join("entry.mjs"),
+                r#"
+import http from "node:http";
+
+const summary = await new Promise((resolve, reject) => {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      requests.push({ method: req.method, url: req.url, body });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, method: req.method, received: body }));
+    });
+  });
+
+  server.on("error", reject);
+  server.listen(0, "127.0.0.1", async () => {
+    try {
+      const port = server.address().port;
+      const response = await fetch(`http://127.0.0.1:${port}/data`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ key: "value" }),
+      });
+      const payload = await response.json();
+      server.close(() => resolve({ payload, requests }));
+    } catch (error) {
+      server.close(() => reject(error));
+    }
+  });
+});
+
+console.log(JSON.stringify(summary));
+"#,
+            );
+
+            let (stdout, stderr, exit_code) = run_javascript_entry(
+                &mut sidecar,
+                &vm_id,
+                &cwd,
+                "proc-js-fetch-loopback",
+                "[\"assert\",\"buffer\",\"console\",\"crypto\",\"events\",\"fs\",\"http\",\"path\",\"querystring\",\"stream\",\"string_decoder\",\"timers\",\"url\",\"util\",\"zlib\"]",
+            );
+
+            assert_eq!(exit_code, Some(0), "stderr: {stderr}");
+            let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse fetch JSON");
+            assert_eq!(parsed["payload"]["ok"], Value::Bool(true));
+            assert_eq!(
+                parsed["payload"]["received"],
+                Value::String(String::from("{\"key\":\"value\"}"))
+            );
+            assert_eq!(
+                parsed["requests"][0]["method"],
+                Value::String(String::from("POST"))
+            );
+            assert_eq!(
+                parsed["requests"][0]["url"],
+                Value::String(String::from("/data"))
+            );
+        }
         fn javascript_https_rpc_requests_and_serves_over_guest_tls() {
             assert_node_available();
 
@@ -15070,6 +15149,7 @@ console.log(JSON.stringify({
             javascript_http2_secure_listen_connect_request_and_respond_round_trip();
             javascript_http2_server_respond_records_pending_response();
             javascript_http_rpc_requests_gets_and_serves_over_guest_net();
+            javascript_fetch_posts_to_guest_loopback_http_server();
             javascript_https_rpc_requests_and_serves_over_guest_tls();
             javascript_net_rpc_listens_accepts_connections_and_reports_listener_state();
             javascript_net_rpc_reports_connection_counts_and_enforces_backlog();
