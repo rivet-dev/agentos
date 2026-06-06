@@ -6,12 +6,12 @@
  * build pipeline:
  *   1. Host-side package install populates node_modules
  *   2. NodeFileSystem mounts the project into the kernel
- *   3. kernel.exec('npx next build') runs Next.js through kernel
+ *   3. kernel.exec('node /run-next-build.cjs') runs Next.js through kernel
  *   4. Build output directory exists after completion
  *
  * Known workarounds applied:
- *   - NEXT_DISABLE_SWC=1: SWC is a native .node addon that the sandbox
- *     blocks (ERR_MODULE_ACCESS_NATIVE_ADDON), so we force Babel fallback
+ *   - run-next-build.cjs preloads the fixture's WASM-compatible Next shim
+ *     before invoking Next's build API.
  *   - The checked-in fixture writes normal Next.js build output to `.next`
  */
 
@@ -87,19 +87,17 @@ describeIf(!skipReason, 'e2e Next.js build through kernel', () => {
       await kernel.mount(createNodeRuntime());
 
       try {
-        const result = await kernel.exec('npx next build', {
+        const result = await kernel.exec('node /run-next-build.cjs', {
           cwd: '/',
           env: {
-            // Disable SWC. Native .node addon blocked by sandbox.
-            NEXT_DISABLE_SWC: '1',
-            // Force single-threaded. worker_threads not supported in V8 isolate.
-            NEXT_EXPERIMENTAL_WORKERS: '0',
-            // Suppress telemetry
             NEXT_TELEMETRY_DISABLED: '1',
           },
         });
 
-        expect(result.exitCode).toBe(0);
+        expect(
+          result.exitCode,
+          `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+        ).toBe(0);
 
         // Some fixtures may emit a static export, but the checked-in Next.js
         // kernel fixture currently writes its build artifacts to `.next`.
