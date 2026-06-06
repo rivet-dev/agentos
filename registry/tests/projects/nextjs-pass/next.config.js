@@ -1,2 +1,12 @@
 /** @type {import('next').NextConfig} */
-module.exports = {};
+module.exports = {
+	eslint: {
+		ignoreDuringBuilds: true,
+	},
+	experimental: {
+		webpackBuildWorker: false,
+	},
+	typescript: {
+		ignoreBuildErrors: true,
+	},
+};

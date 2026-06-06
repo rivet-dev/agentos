@@ -22,14 +22,14 @@ function ensureBuild() {
 		// Build manifest missing — run build
 	}
 	var execSync = require("child_process").execSync;
-	var nextBin = path.join(projectDir, "node_modules", ".bin", "next");
 	var buildEnv = Object.assign({}, process.env);
 	if (!buildEnv.PATH) {
 		buildEnv.PATH =
 			"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 	}
 	buildEnv.NEXT_TELEMETRY_DISABLED = "1";
-	execSync(nextBin + " build", {
+	var buildCommand = "node " + JSON.stringify(path.join(projectDir, "run-next-build.cjs"));
+	execSync(buildCommand, {
 		cwd: projectDir,
 		stdio: "pipe",
 		timeout: 30000,
