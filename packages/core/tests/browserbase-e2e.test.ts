@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { AgentOs, type Permissions } from "../src/index.js";
@@ -35,6 +34,8 @@ const BROWSE_PATH = "/root/node_modules/@browserbasehq/browse-cli/dist/index.js"
 const CLI_PATH = "/root/node_modules/@browserbasehq/cli/dist/main.js";
 const JSON_OUTPUT_TIMEOUT_MS = 60_000;
 const SESSION_SCRIPT_PATH = "/tmp/browserbase-session.mjs";
+const BROWSE_SCREENSHOT_SCRIPT_PATH = "/tmp/browserbase-browse-screenshot.mjs";
+const CONNECT_URL_PATH = "/tmp/browserbase-connect-url.txt";
 
 function testIf(
 	condition: boolean,
@@ -240,6 +241,25 @@ if (mode === "create") {
 }
 `;
 
+const BROWSE_SCREENSHOT_SCRIPT = String.raw`
+import { readFileSync } from "node:fs";
+
+const BROWSE_PATH = "/root/node_modules/@browserbasehq/browse-cli/dist/index.js";
+const CONNECT_URL_PATH = "/tmp/browserbase-connect-url.txt";
+const connectUrl = readFileSync(CONNECT_URL_PATH, "utf8").trim();
+
+process.argv = [
+  process.execPath,
+  BROWSE_PATH,
+  "--ws",
+  connectUrl,
+  "screenshot",
+  "--json",
+];
+
+await import(BROWSE_PATH);
+`;
+
 describe("Browserbase e2e", () => {
 	let vm: AgentOs | null = null;
 
@@ -256,10 +276,11 @@ describe("Browserbase e2e", () => {
 	browserbaseTest(
 		"runs Browserbase browser automation inside the VM with restricted guest egress",
 		async () => {
-			const screenshotPath = `/tmp/browserbase-e2e-${Date.now()}.png`;
+			const browseSession = `browserbase-e2e-${Date.now()}`;
 			const browseEnv = {
 				BROWSERBASE_API_KEY: BROWSER_BASE_API_KEY,
 				BROWSERBASE_PROJECT_ID: BROWSER_BASE_PROJECT_ID,
+				BROWSE_SESSION: browseSession,
 			};
 
 			vm = await AgentOs.create({
@@ -268,6 +289,7 @@ describe("Browserbase e2e", () => {
 			});
 			await vm.writeFile("/tmp/browserbase-e2e.mjs", GUEST_SCRIPT);
 			await vm.writeFile(SESSION_SCRIPT_PATH, SESSION_SCRIPT);
+			await vm.writeFile(BROWSE_SCREENSHOT_SCRIPT_PATH, BROWSE_SCREENSHOT_SCRIPT);
 
 			let stdout = "";
 			let stderr = "";
@@ -319,34 +341,32 @@ describe("Browserbase e2e", () => {
 			);
 			expect(created.id).toBeTruthy();
 			expect(created.connectUrl).toMatch(/^wss?:\/\//);
+			await vm.writeFile(CONNECT_URL_PATH, created.connectUrl!);
 
 			try {
-				await runVmNodeCommand(
+				const screenshot = await runVmNodeJsonCommand<{
+					base64?: string;
+				}>(
 					vm,
-					BROWSE_PATH,
-					[
-						"--ws",
-						created.connectUrl!,
-						"open",
-						"https://example.com",
-						"--json",
-					],
-					"browse open via direct websocket",
+					BROWSE_SCREENSHOT_SCRIPT_PATH,
+					[],
+					"browse screenshot via direct websocket launcher",
 					browseEnv,
 				);
-				await runVmNodeCommand(
-					vm,
-					BROWSE_PATH,
-					[
-						"--ws",
-						created.connectUrl!,
-						"screenshot",
-						screenshotPath,
-						"--json",
-					],
-					"browse screenshot via direct websocket",
-					browseEnv,
-				);
+
+				expect(screenshot.base64).toBeTruthy();
+				const screenshotBytes = Buffer.from(screenshot.base64!, "base64");
+				expect(screenshotBytes.byteLength).toBeGreaterThanOrEqual(1024);
+				expect(Array.from(screenshotBytes.slice(0, 8))).toEqual([
+					0x89,
+					0x50,
+					0x4e,
+					0x47,
+					0x0d,
+					0x0a,
+					0x1a,
+					0x0a,
+				]);
 			} finally {
 				if (created.id) {
 					await runVmNodeCommand(
@@ -358,21 +378,6 @@ describe("Browserbase e2e", () => {
 					).catch(() => {});
 				}
 			}
-
-			expect(existsSync(screenshotPath)).toBe(false);
-
-			const screenshotBytes = await vm.readFile(screenshotPath);
-			expect(screenshotBytes.byteLength).toBeGreaterThanOrEqual(1024);
-			expect(Array.from(screenshotBytes.slice(0, 8))).toEqual([
-				0x89,
-				0x50,
-				0x4e,
-				0x47,
-				0x0d,
-				0x0a,
-				0x1a,
-				0x0a,
-			]);
 		},
 		90_000,
 	);
