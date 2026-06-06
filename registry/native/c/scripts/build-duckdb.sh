@@ -57,6 +57,9 @@ if [ -f "$DUCKDB_BUILD_DIR/CMakeCache.txt" ]; then
   if ! grep -Fx "CMAKE_HOME_DIRECTORY:INTERNAL=$DUCKDB_SRC_DIR" "$DUCKDB_BUILD_DIR/CMakeCache.txt" >/dev/null; then
     echo "removing stale DuckDB CMake cache at $DUCKDB_BUILD_DIR" >&2
     rm -rf "$DUCKDB_BUILD_DIR"
+  elif grep -E '^CMAKE_(C|CXX)_COMPILER_LAUNCHER:.*=.+$' "$DUCKDB_BUILD_DIR/CMakeCache.txt" >/dev/null; then
+    echo "removing DuckDB CMake cache with compiler launcher at $DUCKDB_BUILD_DIR" >&2
+    rm -rf "$DUCKDB_BUILD_DIR"
   fi
 fi
 
@@ -84,6 +87,8 @@ cmake \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_FLAGS="$COMMON_FLAGS" \
   -DCMAKE_CXX_FLAGS="$COMMON_CXX_FLAGS -isystem $CXX_STDLIB_INCLUDE" \
+  -DCMAKE_C_COMPILER_LAUNCHER="" \
+  -DCMAKE_CXX_COMPILER_LAUNCHER="" \
   -DCMAKE_EXE_LINKER_FLAGS="$SHIM_OBJECTS -L$RUNTIME_LIB_DIR -fwasm-exceptions -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks" \
   -DCMAKE_SHARED_LINKER_FLAGS="-L$RUNTIME_LIB_DIR -fwasm-exceptions" \
   -DCMAKE_CXX_STANDARD_LIBRARIES="-lc++ -lc++abi -lunwind -lc" \
