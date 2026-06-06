@@ -33,7 +33,7 @@ async function createGitKernel() {
   await (vfs as any).chmod('/', 0o1777);
   await vfs.mkdir('/tmp', { recursive: true });
   await (vfs as any).chmod('/tmp', 0o1777);
-  const kernel = createKernel({ filesystem: vfs });
+  const kernel = createKernel({ filesystem: vfs, syncFilesystemOnDispose: false });
   await kernel.mount(createWasmVmRuntime({ commandDirs: [COMMANDS_DIR] }));
   return { kernel, vfs, dispose: () => kernel.dispose() };
 }
@@ -47,6 +47,7 @@ async function createGitKernelWithNet(loopbackExemptPorts: number[]) {
     filesystem: vfs,
     permissions: allowAll,
     loopbackExemptPorts,
+    syncFilesystemOnDispose: false,
   });
   await kernel.mount(createWasmVmRuntime({ commandDirs: [COMMANDS_DIR] }));
   return { kernel, vfs, dispose: () => kernel.dispose() };

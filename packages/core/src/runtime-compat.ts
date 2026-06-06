@@ -2406,6 +2406,7 @@ class NativeKernel implements Kernel {
 				fs: VirtualFileSystem;
 				readOnly?: boolean;
 			}>;
+			syncFilesystemOnDispose?: boolean;
 		},
 	) {
 		this.env = { ...(options.env ?? {}) };
@@ -2524,7 +2525,11 @@ class NativeKernel implements Kernel {
 	async dispose(): Promise<void> {
 		await this.readyPromise?.catch(() => {});
 		let syncError: unknown;
-		if (this.rootFilesystem && !(this.options.filesystem instanceof NodeFileSystem)) {
+		if (
+			this.options.syncFilesystemOnDispose !== false &&
+			this.rootFilesystem &&
+			!(this.options.filesystem instanceof NodeFileSystem)
+		) {
 			try {
 				await this.liveFilesystemBinding.syncFromLive(
 					this.liveFilesystemSyncRoots,
@@ -2870,6 +2875,7 @@ export function createKernel(options: {
 	loopbackExemptPorts?: number[];
 	logger?: unknown;
 	mounts?: Array<{ path: string; fs: VirtualFileSystem; readOnly?: boolean }>;
+	syncFilesystemOnDispose?: boolean;
 }): Kernel {
 	return new NativeKernel(options);
 }
