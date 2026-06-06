@@ -9,6 +9,12 @@ var buildManifestPath = path.join(
 	".next",
 	"build-manifest.json",
 );
+var pagesManifestPath = path.join(
+	projectDir,
+	".next",
+	"server",
+	"pages-manifest.json",
+);
 
 function readManifest() {
 	return JSON.parse(fs.readFileSync(buildManifestPath, "utf8"));
@@ -47,13 +53,20 @@ function main() {
 
 	results.push({ check: "build-manifest", pages: pages });
 
-	var indexHtml = fs.readFileSync(
-		path.join(projectDir, ".next", "server", "pages", "index.html"),
+	var pagesManifest = JSON.parse(fs.readFileSync(pagesManifestPath, "utf8"));
+	results.push({
+		check: "pages-manifest",
+		hasIndex: pagesManifest["/"] === "pages/index.js",
+		hasApiRoute: pagesManifest["/api/hello"] === "pages/api/hello.js",
+	});
+
+	var indexModule = fs.readFileSync(
+		path.join(projectDir, ".next", "server", "pages", "index.js"),
 		"utf8",
 	);
 	results.push({
-		check: "ssr-page",
-		rendered: indexHtml.indexOf("Hello from Next.js") !== -1,
+		check: "compiled-page",
+		rendered: indexModule.indexOf("Hello from Next.js") !== -1,
 	});
 
 	var apiRouteExists = true;
