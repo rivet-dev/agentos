@@ -1,0 +1,429 @@
+Contributing
+============
+
+Hello and welcome to your local friendly neighborhood operating system testing!
+
+os-test is a project of the Sortix operating system and wants to provide value
+to all POSIX systems as our common testing solution.
+
+This guide will provide you with all the information needed to start
+contributing effectively to this project. Sortix is a community project that
+strives to be welcoming, fun, inclusive, and generally trying to do better.
+Please come join our community and don't hestitate to ask for any help that you
+could use.
+
+Community
+---------
+
+Joining the IRC chat on <https://irc.sortix.org> is the best way to meet the
+community, ask for help, and coordinate development. Please come introduce
+yourself and stick around. The developers might not be around at all times, but
+they will see your messages when they're back, and you will always get a
+response in due time. The chat actually runs on a real Sortix server.
+
+You can also drop an email or open an issue, if you prefer to get in touch in a
+more asynchronous and reliable fashion. See the website and git logs for the
+email contact information.
+
+Please get in touch if you experience any problems with the community,
+developers, or the maintainer. The community has been very small so far, so we
+just haven't taken the time to make official policies for conduct yet, but we're
+definitely doing it immediately at the first sight of trouble or if anybody
+asks. We're in touch with experts on diversity and inclusion as part of the
+funding that this project has received, and we will use them and their
+resources. You are welcome here if you believe everyone is inherently welcome
+and worthy as they are, but not if you are hateful.
+
+Welcome to the Sortix community. :)
+
+Writing Tests
+-------------
+
+If you submit small C programs, we're more than happy to run them everywhere for
+you, and then provide you with portability information. If you follow the
+guidelines provided here, then it's easy for us to add your tests to the os-test
+project and provide value to everyone.
+
+The guidelines discussed here are based on years of experience running os-test
+on many operating systems, and you should follow them unless you have a good
+reason.
+
+os-test is split into suites (which may be further split into subsuites) which
+contain tests. Each test is a .c program that is compiled and executed by the
+os-test build system. Tests are further sliced per the `/*[FOO]*/` comment,
+which indicates what POSIX group or other extension the test applies to.
+
+Adding a new test to a suite is as simple as dropping a .c file into the suite
+directory.
+
+Adding a new suite is as simple as making a new directory, creating a README,
+creating symbolic links to the appropriate shared makefiles in ../misc,
+registering the suite in ../misc/suites.list, making a suite header, and adding
+the .c files you want. The suite header should be named `suite.h` for new
+suites, and you must avoid using the same name as an existing system header to
+avoid collisions. The first line of the README is special, as it contains a short
+sentence summary that is included on the front page. You can use markdown from
+the second paragraph onwards to add more detail on the suite's formatted html
+page.
+
+Suites either use expectation files, or the program exit code. Expectation files
+are useful for tests that study platform differences where multiple outcomes are
+allowed, when it is interesting to know which outcome happened. Program exit
+codes are useful for binary tests that test a standard, where there is only one
+allowed outcome.
+
+If the foo suite has a foo.expect directory, then that suite uses expectation
+files. The foo/bar.c test passes if the output is identical to any of the
+foo.expect/bar{,.posix}.[1-9] files. The .posix part should be used if the
+test result is standardized, otherwise it should be omitted to clarify that the
+outcome is de-facto allowed per operating system consensus. If it is not known
+whether an outcome is good or bad, then use the .unknown part instead, which
+makes the test have a neutral outcome that does not punish the operating system.
+Ideally we will be able to interpret these outcomes later. A test fails if its
+outcome does not match any expectation files, and there is expectation files
+for the test.
+
+Otherwise the foo suite uses the program exit code. A passing test must exit 0
+and not output anything else to the standard output and error. A failing test
+must emit an error message to the standard error and exit non-zero.
+
+If a test exits non-zero, it must output an error message to stderr.
+
+os-test strives to write tests as well as possible, including theoretical or
+rare problems, if there is a way to avoid such problems.
+
+Name your tests lowercase preferring hyphens instead of underscores, but use
+underscores if the name of the invoked function has underscores. Be systematic.
+Systematic naming makes it easier to know how tests are different at a glance.
+It is often useful to e.g. name them after the sequence of invoked syscalls.
+
+Each test should only test one thing. If there are multiple things that may go
+wrong, then simply copy paste the test to another .c file and edit it slightly.
+You can be extremely productive making a dozen variants and finding half a dozen
+bugs in edge cases, but you may want to get one variant through code review
+first to avoid too much refactoring toil.
+
+Structure your test source files like this:
+
+1. An optional `/*[FOO]*/` comment indicating the option the test belongs to.
+2. A mandatory comment explaining the purpose of the test.
+3. A blank line.
+4. Inclusions of the system headers sorted alphabetically. `<sys/foo.h`>
+   headers, if any, go before other headers followed by a blank line, per
+   old-school Unix style.
+5. A blank line.
+6. Include the suite header.
+6. A blank line.
+7. The actual data and functions for your test and the main function.
+
+Tests should have a top comment that explains what is being tested. Remember
+that the users will often find a failing test, click the source code link, and
+have no idea what the test is about. Make it easy for them to quickly get up to
+speed by adding comments about what is being testing, adding a comment at the
+point where a bug might be detected, and cite the standard with what is supposed
+to happen at that point. It's worth adding a comment before each section in a
+long test, to make it easy to skim the source code and get an overview.
+
+Brevity is important.
+
+The test output is displayed in huge html tables for comparison. Long words and
+messages that cannot reasonably be line broken, as well as just long messages
+overall, cause the tables to explode in size and makes it harder to have
+an overview of the data. If it doesn't need to be said, don't. If there are
+multiple things to say in a single test, make multiple tests instead.
+
+Tests must check all return values of functions and handle all possible errors,
+including functions that can never fail in practice on reasonable operating
+systems, if the function signature technically allows such failures. os-test
+will run on upcoming and buggy operating systems, and even the established
+operating systems have proven surprisingly buggy in practice. Check every error.
+
+Tests should output messages in a platform neutral manner, using e.g. symbolic
+names such as ENOENT instead of the locale-variant 'No such file or directory'.
+The testing harness has `<err.h>` compatible functions that will do this and you
+should use these functions. Don't use `<err.h>` directly as it is only extremely
+portable, but it is not universal, use our version instead. Each error message
+should uniquely identify a particular point in the program, for instance using
+error messages like `first sigfoo: EINVAL` and `second sigfoo: EINVAL`. Do not
+output ABI specific constants and values, but rather use the symbolic names
+whenever possible. As an exception, it is allowed to output unexpected values in
+an unexpected error case, if formatting abstract values is too inconvenient.
+
+Tests must not leak resources. This rule includes error paths and asynchronous
+termination via signals, such as user interrupts and timeouts. As special
+exemption, it is allowed to leak files in $TMPDIR upon unexpected signals, but
+not normal intended test termination. Users are supposed to set $TMPDIR to a
+location where such files can be deleted manually. Prefix temporary files with
+os-test, such as `$TMPDIR/os-test.XXXXXX` to make it clear where they came from,
+and make it easy to clean up. You may need to make a directory using `mkdtemp`
+for full safety in some cases, but that function is not universal, so grab the
+boilerplate code from an existing test.
+
+This rule also includes descendant processes, which must eventually terminate if
+the initial test process dies. Tests may create sessions, process groups,
+psuedoterminals, and it may be complex to properly set up and properly tear down
+tests in every possible situation.
+
+If you spawn a child process, wait for its completion and format proper error
+messages if it unexpectedly exits non-zero or if it unexpectedly exits on a
+signal. Grab the boilerplate code from an existing test.
+
+Race conditions may be unavoidable, in which case a `sleep(1)` call or a
+`usleep(100 * 1000)` call may be the best portable solution. Significant
+scheduling delays may occur in practice under peak load, and running os-test may
+be resource intensive. Tests must strive to not be flaky if at all possible.
+
+Tests may run in parallel. Dynamically allocate resources such as socket ports
+and file paths in a way that works if the same test is run multiple times at the
+same time per the 'what if two processes do this?' rule. Use tmpfile, mkstemp,
+bind to port 0, and other appropriate solutions.
+
+Don't modify data inside the working directory and the os-test directory. Create
+temporary files and directories as needed. It is fine to use the os-test
+directory and the working directory as read-only data for testing.
+
+Prefer parameterless tests that do not use arguments and the environment
+unless required. For instance, those facilities may be required for execve(2)
+tests. Less special logic makes it easier to potentially add shared logic later.
+
+Be careful with implementing signal handling correctly. signal() is handy but
+its exact `sa_flags` values vary, and using sigaction() directly avoids the
+potential variance (such as `SA_RESTART` enabled/disabled) that could affect test
+results in some cases. Use a `static volatile sig_atomic_t` variable to see if
+the signal handler ran, or be careful to either use async-signal-safe functions
+or blocking signals to ensure the signal happens at a particular safe location.
+Assigning the signal number to your `volatile sig_atomic_t` variable is a useful
+way to avoid the unused parameter warning.
+
+Tests must not hang on reasonably functional operating systems. If at all
+possible, write the test so it cannot hang. On some systems, a special timeout
+may be required. 1 s or 100 ms delays are encouraged as a middle ground between
+potential scheduling delays on tests that are expected to be fast. The alarm
+syscall is useful as a portable timeout. Do not add timeouts to tests where no
+portable need has been demonstrated, as excessive small timeouts significantly
+increases likelihood of flakiness, which is strongly disliked by the os-test
+developers. In the near future, we'll probably add a large default fallback
+timeout to the test execution, and excessive existing timeouts will complicate
+that work. You should avoid SIGALRM for that reason, unless required for the
+test.
+
+Tests do not need to be universally portable, but whenever a test concerns a
+feature, then it should only use other features that are generally as portable
+in practice. E.g. a test for a POSIX 2008 function is allowed to use other
+POSIX 2008 functions, if they have become generally universal. On the other
+hand, it should not use POSIX 2024 functions, as they are not portable enough
+yet. Likewise it should not use non-standard features, although if the
+combination is of interest, it can be worth submitting as an additional special
+copy of the test. The published os-test data can help you make decisions.
+
+When interpreting results, take care to distinguish your personal opinion from
+the language in the official standard. The option comment, the .posix
+expectation files, and other formalized data are great ways to establish the
+distinction.
+
+Anything you say can and will be tested against you. You have the right to have
+a language lawyer present during testing. If you cannot afford a language
+lawyer, one will be provided.
+
+The existing coding style is not absolute. Be consistent. If you don't follow
+the Sortix coding style, it's fine to use a reasonable K&R or BSD style coding
+style. The GNU coding convention is its own punishment. You are encouraged to
+indent with tabs instead of spaces. The source code must wrap at 80 columns
+whenever possible. Trailing whitespace is not allowed, unless required.
+
+C99 is universal at this point. You can rely on it. C11 is less so.
+
+Test files are meant to be standalone .c files that only uses the (minimal)
+suite harness header. This makes it easy to contribute tests and adapt them for
+different environments and uses.
+
+os-test is generally write-once code, in the sense that we will accumulate a lot
+of tests which are written once, duplicated a lot with slight edits, and
+generally requires minimal maintenance. It's still good to write tests that have
+good quality and good comments, but there is less need to be maintainable.
+
+Tests should not produce warnings on the -Wall -Wextra level. Note how the build 
+system will hide warnings at this time. You may need to compile the tests
+manually.
+
+Issues
+------
+
+Please report and find all known issues in the official issue tracker:
+
+<https://gitlab.com/sortix/os-test/-/issues>
+
+Issues are continuously triaged and labeled. If you're looking for some great
+first issues for your first contribution, see the `contributable` label:
+
+<https://gitlab.com/sortix/os-test/-/issues?state=opened&label_name[]=contributable>
+
+Some issues are marked `needs-investigation` to mark them as tricky and may
+require careful non-trivial design work, and there may already be a vision in
+mind. You definitely want to talk to us while working on these issues.
+
+Otherwise, the golden rule is to have fun, try out the system, and find some
+itches to scratch and see how your personal skills can be best used!
+
+Merge Requests
+--------------
+
+Merge requests are more than welcome at
+<https://gitlab.com/sortix/os-test/-/merge_requests>.
+
+Please fork the official repository on gitlab to be able to submit MRs and make
+sure the project visibility is public, so the developers are able to pull from
+your repository.
+
+First identity an issue that you would like to work on. Filing an issue or
+talking to the developers on chat early on can help you avoid solving a
+non-problem or using the wrong approach.
+
+You will want to add your git fork as an extra remote and usually leave the
+origin remote pointing to the upstream repository:
+
+    git remote add username git@gitlab.com:username/os-test.git
+
+Please configure git with your identity:
+
+    git config --global user.name 'Firstname Lastname'
+    git config --global user.email 'username@example.com'
+
+Please consider using your real identity, however it is not required. You can be
+pseudonymous. All that we ask is that your identity is established in some sense
+(such as within our project only) and permanent in the sense that we can contact
+you later in the event of problems or disputes and that your email continue to
+be valid. We understand and appreciate that different people are exposed to
+different levels of risk online with different privacy requirements and desires,
+and we only want to make sure we know where our code came from, in order to
+respect your copyright and moral rights when you license your contributions to
+the project.
+
+Please branch off the main branch for your changes:
+
+    git checkout main
+    git pull origin main
+    git checkout -b my-feature
+
+Edit the source code as you please with your favorite editor and test the aspect
+you wish to test per the Writing Tests section above.
+
+Commit your changes early and often to avoid losing work:
+
+    git commit -a -m 'Add foo test.'
+
+Merge requests should be a singular, perfect commit, so please amend the commit
+with follow-up changes instead of submitting a series of work-in-process
+commits:
+
+    git commit -a --amend
+
+Commit messages should have a special first line using an imperative verb,
+optionally followed by a blank line and additional paragraphs. All lines should
+be less than 76 characters wide as a style. Bug-fixes should use the format
+`Fix foo.` as a style to make it easy to identify and backport such fixes.
+
+Please include context for your changes, such as why the changes needed to be
+made, what was wrong, any non-trivial aspects, and provide an overview of the
+changes in the merge request. Unrelated changes should go in separate merge
+requests to ease reviews.
+
+The main branch will move ahead during development, and you should occasionally
+rebase your branch on main to avoid conflicts with the latest official source
+code:
+
+    git checkout main
+    git pull origin main
+    git checkout my-feature
+    git rebase main
+
+If your branch's git history becomes messy and isn't a singular commit, you can
+clean it up by rebasing on main, and reseting to main to undo your commit
+history but retaining your local files, and then you can recommit your
+changes:
+
+    git checkout my-feature
+    git rebase main
+    git reset main
+    git add foo.c
+    git commit -a -m 'Add foo(1).'
+
+Alternatively git rebase -i with fixup commits is a powerful workflow.
+
+See the Writing Tests section above to make your change ready for submission.
+
+Push your changes to your branch in your fork when you're ready to submit your
+merge request:
+
+   git push username my-branch
+
+Open a merge request on the official gitlab project and ask for your branch to
+be merged to the main branch.
+
+Contributions submitted to the Sortix project are implicitly licensed to the
+Sortix project by the nature of submitting them as contributions. The license of
+the files being contributed to applies, or the ISC license per LICENSE if the
+file has no license statement. Contributors are responsible for ascertaining
+they have the right to license the contribution.
+
+Though submitted contributions are implicitly licensed to the project, first
+time contributors must make a written statement to that effect on the permanent
+record, to ensure there are no misunderstandings, e.g.:
+
+    I hereby license my past, current, and future contributions to Sortix under
+    the ISC license or the license of the relevant files.
+
+os-test is part of Sortix. Any such statements made previously apply to all
+Sortix repositories and projects including os-test.
+
+Do not submit contributions you do not have the rights to submit, and the
+project will assume good faith and that you have the rights to all contributions
+you submit.
+
+Please be patient and wait for the developers to review your change. Please feel
+free to ping the merge request if the developers are inactive for an extended
+period, so the contribution doesn't fall through the cracks.
+
+You will receive a mandatory code review before your change is merged. You will
+likely receive comments that you will have to address, or explain why your
+approach is better. The project developers will determine the suitability for
+inclusion into the official project, and generally the person that maintains the
+code and does the majority of the work gets to have the final say when resolving
+disagreements. This person can be you if you join and take ownership of an area
+of the project.
+
+To address the feedback, simply amend the commit on your branch, and force push
+it up to your fork:
+
+    git checkout my-branch
+    $EDITOR foo.c
+    git commit -a --amend
+    git push -f username my-branch
+
+Please comment on the merge requests that you have addressed the feedback, and
+you will receive another review round soon.
+
+Trivial and safe changes may be merged immediately. However, risky changes may
+be subject to additional testing proportional to the complexity and risk.
+
+Please feel free to parallelize your work by possibly working on other merge
+requests while waiting on your code review. You should prefer finishing up
+existing merge requests with feedback rather than submitting additional merge
+requests to avoid overloading the code reviewers.
+
+Your branch will be rebased on main when merged. If you disable the ability for
+developers to rebase your branch, you will have to do it yourself.
+
+We're really happy that you chose to contribute to the project. Your
+contributions will be available on the os-test website when the lead developer
+runs os-test on the lab and publishes the results, which is usually done
+occasionally as needed, or upon request.
+
+Hey, if you get three contributions merged, then you can receive a special voice
+status on the official IRC channel as a meaningless but fun status symbol to
+show that you are one of us now. That makes you a junior contributor. If you
+keep up the good work, you'll become a senior contributor and be expected to
+help out junior contributors and do code reviews, in order to offload the
+maintainer.
+
+It's a community project and we're happy to have you here.

@@ -1,0 +1,25 @@
+[XSI] #include <sys/ipc.h>
+[XSI] struct ipc_perm;
+[XSI] parent struct ipc_perm struct_member uid: uid_t uid;
+[XSI] parent struct ipc_perm struct_member gid: gid_t gid;
+[XSI] parent struct ipc_perm struct_member cuid: uid_t cuid;
+[XSI] parent struct ipc_perm struct_member cgid: gid_t cgid;
+[XSI] parent struct ipc_perm struct_member mode: mode_t mode;
+[XSI] typedef uid_t;
+[XSI] typedef gid_t;
+[XSI] typedef mode_t;
+[XSI] typedef key_t;
+[XSI] symbolic_constant IPC_CREAT;
+[XSI] symbolic_constant IPC_EXCL;
+[XSI] symbolic_constant IPC_NOWAIT;
+[XSI] symbolic_constant IPC_PRIVATE;
+[XSI] symbolic_constant IPC_RMID;
+[XSI] symbolic_constant IPC_SET;
+[XSI] symbolic_constant IPC_STAT;
+[XSI] maybe_define function ftok: key_t ftok(const char *, int);
+[XSI XSI] namespace ^ipc_;
+[XSI XSI] namespace ^IPC_;
+[XSI XSI] namespace ^key$;
+[XSI XSI] namespace ^pad$;
+[XSI XSI] namespace ^seq$;
+[XSI CX] namespace _t$;

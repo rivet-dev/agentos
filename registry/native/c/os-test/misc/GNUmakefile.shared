@@ -1,0 +1,91 @@
+TEST_SOURCES := $(shell find . -name '*.c' | sed 's,^\./,,' | sort)
+TESTS := $(TEST_SOURCES:.c=)
+OS := $(shell uname -s)
+OUT_DIRECTORY ?= ../out
+OUT_OS := $(shell echo "$(OS)" | tr '[:upper:]' '[:lower:]')
+OUT_SUITE := $(shell basename "$$(pwd)")
+OUT_PATH = $(OUT_DIRECTORY)/$(OUT_OS)/$(OUT_SUITE)
+TEST_RESULTS := $(addprefix $(OUT_PATH)/,$(TEST_SOURCES:.c=.out))
+TEST_ERRORS := $(addprefix $(OUT_PATH)/,$(TEST_SOURCES:.c=.err))
+
+LDFLAGS =
+EXTRA_LDFLAGS =
+STD_C17 = -std=c17
+NO_SHARED_DEFAULT ?= 0
+
+LDFLAGS += -lm
+ifneq ($(OS),Minix)
+  CFLAGS += -pthread
+  LDFLAGS += -lpthread
+endif
+ifneq ($(OS),Haiku)
+ifneq ($(OS),Minix)
+ifneq ($(OS),Darwin)
+ifneq ($(OS),OpenBSD)
+  LDFLAGS += -lrt
+endif
+endif
+endif
+endif
+ifeq ($(OS),AIX)
+  EXTRA_LDFLAGS += -liconv -latomic
+endif
+ifeq ($(OS),Darwin)
+  EXTRA_LDFLAGS += -liconv
+endif
+ifeq ($(OS),Dragonfly)
+  USR_LOCAL_LIB ?= -L/usr/local/lib
+  USR_LOCAL_INCLUDE ?= -I/usr/local/include
+  EXTRA_LDFLAGS += -lintl -lrt -lcrypt
+endif
+ifeq ($(OS),FreeBSD)
+  USR_LOCAL_LIB ?= -L/usr/local/lib
+  USR_LOCAL_INCLUDE ?= -I/usr/local/include
+  EXTRA_LDFLAGS += -lintl -lstdthreads -lcrypt
+endif
+ifeq ($(OS),GNU)
+  EXTRA_LDFLAGS += -lgdbm_compat -lcrypt -latomic
+endif
+ifeq ($(OS),Haiku)
+  EXTRA_LDFLAGS += -lgdbm_compat -lintl -lnetwork -lbsd -latomic
+endif
+ifeq ($(OS),Linux)
+  EXTRA_LDFLAGS += -lgdbm_compat -lcrypt -latomic
+endif
+ifeq ($(OS),Managarm)
+  EXTRA_LDFLAGS += -lintl -liconv
+endif
+ifeq ($(OS),Minix)
+  EXTRA_LDFLAGS += -lintl
+  STD_C17 = -std=c11
+endif
+ifeq ($(OS),NetBSD)
+  USR_LOCAL_LIB ?= -L/usr/local/lib
+  USR_LOCAL_INCLUDE ?= -I/usr/local/include
+  EXTRA_LDFLAGS += -lintl -lcrypt
+endif
+ifeq ($(OS),OpenBSD)
+  USR_LOCAL_LIB ?= -L/usr/local/lib
+  USR_LOCAL_INCLUDE ?= -I/usr/local/include
+  EXTRA_LDFLAGS += -lintl
+endif
+ifeq ($(OS),Redox)
+  EXTRA_LDFLAGS += -lintl -liconv
+endif
+ifeq ($(OS),Sortix)
+  EXTRA_LDFLAGS += -lintl -liconv
+  NO_SHARED=1
+endif
+ifeq ($(OS),SunOS)
+  LDFLAGS += -lxnet
+  EXTRA_LDFLAGS += -lsocket -latomic
+endif
+NO_SHARED ?= $(NO_SHARED_DEFAULT)
+EXTRA_LDFLAGS := $(USR_LOCAL_LIB) $(EXTRA_LDFLAGS)
+CPPFLAGS := $(USR_LOCAL_INCLUDE) $(CPPFLAGS)
+SHARED_CFLAGS ?= -shared -fPIC
+
+CC_FOR_BUILD ?= $(CC)
+CFLAGS_FOR_BUILD ?= $(CFLAGS)
+CPPFLAGS_FOR_BUILD ?= $(CPPFLAGS)
+LDFLAGS_FOR_BUILD ?= $(LDFLAGS) $(EXTRA_LDFLAGS)

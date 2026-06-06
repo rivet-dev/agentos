@@ -1,0 +1,4 @@
+#include <netinet/tcp.h>
+symbolic_constant TCP_NODELAY;
+namespace ^TCP_;
+[CX] namespace _t$;

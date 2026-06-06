@@ -1,0 +1,22 @@
+#include <endian.h>
+define BYTE_ORDER;
+define LITTLE_ENDIAN;
+define BIG_ENDIAN;
+maybe_define maybe_function be16toh: uint16_t be16toh(uint16_t);
+maybe_define maybe_function be32toh: uint32_t be32toh(uint32_t);
+maybe_define maybe_function be64toh: uint64_t be64toh(uint64_t);
+maybe_define maybe_function htobe16: uint16_t htobe16(uint16_t);
+maybe_define maybe_function htobe32: uint32_t htobe32(uint32_t);
+maybe_define maybe_function htobe64: uint64_t htobe64(uint64_t);
+maybe_define maybe_function htole16: uint16_t htole16(uint16_t);
+maybe_define maybe_function htole32: uint32_t htole32(uint32_t);
+maybe_define maybe_function htole64: uint64_t htole64(uint64_t);
+maybe_define maybe_function le16toh: uint16_t le16toh(uint16_t);
+maybe_define maybe_function le32toh: uint32_t le32toh(uint32_t);
+maybe_define maybe_function le64toh: uint64_t le64toh(uint64_t);
+typedef uint16_t;
+typedef uint32_t;
+typedef uint64_t;
+optional include stdint: stdint.h;
+[CX] namespace _t$;
+namespace _ENDIAN$;

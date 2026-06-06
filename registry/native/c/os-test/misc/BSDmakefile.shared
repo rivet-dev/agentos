@@ -1,0 +1,95 @@
+TEST_SOURCES != find . -name '*.c' | sed 's,^\./,,' | sort
+TESTS := $(TEST_SOURCES:.c=)
+OS != uname -s
+OUT_DIRECTORY ?= ../out
+OUT_SUITE != basename "$$(pwd)"
+OUT_OS != echo "$(OS)" | tr '[:upper:]' '[:lower:]'
+OUT_PATH = $(OUT_DIRECTORY)/$(OUT_OS)/$(OUT_SUITE)
+TEST_RESULTS =
+TEST_ERRORS =
+.for TEST in $(TEST_SOURCES)
+TEST_RESULTS := $(TEST_RESULTS) $(OUT_PATH)/$(TEST:.c=.out)
+TEST_ERRORS := $(TEST_ERRORS) $(OUT_PATH)/$(TEST:.c=.err)
+.endfor
+
+LDFLAGS =
+EXTRA_LDFLAGS =
+STD_C17 = -std=c17
+NO_SHARED_DEFAULT ?= 0
+
+LDFLAGS += -lm
+.if ${OS} != Minix
+  CFLAGS += -pthread
+  LDFLAGS += -lpthread
+.endif
+.if ${OS} != Haiku
+.if ${OS} != Minix
+.if ${OS} != Darwin
+.if ${OS} != OpenBSD
+  LDFLAGS += -lrt
+.endif
+.endif
+.endif
+.endif
+.if ${OS} == AIX
+  EXTRA_LDFLAGS += -liconv -latomic
+.endif
+.if ${OS} == Darwin
+  EXTRA_LDFLAGS += -liconv
+.endif
+.if ${OS} == DragonFly
+  USR_LOCAL_LIB ?= -L/usr/local/lib
+  USR_LOCAL_INCLUDE ?= -I/usr/local/include
+  EXTRA_LDFLAGS += -lintl -lrt -lcrypt
+.endif
+.if ${OS} == FreeBSD
+  USR_LOCAL_LIB ?= -L/usr/local/lib
+  USR_LOCAL_INCLUDE ?= -I/usr/local/include
+  EXTRA_LDFLAGS += -lintl -lstdthreads -lcrypt
+.endif
+.if ${OS} == GNU
+  EXTRA_LDFLAGS += -lgdbm_compat -lcrypt -latomic
+.endif
+.if ${OS} == Haiku
+  EXTRA_LDFLAGS += -lgdbm_compat -lintl -lnetwork -lbsd -latomic
+.endif
+.if ${OS} == Linux
+  EXTRA_LDFLAGS += -lgdbm_compat -lcrypt -latomic
+.endif
+.if ${OS} == Managarm
+  EXTRA_LDFLAGS += -lintl -liconv
+.endif
+.if ${OS} == Minix
+  EXTRA_LDFLAGS += -lintl
+  STD_C17 = -std=c11
+.endif
+.if ${OS} == NetBSD
+  USR_LOCAL_LIB ?= -L/usr/local/lib
+  USR_LOCAL_INCLUDE ?= -I/usr/local/include
+  EXTRA_LDFLAGS += -lintl -lcrypt
+.endif
+.if ${OS} == OpenBSD
+  USR_LOCAL_LIB ?= -L/usr/local/lib
+  USR_LOCAL_INCLUDE ?= -I/usr/local/include
+  EXTRA_LDFLAGS += -lintl
+.endif
+.if ${OS} == Redox
+  EXTRA_LDFLAGS += -lintl -liconv
+.endif
+.if ${OS} == Sortix
+  EXTRA_LDFLAGS += -lintl -liconv
+  NO_SHARED_DEFAULT=1
+.endif
+.if ${OS} == SunOS
+  LDFLAGS += -lxnet
+  EXTRA_LDFLAGS += -lsocket -latomic
+.endif
+NO_SHARED ?= $(NO_SHARED_DEFAULT)
+EXTRA_LDFLAGS := $(USR_LOCAL_LIB) $(EXTRA_LDFLAGS)
+CPPFLAGS := $(USR_LOCAL_INCLUDE) $(CPPFLAGS)
+SHARED_CFLAGS ?= -shared -fPIC
+
+CC_FOR_BUILD ?= $(CC)
+CFLAGS_FOR_BUILD ?= $(CFLAGS)
+CPPFLAGS_FOR_BUILD ?= $(CPPFLAGS)
+LDFLAGS_FOR_BUILD ?= $(LDFLAGS) $(EXTRA_LDFLAGS)

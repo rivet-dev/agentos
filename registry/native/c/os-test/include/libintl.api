@@ -1,0 +1,20 @@
+#include <libintl.h>
+optional define TEXTDOMAINMAX;
+typedef locale_t;
+maybe_define function bindtextdomain: char *bindtextdomain(const char *, const char *);
+maybe_define function bind_textdomain_codeset: char *bind_textdomain_codeset(const char *, const char *);
+maybe_define function dcgettext: char *dcgettext(const char *, const char *, int);
+maybe_define function dcgettext_l: char *dcgettext_l(const char *, const char *, int, locale_t);
+maybe_define function dcngettext: char *dcngettext(const char *, const char *, const char *, unsigned long int, int);
+maybe_define function dcngettext_l: char *dcngettext_l(const char *, const char *, const char *, unsigned long int, int, locale_t);
+maybe_define function dgettext: char *dgettext(const char *, const char *);
+maybe_define function dgettext_l: char *dgettext_l(const char *, const char *, locale_t);
+maybe_define function dngettext: char *dngettext(const char *, const char *, const char *, unsigned long int);
+maybe_define function dngettext_l: char *dngettext_l(const char *, const char *, const char *, unsigned long int, locale_t);
+maybe_define function gettext: char *gettext(const char *);
+maybe_define function gettext_l: char *gettext_l(const char *, locale_t);
+maybe_define function ngettext: char *ngettext(const char *, const char *, unsigned long int);
+maybe_define function ngettext_l: char *ngettext_l(const char *, const char *, unsigned long int, locale_t);
+maybe_define function textdomain: char *textdomain(const char *);
+namespace ^TEXTDOMAINMAX$;
+[CX] namespace _t$;

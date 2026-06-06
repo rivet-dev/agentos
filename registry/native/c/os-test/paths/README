@@ -1,0 +1,10 @@
+This suite tests whether common paths exist in the filesystem.
+
+POSIX only requires /, /dev, /dev/console, /dev/null, /dev/tty, and /tmp to
+exist. All other files and directories are optional and their won't count
+against your system. Except /bin/sh that everyone really must have as universal
+de-facto behavior. /usr/bin/env also really needs to exist for compatibility
+with countless #! scripts. The reality is that there is a lot of paths that are
+ultimately de-facto and everyone has. Meanwhile there are a lot of paths and
+devices that are useful but varies between systems. This suite studies what
+facilities are available on which systems.

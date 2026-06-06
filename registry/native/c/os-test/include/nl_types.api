@@ -1,0 +1,10 @@
+#include <nl_types.h>
+typedef nl_catd;
+typedef nl_item;
+symbolic_constant NL_SETD;
+symbolic_constant NL_CAT_LOCALE;
+maybe_define function catclose: int catclose(nl_catd);
+maybe_define function catgets: char *catgets(nl_catd, int, int, const char *);
+maybe_define function catopen: nl_catd catopen(const char *, int);
+namespace ^NL_;
+[CX] namespace _t$;

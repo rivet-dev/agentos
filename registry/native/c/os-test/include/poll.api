@@ -1,0 +1,27 @@
+#include <poll.h>
+struct pollfd;
+parent struct pollfd struct_member fd: int fd;
+parent struct pollfd struct_member events: short events;
+parent struct pollfd struct_member revents: short revents;
+typedef nfds_t;
+typedef sigset_t;
+struct timespec;
+symbolic_constant POLLIN;
+symbolic_constant POLLRDNORM;
+symbolic_constant POLLRDBAND;
+symbolic_constant POLLPRI;
+symbolic_constant POLLOUT;
+symbolic_constant POLLWRNORM;
+symbolic_constant POLLWRBAND;
+symbolic_constant POLLERR;
+symbolic_constant POLLHUP;
+symbolic_constant POLLNVAL;
+maybe_define function poll: int poll(struct pollfd [], nfds_t, int);
+maybe_define function ppoll: int ppoll(struct pollfd [], nfds_t, const struct timespec *restrict, const sigset_t *restrict);
+optional include signal: signal.h;
+optional include time: time.h;
+namespace ^pd_;
+namespace ^ph_;
+namespace ^ps_;
+namespace ^POLL;
+[CX] namespace _t$;

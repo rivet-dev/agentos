@@ -1,0 +1,26 @@
+[XSI] #include <sys/msg.h>
+[XSI] typedef msgqnum_t;
+[XSI] typedef msglen_t;
+[XSI] symbolic_constant MSG_NOERROR;
+[XSI] struct msqid_ds;
+[XSI] parent struct msqid_ds struct_member msg_perm: struct ipc_perm msg_perm;
+[XSI] parent struct msqid_ds struct_member msg_qnum: msgqnum_t msg_qnum;
+[XSI] parent struct msqid_ds struct_member msg_qbytes: msglen_t msg_qbytes;
+[XSI] parent struct msqid_ds struct_member msg_lspid: pid_t msg_lspid;
+[XSI] parent struct msqid_ds struct_member msg_lrpid: pid_t msg_lrpid;
+[XSI] parent struct msqid_ds struct_member msg_stime: time_t msg_stime;
+[XSI] parent struct msqid_ds struct_member msg_rtime: time_t msg_rtime;
+[XSI] parent struct msqid_ds struct_member msg_ctime: time_t msg_ctime;
+[XSI] typedef pid_t;
+[XSI] typedef size_t;
+[XSI] typedef ssize_t;
+[XSI] typedef time_t;
+[XSI] maybe_define function msgctl: int msgctl(int, int, struct msqid_ds *);
+[XSI] maybe_define function msgget: int msgget(key_t, int);
+[XSI] maybe_define function msgrcv: ssize_t msgrcv(int, void *, size_t, long, int);
+[XSI] maybe_define function msgsnd: int msgsnd(int, const void *, size_t, int);
+[XSI] include sys: sys/ipc.h;
+[XSI XSI] namespace ^msg;
+[XSI XSI] namespace ^MSG_[A-Z];
+[XSI XSI] namespace ^msg$;
+[XSI CX] namespace _t$;

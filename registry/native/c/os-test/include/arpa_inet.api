@@ -1,0 +1,21 @@
+#include <arpa/inet.h>
+typedef in_port_t;
+typedef in_addr_t;
+typedef socklen_t;
+struct in_addr;
+define INET_ADDRSTRLEN;
+[IP6] define INET6_ADDRSTRLEN;
+maybe_define maybe_function htonl: uint32_t htonl(uint32_t);
+maybe_define maybe_function htons: uint16_t htons(uint16_t);
+maybe_define maybe_function ntohl: uint32_t ntohl(uint32_t);
+maybe_define maybe_function ntohs: uint16_t ntohs(uint16_t);
+typedef uint32_t;
+typedef uint16_t;
+[OB] maybe_define function inet_addr: in_addr_t inet_addr(const char *);
+[OB] maybe_define function inet_ntoa: char *inet_ntoa(struct in_addr);
+maybe_define function inet_ntop: const char *inet_ntop(int, const void *restrict, char *restrict, socklen_t);
+maybe_define function inet_pton: int inet_pton(int, const char *restrict, void *restrict);
+optional include netinet: netinet/in.h;
+optional include inttypes: inttypes.h;
+namespace ^inet_;
+[CX] namespace _t$;

@@ -1,0 +1,11 @@
+#include <strings.h>
+[XSI] maybe_define function ffs: int ffs(int);
+[XSI] maybe_define function ffsl: int ffsl(long);
+[XSI] maybe_define function ffsll: int ffsll(long long);
+maybe_define function strcasecmp: int strcasecmp(const char *, const char *);
+maybe_define function strcasecmp_l: int strcasecmp_l(const char *, const char *, locale_t);
+maybe_define function strncasecmp: int strncasecmp(const char *, const char *, size_t);
+maybe_define function strncasecmp_l: int strncasecmp_l(const char *, const char *, size_t, locale_t);
+typedef locale_t;
+typedef size_t;
+[CX] namespace _t$;

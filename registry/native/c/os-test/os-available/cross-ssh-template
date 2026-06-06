@@ -1,0 +1,24 @@
+if [ -z "$host" ] || [ -z "$directory" ]; then
+  cat << \EOF
+usage:
+#!/bin/sh
+host=$HOST
+directory=$DIRECTORY
+#cross_make=$CROSS_MAKE
+#make=$MAKE
+. "$(dirname -- "$(which -- "$0")")/../os-available/cross-ssh-template"
+EOF
+  exit 1
+fi
+make=${make-make}
+cross_make=${cross_make-make}
+$cross_make all
+tar -cf - . |
+ssh $host "rm -rf -- \"$directory\" &&
+mkdir -p -- \"$directory\" &&
+cd \"$directory\" &&
+tar -xf - &&
+$make clean clean-test 1>&2 &&
+$make test 1>&2 &&
+tar -cf - out" |
+tar -xf -

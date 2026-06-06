@@ -1,0 +1,35 @@
+      <h2 id="legend"><a href="#legend">Legend</a></h2>
+      <table class="big-comparison">
+        <tr>
+          <th></th>
+          <th colspan="6">Outcomes</th>
+        </tr>
+        <tr>
+          <th>Good</th>
+          <td class="good">Good</td>
+        </tr>
+        <tr>
+          <th>Neutral</th>
+          <td class="none">None</td>
+        </tr>
+        <tr>
+          <th>Bad</th>
+          <td class="pollution">Namespace pollution</td>
+          <td class="missing_header">Missing header</td>
+        </tr>
+      </table>
+      <p><b>Good.</b> A cell is <samp>good</samp> if all declarations in the
+         header are allowed per POSIX under the
+         <code>-D_POSIX_C_SOURCE=202405</code> or
+         <code>-D_XOPEN_SOURCE=800</code> feature macros, and each declaration
+         had the correct type.</p>
+      <p><b>None.</b> A cell is <samp>none</samp> if there is no test data
+         result for that operating system.</p>
+      <p><b>Namespace pollution.</b> A cell is <samp>pollution</samp> if the
+         header contained a declaration that is not allowed by the POSIX
+         standard under the effective feature macro, or if it had the wrong
+         type. Click the pollution link in the cell to see the rejected
+         declarations.</p>
+      <p><b>Missing header.</b> A cell is <samp>missing_header</samp> if the
+         header did not exist.</p>
+      <p><b>§.</b> The § link on the left of each row links to that row.</p>

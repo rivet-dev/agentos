@@ -1,0 +1,21 @@
+[XSI] #include <ndbm.h>
+[XSI] typedef datum;
+[XSI] parent datum struct_member dptr: void *dptr;
+[XSI] parent datum struct_member dsize: size_t dsize;
+[XSI] typedef size_t;
+[XSI] typedef DBM;
+[XSI] symbolic_constant DBM_INSERT;
+[XSI] symbolic_constant DBM_REPLACE;
+[XSI] maybe_define function dbm_clearerr: int dbm_clearerr(DBM *);
+[XSI] maybe_define function dbm_close: void dbm_close(DBM *);
+[XSI] maybe_define function dbm_delete: int dbm_delete(DBM *, datum);
+[XSI] maybe_define function dbm_error: int dbm_error(DBM *);
+[XSI] maybe_define function dbm_fetch: datum dbm_fetch(DBM *, datum);
+[XSI] maybe_define function dbm_firstkey: datum dbm_firstkey(DBM *);
+[XSI] maybe_define function dbm_nextkey: datum dbm_nextkey(DBM *);
+[XSI] maybe_define function dbm_open: DBM *dbm_open(const char *, int, mode_t);
+[XSI] maybe_define function dbm_store: int dbm_store(DBM *, datum, datum, int);
+[XSI] typedef mode_t;
+[XSI XSI] namespace ^dbm_;
+[XSI XSI] namespace ^DBM_;
+[XSI CX] namespace _t$;

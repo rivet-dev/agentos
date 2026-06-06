@@ -1,0 +1,22 @@
+#include <sys/select.h>
+struct timeval;
+parent struct timeval struct_member tv_sec: time_t tv_sec;
+parent struct timeval struct_member tv_usec: suseconds_t tv_usec;
+typedef time_t;
+typedef suseconds_t;
+typedef sigset_t;
+struct timespec;
+typedef fd_set;
+symbolic_constant FD_SETSIZE;
+maybe_define maybe_function FD_CLR: void FD_CLR(int, fd_set *);
+maybe_define maybe_function FD_ISSET: int FD_ISSET(int, const fd_set *);
+maybe_define maybe_function FD_SET: void FD_SET(int, fd_set *);
+maybe_define maybe_function FD_ZERO: void FD_ZERO(fd_set *);
+maybe_define function pselect: int pselect(int, fd_set *restrict, fd_set *restrict, fd_set *restrict, const struct timespec *restrict, const sigset_t *restrict);
+maybe_define function select: int select(int, fd_set *restrict, fd_set *restrict, fd_set *restrict, struct timeval *restrict);
+optional include signal: signal.h;
+optional include time: time.h;
+namespace ^fd_;
+namespace ^fds_;
+namespace ^FD_;
+[CX] namespace _t$;

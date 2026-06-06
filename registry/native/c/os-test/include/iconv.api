@@ -1,0 +1,7 @@
+#include <iconv.h>
+typedef iconv_t;
+typedef size_t;
+maybe_define function iconv: size_t iconv(iconv_t, char **restrict, size_t *restrict, char **restrict, size_t *restrict);
+maybe_define function iconv_close: int iconv_close(iconv_t);
+maybe_define function iconv_open: iconv_t iconv_open(const char *, const char *);
+[CX] namespace _t$;

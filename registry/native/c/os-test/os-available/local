@@ -1,0 +1,2 @@
+#!/bin/sh
+CC='gcc -std=gnu17' ${MAKE-make} clean clean-test && ${MAKE-make} test

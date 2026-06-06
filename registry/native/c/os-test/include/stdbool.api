@@ -1,0 +1,6 @@
+#include <stdbool.h>
+define bool;
+define true;
+define false;
+define __bool_true_false_are_defined;
+[CX] namespace _t$;

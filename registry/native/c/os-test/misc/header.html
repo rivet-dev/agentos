@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+table.big-comparison {
+	background-color: #EEEEEE;
+	margin-left: auto;
+	margin-right: auto;
+	font-size: 90%;
+}
+
+table.big-comparison tr th {
+	padding-left: 0.1em;
+	padding-right: 0.1em;
+	padding-top: 0.5em;
+	padding-bottom: 0.5em;
+	text-align: center;
+}
+
+table.big-comparison tr td {
+	padding-left: 0.1em;
+	padding-right: 0.1em;
+	padding-top: 0.5em;
+	padding-bottom: 0.5em;
+	text-align: center;
+}
+
+table.big-comparison tr.percentage td {
+	vertical-align: top;
+}
+
+table.big-comparison tr th span.option {
+	font-size: 16px;
+	font-weight: bold;
+	font-family: sans-serif;
+	color: #CF1111;
+}
+
+table.big-comparison tr th span.option > a {
+	color: #CF1111;
+    text-decoration: none;
+}
+
+.score {
+	font-size: 125%;
+}
+.score > a {
+	color: #000030;
+}
+.good {
+	background-color: #80FF80;
+}
+
+.good-1, .missing_optional {
+	background-color: #40BF80;
+}
+
+.good-2, .outside_libc {
+	background-color: #80BF80;
+}
+
+.good-3 {
+	background-color: #80BF40;
+}
+
+.good-4 {
+	background-color: #40BF40;
+}
+
+.good-5 {
+	background-color: #409F40;
+}
+
+.bad {
+	background-color: #FF8080;
+}
+
+.bad-1, .compile_error, .pollution {
+	background-color: #FF8080;
+}
+
+.bad-2, .undefined, .missing_header {
+	background-color: #FF6080;
+}
+
+.bad-3, .incompatible {
+	background-color: #FF8060;
+}
+
+.bad-4, .undeclared {
+	background-color: #FF6060;
+}
+
+.bad-5, .unknown_type {
+	background-color: #BF6060;
+}
+
+.unknown {
+	background-color: #8080FF;
+}
+
+.unknown-1 {
+	background-color: #8080BF;
+}
+
+.unknown-2 {
+	background-color: #6080BF;
+}
+
+.unknown-3 {
+	background-color: #8060BF;
+}
+
+.unknown-4 {
+	background-color: #6060BF;
+}
+
+.unknown-5 {
+	background-color: #60609F;
+}
+
+.unrated, .none {
+	background-color: #D0D0D0;
+}
+
+.unrated-1 {
+	background-color: #C0D0D0;
+}
+
+.unrated-2 {
+	background-color: #D0C0D0;
+}
+
+.unrated-3 {
+	background-color: #D0D0C0;
+}
+
+.unrated-4 {
+	background-color: #C0C0D0;
+}
+
+.unrated-5 {
+	background-color: #D0C0C0;
+}
+
+.extension {
+	background-color: #FFD070;
+}
+
+.previous_posix {
+	background-color: #F0E060;
+}
+    </style>
+    <title>os-test</title>
+  </head/>
+  <body>
+    <article>

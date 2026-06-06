@@ -1,0 +1,3 @@
+#include <sys/types.h>
+blksize_t* foo;
+int main(void) { return 0; }

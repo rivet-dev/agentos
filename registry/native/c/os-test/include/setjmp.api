@@ -1,0 +1,8 @@
+#include <setjmp.h>
+typedef jmp_buf;
+[CX] typedef sigjmp_buf;
+maybe_define function longjmp: _Noreturn void longjmp(jmp_buf, int);
+[CX] maybe_define function siglongjmp: _Noreturn void siglongjmp(sigjmp_buf, int);
+maybe_define maybe_function setjmp: int setjmp(jmp_buf);
+[CX] maybe_define maybe_function sigsetjmp: int sigsetjmp(sigjmp_buf, int);
+[CX] namespace _t$;

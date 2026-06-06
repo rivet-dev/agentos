@@ -1,0 +1,26 @@
+#include <sched.h>
+[PS] typedef pid_t;
+[SS|TSP] typedef time_t;
+struct timespec;
+struct sched_param;
+parent struct sched_param struct_member sched_priority: int sched_priority;
+[SS|TSP] parent struct sched_param struct_member sched_ss_low_priority: int sched_ss_low_priority;
+[SS|TSP] parent struct sched_param struct_member sched_ss_repl_period: struct timespec sched_ss_repl_period;
+[SS|TSP] parent struct sched_param struct_member sched_ss_init_budget: struct timespec sched_ss_init_budget;
+[SS|TSP] parent struct sched_param struct_member sched_ss_max_repl: int sched_ss_max_repl;
+[PS|TPS] symbolic_constant SCHED_FIFO;
+[PS|TPS] symbolic_constant SCHED_RR;
+[SS|TSP] symbolic_constant SCHED_SPORADIC;
+[PS|TPS] symbolic_constant SCHED_OTHER;
+[PS|TPS] maybe_define function sched_get_priority_max: int sched_get_priority_max(int);
+[PS|TPS] maybe_define function sched_get_priority_min: int sched_get_priority_min(int);
+[PS] maybe_define function sched_getparam: int sched_getparam(pid_t, struct sched_param *);
+[PS] maybe_define function sched_getscheduler: int sched_getscheduler(pid_t);
+[PS|TPS] maybe_define function sched_rr_get_interval: int sched_rr_get_interval(pid_t, struct timespec *);
+[PS] maybe_define function sched_setparam: int sched_setparam(pid_t, const struct sched_param *);
+[PS] maybe_define function sched_setscheduler: int sched_setscheduler(pid_t, int, const struct sched_param *);
+maybe_define function sched_yield: int sched_yield(void);
+optional include time: time.h;
+namespace ^sched_;
+namespace ^SCHED_;
+[CX] namespace _t$;

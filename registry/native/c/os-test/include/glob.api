@@ -1,0 +1,21 @@
+#include <glob.h>
+typedef glob_t;
+parent glob_t struct_member gl_pathc: size_t gl_pathc;
+parent glob_t struct_member gl_pathv: char **gl_pathv;
+parent glob_t struct_member gl_offs: size_t gl_offs;
+typedef size_t;
+symbolic_constant GLOB_APPEND;
+symbolic_constant GLOB_DOOFFS;
+symbolic_constant GLOB_ERR;
+symbolic_constant GLOB_MARK;
+symbolic_constant GLOB_NOCHECK;
+symbolic_constant GLOB_NOESCAPE;
+symbolic_constant GLOB_NOSORT;
+symbolic_constant GLOB_ABORTED;
+symbolic_constant GLOB_NOMATCH;
+symbolic_constant GLOB_NOSPACE;
+maybe_define function glob: int glob(const char *restrict, int, int(*)(const char *, int), glob_t *restrict);
+maybe_define function globfree: void globfree(glob_t *);
+namespace ^gl_;
+namespace ^GLOB_;
+[CX] namespace _t$;

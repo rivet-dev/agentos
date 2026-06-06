@@ -1,0 +1,27 @@
+#include <tar.h>
+symbolic_constant TMAGIC: char * TMAGIC;
+symbolic_constant TMAGLEN: int TMAGLEN;
+symbolic_constant TVERSION: char * TVERSION;
+symbolic_constant TVERSLEN: int TVERSLEN;
+symbolic_constant REGTYPE: char REGTYPE;
+symbolic_constant AREGTYPE: char AREGTYPE;
+symbolic_constant LNKTYPE: char LNKTYPE;
+symbolic_constant SYMTYPE: char SYMTYPE;
+symbolic_constant CHRTYPE: char CHRTYPE;
+symbolic_constant BLKTYPE: char BLKTYPE;
+symbolic_constant DIRTYPE: char DIRTYPE;
+symbolic_constant FIFOTYPE: char FIFOTYPE;
+symbolic_constant CONTTYPE: char CONTTYPE;
+symbolic_constant TSUID: int TSUID;
+symbolic_constant TSGID: int TSGID;
+symbolic_constant TSVTX: int TSVTX;
+symbolic_constant TUREAD: int TUREAD;
+symbolic_constant TUWRITE: int TUWRITE;
+symbolic_constant TUEXEC: int TUEXEC;
+symbolic_constant TGREAD: int TGREAD;
+symbolic_constant TGWRITE: int TGWRITE;
+symbolic_constant TGEXEC: int TGEXEC;
+symbolic_constant TOREAD: int TOREAD;
+symbolic_constant TOWRITE: int TOWRITE;
+symbolic_constant TOEXEC: int TOEXEC;
+[CX] namespace _t$;

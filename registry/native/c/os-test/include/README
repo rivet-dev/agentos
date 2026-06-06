@@ -1,0 +1,7 @@
+This suite tests whether headers include the correct declarations.
+
+The POSIX standard has been parsed into machine readable declaration files for
+each header. A test has been generated for each declaration to check if the
+header contains a compatible declaration. The machine readable .api files
+are available in the os-test source code inside the include/ directory and were
+generated with the tool in the posix-parse/ directory.

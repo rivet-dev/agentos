@@ -1,0 +1,6 @@
+#include <stdalign.h>
+define alignas;
+define alignof;
+define __alignas_is_defined;
+define __alignof_is_defined;
+[CX] namespace _t$;

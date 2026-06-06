@@ -1,0 +1,12 @@
+#include <net/if.h>
+struct if_nameindex;
+parent struct if_nameindex struct_member if_index: unsigned if_index;
+parent struct if_nameindex struct_member if_name: char *if_name;
+symbolic_constant IF_NAMESIZE;
+maybe_define function if_freenameindex: void if_freenameindex(struct if_nameindex *);
+maybe_define function if_indextoname: char *if_indextoname(unsigned, char *);
+maybe_define function if_nameindex: struct if_nameindex *if_nameindex(void);
+maybe_define function if_nametoindex: unsigned if_nametoindex(const char *);
+namespace ^if_;
+namespace ^IF_;
+[CX] namespace _t$;

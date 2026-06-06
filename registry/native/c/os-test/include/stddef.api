@@ -1,0 +1,8 @@
+#include <stddef.h>
+[CX] define NULL;
+define offsetof: offsetof(type, member-designator);
+typedef max_align_t;
+typedef ptrdiff_t;
+typedef wchar_t;
+typedef size_t;
+[CX] namespace _t$;

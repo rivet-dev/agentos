@@ -1,0 +1,10 @@
+#include <sys/utsname.h>
+struct utsname;
+parent struct utsname struct_member sysname: char sysname[];
+parent struct utsname struct_member nodename: char nodename[];
+parent struct utsname struct_member release: char release[];
+parent struct utsname struct_member version: char version[];
+parent struct utsname struct_member machine: char machine[];
+maybe_define function uname: int uname(struct utsname *);
+namespace ^uts_;
+[CX] namespace _t$;

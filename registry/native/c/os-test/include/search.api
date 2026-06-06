@@ -1,0 +1,27 @@
+[XSI] #include <search.h>
+[XSI] typedef ENTRY;
+[XSI] struct entry;
+[XSI] parent struct entry struct_member key: char *key;
+[XSI] parent struct entry struct_member data: void *data;
+[XSI] typedef ACTION;
+[XSI] typedef VISIT;
+[XSI] parent ACTION enum_member FIND;
+[XSI] parent ACTION enum_member ENTER;
+[XSI] parent VISIT enum_member preorder;
+[XSI] parent VISIT enum_member postorder;
+[XSI] parent VISIT enum_member endorder;
+[XSI] parent VISIT enum_member leaf;
+[XSI] typedef size_t;
+[XSI] typedef posix_tnode;
+[XSI] maybe_define function hcreate: int hcreate(size_t);
+[XSI] maybe_define function hdestroy: void hdestroy(void);
+[XSI] maybe_define function hsearch: ENTRY *hsearch(ENTRY, ACTION);
+[XSI] maybe_define function insque: void insque(void *, void *);
+[XSI] maybe_define function lfind: void *lfind(const void *, const void *, size_t *, size_t, int (*)(const void *, const void *));
+[XSI] maybe_define function lsearch: void *lsearch(const void *, void *, size_t *, size_t, int (*)(const void *, const void *));
+[XSI] maybe_define function remque: void remque(void *);
+[XSI] maybe_define function tdelete: void *tdelete(const void *restrict, posix_tnode **restrict, int(*)(const void *, const void *));
+[XSI] maybe_define function tfind: posix_tnode *tfind(const void *, posix_tnode *const *, int(*)(const void *, const void *));
+[XSI] maybe_define function tsearch: posix_tnode *tsearch(const void *, posix_tnode **, int(*)(const void *, const void *));
+[XSI] maybe_define function twalk: void twalk(const posix_tnode *, void (*)(const posix_tnode *, VISIT, int));
+[XSI CX] namespace _t$;

@@ -1,0 +1,28 @@
+[XSI] #include <sys/shm.h>
+[XSI] symbolic_constant SHM_RDONLY;
+[XSI] symbolic_constant SHM_RND;
+[XSI] symbolic_constant SHMLBA;
+[XSI] symbolic_constant SHM_FAILED: void *SHM_FAILED;
+[XSI] typedef intptr_t;
+[XSI] typedef shmatt_t;
+[XSI] struct shmid_ds;
+[XSI] parent struct shmid_ds struct_member shm_perm: struct ipc_perm shm_perm;
+[XSI] parent struct shmid_ds struct_member shm_segsz: size_t shm_segsz;
+[XSI] parent struct shmid_ds struct_member shm_lpid: pid_t shm_lpid;
+[XSI] parent struct shmid_ds struct_member shm_cpid: pid_t shm_cpid;
+[XSI] parent struct shmid_ds struct_member shm_nattch: shmatt_t shm_nattch;
+[XSI] parent struct shmid_ds struct_member shm_atime: time_t shm_atime;
+[XSI] parent struct shmid_ds struct_member shm_dtime: time_t shm_dtime;
+[XSI] parent struct shmid_ds struct_member shm_ctime: time_t shm_ctime;
+[XSI] typedef pid_t;
+[XSI] typedef size_t;
+[XSI] typedef time_t;
+[XSI] maybe_define function shmat: void *shmat(int, const void *, int);
+[XSI] maybe_define function shmctl: int shmctl(int, int, struct shmid_ds *);
+[XSI] maybe_define function shmdt: int shmdt(const void *);
+[XSI] maybe_define function shmget: int shmget(key_t, size_t, int);
+[XSI] include sys: sys/ipc.h;
+[XSI XSI] namespace ^shm;
+[XSI XSI] namespace ^SHM[A-Z];
+[XSI XSI] namespace ^SHM_[A-Z];
+[XSI CX] namespace _t$;

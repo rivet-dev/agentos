@@ -1,0 +1,10 @@
+#include <fnmatch.h>
+symbolic_constant FNM_NOMATCH;
+symbolic_constant FNM_PATHNAME;
+symbolic_constant FNM_PERIOD;
+symbolic_constant FNM_NOESCAPE;
+symbolic_constant FNM_CASEFOLD;
+symbolic_constant FNM_IGNORECASE;
+maybe_define function fnmatch: int fnmatch(const char *, const char *, int);
+namespace ^FNM_;
+[CX] namespace _t$;

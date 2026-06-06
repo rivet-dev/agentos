@@ -1,0 +1,246 @@
+os-test is a set of test suites for POSIX operating systems designed to make it
+easy to compare differences between operating systems and to find operating
+system bugs. It consists of test suites that focus on different operating system
+areas.
+
+os-test has been tested on DragonFly, FreeBSD, Haiku, Hurd, Linux, Minix,
+NetBSD, OpenBSD, and Sortix.
+
+os-test has been generously funded by the Next Generation Internet Zero Commons
+fund managed by the NLnet Foundation <https://sortix.org/blog/os-test-funding/>.
+
+## Dependencies ##
+
+os-test strives to have as few dependencies as possible. However, some parts of
+POSIX are provided as ports on some operating systems, such as libiconv, libintl,
+libcrypt, and libgdbm_compat. You will need to install those libraries if this
+is how your operating system provides that part of POSIX/XSI, or you can
+override the `EXTRA_LDFLAGS` variable to not link with them.
+
+On BSD systems, `/usr/local/include` and `/usr/local/lib` are not in the default
+compiler search path, but `os-test` explicitly searches these directories to
+find e.g. the `libintl` port. See below on how to configure this behavior.
+
+## Usage ##
+
+os-test uses makefiles and is compatible with both GNU and BSD make by having
+a GNUmakefile for GNU make and a BSDmakefile for BSD make. GNU make will
+automatically prefer GNUmakefile, and there is a symlink Makefile -> BSDmakefile
+for BSD makes that don't look for BSDmakefile.
+
+These makefile targets are available:
+
+* `all` (default) - compile all the testcases in every suite.
+
+* `test` - compile all the testcases in every suite, if not already done,
+   and then sequentially run the testcases if they haven't already been run.
+
+* `clean` - delete all the compiled testcases and test outcomes.
+
+* `clean-test` - deletes all the test outcomes.
+
+* `html` - compile and run the tests as needed and then generate a
+  `html/index.html` tree of reports containing the test results and scores.
+
+* `json` - compile and run the tests as needed and then generate a
+  `os-test.json` in the json format report containing the test results.
+
+* `jsonl` - like `json` but in json lines format.
+
+Every test foo in suite bar is a file called bar/foo.c, which is compiled to
+bar/foo, and the test outcome is stored in bar/foo.out. The test expectations
+are the files bar.expect/foo.*, where the special expectations
+bar.expect/foo.unknown.* contains known test outcomes that is not currently
+known whether are good or bad.
+
+Every suite has a `README` file in its subdirectory. You should read this file
+before running the suite to understand the consequences of running the suite.
+The list of suites is stored in `misc/suites.list`.
+
+## Running on multiple operating systems ##
+
+os-test can run tests on multiple operating systems automatically. Each file in
+the `os' directory is an executable script that is run inside a fresh checkout
+of os-test in `out/os-name`. The script is expected to copy the current
+directory onto the target operating system, compile and run the tests, and then
+copy back the test outcomes to the current directory.
+
+Operating systems can be conveniently disabled or enabled by placing the actual
+script in the `os-available` directory, and then making a symlink to the actual
+script in the `os` directory: `ln -s ../os-available/foo foo`.
+
+The distributed testing is handled using makefiles: GNUmakefile.os for GNU
+make and BSDmakefile.os for BSD make where Makefile.os is a symbolic link
+Makefile.os -> BSDmakefile.os. Use the makefiles by running
+`make -f GNUmakefile.os` or `make -f BSDmakefile.os` depending on your system.
+
+These makefile targets are available:
+
+* `all` (default) - run the tests on every operating system and store the
+  outcomes in the `out` directory, even if they have already been run.
+
+* `os-name` - run the tests on that operating system, even if they have already
+  been run.
+
+* `clean` - delete the `out` directory.
+
+* `os-name-clean` - clean the tests of that operating system by deleting the
+  `out/os-name` directory.
+
+* `html` - run the tests on every operating system and generate a
+  `html/index.html` tree of reports containing the test results and scores.
+
+* `json` - run the tests on every operating system and generate a
+  `os-test.json` in the json format report containing the test results.
+
+* `jsonl` - like `json` but in json lines format.
+
+The `os-available` directory contains a `local` operating system that simply
+runs the testcases on the local operating system.
+
+The `os-available` directory contains a `in-template` script fragment that makes
+it easy to write a OS script that doesn't run the testcases, but just copies
+existing test outcomes from a directory. You can use it by making an executable
+`os/foo` file with the following contents:
+
+    #!/bin/sh
+    directory=somewhere
+    . "$(dirname -- "$(which -- "$0")")/../os-available/in-template"
+
+The `os-available` directory contains a `ssh-template` script fragment that
+makes it easy to write a OS script that uses ssh to copy the files to a remote
+system, run the testcases, and copy the the test outcomes back to the local
+system. You can use it by making an executable `os/foo` file with the following
+contents:
+
+    #!/bin/sh
+    host=192.0.2.01
+    directory=/path/to/place/os-test
+    . "$(dirname -- "$(which -- "$0")")/../os-available/ssh-template"
+
+## Cross-compilation ##
+
+Cross-compiling tests is supported, although you will still need to execute the
+tests on the host system to obtain the test results. The
+`misc/BSDmakefile.shared` and `misc/GNUmakefile.shared` files contains
+per-operating-system logic that you can use or amend, if you wish, or you can
+manually force the following variables when invoking `make`:
+
+* `OS` - The name of the host OS, as the output of `uname -s`, which is used to
+  default the following variables (except `CC`) if recognized. It controls the
+  logic in `misc/BSDmakefile.shared` and `misc/GNUmakefile.shared`. If you have
+  a new operating system not listed here, feel free to submit the logic for your
+  system. In the future, the compiler features and libraries may just be
+  detected automatically instead.
+
+* `CC` - The C compiler that runs on the build system and produces executables
+  for the host system.
+
+* `USR_LOCAL_INCLUDE` - Set to `-L/usr/local/include` on BSD systems, and is
+  added to `CPPFLAGS`. You can use this variable to opt in/out of using
+  ports in addition to the base system.
+
+* `USR_LOCAL_LIB` - Set to `-L/usr/local/lib` on BSD systems, and is
+  added to `EXTRA_LDFLAGS`. You can use this variable to opt in/out of using
+  ports in addition to the base system.
+
+* `CFLAGS` - The required options to the C compiler that makes it function
+  correctly for the host system environment. Typically this will include
+  `-pthread` to turn on threading support. Warnings should be omitted as some
+  tests are compiled with `-Werror` to detect incompatible system headers and
+  false positives will cause invalid results.
+
+* `CPPFLAGS` - Additional C preprocessor options for the C compiler. This
+  variable must typically not contain any feature macros, or the test results
+  will be invalid, as the feature macros are added by the compile scripts in
+  `misc/` as needed to measure compliance. On BSD systems, you may wish to use
+  `-I/usr/local/include` as e.g. libintl is now part of POSIX and is provided as
+   a port.
+
+* `LDFLAGS` - The options required to link with the POSIX standard library,
+  which may only include `-lc -lpthread -lm -lrt -lxnet` or the test results
+  will be invalid. Use `EXTRA_LDFLAGS` for additional libraries.
+
+* `EXTRA_LDFLAGS` - Additional link options for non-standard libraries that are
+  required by the implementation. These could be e.g.
+  `-lgdbm_compat -lintl -liconv -lcrypt -liconv -latomic` and such. On BSD
+  systems, you may wish to use `-L/usr/local/include` as e.g. libintl is now
+  part of POSIX and is provided as a port.
+
+* `SHARED_CFLAGS' - The options required to create a shared library. By default
+  this variable is `-shared -fPIC`.
+
+* `NO_SHARED` - If dynamic linking is not implemented, set this variable to `1`
+  and shared libraries will not be built.
+
+The `CC_FOR_BUILD`, `CFLAGS_FOR_BUILD`, `CPPFLAGS_FOR_BUILD`, and
+`LDFLAGS_FOR_BUILD` variables are used to compile programs that run on the
+current machine in order to process test results.
+
+A full example that cross-compiles to a new unknown operating system and forces
+all settings manually:
+
+    make OS=MyOS CC=x86_64-myos-gcc CFLAGS='-pthread' CPPFLAGS='' \
+         LDFLAGS='-lpthread -lm -lrt' EXTRA_LDFLAGS='-latomic' \
+         CC_FOR_BUILD=cc CFLAGS_FOR_BUILD=pthread CPPFLAGS_FOR_BUILD= \
+         LDFLAGS_FOR_BUILD= all
+
+This command will produce all the compile-time results in `out/myos`. You will
+have to transfer the whole os-test directory, including `out`, to the host
+system to finish the job, and then run:
+
+    make test
+
+All the tests that are already compiled shouldn't need to be recompiled, and the
+`OS` variable shouldn't be needed since it already matches the `uname -s`
+output. Alternatively you can arrange to manually run `../misc/run.sh` on every
+test program that doesn't have a test result already if you are unable to run
+the makefile. If you're unable to execute `run.sh`, you will need to replace its
+logic somehow with your own.
+
+You can collect the test results in the `out/myos` directory afterwards:
+
+1. You can produce a html report on the host system if it's capable enough by
+   running `make html`; or
+
+2. You can transfer the tests results back to your host system in `out/myos` and
+   run `make html` to compare the test results for your build system and the
+   host system; or
+
+3. You can transfer the tests results back to your host system in `out/myos` and
+   run `make misc/html && misc/html` to just produce a report for just your host
+   system.
+
+However, note the powerful `Makefile.os` feature above, and consider automating
+the process `os/myos` script that that cross-compiles os-test, somehow transfers
+os-test into an instance of MyOS, somehow runs the tests, and somehow transfers
+the the `out` directory back to the build system.
+
+The `os-available/cross-ssh-template` example cross-compiles the tests and uses
+`ssh` to execute them and transfer the results out. Set the `cross_make`
+variable to e.g. `make OS=MyOS CC=x86_64-myos-gcc` to do the cross-compilation.
+You can make a modified copy if you wish to use another execution method.
+
+## Skipping tests ##
+
+You may experience that tests cause a panic or hang on new unknown operating
+systems that have not run os-test before. No such behaviors are known on any
+systems where os-test has published results for.
+
+If a test cause the operating system to panic, congratulations on os-test
+finding a major operating system bug. If a test hangs forever, you may have
+found a bug in the operating _and_ os-test. Please report any hangs you
+experience. We may fix bugs and/or amend tests with an appropriate timeout.
+
+You can disable tests by simply making failing test results ahead of time, and
+copying them into your results before doing a fresh test execution.
+
+    mkdir -p out.known/myos
+    echo panic > out.known/myos/foo/bar.out
+    cp -t out -R out.known/myos
+    make test
+
+The html report will show these outcomes as failures, so you don't forget about
+them. Alternatively you can delete the appropriate source files or edit the
+test source code, but this approach creates an alterate os-test that you may
+need to maintain and you risk forgetting about these tests.
