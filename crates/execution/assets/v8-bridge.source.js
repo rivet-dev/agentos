@@ -17710,6 +17710,7 @@ ${headerLines}\r
     _loopbackDispatchRunning = false;
     _loopbackDispatchPending = false;
     _loopbackReadableEnded = false;
+    _loopbackUpgradeSocket = null;
     _loopbackEventQueue = Promise.resolve();
     _encoding;
     _noDelayState = false;
@@ -17836,6 +17837,13 @@ ${headerLines}\r
       if (this._loopbackServer) {
         debugBridgeNetwork("socket write loopback", this._socketId, buf.length);
         this.bytesWritten += buf.length;
+        if (this._loopbackUpgradeSocket) {
+          this._touchTimeout();
+          this._loopbackUpgradeSocket._pushData(buf);
+          const cb2 = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+          if (cb2) cb2();
+          return true;
+        }
         this._loopbackBuffer = Buffer.concat([this._loopbackBuffer, buf]);
         this._touchTimeout();
         this._dispatchLoopbackHttpRequest();
@@ -17877,7 +17885,11 @@ ${headerLines}\r
         }
       });
       if (this._loopbackServer) {
-        if (!this._loopbackReadableEnded) {
+        if (this._loopbackUpgradeSocket) {
+          queueMicrotask(() => {
+            this._loopbackUpgradeSocket?._pushEnd();
+          });
+        } else if (!this._loopbackReadableEnded) {
           queueMicrotask(() => {
             this._closeLoopbackReadable();
           });
@@ -17906,6 +17918,8 @@ ${headerLines}\r
         this._bridgeReadPollTimer = null;
       }
       if (this._loopbackServer) {
+        this._loopbackUpgradeSocket?.destroy(error);
+        this._loopbackUpgradeSocket = null;
         this._loopbackServer = null;
         if (error) {
           this._emitNet("error", error);
@@ -18422,13 +18436,19 @@ ${headerLines}\r
         return;
       }
       try {
+        const socket = new DirectTunnelSocket({
+          host: this.remoteAddress,
+          port: this.remotePort
+        });
+        socket._attachPeer({
+          _pushData: (data) => this._pushLoopbackData(data),
+          _pushEnd: () => this._closeLoopbackReadable()
+        });
+        this._loopbackUpgradeSocket = socket;
         this._loopbackServer._emit(
           "upgrade",
           new ServerIncomingMessage(request),
-          new DirectTunnelSocket({
-            host: this.remoteAddress,
-            port: this.remotePort
-          }),
+          socket,
           head
         );
       } catch (error) {
