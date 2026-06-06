@@ -2144,6 +2144,10 @@ fn prepend_v8_runtime_shim(
     if (typeof nextEnv.AGENT_OS_VIRTUAL_PROCESS_EXEC_PATH === "string" && nextEnv.AGENT_OS_VIRTUAL_PROCESS_EXEC_PATH.length > 0) {{
       process.execPath = nextEnv.AGENT_OS_VIRTUAL_PROCESS_EXEC_PATH;
     }}
+    if (nextEnv.AGENT_OS_NODE_IPC === "1" && typeof __runtimeInstallProcessIpcBridge === "function") {{
+      process.connected = true;
+      __runtimeInstallProcessIpcBridge();
+    }}
     process.cwd = () => nextCwd;
     process._cwd = nextCwd;
     if (typeof process.getBuiltinModule !== "function") {{

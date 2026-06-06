@@ -2207,53 +2207,71 @@ console.log(JSON.stringify({
     );
 }
 
-fn child_process_fork_emits_error_async_impl() {
-    let cwd = temp_dir("builtin-child-process-fork-async-error");
+fn child_process_fork_supports_basic_ipc_impl() {
+    let cwd = temp_dir("builtin-child-process-fork-ipc");
     let entrypoint = cwd.join("entry.mjs");
+    let worker = cwd.join("worker.mjs");
+    write_fixture(
+        &worker,
+        r#"
+process.send({
+  type: "ready",
+  connected: process.connected,
+  argv: process.argv.slice(-1),
+});
+
+process.on("message", (message) => {
+  process.send({
+    type: "pong",
+    value: message.value + 1,
+    connected: process.connected,
+  });
+  process.exit(0);
+});
+"#,
+    );
     write_fixture(
         &entrypoint,
         r#"
 import childProcess from "node:child_process";
+import { Buffer } from "node:buffer";
 
-let child = null;
-let syncThrow = null;
+const child = childProcess.fork("./worker.mjs", ["worker-arg"]);
+const stdout = [];
+const messages = [];
+const errors = [];
+let sendReturn = null;
 
-try {
-  child = childProcess.fork("./worker.mjs");
-} catch (error) {
-  syncThrow = {
-    name: error?.name ?? null,
-    message: error?.message ?? null,
-  };
-}
+child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+child.on("error", (error) => errors.push({
+  name: error?.name ?? null,
+  message: error?.message ?? null,
+  code: error?.code ?? null,
+}));
+child.on("message", (message) => {
+  messages.push(message);
+  if (message.type === "ready") {
+    sendReturn = child.send({ type: "ping", value: 41 });
+  }
+});
 
-let errorEvent = null;
-let receivedBeforeAwait = null;
-
-if (child) {
-  child.on("error", (error) => {
-    errorEvent = {
-      name: error?.name ?? null,
-      message: error?.message ?? null,
-    };
-  });
-  receivedBeforeAwait = errorEvent !== null;
-  await Promise.resolve();
-}
+const exit = await new Promise((resolve) => {
+  child.on("close", (code, signal) => resolve({ code, signal }));
+});
 
 console.log(JSON.stringify({
-  returnedChild: child !== null,
-  hasOn: typeof child?.on === "function",
-  hasStdout: child?.stdout != null,
-  syncThrow,
-  receivedBeforeAwait,
-  errorEvent,
+  connectedAfterFork: child.connected,
+  sendReturn,
+  messages,
+  errors,
+  stdoutBase64: Buffer.concat(stdout).toString("base64"),
+  exit,
 }));
 "#,
     );
 
     let guest = run_guest_probe_with_config(
-        "child-process-fork-async-error",
+        "child-process-fork-ipc",
         &cwd,
         &entrypoint,
         BTreeMap::new(),
@@ -2261,22 +2279,40 @@ console.log(JSON.stringify({
         &["child_process"],
     );
 
-    assert_eq!(guest["returnedChild"], Value::Bool(true));
-    assert_eq!(guest["hasOn"], Value::Bool(true));
-    assert_eq!(guest["hasStdout"], Value::Bool(true));
-    assert_eq!(guest["syncThrow"], Value::Null);
-    assert_eq!(guest["receivedBeforeAwait"], Value::Bool(false));
+    let pretty_guest = serde_json::to_string_pretty(&guest).expect("pretty guest JSON");
     assert_eq!(
-        guest["errorEvent"]["message"],
-        Value::String(String::from(
-            "child_process.fork is not supported in sandbox"
-        ))
+        guest["sendReturn"],
+        Value::Bool(true),
+        "guest result:\n{pretty_guest}"
     );
+    assert_eq!(
+        guest["errors"],
+        Value::Array(Vec::new()),
+        "guest result:\n{pretty_guest}"
+    );
+    assert_eq!(guest["stdoutBase64"], Value::String(String::new()));
+    assert_eq!(guest["exit"]["code"], Value::from(0));
+    assert_eq!(guest["exit"]["signal"], Value::Null);
+    assert_eq!(
+        guest["messages"][0]["type"],
+        Value::String(String::from("ready"))
+    );
+    assert_eq!(guest["messages"][0]["connected"], Value::Bool(true));
+    assert_eq!(
+        guest["messages"][0]["argv"][0],
+        Value::String(String::from("worker-arg"))
+    );
+    assert_eq!(
+        guest["messages"][1]["type"],
+        Value::String(String::from("pong"))
+    );
+    assert_eq!(guest["messages"][1]["value"], Value::from(42));
+    assert_eq!(guest["messages"][1]["connected"], Value::Bool(true));
 }
 
 #[test]
-fn child_process_fork_emits_error_async() {
-    run_isolated_builtin_conformance_test("child-process-fork-async-error");
+fn child_process_fork_supports_basic_ipc() {
+    run_isolated_builtin_conformance_test("child-process-fork-ipc");
 }
 
 fn child_process_exec_preserves_spawn_error_codes_impl() {
@@ -3747,7 +3783,7 @@ fn __builtin_conformance_extra_test_runner() {
     match test_name.as_str() {
         "http-request-keepalive" => http_request_custom_agent_reuses_keepalive_socket_impl(),
         "http-request-denied" => http_request_denied_egress_returns_permission_error_impl(),
-        "child-process-fork-async-error" => child_process_fork_emits_error_async_impl(),
+        "child-process-fork-ipc" => child_process_fork_supports_basic_ipc_impl(),
         "http-socket-writes" => http_socket_writes_do_not_silently_drop_data_impl(),
         "buffer-concat-truncation" => buffer_concat_truncation_matches_host_node_impl(),
         "mkdtemp-sync-collision-safe" => mkdtemp_sync_collision_safe_matches_host_node_impl(),

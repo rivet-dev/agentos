@@ -8615,6 +8615,41 @@ var __bridge = (() => {
     }
     return payload;
   }
+  const CHILD_PROCESS_IPC_FRAME_PREFIX = "\x1EAGENTOS_IPC:";
+  function encodeChildProcessIpcFrame(message) {
+    const json = JSON.stringify(message);
+    const encoded = typeof Buffer !== "undefined" ? Buffer.from(json, "utf8").toString("base64") : btoa(json);
+    return `${CHILD_PROCESS_IPC_FRAME_PREFIX}${encoded}\n`;
+  }
+  function decodeChildProcessIpcFramePayload(payload) {
+    const json = typeof Buffer !== "undefined" ? Buffer.from(payload, "base64").toString("utf8") : atob(payload);
+    return JSON.parse(json);
+  }
+  function splitChildProcessIpcFrames(buffer, chunk) {
+    const text = `${buffer}${typeof Buffer !== "undefined" ? Buffer.from(chunk).toString("utf8") : String(chunk)}`;
+    const messages = [];
+    const output = [];
+    let cursor = 0;
+    while (true) {
+      const frameStart = text.indexOf(CHILD_PROCESS_IPC_FRAME_PREFIX, cursor);
+      if (frameStart === -1) {
+        output.push(text.slice(cursor));
+        return { buffer: "", messages, output: output.join("") };
+      }
+      output.push(text.slice(cursor, frameStart));
+      const payloadStart = frameStart + CHILD_PROCESS_IPC_FRAME_PREFIX.length;
+      const frameEnd = text.indexOf("\n", payloadStart);
+      if (frameEnd === -1) {
+        return { buffer: text.slice(frameStart), messages, output: output.join("") };
+      }
+      try {
+        messages.push(decodeChildProcessIpcFramePayload(text.slice(payloadStart, frameEnd)));
+      } catch (error) {
+        output.push(text.slice(frameStart, frameEnd + 1));
+      }
+      cursor = frameEnd + 1;
+    }
+  }
   function dispatchChildProcessPollResult(sessionId, next) {
     if (!next || typeof next !== "object") {
       return false;
@@ -8720,12 +8755,26 @@ var __bridge = (() => {
     if (!child) return;
     if (type === "stdout") {
       const buf = typeof Buffer !== "undefined" ? Buffer.from(data) : data;
+      if (child._ipcEnabled) {
+        const parsed = splitChildProcessIpcFrames(child._ipcStdoutBuffer, buf);
+        child._ipcStdoutBuffer = parsed.buffer;
+        for (const message of parsed.messages) {
+          child._emitOrQueueIpcMessage(message);
+        }
+        if (parsed.output.length === 0) {
+          return;
+        }
+        child.stdout.emit("data", typeof Buffer !== "undefined" ? Buffer.from(parsed.output, "utf8") : parsed.output);
+        return;
+      }
       child.stdout.emit("data", buf);
     } else if (type === "stderr") {
       const buf = typeof Buffer !== "undefined" ? Buffer.from(data) : data;
       child.stderr.emit("data", buf);
     } else if (type === "exit") {
       completeDetachedChildBootstrap(child);
+      const wasConnected = child.connected;
+      child.connected = false;
       const signalCode = child._pendingSignalCode ?? (data && typeof data === "object" ? data.signal ?? null : null);
       const exitCode = data && typeof data === "object" ? data.code : data;
       child._pendingSignalCode = null;
@@ -8733,6 +8782,9 @@ var __bridge = (() => {
       child.exitCode = signalCode == null ? exitCode : null;
       child.stdout.emit("end");
       child.stderr.emit("end");
+      if (wasConnected) {
+        child.emit("disconnect");
+      }
       child.emit("close", child.exitCode, child.signalCode);
       child.emit("exit", child.exitCode, child.signalCode);
       childProcessInstances.delete(sessionId);
@@ -8960,6 +9012,9 @@ var __bridge = (() => {
     _handleId = null;
     _handleDescription = "";
     _handleRefed = false;
+    _ipcEnabled = false;
+    _ipcStdoutBuffer = "";
+    _ipcQueuedMessages = [];
     spawnfile = "";
     spawnargs = [];
     stdin;
@@ -9232,12 +9287,18 @@ var __bridge = (() => {
       if (!this._listeners[event]) this._listeners[event] = [];
       this._listeners[event].push(listener);
       this._checkMaxListeners(event);
+      if (event === "message") {
+        this._flushQueuedIpcMessages();
+      }
       return this;
     }
     once(event, listener) {
       if (!this._onceListeners[event]) this._onceListeners[event] = [];
       this._onceListeners[event].push(listener);
       this._checkMaxListeners(event);
+      if (event === "message") {
+        this._flushQueuedIpcMessages();
+      }
       return this;
     }
     off(event, listener) {
@@ -9271,6 +9332,26 @@ var __bridge = (() => {
           }
         }
       }
+    }
+    _hasIpcMessageListeners() {
+      return (this._listeners.message?.length ?? 0) > 0 || (this._onceListeners.message?.length ?? 0) > 0;
+    }
+    _emitOrQueueIpcMessage(message) {
+      if (!this._hasIpcMessageListeners()) {
+        this._ipcQueuedMessages.push(message);
+        return false;
+      }
+      return this.emit("message", message, void 0);
+    }
+    _flushQueuedIpcMessages() {
+      if (this._ipcQueuedMessages.length === 0) {
+        return;
+      }
+      queueMicrotask(() => {
+        while (this._ipcQueuedMessages.length > 0 && this._hasIpcMessageListeners()) {
+          this.emit("message", this._ipcQueuedMessages.shift(), void 0);
+        }
+      });
     }
     emit(event, ...args) {
       let handled = false;
@@ -9320,6 +9401,25 @@ var __bridge = (() => {
     }
     disconnect() {
       this.connected = false;
+      this.emit("disconnect");
+    }
+    send(message, sendHandleOrOptions, optionsOrCallback, maybeCallback) {
+      if (!this.connected || !this._ipcEnabled || this._sessionId == null) {
+        return false;
+      }
+      const callback = typeof sendHandleOrOptions === "function" ? sendHandleOrOptions : typeof optionsOrCallback === "function" ? optionsOrCallback : maybeCallback;
+      try {
+        const frame = encodeChildProcessIpcFrame(message);
+        this.stdin.write(frame, "utf8", callback);
+        return true;
+      } catch (error) {
+        if (callback) {
+          queueMicrotask(() => callback(error));
+          return false;
+        }
+        this.emit("error", error);
+        return false;
+      }
     }
     _complete(stdout, stderr, code) {
       const signalCode = this._pendingSignalCode ?? this.signalCode;
@@ -10068,13 +10168,37 @@ var __bridge = (() => {
     }
     return typeof result.stdout === "string" ? result.stdout : result.stdout.toString(opts.encoding);
   }
-  function fork(_modulePath, _args, _options) {
-    const child = new ChildProcess();
-    child.spawnfile = typeof _modulePath === "string" ? _modulePath : "";
-    child.spawnargs = child.spawnfile ? [child.spawnfile] : [];
-    queueMicrotask(() => {
-      child.emit("error", new Error("child_process.fork is not supported in sandbox"));
+  function fork(modulePath, args, options) {
+    if (typeof modulePath !== "string" || modulePath.length === 0) {
+      throw new TypeError("The \"modulePath\" argument must be of type string");
+    }
+    let argsArray = [];
+    let opts = {};
+    if (Array.isArray(args)) {
+      argsArray = args.slice();
+      opts = options || {};
+    } else {
+      opts = args || {};
+    }
+    const effectiveCwd = opts.cwd ?? (typeof process !== "undefined" ? process.cwd() : "/");
+    const execArgv = Array.isArray(opts.execArgv) ? opts.execArgv : typeof process !== "undefined" && Array.isArray(process.execArgv) ? process.execArgv : [];
+    const env = {
+      ...(typeof process !== "undefined" ? process.env : {}),
+      ...(opts.env || {}),
+      AGENT_OS_NODE_IPC: "1"
+    };
+    const child = spawn(opts.execPath || (typeof process !== "undefined" ? process.execPath : "node"), [
+      ...execArgv,
+      modulePath,
+      ...argsArray
+    ], {
+      ...opts,
+      cwd: effectiveCwd,
+      env,
+      shell: false
     });
+    child._ipcEnabled = true;
+    child.connected = true;
     return child;
   }
   var childProcess = {
@@ -23288,7 +23412,7 @@ ${headerLines}\r
     stderr: _stderr,
     stdin: _stdin,
     // Process state
-    connected: false,
+    connected: config2.env?.AGENT_OS_NODE_IPC === "1",
     // Module info (will be set by createRequire)
     mainModule: void 0,
     // No-op methods for compatibility
@@ -23326,11 +23450,35 @@ ${headerLines}\r
     },
     setUncaughtExceptionCaptureCallback() {
     },
-    // Send for IPC (no-op)
-    send() {
-      return false;
+    send(message, sendHandleOrOptions, optionsOrCallback, maybeCallback) {
+      const callback = typeof sendHandleOrOptions === "function" ? sendHandleOrOptions : typeof optionsOrCallback === "function" ? optionsOrCallback : maybeCallback;
+      if (!process2.connected) {
+        return false;
+      }
+      try {
+        process2.stdout.write(encodeChildProcessIpcFrame(message));
+        if (callback) {
+          queueMicrotask(() => callback(null));
+        }
+        return true;
+      } catch (error) {
+        if (callback) {
+          queueMicrotask(() => callback(error));
+          return false;
+        }
+        throw error;
+      }
     },
     disconnect() {
+      if (!process2.connected) {
+        return;
+      }
+      process2.connected = false;
+      if (process2._agentOsIpcHandleId && typeof _unregisterHandle === "function") {
+        _unregisterHandle(process2._agentOsIpcHandleId);
+        process2._agentOsIpcHandleId = null;
+      }
+      _emit("disconnect");
     },
     // Report
     report: {
@@ -23354,6 +23502,26 @@ ${headerLines}\r
     _cwd: config2.cwd,
     _umask: 18
   };
+  function installProcessIpcBridge() {
+    const ipcEnabled = config2.env?.AGENT_OS_NODE_IPC === "1" || globalThis.__agentOsProcessConfigEnv?.AGENT_OS_NODE_IPC === "1";
+    if (!ipcEnabled || process2._agentOsIpcInstalled) {
+      return;
+    }
+    process2._agentOsIpcInstalled = true;
+    process2.connected = true;
+    if (!process2._agentOsIpcHandleId && typeof _registerHandle === "function") {
+      process2._agentOsIpcHandleId = `process-ipc:${process2.pid}`;
+      _registerHandle(process2._agentOsIpcHandleId, "child_process IPC channel");
+    }
+    let ipcInputBuffer = "";
+    process2.stdin.on("data", (chunk) => {
+      const parsed = splitChildProcessIpcFrames(ipcInputBuffer, chunk);
+      ipcInputBuffer = parsed.buffer;
+      for (const message of parsed.messages) {
+        _emit("message", message, void 0);
+      }
+    });
+  }
   function applyProcessConfig(nextConfig) {
     syncLiveStdinHandle(false);
     _stdinLiveBuffer = "";
@@ -23382,6 +23550,7 @@ ${headerLines}\r
     process2.argv = nextConfig.argv;
     process2.argv0 = nextConfig.argv[0] || "node";
     process2.env = nextConfig.env;
+    process2.connected = nextConfig.env?.AGENT_OS_NODE_IPC === "1";
     process2._cwd = nextConfig.cwd;
     process2.stdin.paused = true;
     process2.stdin.encoding = null;
@@ -23392,6 +23561,8 @@ ${headerLines}\r
     applyProcessConfig(readProcessConfig());
   });
   process2.off = process2.removeListener;
+  exposeCustomGlobal("__runtimeInstallProcessIpcBridge", installProcessIpcBridge);
+  installProcessIpcBridge();
   process2.memoryUsage.rss = function() {
     return readLiveProcessMemoryUsage().rss;
   };
