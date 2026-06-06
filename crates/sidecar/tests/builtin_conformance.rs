@@ -2590,9 +2590,17 @@ import crypto from "node:crypto";
 
 const random = crypto.randomBytes(16);
 const uuid = crypto.randomUUID();
+const ciphers = crypto.getCiphers();
+const curves = crypto.getCurves();
 
 console.log(JSON.stringify({
   hashesIncludeSha256: crypto.getHashes().includes("sha256"),
+  ciphersIncludeAes256Cbc: ciphers.includes("aes-256-cbc"),
+  ciphersIncludeAes256Gcm: ciphers.includes("aes-256-gcm"),
+  ciphersSorted: ciphers.join(",") === [...ciphers].sort().join(","),
+  curvesIncludePrime256v1: curves.includes("prime256v1"),
+  curvesIncludeSecp384r1: curves.includes("secp384r1"),
+  curvesSorted: curves.join(",") === [...curves].sort().join(","),
   sha256: crypto.createHash("sha256").update("agent-os").digest("hex"),
   hmacSha256: crypto.createHmac("sha256", "shared-secret").update("agent-os").digest("hex"),
   randomBytesLength: random.length,

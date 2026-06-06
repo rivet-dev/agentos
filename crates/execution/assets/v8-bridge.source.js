@@ -25663,6 +25663,25 @@ ${headerLines}\r
     getHashes() {
       return ["md5", "sha1", "sha224", "sha256", "sha384", "sha512"];
     },
+    getCiphers() {
+      return [
+        "aes-128-cbc",
+        "aes-128-ctr",
+        "aes-128-gcm",
+        "aes-192-cbc",
+        "aes-192-ctr",
+        "aes-192-gcm",
+        "aes-256-cbc",
+        "aes-256-ctr",
+        "aes-256-gcm",
+        "aes128",
+        "aes192",
+        "aes256"
+      ];
+    },
+    getCurves() {
+      return ["prime256v1", "secp256k1", "secp384r1", "secp521r1"];
+    },
     getRandomValues(array) {
       return cryptoPolyfill.getRandomValues(array);
     },
