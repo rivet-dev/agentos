@@ -1503,47 +1503,87 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 request.method.as_str(),
                 "fs.lutimesSync" | "fs.promises.lutimes"
             );
-            match mapped_runtime_host_path(process, path, true) {
-                Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
-                    materialize_mapped_host_path_from_kernel(
-                        kernel,
-                        kernel_pid,
-                        path,
-                        &mapped_host.host_path,
-                    )?;
-                    let proc_path = if follow_symlinks {
-                        let opened = open_mapped_runtime_beneath(
-                            &mapped_host,
-                            "fs.utimes",
-                            OFlag::O_PATH,
-                            Mode::empty(),
-                        )?;
-                        opened.handle.proc_path()
+            if let Some(shadow_path) = process_shadow_host_path(process, path) {
+                if fs::symlink_metadata(&shadow_path).is_ok() {
+                    let result = if follow_symlinks {
+                        kernel.utimes_spec(path, atime, mtime)
                     } else {
-                        let parent =
-                            open_mapped_runtime_parent_beneath(&mapped_host, "fs.lutimes")?;
-                        mapped_runtime_parent_child_path(&parent)
+                        kernel.lutimes(path, atime, mtime)
                     };
-                    if kernel
-                        .exists_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
-                        .map_err(kernel_error)?
-                    {
-                        if follow_symlinks {
-                            kernel
-                                .utimes_spec(path, atime, mtime)
-                                .map_err(kernel_error)?;
-                        } else {
-                            kernel.lutimes(path, atime, mtime).map_err(kernel_error)?;
+                    if let Err(error) = result {
+                        if error.code() != "ENOENT" {
+                            return Err(kernel_error(error));
                         }
                     }
                     apply_host_path_utimens(
-                        &proc_path,
+                        &shadow_path,
                         atime,
                         mtime,
                         follow_symlinks,
-                        &format!("failed to update mapped guest path times {path}"),
+                        &format!("failed to update process shadow path times {path}"),
                     )?;
                     return Ok(Value::Null);
+                }
+            }
+            match mapped_runtime_host_path(process, path, true) {
+                Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
+                    let mapped_host_exists = match fs::symlink_metadata(&mapped_host.host_path) {
+                        Ok(_) => true,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            materialize_mapped_host_path_from_kernel(
+                                kernel,
+                                kernel_pid,
+                                path,
+                                &mapped_host.host_path,
+                            )?;
+                            fs::symlink_metadata(&mapped_host.host_path).is_ok()
+                        }
+                        Err(error) => {
+                            return Err(SidecarError::Io(format!(
+                                "failed to inspect mapped guest path {} -> {}: {error}",
+                                path,
+                                mapped_host.host_path.display()
+                            )));
+                        }
+                    };
+                    if mapped_host_exists {
+                        let proc_path = if follow_symlinks {
+                            let opened = open_mapped_runtime_beneath(
+                                &mapped_host,
+                                "fs.utimes",
+                                OFlag::O_PATH,
+                                Mode::empty(),
+                            )?;
+                            opened.handle.proc_path()
+                        } else {
+                            let parent =
+                                open_mapped_runtime_parent_beneath(&mapped_host, "fs.lutimes")?;
+                            mapped_runtime_parent_child_path(&parent)
+                        };
+                        if kernel
+                            .exists_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
+                            .map_err(kernel_error)?
+                        {
+                            let result = if follow_symlinks {
+                                kernel.utimes_spec(path, atime, mtime)
+                            } else {
+                                kernel.lutimes(path, atime, mtime)
+                            };
+                            if let Err(error) = result {
+                                if error.code() != "ENOENT" {
+                                    return Err(kernel_error(error));
+                                }
+                            }
+                        }
+                        apply_host_path_utimens(
+                            &proc_path,
+                            atime,
+                            mtime,
+                            follow_symlinks,
+                            &format!("failed to update mapped guest path times {path}"),
+                        )?;
+                        return Ok(Value::Null);
+                    }
                 }
                 Some(MappedRuntimeHostAccess::ReadOnly(_)) => {
                     return Err(read_only_mapped_runtime_host_path_error(path));
@@ -1553,14 +1593,11 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             if follow_symlinks {
                 kernel
                     .utimes_spec(path, atime, mtime)
-                    .map(|()| Value::Null)
-                    .map_err(kernel_error)
+                    .map_err(kernel_error)?;
             } else {
-                kernel
-                    .lutimes(path, atime, mtime)
-                    .map(|()| Value::Null)
-                    .map_err(kernel_error)
-            }
+                kernel.lutimes(path, atime, mtime).map_err(kernel_error)?;
+            };
+            Ok(Value::Null)
         }
         "fs.futimesSync" => {
             let fd = javascript_sync_rpc_arg_u32(&request.args, 0, "filesystem futimes fd")?;
@@ -1811,6 +1848,36 @@ fn mapped_runtime_host_path_for_read(
         Some(MappedRuntimeHostAccess::Writable(mapped_host))
         | Some(MappedRuntimeHostAccess::ReadOnly(mapped_host)) => Some(mapped_host),
         None => None,
+    }
+}
+
+fn process_shadow_host_path(process: &ActiveProcess, guest_path: &str) -> Option<PathBuf> {
+    let normalized_guest_path = normalized_process_guest_path(process, guest_path);
+    let normalized_guest_cwd = normalize_path(&process.guest_cwd);
+    let mut host_root = normalize_host_path(&process.host_cwd);
+    for _ in normalized_guest_cwd
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+    {
+        host_root = host_root.parent()?.to_path_buf();
+    }
+    if normalized_guest_path == "/" {
+        Some(host_root)
+    } else {
+        Some(host_root.join(normalized_guest_path.trim_start_matches('/')))
+    }
+}
+
+fn normalized_process_guest_path(process: &ActiveProcess, guest_path: &str) -> String {
+    if guest_path.starts_with('/') {
+        normalize_path(guest_path)
+    } else {
+        normalize_path(&format!(
+            "{}/{}",
+            process.guest_cwd.trim_end_matches('/'),
+            guest_path
+        ))
     }
 }
 
