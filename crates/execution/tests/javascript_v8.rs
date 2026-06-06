@@ -803,6 +803,57 @@ if (process.ppid !== 41) throw new Error(`ppid=${process.ppid}`);
     assert!(result.stderr.is_empty(), "unexpected stderr: {stderr}");
 }
 
+fn javascript_execution_process_kill_rejects_invalid_pid_in_guest_js() {
+    let temp = tempdir().expect("create temp dir");
+    let mut engine = JavascriptExecutionEngine::default();
+    let context = engine.create_context(CreateJavascriptContextRequest {
+        vm_id: String::from("vm-js"),
+        bootstrap_module: None,
+        compile_cache_root: None,
+    });
+
+    let execution = engine
+        .start_execution(StartJavascriptExecutionRequest {
+            vm_id: String::from("vm-js"),
+            context_id: context.context_id,
+            argv: vec![String::from("./entry.mjs")],
+            env: BTreeMap::new(),
+            cwd: temp.path().to_path_buf(),
+            inline_code: Some(String::from(
+                r#"
+try {
+  process.kill(Number.NaN, "SIGTERM");
+  console.log(JSON.stringify({ caught: false }));
+} catch (error) {
+  console.log(JSON.stringify({
+    caught: true,
+    name: error && error.name,
+    message: error && error.message,
+  }));
+}
+"#,
+            )),
+        })
+        .expect("start JavaScript execution");
+
+    let result = execution.wait().expect("wait for JavaScript execution");
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(result.exit_code, 0, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(result.stderr.is_empty(), "unexpected stderr: {stderr}");
+
+    let output: Value = serde_json::from_slice(&result.stdout).expect("parse stdout JSON");
+    assert_eq!(output.get("caught"), Some(&json!(true)));
+    assert_eq!(output.get("name"), Some(&json!("TypeError")));
+    assert!(
+        output
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("\"pid\" argument")),
+        "unexpected process.kill error output: {output}"
+    );
+}
+
 fn javascript_execution_preserves_binary_process_stdio_writes() {
     let temp = tempdir().expect("create temp dir");
     let mut engine = JavascriptExecutionEngine::default();
@@ -3995,6 +4046,7 @@ fn javascript_v8_suite() {
     javascript_contexts_preserve_vm_and_bootstrap_configuration();
     javascript_execution_uses_v8_runtime_without_spawning_guest_node_binary();
     javascript_execution_virtualizes_process_metadata_for_inline_v8_code();
+    javascript_execution_process_kill_rejects_invalid_pid_in_guest_js();
     javascript_execution_preserves_binary_process_stdio_writes();
     javascript_execution_intl_number_format_does_not_require_host_icu();
     javascript_execution_stream_consumers_text_reads_live_stdin();

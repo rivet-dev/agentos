@@ -23337,6 +23337,9 @@ ${headerLines}\r
       return readLiveProcessResourceUsage();
     },
     kill(pid, signal) {
+      if (typeof pid !== "number" || !Number.isFinite(pid) || !Number.isInteger(pid)) {
+        throw new TypeError(`The "pid" argument must be an integer. Received ${String(pid)}`);
+      }
       const sigNum = _resolveSignal(signal);
       const sigName = _signalNamesByNumber[sigNum] ?? `SIG${sigNum}`;
       if (typeof _processKill !== "undefined") {
