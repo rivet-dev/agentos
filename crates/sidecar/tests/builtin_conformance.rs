@@ -2047,8 +2047,26 @@ fn console_conformance_matches_host_node() {
         "console",
         r#"
 import * as consoleModule from "node:console";
+import { Writable } from "node:stream";
 const consoleInstance = new consoleModule.Console(process.stdout, process.stderr);
 const task = consoleModule.createTask("demo-task");
+const detachedChunks = [];
+const detachedErrors = [];
+const createSink = (target) =>
+  new Writable({
+    write(chunk, _encoding, callback) {
+      target.push(String(chunk));
+      callback();
+    },
+  });
+const detachedConsole = new consoleModule.Console(
+  createSink(detachedChunks),
+  createSink(detachedErrors),
+);
+const detachedLog = detachedConsole.log;
+const detachedError = detachedConsole.error;
+detachedLog("detached-log");
+detachedError("detached-error");
 
 console.log(JSON.stringify({
   types: {
@@ -2083,6 +2101,8 @@ console.log(JSON.stringify({
     trace: typeof consoleInstance.trace,
     warn: typeof consoleInstance.warn,
   },
+  detachedOutput: detachedChunks.join(""),
+  detachedErrorOutput: detachedErrors.join(""),
 }));
 "#,
     );

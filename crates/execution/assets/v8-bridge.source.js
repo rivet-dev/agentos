@@ -22035,6 +22035,29 @@ ${headerLines}\r
       this._stderr = stderr;
       this._counts = new Map();
       this._times = new Map();
+      for (const method of [
+        "assert",
+        "clear",
+        "count",
+        "countReset",
+        "debug",
+        "dir",
+        "dirxml",
+        "error",
+        "group",
+        "groupCollapsed",
+        "groupEnd",
+        "info",
+        "log",
+        "table",
+        "time",
+        "timeEnd",
+        "timeLog",
+        "trace",
+        "warn"
+      ]) {
+        this[method] = this[method].bind(this);
+      }
     }
     log(...args) {
       this._stdout.write(formatConsoleLine(args));
