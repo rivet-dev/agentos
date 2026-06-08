@@ -468,14 +468,9 @@ SQLITE_NATIVE  := $(SQLITE_COMMON)
 
 $(BUILD_DIR)/sqlite3_mem: programs/sqlite3_mem.c libs/sqlite3/sqlite3.c $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(WASM_CFLAGS) $(SQLITE_WASM) -Ilibs/sqlite3 -o $@.wasm \
+	$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -Os -I include/ \
+	    $(SQLITE_WASM) -Ilibs/sqlite3 -Wl,--initial-memory=16777216 -o $@ \
 	    programs/sqlite3_mem.c libs/sqlite3/sqlite3.c
-	@if [ "$(HAS_WASM_OPT)" = "1" ]; then \
-		wasm-opt -O3 --strip-debug $@.wasm -o $@; \
-	else \
-		cp $@.wasm $@; \
-	fi
-	@rm -f $@.wasm
 
 $(NATIVE_DIR)/sqlite3_mem: programs/sqlite3_mem.c libs/sqlite3/sqlite3.c
 	@mkdir -p $(NATIVE_DIR)
