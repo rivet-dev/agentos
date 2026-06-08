@@ -400,22 +400,48 @@ fn embedded_runtime_process_kill_signal_zero_checks_child_liveness() {
         Vec::new(),
     );
 
-    wait_for_process_output(
-        &mut sidecar,
-        &connection_id,
-        &session_id,
-        &vm_id,
-        "process-kill-sig0",
-        "live:true",
+    let ownership = OwnershipScope::vm(&connection_id, &session_id, &vm_id);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut saw_live = false;
+    let mut saw_stale_esrch = false;
+    let mut exit_code = None;
+
+    while exit_code.is_none() || !saw_live || !saw_stale_esrch {
+        let event = sidecar
+            .poll_event_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll process.kill signal-zero events");
+        let Some(event) = event else {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for process.kill signal-zero output"
+            );
+            continue;
+        };
+
+        match event.payload {
+            EventPayload::ProcessOutput(output) if output.process_id == "process-kill-sig0" => {
+                let chunk = String::from_utf8_lossy(&output.chunk);
+                saw_live |= chunk.contains("live:true");
+                saw_stale_esrch |= chunk.contains("stale:ESRCH");
+            }
+            EventPayload::ProcessExited(exited) if exited.process_id == "process-kill-sig0" => {
+                exit_code = Some(exited.exit_code);
+            }
+            _ => {}
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for process.kill signal-zero completion"
+        );
+    }
+
+    assert!(saw_live, "live child should be visible to signal 0");
+    assert!(
+        saw_stale_esrch,
+        "stale child PID should throw ESRCH for signal 0"
     );
-    wait_for_process_output(
-        &mut sidecar,
-        &connection_id,
-        &session_id,
-        &vm_id,
-        "process-kill-sig0",
-        "stale:",
-    );
+    assert_eq!(exit_code, Some(0));
 }
 
 fn embedded_runtime_signal_delivers_sigchld_on_child_exit() {

@@ -1989,6 +1989,15 @@ where
                         );
                         return Ok(());
                     };
+                    if !vm.active_processes.contains_key(process_id) {
+                        log_stale_process_event(
+                            &self.bridge,
+                            vm_id,
+                            process_id,
+                            "javascript sync RPC process.kill",
+                        );
+                        return Ok(());
+                    }
                     vm.kernel
                         .signal_process(EXECUTION_DRIVER_NAME, target_pid, parsed_signal)
                         .map(|()| Value::Null)

@@ -2686,7 +2686,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
     }
 
     pub fn kill_process(&self, requester_driver: &str, pid: u32, signal: i32) -> KernelResult<()> {
-        self.signal_process(requester_driver, pid as i32, signal)
+        let pid = i32::try_from(pid)
+            .map_err(|_| KernelError::new("EINVAL", format!("pid {pid} exceeds i32::MAX")))?;
+        self.signal_process(requester_driver, pid, signal)
     }
 
     pub fn setpgid(&self, requester_driver: &str, pid: u32, pgid: u32) -> KernelResult<()> {
