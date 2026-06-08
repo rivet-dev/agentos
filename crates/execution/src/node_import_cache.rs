@@ -8676,6 +8676,8 @@ const WASI_WHENCE_SET = 0;
 const WASI_WHENCE_CUR = 1;
 const WASI_WHENCE_END = 2;
 const WASM_PAGE_BYTES = 65536;
+const DEFAULT_VIRTUAL_PID = 1;
+const DEFAULT_VIRTUAL_PPID = 0;
 const DEFAULT_VIRTUAL_UID = 0;
 const DEFAULT_VIRTUAL_GID = 0;
 const DEFAULT_VIRTUAL_OS_USER = 'root';
@@ -8798,6 +8800,14 @@ const VIRTUAL_UID = parseVirtualProcessNumber(
 const VIRTUAL_GID = parseVirtualProcessNumber(
   process.env.AGENT_OS_VIRTUAL_PROCESS_GID,
   DEFAULT_VIRTUAL_GID,
+);
+const VIRTUAL_PID = parseVirtualProcessNumber(
+  process.env.AGENT_OS_VIRTUAL_PROCESS_PID,
+  DEFAULT_VIRTUAL_PID,
+);
+const VIRTUAL_PPID = parseVirtualProcessNumber(
+  process.env.AGENT_OS_VIRTUAL_PROCESS_PPID,
+  DEFAULT_VIRTUAL_PPID,
 );
 const VIRTUAL_OS_USER = parseVirtualProcessString(
   process.env.AGENT_OS_VIRTUAL_OS_USER,

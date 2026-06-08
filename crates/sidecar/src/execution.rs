@@ -2950,6 +2950,7 @@ where
                 },
             )
             .map_err(kernel_error)?;
+        let kernel_pid = kernel_handle.pid();
 
         let (execution, process_env) = match resolved.runtime {
             GuestRuntimeKind::JavaScript => {
@@ -3042,6 +3043,14 @@ where
                 (ActiveExecution::Python(execution), env.clone())
             }
             GuestRuntimeKind::WebAssembly => {
+                env.insert(
+                    String::from("AGENT_OS_VIRTUAL_PROCESS_PID"),
+                    kernel_pid.to_string(),
+                );
+                env.insert(
+                    String::from("AGENT_OS_VIRTUAL_PROCESS_PPID"),
+                    String::from("0"),
+                );
                 apply_wasm_limit_env(&mut env, vm.kernel.resource_limits());
                 let wasm_permission_tier = resolved.wasm_permission_tier.unwrap_or_else(|| {
                     resolve_wasm_permission_tier(
@@ -3070,7 +3079,6 @@ where
             }
         };
         let child_pid = execution.child_pid();
-        let kernel_pid = kernel_handle.pid();
         let kernel_stdin_writer_fd = install_kernel_stdin_pipe(&mut vm.kernel, kernel_pid)?;
         vm.active_processes.insert(
             payload.process_id.clone(),
@@ -5186,6 +5194,14 @@ where
                 }
                 GuestRuntimeKind::WebAssembly => {
                     execution_env.insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
+                    execution_env.insert(
+                        String::from("AGENT_OS_VIRTUAL_PROCESS_PID"),
+                        kernel_pid.to_string(),
+                    );
+                    execution_env.insert(
+                        String::from("AGENT_OS_VIRTUAL_PROCESS_PPID"),
+                        parent_kernel_pid.to_string(),
+                    );
                     apply_wasm_limit_env(&mut execution_env, vm.kernel.resource_limits());
                     let context = self.wasm_engine.create_context(CreateWasmContextRequest {
                         vm_id: vm_id.to_owned(),
@@ -5719,6 +5735,14 @@ where
                 }
                 GuestRuntimeKind::WebAssembly => {
                     execution_env.insert(String::from(WASM_STDIO_SYNC_RPC_ENV), String::from("1"));
+                    execution_env.insert(
+                        String::from("AGENT_OS_VIRTUAL_PROCESS_PID"),
+                        kernel_pid.to_string(),
+                    );
+                    execution_env.insert(
+                        String::from("AGENT_OS_VIRTUAL_PROCESS_PPID"),
+                        parent_kernel_pid.to_string(),
+                    );
                     apply_wasm_limit_env(&mut execution_env, vm.kernel.resource_limits());
                     let context = self.wasm_engine.create_context(CreateWasmContextRequest {
                         vm_id: vm_id.to_owned(),

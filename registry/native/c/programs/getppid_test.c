@@ -5,6 +5,6 @@
 int main(void) {
     pid_t ppid = getppid();
     printf("ppid=%d\n", ppid);
-    printf("ppid_positive=%s\n", ppid > 0 ? "yes" : "no");
+    printf("ppid_nonnegative=%s\n", ppid >= 0 ? "yes" : "no");
     return 0;
 }

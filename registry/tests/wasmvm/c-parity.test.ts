@@ -366,14 +366,15 @@ describeIf(!skipReason(), 'C parity: native vs WASM', { timeout: 30_000 }, () =>
     expect(wasmPid).not.toBe(42);
   });
 
-  itIf(!tier2Skip, 'getppid_test: parent PID is valid and positive', async () => {
+  itIf(!tier2Skip, 'getppid_test: top-level parent PID is valid', async () => {
     const native = await runNative('getppid_test');
     const wasm = await kernel.exec('getppid_test');
 
     expect(wasm.exitCode).toBe(native.exitCode);
     expect(normalizeStderr(wasm.stderr)).toBe(normalizeStderr(native.stderr));
-    expect(wasm.stdout).toContain('ppid_positive=yes');
-    expect(native.stdout).toContain('ppid_positive=yes');
+    expect(wasm.stdout).toContain('ppid_nonnegative=yes');
+    expect(native.stdout).toContain('ppid_nonnegative=yes');
+    expect(wasm.stdout).toContain('ppid=0');
   });
 
   itIf(!tier2Skip, 'userinfo: uid/gid/euid/egid values are specific', async () => {
