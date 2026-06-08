@@ -85,6 +85,46 @@ function parseArgs(argv: string[]): CliOptions {
 	return options;
 }
 
+async function runCommand(
+	vm: AgentOs,
+	cli: CliOptions,
+	cwd: string,
+): Promise<number> {
+	const args =
+		(cli.command === "bash" || cli.command === "sh") && cli.args.length === 0
+			? ["-i"]
+			: cli.args;
+	const child = vm.spawn(cli.command, args, {
+		cwd,
+		onStdout: (data) => {
+			process.stdout.write(data);
+		},
+		onStderr: (data) => {
+			process.stderr.write(data);
+		},
+	});
+	const restoreRawMode =
+		process.stdin.isTTY && typeof process.stdin.setRawMode === "function";
+	const onStdinData = (data: Uint8Array | string) => {
+		vm.writeProcessStdin(child.pid, data);
+	};
+
+	try {
+		if (restoreRawMode) {
+			process.stdin.setRawMode(true);
+		}
+		process.stdin.on("data", onStdinData);
+		process.stdin.resume();
+		return await vm.waitProcess(child.pid);
+	} finally {
+		process.stdin.removeListener("data", onStdinData);
+		process.stdin.pause();
+		if (restoreRawMode) {
+			process.stdin.setRawMode(false);
+		}
+	}
+}
+
 const cli = parseArgs(process.argv.slice(2));
 
 const vm = await AgentOs.create({
@@ -96,11 +136,10 @@ const cwd = cli.workDir ?? "/home/user";
 console.error("agent-os shell");
 console.error(`cwd: ${cwd}`);
 
-const exitCode = await vm.connectTerminal({
-	command: cli.command,
-	args: cli.args,
-	cwd,
-});
-
-await vm.dispose();
+let exitCode = 1;
+try {
+	exitCode = await runCommand(vm, cli, cwd);
+} finally {
+	await vm.dispose();
+}
 process.exit(exitCode);

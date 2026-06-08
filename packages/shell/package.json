@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc",
     "check-types": "tsc --noEmit",
-    "shell": "tsx src/main.ts"
+    "shell": "tsx src/main.ts",
+    "test": "pnpm build && vitest run --fileParallelism=false"
   },
   "dependencies": {
     "@rivet-dev/agent-os-core": "workspace:*",
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@types/node": "^22.19.3",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }
