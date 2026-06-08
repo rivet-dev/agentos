@@ -10492,6 +10492,8 @@ function pumpPipeProducers(pipe, waitMs) {
       continue;
     }
 
+    processed = pumpChildInputPipe(record, 0) || processed;
+
     const event = pollChildEvent(record, waitMs);
     if (!event) {
       continue;
@@ -10512,46 +10514,54 @@ function pumpChildInputPipe(record, waitMs) {
     });
     return false;
   }
-  const stdinReadyAt = Number(record?.stdinReadyAtMs) || 0;
-  if (stdinReadyAt > Date.now()) {
-    traceHostProcess('pump-child-input-deferred', {
+  if (record.pumpingInputPipe === true) {
+    return false;
+  }
+  record.pumpingInputPipe = true;
+  try {
+    const stdinReadyAt = Number(record?.stdinReadyAtMs) || 0;
+    if (stdinReadyAt > Date.now()) {
+      traceHostProcess('pump-child-input-deferred', {
+        childId: record?.childId ?? null,
+        waitMs: Number(waitMs) >>> 0,
+        stdinReadyAt,
+        now: Date.now(),
+        chunkCount: inputPipe.chunks.length,
+        writeHandleCount: inputPipe.writeHandleCount ?? null,
+        producerCount: inputPipe.producers?.size ?? null,
+      });
+      return false;
+    }
+
+    let progressed = false;
+    traceHostProcess('pump-child-input-begin', {
       childId: record?.childId ?? null,
       waitMs: Number(waitMs) >>> 0,
-      stdinReadyAt,
-      now: Date.now(),
       chunkCount: inputPipe.chunks.length,
       writeHandleCount: inputPipe.writeHandleCount ?? null,
       producerCount: inputPipe.producers?.size ?? null,
     });
-    return false;
-  }
+    if (inputPipe.chunks.length > 0) {
+      progressed = flushPipeConsumers(inputPipe) || progressed;
+    }
 
-  let progressed = false;
-  traceHostProcess('pump-child-input-begin', {
-    childId: record?.childId ?? null,
-    waitMs: Number(waitMs) >>> 0,
-    chunkCount: inputPipe.chunks.length,
-    writeHandleCount: inputPipe.writeHandleCount ?? null,
-    producerCount: inputPipe.producers?.size ?? null,
-  });
-  if (inputPipe.chunks.length > 0) {
-    progressed = flushPipeConsumers(inputPipe) || progressed;
-  }
+    if (inputPipe.producers.size === 0 && (inputPipe.writeHandleCount ?? 0) === 0) {
+      return closePipeConsumers(inputPipe) || progressed;
+    }
 
-  if (inputPipe.producers.size === 0 && (inputPipe.writeHandleCount ?? 0) === 0) {
-    return closePipeConsumers(inputPipe) || progressed;
-  }
+    const pumped = pumpPipeProducers(inputPipe, waitMs);
+    progressed = pumped || progressed;
+    if (inputPipe.chunks.length > 0) {
+      progressed = flushPipeConsumers(inputPipe) || progressed;
+    }
+    if (inputPipe.producers.size === 0 && (inputPipe.writeHandleCount ?? 0) === 0) {
+      progressed = closePipeConsumers(inputPipe) || progressed;
+    }
 
-  const pumped = pumpPipeProducers(inputPipe, waitMs);
-  progressed = pumped || progressed;
-  if (inputPipe.chunks.length > 0) {
-    progressed = flushPipeConsumers(inputPipe) || progressed;
+    return progressed;
+  } finally {
+    record.pumpingInputPipe = false;
   }
-  if (inputPipe.producers.size === 0 && (inputPipe.writeHandleCount ?? 0) === 0) {
-    progressed = closePipeConsumers(inputPipe) || progressed;
-  }
-
-  return progressed;
 }
 
 function pumpSpawnedChildren(waitMs) {
