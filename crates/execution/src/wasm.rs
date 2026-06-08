@@ -3788,6 +3788,16 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsSyncRpc === 
             throw new Error("Agent OS WASM net.connect bridge is unavailable");
           }}
           return _netSocketConnectRaw.applySync(void 0, args);
+        case "net.listen":
+          if (typeof _netServerListenRaw === "undefined") {{
+            throw new Error("Agent OS WASM net.listen bridge is unavailable");
+          }}
+          return _netServerListenRaw.applySync(void 0, args);
+        case "net.server_accept":
+          if (typeof _netServerAcceptRaw === "undefined") {{
+            throw new Error("Agent OS WASM net.server_accept bridge is unavailable");
+          }}
+          return _netServerAcceptRaw.applySync(void 0, args);
         case "net.poll":
           if (typeof _netSocketPollRaw === "undefined") {{
             throw new Error("Agent OS WASM net.poll bridge is unavailable");

@@ -9473,6 +9473,13 @@ function writeGuestUint32(ptr, value) {
   }
 }
 
+function readGuestUint32(ptr) {
+  if (!(instanceMemory instanceof WebAssembly.Memory)) {
+    throw new Error('WebAssembly memory is unavailable');
+  }
+  return new DataView(instanceMemory.buffer).getUint32(Number(ptr), true);
+}
+
 function writeGuestUint64(ptr, value) {
   if (!(instanceMemory instanceof WebAssembly.Memory)) {
     return WASI_ERRNO_FAULT;
@@ -10702,6 +10709,7 @@ function callSyncRpc(method, args = []) {
 
 const hostNetSockets = new Map();
 let nextHostNetSocketFd = 0x40000000;
+const HOST_NET_TIMEOUT_SENTINEL = '__secure_exec_net_timeout__';
 
 function getHostNetSocket(fd) {
   return hostNetSockets.get(Number(fd) >>> 0) ?? null;
@@ -10797,6 +10805,30 @@ function parseHostNetAddress(raw) {
   };
 }
 
+function parseHostNetListenAddress(raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) {
+    throw new Error('host_net listen address is required');
+  }
+  if (value.startsWith('/')) {
+    return { path: value };
+  }
+  const address = parseHostNetAddress(value);
+  return { host: address.host, port: address.port };
+}
+
+function formatHostNetAddress(info) {
+  if (typeof info?.remotePath === 'string') {
+    return info.remotePath;
+  }
+  const address = String(info?.remoteAddress ?? '');
+  const port = Number(info?.remotePort);
+  if (!address || !Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error('host_net accept response missing remote address');
+  }
+  return `${address}:${port}`;
+}
+
 function signalNumberFromName(signal) {
   switch (String(signal)) {
     case 'SIGHUP':
@@ -10860,6 +10892,8 @@ const hostNetImport = {
         domain: numericDomain,
         sockType: numericType,
         protocol: numericProtocol,
+        bindOptions: null,
+        serverId: null,
         socketId: null,
         readChunks: [],
         readableEnded: false,
@@ -10894,6 +10928,87 @@ const hostNetImport = {
       socket.closed = false;
       socket.lastError = null;
       return WASI_ERRNO_SUCCESS;
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  },
+  net_bind(fd, addrPtr, addrLen) {
+    const socket = getHostNetSocket(fd);
+    if (!socket || socket.closed) {
+      return WASI_ERRNO_BADF;
+    }
+
+    try {
+      socket.bindOptions = parseHostNetListenAddress(readGuestString(addrPtr, addrLen));
+      return WASI_ERRNO_SUCCESS;
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  },
+  net_listen(fd, backlog) {
+    const socket = getHostNetSocket(fd);
+    if (!socket || socket.closed) {
+      return WASI_ERRNO_BADF;
+    }
+    if (socket.serverId || !socket.bindOptions) {
+      return WASI_ERRNO_FAULT;
+    }
+
+    try {
+      const result = callSyncRpc('net.listen', [{
+        ...socket.bindOptions,
+        backlog: Math.max(0, Number(backlog) >>> 0),
+      }]);
+      if (!result || typeof result.serverId !== 'string') {
+        return WASI_ERRNO_FAULT;
+      }
+      socket.serverId = result.serverId;
+      return WASI_ERRNO_SUCCESS;
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  },
+  net_accept(fd, retFdPtr, retAddrPtr, retAddrLenPtr) {
+    const socket = getHostNetSocket(fd);
+    if (!socket?.serverId || socket.closed) {
+      return WASI_ERRNO_BADF;
+    }
+
+    try {
+      let result = null;
+      while (true) {
+        result = callSyncRpc('net.server_accept', [socket.serverId]);
+        if (result !== HOST_NET_TIMEOUT_SENTINEL) {
+          break;
+        }
+        sleepSync(10);
+      }
+      if (typeof result === 'string') {
+        result = JSON.parse(result);
+      }
+      if (!result || typeof result.socketId !== 'string') {
+        return WASI_ERRNO_FAULT;
+      }
+
+      const acceptedFd = nextHostNetSocketFd++;
+      hostNetSockets.set(acceptedFd, {
+        domain: socket.domain,
+        sockType: socket.sockType,
+        protocol: socket.protocol,
+        bindOptions: null,
+        serverId: null,
+        socketId: result.socketId,
+        readChunks: [],
+        readableEnded: false,
+        closed: false,
+        lastError: null,
+      });
+
+      const address = Buffer.from(formatHostNetAddress(result.info), 'utf8');
+      if (writeGuestUint32(retFdPtr, acceptedFd) !== WASI_ERRNO_SUCCESS) {
+        return WASI_ERRNO_FAULT;
+      }
+      return writeGuestBytes(retAddrPtr, readGuestUint32(retAddrLenPtr), address, retAddrLenPtr);
     } catch {
       return WASI_ERRNO_FAULT;
     }
@@ -10954,12 +11069,10 @@ const hostNetImport = {
     }
 
     hostNetSockets.delete(numericFd);
-    if (!socket.socketId || socket.closed) {
-      return WASI_ERRNO_SUCCESS;
-    }
-
     try {
-      callSyncRpc('net.destroy', [socket.socketId]);
+      if (socket.socketId && !socket.closed) {
+        callSyncRpc('net.destroy', [socket.socketId]);
+      }
       return WASI_ERRNO_SUCCESS;
     } catch {
       return WASI_ERRNO_FAULT;
