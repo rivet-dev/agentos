@@ -50,9 +50,7 @@ export function describeIf(
 		return;
 	}
 	const [name] = args;
-	describe(String(name), () => {
-		it('environment prerequisites not met', () => {});
-	});
+	describe.skip(`${String(name)} [environment prerequisites not met]`, () => {});
 }
 
 export function itIf(
@@ -66,7 +64,7 @@ export function itIf(
 		return;
 	}
 	const [name] = args;
-	it(String(name), () => {});
+	it.skip(`${String(name)} [environment prerequisites not met]`, () => {});
 }
 
 // Re-exports from the repo-owned Agent OS test runtime surface.
