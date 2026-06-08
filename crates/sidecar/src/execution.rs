@@ -12920,6 +12920,29 @@ pub(crate) fn javascript_sync_rpc_arg_u32(
         .map_err(|_| SidecarError::InvalidState(format!("{label} must fit within u32")))
 }
 
+pub(crate) fn javascript_sync_rpc_arg_i32(
+    args: &[Value],
+    index: usize,
+    label: &str,
+) -> Result<i32, SidecarError> {
+    let Some(value) = args.get(index) else {
+        return Err(SidecarError::InvalidState(format!("{label} is required")));
+    };
+
+    let numeric = value
+        .as_i64()
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|number| number.is_finite())
+                .map(|number| number as i64)
+        })
+        .ok_or_else(|| SidecarError::InvalidState(format!("{label} must be a numeric argument")))?;
+
+    i32::try_from(numeric)
+        .map_err(|_| SidecarError::InvalidState(format!("{label} must fit within i32")))
+}
+
 pub(crate) fn javascript_sync_rpc_arg_u32_optional(
     args: &[Value],
     index: usize,
@@ -13220,10 +13243,18 @@ where
         }
         "process.kill" => {
             let target_pid =
-                javascript_sync_rpc_arg_u32(&request.args, 0, "process.kill target pid")?;
+                javascript_sync_rpc_arg_i32(&request.args, 0, "process.kill target pid")?;
             let signal = javascript_sync_rpc_arg_str(&request.args, 1, "process.kill signal")?;
             let parsed_signal = parse_signal(signal)?;
-            if target_pid != process.kernel_pid {
+            if parsed_signal == 0 {
+                kernel
+                    .signal_process(EXECUTION_DRIVER_NAME, target_pid, parsed_signal)
+                    .map_err(kernel_error)?;
+                return Ok(Value::Null);
+            }
+            let process_pid = i32::try_from(process.kernel_pid)
+                .map_err(|_| SidecarError::InvalidState("process pid exceeds i32".into()))?;
+            if target_pid != process_pid {
                 return Err(SidecarError::InvalidState(format!(
                     "unknown process pid {target_pid}"
                 )));

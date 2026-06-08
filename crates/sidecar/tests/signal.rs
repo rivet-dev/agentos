@@ -346,6 +346,78 @@ fn embedded_runtime_signal_stop_continue_updates_kernel_state_and_guest_handler(
         .expect("terminate stopped/continued process");
 }
 
+fn embedded_runtime_process_kill_signal_zero_checks_child_liveness() {
+    assert_node_available();
+
+    let mut sidecar = new_sidecar("embedded-runtime-process-kill-sig0");
+    let cwd = temp_dir("embedded-runtime-process-kill-sig0-cwd");
+    let entry = cwd.join("process-kill-sig0.mjs");
+
+    write_fixture(
+        &entry,
+        [
+            "const { spawn, spawnSync } = require('node:child_process');",
+            "const live = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { stdio: 'ignore' });",
+            "console.log(`live:${process.kill(live.pid, 0)}`);",
+            "live.kill('SIGTERM');",
+            "const stale = spawnSync(process.execPath, ['-e', ''], { encoding: 'utf8' });",
+            "if (typeof stale.pid !== 'number') {",
+            "  throw new Error('spawnSync result did not include child pid');",
+            "}",
+            "let staleResult = 'alive';",
+            "try {",
+            "  process.kill(stale.pid, 0);",
+            "} catch (error) {",
+            "  staleResult = error && typeof error.code === 'string' ? error.code : 'error';",
+            "}",
+            "console.log(`stale:${staleResult}`);",
+            "process.exit(staleResult === 'alive' ? 1 : 0);",
+        ]
+        .join("\n"),
+    );
+
+    let connection_id = authenticate(&mut sidecar, "conn-embedded-runtime-process-kill-sig0");
+    let session_id = open_session(&mut sidecar, 2, &connection_id);
+    let (vm_id, _) = create_vm_with_metadata(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::JavaScript,
+        &cwd,
+        BTreeMap::new(),
+    );
+
+    execute(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "process-kill-sig0",
+        GuestRuntimeKind::JavaScript,
+        &entry,
+        Vec::new(),
+    );
+
+    wait_for_process_output(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "process-kill-sig0",
+        "live:true",
+    );
+    wait_for_process_output(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "process-kill-sig0",
+        "stale:",
+    );
+}
+
 fn embedded_runtime_signal_delivers_sigchld_on_child_exit() {
     assert_node_available();
 
@@ -511,5 +583,6 @@ fn embedded_runtime_signal_delivers_sigchld_on_child_exit() {
 fn embedded_runtime_signal_suite() {
     embedded_runtime_signal_routes_sigterm_and_process_kill();
     embedded_runtime_signal_stop_continue_updates_kernel_state_and_guest_handler();
+    embedded_runtime_process_kill_signal_zero_checks_child_liveness();
     embedded_runtime_signal_delivers_sigchld_on_child_exit();
 }

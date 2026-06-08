@@ -587,6 +587,9 @@ impl ProcessTable {
                 if grouped.is_empty() {
                     return Err(ProcessTableError::no_such_process_group(pgid));
                 }
+                if signal == 0 {
+                    return Ok(());
+                }
                 collect_signal_deliveries(&mut state, &grouped, signal)?
             } else {
                 let pid = pid as u32;

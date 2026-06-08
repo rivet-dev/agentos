@@ -804,6 +804,43 @@ fn negative_pid_kill_targets_entire_process_groups() {
 }
 
 #[test]
+fn negative_pid_signal_zero_checks_process_group_liveness() {
+    let table = ProcessTable::new();
+    let leader = MockDriverProcess::new();
+    let peer = MockDriverProcess::new();
+    let leader_pid = table.allocate_pid();
+    let peer_pid = table.allocate_pid();
+
+    table.register(
+        leader_pid,
+        "wasmvm",
+        "leader",
+        Vec::new(),
+        create_context(0),
+        leader.clone(),
+    );
+    table.register(
+        peer_pid,
+        "wasmvm",
+        "peer",
+        Vec::new(),
+        create_context(leader_pid),
+        peer.clone(),
+    );
+    table
+        .setpgid(peer_pid, leader_pid)
+        .expect("peer joins leader group");
+
+    table
+        .kill(-(leader_pid as i32), 0)
+        .expect("signal 0 should check process group liveness");
+
+    assert!(leader.kills().is_empty());
+    assert!(peer.kills().is_empty());
+    assert_error_code(table.kill(-999, 0), "ESRCH");
+}
+
+#[test]
 fn negative_pid_kill_reaches_stopped_and_exited_group_members() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
     let init = MockDriverProcess::new();

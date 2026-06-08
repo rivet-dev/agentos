@@ -15,11 +15,12 @@ use crate::acp::{
 use crate::bridge::{build_mount_plugin_registry, MountPluginContext};
 pub(crate) use crate::execution::{
     build_javascript_socket_path_context, canonical_signal_name, error_code,
-    ignore_stale_javascript_sync_rpc_response, javascript_sync_rpc_arg_str,
-    javascript_sync_rpc_arg_u32, javascript_sync_rpc_arg_u32_optional, javascript_sync_rpc_arg_u64,
-    javascript_sync_rpc_arg_u64_optional, javascript_sync_rpc_bytes_arg,
-    javascript_sync_rpc_bytes_value, javascript_sync_rpc_encoding, javascript_sync_rpc_error_code,
-    javascript_sync_rpc_option_bool, javascript_sync_rpc_option_u32, parse_signal,
+    ignore_stale_javascript_sync_rpc_response, javascript_sync_rpc_arg_i32,
+    javascript_sync_rpc_arg_str, javascript_sync_rpc_arg_u32, javascript_sync_rpc_arg_u32_optional,
+    javascript_sync_rpc_arg_u64, javascript_sync_rpc_arg_u64_optional,
+    javascript_sync_rpc_bytes_arg, javascript_sync_rpc_bytes_value, javascript_sync_rpc_encoding,
+    javascript_sync_rpc_error_code, javascript_sync_rpc_option_bool,
+    javascript_sync_rpc_option_u32, parse_signal,
     sanitize_javascript_child_process_internal_bootstrap_env, service_javascript_sync_rpc,
     vm_network_resource_counts, write_kernel_process_stdin,
 };
@@ -1975,15 +1976,10 @@ where
             }
             "process.kill" => {
                 let target_pid =
-                    javascript_sync_rpc_arg_u32(&request.args, 0, "process.kill target pid")?;
+                    javascript_sync_rpc_arg_i32(&request.args, 0, "process.kill target pid")?;
                 let signal = javascript_sync_rpc_arg_str(&request.args, 1, "process.kill signal")?;
                 let parsed_signal = parse_signal(signal)?;
-                enum ProcessKillTarget {
-                    SelfProcess(SignalDispositionAction),
-                    Child(String),
-                    TopLevel(String),
-                }
-                let target = {
+                if parsed_signal == 0 {
                     let Some(vm) = self.vms.get(vm_id) else {
                         log_stale_process_event(
                             &self.bridge,
@@ -1993,78 +1989,104 @@ where
                         );
                         return Ok(());
                     };
-                    let Some(caller) = vm.active_processes.get(process_id) else {
-                        log_stale_process_event(
-                            &self.bridge,
-                            vm_id,
-                            process_id,
-                            "javascript sync RPC process.kill",
-                        );
-                        return Ok(());
-                    };
-                    if caller.kernel_pid == target_pid {
-                        let action = vm
-                            .signal_states
-                            .get(process_id)
-                            .and_then(|handlers| handlers.get(&(parsed_signal as u32)))
-                            .map(|registration| registration.action)
-                            .unwrap_or(SignalDispositionAction::Default);
-                        Some(ProcessKillTarget::SelfProcess(action))
-                    } else if let Some((child_process_id, _)) = caller
-                        .child_processes
-                        .iter()
-                        .find(|(_, child)| child.kernel_pid == target_pid)
-                    {
-                        Some(ProcessKillTarget::Child(child_process_id.clone()))
-                    } else {
-                        vm.active_processes
-                            .iter()
-                            .find(|(_, process)| process.kernel_pid == target_pid)
-                            .map(|(target_process_id, _)| {
-                                ProcessKillTarget::TopLevel(target_process_id.clone())
-                            })
+                    vm.kernel
+                        .signal_process(EXECUTION_DRIVER_NAME, target_pid, parsed_signal)
+                        .map(|()| Value::Null)
+                        .map_err(kernel_error)
+                } else {
+                    enum ProcessKillTarget {
+                        SelfProcess(SignalDispositionAction),
+                        Child(String),
+                        TopLevel(String),
                     }
-                };
-                match target {
-                    Some(ProcessKillTarget::SelfProcess(action)) => {
-                        if action == SignalDispositionAction::Default
-                            && parsed_signal != 0
-                            && !matches!(
-                                canonical_signal_name(parsed_signal),
-                                Some("SIGWINCH" | "SIGCHLD" | "SIGCONT" | "SIGURG")
-                            )
+                    let target = {
+                        let Some(vm) = self.vms.get(vm_id) else {
+                            log_stale_process_event(
+                                &self.bridge,
+                                vm_id,
+                                process_id,
+                                "javascript sync RPC process.kill",
+                            );
+                            return Ok(());
+                        };
+                        let Some(caller) = vm.active_processes.get(process_id) else {
+                            log_stale_process_event(
+                                &self.bridge,
+                                vm_id,
+                                process_id,
+                                "javascript sync RPC process.kill",
+                            );
+                            return Ok(());
+                        };
+                        let caller_pid = i32::try_from(caller.kernel_pid).map_err(|_| {
+                            SidecarError::InvalidState("caller pid exceeds i32".into())
+                        })?;
+                        if caller_pid == target_pid {
+                            let action = vm
+                                .signal_states
+                                .get(process_id)
+                                .and_then(|handlers| handlers.get(&(parsed_signal as u32)))
+                                .map(|registration| registration.action)
+                                .unwrap_or(SignalDispositionAction::Default);
+                            Some(ProcessKillTarget::SelfProcess(action))
+                        } else if let Some((child_process_id, _)) = caller
+                            .child_processes
+                            .iter()
+                            .find(|(_, child)| i32::try_from(child.kernel_pid) == Ok(target_pid))
                         {
-                            if let Some(vm) = self.vms.get_mut(vm_id) {
-                                if let Some(process) = vm.active_processes.get_mut(process_id) {
-                                    process.pending_self_signal_exit = Some(parsed_signal);
+                            Some(ProcessKillTarget::Child(child_process_id.clone()))
+                        } else {
+                            vm.active_processes
+                                .iter()
+                                .find(|(_, process)| {
+                                    i32::try_from(process.kernel_pid) == Ok(target_pid)
+                                })
+                                .map(|(target_process_id, _)| {
+                                    ProcessKillTarget::TopLevel(target_process_id.clone())
+                                })
+                        }
+                    };
+                    match target {
+                        Some(ProcessKillTarget::SelfProcess(action)) => {
+                            if action == SignalDispositionAction::Default
+                                && parsed_signal != 0
+                                && !matches!(
+                                    canonical_signal_name(parsed_signal),
+                                    Some("SIGWINCH" | "SIGCHLD" | "SIGCONT" | "SIGURG")
+                                )
+                            {
+                                if let Some(vm) = self.vms.get_mut(vm_id) {
+                                    if let Some(process) = vm.active_processes.get_mut(process_id) {
+                                        process.pending_self_signal_exit = Some(parsed_signal);
+                                    }
                                 }
                             }
+                            Ok(json!({
+                                "self": true,
+                                "action": match action {
+                                    SignalDispositionAction::Default => "default",
+                                    SignalDispositionAction::Ignore => "ignore",
+                                    SignalDispositionAction::User => "user",
+                                },
+                            }))
                         }
-                        Ok(json!({
-                            "self": true,
-                            "action": match action {
-                                SignalDispositionAction::Default => "default",
-                                SignalDispositionAction::Ignore => "ignore",
-                                SignalDispositionAction::User => "user",
-                            },
-                        }))
+                        Some(ProcessKillTarget::Child(child_process_id)) => {
+                            self.kill_javascript_child_process(
+                                vm_id,
+                                process_id,
+                                &child_process_id,
+                                signal,
+                            )?;
+                            Ok(Value::Null)
+                        }
+                        Some(ProcessKillTarget::TopLevel(target_process_id)) => {
+                            self.kill_process_internal(vm_id, &target_process_id, signal)?;
+                            Ok(Value::Null)
+                        }
+                        None => Err(SidecarError::InvalidState(format!(
+                            "unknown process pid {target_pid}"
+                        ))),
                     }
-                    Some(ProcessKillTarget::Child(child_process_id)) => {
-                        self.kill_javascript_child_process(
-                            vm_id,
-                            process_id,
-                            &child_process_id,
-                            signal,
-                        )?;
-                        Ok(Value::Null)
-                    }
-                    Some(ProcessKillTarget::TopLevel(target_process_id)) => {
-                        self.kill_process_internal(vm_id, &target_process_id, signal)?;
-                        Ok(Value::Null)
-                    }
-                    None => Err(SidecarError::InvalidState(format!(
-                        "unknown process pid {target_pid}"
-                    ))),
                 }
             }
             "process.signal_state" => {

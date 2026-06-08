@@ -2647,10 +2647,46 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         Ok(())
     }
 
-    pub fn kill_process(&self, requester_driver: &str, pid: u32, signal: i32) -> KernelResult<()> {
+    pub fn signal_process(
+        &self,
+        requester_driver: &str,
+        pid: i32,
+        signal: i32,
+    ) -> KernelResult<()> {
+        if pid < 0 {
+            let pgid = pid.unsigned_abs();
+            let members = self
+                .processes
+                .list_processes()
+                .into_values()
+                .filter(|process| process.pgid == pgid && process.status != ProcessStatus::Exited)
+                .collect::<Vec<_>>();
+            if members.is_empty() {
+                self.processes.kill(pid, signal)?;
+                return Ok(());
+            }
+            if let Some(process) = members
+                .iter()
+                .find(|process| process.driver != requester_driver)
+            {
+                return Err(KernelError::permission_denied(format!(
+                    "driver \"{requester_driver}\" does not own process group {pgid} containing PID {}",
+                    process.pid
+                )));
+            }
+            self.processes.kill(pid, signal)?;
+            return Ok(());
+        }
+
+        let pid = u32::try_from(pid)
+            .map_err(|_| KernelError::new("EINVAL", format!("invalid pid {pid}")))?;
         self.assert_driver_owns(requester_driver, pid)?;
         self.processes.kill(pid as i32, signal)?;
         Ok(())
+    }
+
+    pub fn kill_process(&self, requester_driver: &str, pid: u32, signal: i32) -> KernelResult<()> {
+        self.signal_process(requester_driver, pid as i32, signal)
     }
 
     pub fn setpgid(&self, requester_driver: &str, pid: u32, pgid: u32) -> KernelResult<()> {
