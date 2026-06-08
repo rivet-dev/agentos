@@ -1133,8 +1133,12 @@ fn handle_internal_wasm_sync_rpc_request(
         let Some(host_path) = translate_wasm_guest_path(path, internal_sync_rpc) else {
             return Ok(false);
         };
-        let target = fs::read_link(&host_path)
-            .map(|target| Value::String(target.to_string_lossy().into_owned()));
+        let target = fs::read_link(&host_path).map(|target| {
+            Value::String(
+                translate_wasm_host_symlink_target(&target, internal_sync_rpc)
+                    .unwrap_or_else(|| target.to_string_lossy().into_owned()),
+            )
+        });
         return respond_wasm_sync_rpc_value(execution, request, path, target).map(|()| true);
     }
 
@@ -1315,6 +1319,46 @@ fn translate_wasm_host_runtime_path(
     if let Some(sandbox_root) = internal_sync_rpc.sandbox_root.as_ref() {
         if candidate == sandbox_root || candidate.starts_with(sandbox_root) {
             return Some(candidate.to_path_buf());
+        }
+    }
+
+    None
+}
+
+fn translate_wasm_host_symlink_target(
+    target: &Path,
+    internal_sync_rpc: &WasmInternalSyncRpc,
+) -> Option<String> {
+    if !target.is_absolute() {
+        return None;
+    }
+
+    for mapping in &internal_sync_rpc.guest_path_mappings {
+        if let Ok(suffix) = target.strip_prefix(&mapping.host_path) {
+            return Some(join_guest_path(
+                &mapping.guest_path,
+                &suffix.to_string_lossy().replace('\\', "/"),
+            ));
+        }
+    }
+
+    if let Some(suffix) = target
+        .strip_prefix(&internal_sync_rpc.host_cwd)
+        .ok()
+        .filter(|_| internal_sync_rpc.guest_cwd.starts_with('/'))
+    {
+        return Some(join_guest_path(
+            &internal_sync_rpc.guest_cwd,
+            &suffix.to_string_lossy().replace('\\', "/"),
+        ));
+    }
+
+    if let Some(sandbox_root) = internal_sync_rpc.sandbox_root.as_ref() {
+        if let Ok(suffix) = target.strip_prefix(sandbox_root) {
+            return Some(join_guest_path(
+                "/",
+                &suffix.to_string_lossy().replace('\\', "/"),
+            ));
         }
     }
 
@@ -4740,10 +4784,11 @@ fn resolve_path_like_specifier(cwd: &Path, specifier: &str) -> Option<PathBuf> {
 mod tests {
     use super::{
         build_wasm_runner_bootstrap, resolve_wasm_execution_timeout, resolve_wasm_prewarm_timeout,
-        resolved_module_path, translate_wasm_guest_path, wasm_guest_module_paths,
-        wasm_memory_limit_pages, wasm_sandbox_root, StartWasmExecutionRequest, WasmInternalSyncRpc,
-        WasmPermissionTier, WASM_MAX_FUEL_ENV, WASM_MAX_MEMORY_BYTES_ENV, WASM_PAGE_BYTES,
-        WASM_PREWARM_TIMEOUT_MS_ENV, WASM_SANDBOX_ROOT_ENV,
+        resolved_module_path, translate_wasm_guest_path, translate_wasm_host_symlink_target,
+        wasm_guest_module_paths, wasm_memory_limit_pages, wasm_sandbox_root,
+        StartWasmExecutionRequest, WasmInternalSyncRpc, WasmPermissionTier, WASM_MAX_FUEL_ENV,
+        WASM_MAX_MEMORY_BYTES_ENV, WASM_PAGE_BYTES, WASM_PREWARM_TIMEOUT_MS_ENV,
+        WASM_SANDBOX_ROOT_ENV,
     };
     use std::collections::{BTreeMap, VecDeque};
     use std::fs;
@@ -4852,6 +4897,41 @@ mod tests {
         assert_eq!(
             translate_wasm_guest_path("project/output.txt", &internal_sync_rpc),
             Some(cwd.join("project/output.txt"))
+        );
+    }
+
+    #[test]
+    fn translate_wasm_host_symlink_target_returns_guest_path_for_mapped_targets() {
+        let temp = tempdir().expect("create temp dir");
+        let sandbox_root = temp.path().join("shadow-root");
+        let cwd = sandbox_root.join("home/user");
+        fs::create_dir_all(cwd.join("project")).expect("create host cwd");
+
+        let internal_sync_rpc = WasmInternalSyncRpc {
+            module_guest_paths: Vec::new(),
+            module_host_path: sandbox_root.join("module.wasm"),
+            guest_cwd: String::from("/home/user"),
+            host_cwd: cwd.clone(),
+            sandbox_root: Some(sandbox_root.clone()),
+            guest_path_mappings: vec![super::WasmGuestPathMapping {
+                guest_path: String::from("/"),
+                host_path: sandbox_root.clone(),
+            }],
+            next_fd: 64,
+            open_files: Default::default(),
+            pending_events: VecDeque::new(),
+        };
+
+        assert_eq!(
+            translate_wasm_host_symlink_target(
+                &sandbox_root.join("tmp/sc/pdir/r.txt"),
+                &internal_sync_rpc
+            ),
+            Some(String::from("/tmp/sc/pdir/r.txt"))
+        );
+        assert_eq!(
+            translate_wasm_host_symlink_target(Path::new("relative-target"), &internal_sync_rpc),
+            None
         );
     }
 
