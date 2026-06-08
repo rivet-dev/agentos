@@ -2,68 +2,45 @@
 //!
 //! `fetch` dispatches to a guest HTTP server listening on a port INSIDE the kernel (never the host).
 //! Standing up that guest listener requires the V8/JS guest runtime, which may be broken in this
-//! environment, and the client `fetch` method itself is being implemented concurrently (it may still
-//! be unimplemented). This suite is therefore doubly self-gating and tolerant:
+//! environment. This suite fails fast by default when prerequisites are missing; set
+//! `AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1` only for local skip-only runs:
 //!
-//!   1. Skip if the sidecar binary is absent.
-//!   2. Skip if a guest HTTP listener cannot be stood up (no V8 / no command toolchain).
-//!   3. Tolerate `fetch` being unimplemented: the call is run on a task whose panic (e.g. a `todo!()`
-//!      placeholder) is caught and turned into a skip rather than a hard failure.
+//!   1. The sidecar binary must be present.
+//!   2. The guest command/runtime toolchain must be present.
+//!   3. `AgentOs::fetch` must be implemented and responsive.
 //!
 //! When the full path IS available the suite asserts the TS contract: a guest GET returns the
 //! server's body/status, a guest POST round-trips its request body, and a custom request header
-//! reaches the guest server. Until the prerequisites land, the suite passes as a skip.
+//! reaches the guest server.
 
 mod common;
 
 use agent_os_client::AgentOs;
 use bytes::Bytes;
+use futures::StreamExt;
 
-/// Attempt to stand up a guest HTTP server on `port` that echoes request method/path/body. Returns
-/// true when the listener is confirmed up. This requires the guest JS runtime; when that runtime is
-/// unavailable the spawn fails and the suite skips.
-///
-/// NOTE: The exact mechanism for launching a guest HTTP server (a JS `http.createServer` script via
-/// the V8 runtime) is environment-dependent and currently unavailable here, so this helper
-/// conservatively reports `false`. It is the single seam to enable once the guest server path works.
-async fn try_start_guest_server(_os: &AgentOs, _port: u16) -> bool {
-    // Guest HTTP servers run on the V8/JS runtime which is not available in this environment. When
-    // that path is wired, replace this with a real `spawn` of an `http.createServer` script plus a
-    // readiness check, and return whether the listener bound.
-    false
-}
-
-/// Run `fetch` on a task so an unimplemented (`todo!()`) panic surfaces as a `JoinError` we can
-/// detect, instead of aborting the whole test. Returns `Err(())` when `fetch` is not implemented.
 async fn fetch_tolerant(
     os: &AgentOs,
     port: u16,
     request: http::Request<Bytes>,
-) -> Result<anyhow::Result<http::Response<Bytes>>, ()> {
+) -> anyhow::Result<http::Response<Bytes>> {
     let os = os.clone();
     let handle = tokio::spawn(async move { os.fetch(port, request).await });
     match handle.await {
-        Ok(result) => Ok(result),
+        Ok(result) => result,
         Err(join_error) if join_error.is_panic() => {
-            eprintln!("skipping fetch e2e: AgentOs::fetch is not implemented yet (panicked)");
-            Err(())
+            panic!("AgentOs::fetch panicked; fetch e2e cannot be treated as a skip")
         }
-        Err(join_error) => {
-            // A cancellation (not a panic) is unexpected here; treat it as a skip rather than a
-            // spurious failure.
-            eprintln!("skipping fetch e2e: fetch task did not complete ({join_error})");
-            Err(())
-        }
+        Err(join_error) => panic!("fetch task did not complete: {join_error}"),
     }
 }
 
 #[tokio::test]
 async fn fetch_surface_get_post_and_headers() {
-    if !common::sidecar_available() {
-        eprintln!("skipping fetch_surface_get_post_and_headers: sidecar binary not built");
+    if !common::require_sidecar("fetch_surface_get_post_and_headers") {
         return;
     }
-    let os = common::new_vm().await;
+    let os = common::new_vm_with_wasm_commands().await;
 
     // --- Runtime-independent: fetch reaches the sidecar and handles a no-listener port ------------
     // Nothing is bound on this guest port, so the port-based fetch must surface an error or a
@@ -80,41 +57,59 @@ async fn fetch_surface_get_post_and_headers() {
     )
     .await
     {
-        Ok(Ok(Ok(response))) => assert!(
+        Ok(Ok(response)) => assert!(
             !response.status().is_success(),
             "fetch to an unbound port must not return a success status, got {}",
             response.status()
         ),
-        Ok(Ok(Err(_))) => { /* an error is the expected no-listener outcome */ }
-        Ok(Err(())) => {
-            // fetch is unimplemented (not expected now) — skip the rest.
-            os.shutdown().await.expect("shutdown");
-            return;
-        }
-        Err(_) => eprintln!(
-            "note: fetch to an unbound port did not resolve within 8s; skipping the no-listener \
-             assertion (possible sidecar no-listener handling difference)"
-        ),
+        Ok(Err(_)) => { /* an error is the expected no-listener outcome */ }
+        Err(_) => panic!("fetch to an unbound port did not resolve within 8s"),
     }
 
-    if !common::wasm_commands_available(&os).await {
-        eprintln!(
-            "skipping fetch_surface_get_post_and_headers: guest runtime/command toolchain not \
-             present (cannot stand up a guest HTTP server)"
-        );
-        os.shutdown().await.expect("shutdown");
+    if !common::require_wasm_commands(&os, "fetch_surface_get_post_and_headers").await {
+        os.shutdown().await.expect("shutdown after local skip");
         return;
     }
 
     let port: u16 = 18080;
-    if !try_start_guest_server(&os, port).await {
-        eprintln!(
-            "skipping fetch_surface_get_post_and_headers: guest HTTP server could not be started \
-             (V8/JS guest runtime unavailable)"
-        );
-        os.shutdown().await.expect("shutdown");
-        return;
-    }
+    let server = os
+        .spawn(
+            "node",
+            vec![
+                "-e".to_string(),
+                format!(
+                    r#"
+const http = require("node:http");
+const server = http.createServer((req, res) => {{
+  const chunks = [];
+  req.on("data", (chunk) => chunks.push(chunk));
+  req.on("end", () => {{
+    res.writeHead(200, {{ "content-type": "text/plain" }});
+    res.end([req.method, req.url, req.headers["x-agent-os-test"] || "", Buffer.concat(chunks).toString()].join("\n"));
+  }});
+}});
+server.listen({port}, "127.0.0.1", () => console.log("READY"));
+"#
+                ),
+            ],
+            Default::default(),
+        )
+        .expect("spawn guest HTTP server");
+
+    let mut server_stdout = os
+        .on_process_stdout(server.pid)
+        .expect("subscribe guest HTTP server stdout");
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let mut stdout = Vec::new();
+        while !String::from_utf8_lossy(&stdout).contains("READY") {
+            let Some(chunk) = server_stdout.next().await else {
+                panic!("guest HTTP server stdout closed before READY");
+            };
+            stdout.extend_from_slice(&chunk);
+        }
+    })
+    .await
+    .expect("guest HTTP server did not report READY");
 
     // --- GET: the guest server's response body/status reach the caller ---------------------------
     let get_request = http::Request::builder()
@@ -122,13 +117,9 @@ async fn fetch_surface_get_post_and_headers() {
         .uri("http://guest.local/echo?q=1")
         .body(Bytes::new())
         .expect("build GET request");
-    let response = match fetch_tolerant(&os, port, get_request).await {
-        Ok(result) => result.expect("fetch GET"),
-        Err(()) => {
-            os.shutdown().await.expect("shutdown");
-            return;
-        }
-    };
+    let response = fetch_tolerant(&os, port, get_request)
+        .await
+        .expect("fetch GET");
     assert_eq!(
         response.status(),
         http::StatusCode::OK,
@@ -147,13 +138,9 @@ async fn fetch_surface_get_post_and_headers() {
         .header("x-agent-os-test", "header-value")
         .body(post_body.clone())
         .expect("build POST request");
-    let response = match fetch_tolerant(&os, port, post_request).await {
-        Ok(result) => result.expect("fetch POST"),
-        Err(()) => {
-            os.shutdown().await.expect("shutdown");
-            return;
-        }
-    };
+    let response = fetch_tolerant(&os, port, post_request)
+        .await
+        .expect("fetch POST");
     assert_eq!(response.status(), http::StatusCode::OK, "guest POST → 200");
     // An echo server reflects the posted body; the custom header should be observable in the echoed
     // response (header round-trip) since the guest server echoes received headers back.
@@ -167,5 +154,6 @@ async fn fetch_surface_get_post_and_headers() {
         "the custom request header must reach the guest server (header round-trip)"
     );
 
+    os.kill_process(server.pid).expect("kill guest HTTP server");
     os.shutdown().await.expect("shutdown");
 }

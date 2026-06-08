@@ -14,8 +14,7 @@ use chrono::Utc;
 
 #[tokio::test]
 async fn cron_callback_fires_and_registry_round_trips() {
-    if !common::sidecar_available() {
-        eprintln!("skipping cron_callback_fires_and_registry_round_trips: sidecar not built");
+    if !common::require_sidecar("cron_callback_fires_and_registry_round_trips") {
         return;
     }
     let os = common::new_vm().await;

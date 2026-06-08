@@ -7,8 +7,7 @@ use agent_os_client::fs::FileContent;
 
 #[tokio::test]
 async fn lifecycle_independent_vms_and_idempotent_shutdown() {
-    if !common::sidecar_available() {
-        eprintln!("skipping lifecycle_independent_vms_and_idempotent_shutdown: sidecar not built");
+    if !common::require_sidecar("lifecycle_independent_vms_and_idempotent_shutdown") {
         return;
     }
 

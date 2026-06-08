@@ -8,8 +8,7 @@ use agent_os_client::fs::FileContent;
 
 #[tokio::test]
 async fn shared_sidecar_pooling_reuses_one_process() {
-    if !common::sidecar_available() {
-        eprintln!("skipping shared_sidecar_pooling_reuses_one_process: sidecar not built");
+    if !common::require_sidecar("shared_sidecar_pooling_reuses_one_process") {
         return;
     }
 

@@ -1,11 +1,8 @@
 //! Agent session (ACP) e2e against a real `agent-os-sidecar`.
 //!
 //! `create_session` requires agent adapters + a mock LLM + V8 execution. In this environment the
-//! client's `create_session` is not yet wired to the agent-config resolution infrastructure (it
-//! returns an error), and V8 execution may be broken. This suite is therefore self-gating: it
-//! attempts `create_session` and, if it fails for ANY reason (missing adapter, no V8, missing
-//! infra), it treats that as "agent runtime not present" and skips. The suite still compiles and
-//! passes as a skip in that environment.
+//! client. This suite fails fast by default when session creation is unavailable; set
+//! `AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1` only for local skip-only runs.
 //!
 //! When a session CAN be created the suite asserts the real TS contract: the session appears in
 //! `list_sessions`, `prompt` returns a `PromptResult` (response + accumulated agent text),
@@ -14,33 +11,102 @@
 
 mod common;
 
-use agent_os_client::{AgentOs, ClientError, CreateSessionOptions};
+use std::collections::BTreeMap;
 
-/// Attempt to create a session, returning the session id when the agent runtime is present, or
-/// `None` (with a skip log) when it is not. The agent type is best-effort: any registered adapter is
-/// acceptable since the suite gates on success, not on a specific agent.
-async fn try_create_session(os: &AgentOs) -> Option<String> {
-    match os
-        .create_session("pi", CreateSessionOptions::default())
+use agent_os_client::fs::FileContent;
+use agent_os_client::{AgentOs, ClientError, CreateSessionOptions, GetEventsOptions};
+use futures::StreamExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
+
+struct MockAnthropic {
+    url: String,
+    port: u16,
+    task: JoinHandle<()>,
+}
+
+impl MockAnthropic {
+    fn stop(self) {
+        self.task.abort();
+    }
+}
+
+async fn start_mock_anthropic() -> MockAnthropic {
+    let listener = TcpListener::bind("127.0.0.1:0")
         .await
-    {
+        .expect("bind mock anthropic server");
+    let port = listener.local_addr().expect("mock server address").port();
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buffer = [0_u8; 8192];
+                let _ = socket.read(&mut buffer).await;
+                let body = r#"{"id":"msg_mock","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[{"type":"text","text":"PONG"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            });
+        }
+    });
+
+    MockAnthropic {
+        url: format!("http://127.0.0.1:{port}"),
+        port,
+        task,
+    }
+}
+
+async fn try_create_session_with_options(
+    os: &AgentOs,
+    options: CreateSessionOptions,
+) -> Option<String> {
+    match os.create_session("pi", options).await {
         Ok(session) => Some(session.session_id),
         Err(error) => {
-            eprintln!(
-                "skipping session e2e: create_session unavailable in this environment ({error})"
-            );
-            None
+            if common::allow_local_e2e_skips() {
+                eprintln!(
+                    "skipping session e2e: create_session unavailable in this environment ({error})"
+                );
+                None
+            } else {
+                panic!("create_session unavailable; this e2e cannot pass as a skip: {error}");
+            }
         }
     }
 }
 
+fn session_update_kind(notification: &agent_os_client::JsonRpcNotification) -> Option<&str> {
+    let params = notification.params.as_ref()?;
+    let update = params.get("update").unwrap_or(params);
+    update.get("sessionUpdate").and_then(|value| value.as_str())
+}
+
+fn agent_message_chunk_text(notification: &agent_os_client::JsonRpcNotification) -> Option<&str> {
+    let params = notification.params.as_ref()?;
+    let update = params.get("update").unwrap_or(params);
+    if update.get("sessionUpdate").and_then(|value| value.as_str()) != Some("agent_message_chunk") {
+        return None;
+    }
+    update
+        .get("content")
+        .and_then(|content| content.get("text"))
+        .and_then(|value| value.as_str())
+}
+
 #[tokio::test]
 async fn session_surface_create_prompt_events_close() {
-    if !common::sidecar_available() {
-        eprintln!("skipping session_surface_create_prompt_events_close: sidecar binary not built");
+    if !common::require_sidecar("session_surface_create_prompt_events_close") {
         return;
     }
-    let os = common::new_vm().await;
+    let mock = start_mock_anthropic().await;
+    let os = common::new_vm_with_loopback_ports(vec![mock.port]).await;
 
     // --- Runtime-independent session surface (no agents/V8 needed) --------------------------------
     // Real assertions against the real sidecar: the registry starts empty, the built-in agent set is
@@ -78,10 +144,51 @@ async fn session_surface_create_prompt_events_close() {
         "prompt(unknown) must return SessionNotFound"
     );
 
-    let session_id = match try_create_session(&os).await {
+    let home_dir = "/home/user";
+    let workspace_dir = "/home/user/workspace";
+    os.mkdir("/home/user/.pi/agent", Default::default())
+        .await
+        .expect("create pi config directory");
+    os.mkdir(workspace_dir, Default::default())
+        .await
+        .expect("create workspace");
+    os.write_file(
+        "/home/user/.pi/agent/models.json",
+        FileContent::Text(format!(
+            r#"{{
+  "providers": {{
+    "anthropic": {{
+      "baseUrl": "{}",
+      "apiKey": "mock-key"
+    }}
+  }}
+}}"#,
+            mock.url
+        )),
+    )
+    .await
+    .expect("write pi model config");
+
+    let mut env = BTreeMap::new();
+    env.insert("HOME".to_string(), home_dir.to_string());
+    env.insert("ANTHROPIC_API_KEY".to_string(), "mock-key".to_string());
+    env.insert("ANTHROPIC_BASE_URL".to_string(), mock.url.clone());
+    env.insert("PI_SKIP_VERSION_CHECK".to_string(), "1".to_string());
+
+    let session_id = match try_create_session_with_options(
+        &os,
+        CreateSessionOptions {
+            cwd: Some(workspace_dir.to_string()),
+            env,
+            ..Default::default()
+        },
+    )
+    .await
+    {
         Some(id) => id,
         None => {
             os.shutdown().await.expect("shutdown");
+            mock.stop();
             return;
         }
     };
@@ -94,7 +201,22 @@ async fn session_surface_create_prompt_events_close() {
         "created session must appear in list_sessions"
     );
 
-    // --- on_session_event: subscribe before prompting so updates are observed --------------------
+    // --- on_session_event: subscribe before prompting so prompt-time chunks are observed ---------
+    let updates_before_prompt = os
+        .get_session_events(
+            &session_id,
+            GetEventsOptions {
+                method: Some("session/update".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("get_session_events before prompt");
+    assert!(
+        updates_before_prompt
+            .iter()
+            .all(|event| session_update_kind(&event.notification) != Some("agent_message_chunk")),
+        "create_session should not replay prompt agent_message_chunk events before prompting"
+    );
     let (mut events, _sub) = os
         .on_session_event(&session_id)
         .expect("on_session_event for live session");
@@ -107,22 +229,34 @@ async fn session_surface_create_prompt_events_close() {
     // The JSON-RPC response is returned even when it carries an error; here a healthy mock should
     // produce a non-error response. We assert the response shape rather than exact model text.
     assert_eq!(result.response.jsonrpc, "2.0");
+    assert!(
+        result.response.error.is_none(),
+        "mock-backed prompt should not return a JSON-RPC error: {:?}",
+        result.response.error
+    );
 
-    // Drain any buffered/live `session/update` notifications that arrived during the prompt. Only
-    // `session/update` is delivered on this stream (TS contract).
-    let saw_update = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        use futures::StreamExt;
-        // A single update is sufficient to prove the stream is wired; the prompt above should have
-        // produced at least an agent_message_chunk update.
-        events.next().await.map(|n| n.method == "session/update")
+    // Ignore any replayed non-prompt session/update events from create_session. The first
+    // agent_message_chunk must arrive live because the subscription was created before prompt.
+    let live_chunk_text = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while let Some(notification) = events.next().await {
+            if let Some(text) = agent_message_chunk_text(&notification) {
+                return Some(text.to_string());
+            }
+        }
+        None
     })
     .await
     .ok()
-    .flatten()
-    .unwrap_or(false);
+    .flatten();
     assert!(
-        saw_update || !result.text.is_empty(),
-        "prompt should surface agent activity either via the event stream or accumulated text"
+        !result.text.is_empty(),
+        "prompt should accumulate agent_message_chunk text from hydrated session events"
+    );
+    assert!(
+        live_chunk_text
+            .as_deref()
+            .is_some_and(|text| !text.is_empty()),
+        "on_session_event should stream a live agent_message_chunk during prompt"
     );
 
     // --- get_session_events: the bounded ring exposes recorded notifications ----------------------
@@ -159,4 +293,5 @@ async fn session_surface_create_prompt_events_close() {
     );
 
     os.shutdown().await.expect("shutdown");
+    mock.stop();
 }

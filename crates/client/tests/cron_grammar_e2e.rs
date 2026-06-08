@@ -29,8 +29,7 @@ fn try_schedule(os: &AgentOs, schedule: &str) -> Result<(), ClientError> {
 
 #[tokio::test]
 async fn cron_grammar_matches_croner() {
-    if !common::sidecar_available() {
-        eprintln!("skipping cron_grammar_matches_croner: sidecar not built");
+    if !common::require_sidecar("cron_grammar_matches_croner") {
         return;
     }
     let os = common::new_vm().await;

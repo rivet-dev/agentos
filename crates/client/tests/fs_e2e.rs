@@ -35,8 +35,7 @@ async fn base_layer_exposes_agentos_instructions() {
 
 #[tokio::test]
 async fn filesystem_surface_round_trips() {
-    if !common::sidecar_available() {
-        eprintln!("skipping filesystem_surface_round_trips: sidecar binary not built");
+    if !common::require_sidecar("filesystem_surface_round_trips") {
         return;
     }
     let os = common::new_vm().await;

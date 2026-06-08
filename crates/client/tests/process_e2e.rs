@@ -1,10 +1,8 @@
 //! Process e2e against a real `agent-os-sidecar`.
 //!
-//! `exec`/`spawn` require WASM command packages (sh/echo/cat) that are NOT checked into git, so this
-//! suite is self-gating: it first probes a trivial `exec` and, if the command cannot be resolved
-//! (a "no shell" / command-not-found style kernel rejection, or a non-zero exit with empty stdout),
-//! it treats that as "WASM commands not present" and skips. The suite still compiles and passes as a
-//! skip in that environment, so it is honest and never fails for agent-os reasons.
+//! `exec`/`spawn` require WASM command packages (sh/echo/cat). This suite fails fast by default when
+//! those packages are unavailable; set `AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1` only for local skip-only
+//! runs.
 //!
 //! When commands ARE available the suite asserts the real TS contract: exec stdout + exit code,
 //! binary stdout round-trip, spawn pid + stdin write, exit-code wait, list/get of SDK processes, and
@@ -14,33 +12,15 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
-use agent_os_client::{AgentOs, ClientError, ExecOptions, SpawnOptions, StdinInput};
+use agent_os_client::{ClientError, ExecOptions, SpawnOptions, StdinInput};
 use futures::StreamExt;
-
-/// Probe whether WASM commands (a `sh`-backed `echo`) resolve inside the VM. Returns the probe's
-/// stdout when commands work, or `None` when the prerequisite is absent (kernel rejection, or a
-/// failed run with no output). A successful `echo` is the cheapest positive signal that the command
-/// toolchain is mounted.
-async fn commands_available(os: &AgentOs) -> Option<String> {
-    // `exec` forwards the `command` field only (no shell args), so a bare `echo` runs the WASM
-    // `echo` command which exits 0 (printing a blank line). A clean exit is the availability signal.
-    let result = os.exec("echo", ExecOptions::default()).await;
-    match result {
-        // A clean run with the expected newline-terminated marker means commands are present.
-        Ok(res) if res.exit_code == 0 => Some(res.stdout),
-        // Any other outcome (kernel rejection, non-zero exit, or error) means the WASM command
-        // toolchain is not mounted in this environment.
-        Ok(_) | Err(_) => None,
-    }
-}
 
 #[tokio::test]
 async fn process_surface_exec_spawn_and_snapshot() {
-    if !common::sidecar_available() {
-        eprintln!("skipping process_surface_exec_spawn_and_snapshot: sidecar binary not built");
+    if !common::require_sidecar("process_surface_exec_spawn_and_snapshot") {
         return;
     }
-    let os = common::new_vm().await;
+    let os = common::new_vm_with_wasm_commands().await;
 
     // --- Runtime-independent process-management surface (no WASM needed) --------------------------
     // These execute real assertions against the real sidecar regardless of whether WASM command
@@ -107,12 +87,8 @@ async fn process_surface_exec_spawn_and_snapshot() {
 
     // Gate: probe for the WASM command toolchain. Bare `echo` with no args prints an empty line, so
     // a clean exit (code 0) is the availability signal even though stdout is just "\n".
-    if commands_available(&os).await.is_none() {
-        eprintln!(
-            "skipping process_surface_exec_spawn_and_snapshot: WASM command packages (sh/echo) \
-             not present in this environment"
-        );
-        os.shutdown().await.expect("shutdown");
+    if !common::require_wasm_commands(&os, "process_surface_exec_spawn_and_snapshot").await {
+        os.shutdown().await.expect("shutdown after local skip");
         return;
     }
 
@@ -216,18 +192,23 @@ async fn process_surface_exec_spawn_and_snapshot() {
         .expect("write stdin");
     os.close_process_stdin(handle.pid).expect("close stdin");
 
-    // Collect stdout chunks until the stream closes (process exit closes the broadcast).
+    // Collect the expected stdout bytes. The stdout subscription is a live multi-subscriber stream,
+    // so process exit is observed through wait_process rather than channel closure.
+    let expected_spawn_stdout = b"spawned-input";
     let collected = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let mut buf = Vec::<u8>::new();
-        while let Some(chunk) = stdout.next().await {
+        while buf.len() < expected_spawn_stdout.len() {
+            let Some(chunk) = stdout.next().await else {
+                break;
+            };
             buf.extend_from_slice(&chunk);
         }
         buf
     })
     .await
-    .expect("spawn stdout did not close within timeout");
+    .expect("spawn stdout did not produce expected bytes within timeout");
     assert_eq!(
-        collected, b"spawned-input",
+        collected, expected_spawn_stdout,
         "spawned cat must echo the written stdin to its stdout stream"
     );
 
