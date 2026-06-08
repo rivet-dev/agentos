@@ -512,6 +512,55 @@ try {
     assert!(message.contains("require() of ES Module"));
 }
 
+fn runtime_require_fails_closed_when_module_format_bridge_is_missing() {
+    let fixture = Fixture::new();
+    fixture.write("dep.js", "module.exports = { value: 42 };\n");
+    fixture.write(
+        "entry.cjs",
+        r#"
+let bridgeOverride = "not-attempted";
+try {
+  Object.defineProperty(globalThis, "_moduleFormat", {
+    configurable: true,
+    writable: true,
+    value: undefined
+  });
+  bridgeOverride = "defined";
+} catch (error) {
+  bridgeOverride = `define-failed:${error && error.message ? error.message : error}`;
+}
+
+try {
+  require("./dep.js");
+  console.log(JSON.stringify({ mode: "loaded", bridgeOverride }));
+} catch (error) {
+  console.log(JSON.stringify({
+    mode: "error",
+    bridgeOverride,
+    code: error && error.code ? error.code : null,
+    message: String(error && error.message ? error.message : error)
+  }));
+}
+"#,
+    );
+
+    let output = run_guest_json(&fixture, "./entry.cjs");
+    assert_eq!(output.get("bridgeOverride"), Some(&json!("defined")));
+    assert_eq!(output.get("mode"), Some(&json!("error")));
+    assert_eq!(
+        output.get("code"),
+        Some(&json!("ERR_AGENT_OS_MODULE_FORMAT_BRIDGE_MISSING"))
+    );
+    let message = output
+        .get("message")
+        .and_then(Value::as_str)
+        .expect("error message");
+    assert!(
+        message.contains("module format bridge is not registered"),
+        "unexpected missing bridge error message: {message}"
+    );
+}
+
 fn runtime_import_module_condition_js_target_uses_esm_syntax() {
     let fixture = Fixture::new();
     fixture.write_json(
@@ -1217,6 +1266,7 @@ fn cjs_esm_interop_suite() {
     runtime_export_star_reexport_with_own_static_exports_exposes_all_named_esm_imports();
     runtime_require_of_esm_only_packages_either_loads_or_throws_clearly();
     runtime_require_type_module_js_main_throws_require_esm();
+    runtime_require_fails_closed_when_module_format_bridge_is_missing();
     runtime_import_module_condition_js_target_uses_esm_syntax();
     runtime_type_module_export_subpaths_keep_js_files_in_esm_mode();
     runtime_require_of_dual_packages_uses_the_cjs_entrypoint();

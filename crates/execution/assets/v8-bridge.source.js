@@ -26332,9 +26332,19 @@ ${headerLines}\r
     error.code = "ERR_REQUIRE_ESM";
     return error;
   }
+  function createModuleFormatBridgeMissingError(filename) {
+    const error = new Error(
+      `Agent OS module format bridge is not registered; cannot require ${filename}.`
+    );
+    error.code = "ERR_AGENT_OS_MODULE_FORMAT_BRIDGE_MISSING";
+    return error;
+  }
   function assertCommonjsLoadable(filename) {
-    if (typeof _moduleFormat === "undefined") {
-      return;
+    if (
+      typeof _moduleFormat === "undefined" ||
+      typeof _moduleFormat.applySyncPromise !== "function"
+    ) {
+      throw createModuleFormatBridgeMissingError(filename);
     }
     const format = _moduleFormat.applySyncPromise(void 0, [filename]);
     if (format === "module") {
