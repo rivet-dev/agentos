@@ -3,7 +3,7 @@
   "version": "0.0.260331072558",
   "type": "module",
   "license": "Apache-2.0",
-  "description": "OpenAI Codex integration for agentOS",
+  "description": "OpenAI Codex command package for Agent OS",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [

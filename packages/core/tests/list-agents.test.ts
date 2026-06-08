@@ -20,7 +20,6 @@ describe("listAgents()", () => {
 		expect(ids).toContain("pi-cli");
 		expect(ids).toContain("opencode");
 		expect(ids).toContain("claude");
-		expect(ids).toContain("codex");
 	});
 
 	test("each entry exposes the current built-in adapter metadata", () => {

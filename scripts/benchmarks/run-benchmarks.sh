@@ -38,8 +38,5 @@ run "memory-pi-session" \
 run "memory-claude-session" \
   --expose-gc scripts/benchmarks/memory.bench.ts --workload=claude-session --count=3
 
-run "memory-codex-session" \
-  --expose-gc scripts/benchmarks/memory.bench.ts --workload=codex-session --count=3
-
 echo "" >&2
 echo "=== Done. Results in $RESULTS_DIR ===" >&2

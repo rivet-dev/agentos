@@ -1,11 +1,21 @@
 import { resolve } from "node:path";
-import codex from "@rivet-dev/agent-os-codex-agent";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import type { SoftwareInput } from "../src/packages.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const MOCK_ADAPTER_PATH = "/tmp/mock-synthetic-session-updates-adapter.mjs";
+const SYNTHETIC_AGENT = {
+	name: "synthetic-session-updates",
+	type: "agent" as const,
+	packageDir: MODULE_ACCESS_CWD,
+	requires: [],
+	agent: {
+		id: "synthetic",
+		acpAdapter: "synthetic-session-updates-adapter",
+		agentPackage: "synthetic-session-updates-agent",
+	},
+};
 
 const MOCK_ACP_ADAPTER = `
 let buffer = "";
@@ -145,7 +155,7 @@ function useMockAdapterBin(vm: AgentOs, scriptPath: string): () => void {
 	};
 }
 
-async function createMockCodexVm(software: SoftwareInput[]): Promise<AgentOs> {
+async function createMockAgentVm(software: SoftwareInput[]): Promise<AgentOs> {
 	return AgentOs.create({
 		moduleAccessCwd: MODULE_ACCESS_CWD,
 		software,
@@ -154,13 +164,13 @@ async function createMockCodexVm(software: SoftwareInput[]): Promise<AgentOs> {
 
 describe("synthetic session/update compatibility", () => {
 	test("surfaces synthetic mode and config updates when the ACP adapter omits notifications", async () => {
-		const vm = await createMockCodexVm([codex]);
+		const vm = await createMockAgentVm([SYNTHETIC_AGENT]);
 		const restore = useMockAdapterBin(vm, MOCK_ADAPTER_PATH);
 		let sessionId: string | undefined;
 
 		try {
 			await vm.writeFile(MOCK_ADAPTER_PATH, MOCK_ACP_ADAPTER);
-			sessionId = (await vm.createSession("codex")).sessionId;
+			sessionId = (await vm.createSession("synthetic")).sessionId;
 
 			const receivedEvents: string[] = [];
 			const unsubscribe = vm.onSessionEvent(sessionId, (event) => {

@@ -7,7 +7,6 @@ import {
 import { readlink, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import claude from "@rivet-dev/agent-os-claude";
-import codex from "@rivet-dev/agent-os-codex-agent";
 import opencode from "@rivet-dev/agent-os-opencode";
 import pi from "@rivet-dev/agent-os-pi";
 import piCli from "@rivet-dev/agent-os-pi-cli";
@@ -26,10 +25,6 @@ import {
 	createVmWorkspace as createOpenCodeWorkspace,
 } from "./helpers/opencode-helper.js";
 import {
-	type ResponsesFixture,
-	startResponsesMock,
-} from "./helpers/openai-responses-mock.js";
-import {
 	REGISTRY_SOFTWARE,
 } from "./helpers/registry-commands.js";
 
@@ -37,14 +32,14 @@ const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const PROMPT_TEXT = "Reply with exactly cleanup-ok.";
 const PROMPT_RESPONSE = "cleanup-ok";
 
-type MockKind = "anthropic" | "openai";
+type MockKind = "anthropic";
 
 type SessionCleanupAgent = {
 	agentType: string;
 	label: string;
 	mockKind: MockKind;
 	activePromptTermination: "close" | "cancel_then_close";
-	activePromptMock: "hang" | "slow_response";
+	activePromptMock: "hang";
 	createVm: (mockUrl: string) => Promise<AgentOs>;
 	createSession: (vm: AgentOs, mockUrl: string) => Promise<{ sessionId: string }>;
 };
@@ -150,36 +145,7 @@ const REGISTRY_AGENTS: SessionCleanupAgent[] = [
 			});
 		},
 	},
-	{
-		agentType: "codex",
-		label: "Codex",
-		mockKind: "openai",
-		activePromptTermination: "cancel_then_close",
-		activePromptMock: "slow_response",
-		createVm: async (mockUrl) =>
-			AgentOs.create({
-				loopbackExemptPorts: [Number(new URL(mockUrl).port)],
-				moduleAccessCwd: MODULE_ACCESS_CWD,
-				software: [codex, ...REGISTRY_SOFTWARE],
-			}),
-		createSession: async (vm, mockUrl) =>
-			vm.createSession("codex", {
-				cwd: "/home/user",
-				env: {
-					OPENAI_API_KEY: "mock-key",
-					OPENAI_BASE_URL: mockUrl,
-				},
-			}),
-	},
 ];
-
-const CODEX_CLEANUP_AGENT = REGISTRY_AGENTS.find(
-	(agent) => agent.agentType === "codex",
-);
-
-if (!CODEX_CLEANUP_AGENT) {
-	throw new Error("missing Codex cleanup agent fixture");
-}
 
 async function createVmPiHome(vm: AgentOs, mockUrl: string): Promise<string> {
 	const homeDir = "/home/user";
@@ -561,35 +527,6 @@ async function createTextMock(mockKind: MockKind): Promise<{
 	url: string;
 	stop: () => Promise<void>;
 }> {
-	if (mockKind === "openai") {
-		const fixtures: ResponsesFixture[] = [
-			{
-				name: "cleanup-text-response",
-				predicate: () => true,
-				response: {
-					id: "resp_cleanup_text",
-					output: [
-						{
-							type: "message",
-							role: "assistant",
-							content: [
-								{
-									type: "output_text",
-									text: PROMPT_RESPONSE,
-								},
-							],
-						},
-					],
-				},
-			},
-		];
-		const mock = await startResponsesMock(fixtures);
-		return {
-			url: mock.url,
-			stop: mock.stop,
-		};
-	}
-
 	const { mock, url } = await startLlmock([
 		createAnthropicFixture({}, { content: PROMPT_RESPONSE }),
 	]);
@@ -769,84 +706,13 @@ async function createHangingAnthropicServer(): Promise<{
 	};
 }
 
-async function createSlowResponseMock(mockKind: MockKind): Promise<{
-	url: string;
-	stop: () => Promise<void>;
-	waitForRequest: () => Promise<void>;
-}> {
-	if (mockKind !== "openai") {
-		throw new Error(`slow-response mock is unsupported for ${mockKind}`);
-	}
-
-	const requestSignal = createDeferredSignal();
-	const server = createServer(async (req, res) => {
-		if (req.method !== "POST" || req.url !== "/v1/responses") {
-			writeJson(res, 404, { error: "not_found" });
-			return;
-		}
-
-		try {
-			await readJsonBody(req);
-			requestSignal.resolve();
-			await new Promise((resolve) => setTimeout(resolve, 60_000));
-			writeJson(res, 200, {
-				id: "resp_cleanup_slow",
-				output: [
-					{
-						type: "message",
-						role: "assistant",
-						content: [
-							{
-								type: "output_text",
-								text: "This response should be cancelled before it completes.",
-							},
-						],
-					},
-				],
-			});
-		} catch (error) {
-			writeJson(res, 500, {
-				error: "invalid_request",
-				message: error instanceof Error ? error.message : String(error),
-			});
-		}
-	});
-
-	await new Promise<void>((resolve) => {
-		server.listen(0, "127.0.0.1", () => resolve());
-	});
-	server.unref();
-
-	const address = server.address();
-	if (!address || typeof address === "string") {
-		throw new Error("mock server did not expose a TCP port");
-	}
-
-	return {
-		url: `http://127.0.0.1:${address.port}`,
-		waitForRequest: requestSignal.wait,
-		stop: async () => {
-			server.closeAllConnections?.();
-			await new Promise<void>((resolve, reject) => {
-				server.close((error) => {
-					if (error) reject(error);
-					else resolve();
-				});
-			});
-		},
-	};
-}
-
 async function createActivePromptMock(
-	agent: SessionCleanupAgent,
+	_agent: SessionCleanupAgent,
 ): Promise<{
 	url: string;
 	stop: () => Promise<void>;
 	waitForRequest: () => Promise<void>;
 }> {
-	if (agent.activePromptMock === "slow_response") {
-		return createSlowResponseMock(agent.mockKind);
-	}
 	return createHangingAnthropicServer();
 }
 
@@ -1098,12 +964,4 @@ describe("session cleanup", () => {
 
 describe("session cleanup with registry-backed agents", () => {
 	registerSharedCleanupCoverage(REGISTRY_AGENTS);
-
-	test(
-		"Codex active-prompt cleanup frees sockets, FDs, and processes",
-		async () => {
-			await assertActivePromptCleanup(CODEX_CLEANUP_AGENT);
-		},
-		300_000,
-	);
 });

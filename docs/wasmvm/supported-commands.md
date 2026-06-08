@@ -228,12 +228,11 @@
 | Command | just-bash | Status | Implementation | Target |
 |---------|-----------|--------|----------------|--------|
 | codex | — | done | Rust binary (`rivet-dev/codex` fork, TUI mode via ratatui/crossterm, `host_net` + `host_process`) | — |
-| codex-exec | — | done | Rust binary (`rivet-dev/codex` fork, headless mode, `host_net` + `host_process`) | — |
+| codex-exec | — | partial | Rust binary placeholder; provider-backed headless mode is not wired | — |
 
 - **codex** is the TUI (interactive terminal UI) mode — requires a PTY for rendering
-- **codex-exec** is the headless mode — accepts a prompt via CLI args, prints result to stdout
-- Both require `OPENAI_API_KEY` environment variable for API access
-- Both require network access (`host_net`) for OpenAI API calls
+- **codex-exec** currently accepts prompt arguments only as a placeholder and fails fast for ACP session-turn mode
+- Provider-backed Codex commands require `OPENAI_API_KEY` and network access (`host_net`) when that path is wired
 
 ## Package Management (Node Runtime)
 

@@ -742,10 +742,6 @@ dependencies = [
  "codex-network-proxy",
  "codex-otel",
  "secureexec-wasi-http",
- "secureexec-wasi-spawn",
- "serde",
- "serde_json",
- "wasi-ext",
 ]
 
 [[package]]

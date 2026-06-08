@@ -81,9 +81,6 @@ importers:
       '@rivet-dev/agent-os-claude':
         specifier: workspace:*
         version: link:../../registry/agent/claude
-      '@rivet-dev/agent-os-codex-agent':
-        specifier: workspace:*
-        version: link:../../registry/agent/codex
       '@rivet-dev/agent-os-common':
         specifier: workspace:*
         version: link:../../registry/software/common
@@ -511,15 +508,9 @@ importers:
 
   registry/agent/codex:
     dependencies:
-      '@agentclientprotocol/sdk':
-        specifier: ^0.16.1
-        version: 0.16.1(zod@4.3.6)
       '@rivet-dev/agent-os-codex':
         specifier: workspace:*
         version: link:../../software/codex
-      '@rivet-dev/agent-os-core':
-        specifier: workspace:*
-        version: link:../../../packages/core
     devDependencies:
       '@types/node':
         specifier: ^22.10.2

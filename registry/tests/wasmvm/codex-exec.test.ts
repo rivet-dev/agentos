@@ -1,5 +1,5 @@
 /**
- * Integration tests for codex-exec headless agent WASM binary.
+ * Integration tests for codex-exec command WASM binary.
  *
  * Verifies the codex-exec binary running in WasmVM can:
  *   - Print usage via --help
@@ -8,8 +8,8 @@
  *   - Accept a prompt argument and exit cleanly
  *   - Capture stdout/stderr correctly through the kernel
  *   - Be spawned from the shell (sh -c) via the kernel pipeline
+ *   - Fail fast for session-turn mode until the real Codex agent is wired
  *
- * API-dependent tests are gated behind OPENAI_API_KEY env var.
  * WASM binary tests are gated behind hasWasmBinaries.
  */
 
@@ -17,8 +17,6 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { createWasmVmRuntime } from '@rivet-dev/agent-os-core/test/runtime';
 import { COMMANDS_DIR, createKernel, describeIf, hasWasmBinaries } from '../helpers.js';
 import type { Kernel } from '../helpers.js';
-
-const hasApiKey = !!process.env.OPENAI_API_KEY;
 
 // Minimal in-memory VFS for kernel tests
 class SimpleVFS {
@@ -116,7 +114,7 @@ async function createTestKernel(): Promise<{ kernel: Kernel; vfs: SimpleVFS }> {
   return { kernel, vfs };
 }
 
-describeIf(hasWasmBinaries, 'codex-exec headless agent (WasmVM)', { timeout: 30_000 }, () => {
+describeIf(hasWasmBinaries, 'codex-exec command (WasmVM)', { timeout: 30_000 }, () => {
   let kernel: Kernel;
 
   afterEach(async () => {
@@ -194,27 +192,11 @@ describeIf(hasWasmBinaries, 'codex-exec headless agent (WasmVM)', { timeout: 30_
     // Verify it doesn't hang — the exec() call resolves
     expect(result.stderr).toContain('hello world');
   });
-});
 
-describeIf(hasWasmBinaries && hasApiKey, 'codex-exec API integration (requires OPENAI_API_KEY)', { timeout: 60_000 }, () => {
-  let kernel: Kernel;
-
-  afterEach(async () => {
-    await kernel?.dispose();
-  });
-
-  it('with OPENAI_API_KEY env var produces output', async () => {
-    const vfs = new SimpleVFS();
-    const kernel_local = createKernel({ filesystem: vfs as any });
-    kernel = kernel_local;
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [COMMANDS_DIR] }));
-
-    // Since the agent loop is a placeholder, this test verifies that
-    // the binary accepts the prompt and exits without crashing when
-    // the API key is in the environment. Full API integration will be
-    // tested when codex-core is wired in.
-    const result = await kernel.exec('codex-exec "say hello"');
-    // Should at minimum print the prompt back and exit
-    expect(result.stderr).toContain('say hello');
+  it('session-turn mode fails fast instead of calling a bespoke provider loop', async () => {
+    ({ kernel } = await createTestKernel());
+    const result = await kernel.exec('codex-exec --session-turn');
+    expect(result.stdout).toContain('"type":"error"');
+    expect(result.stdout).toContain('real Codex agent package');
   });
 });

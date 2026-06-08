@@ -6,7 +6,6 @@
  *   --workload=pi-session       VM + createSession("pi") completing (ACP handshake done)
  *   --workload=pi-prompt-turn   VM + createSession("pi-cli") + first prompt turn completing
  *   --workload=claude-session   VM + createSession("claude") completing (ACP handshake done)
- *   --workload=codex-session    VM + createSession("codex") completing (ACP handshake done)
  *
  * `pi-prompt-turn` now benchmarks the native PI CLI path through
  * `createSession("pi-cli")`, which uses `pi-acp` to drive the real PI CLI in
@@ -64,7 +63,9 @@ async function measureAgentSession(workloadName: string): Promise<Measurement> {
 	const workload = WORKLOADS[workloadName];
 	const t0 = performance.now();
 	const vm = await workload.createVm();
-	const observation = await workload.start(vm);
+	const observation = (await workload.start(vm)) as
+		| WorkloadObservation
+		| undefined;
 	const ms = performance.now() - t0;
 	await vm.dispose();
 	return { ms, observation };

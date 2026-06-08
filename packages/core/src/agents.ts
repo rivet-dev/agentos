@@ -185,17 +185,6 @@ export const AGENT_CONFIGS = {
 				opts,
 			),
 	},
-	codex: {
-		acpAdapter: "@rivet-dev/agent-os-codex-agent",
-		agentPackage: "@rivet-dev/agent-os-codex",
-		prepareInstructions: async (kernel, _cwd, additionalInstructions, opts) =>
-			prepareAppendedInstructions(
-				"--append-developer-instructions",
-				kernel,
-				additionalInstructions,
-				opts,
-			),
-	},
 } satisfies Record<string, AgentConfig>;
 
 export type AgentType = keyof typeof AGENT_CONFIGS;

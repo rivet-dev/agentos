@@ -30,7 +30,6 @@
 		"@rivet-dev/agent-os-common": "workspace:*",
 		"@rivet-dev/agent-os-git": "workspace:*",
 		"@rivet-dev/agent-os-claude": "workspace:*",
-		"@rivet-dev/agent-os-codex-agent": "workspace:*",
 		"@rivet-dev/agent-os-opencode": "workspace:*",
 		"@rivet-dev/agent-os-pi": "workspace:*",
 		"@rivet-dev/agent-os-s3": "workspace:*",

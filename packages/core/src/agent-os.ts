@@ -2874,66 +2874,6 @@ export class AgentOs {
 		);
 	}
 
-	private _applyCodexConfigFallback(
-		session: AgentSessionEntry,
-		category: string,
-		value: string,
-	): JsonRpcResponse {
-		const option = session.configOptions.find(
-			(entry) => entry.category === category,
-		);
-		if (option) {
-			session.configOverrides.set(option.id, value);
-		}
-		session.configOverrides.set(category, value);
-		this._applySyntheticConfigOverrides(session);
-		this._recordSyntheticConfigUpdate(session);
-		return {
-			jsonrpc: "2.0",
-			id: null,
-			result: {
-				configOptions: session.configOptions,
-				via: "codex-config-fallback",
-			},
-		};
-	}
-
-	private _augmentPromptParams(
-		session: AgentSessionEntry,
-		params?: Record<string, unknown>,
-	): Record<string, unknown> | undefined {
-		if (session.agentType !== "codex") {
-			return params;
-		}
-
-		const model = session.configOptions.find(
-			(option) => option.category === "model",
-		)?.currentValue;
-		const thoughtLevel = session.configOptions.find(
-			(option) => option.category === "thought_level",
-		)?.currentValue;
-		if (!model && !thoughtLevel) {
-			return params;
-		}
-
-		const meta =
-			params?._meta &&
-			typeof params._meta === "object" &&
-			!Array.isArray(params._meta)
-				? { ...(params._meta as Record<string, unknown>) }
-				: {};
-		meta.agentOsCodexConfig = {
-			...(typeof model === "string" ? { model } : {}),
-			...(typeof thoughtLevel === "string"
-				? { thought_level: thoughtLevel }
-				: {}),
-		};
-		return {
-			...(params ?? {}),
-			_meta: meta,
-		};
-	}
-
 	private _handleSidecarEvent(
 		event: Parameters<NativeSidecarProcessClient["onEvent"]>[0] extends (
 			event: infer T,
@@ -2999,10 +2939,6 @@ export class AgentOs {
 		params?: Record<string, unknown>,
 	): Promise<JsonRpcResponse> {
 		const session = this._requireSession(sessionId);
-		const requestParams =
-			method === "session/prompt"
-				? this._augmentPromptParams(session, params)
-				: params;
 		const response = await new Promise<JsonRpcResponse>((resolve, reject) => {
 			const resolvers =
 				this._pendingSessionRequestResolvers.get(sessionId) ?? new Set();
@@ -3019,7 +2955,7 @@ export class AgentOs {
 				.sessionRequest(this._sidecarSession, this._sidecarVm, {
 					sessionId,
 					method,
-					params: requestParams,
+					params,
 				})
 				.then(resolve, reject)
 				.finally(() => {
@@ -3041,22 +2977,22 @@ export class AgentOs {
 		if (!response.error) {
 			if (
 				method === "session/set_mode" &&
-				typeof requestParams?.modeId === "string" &&
+				typeof params?.modeId === "string" &&
 				session.modes
 			) {
 				session.modes = {
 					...session.modes,
-					currentModeId: requestParams.modeId,
+					currentModeId: params.modeId,
 				};
 			}
 			if (
 				method === "session/set_config_option" &&
-				typeof requestParams?.configId === "string" &&
-				typeof requestParams?.value === "string"
+				typeof params?.configId === "string" &&
+				typeof params?.value === "string"
 			) {
-				const nextValue = requestParams.value;
+				const nextValue = params.value;
 				session.configOptions = session.configOptions.map((option) =>
-					option.id === requestParams.configId
+					option.id === params.configId
 						? { ...option, currentValue: nextValue }
 						: option,
 				);
@@ -3085,13 +3021,6 @@ export class AgentOs {
 				value,
 			},
 		);
-		if (
-			session.agentType === "codex" &&
-			response.error?.code === -32601 &&
-			toRecord(response.error.data).method === "session/set_config_option"
-		) {
-			return this._applyCodexConfigFallback(session, category, value);
-		}
 		return response;
 	}
 

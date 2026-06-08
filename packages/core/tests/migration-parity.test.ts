@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { resolve } from "node:path";
 import common from "@rivet-dev/agent-os-common";
-import codexAgent from "@rivet-dev/agent-os-codex-agent";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { AgentOs, hostTool, toolKit } from "../src/index.js";
@@ -9,6 +8,17 @@ import { AgentOs, hostTool, toolKit } from "../src/index.js";
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const MOCK_ADAPTER_PATH = "/tmp/mock-migration-parity-adapter.mjs";
 const textDecoder = new TextDecoder();
+const SYNTHETIC_AGENT = {
+	name: "migration-parity-agent",
+	type: "agent" as const,
+	packageDir: MODULE_ACCESS_CWD,
+	requires: [],
+	agent: {
+		id: "migration-parity",
+		acpAdapter: "migration-parity-adapter",
+		agentPackage: "migration-parity-agent",
+	},
+};
 const MOCK_ACP_ADAPTER = `
 let buffer = "";
 
@@ -371,7 +381,7 @@ test("covers filesystem, process execution, and reusable layer snapshots on the 
 	test("covers session lifecycle and agent prompt flow on the Rust sidecar path", async () => {
 		const vm = await AgentOs.create({
 			moduleAccessCwd: MODULE_ACCESS_CWD,
-			software: [codexAgent],
+			software: [SYNTHETIC_AGENT],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -389,7 +399,7 @@ test("covers filesystem, process execution, and reusable layer snapshots on the 
 		});
 		await vm.writeFile(MOCK_ADAPTER_PATH, MOCK_ACP_ADAPTER);
 
-		const { sessionId } = await vm.createSession("codex");
+		const { sessionId } = await vm.createSession("migration-parity");
 
 		const { response, text } = await vm.prompt(
 			sessionId,

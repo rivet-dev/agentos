@@ -4,7 +4,6 @@
 // agent runtime. It may not complete in all environments.
 
 import claude from "@rivet-dev/agent-os-claude";
-import codex from "@rivet-dev/agent-os-codex-agent";
 import common from "@rivet-dev/agent-os-common";
 import type { SoftwareInput } from "@rivet-dev/agent-os-core";
 import { AgentOs } from "@rivet-dev/agent-os-core";
@@ -12,20 +11,18 @@ import opencode from "@rivet-dev/agent-os-opencode";
 import pi from "@rivet-dev/agent-os-pi";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-const software: SoftwareInput[] = [common, claude, [...codex], opencode, pi];
+const software: SoftwareInput[] = [common, claude, opencode, pi];
 
 const vm = await AgentOs.create({
 	software,
 });
 
-// Change the agent here: "claude", "codex", "opencode", or "pi"
+// Change the agent here: "claude", "opencode", or "pi"
 const agent = "claude";
 
 const env: Record<string, string> = {};
 if (ANTHROPIC_API_KEY) env.ANTHROPIC_API_KEY = ANTHROPIC_API_KEY;
-if (OPENAI_API_KEY) env.OPENAI_API_KEY = OPENAI_API_KEY;
 
 const { sessionId } = await vm.createSession(agent, { env });
 console.log("Session ID:", sessionId);

@@ -107,7 +107,7 @@ All benchmarks compare agentOS against the fastest/cheapest mainstream sandbox p
 ## Features
 
 ### Agents
-- **Multi-agent support**: Run Claude Code, Codex, OpenCode, Amp, Pi, and more with a unified API
+- **Multi-agent support**: Run Claude Code, OpenCode, Amp, Pi, and more with a unified API
 - **[Sessions via ACP](https://rivet.dev/docs/agent-os/sessions)**: Create, manage, and resume agent sessions over the [Agent Communication Protocol](https://agentclientprotocol.com)
 - **Universal transcript format**: One transcript format across all agents for debugging, auditing, and comparison
 - **[Automatic persistence](https://rivet.dev/docs/agent-os/persistence)**: Every conversation is saved and replayable without extra code
@@ -150,7 +150,7 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 
 | Package | apt Equivalent | Description | Source | Combined Size | Gzipped |
 |---------|---------------|-------------|--------|---------------|---------|
-| `@rivet-dev/agent-os-codex` | codex | OpenAI Codex integration (codex, codex-exec) | rust | - | - |
+| `@rivet-dev/agent-os-codex` | codex | OpenAI Codex command package (codex, codex-exec) | rust | - | - |
 | `@rivet-dev/agent-os-coreutils` | coreutils | GNU coreutils: sh, cat, ls, cp, sort, and 80+ commands | rust | - | - |
 | `@rivet-dev/agent-os-curl` | curl | curl HTTP client | c | - | - |
 | `@rivet-dev/agent-os-diffutils` | diffutils | GNU diffutils (diff) | rust | - | - |

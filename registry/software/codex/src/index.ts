@@ -7,7 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = {
 	name: "codex",
 	aptName: "codex",
-	description: "OpenAI Codex integration (codex, codex-exec)",
+	description: "OpenAI Codex command package (codex, codex-exec)",
 	source: "rust" as const,
 	commands: [
 		{ name: "codex", permissionTier: "full" as const },

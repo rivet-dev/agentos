@@ -1,7 +1,6 @@
 import { AgentOs, type SoftwareInput } from "@rivet-dev/agent-os-core";
 import { coreutils } from "@rivet-dev/agent-os-common";
 import claude from "@rivet-dev/agent-os-claude";
-import codex from "@rivet-dev/agent-os-codex-agent";
 import pi from "@rivet-dev/agent-os-pi";
 import { LLMock } from "@copilotkit/llmock";
 import os from "node:os";
@@ -181,7 +180,7 @@ function makeAgentPromptWorkload(opts: {
 			const requestCountBefore = getLlmockRequestCount();
 
 			try {
-				const response = await vm.prompt(sessionId, opts.prompt);
+				const { response, text } = await vm.prompt(sessionId, opts.prompt);
 				if (response.error) {
 					throw new Error(
 						`${opts.agentId} prompt workload failed: ${response.error.message}`,
@@ -190,7 +189,7 @@ function makeAgentPromptWorkload(opts: {
 				const textEvents = events
 					.map(getTextEventPayload)
 					.filter((event) => event?.type === "text");
-				const finalText = textEvents.at(-1)?.text ?? null;
+				const finalText = textEvents.at(-1)?.text ?? text;
 				const providerRequestCount =
 					getLlmockRequestCount() - requestCountBefore;
 
@@ -270,12 +269,6 @@ export const WORKLOADS: Record<string, Workload> = {
 		description: "VM with Claude agent session via createSession",
 		software: [claude],
 		processMarker: "agent-os-claude",
-	}),
-	"codex-session": makeAgentSessionWorkload({
-		agentId: "codex",
-		description: "VM with Codex agent session via createSession",
-		software: [...codex],
-		processMarker: "agent-os-codex-agent",
 	}),
 };
 
