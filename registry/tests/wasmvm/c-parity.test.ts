@@ -188,11 +188,26 @@ describeIf(!skipReason(), 'C parity: native vs WASM', { timeout: 30_000 }, () =>
   let kernel: Kernel;
   let vfs: SimpleVFS;
 
+  async function mountParityKernel(options: { loopbackExemptPorts?: number[] } = {}) {
+    const nextKernel = createKernel({
+      filesystem: vfs as any,
+      ...(options.loopbackExemptPorts
+        ? { loopbackExemptPorts: options.loopbackExemptPorts }
+        : {}),
+    });
+    // C build dir first so C programs take precedence over same-named Rust commands
+    await nextKernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    return nextKernel;
+  }
+
+  async function recreateKernel(options: { loopbackExemptPorts?: number[] } = {}) {
+    await kernel?.dispose();
+    kernel = await mountParityKernel(options);
+  }
+
   beforeEach(async () => {
     vfs = new SimpleVFS();
-    kernel = createKernel({ filesystem: vfs as any });
-    // C build dir first so C programs take precedence over same-named Rust commands
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    kernel = await mountParityKernel();
   });
 
   afterEach(async () => {
@@ -912,6 +927,7 @@ describeIf(!skipReason(), 'C parity: native vs WASM', { timeout: 30_000 }, () =>
     const port = (server.address() as import('node:net').AddressInfo).port;
 
     try {
+      await recreateKernel({ loopbackExemptPorts: [port] });
       const native = await runNative('tcp_echo', [String(port)]);
       const wasm = await kernel.exec(`tcp_echo ${port}`);
 
@@ -936,6 +952,7 @@ describeIf(!skipReason(), 'C parity: native vs WASM', { timeout: 30_000 }, () =>
     const port = (server.address() as import('node:net').AddressInfo).port;
 
     try {
+      await recreateKernel({ loopbackExemptPorts: [port] });
       const native = await runNative('http_get', [String(port)]);
       const wasm = await kernel.exec(`http_get ${port}`);
 
