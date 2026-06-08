@@ -8,8 +8,15 @@ const BROWSER_BASE_PROJECT_ID = process.env.BROWSER_BASE_PROJECT_ID ?? "";
 const HAS_BROWSERBASE_CREDENTIALS = Boolean(
 	BROWSER_BASE_API_KEY && BROWSER_BASE_PROJECT_ID,
 );
+const REQUIRES_BROWSERBASE_CREDENTIALS = process.env.AGENTOS_E2E_NETWORK === "1";
 
-if (!HAS_BROWSERBASE_CREDENTIALS) {
+if (!HAS_BROWSERBASE_CREDENTIALS && REQUIRES_BROWSERBASE_CREDENTIALS) {
+	throw new Error(
+		"Browserbase e2e requires BROWSER_BASE_API_KEY and BROWSER_BASE_PROJECT_ID when AGENTOS_E2E_NETWORK=1.",
+	);
+}
+
+if (!HAS_BROWSERBASE_CREDENTIALS && !REQUIRES_BROWSERBASE_CREDENTIALS) {
 	console.warn(
 		"Skipping Browserbase e2e: source ~/misc/env.txt so BROWSER_BASE_API_KEY and BROWSER_BASE_PROJECT_ID are available.",
 	);
@@ -36,19 +43,6 @@ const JSON_OUTPUT_TIMEOUT_MS = 60_000;
 const SESSION_SCRIPT_PATH = "/tmp/browserbase-session.mjs";
 const BROWSE_SCREENSHOT_SCRIPT_PATH = "/tmp/browserbase-browse-screenshot.mjs";
 const CONNECT_URL_PATH = "/tmp/browserbase-connect-url.txt";
-
-function testIf(
-	condition: boolean,
-	...args: Parameters<typeof test>
-): void {
-	if (condition) {
-		// @ts-expect-error forwarded test() arguments stay runtime-compatible.
-		test(...args);
-		return;
-	}
-	const [name] = args;
-	test(String(name), () => {});
-}
 
 async function runVmNodeCommand(
 	vm: AgentOs,
@@ -270,8 +264,7 @@ describe("Browserbase e2e", () => {
 		}
 	});
 
-	const browserbaseTest = (...args: Parameters<typeof test>) =>
-		testIf(HAS_BROWSERBASE_CREDENTIALS, ...args);
+	const browserbaseTest = HAS_BROWSERBASE_CREDENTIALS ? test : test.skip;
 
 	browserbaseTest(
 		"runs Browserbase browser automation inside the VM with restricted guest egress",

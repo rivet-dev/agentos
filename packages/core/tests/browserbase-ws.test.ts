@@ -8,6 +8,19 @@ const BROWSER_BASE_PROJECT_ID = process.env.BROWSER_BASE_PROJECT_ID ?? "";
 const HAS_BROWSERBASE_CREDENTIALS = Boolean(
 	BROWSER_BASE_API_KEY && BROWSER_BASE_PROJECT_ID,
 );
+const REQUIRES_BROWSERBASE_CREDENTIALS = process.env.AGENTOS_E2E_NETWORK === "1";
+
+if (!HAS_BROWSERBASE_CREDENTIALS && REQUIRES_BROWSERBASE_CREDENTIALS) {
+	throw new Error(
+		"Browserbase websocket tests require BROWSER_BASE_API_KEY and BROWSER_BASE_PROJECT_ID when AGENTOS_E2E_NETWORK=1.",
+	);
+}
+
+if (!HAS_BROWSERBASE_CREDENTIALS && !REQUIRES_BROWSERBASE_CREDENTIALS) {
+	console.warn(
+		"Skipping Browserbase websocket tests: source ~/misc/env.txt so BROWSER_BASE_API_KEY and BROWSER_BASE_PROJECT_ID are available.",
+	);
+}
 
 const BROWSERBASE_PERMISSIONS: Permissions = {
 	fs: "allow",
@@ -117,19 +130,6 @@ if (!releaseResponse.ok) {
 
 console.log("BROWSERBASE_CDP_REPLY:" + cdpReply);
 `;
-
-function testIf(
-	condition: boolean,
-	...args: Parameters<typeof test>
-): void {
-	if (condition) {
-		// @ts-expect-error forwarded test() arguments stay runtime-compatible.
-		test(...args);
-		return;
-	}
-	const [name] = args;
-	test(String(name), () => {});
-}
 
 const CLI_PAGES_SCRIPT = String.raw`
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -829,8 +829,7 @@ describe("Browserbase websocket smoke test", () => {
 		}
 	});
 
-	const browserbaseTest = (...args: Parameters<typeof test>) =>
-		testIf(HAS_BROWSERBASE_CREDENTIALS, ...args);
+	const browserbaseTest = HAS_BROWSERBASE_CREDENTIALS ? test : test.skip;
 
 	browserbaseTest(
 		"opens a Browserbase CDP websocket and completes one command",
