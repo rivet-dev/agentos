@@ -15,7 +15,7 @@ const NODE_IMPORT_CACHE_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_PATH";
 const NODE_IMPORT_CACHE_LOADER_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_LOADER_PATH";
 const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "50";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "53";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agent-os-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const PYODIDE_DIST_DIR: &str = "pyodide-dist";
@@ -8722,6 +8722,7 @@ const WASI_ERRNO_SPIPE = 70;
 const WASI_ERRNO_SRCH = 71;
 const WASI_ERRNO_FAULT = 21;
 const WASI_RIGHT_FD_WRITE = 64n;
+const WASI_FILETYPE_UNKNOWN = 0;
 const WASI_FILETYPE_REGULAR_FILE = 4;
 const WASI_OFLAGS_CREAT = 1;
 const WASI_OFLAGS_DIRECTORY = 2;
@@ -8889,6 +8890,7 @@ const spawnedChildrenById = new Map();
 let nextSyntheticChildPid = 0x40000000;
 const syntheticFdEntries = new Map();
 const delegateManagedFdRefCounts = new Map();
+const closedPassthroughFds = new Set();
 globalThis.__agentOsWasiDelegateFdRefCount = (fd) =>
   delegateManagedFdRefCounts.get(Number(fd) >>> 0) ?? 0;
 const passthroughHandles = new Map([
@@ -9501,6 +9503,7 @@ function retainPathOpenDelegateFd(openedFdPtr, guestPath) {
     const openedFd = new DataView(instanceMemory.buffer).getUint32(Number(openedFdPtr), true);
     retainDelegateFd(openedFd);
     if (openedFd > 2 && !passthroughHandles.has(openedFd)) {
+      closedPassthroughFds.delete(openedFd);
       passthroughHandles.set(openedFd, {
         kind: 'passthrough',
         targetFd: openedFd,
@@ -9570,6 +9573,24 @@ function writeGuestFilestat(ptr, stats, filetype = WASI_FILETYPE_REGULAR_FILE) {
     view.setBigUint64(offset + 40, statTimestampNs(stats?.atimeMs), true);
     view.setBigUint64(offset + 48, statTimestampNs(stats?.mtimeMs), true);
     view.setBigUint64(offset + 56, statTimestampNs(stats?.ctimeMs), true);
+    return WASI_ERRNO_SUCCESS;
+  } catch {
+    return WASI_ERRNO_FAULT;
+  }
+}
+
+function writeGuestFdstat(ptr, filetype, flags, rightsBase, rightsInheriting) {
+  if (!(instanceMemory instanceof WebAssembly.Memory)) {
+    return WASI_ERRNO_FAULT;
+  }
+
+  try {
+    const view = new DataView(instanceMemory.buffer);
+    const offset = Number(ptr) >>> 0;
+    view.setUint8(offset, Number(filetype) >>> 0);
+    view.setUint16(offset + 2, Number(flags) >>> 0, true);
+    view.setBigUint64(offset + 8, BigInt(rightsBase), true);
+    view.setBigUint64(offset + 16, BigInt(rightsInheriting), true);
     return WASI_ERRNO_SUCCESS;
   } catch {
     return WASI_ERRNO_FAULT;
@@ -9711,15 +9732,13 @@ function cloneFdHandle(fd) {
   return handle;
 }
 
-function wrapDelegateFdHandle(fd, displayFd = fd) {
-  retainDelegateFd(fd);
-  return {
-    kind: 'passthrough',
-    targetFd: Number(fd) >>> 0,
-    displayFd: Number(displayFd) >>> 0,
-    refCount: 1,
-    open: true,
-  };
+function passthroughHandleHasCanonicalMapping(handle) {
+  for (const current of passthroughHandles.values()) {
+    if (current === handle) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function releaseFdHandle(handle) {
@@ -9733,6 +9752,7 @@ function releaseFdHandle(handle) {
       handle.refCount === 0 &&
       handle.open &&
       handle.targetFd > 2 &&
+      !passthroughHandleHasCanonicalMapping(handle) &&
       releaseDelegateFd(handle.targetFd) &&
       typeof delegateManagedFdClose === 'function'
     ) {
@@ -9787,6 +9807,25 @@ function closeSyntheticFd(fd) {
     collectInactivePipeHandles(handle.pipe);
   }
   return true;
+}
+
+function closePassthroughFd(fd) {
+  const numericFd = Number(fd) >>> 0;
+  const handle = passthroughHandles.get(numericFd);
+  if (!handle) {
+    return false;
+  }
+
+  passthroughHandles.delete(numericFd);
+  closedPassthroughFds.add(numericFd);
+  if ((handle.refCount ?? 0) === 0) {
+    releaseFdHandle(handle);
+  }
+  return true;
+}
+
+function rejectClosedPassthroughFd(fd) {
+  return closedPassthroughFds.has(Number(fd) >>> 0);
 }
 
 function collectInactivePipeHandles(pipe) {
@@ -11890,8 +11929,24 @@ const hostProcessImport = {
         },
         fd_dup(fd, retNewFdPtr) {
           try {
-            const duplicatedFd = nextSyntheticFd++;
-            const handle = cloneFdHandle(fd) ?? wrapDelegateFdHandle(fd, duplicatedFd);
+            const handle = cloneFdHandle(fd);
+            if (!handle) {
+              return WASI_ERRNO_BADF;
+            }
+            let duplicatedFd = 0;
+            while (
+              duplicatedFd <= 2 &&
+              (
+                syntheticFdEntries.has(duplicatedFd) ||
+                passthroughHandles.has(duplicatedFd) ||
+                delegateManagedFdRefCounts.has(duplicatedFd)
+              )
+            ) {
+              duplicatedFd += 1;
+            }
+            if (duplicatedFd > 2) {
+              duplicatedFd = nextSyntheticFd++;
+            }
             syntheticFdEntries.set(duplicatedFd, handle);
             traceHostProcess('fd-dup', {
               fd: Number(fd) >>> 0,
@@ -11907,35 +11962,38 @@ const hostProcessImport = {
         },
         fd_dup2(oldFd, newFd) {
           try {
+            const sourceFd = Number(oldFd) >>> 0;
             const targetFd = Number(newFd) >>> 0;
-            const sourceHandle = cloneFdHandle(oldFd) ?? wrapDelegateFdHandle(oldFd, targetFd);
-
-            const sourceIsSamePassthrough =
-              sourceHandle.kind === 'passthrough' && sourceHandle.targetFd === targetFd;
-
-            traceHostProcess('fd-dup2-begin', {
-              oldFd: Number(oldFd) >>> 0,
-              newFd: targetFd,
-              sourceKind: sourceHandle.kind,
-              sourceTargetFd: sourceHandle.targetFd ?? null,
-              sourceDisplayFd: sourceHandle.displayFd ?? null,
-              sourceIsSamePassthrough,
-              existingKind: syntheticFdEntries.get(targetFd)?.kind ?? passthroughHandles.get(targetFd)?.kind ?? null,
-            });
-            closeSyntheticFd(targetFd);
-
-            if (sourceIsSamePassthrough) {
-              releaseFdHandle(sourceHandle);
-              traceHostProcess('fd-dup2-same-passthrough', {
-                oldFd: Number(oldFd) >>> 0,
+            if (sourceFd === targetFd) {
+              if (!lookupFdHandle(sourceFd)) {
+                return WASI_ERRNO_BADF;
+              }
+              traceHostProcess('fd-dup2-same-fd', {
+                oldFd: sourceFd,
                 newFd: targetFd,
               });
               return WASI_ERRNO_SUCCESS;
             }
 
+            const sourceHandle = cloneFdHandle(sourceFd);
+            if (!sourceHandle) {
+              return WASI_ERRNO_BADF;
+            }
+
+            traceHostProcess('fd-dup2-begin', {
+              oldFd: sourceFd,
+              newFd: targetFd,
+              sourceKind: sourceHandle.kind,
+              sourceTargetFd: sourceHandle.targetFd ?? null,
+              sourceDisplayFd: sourceHandle.displayFd ?? null,
+              existingKind: syntheticFdEntries.get(targetFd)?.kind ?? passthroughHandles.get(targetFd)?.kind ?? null,
+            });
+
+            closeSyntheticFd(targetFd);
+            closePassthroughFd(targetFd);
             syntheticFdEntries.set(targetFd, sourceHandle);
             traceHostProcess('fd-dup2-installed', {
-              oldFd: Number(oldFd) >>> 0,
+              oldFd: sourceFd,
               newFd: targetFd,
               sourceKind: sourceHandle.kind,
             });
@@ -11955,6 +12013,11 @@ const hostProcessImport = {
               return WASI_ERRNO_INVAL;
             }
 
+            const handle = cloneFdHandle(sourceFd);
+            if (!handle) {
+              return WASI_ERRNO_BADF;
+            }
+
             let duplicatedFd = minimumFdNumber >>> 0;
             while (
               syntheticFdEntries.has(duplicatedFd) ||
@@ -11965,8 +12028,6 @@ const hostProcessImport = {
             }
             nextSyntheticFd = Math.max(nextSyntheticFd, duplicatedFd + 1);
 
-            const handle =
-              cloneFdHandle(sourceFd) ?? wrapDelegateFdHandle(sourceFd, duplicatedFd);
             syntheticFdEntries.set(duplicatedFd, handle);
             traceHostProcess('fd-dup-min', {
               fd: sourceFd >>> 0,
@@ -12053,6 +12114,23 @@ const HOST_FS_GUEST_CWD =
   typeof guestEnv?.PWD === 'string' && guestEnv.PWD.startsWith('/')
     ? path.posix.normalize(guestEnv.PWD)
     : '/';
+
+for (let index = 0; index < WASI_PREOPEN_ENTRIES.length; index += 1) {
+  const fd = WASI_PREOPEN_FD_BASE + index;
+  const [guestPath] = WASI_PREOPEN_ENTRIES[index];
+  if (!passthroughHandles.has(fd)) {
+    retainDelegateFd(fd);
+    closedPassthroughFds.delete(fd);
+    passthroughHandles.set(fd, {
+      kind: 'passthrough',
+      targetFd: fd,
+      displayFd: fd,
+      refCount: 0,
+      open: true,
+      guestPath: guestPathForPreopenKey(guestPath),
+    });
+  }
+}
 
 function hostFsModeFromStat(stat) {
   const mode = Number(stat?.mode);
@@ -12191,6 +12269,18 @@ if (delegatePathOpen) {
       return denyReadOnlyMutation();
     }
 
+    const passthroughDirHandle = lookupFdHandle(fd);
+    if (passthroughDirHandle && passthroughDirHandle.kind !== 'passthrough') {
+      return WASI_ERRNO_BADF;
+    }
+    if (!passthroughDirHandle && rejectClosedPassthroughFd(fd)) {
+      return WASI_ERRNO_BADF;
+    }
+
+    const delegateDirFd =
+      passthroughDirHandle?.kind === 'passthrough'
+        ? passthroughDirHandle.targetFd
+        : fd;
     const guestPath = resolvePathOpenGuestPath(fd, pathPtr, pathLen);
     if ((Number(oflags) & WASI_OFLAGS_CREAT) !== 0) {
       try {
@@ -12212,7 +12302,7 @@ if (delegatePathOpen) {
     }
 
     let result = delegatePathOpen(
-      fd,
+      delegateDirFd,
       dirflags,
       pathPtr,
       pathLen,
@@ -12227,7 +12317,7 @@ if (delegatePathOpen) {
       try {
         precreatePathOpenTarget(fd, pathPtr, pathLen, oflags);
         result = delegatePathOpen(
-          fd,
+          delegateDirFd,
           dirflags,
           pathPtr,
           pathLen,
@@ -12321,6 +12411,14 @@ const delegateManagedFdTell =
   typeof wasiImport.fd_tell === 'function'
     ? wasiImport.fd_tell.bind(wasiImport)
     : null;
+const delegateManagedFdFdstatGet =
+  typeof wasiImport.fd_fdstat_get === 'function'
+    ? wasiImport.fd_fdstat_get.bind(wasiImport)
+    : null;
+const delegateManagedFdFdstatSetFlags =
+  typeof wasiImport.fd_fdstat_set_flags === 'function'
+    ? wasiImport.fd_fdstat_set_flags.bind(wasiImport)
+    : null;
 const delegateManagedFdFilestatGet =
   typeof wasiImport.fd_filestat_get === 'function'
     ? wasiImport.fd_filestat_get.bind(wasiImport)
@@ -12332,6 +12430,14 @@ const delegateManagedFdFilestatSetSize =
 const delegateManagedFdClose =
   typeof wasiImport.fd_close === 'function'
     ? wasiImport.fd_close.bind(wasiImport)
+    : null;
+const delegateManagedFdPrestatGet =
+  typeof wasiImport.fd_prestat_get === 'function'
+    ? wasiImport.fd_prestat_get.bind(wasiImport)
+    : null;
+const delegateManagedFdPrestatDirName =
+  typeof wasiImport.fd_prestat_dir_name === 'function'
+    ? wasiImport.fd_prestat_dir_name.bind(wasiImport)
     : null;
 const delegateManagedPollOneoff =
   typeof wasiImport.poll_oneoff === 'function'
@@ -12410,7 +12516,12 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
     }
   }
 
-  if (numericFd === 0) {
+  if (
+    numericFd === 0 &&
+    handle?.kind === 'passthrough' &&
+    handle.targetFd === 0 &&
+    passthroughHandles.get(0) === handle
+  ) {
     const sidecarManagedProcess =
       typeof process?.env?.AGENT_OS_SANDBOX_ROOT === 'string' &&
       process.env.AGENT_OS_SANDBOX_ROOT.length > 0;
@@ -12440,10 +12551,18 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
     }
   }
 
+  if (!handle && numericFd <= 2) {
+    return WASI_ERRNO_BADF;
+  }
+
   if (handle?.kind === 'passthrough') {
     return delegateManagedFdRead
       ? delegateManagedFdRead(handle.targetFd, iovs, iovsLen, nreadPtr)
       : WASI_ERRNO_BADF;
+  }
+
+  if (rejectClosedPassthroughFd(numericFd)) {
+    return WASI_ERRNO_BADF;
   }
 
   return delegateManagedFdRead
@@ -12488,6 +12607,10 @@ wasiImport.fd_pread = (fd, iovs, iovsLen, offset, nreadPtr) => {
       : WASI_ERRNO_BADF;
   }
 
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
+  }
+
   return delegateFdPread
     ? delegateFdPread(fd, iovs, iovsLen, offset, nreadPtr)
     : WASI_ERRNO_BADF;
@@ -12517,6 +12640,10 @@ wasiImport.fd_pwrite = (fd, iovs, iovsLen, offset, nwrittenPtr) => {
       : WASI_ERRNO_BADF;
   }
 
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
+  }
+
   return delegateManagedFdPwrite
     ? delegateManagedFdPwrite(fd, iovs, iovsLen, offset, nwrittenPtr)
     : WASI_ERRNO_BADF;
@@ -12530,6 +12657,10 @@ wasiImport.fd_sync = (fd) => {
 
   if (handle?.kind === 'passthrough') {
     return delegateFdSync ? delegateFdSync(handle.targetFd) : WASI_ERRNO_SUCCESS;
+  }
+
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
   }
 
   return delegateFdSync ? delegateFdSync(fd) : WASI_ERRNO_SUCCESS;
@@ -12559,6 +12690,10 @@ wasiImport.fd_seek = (fd, offset, whence, newOffsetPtr) => {
       : WASI_ERRNO_BADF;
   }
 
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
+  }
+
   return delegateManagedFdSeek
     ? delegateManagedFdSeek(fd, offset, whence, newOffsetPtr)
     : WASI_ERRNO_BADF;
@@ -12580,8 +12715,80 @@ wasiImport.fd_tell = (fd, offsetPtr) => {
       : WASI_ERRNO_BADF;
   }
 
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
+  }
+
   return delegateManagedFdTell
     ? delegateManagedFdTell(fd, offsetPtr)
+    : WASI_ERRNO_BADF;
+};
+
+wasiImport.fd_fdstat_get = (fd, statPtr) => {
+  const handle = lookupFdHandle(fd);
+  if (handle?.kind === 'pipe-read') {
+    return writeGuestFdstat(
+      statPtr,
+      WASI_FILETYPE_UNKNOWN,
+      0,
+      WASI_RIGHT_FD_READ |
+        WASI_RIGHT_FD_FDSTAT_SET_FLAGS |
+        WASI_RIGHT_FD_FILESTAT_GET |
+        WASI_RIGHT_POLL_FD_READWRITE,
+      0n,
+    );
+  }
+
+  if (handle?.kind === 'pipe-write') {
+    return writeGuestFdstat(
+      statPtr,
+      WASI_FILETYPE_UNKNOWN,
+      0,
+      WASI_RIGHT_FD_WRITE |
+        WASI_RIGHT_FD_FDSTAT_SET_FLAGS |
+        WASI_RIGHT_FD_FILESTAT_GET |
+        WASI_RIGHT_POLL_FD_READWRITE,
+      0n,
+    );
+  }
+
+  if (handle && handle.kind !== 'passthrough') {
+    return WASI_ERRNO_BADF;
+  }
+
+  if (handle?.kind === 'passthrough') {
+    return delegateManagedFdFdstatGet
+      ? delegateManagedFdFdstatGet(handle.targetFd, statPtr)
+      : WASI_ERRNO_BADF;
+  }
+
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
+  }
+
+  return delegateManagedFdFdstatGet
+    ? delegateManagedFdFdstatGet(fd, statPtr)
+    : WASI_ERRNO_BADF;
+};
+
+wasiImport.fd_fdstat_set_flags = (fd, flags) => {
+  const handle = lookupFdHandle(fd);
+  if (handle && handle.kind !== 'passthrough') {
+    return WASI_ERRNO_BADF;
+  }
+
+  if (handle?.kind === 'passthrough') {
+    return delegateManagedFdFdstatSetFlags
+      ? delegateManagedFdFdstatSetFlags(handle.targetFd, flags)
+      : WASI_ERRNO_BADF;
+  }
+
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
+  }
+
+  return delegateManagedFdFdstatSetFlags
+    ? delegateManagedFdFdstatSetFlags(fd, flags)
     : WASI_ERRNO_BADF;
 };
 
@@ -12599,6 +12806,10 @@ wasiImport.fd_filestat_get = (fd, statPtr) => {
     return delegateManagedFdFilestatGet
       ? delegateManagedFdFilestatGet(handle.targetFd, statPtr)
       : WASI_ERRNO_BADF;
+  }
+
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
   }
 
   return delegateManagedFdFilestatGet
@@ -12627,8 +12838,54 @@ wasiImport.fd_filestat_set_size = (fd, size) => {
       : WASI_ERRNO_BADF;
   }
 
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
+  }
+
   return delegateManagedFdFilestatSetSize
     ? delegateManagedFdFilestatSetSize(fd, size)
+    : WASI_ERRNO_BADF;
+};
+
+wasiImport.fd_prestat_get = (fd, prestatPtr) => {
+  const handle = lookupFdHandle(fd);
+  if (handle && handle.kind !== 'passthrough') {
+    return WASI_ERRNO_BADF;
+  }
+
+  if (handle?.kind === 'passthrough') {
+    return delegateManagedFdPrestatGet
+      ? delegateManagedFdPrestatGet(handle.targetFd, prestatPtr)
+      : WASI_ERRNO_BADF;
+  }
+
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
+  }
+
+  return delegateManagedFdPrestatGet
+    ? delegateManagedFdPrestatGet(fd, prestatPtr)
+    : WASI_ERRNO_BADF;
+};
+
+wasiImport.fd_prestat_dir_name = (fd, pathPtr, pathLen) => {
+  const handle = lookupFdHandle(fd);
+  if (handle && handle.kind !== 'passthrough') {
+    return WASI_ERRNO_BADF;
+  }
+
+  if (handle?.kind === 'passthrough') {
+    return delegateManagedFdPrestatDirName
+      ? delegateManagedFdPrestatDirName(handle.targetFd, pathPtr, pathLen)
+      : WASI_ERRNO_BADF;
+  }
+
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
+  }
+
+  return delegateManagedFdPrestatDirName
+    ? delegateManagedFdPrestatDirName(fd, pathPtr, pathLen)
     : WASI_ERRNO_BADF;
 };
 
@@ -12665,6 +12922,10 @@ wasiImport.fd_write = (fd, iovs, iovsLen, nwrittenPtr) => {
       : WASI_ERRNO_BADF;
   }
 
+  if (!handle && numericFd <= 2) {
+    return WASI_ERRNO_BADF;
+  }
+
   if (numericFd === 1 || numericFd === 2) {
     try {
       const bytes = collectGuestIovBytes(iovs, iovsLen);
@@ -12682,6 +12943,10 @@ wasiImport.fd_write = (fd, iovs, iovsLen, nwrittenPtr) => {
     } catch {
       return WASI_ERRNO_FAULT;
     }
+  }
+
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
   }
 
   return delegateManagedFdWrite
@@ -12706,7 +12971,16 @@ wasiImport.fd_close = (fd) => {
       fd: Number(fd) >>> 0,
       targetFd: handle.targetFd ?? null,
     });
+    closePassthroughFd(fd);
     return WASI_ERRNO_SUCCESS;
+  }
+
+  if (!handle && Number(fd) >>> 0 <= 2) {
+    return WASI_ERRNO_BADF;
+  }
+
+  if (rejectClosedPassthroughFd(fd)) {
+    return WASI_ERRNO_BADF;
   }
 
   if (delegateManagedFdRefCounts.has(Number(fd) >>> 0)) {
@@ -12770,6 +13044,17 @@ wasiImport.poll_oneoff = (inPtr, outPtr, nsubscriptions, neventsPtr) => {
 
     const fd = view.getUint32(base + 16, true);
     const handle = lookupFdHandle(fd);
+    if (!handle && rejectClosedPassthroughFd(fd)) {
+      hasSyntheticSubscription = true;
+      subscriptions.push({
+        kind: tag === 1 ? 'fd_read' : 'fd_write',
+        fd,
+        handle,
+        userdata,
+        error: WASI_ERRNO_BADF,
+      });
+      continue;
+    }
     if (handle && handle.kind !== 'passthrough') {
       hasSyntheticSubscription = true;
     } else if (handle?.kind === 'passthrough') {
@@ -12875,6 +13160,17 @@ wasiImport.poll_oneoff = (inPtr, outPtr, nsubscriptions, neventsPtr) => {
 
   while (readyEvents.length === 0) {
     for (const subscription of subscriptions) {
+      if (subscription.error != null) {
+        readyEvents.push({
+          userdata: subscription.userdata,
+          error: subscription.error,
+          type: subscription.kind === 'fd_read' ? 1 : 2,
+          nbytes: 0,
+          flags: 0,
+        });
+        continue;
+      }
+
       if (subscription.kind === 'fd_read' && subscription.handle?.kind === 'pipe-read') {
         const pipe = subscription.handle.pipe;
         if (pipe.chunks.length > 0 || (pipe.writeHandleCount === 0 && pipe.producers.size === 0)) {
