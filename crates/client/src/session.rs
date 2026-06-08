@@ -916,14 +916,26 @@ fn sync_session_state(entry: &SessionEntry, state: &SessionStateResponse) {
         })
         .collect();
 
+    let previous_highest = entry.highest_sequence_number.load(Ordering::SeqCst);
+    let dispatchable_new_events = incoming
+        .iter()
+        .filter(|event| {
+            event.sequence_number > previous_highest
+                && should_dispatch_to_session_event_handlers(&event.notification)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
     let mut ring = entry.event_ring.lock();
     merge_sequenced_events(&mut ring, incoming);
-    let next = next_highest_sequence_number(
-        Some(entry.highest_sequence_number.load(Ordering::SeqCst)),
-        &ring,
-    );
+    let next = next_highest_sequence_number(Some(previous_highest), &ring);
     if let Some(next) = next {
         entry.highest_sequence_number.store(next, Ordering::SeqCst);
+    }
+    drop(ring);
+
+    for event in dispatchable_new_events {
+        let _ = entry.event_tx.send(event);
     }
 }
 
