@@ -17,12 +17,17 @@ import { createTypeScriptTools } from "@secure-exec/typescript";
 import { generateText, stepCountIs, tool } from "ai";
 import {
 	allowAll,
+	createInMemoryFileSystem,
+	createKernel,
 	createNodeDriver,
+	createNodeRuntime,
 	createNodeRuntimeDriverFactory,
 } from "secure-exec";
 import { z } from "zod";
 
+const filesystem = createInMemoryFileSystem();
 const systemDriver = createNodeDriver({
+	filesystem,
 	moduleAccess: {
 		cwd: process.cwd(),
 	},
@@ -82,18 +87,49 @@ const { text } = await generateText({
 				}
 
 				try {
-					const module = { exports: {} as Record<string, unknown> };
-					const execute = new Function(
-						"module",
-						"exports",
+					await filesystem.mkdir("/root", { recursive: true });
+					await filesystem.writeFile(
+						"/root/generated.js",
 						compiled.outputText,
 					);
-					execute(module, module.exports);
+					const kernel = createKernel({
+						filesystem,
+						permissions: allowAll,
+						syncFilesystemOnDispose: false,
+					});
+					let stdout = "";
+					let stderr = "";
+					try {
+						await kernel.mount(createNodeRuntime());
+						const child = kernel.spawn(
+							"node",
+							[
+								"-e",
+								"const exportsValue = require('/root/generated.js'); console.log(JSON.stringify(exportsValue));",
+							],
+							{
+								onStdout: (chunk) => {
+									stdout += Buffer.from(chunk).toString("utf8");
+								},
+								onStderr: (chunk) => {
+									stderr += Buffer.from(chunk).toString("utf8");
+								},
+							},
+						);
+						const exitCode = await child.wait();
+						if (exitCode !== 0) {
+							throw new Error(
+								stderr.trim() || `sandboxed JavaScript exited ${exitCode}`,
+							);
+						}
+					} finally {
+						await kernel.dispose();
+					}
 
 					return {
 						ok: true,
 						stage: "run",
-						exports: module.exports,
+						exports: JSON.parse(stdout),
 					};
 				} catch (error) {
 					return {
