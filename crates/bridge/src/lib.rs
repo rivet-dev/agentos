@@ -564,4 +564,46 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn bridge_contract_module_loading_signatures_match_runtime_calls() {
+        let contract = bridge_contract();
+
+        let find_group = |method: &str| {
+            contract
+                .groups
+                .iter()
+                .find(|group| group.names.iter().any(|name| name == method))
+                .unwrap_or_else(|| panic!("missing bridge contract method {method}"))
+        };
+
+        let resolve_group = find_group("_resolveModule");
+        assert_eq!(resolve_group.convention, BridgeCallConvention::SyncPromise);
+        assert_eq!(
+            resolve_group.argument_types,
+            vec![
+                "specifier: string",
+                "fromDir: string",
+                "mode?: \"require\" | \"import\""
+            ]
+        );
+        assert_eq!(
+            resolve_group.names,
+            vec!["_resolveModule", "_resolveModuleSync"]
+        );
+
+        let load_group = find_group("_loadFile");
+        assert_eq!(load_group.convention, BridgeCallConvention::SyncPromise);
+        assert_eq!(load_group.argument_types, vec!["path: string"]);
+        assert_eq!(load_group.names, vec!["_loadFile", "_loadFileSync"]);
+
+        let format_group = find_group("_moduleFormat");
+        assert_eq!(format_group.convention, BridgeCallConvention::SyncPromise);
+        assert_eq!(format_group.argument_types, vec!["filename: string"]);
+        assert_eq!(
+            format_group.return_type,
+            "\"module\" | \"commonjs\" | \"json\" | null"
+        );
+        assert_eq!(format_group.names, vec!["_moduleFormat"]);
+    }
 }

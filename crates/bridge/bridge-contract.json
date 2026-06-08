@@ -17,7 +17,19 @@
       "convention": "syncPromise",
       "argumentTypes": ["specifier: string", "fromDir: string", "mode?: \"require\" | \"import\""],
       "returnType": "string | null",
-      "names": ["_resolveModule", "_loadFile", "_resolveModuleSync", "_loadFileSync", "_moduleFormat"]
+      "names": ["_resolveModule", "_resolveModuleSync"]
+    },
+    {
+      "convention": "syncPromise",
+      "argumentTypes": ["path: string"],
+      "returnType": "string | null",
+      "names": ["_loadFile", "_loadFileSync"]
+    },
+    {
+      "convention": "syncPromise",
+      "argumentTypes": ["filename: string"],
+      "returnType": "\"module\" | \"commonjs\" | \"json\" | null",
+      "names": ["_moduleFormat"]
     },
     {
       "convention": "syncPromise",
