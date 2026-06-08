@@ -162,11 +162,19 @@ function tailFile(filePath, maxLines = 40) {
   if (!existsSync(filePath)) {
     return "";
   }
-  return readFileSync(filePath, "utf8")
-    .trim()
-    .split("\n")
-    .slice(-maxLines)
-    .join("\n");
+  const stats = statSync(filePath);
+  if (!stats.isFile()) {
+    return "<non-regular file>";
+  }
+  try {
+    return readFileSync(filePath, "utf8")
+      .trim()
+      .split("\n")
+      .slice(-maxLines)
+      .join("\n");
+  } catch (error) {
+    return "<unreadable: " + (error?.code || error?.message || String(error)) + ">";
+  }
 }
 
 function dumpSessionState(session) {
