@@ -3361,6 +3361,20 @@ pub struct JavascriptNetConnectRequest {
     pub port: Option<u16>,
     #[serde(default)]
     pub path: Option<String>,
+    #[serde(rename = "localAddress", default)]
+    pub local_address: Option<String>,
+    #[serde(rename = "localPort", default)]
+    pub local_port: Option<u16>,
+    #[serde(rename = "localReservation", default)]
+    pub local_reservation: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JavascriptNetReserveTcpPortRequest {
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3373,6 +3387,8 @@ pub struct JavascriptNetListenRequest {
     pub path: Option<String>,
     #[serde(default)]
     pub backlog: Option<u32>,
+    #[serde(rename = "localReservation", default)]
+    pub local_reservation: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

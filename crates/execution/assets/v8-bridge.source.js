@@ -3774,6 +3774,16 @@ var __bridge = (() => {
       rationale: "Host TLS cipher-list bridge reference."
     },
     {
+      name: "_netReserveTcpPortRaw",
+      classification: "hardened",
+      rationale: "Host net TCP port reservation bridge reference."
+    },
+    {
+      name: "_netReleaseTcpPortRaw",
+      classification: "hardened",
+      rationale: "Host net TCP port release bridge reference."
+    },
+    {
       name: "_netServerListenRaw",
       classification: "hardened",
       rationale: "Host net server listen bridge reference."

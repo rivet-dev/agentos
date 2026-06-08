@@ -3804,6 +3804,16 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsSyncRpc === 
             throw new Error("Agent OS WASM net.connect bridge is unavailable");
           }}
           return _netSocketConnectRaw.applySync(void 0, args);
+        case "net.reserve_tcp_port":
+          if (typeof _netReserveTcpPortRaw === "undefined") {{
+            throw new Error("Agent OS WASM net.reserve_tcp_port bridge is unavailable");
+          }}
+          return _netReserveTcpPortRaw.applySync(void 0, args);
+        case "net.release_tcp_port":
+          if (typeof _netReleaseTcpPortRaw === "undefined") {{
+            throw new Error("Agent OS WASM net.release_tcp_port bridge is unavailable");
+          }}
+          return _netReleaseTcpPortRaw.applySync(void 0, args);
         case "net.listen":
           if (typeof _netServerListenRaw === "undefined") {{
             throw new Error("Agent OS WASM net.listen bridge is unavailable");

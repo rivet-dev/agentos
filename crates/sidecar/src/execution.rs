@@ -11,12 +11,13 @@ use crate::protocol::{
     JavascriptChildProcessSpawnRequest, JavascriptDgramBindRequest,
     JavascriptDgramCreateSocketRequest, JavascriptDgramSendRequest, JavascriptDnsLookupRequest,
     JavascriptDnsResolveRequest, JavascriptNetConnectRequest, JavascriptNetListenRequest,
-    KillProcessRequest, ListenerSnapshotResponse, OwnershipScope, ProcessExitedEvent,
-    ProcessKilledResponse, ProcessOutputEvent, ProcessSnapshotEntry, ProcessSnapshotResponse,
-    ProcessSnapshotStatus, ProcessStartedResponse, RequestFrame, ResponsePayload,
-    SidecarRequestPayload, SignalDispositionAction, SignalHandlerRegistration, SignalStateResponse,
-    SocketStateEntry, StdinClosedResponse, StdinWrittenResponse, StreamChannel, VmFetchRequest,
-    VmFetchResponse, WasmPermissionTier, WriteStdinRequest, ZombieTimerCountResponse,
+    JavascriptNetReserveTcpPortRequest, KillProcessRequest, ListenerSnapshotResponse,
+    OwnershipScope, ProcessExitedEvent, ProcessKilledResponse, ProcessOutputEvent,
+    ProcessSnapshotEntry, ProcessSnapshotResponse, ProcessSnapshotStatus, ProcessStartedResponse,
+    RequestFrame, ResponsePayload, SidecarRequestPayload, SignalDispositionAction,
+    SignalHandlerRegistration, SignalStateResponse, SocketStateEntry, StdinClosedResponse,
+    StdinWrittenResponse, StreamChannel, VmFetchRequest, VmFetchResponse, WasmPermissionTier,
+    WriteStdinRequest, ZombieTimerCountResponse,
 };
 use crate::service::{
     audit_fields, dirname, emit_security_audit_event, emit_structured_event, javascript_error,
@@ -337,6 +338,8 @@ impl ActiveProcess {
             next_tcp_listener_id: 0,
             tcp_sockets: BTreeMap::new(),
             next_tcp_socket_id: 0,
+            tcp_port_reservations: BTreeMap::new(),
+            next_tcp_port_reservation_id: 0,
             unix_listeners: BTreeMap::new(),
             next_unix_listener_id: 0,
             unix_sockets: BTreeMap::new(),
@@ -422,6 +425,11 @@ impl ActiveProcess {
     fn allocate_tcp_socket_id(&mut self) -> String {
         self.next_tcp_socket_id += 1;
         format!("socket-{}", self.next_tcp_socket_id)
+    }
+
+    fn allocate_tcp_port_reservation_id(&mut self) -> String {
+        self.next_tcp_port_reservation_id += 1;
+        format!("tcp-port-reservation-{}", self.next_tcp_port_reservation_id)
     }
 
     fn allocate_unix_listener_id(&mut self) -> String {
@@ -826,6 +834,9 @@ struct ActiveTcpConnectRequest<'a, B> {
     dns: &'a VmDnsConfig,
     host: &'a str,
     port: u16,
+    local_address: Option<&'a str>,
+    local_port: Option<u16>,
+    local_reservation: Option<(JavascriptSocketFamily, u16)>,
     context: &'a JavascriptSocketPathContext,
 }
 
@@ -925,20 +936,48 @@ impl ActiveTcpSocket {
             dns,
             host,
             port,
+            local_address,
+            local_port,
+            local_reservation,
             context,
         } = request;
         let resolved = resolve_tcp_connect_addr(bridge, kernel, vm_id, dns, host, port, context)?;
         if resolved.use_kernel_loopback {
             let family = JavascriptSocketFamily::from_ip(resolved.guest_remote_addr.ip());
-            let local_port = allocate_guest_listen_port(
-                0,
-                family,
-                &context.used_tcp_guest_ports,
-                context.listen_policy,
-            )?;
-            let local_ip = match family {
-                JavascriptSocketFamily::Ipv4 => IpAddr::V4(Ipv4Addr::LOCALHOST),
-                JavascriptSocketFamily::Ipv6 => IpAddr::V6(Ipv6Addr::LOCALHOST),
+            let requested_local_port = local_port.unwrap_or(0);
+            let local_port = if requested_local_port != 0
+                && local_reservation == Some((family, requested_local_port))
+            {
+                requested_local_port
+            } else {
+                allocate_guest_listen_port(
+                    requested_local_port,
+                    family,
+                    &context.used_tcp_guest_ports,
+                    context.listen_policy,
+                )?
+            };
+            let local_ip = match (family, local_address) {
+                (JavascriptSocketFamily::Ipv4, Some("0.0.0.0")) => {
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+                }
+                (JavascriptSocketFamily::Ipv4, Some("127.0.0.1") | Some("localhost") | None) => {
+                    IpAddr::V4(Ipv4Addr::LOCALHOST)
+                }
+                (JavascriptSocketFamily::Ipv6, Some("::")) => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                (JavascriptSocketFamily::Ipv6, Some("::1") | Some("localhost") | None) => {
+                    IpAddr::V6(Ipv6Addr::LOCALHOST)
+                }
+                (JavascriptSocketFamily::Ipv4, Some(other)) => {
+                    return Err(SidecarError::Execution(format!(
+                        "EACCES: TCP sockets must bind to loopback or unspecified addresses, got {other}"
+                    )));
+                }
+                (JavascriptSocketFamily::Ipv6, Some(other)) => {
+                    return Err(SidecarError::Execution(format!(
+                        "EACCES: TCP sockets must bind to loopback or unspecified addresses, got {other}"
+                    )));
+                }
             };
             let local_addr = SocketAddr::new(local_ip, local_port);
             let spec = match family {
@@ -10218,6 +10257,10 @@ fn collect_javascript_socket_port_state(
     used_tcp_ports: &mut BTreeMap<JavascriptSocketFamily, BTreeSet<u16>>,
     used_udp_ports: &mut BTreeMap<JavascriptSocketFamily, BTreeSet<u16>>,
 ) {
+    for (family, port) in process.tcp_port_reservations.values() {
+        used_tcp_ports.entry(*family).or_default().insert(*port);
+    }
+
     let mut record_tcp_listener = |guest_addr: SocketAddr, host_port: u16| {
         let family = JavascriptSocketFamily::from_ip(guest_addr.ip());
         used_tcp_ports
@@ -13476,6 +13519,8 @@ where
             })
         }
         "net.connect"
+        | "net.reserve_tcp_port"
+        | "net.release_tcp_port"
         | "net.listen"
         | "net.poll"
         | "net.socket_wait_connect"
@@ -19008,6 +19053,54 @@ where
             *pending = Some(response_json.to_owned());
             Ok(Value::Null)
         }
+        "net.reserve_tcp_port" => {
+            let payload = request
+                .args
+                .first()
+                .cloned()
+                .ok_or_else(|| {
+                    SidecarError::InvalidState(String::from(
+                        "net.reserve_tcp_port requires a request payload",
+                    ))
+                })
+                .and_then(|value| {
+                    serde_json::from_value::<JavascriptNetReserveTcpPortRequest>(value).map_err(
+                        |error| {
+                            SidecarError::InvalidState(format!(
+                                "invalid net.reserve_tcp_port payload: {error}"
+                            ))
+                        },
+                    )
+                })?;
+            let (family, _bind_host, guest_host) =
+                normalize_tcp_listen_host(payload.host.as_deref())?;
+            let requested_port = payload.port.unwrap_or(0);
+            let port = allocate_guest_listen_port(
+                requested_port,
+                family,
+                &socket_paths.used_tcp_guest_ports,
+                socket_paths.listen_policy,
+            )?;
+            let reservation_id = process.allocate_tcp_port_reservation_id();
+            process
+                .tcp_port_reservations
+                .insert(reservation_id.clone(), (family, port));
+            Ok(json!({
+                "reservationId": reservation_id,
+                "localAddress": guest_host,
+                "localPort": port,
+                "family": match family {
+                    JavascriptSocketFamily::Ipv4 => "IPv4",
+                    JavascriptSocketFamily::Ipv6 => "IPv6",
+                },
+            }))
+        }
+        "net.release_tcp_port" => {
+            let reservation_id =
+                javascript_sync_rpc_arg_str(&request.args, 0, "net.release_tcp_port reservation")?;
+            process.tcp_port_reservations.remove(reservation_id);
+            Ok(Value::Null)
+        }
         "net.connect" => {
             check_network_resource_limit(
                 resource_limits.max_sockets,
@@ -19052,12 +19145,18 @@ where
                     ))
                 })?;
                 let host = payload.host.as_deref().unwrap_or("localhost");
+                let local_reservation = payload.local_reservation.as_deref().and_then(|id| {
+                    process
+                        .tcp_port_reservations
+                        .remove(id)
+                        .map(|reservation| (id.to_owned(), reservation))
+                });
                 bridge.require_network_access(
                     vm_id,
                     NetworkOperation::Http,
                     format_tcp_resource(host, port),
                 )?;
-                let socket = ActiveTcpSocket::connect(ActiveTcpConnectRequest {
+                let connect_result = ActiveTcpSocket::connect(ActiveTcpConnectRequest {
                     bridge,
                     kernel,
                     kernel_pid: process.kernel_pid,
@@ -19065,8 +19164,22 @@ where
                     dns,
                     host,
                     port,
+                    local_address: payload.local_address.as_deref(),
+                    local_port: payload.local_port,
+                    local_reservation: local_reservation
+                        .as_ref()
+                        .map(|(_, reservation)| *reservation),
                     context: socket_paths,
-                })?;
+                });
+                if let Err(error) = connect_result {
+                    if let Some((reservation_id, reservation)) = local_reservation {
+                        process
+                            .tcp_port_reservations
+                            .insert(reservation_id, reservation);
+                    }
+                    return Err(error);
+                }
+                let socket = connect_result?;
                 let socket_id = process.allocate_tcp_socket_id();
                 let local_addr = socket.guest_local_addr;
                 let remote_addr = socket.guest_remote_addr;
@@ -19147,19 +19260,43 @@ where
                     NetworkOperation::Listen,
                     format_tcp_resource(bind_host, requested_port),
                 )?;
-                let port = allocate_guest_listen_port(
-                    requested_port,
-                    family,
-                    &socket_paths.used_tcp_guest_ports,
-                    socket_paths.listen_policy,
-                )?;
-                let listener = ActiveTcpListener::bind_kernel(
+                let local_reservation = payload.local_reservation.as_deref().and_then(|id| {
+                    process
+                        .tcp_port_reservations
+                        .remove(id)
+                        .map(|reservation| (id.to_owned(), reservation))
+                });
+                let port = if requested_port != 0
+                    && local_reservation
+                        .as_ref()
+                        .map(|(_, reservation)| *reservation)
+                        == Some((family, requested_port))
+                {
+                    requested_port
+                } else {
+                    allocate_guest_listen_port(
+                        requested_port,
+                        family,
+                        &socket_paths.used_tcp_guest_ports,
+                        socket_paths.listen_policy,
+                    )?
+                };
+                let listener_result = ActiveTcpListener::bind_kernel(
                     kernel,
                     process.kernel_pid,
                     guest_host,
                     port,
                     payload.backlog,
-                )?;
+                );
+                if let Err(error) = listener_result {
+                    if let Some((reservation_id, reservation)) = local_reservation {
+                        process
+                            .tcp_port_reservations
+                            .insert(reservation_id, reservation);
+                    }
+                    return Err(error);
+                }
+                let listener = listener_result?;
                 let listener_id = process.allocate_tcp_listener_id();
                 let local_addr = listener.guest_local_addr();
                 process.tcp_listeners.insert(listener_id.clone(), listener);

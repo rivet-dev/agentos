@@ -328,6 +328,8 @@ pub fn map_bridge_method(method: &str) -> (&str, bool) {
         "_netSocketGetTlsClientHelloRaw" => ("net.socket_get_tls_client_hello", false),
         "_netSocketTlsQueryRaw" => ("net.socket_tls_query", false),
         "_tlsGetCiphersRaw" => ("tls.get_ciphers", false),
+        "_netReserveTcpPortRaw" => ("net.reserve_tcp_port", false),
+        "_netReleaseTcpPortRaw" => ("net.release_tcp_port", false),
         "_netServerListenRaw" => ("net.listen", false),
         "_netServerAcceptRaw" => ("net.server_accept", false),
         "_netServerCloseRaw" => ("net.server_close", false),

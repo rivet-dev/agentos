@@ -15,7 +15,7 @@ const NODE_IMPORT_CACHE_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_PATH";
 const NODE_IMPORT_CACHE_LOADER_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_LOADER_PATH";
 const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "49";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "50";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agent-os-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const PYODIDE_DIST_DIR: &str = "pyodide-dist";
@@ -10854,14 +10854,20 @@ function parseHostNetListenAddress(raw) {
   return { host: address.host, port: address.port };
 }
 
-function formatHostNetAddress(info) {
-  if (typeof info?.remotePath === 'string') {
-    return info.remotePath;
+function normalizeHostNetAddressInfo(address, port) {
+  const host = String(address ?? '');
+  const numericPort = Number(port);
+  if (!host || !Number.isInteger(numericPort) || numericPort < 0 || numericPort > 65535) {
+    return null;
   }
-  const address = String(info?.remoteAddress ?? '');
-  const port = Number(info?.remotePort);
+  return { address: host, port: numericPort };
+}
+
+function formatHostNetAddressInfo(info) {
+  const address = String(info?.address ?? '');
+  const port = Number(info?.port);
   if (!address || !Number.isInteger(port) || port < 0 || port > 65535) {
-    throw new Error('host_net accept response missing remote address');
+    throw new Error('host_net socket address is incomplete');
   }
   return `${address}:${port}`;
 }
@@ -10947,6 +10953,9 @@ const hostNetImport = {
         sockType: numericType,
         protocol: numericProtocol,
         bindOptions: null,
+        localInfo: null,
+        localReservation: null,
+        remoteInfo: null,
         serverId: null,
         socketId: null,
         readChunks: [],
@@ -10971,12 +10980,26 @@ const hostNetImport = {
         return WASI_ERRNO_FAULT;
       }
 
-      const result = callSyncRpc('net.connect', [{ host, port }]);
+      const request = { host, port };
+      if (socket.bindOptions?.host != null) {
+        request.localAddress = socket.bindOptions.host;
+      }
+      if (socket.bindOptions?.port != null) {
+        request.localPort = socket.bindOptions.port;
+      }
+      if (socket.localReservation != null) {
+        request.localReservation = socket.localReservation;
+      }
+
+      const result = callSyncRpc('net.connect', [request]);
       if (!result || typeof result.socketId !== 'string') {
         return WASI_ERRNO_FAULT;
       }
 
       socket.socketId = result.socketId;
+      socket.localInfo = normalizeHostNetAddressInfo(result.localAddress, result.localPort);
+      socket.localReservation = null;
+      socket.remoteInfo = normalizeHostNetAddressInfo(result.remoteAddress, result.remotePort);
       socket.readChunks.length = 0;
       socket.readableEnded = false;
       socket.closed = false;
@@ -10993,7 +11016,34 @@ const hostNetImport = {
     }
 
     try {
+      if (socket.localReservation != null) {
+        callSyncRpc('net.release_tcp_port', [socket.localReservation]);
+        socket.localReservation = null;
+      }
+
       socket.bindOptions = parseHostNetListenAddress(readGuestString(addrPtr, addrLen));
+      if (socket.bindOptions.path == null) {
+        const reservation = callSyncRpc('net.reserve_tcp_port', [socket.bindOptions]);
+        if (
+          !reservation ||
+          typeof reservation.reservationId !== 'string' ||
+          !Number.isInteger(Number(reservation.localPort))
+        ) {
+          return WASI_ERRNO_FAULT;
+        }
+        socket.localReservation = reservation.reservationId;
+        socket.bindOptions = {
+          ...socket.bindOptions,
+          host: reservation.localAddress ?? socket.bindOptions.host,
+          port: Number(reservation.localPort),
+        };
+        socket.localInfo = normalizeHostNetAddressInfo(
+          socket.bindOptions.host ?? '127.0.0.1',
+          socket.bindOptions.port,
+        );
+      } else {
+        socket.localInfo = null;
+      }
       return WASI_ERRNO_SUCCESS;
     } catch {
       return WASI_ERRNO_FAULT;
@@ -11009,14 +11059,21 @@ const hostNetImport = {
     }
 
     try {
-      const result = callSyncRpc('net.listen', [{
+      const request = {
         ...socket.bindOptions,
         backlog: Math.max(0, Number(backlog) >>> 0),
-      }]);
+      };
+      if (socket.localReservation != null) {
+        request.localReservation = socket.localReservation;
+      }
+
+      const result = callSyncRpc('net.listen', [request]);
       if (!result || typeof result.serverId !== 'string') {
         return WASI_ERRNO_FAULT;
       }
       socket.serverId = result.serverId;
+      socket.localReservation = null;
+      socket.localInfo = normalizeHostNetAddressInfo(result.localAddress, result.localPort);
       return WASI_ERRNO_SUCCESS;
     } catch {
       return WASI_ERRNO_FAULT;
@@ -11050,6 +11107,9 @@ const hostNetImport = {
         sockType: socket.sockType,
         protocol: socket.protocol,
         bindOptions: null,
+        localInfo: normalizeHostNetAddressInfo(result.info?.localAddress, result.info?.localPort),
+        localReservation: null,
+        remoteInfo: normalizeHostNetAddressInfo(result.info?.remoteAddress, result.info?.remotePort),
         serverId: null,
         socketId: result.socketId,
         readChunks: [],
@@ -11058,11 +11118,46 @@ const hostNetImport = {
         lastError: null,
       });
 
-      const address = Buffer.from(formatHostNetAddress(result.info), 'utf8');
+      const address = Buffer.from(formatHostNetAddressInfo({
+        address: result.info?.remoteAddress,
+        port: result.info?.remotePort,
+      }), 'utf8');
       if (writeGuestUint32(retFdPtr, acceptedFd) !== WASI_ERRNO_SUCCESS) {
         return WASI_ERRNO_FAULT;
       }
       return writeGuestBytes(retAddrPtr, readGuestUint32(retAddrLenPtr), address, retAddrLenPtr);
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  },
+  net_getsockname(fd, addrPtr, addrLenPtr) {
+    const socket = getHostNetSocket(fd);
+    if (!socket || socket.closed) {
+      return WASI_ERRNO_BADF;
+    }
+    if (!socket.localInfo) {
+      return WASI_ERRNO_INVAL;
+    }
+
+    try {
+      const address = Buffer.from(formatHostNetAddressInfo(socket.localInfo), 'utf8');
+      return writeGuestBytes(addrPtr, readGuestUint32(addrLenPtr), address, addrLenPtr);
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  },
+  net_getpeername(fd, addrPtr, addrLenPtr) {
+    const socket = getHostNetSocket(fd);
+    if (!socket || socket.closed) {
+      return WASI_ERRNO_BADF;
+    }
+    if (!socket.remoteInfo) {
+      return WASI_ERRNO_INVAL;
+    }
+
+    try {
+      const address = Buffer.from(formatHostNetAddressInfo(socket.remoteInfo), 'utf8');
+      return writeGuestBytes(addrPtr, readGuestUint32(addrLenPtr), address, addrLenPtr);
     } catch {
       return WASI_ERRNO_FAULT;
     }
@@ -11124,6 +11219,9 @@ const hostNetImport = {
 
     hostNetSockets.delete(numericFd);
     try {
+      if (socket.localReservation != null) {
+        callSyncRpc('net.release_tcp_port', [socket.localReservation]);
+      }
       if (socket.socketId && !socket.closed) {
         callSyncRpc('net.destroy', [socket.socketId]);
       }

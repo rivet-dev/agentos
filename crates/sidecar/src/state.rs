@@ -405,6 +405,8 @@ pub(crate) struct ActiveProcess {
     pub(crate) next_tcp_listener_id: usize,
     pub(crate) tcp_sockets: BTreeMap<String, ActiveTcpSocket>,
     pub(crate) next_tcp_socket_id: usize,
+    pub(crate) tcp_port_reservations: BTreeMap<String, (JavascriptSocketFamily, u16)>,
+    pub(crate) next_tcp_port_reservation_id: usize,
     pub(crate) unix_listeners: BTreeMap<String, ActiveUnixListener>,
     pub(crate) next_unix_listener_id: usize,
     pub(crate) unix_sockets: BTreeMap<String, ActiveUnixSocket>,

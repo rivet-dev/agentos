@@ -1070,6 +1070,8 @@ pub(crate) const SYNC_BRIDGE_FNS: &[&str] = &[
     "_netSocketGetTlsClientHelloRaw",
     "_netSocketTlsQueryRaw",
     "_tlsGetCiphersRaw",
+    "_netReserveTcpPortRaw",
+    "_netReleaseTcpPortRaw",
     "_netServerListenRaw",
     "_netServerAcceptRaw",
     "_dgramSocketCreateRaw",
