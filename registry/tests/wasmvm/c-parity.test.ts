@@ -106,6 +106,13 @@ class SimpleVFS {
     const data = await this.readFile(path);
     return data.slice(offset, offset + length);
   }
+  async pwrite(path: string, offset: number, content: Uint8Array): Promise<void> {
+    const data = await this.readFile(path);
+    const next = new Uint8Array(Math.max(data.length, offset + content.length));
+    next.set(data);
+    next.set(content, offset);
+    this.files.set(path, next);
+  }
   async readDir(path: string): Promise<string[]> {
     const prefix = path === '/' ? '/' : path + '/';
     const entries: string[] = [];

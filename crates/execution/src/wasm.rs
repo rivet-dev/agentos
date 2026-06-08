@@ -17,8 +17,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::io::{Read, Write};
+use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -1162,11 +1162,12 @@ fn handle_internal_wasm_sync_rpc_request(
         let Some(file) = internal_sync_rpc.open_files.get_mut(&(fd as u32)) else {
             return Ok(false);
         };
-        if let Some(position) = position {
-            file.seek(SeekFrom::Start(position))
-                .map_err(WasmExecutionError::Spawn)?;
-        }
-        let written = file.write(&bytes).map_err(WasmExecutionError::Spawn)?;
+        let written = if let Some(position) = position {
+            file.write_at(&bytes, position)
+                .map_err(WasmExecutionError::Spawn)?
+        } else {
+            file.write(&bytes).map_err(WasmExecutionError::Spawn)?
+        };
         execution
             .respond_sync_rpc_success(request.id, json!(written))
             .map_err(map_javascript_error)?;
@@ -1184,12 +1185,13 @@ fn handle_internal_wasm_sync_rpc_request(
         let Some(file) = internal_sync_rpc.open_files.get_mut(&(fd as u32)) else {
             return Ok(false);
         };
-        if let Some(position) = position {
-            file.seek(SeekFrom::Start(position))
-                .map_err(WasmExecutionError::Spawn)?;
-        }
         let mut buffer = vec![0u8; length];
-        let bytes_read = file.read(&mut buffer).map_err(WasmExecutionError::Spawn)?;
+        let bytes_read = if let Some(position) = position {
+            file.read_at(&mut buffer, position)
+                .map_err(WasmExecutionError::Spawn)?
+        } else {
+            file.read(&mut buffer).map_err(WasmExecutionError::Spawn)?
+        };
         buffer.truncate(bytes_read);
         execution
             .respond_sync_rpc_success(
