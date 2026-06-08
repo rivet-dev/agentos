@@ -29,7 +29,7 @@
   "scripts": {
     "check-types": "tsc --noEmit -p ./tsconfig.json",
     "build": "tsc -p ./tsconfig.json",
-    "test": "vitest run --fileParallelism=false --passWithNoTests"
+    "test": "pnpm build && vitest run --fileParallelism=false"
   },
   "dependencies": {
     "@secure-exec/core": "^0.2.1",
