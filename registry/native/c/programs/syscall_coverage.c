@@ -162,7 +162,6 @@ static void test_path_ops(const char *base) {
         struct dirent *ent;
         while ((ent = readdir(d)) != NULL) {
             if (strcmp(ent->d_name, "r.txt") == 0) found = 1;
-            fprintf(stderr, "DBG readdir: entry='%s'\n", ent->d_name);
         }
         TEST("readdir", found, "r.txt not found");
         TEST("closedir", closedir(d) == 0, "failed");
