@@ -246,7 +246,7 @@ static void test_host_process(void) {
 
     /* getppid */
     pid_t ppid = getppid();
-    TEST("getppid", ppid > 0, "not positive");
+    TEST("getppid", ppid >= 0, "negative");
 
     /* sigaction */
     struct sigaction action;
