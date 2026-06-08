@@ -271,7 +271,15 @@ const browseDir = dirname(dirname(browsePath));
 const stagehandPackagePath = require.resolve("@browserbasehq/stagehand/package.json", {
   paths: [browseDir],
 });
-const stagehandPath = join(dirname(stagehandPackagePath), "dist/esm/index.js");
+const stagehandPackage = require(stagehandPackagePath);
+const stagehandImportPath =
+  typeof stagehandPackage.exports?.["."]?.import === "string"
+    ? stagehandPackage.exports["."].import
+    : stagehandPackage.module;
+if (typeof stagehandImportPath !== "string") {
+  throw new Error("Stagehand package does not expose an ESM entrypoint");
+}
+const stagehandPath = join(dirname(stagehandPackagePath), stagehandImportPath);
 const { V3 } = await import(pathToFileURL(stagehandPath).href);
 
 const steps = [];
