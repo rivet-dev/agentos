@@ -7856,12 +7856,22 @@ fn is_shadow_bootstrap_dir(path: &str) -> bool {
 
 #[cfg(test)]
 mod shadow_sync_tests {
-    use super::is_shadow_bootstrap_dir;
+    use super::{is_protected_agentos_shadow_sync_path, is_shadow_bootstrap_dir};
 
     #[test]
     fn shadow_bootstrap_sync_skips_virtual_home_tree() {
         assert!(is_shadow_bootstrap_dir("/home"));
         assert!(is_shadow_bootstrap_dir("/home/user"));
+    }
+
+    #[test]
+    fn protected_agentos_paths_are_not_shadow_synced() {
+        assert!(is_protected_agentos_shadow_sync_path("/etc/agentos"));
+        assert!(is_protected_agentos_shadow_sync_path(
+            "/etc/agentos/instructions.md"
+        ));
+        assert!(!is_protected_agentos_shadow_sync_path("/etc/agentos-copy"));
+        assert!(!is_protected_agentos_shadow_sync_path("/etc/agentos.md"));
     }
 }
 
@@ -7872,8 +7882,13 @@ fn is_kernel_owned_shadow_sync_path(path: &str) -> bool {
         || path.starts_with("/sys/")
 }
 
+pub(crate) fn is_protected_agentos_shadow_sync_path(path: &str) -> bool {
+    path == "/etc/agentos" || path.starts_with("/etc/agentos/")
+}
+
 fn should_skip_shadow_sync_path(vm: &VmState, guest_path: &str) -> bool {
     is_kernel_owned_shadow_sync_path(guest_path)
+        || is_protected_agentos_shadow_sync_path(guest_path)
         || host_mount_path_for_guest_path_from_mounts(&vm.configuration.mounts, guest_path)
             .is_some()
 }

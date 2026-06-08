@@ -1,7 +1,8 @@
 //! Guest filesystem and VFS dispatch extracted from service.rs.
 
 use crate::execution::{
-    host_path_from_runtime_guest_mappings, sync_active_process_host_writes_to_kernel,
+    host_path_from_runtime_guest_mappings, is_protected_agentos_shadow_sync_path,
+    sync_active_process_host_writes_to_kernel,
 };
 use crate::protocol::{
     GuestFilesystemCallRequest, GuestFilesystemOperation, GuestFilesystemResultResponse,
@@ -2861,6 +2862,9 @@ fn sync_active_shadow_path_to_kernel(
 ) -> Result<(), SidecarError> {
     sync_active_process_host_writes_to_kernel(vm)?;
     let guest_path = normalize_path(guest_path);
+    if is_protected_agentos_shadow_sync_path(&guest_path) {
+        return Ok(());
+    }
     let mut host_paths = active_process_shadow_host_paths_for_guest(vm, &guest_path);
     if host_paths.is_empty() && !vm.kernel.exists(&guest_path).unwrap_or(false) {
         host_paths.push(shadow_host_path_for_guest(&vm.cwd, &guest_path));
