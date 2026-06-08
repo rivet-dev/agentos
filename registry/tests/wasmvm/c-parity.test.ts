@@ -546,6 +546,18 @@ describeIf(!skipReason(), 'C parity: native vs WASM', { timeout: 30_000 }, () =>
     expect(wasm.stdout).toContain('sa_restart_child_exit=0');
   });
 
+  itIf(!tier3Skip, 'sigaction_self: self kill dispatches SA_RESETHAND handler', async () => {
+    const native = await runNative('sigaction_self');
+    const wasm = await kernel.exec('sigaction_self');
+
+    expect(wasm.exitCode).toBe(native.exitCode);
+    expect(wasm.exitCode).toBe(0);
+    expect(wasm.stdout).toBe(native.stdout);
+    expect(wasm.stdout).toContain('self_signal_handler_calls=1');
+    expect(wasm.stdout).toContain('self_signal_reset=yes');
+    expect(normalizeStderr(wasm.stderr)).toBe(normalizeStderr(native.stderr));
+  });
+
   itIf(!tier3Skip, 'getppid_verify: child getppid matches parent getpid', async () => {
     // Native needs getppid_test on PATH for posix_spawnp
     const native = await runNative('getppid_verify', [], {

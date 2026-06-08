@@ -10830,39 +10830,56 @@ function formatHostNetAddress(info) {
 }
 
 function signalNumberFromName(signal) {
-  switch (String(signal)) {
-    case 'SIGHUP':
-      return 1;
-    case 'SIGINT':
-      return 2;
-    case 'SIGKILL':
-      return 9;
-    case 'SIGTERM':
-      return 15;
-    default:
-      if (String(signal).startsWith('SIG')) {
-        const numeric = Number.parseInt(String(signal).slice(3), 10);
-        return Number.isInteger(numeric) ? numeric : 15;
-      }
-      return 15;
+  const mapped = LINUX_SIGNAL_NAMES.indexOf(String(signal));
+  if (mapped > 0) {
+    return mapped;
   }
+  if (String(signal).startsWith('SIG')) {
+    const numeric = Number.parseInt(String(signal).slice(3), 10);
+    return Number.isInteger(numeric) ? numeric : 15;
+  }
+  return 15;
 }
 
 function signalNameFromNumber(signal) {
   const numeric = Number(signal) >>> 0;
-  switch (numeric) {
-    case 1:
-      return 'SIGHUP';
-    case 2:
-      return 'SIGINT';
-    case 9:
-      return 'SIGKILL';
-    case 15:
-      return 'SIGTERM';
-    default:
-      return `SIG${numeric}`;
-  }
+  return LINUX_SIGNAL_NAMES[numeric] ?? `SIG${numeric}`;
 }
+
+const LINUX_SIGNAL_NAMES = [
+  null,
+  'SIGHUP',
+  'SIGINT',
+  'SIGQUIT',
+  'SIGILL',
+  'SIGTRAP',
+  'SIGABRT',
+  'SIGBUS',
+  'SIGFPE',
+  'SIGKILL',
+  'SIGUSR1',
+  'SIGSEGV',
+  'SIGUSR2',
+  'SIGPIPE',
+  'SIGALRM',
+  'SIGTERM',
+  null,
+  'SIGCHLD',
+  'SIGCONT',
+  'SIGSTOP',
+  'SIGTSTP',
+  'SIGTTIN',
+  'SIGTTOU',
+  'SIGURG',
+  'SIGXCPU',
+  'SIGXFSZ',
+  'SIGVTALRM',
+  'SIGPROF',
+  'SIGWINCH',
+  'SIGIO',
+  'SIGPWR',
+  'SIGSYS',
+];
 
 function writeGuestBytes(ptr, maxLen, bytes, actualLenPtr) {
   if (!(instanceMemory instanceof WebAssembly.Memory)) {
@@ -11334,13 +11351,27 @@ const hostProcessImport = {
           if (permissionTier !== 'full') {
             return WASI_ERRNO_SRCH;
           }
-          const record = spawnedChildren.get(Number(pid) >>> 0);
-          if (!record) {
-            return WASI_ERRNO_SRCH;
-          }
+          const targetPid = Number(pid) >>> 0;
+          const signalName = signalNameFromNumber(signal);
 
           try {
-            callSyncRpc('child_process.kill', [record.childId, signalNameFromNumber(signal)]);
+            if (targetPid === VIRTUAL_PID) {
+              callSyncRpc('process.kill', [VIRTUAL_PID, signalName]);
+              if (
+                Number(signal) > 0 &&
+                typeof instance?.exports?.__wasi_signal_trampoline === 'function'
+              ) {
+                instance.exports.__wasi_signal_trampoline(Number(signal) | 0);
+              }
+              return WASI_ERRNO_SUCCESS;
+            }
+
+            const record = spawnedChildren.get(targetPid);
+            if (!record) {
+              return WASI_ERRNO_SRCH;
+            }
+
+            callSyncRpc('child_process.kill', [record.childId, signalName]);
             return WASI_ERRNO_SUCCESS;
           } catch {
             return WASI_ERRNO_FAULT;

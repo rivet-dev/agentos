@@ -3768,6 +3768,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsSyncRpc === 
             throw new Error("Agent OS WASM child_process kill bridge is unavailable");
           }}
           return _childProcessKill.applySync(void 0, args);
+        case "process.kill":
+          if (typeof _processKill === "undefined") {{
+            throw new Error("Agent OS WASM process kill bridge is unavailable");
+          }}
+          return _processKill.applySync(void 0, args);
         case "child_process.write_stdin": {{
           if (typeof _childProcessStdinWrite === "undefined") {{
             throw new Error("Agent OS WASM child_process stdin bridge is unavailable");

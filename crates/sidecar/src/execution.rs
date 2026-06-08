@@ -19502,6 +19502,8 @@ fn signal_name_for_stream_event(signal: i32) -> Option<&'static str> {
     match signal {
         libc::SIGHUP => Some("SIGHUP"),
         libc::SIGINT => Some("SIGINT"),
+        libc::SIGUSR1 => Some("SIGUSR1"),
+        libc::SIGALRM => Some("SIGALRM"),
         libc::SIGCONT => Some("SIGCONT"),
         libc::SIGTERM => Some("SIGTERM"),
         libc::SIGCHLD => Some("SIGCHLD"),
