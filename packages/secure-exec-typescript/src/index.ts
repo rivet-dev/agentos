@@ -3,9 +3,9 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import {
 	createKernel,
+	type createNodeDriver,
 	createNodeRuntime,
 	NodeFileSystem,
-	type createNodeDriver,
 	type NodeRuntimeDriver,
 	type NodeRuntimeDriverFactory,
 	type Permissions,
@@ -160,12 +160,16 @@ async function runCompilerInRuntime(
 ): Promise<CompilerResponse> {
 	const filesystem = options.systemDriver.filesystem;
 	if (!filesystem) {
-		throw new Error("TypeScript tools require a filesystem-backed system driver");
+		throw new Error(
+			"TypeScript tools require a filesystem-backed system driver",
+		);
 	}
 
 	const hostNodeModules = findNearestNodeModules(process.cwd());
 	if (!hostNodeModules) {
-		throw new Error("Unable to locate host node_modules for TypeScript runtime");
+		throw new Error(
+			"Unable to locate host node_modules for TypeScript runtime",
+		);
 	}
 
 	const runtimeDriver = options.runtimeDriverFactory.createRuntimeDriver({
@@ -222,7 +226,9 @@ async function runCompilerWithKernelRuntime(
 ): Promise<CompilerResponse> {
 	const filesystem = options.systemDriver.filesystem;
 	if (!filesystem) {
-		throw new Error("TypeScript tools require a filesystem-backed system driver");
+		throw new Error(
+			"TypeScript tools require a filesystem-backed system driver",
+		);
 	}
 
 	await filesystem.mkdir("/tmp", { recursive: true });
@@ -230,7 +236,10 @@ async function runCompilerWithKernelRuntime(
 	const requestPath = `/tmp/secure-exec-typescript-request-${requestId}.json`;
 	const runnerPath = `/tmp/secure-exec-typescript-runner-${requestId}.cjs`;
 	await filesystem.writeFile(requestPath, JSON.stringify(request));
-	await filesystem.writeFile(runnerPath, buildCompilerRuntimeScript(requestPath));
+	await filesystem.writeFile(
+		runnerPath,
+		buildCompilerRuntimeScript(requestPath),
+	);
 
 	const kernel = createKernel({
 		filesystem,
@@ -360,7 +369,9 @@ function normalizeCompilerFailureMessage(errorMessage?: string): string {
 	return message;
 }
 
-function buildRuntimeEnv(options: TypeScriptToolsOptions): Record<string, string> {
+function buildRuntimeEnv(
+	options: TypeScriptToolsOptions,
+): Record<string, string> {
 	const env = { ...(options.systemDriver.runtime.process.env ?? {}) };
 	if (options.memoryLimit !== undefined) {
 		const limit = Math.max(1, Math.floor(options.memoryLimit));
@@ -438,10 +449,14 @@ try {
 }
 
 function parseRuntimeResponse(stdout: string): CompilerResponse {
-	return parseRuntimeEnvelope(JSON.parse(stdout.trim()) as RuntimeCompilerEnvelope);
+	return parseRuntimeEnvelope(
+		JSON.parse(stdout.trim()) as RuntimeCompilerEnvelope,
+	);
 }
 
-function parseRuntimeEnvelope(payload: RuntimeCompilerEnvelope): CompilerResponse {
+function parseRuntimeEnvelope(
+	payload: RuntimeCompilerEnvelope,
+): CompilerResponse {
 	if (payload.ok) {
 		return payload.result;
 	}

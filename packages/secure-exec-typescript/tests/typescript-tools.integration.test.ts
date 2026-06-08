@@ -1,16 +1,16 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createTypeScriptTools } from "@secure-exec/typescript";
 import {
 	allowAllFs,
-	createKernel,
 	createInMemoryFileSystem,
+	createKernel,
 	createNodeDriver,
 	createNodeRuntime,
 	createNodeRuntimeDriverFactory,
 	type NodeRuntimeDriverFactory,
 } from "secure-exec";
 import { describe, expect, it } from "vitest";
-import { createTypeScriptTools } from "@secure-exec/typescript";
 
 const workspaceRoot = resolve(
 	fileURLToPath(new URL("../../..", import.meta.url)),
