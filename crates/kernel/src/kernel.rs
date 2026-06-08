@@ -714,12 +714,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     pub fn write_file(&mut self, path: &str, content: impl Into<Vec<u8>>) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_resolved_write_path(path)?;
         let content = content.into();
         self.check_write_file_limits(path, content.len() as u64)?;
         Ok(self.filesystem.write_file(path, content)?)
@@ -737,12 +732,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.assert_driver_owns(requester_driver, pid)?;
         let existed = self.exists_internal(Some(pid), path)?;
         let content = content.into();
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_resolved_write_path(path)?;
         self.check_write_file_limits(path, content.len() as u64)?;
         VirtualFileSystem::write_file_with_mode(&mut self.filesystem, path, content, mode)?;
         if !existed {
@@ -754,12 +744,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     pub fn create_dir(&mut self, path: &str) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_entry_write_path(path)?;
         self.check_create_dir_limits(path)?;
         Ok(self.filesystem.create_dir(path)?)
     }
@@ -774,12 +759,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
         let existed = self.exists_internal(Some(pid), path)?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_entry_write_path(path)?;
         self.check_create_dir_limits(path)?;
         VirtualFileSystem::create_dir_with_mode(&mut self.filesystem, path, mode)?;
         if !existed {
@@ -791,12 +771,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     pub fn mkdir(&mut self, path: &str, recursive: bool) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_entry_write_path(path)?;
         self.check_mkdir_limits(path, recursive)?;
         Ok(self.filesystem.mkdir(path, recursive)?)
     }
@@ -812,12 +787,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.assert_not_terminated()?;
         self.assert_driver_owns(requester_driver, pid)?;
         let created_paths = self.missing_directory_paths(path, recursive)?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_entry_write_path(path)?;
         self.check_mkdir_limits(path, recursive)?;
         VirtualFileSystem::mkdir_with_mode(&mut self.filesystem, path, recursive, mode)?;
         if !created_paths.is_empty() {
@@ -929,41 +899,20 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     pub fn remove_file(&mut self, path: &str) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_entry_write_path(path)?;
         Ok(self.filesystem.remove_file(path)?)
     }
 
     pub fn remove_dir(&mut self, path: &str) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_entry_write_path(path)?;
         Ok(self.filesystem.remove_dir(path)?)
     }
 
     pub fn rename(&mut self, old_path: &str, new_path: &str) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(old_path) || is_proc_path(new_path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, old_path)
-                .map_err(KernelError::from)?;
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, new_path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(if is_proc_path(new_path) {
-                new_path
-            } else {
-                old_path
-            }));
-        }
+        self.reject_read_only_entry_write_path(old_path)?;
+        self.reject_read_only_entry_write_path(new_path)?;
         Ok(self.filesystem.rename(old_path, new_path)?)
     }
 
@@ -985,46 +934,39 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     pub fn symlink(&mut self, target: &str, link_path: &str) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(target) || is_proc_path(link_path) {
+        if is_proc_path(target) {
             self.filesystem
                 .check_virtual_path(FsOperation::Write, link_path)
                 .map_err(KernelError::from)?;
             return Err(read_only_filesystem_error(link_path));
         }
+        self.reject_read_only_entry_write_path(link_path)?;
         self.check_symlink_limits(target, link_path)?;
         Ok(self.filesystem.symlink(target, link_path)?)
     }
 
     pub fn chmod(&mut self, path: &str, mode: u32) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_resolved_write_path(path)?;
         Ok(self.filesystem.chmod(path, mode)?)
     }
 
     pub fn link(&mut self, old_path: &str, new_path: &str) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(old_path) || is_proc_path(new_path) {
+        if is_proc_path(old_path) {
             self.filesystem
                 .check_virtual_path(FsOperation::Write, new_path)
                 .map_err(KernelError::from)?;
             return Err(read_only_filesystem_error(new_path));
         }
+        self.reject_read_only_resolved_write_path(old_path)?;
+        self.reject_read_only_entry_write_path(new_path)?;
         Ok(self.filesystem.link(old_path, new_path)?)
     }
 
     pub fn chown(&mut self, path: &str, uid: u32, gid: u32) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_resolved_write_path(path)?;
         Ok(self.filesystem.chown(path, uid, gid)?)
     }
 
@@ -1043,12 +985,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         mtime: VirtualUtimeSpec,
     ) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_resolved_write_path(path)?;
         Ok(self.filesystem.utimes_spec(path, atime, mtime, true)?)
     }
 
@@ -1059,12 +996,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         mtime: VirtualUtimeSpec,
     ) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_entry_write_path(path)?;
         Ok(self.filesystem.utimes_spec(path, atime, mtime, false)?)
     }
 
@@ -1081,23 +1013,13 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             .description_for_fd(requester_driver, pid, fd)?
             .path()
             .to_owned();
-        if is_proc_path(&path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, &path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(&path));
-        }
+        self.reject_read_only_resolved_write_path(&path)?;
         Ok(self.filesystem.utimes_spec(&path, atime, mtime, true)?)
     }
 
     pub fn truncate(&mut self, path: &str, length: u64) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        if is_proc_path(path) {
-            self.filesystem
-                .check_virtual_path(FsOperation::Write, path)
-                .map_err(KernelError::from)?;
-            return Err(read_only_filesystem_error(path));
-        }
+        self.reject_read_only_resolved_write_path(path)?;
         self.check_truncate_limits(path, length)?;
         Ok(self.filesystem.truncate(path, length)?)
     }
@@ -1946,9 +1868,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         }
 
         if let Some(proc_node) = self.resolve_proc_node(path, Some(pid))? {
-            if flags & (O_CREAT | O_EXCL | O_TRUNC) != 0
-                || (flags & 0b11) != crate::fd_table::O_RDONLY
-            {
+            if open_requires_write_access(flags) {
                 self.filesystem
                     .check_virtual_path(FsOperation::Write, path)
                     .map_err(KernelError::from)?;
@@ -1982,6 +1902,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             )?);
         }
 
+        if open_requires_write_access(flags) {
+            self.reject_read_only_resolved_write_path(path)?;
+        }
         let existed = if flags & O_CREAT != 0 {
             self.exists_internal(Some(pid), path)?
         } else {
@@ -2124,9 +2047,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             return Ok(self.ptys.write(entry.description.id(), data)?);
         }
 
-        if is_proc_path(entry.description.path()) {
-            return Err(read_only_filesystem_error(entry.description.path()));
-        }
+        self.reject_read_only_resolved_write_path(entry.description.path())?;
 
         let path = entry.description.path().to_owned();
         if is_virtual_device_storage_path(&path) {
@@ -2367,9 +2288,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             return Err(KernelError::new("ESPIPE", "illegal seek"));
         }
 
-        if is_proc_path(entry.description.path()) {
-            return Err(read_only_filesystem_error(entry.description.path()));
-        }
+        self.reject_read_only_resolved_write_path(entry.description.path())?;
 
         let required_size = self
             .current_storage_file_size(entry.description.path())?
@@ -2809,6 +2728,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         flags: u32,
         mode: Option<u32>,
     ) -> KernelResult<(u8, Option<FileLockTarget>)> {
+        if open_requires_write_access(flags) {
+            self.reject_read_only_resolved_write_path(path)?;
+        }
+
         if flags & O_CREAT != 0 && flags & O_EXCL != 0 {
             self.check_write_file_limits(path, 0)?;
             VirtualFileSystem::create_file_exclusive_with_mode(
@@ -2843,6 +2766,93 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             filetype_for_path(path, &stat),
             Some(FileLockTarget::new(stat.ino)),
         ))
+    }
+
+    fn reject_read_only_write_path(&mut self, path: &str) -> KernelResult<()> {
+        if is_proc_path(path) {
+            self.filesystem
+                .check_virtual_path(FsOperation::Write, path)
+                .map_err(KernelError::from)?;
+            return Err(read_only_filesystem_error(path));
+        }
+
+        if is_agentos_path(path) {
+            return Err(read_only_filesystem_error(path));
+        }
+
+        Ok(())
+    }
+
+    fn reject_read_only_resolved_write_path(&mut self, path: &str) -> KernelResult<()> {
+        self.reject_read_only_write_path(path)?;
+
+        if let Some(resolved) = self.resolve_write_guard_path(path, true)? {
+            if is_agentos_path(&resolved) {
+                return Err(read_only_filesystem_error(&resolved));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn reject_read_only_entry_write_path(&mut self, path: &str) -> KernelResult<()> {
+        self.reject_read_only_write_path(path)?;
+
+        if let Some(resolved) = self.resolve_write_guard_path(path, false)? {
+            if is_agentos_path(&resolved) {
+                return Err(read_only_filesystem_error(&resolved));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn resolve_write_guard_path(
+        &mut self,
+        path: &str,
+        follow_final_symlink: bool,
+    ) -> KernelResult<Option<String>> {
+        let normalized = normalize_path(path);
+        if normalized == "/" {
+            return Ok(Some(normalized));
+        }
+
+        if follow_final_symlink {
+            if let Ok(resolved) = self.filesystem.realpath(&normalized) {
+                return Ok(Some(resolved));
+            }
+        }
+
+        let components: Vec<&str> = normalized
+            .split('/')
+            .filter(|component| !component.is_empty())
+            .collect();
+        let mut resolved_prefix = String::from("/");
+        let mut raw_prefix = String::from("/");
+
+        for (index, component) in components.iter().enumerate() {
+            let is_final = index + 1 == components.len();
+            if is_final && !follow_final_symlink {
+                return Ok(Some(join_absolute_path(&resolved_prefix, component)));
+            }
+
+            raw_prefix = join_absolute_path(&raw_prefix, component);
+            match self.filesystem.realpath(&raw_prefix) {
+                Ok(resolved) => {
+                    resolved_prefix = resolved;
+                }
+                Err(error) if error.code() == "ENOENT" => {
+                    let mut resolved = resolved_prefix;
+                    for remaining in &components[index..] {
+                        resolved = join_absolute_path(&resolved, remaining);
+                    }
+                    return Ok(Some(resolved));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+
+        Ok(Some(resolved_prefix))
     }
 
     fn populate_poll_target_revents(
@@ -4266,6 +4276,14 @@ fn parent_path(path: &str) -> String {
     }
 }
 
+fn join_absolute_path(parent: &str, child: &str) -> String {
+    if parent == "/" {
+        format!("/{child}")
+    } else {
+        format!("{parent}/{child}")
+    }
+}
+
 fn is_virtual_device_storage_path(path: &str) -> bool {
     matches!(
         path,
@@ -4280,6 +4298,15 @@ fn is_virtual_device_storage_path(path: &str) -> bool {
 fn is_proc_path(path: &str) -> bool {
     let normalized = normalize_path(path);
     normalized == "/proc" || normalized.starts_with("/proc/")
+}
+
+fn is_agentos_path(path: &str) -> bool {
+    let normalized = normalize_path(path);
+    normalized == "/etc/agentos" || normalized.starts_with("/etc/agentos/")
+}
+
+fn open_requires_write_access(flags: u32) -> bool {
+    flags & (O_CREAT | O_EXCL | O_TRUNC) != 0 || (flags & 0b11) != crate::fd_table::O_RDONLY
 }
 
 fn checked_write_end(offset: u64, len: usize) -> KernelResult<u64> {
