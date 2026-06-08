@@ -236,6 +236,7 @@ pub fn map_bridge_method(method: &str) -> (&str, bool) {
         "_processSignalState" => ("process.signal_state", false),
 
         // DNS operations
+        "_networkDnsLookupSyncRaw" => ("dns.lookup", false),
         "_networkDnsLookupRaw" => ("dns.lookup", false),
         "_networkDnsResolveRaw" => ("dns.resolve", false),
 

@@ -11019,6 +11019,44 @@ const hostNetImport = {
       return WASI_ERRNO_FAULT;
     }
   },
+  net_getaddrinfo(hostPtr, hostLen, portPtr, portLen, family, retAddrPtr, retAddrLenPtr) {
+    try {
+      const hostname = readGuestString(hostPtr, hostLen);
+      const numericFamily = Number(family) >>> 0;
+      const lookupOptions = { hostname, all: true };
+      if (numericFamily === 4) {
+        lookupOptions.family = 4;
+      } else if (numericFamily === 6) {
+        lookupOptions.family = 6;
+      } else if (numericFamily !== 0) {
+        return WASI_ERRNO_INVAL;
+      }
+
+      const records = callSyncRpc('dns.lookup', [lookupOptions]);
+      if (!Array.isArray(records)) {
+        return WASI_ERRNO_FAULT;
+      }
+      const payload = records.map((record) => {
+        const family = Number(record?.family);
+        if (family !== 4 && family !== 6) {
+          throw new Error('host_net dns record family is unsupported');
+        }
+        return {
+          addr: String(record?.address ?? ''),
+          family,
+        };
+      });
+      const encoded = Buffer.from(JSON.stringify(payload), 'utf8');
+      return writeGuestBytes(
+        retAddrPtr,
+        readGuestUint32(retAddrLenPtr),
+        encoded,
+        retAddrLenPtr,
+      );
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  },
   net_bind(fd, addrPtr, addrLen) {
     const socket = getHostNetSocket(fd);
     if (!socket || socket.closed) {

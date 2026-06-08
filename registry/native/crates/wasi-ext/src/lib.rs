@@ -401,6 +401,7 @@ extern "C" {
     ///
     /// `host_ptr`/`host_len` point to the hostname string.
     /// `port_ptr`/`port_len` point to the port/service string.
+    /// `family` is 0 for any address family, 4 for IPv4, and 6 for IPv6.
     /// Resolved address is written to `ret_addr` buffer with max length from `ret_addr_len`.
     /// Actual length is written back to `ret_addr_len`.
     /// Returns errno.
@@ -409,6 +410,7 @@ extern "C" {
         host_len: u32,
         port_ptr: *const u8,
         port_len: u32,
+        family: u32,
         ret_addr: *mut u8,
         ret_addr_len: *mut u32,
     ) -> Errno;
@@ -599,6 +601,7 @@ pub fn getaddrinfo(host: &[u8], port: &[u8], buf: &mut [u8]) -> Result<u32, Errn
             host_len,
             port.as_ptr(),
             port_len,
+            0,
             buf.as_mut_ptr(),
             &mut len,
         )

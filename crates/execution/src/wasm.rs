@@ -3888,6 +3888,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsSyncRpc === 
             throw new Error("Agent OS WASM TLS-upgrade bridge is unavailable");
           }}
           return _netSocketUpgradeTlsRaw.applySync(void 0, args);
+        case "dns.lookup":
+          if (typeof _networkDnsLookupSyncRaw === "undefined") {{
+            throw new Error("Agent OS WASM dns.lookup bridge is unavailable");
+          }}
+          return _networkDnsLookupSyncRaw.applySync(void 0, args);
         case "process.signal_state": {{
           if (typeof _processSignalState === "undefined") {{
             throw new Error("Agent OS WASM signal-state bridge is unavailable");

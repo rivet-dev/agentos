@@ -180,11 +180,12 @@ index 0000000..975e62a
 +WASM_IMPORT("host_net", "net_close")
 +uint32_t __host_net_close(uint32_t fd);
 +
-+// host_net.net_getaddrinfo(host_ptr, host_len, port_ptr, port_len, ret_addr, ret_addr_len) -> errno
++// host_net.net_getaddrinfo(host_ptr, host_len, port_ptr, port_len, family, ret_addr, ret_addr_len) -> errno
 +WASM_IMPORT("host_net", "net_getaddrinfo")
 +uint32_t __host_net_getaddrinfo(
 +    const uint8_t *host_ptr, uint32_t host_len,
 +    const uint8_t *port_ptr, uint32_t port_len,
++    uint32_t family,
 +    uint8_t *ret_addr, uint32_t *ret_addr_len);
 +
 +// host_net.net_setsockopt(fd, level, optname, optval_ptr, optval_len) -> errno
@@ -618,6 +619,11 @@ index 0000000..975e62a
 +
 +    int port = parse_port(port_str);
 +    int socktype = hints ? hints->ai_socktype : 0;
++    int family = hints ? hints->ai_family : AF_UNSPEC;
++    uint32_t query_family = 0;
++    if (family == AF_INET) query_family = 4;
++    else if (family == AF_INET6) query_family = 6;
++    else if (family != AF_UNSPEC) return EAI_FAMILY;
 +
 +    // Call host bridge for DNS resolution
 +    uint8_t buf[4096];
@@ -625,6 +631,7 @@ index 0000000..975e62a
 +    uint32_t err = __host_net_getaddrinfo(
 +        (const uint8_t *)host_str, (uint32_t)strlen(host_str),
 +        (const uint8_t *)port_str, (uint32_t)strlen(port_str),
++        query_family,
 +        buf, &buf_len);
 +    if (err != 0) return EAI_NONAME;
 +
