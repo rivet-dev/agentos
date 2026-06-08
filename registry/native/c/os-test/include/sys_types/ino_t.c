@@ -1,3 +1,0 @@
-#include <sys/types.h>
-ino_t* foo;
-int main(void) { return 0; }

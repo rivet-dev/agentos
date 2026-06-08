@@ -1,8 +1,0 @@
-*
-!BSDmakefile
-!GNUmakefile
-!Makefile
-!*.c
-!*.h
-!README
-!.gitignore

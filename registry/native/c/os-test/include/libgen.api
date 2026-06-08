@@ -1,4 +1,0 @@
-[XSI] #include <libgen.h>
-[XSI] maybe_define function basename: char *basename(char *);
-[XSI] maybe_define function dirname: char *dirname(char *);
-[XSI CX] namespace _t$;

@@ -1,7 +1,0 @@
-#include <stdarg.h>
-typedef va_list;
-define va_start;
-define va_copy;
-define va_arg;
-define va_end;
-[CX] namespace _t$;

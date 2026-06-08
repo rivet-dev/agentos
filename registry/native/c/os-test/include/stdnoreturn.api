@@ -1,3 +1,0 @@
-#include <stdnoreturn.h>
-define noreturn;
-[CX] namespace _t$;

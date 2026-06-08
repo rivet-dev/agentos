@@ -1,4 +1,0 @@
-#include <assert.h>
-define static_assert;
-define assert;
-[CX] namespace _t$;

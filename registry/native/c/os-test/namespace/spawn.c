@@ -1,2 +1,0 @@
-/*[SPN]*/
-#include <spawn.h>

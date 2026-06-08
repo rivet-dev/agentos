@@ -1,7 +1,0 @@
-#include <monetary.h>
-typedef locale_t;
-typedef size_t;
-typedef ssize_t;
-maybe_define function strfmon: ssize_t strfmon(char *restrict, size_t, const char *restrict, ...);
-maybe_define function strfmon_l: ssize_t strfmon_l(char *restrict, size_t, locale_t, const char *restrict, ...);
-[CX] namespace _t$;

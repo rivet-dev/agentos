@@ -1,9 +1,0 @@
-This suite tests basic invocations of all functions.
-
-The goal to test if functions work on basic, hello-world level inputs, as a
-overall runtime coverage metric, as opposed to detailed unit tests.
-
-The math and complex subsuites are generated using misc/genbasic.c and verify
-that the mathematical results are bit perfect and that special cases are
-handled with correct error handling. Implementations will fail if they do not
-have full precision with correct rounding.

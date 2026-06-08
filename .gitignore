@@ -42,6 +42,7 @@ registry/native/c/build/
 registry/native/c/vendor/
 registry/native/c/libs/
 registry/native/c/.cache/
+registry/native/c/os-test/
 registry/native/c/sysroot/
 registry/software/*/wasm/
 registry/software/*/agent-os-package.meta.json

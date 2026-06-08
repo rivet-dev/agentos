@@ -1,4 +1,0 @@
-[DC] #include <devctl.h>
-[DC] typedef size_t;
-[DC] maybe_define function posix_devctl: int posix_devctl(int, int, void *restrict, size_t, int *restrict);
-[DC CX] namespace _t$;

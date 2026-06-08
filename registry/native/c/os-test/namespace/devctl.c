@@ -1,2 +1,0 @@
-/*[DC]*/
-#include <devctl.h>

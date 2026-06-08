@@ -1,2 +1,0 @@
-/*[MSG]*/
-#include <mqueue.h>

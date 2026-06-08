@@ -1,7 +1,0 @@
-#include <sys/un.h>
-struct sockaddr_un;
-parent struct sockaddr_un struct_member sun_family: sa_family_t sun_family;
-parent struct sockaddr_un struct_member sun_path: char sun_path[size];
-typedef sa_family_t;
-namespace ^sun_;
-[CX] namespace _t$;

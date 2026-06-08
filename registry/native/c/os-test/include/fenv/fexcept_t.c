@@ -1,3 +1,0 @@
-#include <fenv.h>
-fexcept_t* foo;
-int main(void) { return 0; }
