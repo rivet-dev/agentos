@@ -40,9 +40,9 @@ const BROWSERBASE_PERMISSIONS: Permissions = {
 const BROWSE_PATH = "/root/node_modules/@browserbasehq/browse-cli/dist/index.js";
 const CLI_PATH = "/root/node_modules/@browserbasehq/cli/dist/main.js";
 const JSON_OUTPUT_TIMEOUT_MS = 60_000;
-const SESSION_SCRIPT_PATH = "/tmp/browserbase-session.mjs";
-const BROWSE_SCREENSHOT_SCRIPT_PATH = "/tmp/browserbase-browse-screenshot.mjs";
-const CONNECT_URL_PATH = "/tmp/browserbase-connect-url.txt";
+const BROWSE_COMMAND_SCRIPT_PATH = "/tmp/browserbase-browse-command.mjs";
+const SCREENSHOT_PATH = "/tmp/browserbase-e2e.png";
+const EXAMPLE_URL_PATTERN = /^https:\/\/example\.com\/?$/;
 
 async function runVmNodeCommand(
 	vm: AgentOs,
@@ -167,91 +167,32 @@ console.log(
 );
 `;
 
-const SESSION_SCRIPT = String.raw`
-const mode = process.argv[2];
-
-async function request(path, init) {
-  const response = await fetch("https://api.browserbase.com" + path, {
-    ...init,
-    headers: {
-      "x-bb-api-key": process.env.BROWSERBASE_API_KEY,
-      "content-type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-    signal: AbortSignal.timeout(30_000),
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      "Browserbase API " +
-        path +
-        " failed with " +
-        response.status +
-        ": " +
-        (await response.text()),
-    );
-  }
-
-  return response.json();
-}
-
-if (mode === "create") {
-  const created = await request("/v1/sessions", {
-    method: "POST",
-    body: JSON.stringify({
-      projectId: process.env.BROWSERBASE_PROJECT_ID,
-      browserSettings: {
-        viewport: { width: 1288, height: 711 },
-      },
-      userMetadata: {
-        agent_os_browserbase_e2e: "true",
-      },
-    }),
-  });
-  console.log(
-    JSON.stringify({
-      connectUrl: created.connectUrl ?? null,
-      id: created.id ?? null,
-      status: created.status ?? null,
-    }),
-  );
-} else if (mode === "release") {
-  const sessionId = process.argv[3];
-  if (!sessionId) {
-    throw new Error("missing session id for release");
-  }
-  const released = await request("/v1/sessions/" + sessionId, {
-    method: "POST",
-    body: JSON.stringify({ status: "REQUEST_RELEASE" }),
-  });
-  console.log(
-    JSON.stringify({
-      id: released.id ?? sessionId,
-      status: released.status ?? "REQUEST_RELEASE",
-    }),
-  );
-} else {
-  throw new Error("unknown mode: " + String(mode));
-}
-`;
-
-const BROWSE_SCREENSHOT_SCRIPT = String.raw`
-import { readFileSync } from "node:fs";
+const BROWSE_COMMAND_SCRIPT = String.raw`
+import { spawnSync } from "node:child_process";
 
 const BROWSE_PATH = "/root/node_modules/@browserbasehq/browse-cli/dist/index.js";
-const CONNECT_URL_PATH = "/tmp/browserbase-connect-url.txt";
-const connectUrl = readFileSync(CONNECT_URL_PATH, "utf8").trim();
+const commandArgs = process.argv.slice(2);
 
-process.argv = [
-  process.execPath,
+const result = spawnSync(process.execPath, [
   BROWSE_PATH,
-  "--ws",
-  connectUrl,
-  "screenshot",
   "--json",
-];
+  ...commandArgs,
+], {
+  encoding: "utf8",
+  env: process.env,
+  timeout: 60_000,
+});
 
-await import(BROWSE_PATH);
+if (result.error) {
+  throw result.error;
+}
+if (result.stdout) {
+  process.stdout.write(result.stdout);
+}
+if (result.stderr) {
+  process.stderr.write(result.stderr);
+}
+process.exit(result.status ?? 1);
 `;
 
 describe("Browserbase e2e", () => {
@@ -274,6 +215,11 @@ describe("Browserbase e2e", () => {
 				BROWSERBASE_API_KEY: BROWSER_BASE_API_KEY,
 				BROWSERBASE_PROJECT_ID: BROWSER_BASE_PROJECT_ID,
 				BROWSE_SESSION: browseSession,
+				BROWSERBASE_CONFIG_DIR: "/tmp/browserbase-e2e-debug",
+				BROWSERBASE_FLOW_LOGS: "1",
+				BROWSERBASE_CDP_CONNECT_MAX_MS: "5000",
+				BROWSERBASE_SESSION_CREATE_MAX_MS: "10000",
+				STAGEHAND_FIRST_TOP_LEVEL_PAGE_TIMEOUT_MS: "2000",
 			};
 
 			vm = await AgentOs.create({
@@ -281,8 +227,7 @@ describe("Browserbase e2e", () => {
 				permissions: BROWSERBASE_PERMISSIONS,
 			});
 			await vm.writeFile("/tmp/browserbase-e2e.mjs", GUEST_SCRIPT);
-			await vm.writeFile(SESSION_SCRIPT_PATH, SESSION_SCRIPT);
-			await vm.writeFile(BROWSE_SCREENSHOT_SCRIPT_PATH, BROWSE_SCREENSHOT_SCRIPT);
+			await vm.writeFile(BROWSE_COMMAND_SCRIPT_PATH, BROWSE_COMMAND_SCRIPT);
 
 			let stdout = "";
 			let stderr = "";
@@ -316,62 +261,56 @@ describe("Browserbase e2e", () => {
 
 			expect(checks.blockedFetchMessage).toMatch(
 				/(EACCES|ERR_ACCESS_DENIED|blocked outbound network access|fetch failed)/,
-			);
-			expect(checks.envAliased).toBe(true);
-			expect(checks.cliProjected).toBe(true);
-			expect(checks.browseProjected).toBe(true);
+				);
+				expect(checks.envAliased).toBe(true);
+				expect(checks.cliProjected).toBe(true);
+				expect(checks.browseProjected).toBe(true);
 
-			const created = await runVmNodeJsonCommand<{
-				connectUrl?: string;
-				id?: string;
-				status?: string;
-			}>(
-				vm,
-				SESSION_SCRIPT_PATH,
-				["create"],
-				"Browserbase session create",
-				browseEnv,
-			);
-			expect(created.id).toBeTruthy();
-			expect(created.connectUrl).toMatch(/^wss?:\/\//);
-			await vm.writeFile(CONNECT_URL_PATH, created.connectUrl!);
+				try {
+					const opened = await runVmNodeJsonCommand<{
+						url?: string;
+					}>(
+					vm,
+					BROWSE_COMMAND_SCRIPT_PATH,
+					["open", "https://example.com"],
+					"browse open via direct websocket launcher",
+					browseEnv,
+				);
+				expect(opened.url).toMatch(EXAMPLE_URL_PATTERN);
 
-			try {
 				const screenshot = await runVmNodeJsonCommand<{
-					base64?: string;
+					saved?: string;
 				}>(
 					vm,
-					BROWSE_SCREENSHOT_SCRIPT_PATH,
-					[],
-					"browse screenshot via direct websocket launcher",
+					BROWSE_COMMAND_SCRIPT_PATH,
+					["screenshot", SCREENSHOT_PATH],
+					"browse screenshot path via direct websocket launcher",
 					browseEnv,
 				);
 
-				expect(screenshot.base64).toBeTruthy();
-				const screenshotBytes = Buffer.from(screenshot.base64!, "base64");
+				expect(screenshot.saved).toBe(SCREENSHOT_PATH);
+				const screenshotBytes = await vm.readFile(SCREENSHOT_PATH);
 				expect(screenshotBytes.byteLength).toBeGreaterThanOrEqual(1024);
-				expect(Array.from(screenshotBytes.slice(0, 8))).toEqual([
-					0x89,
-					0x50,
+					expect(Array.from(screenshotBytes.slice(0, 8))).toEqual([
+						0x89,
+						0x50,
 					0x4e,
 					0x47,
 					0x0d,
 					0x0a,
 					0x1a,
 					0x0a,
-				]);
-			} finally {
-				if (created.id) {
+					]);
+				} finally {
 					await runVmNodeCommand(
 						vm,
-						SESSION_SCRIPT_PATH,
-						["release", created.id],
-						"Browserbase session release",
+						BROWSE_COMMAND_SCRIPT_PATH,
+						["stop"],
+						"browse stop launcher",
 						browseEnv,
 					).catch(() => {});
 				}
-			}
-		},
+			},
 		90_000,
 	);
 });
