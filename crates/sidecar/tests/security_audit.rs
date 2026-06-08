@@ -158,7 +158,7 @@ fn filesystem_permission_denials_emit_security_audit_events() {
         .expect("dispatch denied read");
     match read.response.payload {
         ResponsePayload::Rejected(rejected) => {
-            assert_eq!(rejected.code, "kernel_error");
+            assert_eq!(rejected.code, "invalid_state");
             assert!(rejected.message.contains("EACCES"));
         }
         other => panic!("unexpected read response: {other:?}"),
