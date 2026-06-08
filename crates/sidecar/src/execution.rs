@@ -6657,6 +6657,10 @@ where
             );
         if should_terminate_shared_runtime {
             child.execution.terminate()?;
+            child.pending_self_signal_exit = Some(signal);
+            child
+                .pending_execution_events
+                .push_back(ActiveExecutionEvent::Exited(128 + signal));
         } else {
             vm.kernel
                 .kill_process(EXECUTION_DRIVER_NAME, child.kernel_pid, signal)
@@ -6800,6 +6804,10 @@ where
             );
         if should_terminate_shared_runtime {
             child.execution.terminate()?;
+            child.pending_self_signal_exit = Some(signal);
+            child
+                .pending_execution_events
+                .push_back(ActiveExecutionEvent::Exited(128 + signal));
         } else {
             vm.kernel
                 .kill_process(EXECUTION_DRIVER_NAME, child.kernel_pid, signal)
