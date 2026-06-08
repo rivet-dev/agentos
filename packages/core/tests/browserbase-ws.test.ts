@@ -342,19 +342,33 @@ if (!created?.id || !created?.connectUrl) {
 }
 
 let debugUrl = null;
+let debugError = null;
 try {
   note("before-debug");
   const debug = await bb.sessions.debug(created.id);
   note("after-debug");
   debugUrl = debug?.debuggerUrl ?? null;
+  if (typeof debugUrl !== "string" || !debugUrl.startsWith("http")) {
+    throw new Error("browserbase sdk debug returned unexpected payload");
+  }
 } catch (error) {
-  note("debug-error");
-  debugUrl = String(error);
+  debugError = error;
 }
 
-note("before-release");
-await bb.sessions.update(created.id, { status: "REQUEST_RELEASE" });
-note("after-release");
+try {
+  note("before-release");
+  await bb.sessions.update(created.id, { status: "REQUEST_RELEASE" });
+  note("after-release");
+} catch (releaseError) {
+  if (!debugError) {
+    throw releaseError;
+  }
+  note("release-error");
+}
+
+if (debugError) {
+  throw debugError;
+}
 
 console.log(
   "BROWSERBASE_SDK_RESULT:" +
@@ -440,29 +454,64 @@ if (!created?.id) {
   throw new Error("missing created session id");
 }
 
-console.log("HTTPS_BROWSERBASE_STEP:before-debug");
-const debugResponse = await requestJson(
-  "GET",
-  "/v1/sessions/" + created.id + "/debug",
-  null,
-  agent,
-);
-console.log("HTTPS_BROWSERBASE_STEP:after-debug");
+let debugStatus = 0;
+let debugError = null;
+try {
+  console.log("HTTPS_BROWSERBASE_STEP:before-debug");
+  const debugResponse = await requestJson(
+    "GET",
+    "/v1/sessions/" + created.id + "/debug",
+    null,
+    agent,
+  );
+  console.log("HTTPS_BROWSERBASE_STEP:after-debug");
+  debugStatus = debugResponse.statusCode;
+  if (debugResponse.statusCode < 200 || debugResponse.statusCode >= 300) {
+    throw new Error(
+      "debug failed with " + debugResponse.statusCode + ": " + debugResponse.body,
+    );
+  }
+  const debugPayload = JSON.parse(debugResponse.body);
+  if (
+    typeof debugPayload?.debuggerUrl !== "string" ||
+    !debugPayload.debuggerUrl.startsWith("http")
+  ) {
+    throw new Error("debug returned unexpected payload: " + debugResponse.body);
+  }
+} catch (error) {
+  debugError = error;
+}
 
-console.log("HTTPS_BROWSERBASE_STEP:before-release");
-const releaseResponse = await requestJson(
-  "POST",
-  "/v1/sessions/" + created.id,
-  { status: "REQUEST_RELEASE" },
-  agent,
-);
-console.log("HTTPS_BROWSERBASE_STEP:after-release");
+let releaseResponse = null;
+try {
+  console.log("HTTPS_BROWSERBASE_STEP:before-release");
+  releaseResponse = await requestJson(
+    "POST",
+    "/v1/sessions/" + created.id,
+    { status: "REQUEST_RELEASE" },
+    agent,
+  );
+  console.log("HTTPS_BROWSERBASE_STEP:after-release");
+} catch (releaseError) {
+  if (!debugError) {
+    throw releaseError;
+  }
+  console.log("HTTPS_BROWSERBASE_STEP:release-error");
+}
+
+if (debugError) {
+  throw debugError;
+}
+
+if (!releaseResponse) {
+  throw new Error("missing release response");
+}
 
 console.log(
   "HTTPS_BROWSERBASE_RESULT:" +
     JSON.stringify({
       createStatus: createResponse.statusCode,
-      debugStatus: debugResponse.statusCode,
+      debugStatus,
       releaseStatus: releaseResponse.statusCode,
       sessionId: created.id,
     }),
@@ -1012,7 +1061,29 @@ describe("Browserbase websocket smoke test", () => {
 
 			const exitCode = await vm.waitProcess(pid);
 			expect(exitCode, `stdout:\n${stdout}\nstderr:\n${stderr}`).toBe(0);
-			expect(stdout).toContain("BROWSERBASE_SDK_RESULT:");
+			const resultLine = stdout
+				.split("\n")
+				.find((line) => line.startsWith("BROWSERBASE_SDK_RESULT:"));
+			expect(resultLine, `stdout:\n${stdout}\nstderr:\n${stderr}`).toBeTruthy();
+			const result = JSON.parse(
+				resultLine!.slice("BROWSERBASE_SDK_RESULT:".length),
+			) as {
+				connectUrl?: string;
+				debugUrl?: string;
+				sessionId?: string;
+				steps?: string[];
+			};
+			expect(result.sessionId).toBeTruthy();
+			expect(result.connectUrl).toMatch(/^wss?:\/\//);
+			expect(result.debugUrl).toMatch(/^https?:\/\//);
+			expect(result.steps).toEqual([
+				"before-create",
+				"after-create",
+				"before-debug",
+				"after-debug",
+				"before-release",
+				"after-release",
+			]);
 		},
 		90_000,
 	);
@@ -1047,7 +1118,25 @@ describe("Browserbase websocket smoke test", () => {
 
 			const exitCode = await vm.waitProcess(pid);
 			expect(exitCode, `stdout:\n${stdout}\nstderr:\n${stderr}`).toBe(0);
-			expect(stdout).toContain("HTTPS_BROWSERBASE_RESULT:");
+			const resultLine = stdout
+				.split("\n")
+				.find((line) => line.startsWith("HTTPS_BROWSERBASE_RESULT:"));
+			expect(resultLine, `stdout:\n${stdout}\nstderr:\n${stderr}`).toBeTruthy();
+			const result = JSON.parse(
+				resultLine!.slice("HTTPS_BROWSERBASE_RESULT:".length),
+			) as {
+				createStatus?: number;
+				debugStatus?: number;
+				releaseStatus?: number;
+				sessionId?: string;
+			};
+			expect(result.sessionId).toBeTruthy();
+			expect(result.createStatus).toBeGreaterThanOrEqual(200);
+			expect(result.createStatus).toBeLessThan(300);
+			expect(result.debugStatus).toBeGreaterThanOrEqual(200);
+			expect(result.debugStatus).toBeLessThan(300);
+			expect(result.releaseStatus).toBeGreaterThanOrEqual(200);
+			expect(result.releaseStatus).toBeLessThan(300);
 		},
 		90_000,
 	);
