@@ -74,10 +74,7 @@ const { text } = await generateText({
 
 				try {
 					await filesystem.mkdir("/root", { recursive: true });
-					await filesystem.writeFile(
-						"/root/generated.js",
-						compiled.outputText,
-					);
+					await filesystem.writeFile("/root/generated.js", compiled.outputText);
 					const kernel = createKernel({
 						filesystem,
 						permissions: allowAll,
