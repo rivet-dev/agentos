@@ -558,6 +558,19 @@ describeIf(!skipReason(), 'C parity: native vs WASM', { timeout: 30_000 }, () =>
     expect(normalizeStderr(wasm.stderr)).toBe(normalizeStderr(native.stderr));
   });
 
+  itIf(!tier3Skip, 'tcp_accept_spawn: accept spawned child connection', async () => {
+    const env = { ...process.env, PATH: `${NATIVE_DIR}:${process.env.PATH ?? ''}` };
+    const native = await runNative('tcp_accept_spawn', [], { env });
+    const wasm = await kernel.exec('tcp_accept_spawn');
+
+    expect(wasm.exitCode).toBe(native.exitCode);
+    expect(wasm.exitCode).toBe(0);
+    expect(wasm.stdout).toBe(native.stdout);
+    expect(wasm.stdout).toContain('accept_child_message=yes');
+    expect(wasm.stdout).toContain('accept_child_exit=0');
+    expect(normalizeStderr(wasm.stderr)).toBe(normalizeStderr(native.stderr));
+  });
+
   itIf(!tier3Skip, 'getppid_verify: child getppid matches parent getpid', async () => {
     // Native needs getppid_test on PATH for posix_spawnp
     const native = await runNative('getppid_verify', [], {

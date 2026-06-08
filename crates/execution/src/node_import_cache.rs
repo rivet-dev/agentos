@@ -10539,6 +10539,28 @@ function pumpChildInputPipe(record, waitMs) {
   return progressed;
 }
 
+function pumpSpawnedChildren(waitMs) {
+  let progressed = false;
+  for (const record of Array.from(spawnedChildren.values())) {
+    if (!record || typeof record.exitStatus === 'number') {
+      continue;
+    }
+    try {
+      const event = pollChildEvent(record, waitMs);
+      if (event) {
+        processChildEvent(record, event);
+        progressed = true;
+      }
+      progressed = pumpChildInputPipe(record, 0) || progressed;
+    } catch (error) {
+      if (!isChildProcessGoneError(error)) {
+        throw error;
+      }
+    }
+  }
+  return progressed;
+}
+
 function encodeGuestBytes(value) {
   return new TextEncoder().encode(String(value));
 }
@@ -10995,10 +11017,10 @@ const hostNetImport = {
       let result = null;
       while (true) {
         result = callSyncRpc('net.server_accept', [socket.serverId]);
-        if (result !== HOST_NET_TIMEOUT_SENTINEL) {
+        if (result && result !== HOST_NET_TIMEOUT_SENTINEL) {
           break;
         }
-        sleepSync(10);
+        pumpSpawnedChildren(10);
       }
       if (typeof result === 'string') {
         result = JSON.parse(result);
