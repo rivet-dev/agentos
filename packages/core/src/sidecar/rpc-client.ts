@@ -462,7 +462,7 @@ interface TrackedProcessEntry {
 	hostExitObservedAt: number | null;
 	outputGeneration: number;
 	redirect: TrackedProcessRedirect | null;
-	redirectFlushPromise: Promise<void> | null;
+	redirectFlushPromise: Promise<number> | null;
 }
 
 interface TrackedProcessRedirect {
@@ -1837,20 +1837,18 @@ export class NativeSidecarKernelProxy {
 		entry.exitCode = exitCode;
 		entry.exitTime = Date.now();
 		this.updateTrackedProcessSnapshot(entry);
-		entry.redirectFlushPromise = this.flushTrackedRedirect(entry).catch((error) => {
-			this.handleBackgroundProcessError(entry, error);
-		});
-		void entry.redirectFlushPromise.finally(() => {
-			entry.resolveWait(exitCode);
+		entry.redirectFlushPromise = this.flushTrackedRedirect(entry).then(
+			() => entry.exitCode ?? exitCode,
+			(error) => this.recordCompletedProcessError(entry, error),
+		);
+		void entry.redirectFlushPromise.then((finalExitCode) => {
+			entry.resolveWait(finalExitCode);
 		});
 	}
 
 	private waitForTrackedProcess(entry: TrackedProcessEntry): Promise<number> {
 		if (entry.exitCode !== null) {
-			const exitCode = entry.exitCode;
-			return entry.redirectFlushPromise
-				? entry.redirectFlushPromise.then(() => exitCode)
-				: Promise.resolve(exitCode);
+			return entry.redirectFlushPromise ?? Promise.resolve(entry.exitCode);
 		}
 		if (entry.waitWithFallbackPromise !== null) {
 			return entry.waitWithFallbackPromise;
@@ -2025,13 +2023,39 @@ export class NativeSidecarKernelProxy {
 		if (this.disposed || isNoSuchProcessError(error) || isUnknownVmError(error)) {
 			return;
 		}
+		if (entry.exitCode !== null) {
+			this.recordCompletedProcessError(entry, error);
+			return;
+		}
+		this.emitBackgroundProcessError(entry, error);
+		this.finishProcess(entry, 1);
+	}
+
+	private recordCompletedProcessError(
+		entry: TrackedProcessEntry,
+		error: unknown,
+	): number {
+		if (this.disposed || isNoSuchProcessError(error) || isUnknownVmError(error)) {
+			return entry.exitCode ?? 1;
+		}
+		this.emitBackgroundProcessError(entry, error);
+		entry.exitCode =
+			entry.exitCode === null || entry.exitCode === 0 ? 1 : entry.exitCode;
+		entry.exitTime ??= Date.now();
+		this.updateTrackedProcessSnapshot(entry);
+		return entry.exitCode;
+	}
+
+	private emitBackgroundProcessError(
+		entry: TrackedProcessEntry,
+		error: unknown,
+	): void {
 		const normalized =
 			error instanceof Error ? error : new Error(String(error));
 		const stderr = new TextEncoder().encode(`${normalized.message}\n`);
 		for (const handler of entry.onStderr) {
 			handler(stderr);
 		}
-		this.finishProcess(entry, 1);
 	}
 
 	private createFilesystemView(includeLocalMounts: boolean): VirtualFileSystem {
