@@ -7,7 +7,9 @@ const PACKAGE_EXPORTS = [
 ] as const;
 
 describe("python package exports", () => {
-	test.each(PACKAGE_EXPORTS)("%s is importable after build", async (specifier) => {
+	test.each(
+		PACKAGE_EXPORTS,
+	)("%s is importable after build", async (specifier) => {
 		await expect(import(specifier)).resolves.toBeTypeOf("object");
 	});
 });
