@@ -117,6 +117,58 @@ fn udp_datagrams_preserve_boundaries_and_truncate_per_receive() {
 }
 
 #[test]
+fn udp_loopback_send_reaches_wildcard_bound_receiver() {
+    let mut kernel = new_kernel("vm-udp-wildcard-delivery");
+    let sender = spawn_shell(&mut kernel);
+    let receiver = spawn_shell(&mut kernel);
+
+    let sender_socket = kernel
+        .socket_create("shell", sender.pid(), SocketSpec::udp())
+        .expect("create sender socket");
+    kernel
+        .socket_bind_inet(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 54053),
+        )
+        .expect("bind sender");
+
+    let receiver_socket = kernel
+        .socket_create("shell", receiver.pid(), SocketSpec::udp())
+        .expect("create receiver socket");
+    kernel
+        .socket_bind_inet(
+            "shell",
+            receiver.pid(),
+            receiver_socket,
+            InetSocketAddress::new("0.0.0.0", 43153),
+        )
+        .expect("bind receiver to wildcard");
+
+    let written = kernel
+        .socket_send_to_inet_loopback(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 43153),
+            b"wildcard",
+        )
+        .expect("send to wildcard-bound receiver");
+    assert_eq!(written, b"wildcard".len());
+
+    let datagram = kernel
+        .socket_recv_datagram("shell", receiver.pid(), receiver_socket, 64)
+        .expect("receive datagram")
+        .expect("queued datagram");
+    assert_eq!(
+        datagram.source_address(),
+        Some(&InetSocketAddress::new("127.0.0.1", 54053))
+    );
+    assert_eq!(datagram.payload(), b"wildcard");
+}
+
+#[test]
 fn udp_send_and_receive_require_bound_sockets_and_bound_targets() {
     let mut kernel = new_kernel("vm-udp-errors");
     let sender = spawn_shell(&mut kernel);

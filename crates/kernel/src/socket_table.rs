@@ -1134,17 +1134,17 @@ impl SocketTable {
             .ok_or_else(|| SocketTableError::not_found(socket_id))?;
         validate_bound_udp_sender(&sender)?;
 
-        let receiver_socket_id = table
-            .bound_inet_datagrams
-            .get(&target_address)
-            .and_then(|socket_ids| socket_ids.first().copied())
-            .ok_or_else(|| {
-                SocketTableError::not_found_address(format!(
-                    "no UDP socket bound at {}:{}",
-                    target_address.host(),
-                    target_address.port()
-                ))
-            })?;
+        let receiver_socket_id = lookup_bound_inet_datagram_socket_in_table(
+            &table.bound_inet_datagrams,
+            &target_address,
+        )
+        .ok_or_else(|| {
+            SocketTableError::not_found_address(format!(
+                "no UDP socket bound at {}:{}",
+                target_address.host(),
+                target_address.port()
+            ))
+        })?;
         let receiver = table
             .sockets
             .get_mut(&receiver_socket_id)

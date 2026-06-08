@@ -3052,6 +3052,21 @@ function toGuestBufferView(value, label) {
 }
 
 function decodeFsBytesPayload(value, label) {
+  const decodeByteArray = (bytes) => {
+    const denseBytes = Array.from(bytes);
+    if (denseBytes.length !== bytes.length) {
+      throw new TypeError(`Agent OS ${label} contains sparse byte values`);
+    }
+    if (
+      !denseBytes.every(
+        (byte) => typeof byte === 'number' && Number.isInteger(byte) && byte >= 0 && byte <= 255,
+      )
+    ) {
+      throw new TypeError(`Agent OS ${label} contains an invalid byte value`);
+    }
+    return Buffer.from(denseBytes);
+  };
+
   if (Buffer.isBuffer(value)) {
     return value;
   }
@@ -3061,13 +3076,52 @@ function decodeFsBytesPayload(value, label) {
   if (typeof value === 'string') {
     return Buffer.from(value);
   }
+  if (Array.isArray(value)) {
+    return decodeByteArray(value);
+  }
+  if (
+    value &&
+    typeof value === 'object' &&
+    Array.isArray(value.data)
+  ) {
+    return decodeByteArray(value.data);
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value);
+    if (
+      entries.length > 0 &&
+      entries.every(
+        ([key, byte]) =>
+          /^\d+$/.test(key) && typeof byte === 'number' && Number.isInteger(byte),
+      )
+    ) {
+      const bytes = [];
+      for (const [key, byte] of entries) {
+        const index = Number(key);
+        if (index < 0 || index >= entries.length || bytes[index] !== undefined) {
+          throw new TypeError(`Agent OS ${label} contains non-contiguous byte keys`);
+        }
+        bytes[index] = byte;
+      }
+      if (bytes.length !== entries.length || bytes.some((byte) => byte === undefined)) {
+        throw new TypeError(`Agent OS ${label} contains sparse byte keys`);
+      }
+      return decodeByteArray(bytes);
+    }
+  }
+  if (
+    value &&
+    typeof value === 'object' &&
+    typeof value.data === 'string'
+  ) {
+    return Buffer.from(value.data, 'base64');
+  }
 
   const base64Value =
     value &&
     typeof value === 'object' &&
-    value.__agentOsType === 'bytes' &&
-    typeof value.base64 === 'string'
-      ? value.base64
+    typeof (value.base64 ?? value.dataBase64) === 'string'
+      ? (value.base64 ?? value.dataBase64)
       : null;
   if (base64Value == null) {
     throw new TypeError(`Agent OS ${label} must be an encoded bytes payload`);
@@ -8658,6 +8712,7 @@ const HOST_CWD =
 
 const WASI_ERRNO_SUCCESS = 0;
 const WASI_ERRNO_ACCES = 2;
+const WASI_ERRNO_AGAIN = 6;
 const WASI_ERRNO_BADF = 8;
 const WASI_ERRNO_CHILD = 10;
 const WASI_ERRNO_INVAL = 28;
@@ -10882,6 +10937,79 @@ function formatHostNetAddressInfo(info) {
   return `${address}:${port}`;
 }
 
+const HOST_NET_AF_INET = 2;
+const HOST_NET_AF_INET6 = 10;
+const HOST_NET_SOCK_DGRAM = 5;
+const HOST_NET_SOCKET_TYPE_MASK = 0xf;
+const HOST_NET_SOL_SOCKET = 1;
+const HOST_NET_WASI_SOL_SOCKET = 0x7fffffff;
+const HOST_NET_SO_RCVTIMEO_64 = 20;
+const HOST_NET_SO_RCVTIMEO_32 = 66;
+const HOST_NET_TIMEVAL_BYTES = 16;
+
+function hostNetSocketBaseType(socket) {
+  return Number(socket?.sockType ?? 0) & HOST_NET_SOCKET_TYPE_MASK;
+}
+
+function hostNetSockoptKind(level, optname, optvalLen) {
+  const normalizedLevel = Number(level) >>> 0;
+  const normalizedOptname = Number(optname) >>> 0;
+  const normalizedOptvalLen = Number(optvalLen) >>> 0;
+  if (
+    normalizedLevel !== HOST_NET_SOL_SOCKET &&
+    normalizedLevel !== HOST_NET_WASI_SOL_SOCKET
+  ) {
+    return null;
+  }
+  if (normalizedOptvalLen !== HOST_NET_TIMEVAL_BYTES) {
+    return null;
+  }
+  if (
+    normalizedOptname === HOST_NET_SO_RCVTIMEO_64 ||
+    normalizedOptname === HOST_NET_SO_RCVTIMEO_32
+  ) {
+    return 'recv-timeout';
+  }
+  return null;
+}
+
+function parseHostNetTimevalMs(bytes) {
+  if (bytes.byteLength !== HOST_NET_TIMEVAL_BYTES) {
+    return null;
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const seconds = view.getBigInt64(0, true);
+  const microseconds = view.getBigInt64(8, true);
+  if (seconds < 0n || microseconds < 0n || microseconds > 999999n) {
+    return null;
+  }
+  if (seconds === 0n && microseconds === 0n) {
+    return null;
+  }
+  const milliseconds = seconds * 1000n + (microseconds + 999n) / 1000n;
+  if (milliseconds > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return null;
+  }
+  return Number(milliseconds);
+}
+
+function ensureHostNetUdpSocket(socket) {
+  if (!socket || socket.closed || hostNetSocketBaseType(socket) !== HOST_NET_SOCK_DGRAM) {
+    return null;
+  }
+  if (socket.udpSocketId) {
+    return socket.udpSocketId;
+  }
+
+  const type = socket.domain === HOST_NET_AF_INET6 ? 'udp6' : 'udp4';
+  const result = callSyncRpc('dgram.createSocket', [{ type }]);
+  if (!result || typeof result.socketId !== 'string') {
+    throw new Error('host_net dgram socket creation failed');
+  }
+  socket.udpSocketId = result.socketId;
+  return socket.udpSocketId;
+}
+
 function signalNumberFromName(signal) {
   const mapped = LINUX_SIGNAL_NAMES.indexOf(String(signal));
   if (mapped > 0) {
@@ -10968,6 +11096,8 @@ const hostNetImport = {
         remoteInfo: null,
         serverId: null,
         socketId: null,
+        udpSocketId: null,
+        recvTimeoutMs: null,
         readChunks: [],
         readableEnded: false,
         closed: false,
@@ -11070,6 +11200,25 @@ const hostNetImport = {
       }
 
       socket.bindOptions = parseHostNetListenAddress(readGuestString(addrPtr, addrLen));
+      if (hostNetSocketBaseType(socket) === HOST_NET_SOCK_DGRAM) {
+        if (socket.bindOptions.path != null) {
+          return WASI_ERRNO_FAULT;
+        }
+        const udpSocketId = ensureHostNetUdpSocket(socket);
+        if (!udpSocketId) {
+          return WASI_ERRNO_FAULT;
+        }
+        const result = callSyncRpc('dgram.bind', [
+          udpSocketId,
+          {
+            address: socket.bindOptions.host,
+            port: socket.bindOptions.port,
+          },
+        ]);
+        socket.localInfo = normalizeHostNetAddressInfo(result?.localAddress, result?.localPort);
+        return socket.localInfo ? WASI_ERRNO_SUCCESS : WASI_ERRNO_FAULT;
+      }
+
       if (socket.bindOptions.path == null) {
         const reservation = callSyncRpc('net.reserve_tcp_port', [socket.bindOptions]);
         if (
@@ -11160,6 +11309,8 @@ const hostNetImport = {
         remoteInfo: normalizeHostNetAddressInfo(result.info?.remoteAddress, result.info?.remotePort),
         serverId: null,
         socketId: result.socketId,
+        udpSocketId: null,
+        recvTimeoutMs: socket.recvTimeoutMs,
         readChunks: [],
         readableEnded: false,
         closed: false,
@@ -11238,6 +11389,8 @@ const hostNetImport = {
         // Non-zero recv flags are currently ignored in the WASM host_net shim.
       }
 
+      const deadline =
+        socket.recvTimeoutMs == null ? null : Date.now() + Math.max(0, socket.recvTimeoutMs);
       while (true) {
         const queued = dequeueHostNetBytes(socket, bufLen);
         if (queued.length > 0) {
@@ -11252,11 +11405,146 @@ const hostNetImport = {
           return writeGuestUint32(retReceivedPtr, 0);
         }
 
-        pollHostNetSocket(socket, 50);
+        const pollWaitMs =
+          deadline == null ? 50 : Math.max(0, Math.min(50, deadline - Date.now()));
+        if (deadline != null && pollWaitMs === 0) {
+          return WASI_ERRNO_AGAIN;
+        }
+        pollHostNetSocket(socket, pollWaitMs);
+        if (deadline != null && Date.now() >= deadline) {
+          return WASI_ERRNO_AGAIN;
+        }
       }
     } catch {
       return WASI_ERRNO_FAULT;
     }
+  },
+  net_sendto(fd, bufPtr, bufLen, flags, addrPtr, addrLen, retSentPtr) {
+    const socket = getHostNetSocket(fd);
+    if (!socket || socket.closed) {
+      return WASI_ERRNO_BADF;
+    }
+
+    try {
+      if ((Number(flags) >>> 0) !== 0) {
+        return WASI_ERRNO_INVAL;
+      }
+      const udpSocketId = ensureHostNetUdpSocket(socket);
+      if (!udpSocketId) {
+        return WASI_ERRNO_FAULT;
+      }
+
+      const { host, port } = parseHostNetAddress(readGuestString(addrPtr, addrLen));
+      const chunk = readGuestBytes(bufPtr, bufLen);
+      const result = callSyncRpc('dgram.send', [
+        udpSocketId,
+        chunk,
+        { address: host, port },
+      ]);
+      socket.localInfo = normalizeHostNetAddressInfo(result?.localAddress, result?.localPort);
+      const written = Number(result?.bytes) >>> 0;
+      return writeGuestUint32(retSentPtr, written);
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  },
+  net_recvfrom(fd, bufPtr, bufLen, flags, retReceivedPtr, retAddrPtr, retAddrLenPtr) {
+    const socket = getHostNetSocket(fd);
+    if (!socket || socket.closed) {
+      return WASI_ERRNO_BADF;
+    }
+
+    try {
+      if ((Number(flags) >>> 0) !== 0) {
+        return WASI_ERRNO_INVAL;
+      }
+      const udpSocketId = ensureHostNetUdpSocket(socket);
+      if (!udpSocketId) {
+        return WASI_ERRNO_FAULT;
+      }
+
+      const deadline =
+        socket.recvTimeoutMs == null ? null : Date.now() + Math.max(0, socket.recvTimeoutMs);
+      while (true) {
+        const pollWaitMs =
+          deadline == null ? 50 : Math.max(0, Math.min(50, deadline - Date.now()));
+        if (deadline != null && pollWaitMs === 0) {
+          return WASI_ERRNO_AGAIN;
+        }
+        const event = callSyncRpc('dgram.poll', [udpSocketId, pollWaitMs]);
+        if (!event) {
+          if (deadline != null && Date.now() >= deadline) {
+            return WASI_ERRNO_AGAIN;
+          }
+          continue;
+        }
+        if (event.type === 'error') {
+          return WASI_ERRNO_FAULT;
+        }
+        if (event.type !== 'message') {
+          continue;
+        }
+
+        let bytes;
+        if (event.data && typeof event.data === 'object' && typeof event.data.base64 === 'string') {
+          bytes = Buffer.from(event.data.base64, 'base64');
+        } else {
+          try {
+            bytes = decodeFsBytesPayload(event.data, 'host_net recvfrom data');
+          } catch {
+            return WASI_ERRNO_FAULT;
+          }
+        }
+        const dataResult = writeGuestBytes(bufPtr, bufLen, bytes, retReceivedPtr);
+        if (dataResult !== WASI_ERRNO_SUCCESS) {
+          return dataResult;
+        }
+        if (!event.remoteAddress || !Number.isInteger(Number(event.remotePort))) {
+          return WASI_ERRNO_BADF;
+        }
+        let address;
+        try {
+          address = Buffer.from(formatHostNetAddressInfo({
+            address: event.remoteAddress,
+            port: event.remotePort,
+          }), 'utf8');
+        } catch {
+          return WASI_ERRNO_INVAL;
+        }
+        let addressCapacity;
+        try {
+          addressCapacity = readGuestUint32(retAddrLenPtr);
+        } catch {
+          return WASI_ERRNO_FAULT;
+        }
+        const addressResult = writeGuestBytes(retAddrPtr, addressCapacity, address, retAddrLenPtr);
+        return addressResult;
+      }
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  },
+  net_setsockopt(fd, level, optname, optvalPtr, optvalLen) {
+    const socket = getHostNetSocket(fd);
+    if (!socket || socket.closed) {
+      return WASI_ERRNO_BADF;
+    }
+    const sockoptKind = hostNetSockoptKind(level, optname, optvalLen);
+    if (sockoptKind == null) {
+      return WASI_ERRNO_INVAL;
+    }
+    try {
+      const timeoutMs = parseHostNetTimevalMs(readGuestBytes(optvalPtr, optvalLen));
+      if (timeoutMs == null && readGuestBytes(optvalPtr, optvalLen).some((byte) => byte !== 0)) {
+        return WASI_ERRNO_INVAL;
+      }
+      if (sockoptKind === 'recv-timeout') {
+        socket.recvTimeoutMs = timeoutMs;
+      }
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+    return WASI_ERRNO_SUCCESS;
   },
   net_close(fd) {
     const numericFd = Number(fd) >>> 0;
@@ -11272,6 +11560,9 @@ const hostNetImport = {
       }
       if (socket.socketId && !socket.closed) {
         callSyncRpc('net.destroy', [socket.socketId]);
+      }
+      if (socket.udpSocketId) {
+        callSyncRpc('dgram.close', [socket.udpSocketId]);
       }
       return WASI_ERRNO_SUCCESS;
     } catch {

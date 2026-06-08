@@ -3888,6 +3888,74 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsSyncRpc === 
             throw new Error("Agent OS WASM TLS-upgrade bridge is unavailable");
           }}
           return _netSocketUpgradeTlsRaw.applySync(void 0, args);
+        case "dgram.createSocket":
+          if (typeof _dgramSocketCreateRaw === "undefined") {{
+            throw new Error("Agent OS WASM dgram.createSocket bridge is unavailable");
+          }}
+          return _dgramSocketCreateRaw.applySync(void 0, args);
+        case "dgram.bind":
+          if (typeof _dgramSocketBindRaw === "undefined") {{
+            throw new Error("Agent OS WASM dgram.bind bridge is unavailable");
+          }}
+          return _dgramSocketBindRaw.applySync(void 0, args);
+        case "dgram.send": {{
+          if (typeof _dgramSocketSendRaw === "undefined") {{
+            throw new Error("Agent OS WASM dgram.send bridge is unavailable");
+          }}
+          const [socketId, chunk, options = {{}}] = args;
+          return _dgramSocketSendRaw.applySync(void 0, [
+            socketId,
+            __agentOsNormalizeBytes(chunk),
+            options,
+          ]);
+        }}
+        case "dgram.poll":
+          if (typeof _dgramSocketRecvRaw === "undefined") {{
+            throw new Error("Agent OS WASM dgram.poll bridge is unavailable");
+          }}
+          const event = _dgramSocketRecvRaw.applySync(void 0, args);
+          if (event && event.type === "message") {{
+            const data = __agentOsNormalizeBytes(event.data);
+            if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) {{
+              return {{
+                ...event,
+                data: {{ base64: data.toString("base64") }},
+              }};
+            }}
+          }}
+          if (
+            event &&
+            event.type === "message" &&
+            event.data &&
+            typeof event.data === "object" &&
+            typeof event.data.base64 === "string"
+          ) {{
+            return {{
+              ...event,
+              data: {{ base64: event.data.base64 }},
+            }};
+          }}
+          return event;
+        case "dgram.close":
+          if (typeof _dgramSocketCloseRaw === "undefined") {{
+            throw new Error("Agent OS WASM dgram.close bridge is unavailable");
+          }}
+          return _dgramSocketCloseRaw.applySync(void 0, args);
+        case "dgram.address":
+          if (typeof _dgramSocketAddressRaw === "undefined") {{
+            throw new Error("Agent OS WASM dgram.address bridge is unavailable");
+          }}
+          return _dgramSocketAddressRaw.applySync(void 0, args);
+        case "dgram.setBufferSize":
+          if (typeof _dgramSocketSetBufferSizeRaw === "undefined") {{
+            throw new Error("Agent OS WASM dgram.setBufferSize bridge is unavailable");
+          }}
+          return _dgramSocketSetBufferSizeRaw.applySync(void 0, args);
+        case "dgram.getBufferSize":
+          if (typeof _dgramSocketGetBufferSizeRaw === "undefined") {{
+            throw new Error("Agent OS WASM dgram.getBufferSize bridge is unavailable");
+          }}
+          return _dgramSocketGetBufferSizeRaw.applySync(void 0, args);
         case "dns.lookup":
           if (typeof _networkDnsLookupSyncRaw === "undefined") {{
             throw new Error("Agent OS WASM dns.lookup bridge is unavailable");
