@@ -101,7 +101,7 @@ new file mode 100644
 index 0000000..975e62a
 --- /dev/null
 +++ b/libc-bottom-half/sources/host_socket.c
-@@ -0,0 +1,696 @@
+@@ -0,0 +1,725 @@
 +// Socket API via wasmVM host_net imports.
 +//
 +// Replaces wasi-libc's ENOSYS stubs with calls to our custom WASM imports:
@@ -753,6 +753,28 @@ index 0000000..975e62a
 +    return (int)ready;
 +}
 +
++static int host_fd_isset(int fd, const fd_set *set) {
++    if (!set) return 0;
++    for (size_t i = 0; i < set->__nfds; i++) {
++        if (set->__fds[i] == fd) return 1;
++    }
++    return 0;
++}
++
++static void host_fd_zero(fd_set *set) {
++    if (set) set->__nfds = 0;
++}
++
++static void host_fd_set(int fd, fd_set *set) {
++    if (!set) return;
++    for (size_t i = 0; i < set->__nfds; i++) {
++        if (set->__fds[i] == fd) return;
++    }
++    if (set->__nfds < FD_SETSIZE) {
++        set->__fds[set->__nfds++] = fd;
++    }
++}
++
 +int select(int nfds, fd_set *restrict readfds, fd_set *restrict writefds,
 +           fd_set *restrict exceptfds, struct timeval *restrict timeout) {
 +    // Convert fd_sets to pollfd array, call poll(), then scatter results back
@@ -762,9 +784,9 @@ index 0000000..975e62a
 +
 +    for (int fd = 0; fd < nfds && count < FD_SETSIZE; fd++) {
 +        short events = 0;
-+        if (readfds && FD_ISSET(fd, readfds)) events |= POLLIN;
-+        if (writefds && FD_ISSET(fd, writefds)) events |= POLLOUT;
-+        if (events == 0 && !(exceptfds && FD_ISSET(fd, exceptfds))) continue;
++        if (host_fd_isset(fd, readfds)) events |= POLLIN;
++        if (host_fd_isset(fd, writefds)) events |= POLLOUT;
++        if (events == 0 && !host_fd_isset(fd, exceptfds)) continue;
 +        pfds[count].fd = fd;
 +        pfds[count].events = events;
 +        pfds[count].revents = 0;
@@ -781,24 +803,24 @@ index 0000000..975e62a
 +    if (ret < 0) return -1;
 +
 +    // Clear fd_sets and scatter results
-+    if (readfds) FD_ZERO(readfds);
-+    if (writefds) FD_ZERO(writefds);
-+    if (exceptfds) FD_ZERO(exceptfds);
++    host_fd_zero(readfds);
++    host_fd_zero(writefds);
++    host_fd_zero(exceptfds);
 +
 +    int ready = 0;
 +    for (int i = 0; i < count; i++) {
 +        int fd = fd_map[i];
 +        int any = 0;
 +        if (readfds && (pfds[i].revents & (POLLIN | POLLHUP | POLLERR))) {
-+            FD_SET(fd, readfds);
++            host_fd_set(fd, readfds);
 +            any = 1;
 +        }
 +        if (writefds && (pfds[i].revents & POLLOUT)) {
-+            FD_SET(fd, writefds);
++            host_fd_set(fd, writefds);
 +            any = 1;
 +        }
 +        if (exceptfds && (pfds[i].revents & (POLLERR | POLLNVAL))) {
-+            FD_SET(fd, exceptfds);
++            host_fd_set(fd, exceptfds);
 +            any = 1;
 +        }
 +        if (any) ready++;
