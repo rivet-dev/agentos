@@ -25,21 +25,14 @@ use agent_os_sidecar::protocol::{
 
 use crate::agent_os::{AgentOs, SessionEntry};
 use crate::error::ClientError;
-use crate::json_rpc::{
-    JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcResponse, SequencedEvent,
-};
+use crate::json_rpc::{JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcResponse, SequencedEvent};
 use crate::stream::{subscribe_with_replay, Subscription};
-use crate::{ACP_SESSION_EVENT_RETENTION_LIMIT, CLOSED_SESSION_ID_RETENTION_LIMIT};
+use crate::{ACP_SESSION_EVENT_RETENTION_LIMIT, CLOSED_SESSION_ID_RETENTION_LIMIT, PERMISSION_TIMEOUT_MS};
 
 /// ACP method name for legacy permission requests/responses.
 const LEGACY_PERMISSION_METHOD: &str = "request/permission";
 /// ACP method name for `session/request_permission` (newer ACP).
 const ACP_PERMISSION_METHOD: &str = "session/request_permission";
-
-pub type SessionEventStream = Pin<Box<dyn Stream<Item = JsonRpcNotification> + Send>>;
-pub type SessionEventSubscription = (SessionEventStream, Subscription);
-pub type PermissionRequestStream = Pin<Box<dyn Stream<Item = PermissionRequest> + Send>>;
-pub type PermissionRequestSubscription = (PermissionRequestStream, Subscription);
 
 // ---------------------------------------------------------------------------
 // Supporting types
@@ -322,7 +315,7 @@ pub enum McpServerConfig {
 }
 
 /// Options for `create_session`.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateSessionOptions {
     /// Default `"/home/user"`.
     pub cwd: Option<String>,
@@ -332,6 +325,18 @@ pub struct CreateSessionOptions {
     /// Default false.
     pub skip_os_instructions: bool,
     pub additional_instructions: Option<String>,
+}
+
+impl Default for CreateSessionOptions {
+    fn default() -> Self {
+        Self {
+            cwd: None,
+            env: BTreeMap::new(),
+            mcp_servers: Vec::new(),
+            skip_os_instructions: false,
+            additional_instructions: None,
+        }
+    }
 }
 
 /// The id returned by `create_session` / `resume_session`.
@@ -406,17 +411,9 @@ pub struct SessionConfigOption {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(
-        default,
-        rename = "currentValue",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "currentValue", skip_serializing_if = "Option::is_none")]
     pub current_value: Option<String>,
-    #[serde(
-        default,
-        rename = "allowedValues",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "allowedValues", skip_serializing_if = "Option::is_none")]
     pub allowed_values: Option<Vec<ConfigAllowedValue>>,
     #[serde(default, rename = "readOnly", skip_serializing_if = "Option::is_none")]
     pub read_only: Option<bool>,
@@ -427,11 +424,7 @@ pub struct SessionConfigOption {
 pub struct PromptCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<bool>,
-    #[serde(
-        default,
-        rename = "embeddedContext",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "embeddedContext", skip_serializing_if = "Option::is_none")]
     pub embedded_context: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<bool>,
@@ -448,55 +441,27 @@ pub struct AgentCapabilities {
     pub plan_mode: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub questions: Option<bool>,
-    #[serde(
-        default,
-        rename = "tool_calls",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "tool_calls", skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<bool>,
-    #[serde(
-        default,
-        rename = "text_messages",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "text_messages", skip_serializing_if = "Option::is_none")]
     pub text_messages: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<bool>,
-    #[serde(
-        default,
-        rename = "file_attachments",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "file_attachments", skip_serializing_if = "Option::is_none")]
     pub file_attachments: Option<bool>,
-    #[serde(
-        default,
-        rename = "session_lifecycle",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "session_lifecycle", skip_serializing_if = "Option::is_none")]
     pub session_lifecycle: Option<bool>,
-    #[serde(
-        default,
-        rename = "error_events",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "error_events", skip_serializing_if = "Option::is_none")]
     pub error_events: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<bool>,
-    #[serde(
-        default,
-        rename = "streaming_deltas",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "streaming_deltas", skip_serializing_if = "Option::is_none")]
     pub streaming_deltas: Option<bool>,
     #[serde(default, rename = "mcp_tools", skip_serializing_if = "Option::is_none")]
     pub mcp_tools: Option<bool>,
-    #[serde(
-        default,
-        rename = "promptCapabilities",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "promptCapabilities", skip_serializing_if = "Option::is_none")]
     pub prompt_capabilities: Option<PromptCapabilities>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -519,11 +484,7 @@ pub struct AgentInfo {
 pub struct SessionInitData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modes: Option<SessionModeState>,
-    #[serde(
-        default,
-        rename = "configOptions",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "configOptions", skip_serializing_if = "Option::is_none")]
     pub config_options: Option<Vec<SessionConfigOption>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<AgentCapabilities>,
@@ -539,8 +500,7 @@ pub struct SessionInitData {
 /// and resolves it. Subsequent calls (or other broadcast clones) are no-ops.
 #[derive(Clone)]
 pub struct PermissionResponder {
-    inner:
-        std::sync::Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<PermissionReply>>>>,
+    inner: std::sync::Arc<parking_lot::Mutex<Option<tokio::sync::oneshot::Sender<PermissionReply>>>>,
 }
 
 impl PermissionResponder {
@@ -566,8 +526,8 @@ impl PermissionResponder {
 /// A permission request delivered to a subscriber. Carries a Clone-able one-shot responder.
 ///
 /// The TS handler is `(request) => void`; in Rust this is the request/responder pattern: the
-/// subscriber can call [`PermissionResponder::respond`], while the reachable notification path sends
-/// replies with [`AgentOs::respond_permission`].
+/// subscriber resolves the request by calling [`PermissionResponder::respond`], or the 120s timeout
+/// / no-subscriber path auto-rejects.
 #[derive(Clone)]
 pub struct PermissionRequest {
     pub permission_id: String,
@@ -593,6 +553,65 @@ pub enum PermissionReply {
     Once,
     Always,
     Reject,
+}
+
+/// Resolve the ACP `optionId` for a permission `reply`, scanning the agent-provided `options`
+/// (`params.options[]`) for a matching `optionId`/`kind`, then falling back to the canonical id.
+/// Mirrors `_normalizeAcpPermissionOptionId`. Always returns a `Some` (the TS `null` branch is never
+/// reachable since each reply has a non-empty fallback).
+fn normalize_acp_permission_option_id(
+    options: Option<&Vec<Value>>,
+    reply: PermissionReply,
+) -> String {
+    let (option_ids, kinds): (&[&str], &[&str]) = match reply {
+        PermissionReply::Always => (&["always", "allow_always"], &["allow_always"]),
+        PermissionReply::Once => (&["once", "allow_once"], &["allow_once"]),
+        PermissionReply::Reject => (&["reject", "reject_once"], &["reject_once"]),
+    };
+
+    let matched = options.and_then(|options| {
+        options.iter().find_map(|option| {
+            let option_id = option.get("optionId").and_then(Value::as_str);
+            let kind = option.get("kind").and_then(Value::as_str);
+            let hit = option_id.map(|id| option_ids.contains(&id)).unwrap_or(false)
+                || kind.map(|kind| kinds.contains(&kind)).unwrap_or(false);
+            if hit {
+                option_id.map(str::to_string)
+            } else {
+                None
+            }
+        })
+    });
+
+    matched.unwrap_or_else(|| {
+        match reply {
+            PermissionReply::Always => "allow_always",
+            PermissionReply::Once => "allow_once",
+            PermissionReply::Reject => "reject_once",
+        }
+        .to_string()
+    })
+}
+
+/// Build the ACP permission result (`{ outcome: { outcome: "selected", optionId } }`) for a `reply`,
+/// reading agent-provided options from `params.options[]`. Mirrors `_buildAcpPermissionResult`.
+/// Because `normalize_acp_permission_option_id` always yields an id, the `cancelled` outcome branch
+/// is never taken (matching the TS fallbacks).
+fn build_acp_permission_result(reply: PermissionReply, params: &Value) -> Value {
+    let options: Option<Vec<Value>> = params.get("options").and_then(Value::as_array).map(|array| {
+        array
+            .iter()
+            .filter(|option| option.is_object())
+            .cloned()
+            .collect()
+    });
+    let option_id = normalize_acp_permission_option_id(options.as_ref(), reply);
+    json!({
+        "outcome": {
+            "outcome": "selected",
+            "optionId": option_id,
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -645,10 +664,7 @@ fn merge_sequenced_events(ring: &mut VecDeque<SequencedEvent>, incoming: Vec<Seq
 }
 
 /// Compute the next highest acknowledged sequence number. Mirrors `nextHighestSequenceNumber`.
-fn next_highest_sequence_number(
-    current: Option<i64>,
-    ring: &VecDeque<SequencedEvent>,
-) -> Option<i64> {
+fn next_highest_sequence_number(current: Option<i64>, ring: &VecDeque<SequencedEvent>) -> Option<i64> {
     let Some(latest) = ring.back().map(|event| event.sequence_number) else {
         return current;
     };
@@ -696,9 +712,9 @@ fn apply_session_update(entry: &SessionEntry, notification: &JsonRpcNotification
         Some("config_option_update") | Some("config_options_update")
     ) {
         if let Some(config_options) = update.get("configOptions").and_then(Value::as_array) {
-            if let Ok(parsed) = serde_json::from_value::<Vec<SessionConfigOption>>(Value::Array(
-                config_options.clone(),
-            )) {
+            if let Ok(parsed) =
+                serde_json::from_value::<Vec<SessionConfigOption>>(Value::Array(config_options.clone()))
+            {
                 *entry.config_options.lock() = parsed;
             }
         }
@@ -774,7 +790,9 @@ fn record_session_notification(
     // `_recordSessionNotification`). When a recorded notification is a legacy `request/permission`
     // or ACP `session/request_permission` with a string/number `permissionId`, deliver a
     // [`PermissionRequest`] to subscribers. This is the notification path: it broadcasts the request
-    // with params verbatim, as TS does here, and replies are sent through `respond_permission`.
+    // (params verbatim, as TS does here) WITHOUT registering a `pending_permission_replies` slot or
+    // arming the 120s timeout. The request/responder reply slot + timeout wiring is the separate
+    // ACP/sidecar request path handled by [`AgentOs::deliver_permission_request`].
     if notification.method == LEGACY_PERMISSION_METHOD
         || notification.method == ACP_PERMISSION_METHOD
     {
@@ -800,6 +818,60 @@ fn record_session_notification(
             let _ = entry.permission_tx.send(request);
         }
     }
+}
+
+/// Build a [`PermissionRequest`] from a legacy/ACP permission notification for the request/responder
+/// (sidecar-request / ACP-request) path. Mirrors the request construction in
+/// `_handleAcpPermissionRequest` / `_handlePermissionSidecarRequest`.
+///
+/// For the ACP path (`session/request_permission`) the delivered params are enriched with
+/// `permissionId` and `_acpMethod` (matching `permissionParams = { ...params, permissionId,
+/// _acpMethod: request.method }`). The enriched params are also returned so the caller can build the
+/// ACP outcome result via [`build_acp_permission_result`]. The legacy path delivers params verbatim.
+fn build_permission_request(
+    notification: &JsonRpcNotification,
+) -> Option<(
+    String,
+    PermissionRequest,
+    Value,
+    tokio::sync::oneshot::Receiver<PermissionReply>,
+)> {
+    let raw_params = notification.params.clone().unwrap_or(Value::Null);
+    let permission_id = match raw_params.get("permissionId") {
+        Some(Value::String(id)) => id.clone(),
+        Some(Value::Number(num)) => num.to_string(),
+        _ => return None,
+    };
+
+    // ACP path enriches params with `permissionId` and `_acpMethod`; legacy path uses params as-is.
+    let delivered_params = if notification.method == ACP_PERMISSION_METHOD {
+        let mut object = match raw_params {
+            Value::Object(existing) => existing,
+            _ => serde_json::Map::new(),
+        };
+        object.insert("permissionId".to_string(), Value::String(permission_id.clone()));
+        object.insert(
+            "_acpMethod".to_string(),
+            Value::String(notification.method.clone()),
+        );
+        Value::Object(object)
+    } else {
+        raw_params
+    };
+
+    let description = delivered_params
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    let (responder, receiver) = PermissionResponder::new();
+    let request = PermissionRequest {
+        permission_id: permission_id.clone(),
+        description,
+        params: delivered_params.clone(),
+        responder,
+    };
+    Some((permission_id, request, delivered_params, receiver))
 }
 
 /// Apply the local cache mutations of `_syncSessionState`: modes, config options, capabilities,
@@ -878,11 +950,7 @@ fn unsupported_config_response(agent_type: &str, category: &str) -> JsonRpcRespo
 /// Apply the codex config fallback: record overrides, re-apply, synthesize a negative-seq
 /// `config_option_update`, and return a `via: "codex-config-fallback"` response. Mirrors
 /// `_applyCodexConfigFallback`.
-fn apply_codex_config_fallback(
-    entry: &SessionEntry,
-    category: &str,
-    value: &str,
-) -> JsonRpcResponse {
+fn apply_codex_config_fallback(entry: &SessionEntry, category: &str, value: &str) -> JsonRpcResponse {
     {
         let options = entry.config_options.lock();
         let matching_id = options
@@ -1018,10 +1086,7 @@ impl AgentOs {
 
     /// Re-hydrate cached session state from the sidecar `GetSessionState` snapshot, acknowledging the
     /// highest seen sequence number. Mirrors `_hydrateSessionState`.
-    async fn hydrate_session_state(
-        &self,
-        session_id: &str,
-    ) -> std::result::Result<(), ClientError> {
+    async fn hydrate_session_state(&self, session_id: &str) -> std::result::Result<(), ClientError> {
         let acknowledged = self.require_session(session_id, |entry| {
             let highest = entry.highest_sequence_number.load(Ordering::SeqCst);
             if highest >= 0 {
@@ -1072,9 +1137,7 @@ impl AgentOs {
         params: Option<Value>,
     ) -> std::result::Result<JsonRpcResponse, ClientError> {
         let request_params = if method == "session/prompt" {
-            self.require_session(session_id, |entry| {
-                augment_prompt_params(entry, params.clone())
-            })?
+            self.require_session(session_id, |entry| augment_prompt_params(entry, params.clone()))?
         } else {
             params
         };
@@ -1084,11 +1147,10 @@ impl AgentOs {
         // cancel -> `{stopReason: cancelled}`); whichever completes first wins. Mirrors the TS
         // resolver `{ method, resolve: (response) => void }`.
         let resolver_id = self.inner().request_counter.fetch_add(1, Ordering::SeqCst);
-        let (resolve_tx, resolve_rx) = tokio::sync::oneshot::channel::<JsonRpcResponse>();
+        let (resolve_tx, resolve_rx) =
+            tokio::sync::oneshot::channel::<JsonRpcResponse>();
         self.require_session(session_id, |entry| {
-            let _ = entry
-                .pending_prompt_resolvers
-                .insert(resolver_id, resolve_tx);
+            let _ = entry.pending_prompt_resolvers.insert(resolver_id, resolve_tx);
             // Track the method so prompt-fallback can target only `session/prompt` resolvers.
             entry
                 .config_overrides
@@ -1175,8 +1237,7 @@ impl AgentOs {
     ) -> std::result::Result<(), ClientError> {
         self.require_session(session_id, |entry| {
             if method == "session/set_mode" {
-                if let Some(mode_id) = params.and_then(|p| p.get("modeId")).and_then(Value::as_str)
-                {
+                if let Some(mode_id) = params.and_then(|p| p.get("modeId")).and_then(Value::as_str) {
                     let mut modes = entry.modes.lock();
                     if let Some(modes) = modes.as_mut() {
                         modes.current_mode_id = mode_id.to_string();
@@ -1184,9 +1245,7 @@ impl AgentOs {
                 }
             }
             if method == "session/set_config_option" {
-                let config_id = params
-                    .and_then(|p| p.get("configId"))
-                    .and_then(Value::as_str);
+                let config_id = params.and_then(|p| p.get("configId")).and_then(Value::as_str);
                 let value = params.and_then(|p| p.get("value")).and_then(Value::as_str);
                 if let (Some(config_id), Some(value)) = (config_id, value) {
                     let mut options = entry.config_options.lock();
@@ -1323,7 +1382,8 @@ impl AgentOs {
 
         // Resolve the ACP adapter's VM bin entrypoint from the host node_modules (mirrors TS
         // `_resolveAdapterBin` / `_resolvePackageBin`).
-        let adapter_entrypoint = resolve_package_bin(&module_access_cwd, config.acp_adapter, None)?;
+        let adapter_entrypoint =
+            resolve_package_bin(&module_access_cwd, config.acp_adapter, None)?;
 
         // prepareInstructions (per-agent OS-instruction injection): appended-prompt launch args for
         // pi/pi-cli/claude/codex, OPENCODE_CONTEXTPATHS env for opencode.
@@ -1341,7 +1401,8 @@ impl AgentOs {
         for (key, value) in &options.env {
             env.insert(key.clone(), value.clone());
         }
-        if (agent_type == "pi" || agent_type == "pi-cli") && !env.contains_key("PI_ACP_PI_COMMAND")
+        if (agent_type == "pi" || agent_type == "pi-cli")
+            && !env.contains_key("PI_ACP_PI_COMMAND")
         {
             if let Ok(pi_command) =
                 resolve_package_bin(&module_access_cwd, config.agent_package, Some("pi"))
@@ -1350,10 +1411,7 @@ impl AgentOs {
             }
         }
 
-        let cwd = options
-            .cwd
-            .clone()
-            .unwrap_or_else(|| "/home/user".to_string());
+        let cwd = options.cwd.clone().unwrap_or_else(|| "/home/user".to_string());
         let mcp_servers: Vec<Value> = options
             .mcp_servers
             .iter()
@@ -1434,8 +1492,7 @@ impl AgentOs {
             closed.retain(|id| id != session_id);
         }
 
-        let (event_tx, _) =
-            tokio::sync::broadcast::channel(ACP_SESSION_EVENT_RETENTION_LIMIT.max(1));
+        let (event_tx, _) = tokio::sync::broadcast::channel(ACP_SESSION_EVENT_RETENTION_LIMIT.max(1));
         let (permission_tx, _) = tokio::sync::broadcast::channel(64);
         let entry = SessionEntry {
             agent_type: agent_type.to_string(),
@@ -1452,7 +1509,10 @@ impl AgentOs {
             pending_prompt_resolvers: scc::HashMap::new(),
         };
         sync_session_state(&entry, state);
-        let _ = self.inner().sessions.insert(session_id.to_string(), entry);
+        let _ = self
+            .inner()
+            .sessions
+            .insert(session_id.to_string(), entry);
 
         match self.hydrate_session_state(session_id).await {
             Ok(()) => Ok(()),
@@ -1755,7 +1815,9 @@ impl AgentOs {
     fn abort_pending_session_requests(&self, session_id: &str) {
         let _ = self.require_session(session_id, |entry| {
             let mut ids = Vec::new();
-            entry.pending_prompt_resolvers.scan(|id, _| ids.push(*id));
+            entry
+                .pending_prompt_resolvers
+                .scan(|id, _| ids.push(*id));
             for id in ids {
                 if let Some((_, resolver)) = entry.pending_prompt_resolvers.remove(&id) {
                     // Mirrors `_abortPendingSessionRequests`: resolve EVERY pending resolver
@@ -2026,9 +2088,7 @@ impl AgentOs {
         method: &str,
         params: Option<Value>,
     ) -> Result<JsonRpcResponse> {
-        Ok(self
-            .send_session_request(session_id, method, params)
-            .await?)
+        Ok(self.send_session_request(session_id, method, params).await?)
     }
 
     /// Thin alias for `raw_session_send`.
@@ -2047,7 +2107,10 @@ impl AgentOs {
     pub fn on_session_event(
         &self,
         session_id: &str,
-    ) -> std::result::Result<SessionEventSubscription, ClientError> {
+    ) -> std::result::Result<
+        (Pin<Box<dyn Stream<Item = JsonRpcNotification> + Send>>, Subscription),
+        ClientError,
+    > {
         let (buffered, rx) = self.require_session(session_id, |entry| {
             let ring = entry.event_ring.lock();
             let buffered: VecDeque<SequencedEvent> = ring
@@ -2063,18 +2126,26 @@ impl AgentOs {
         Ok((Box::pin(mapped), Subscription::noop()))
     }
 
-    /// Subscribe to recorded session permission notifications. Both `request/permission` (legacy)
-    /// and `session/request_permission` (ACP) method names are handled; the host answers via
-    /// `respond_permission`.
+    /// Subscribe to a session's permission requests (request/responder). No subscribers -> auto
+    /// reject; 120s timeout; both `request/permission` (legacy) and `session/request_permission`
+    /// (ACP) method names are handled; the host answers via `respond_permission`.
+    ///
+    /// Each emitted [`PermissionRequest`] carries a `responder` oneshot. The matching
+    /// `pending_permission_replies` slot is registered with a 120s timeout that auto-removes the
+    /// entry on expiry. The constant is [`PERMISSION_TIMEOUT_MS`].
     pub fn on_permission_request(
         &self,
         session_id: &str,
-    ) -> std::result::Result<PermissionRequestSubscription, ClientError> {
+    ) -> std::result::Result<
+        (Pin<Box<dyn Stream<Item = PermissionRequest> + Send>>, Subscription),
+        ClientError,
+    > {
         let rx = self.require_session(session_id, |entry| entry.permission_tx.subscribe())?;
 
-        // Pass broadcast items straight through. Each item carries a cloneable
-        // [`PermissionResponder`] for API parity, while reachable replies are sent with
-        // `respond_permission`.
+        // Pass broadcast items straight through. Each item carries a Clone-able
+        // [`PermissionResponder`]; the reply slot + 120s timeout are armed by
+        // [`AgentOs::deliver_permission_request`] at ingestion time, and `respond_permission`
+        // resolves the same slot.
         let stream = futures::stream::unfold(rx, move |mut rx| async move {
             loop {
                 match rx.recv().await {
@@ -2087,14 +2158,103 @@ impl AgentOs {
 
         Ok((Box::pin(stream), Subscription::noop()))
     }
+
+    /// Deliver an inbound permission request to a session's subscribers, registering its reply slot
+    /// into `pending_permission_replies` with a 120s ([`PERMISSION_TIMEOUT_MS`]) timeout that
+    /// auto-rejects on expiry. When there are no subscribers the request auto-rejects immediately.
+    ///
+    /// Invoked by the sidecar event/request handler for both `request/permission` (legacy) and
+    /// `session/request_permission` (ACP). The returned [`PermissionDelivery`] carries the settled
+    /// [`PermissionReply`] and the path-appropriate handler `result`:
+    /// - ACP path (`session/request_permission`) returns `_buildAcpPermissionResult(reply, params)`
+    ///   = `{ outcome: { outcome: "selected", optionId } }`, mirroring `_handleAcpPermissionRequest`.
+    /// - legacy path (`request/permission`) returns the bare `{ reply }`, mirroring
+    ///   `_handlePermissionSidecarRequest`'s `{ reply }`.
+    ///
+    /// On the no-subscriber / timeout path the reply is `Reject`, and the ACP result is built from
+    /// `reject` (mirroring `_buildAcpPermissionResult("reject", ...)`).
+    pub(crate) async fn deliver_permission_request(
+        &self,
+        session_id: &str,
+        notification: &JsonRpcNotification,
+    ) -> PermissionDelivery {
+        let is_acp = notification.method == ACP_PERMISSION_METHOD;
+        let Some((permission_id, request, delivered_params, responder_rx)) =
+            build_permission_request(notification)
+        else {
+            return PermissionDelivery::new(PermissionReply::Reject, is_acp, &Value::Null);
+        };
+
+        // Register the reply slot so `respond_permission` can resolve it directly.
+        let (slot_tx, slot_rx) = tokio::sync::oneshot::channel::<PermissionReply>();
+        let registered = self.require_session(session_id, |entry| {
+            // No subscribers -> auto-reject (mirrors `permissionHandlers.size === 0`).
+            if entry.permission_tx.receiver_count() == 0 {
+                return false;
+            }
+            let _ = entry
+                .pending_permission_replies
+                .insert(permission_id.clone(), slot_tx);
+            let _ = entry.permission_tx.send(request);
+            true
+        });
+
+        match registered {
+            Ok(true) => {}
+            Ok(false) | Err(_) => {
+                return PermissionDelivery::new(PermissionReply::Reject, is_acp, &delivered_params)
+            }
+        }
+
+        // Bridge the subscriber's `responder.respond(..)` into the same reply slot.
+        let this = self.clone();
+        let session_owned = session_id.to_string();
+        let permission_owned = permission_id.clone();
+        tokio::spawn(async move {
+            if let Ok(reply) = responder_rx.await {
+                let _ = this
+                    .respond_permission(&session_owned, &permission_owned, reply)
+                    .await;
+            }
+        });
+
+        // Await the host reply, the subscriber responder (via the bridge above), or the 120s
+        // timeout, whichever fires first.
+        let timeout =
+            tokio::time::sleep(std::time::Duration::from_millis(PERMISSION_TIMEOUT_MS));
+        tokio::pin!(timeout);
+        let reply = tokio::select! {
+            reply = slot_rx => reply.unwrap_or(PermissionReply::Reject),
+            _ = &mut timeout => {
+                let _ = self.require_session(session_id, |entry| {
+                    let _ = entry.pending_permission_replies.remove(&permission_id);
+                });
+                PermissionReply::Reject
+            }
+        };
+        PermissionDelivery::new(reply, is_acp, &delivered_params)
+    }
 }
 
-/// A settled permission outcome carrying both the resolved [`PermissionReply`] and a JSON-RPC
-/// handler result.
+/// The settled outcome of [`AgentOs::deliver_permission_request`], carrying both the resolved
+/// [`PermissionReply`] and the path-appropriate JSON-RPC handler `result` (the ACP `outcome` object
+/// for the ACP path, or the bare `{ reply }` for the legacy sidecar path).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PermissionDelivery {
-    /// The settled reply.
+    /// The settled reply (host answer, or `Reject` on no-subscriber / timeout).
     pub reply: PermissionReply,
     /// The handler result to return on the wire (ACP outcome vs bare `{ reply }`).
     pub result: Value,
 }
+
+impl PermissionDelivery {
+    fn new(reply: PermissionReply, is_acp: bool, params: &Value) -> Self {
+        let result = if is_acp {
+            build_acp_permission_result(reply, params)
+        } else {
+            json!({ "reply": reply })
+        };
+        Self { reply, result }
+    }
+}
+
