@@ -22,7 +22,7 @@ function itIf(condition: boolean, ...args: Parameters<typeof it>): void {
 		return;
 	}
 	const [name] = args;
-	it(String(name), () => {});
+	it.skip(`${String(name)} [missing Google Drive credentials]`, () => {});
 }
 
 let vm: AgentOs | null = null;
