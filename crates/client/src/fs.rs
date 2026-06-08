@@ -337,12 +337,16 @@ impl AgentOs {
         Ok(())
     }
 
-    /// Runs the safe guard, then rejects writes to read-only paths (`/proc`, `/proc/*`).
+    /// Runs the safe guard, then rejects writes to read-only paths.
     pub(crate) fn assert_writable_absolute_path(
         path: &str,
     ) -> std::result::Result<(), ClientError> {
         Self::assert_safe_absolute_path(path)?;
-        if path == "/proc" || path.starts_with("/proc/") {
+        if path == "/proc"
+            || path.starts_with("/proc/")
+            || path == "/etc/agentos"
+            || path.starts_with("/etc/agentos/")
+        {
             return Err(ClientError::PathReadOnly(path.to_string()));
         }
         Ok(())
@@ -612,6 +616,7 @@ impl AgentOs {
         to: &'a str,
     ) -> futures::future::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
+            Self::assert_writable_absolute_path(to)?;
             let stat = self.kernel_lstat(from).await?;
             if stat.is_symbolic_link {
                 let target = self.kernel_readlink(from).await?;
@@ -756,7 +761,7 @@ impl AgentOs {
         if options.recursive {
             return self.mkdirp(path).await;
         }
-        Self::assert_safe_absolute_path(path)?;
+        Self::assert_writable_absolute_path(path)?;
         self.kernel_mkdir(path).await
     }
 
@@ -903,8 +908,8 @@ impl AgentOs {
     /// Move a path. `lstat(from)` no-follow; symlink/non-dir -> rename; real dir -> recursive copy
     /// (preserve mode/uid/gid/symlinks) + recursive delete. (TS `move`.)
     pub async fn move_path(&self, from: &str, to: &str) -> Result<()> {
-        Self::assert_safe_absolute_path(from)?;
-        Self::assert_safe_absolute_path(to)?;
+        Self::assert_writable_absolute_path(from)?;
+        Self::assert_writable_absolute_path(to)?;
         let source_stat = self.kernel_lstat(from).await?;
         if !source_stat.is_directory || source_stat.is_symbolic_link {
             return self.kernel_rename(from, to).await;
@@ -916,7 +921,7 @@ impl AgentOs {
     /// Delete a path. `stat` to discriminate; recursive manually recurses children then `remove_dir`;
     /// non-recursive dir -> `remove_dir` (ENOTEMPTY if non-empty).
     pub async fn delete(&self, path: &str, options: DeleteOptions) -> Result<()> {
-        Self::assert_safe_absolute_path(path)?;
+        Self::assert_writable_absolute_path(path)?;
         self.delete_inner(path, options.recursive).await
     }
 
