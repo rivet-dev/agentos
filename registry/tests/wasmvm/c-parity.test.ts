@@ -542,8 +542,10 @@ describeIf(!skipReason(), 'C parity: native vs WASM', { timeout: 30_000 }, () =>
     expect(wasm.stdout).toContain('sigaction_query_flags=yes');
     expect(wasm.stdout).toContain('sa_resethand_handler_calls=1');
     expect(wasm.stdout).toContain('sa_resethand_reset=yes');
+    expect(wasm.stdout).toContain('sa_restart_handler_calls=1');
     expect(wasm.stdout).toContain('sa_restart_accept=yes');
     expect(wasm.stdout).toContain('sa_restart_child_exit=0');
+    expect(wasm.stdout).toContain('sa_restart_signal_exit=0');
   });
 
   itIf(!tier3Skip, 'sigaction_self: self kill dispatches SA_RESETHAND handler', async () => {
