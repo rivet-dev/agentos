@@ -102,15 +102,7 @@ describeIf(!wasmSkip, 'npm suite - offline', () => {
         await kernel.exec('npm init -y', { cwd: '/' });
 
         const exists = await vfs.exists('/package.json');
-        if (!exists) {
-          // npm init -y currently fails due to http2/@sigstore/sign module
-          // chain in the V8 sandbox. This test will pass once http2 is polyfilled.
-          console.log(
-            'Skipping assertion: npm init -y did not create package.json ' +
-              '(http2 not polyfilled in V8 sandbox)',
-          );
-          return;
-        }
+        expect(exists).toBe(true);
 
         const content = await vfs.readTextFile('/package.json');
         const pkg = JSON.parse(content);
@@ -200,7 +192,8 @@ describeIf(!wasmSkip, 'npm suite - offline', () => {
 
 // --- Online tests (require network + working npm install) ---
 
-const npmInstallSkip = wasmSkip || (await checkNetwork()) || (await checkNpmInstallWorks());
+const networkSkip = await checkNetwork();
+const npmInstallSkip = wasmSkip || networkSkip || (await checkNpmInstallWorks());
 
 describeIf(!npmInstallSkip, 'npm suite - online', () => {
   it(

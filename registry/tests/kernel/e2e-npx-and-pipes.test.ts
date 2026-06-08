@@ -7,9 +7,15 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { describeIf, createIntegrationKernel, skipUnlessWasmBuilt } from './helpers.ts';
+import {
+  describeIf,
+  createIntegrationKernel,
+  itIf,
+  skipUnlessWasmBuilt,
+} from './helpers.ts';
 
 const skipReason = skipUnlessWasmBuilt();
+const networkSkip = await checkNetwork();
 
 /** Check if npm registry is reachable (5s timeout). */
 async function checkNetwork(): Promise<string | false> {
@@ -29,13 +35,7 @@ async function checkNetwork(): Promise<string | false> {
 
 describeIf(!skipReason, 'e2e npx and pipes through kernel', () => {
   describe('npx execution', () => {
-    it('npx semver outputs parsed version', async () => {
-      const networkSkip = await checkNetwork();
-      if (networkSkip) {
-        console.log(`Skipping npx test: ${networkSkip}`);
-        return;
-      }
-
+    itIf(!networkSkip, 'npx semver outputs parsed version', async () => {
       const { kernel, dispose } = await createIntegrationKernel({
         runtimes: ['wasmvm', 'node'],
       });
