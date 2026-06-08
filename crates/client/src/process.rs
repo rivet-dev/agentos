@@ -21,6 +21,7 @@ use agent_os_sidecar::protocol::{
 };
 
 use crate::agent_os::{AgentOs, ProcessEntry};
+use crate::command_line::resolve_exec_command;
 use crate::error::ClientError;
 use crate::stream::{ByteStream, Subscription};
 
@@ -171,11 +172,15 @@ impl AgentOs {
         // request landing and the subscription being installed.
         let mut events = self.transport().subscribe_events();
 
+        // Parse the command line into a `(command, args)` pair the same way the sidecar's
+        // child_process path does: shell-free argv lists spawn directly (preserving the command's
+        // real exit code), while shell syntax or a builtin head runs under `sh -c <line>`.
+        let (resolved_command, resolved_args) = resolve_exec_command(command)?;
         let started = self
             .send_execute(
                 &process_id,
-                Some(command.to_owned()),
-                Vec::new(),
+                Some(resolved_command),
+                resolved_args,
                 options.env.clone(),
                 options.cwd.clone(),
             )

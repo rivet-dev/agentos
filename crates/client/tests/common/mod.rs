@@ -40,6 +40,48 @@ pub async fn new_vm() -> AgentOs {
         .expect("create VM against real sidecar")
 }
 
+/// Locate the coreutils wasm command directory under the workspace `node_modules`. Returns its
+/// canonical absolute path, or `None` when the artifacts have not been installed/built.
+pub fn coreutils_wasm_dir() -> Option<PathBuf> {
+    let pnpm = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../node_modules/.pnpm");
+    for entry in std::fs::read_dir(&pnpm).ok()?.flatten() {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("@rivet-dev+agent-os-coreutils@")
+        {
+            let wasm = entry
+                .path()
+                .join("node_modules/@rivet-dev/agent-os-coreutils/wasm");
+            if wasm.is_dir() {
+                return std::fs::canonicalize(&wasm).ok();
+            }
+        }
+    }
+    None
+}
+
+/// Create a VM with the coreutils wasm command package mounted, so `exec`/`spawn` can resolve real
+/// commands (`echo`, `cat`, `sh`, ...). Returns `None` when the wasm artifacts are absent, so suites
+/// can skip cleanly in unbuilt trees.
+pub async fn new_vm_with_commands() -> Option<AgentOs> {
+    ensure_sidecar_env();
+    let wasm_dir = coreutils_wasm_dir()?;
+    let config = AgentOsConfig {
+        software: vec![agent_os_client::SoftwareInput {
+            package: wasm_dir.to_string_lossy().into_owned(),
+            version: None,
+            kind: agent_os_client::SoftwareKind::WasmCommands,
+        }],
+        ..Default::default()
+    };
+    Some(
+        AgentOs::create(config)
+            .await
+            .expect("create VM with coreutils command software"),
+    )
+}
+
 /// Probe whether WASM-backed commands resolve in the VM (a trivial `exec`). Returns false when the
 /// registry WASM command packages are absent (the common case in unbuilt trees), so the
 /// process/shell/fetch suites can gate cleanly without each re-implementing the probe.

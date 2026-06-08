@@ -113,12 +113,30 @@ impl AgentOsConfigBuilder {
     }
 }
 
+/// The kind of a software package, which decides how it is mounted into the VM. Mirrors the TS
+/// descriptor `type` discriminator (`packages/core/src/packages.ts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SoftwareKind {
+    /// A directory of wasm command binaries. Mounted at `/__agentos/commands/{index}/` so the
+    /// sidecar's command discovery can resolve guest commands (`echo`, `sh`, `grep`, ...).
+    #[default]
+    WasmCommands,
+    /// An agent SDK/adapter package. Not mounted as a command directory.
+    Agent,
+    /// A host-tool package. Not mounted as a command directory.
+    Tool,
+}
+
 /// A flattened software package input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SoftwareInput {
     pub package: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// How the package is mounted into the VM. Defaults to [`SoftwareKind::WasmCommands`].
+    #[serde(default)]
+    pub kind: SoftwareKind,
 }
 
 /// A host-side tool execute callback. Receives the validated JSON input, returns a JSON result or an

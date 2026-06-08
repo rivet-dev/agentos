@@ -14,6 +14,7 @@
 //! checklist) for the architecture, type-mapping, error taxonomy, and streaming model.
 
 pub mod agent_os;
+pub(crate) mod command_line;
 pub mod config;
 pub mod cron;
 pub mod error;
@@ -64,7 +65,8 @@ pub use config::{
     HostTool, MountConfig, MountPlugin, OverlayMountConfig, PatternPermissionRule,
     PatternPermissions, PermissionMode, Permissions, RootFilesystemConfig, RootFilesystemKind,
     RootFilesystemMode, RootLowerInput, RulePermissions, ScheduleCallback, ScheduleDriver,
-    ScheduleEntry, ScheduleHandle, SoftwareInput, TimerScheduleDriver, ToolCallback, ToolKit,
+    ScheduleEntry, ScheduleHandle, SoftwareInput, SoftwareKind, TimerScheduleDriver, ToolCallback,
+    ToolKit,
 };
 
 pub use process::{

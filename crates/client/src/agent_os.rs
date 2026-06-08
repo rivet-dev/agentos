@@ -16,13 +16,14 @@ use tokio::task::JoinHandle;
 
 use agent_os_sidecar::protocol::{
     ConfigureVmRequest, CreateVmRequest, DisposeReason, DisposeVmRequest, EventPayload,
-    GuestRuntimeKind, OpenSessionRequest, OwnershipScope, PermissionsPolicy, RegisterToolkitRequest,
-    RegisteredToolDefinition, RequestPayload, ResponsePayload, RootFilesystemDescriptor,
-    SidecarPlacement, SidecarRequestPayload, SidecarResponsePayload, SoftwareDescriptor,
-    ToolInvocationRequest, ToolInvocationResultResponse, VmLifecycleState,
+    GuestRuntimeKind, MountDescriptor, MountPluginDescriptor, OpenSessionRequest, OwnershipScope,
+    PermissionsPolicy, RegisterToolkitRequest, RegisteredToolDefinition, RequestPayload,
+    ResponsePayload, RootFilesystemDescriptor, SidecarPlacement, SidecarRequestPayload,
+    SidecarResponsePayload, SoftwareDescriptor, ToolInvocationRequest, ToolInvocationResultResponse,
+    VmLifecycleState,
 };
 
-use crate::config::{AgentOsConfig, HostTool, TimerScheduleDriver};
+use crate::config::{AgentOsConfig, HostTool, SoftwareKind, TimerScheduleDriver};
 use crate::cron::CronManager;
 use crate::error::ClientError;
 use crate::json_rpc::SequencedEvent;
@@ -227,15 +228,22 @@ impl AgentOs {
 
         // Resolve software packages to host roots (port of TS `processSoftware` for the
         // ConfigureVm descriptors). Each `package` is resolved under `module_access_cwd/node_modules`;
-        // an unresolvable package is an explicit error rather than a silent no-op.
-        let software = resolve_software(&config)?;
+        // an unresolvable package is an explicit error rather than a silent no-op. Wasm command
+        // packages additionally become `/__agentos/commands/{index}/` mounts so the sidecar can
+        // discover and resolve guest commands.
+        let resolved_software = resolve_software(&config)?;
+        let command_mounts = build_command_mounts(&resolved_software);
+        let software: Vec<SoftwareDescriptor> = resolved_software
+            .into_iter()
+            .map(|entry| entry.descriptor)
+            .collect();
 
         // 6. Configure the VM (vm scope).
         match transport
             .request(
                 OwnershipScope::vm(&connection_id, &session_id, &vm_id),
                 RequestPayload::ConfigureVm(ConfigureVmRequest {
-                    mounts: Vec::new(),
+                    mounts: command_mounts,
                     software,
                     permissions: Some(PermissionsPolicy::allow_all()),
                     module_access_cwd: config.module_access_cwd.clone(),
@@ -576,11 +584,18 @@ async fn run_tool_invocation(
     }
 }
 
-/// Resolve `config.software` package inputs to `SoftwareDescriptor`s, each rooted at its host
-/// `node_modules` directory under `module_access_cwd` (default `.`). Mirrors the TS `processSoftware`
-/// mapping for the ConfigureVm descriptors. An unresolvable package is an explicit error, not a
-/// silent no-op.
-fn resolve_software(config: &AgentOsConfig) -> Result<Vec<SoftwareDescriptor>, ClientError> {
+/// A software package resolved to its host root, paired with the kind that decides how it is mounted.
+struct ResolvedSoftware {
+    descriptor: SoftwareDescriptor,
+    kind: SoftwareKind,
+}
+
+/// Resolve `config.software` package inputs to host roots, each rooted at its host `node_modules`
+/// directory under `module_access_cwd` (default `.`). An absolute `package` path bypasses the
+/// `node_modules` prefix (via `Path::join` semantics), which is how wasm command directories are
+/// passed directly. Mirrors the TS `processSoftware` mapping. An unresolvable package is an explicit
+/// error, not a silent no-op.
+fn resolve_software(config: &AgentOsConfig) -> Result<Vec<ResolvedSoftware>, ClientError> {
     if config.software.is_empty() {
         return Ok(Vec::new());
     }
@@ -588,7 +603,7 @@ fn resolve_software(config: &AgentOsConfig) -> Result<Vec<SoftwareDescriptor>, C
         .module_access_cwd
         .clone()
         .unwrap_or_else(|| ".".to_string());
-    let mut descriptors = Vec::with_capacity(config.software.len());
+    let mut resolved = Vec::with_capacity(config.software.len());
     for input in &config.software {
         let root = std::path::Path::new(&module_access_cwd)
             .join("node_modules")
@@ -600,12 +615,44 @@ fn resolve_software(config: &AgentOsConfig) -> Result<Vec<SoftwareDescriptor>, C
                 root.display()
             )));
         }
-        descriptors.push(SoftwareDescriptor {
-            package_name: input.package.clone(),
-            root: root.to_string_lossy().into_owned(),
+        resolved.push(ResolvedSoftware {
+            descriptor: SoftwareDescriptor {
+                package_name: input.package.clone(),
+                root: root.to_string_lossy().into_owned(),
+            },
+            kind: input.kind,
         });
     }
-    Ok(descriptors)
+    Ok(resolved)
+}
+
+/// Build the `host_dir` mount descriptors that expose each wasm command directory at
+/// `/__agentos/commands/{index}/` in the guest, so the sidecar's `discover_command_guest_paths` can
+/// resolve guest commands. Indices are zero-padded so the sidecar's lexical sort preserves numeric
+/// resolution priority past nine packages. Agent/tool packages are skipped here (they are not
+/// command directories). Mirrors the TS `commandDirs` mount loop in `agent-os.ts`.
+fn build_command_mounts(resolved: &[ResolvedSoftware]) -> Vec<MountDescriptor> {
+    let mut mounts = Vec::new();
+    for entry in resolved {
+        match entry.kind {
+            SoftwareKind::WasmCommands => {
+                let index = mounts.len();
+                mounts.push(MountDescriptor {
+                    guest_path: format!("/__agentos/commands/{index:03}"),
+                    read_only: true,
+                    plugin: MountPluginDescriptor {
+                        id: String::from("host_dir"),
+                        config: serde_json::json!({
+                            "hostPath": entry.descriptor.root,
+                            "readOnly": true,
+                        }),
+                    },
+                });
+            }
+            SoftwareKind::Agent | SoftwareKind::Tool => {}
+        }
+    }
+    mounts
 }
 
 /// Extract the `vm_id` from an ownership scope, if it is VM-scoped.
