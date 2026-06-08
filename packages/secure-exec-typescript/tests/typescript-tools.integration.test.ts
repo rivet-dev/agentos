@@ -2,12 +2,15 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	allowAllFs,
+	createKernel,
 	createInMemoryFileSystem,
 	createNodeDriver,
+	createNodeRuntime,
 	createNodeRuntimeDriverFactory,
+	type NodeRuntimeDriverFactory,
 } from "secure-exec";
 import { describe, expect, it } from "vitest";
-import { createTypeScriptTools } from "../src/index.js";
+import { createTypeScriptTools } from "@secure-exec/typescript";
 
 const workspaceRoot = resolve(
 	fileURLToPath(new URL("../../..", import.meta.url)),
@@ -53,8 +56,10 @@ describe("@secure-exec/typescript", () => {
 
 		const result = await tools.typecheckProject({ cwd: "/root" });
 
-		expect(result.success).toBe(true);
-		expect(result.diagnostics).toEqual([]);
+		expect(result).toEqual({
+			success: true,
+			diagnostics: [],
+		});
 	});
 
 	it("compiles a project into the virtual filesystem and the output executes", async () => {
@@ -79,17 +84,53 @@ describe("@secure-exec/typescript", () => {
 
 		const compileResult = await tools.compileProject({ cwd: "/root" });
 
-		expect(compileResult.success).toBe(true);
-		expect(compileResult.emitSkipped).toBe(false);
+		expect(compileResult).toEqual({
+			success: true,
+			diagnostics: [],
+			emitSkipped: false,
+			emittedFiles: ["/root/dist/index.js"],
+		});
 		expect(compileResult.emittedFiles).toContain("/root/dist/index.js");
 		const emitted = await filesystem.readTextFile("/root/dist/index.js");
 		expect(emitted).toContain("exports.value = 7");
 
-		const module = { exports: {} as Record<string, unknown> };
-		const execute = new Function("module", "exports", emitted);
-		execute(module, module.exports);
+		const kernel = createKernel({
+			filesystem,
+			permissions: {
+				fs: allowAllFs,
+				childProcess: {
+					default: "deny",
+					rules: [{ mode: "allow", operations: ["*"], patterns: ["node"] }],
+				},
+			},
+			syncFilesystemOnDispose: false,
+		});
+		let stdout = "";
+		let stderr = "";
+		try {
+			await kernel.mount(createNodeRuntime());
+			const child = kernel.spawn(
+				"node",
+				[
+					"-e",
+					"const value = require('/root/dist/index.js').value; console.log(JSON.stringify({ value }));",
+				],
+				{
+					onStdout: (chunk) => {
+						stdout += Buffer.from(chunk).toString("utf8");
+					},
+					onStderr: (chunk) => {
+						stderr += Buffer.from(chunk).toString("utf8");
+					},
+				},
+			);
+			expect(await child.wait()).toBe(0);
+		} finally {
+			await kernel.dispose();
+		}
 
-		expect(module.exports).toEqual({ value: 7 });
+		expect(stderr).toBe("");
+		expect(JSON.parse(stdout)).toEqual({ value: 7 });
 	});
 
 	it("typechecks a source string without mutating the filesystem", async () => {
@@ -106,6 +147,52 @@ describe("@secure-exec/typescript", () => {
 		).toBe(true);
 	});
 
+	it("uses a supplied runtime driver when one is available", async () => {
+		const filesystem = createInMemoryFileSystem();
+		let runs = 0;
+		let disposed = false;
+		const runtimeDriverFactory: NodeRuntimeDriverFactory = {
+			createRuntimeDriver: () => ({
+				exec: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+				run: async () => {
+					runs += 1;
+					return {
+						code: 0,
+						value: {
+							ok: true as const,
+							result: {
+								success: true,
+								diagnostics: [],
+							},
+						},
+					};
+				},
+				dispose: () => {
+					disposed = true;
+				},
+			}),
+		};
+		const tools = createTypeScriptTools({
+			systemDriver: createNodeDriver({
+				filesystem,
+				permissions: allowAllFs,
+			}),
+			runtimeDriverFactory,
+		});
+
+		await expect(
+			tools.typecheckSource({
+				sourceText: "const value: number = 1;\n",
+				filePath: "/root/input.ts",
+			}),
+		).resolves.toEqual({
+			success: true,
+			diagnostics: [],
+		});
+		expect(runs).toBe(1);
+		expect(disposed).toBe(true);
+	});
+
 	it("compiles a source string to JavaScript text", async () => {
 		const { tools } = createTools();
 
@@ -119,6 +206,7 @@ describe("@secure-exec/typescript", () => {
 		});
 
 		expect(result.success).toBe(true);
+		expect(result.diagnostics).toEqual([]);
 		expect(result.outputText).toContain("exports.value = 3");
 	});
 

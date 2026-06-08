@@ -1,9 +1,15 @@
-import * as fsPromises from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import type { createNodeDriver, NodeRuntimeDriverFactory } from "secure-exec";
+import {
+	createKernel,
+	createNodeRuntime,
+	NodeFileSystem,
+	type createNodeDriver,
+	type NodeRuntimeDriver,
+	type NodeRuntimeDriverFactory,
+	type Permissions,
+} from "secure-exec";
 
 export interface TypeScriptDiagnostic {
 	code: number;
@@ -85,9 +91,13 @@ type CompilerResponse =
 	| TypeCheckResult
 	| ProjectCompileResult
 	| SourceCompileResult;
+type RuntimeCompilerEnvelope =
+	| { ok: true; result: CompilerResponse }
+	| { ok: false; errorMessage?: string };
 
 const DEFAULT_COMPILER_SPECIFIER = "typescript";
 const moduleRequire = createRequire(import.meta.url);
+let nextRuntimeRequestId = 0;
 
 export function createTypeScriptTools(
 	options: TypeScriptToolsOptions,
@@ -137,76 +147,167 @@ async function runCompilerRequest<TResult extends CompilerResponse>(
 	}
 
 	try {
-		void options.runtimeDriverFactory;
-		void options.memoryLimit;
-		void options.cpuTimeLimitMs;
-		const tempRoot = await fsPromises.mkdtemp(
-			path.join(tmpdir(), "secure-exec-typescript-"),
-		);
-		try {
-			await mirrorVirtualTree(filesystem, "/", tempRoot);
-			const hostRequest = mapRequestToHostPaths(request, tempRoot);
-			const ts = await loadTypeScriptCompiler(request.compilerSpecifier);
-			await linkHostNodeModules(tempRoot, hostRequest);
-			await rewriteProjectConfigPaths(hostRequest, tempRoot, ts);
-			const runCompiler = new Function(
-				"request",
-				"ts",
-				"require",
-				`return (${compilerRuntimeMain.toString()})(request, ts);`,
-			) as (
-				request: CompilerRequest,
-				ts: typeof import("typescript"),
-				require: NodeJS.Require,
-			) => CompilerResponse;
-			const hostResult = runCompiler(hostRequest, ts, moduleRequire);
-			return await mapHostResultToVirtualPaths(
-				hostResult as TResult,
-				filesystem,
-				tempRoot,
-			);
-		} finally {
-			await fsPromises.rm(tempRoot, { recursive: true, force: true });
-		}
+		return (await runCompilerInRuntime(options, request)) as TResult;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return createFailureResult<TResult>(request.kind, message);
 	}
 }
 
-async function linkHostNodeModules(
-	tempRoot: string,
+async function runCompilerInRuntime(
+	options: TypeScriptToolsOptions,
 	request: CompilerRequest,
-): Promise<void> {
+): Promise<CompilerResponse> {
+	const filesystem = options.systemDriver.filesystem;
+	if (!filesystem) {
+		throw new Error("TypeScript tools require a filesystem-backed system driver");
+	}
+
 	const hostNodeModules = findNearestNodeModules(process.cwd());
 	if (!hostNodeModules) {
-		return;
+		throw new Error("Unable to locate host node_modules for TypeScript runtime");
 	}
 
-	const linkTargets = [path.join(tempRoot, "node_modules")];
-	const requestCwd = request.options.cwd;
-	if (requestCwd) {
-		linkTargets.push(path.join(requestCwd, "node_modules"));
-	}
-
-	for (const linkPath of linkTargets) {
+	const runtimeDriver = options.runtimeDriverFactory.createRuntimeDriver({
+		system: options.systemDriver,
+		runtime: options.systemDriver.runtime,
+		memoryLimit: options.memoryLimit,
+		cpuTimeLimitMs: options.cpuTimeLimitMs,
+	});
+	try {
+		return await runCompilerWithRuntimeDriver(runtimeDriver, request);
+	} catch (error) {
+		if (!isUnavailableRuntimeDriverError(error)) {
+			throw error;
+		}
+	} finally {
 		try {
-			await fsPromises.lstat(linkPath);
-			continue;
+			runtimeDriver.dispose();
 		} catch {}
-		await fsPromises.mkdir(path.dirname(linkPath), { recursive: true });
-		await fsPromises.symlink(hostNodeModules, linkPath, "junction");
 	}
+
+	return runCompilerWithKernelRuntime(options, request, hostNodeModules);
+}
+
+async function runCompilerWithRuntimeDriver(
+	runtimeDriver: NodeRuntimeDriver,
+	request: CompilerRequest,
+): Promise<CompilerResponse> {
+	const result = await runtimeDriver.run<RuntimeCompilerEnvelope>(
+		buildCompilerRuntimeEval(request),
+		"/tmp/secure-exec-typescript-runner.cjs",
+	);
+	if (result.value) {
+		return parseRuntimeEnvelope(result.value);
+	}
+	if (result.errorMessage) {
+		throw new Error(result.errorMessage);
+	}
+	throw new Error(`TypeScript runtime exited ${result.code}`);
+}
+
+function isUnavailableRuntimeDriverError(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		error.message.includes(
+			"NodeExecutionDriver is not available after the native runtime migration",
+		)
+	);
+}
+
+async function runCompilerWithKernelRuntime(
+	options: TypeScriptToolsOptions,
+	request: CompilerRequest,
+	hostNodeModules: string,
+): Promise<CompilerResponse> {
+	const filesystem = options.systemDriver.filesystem;
+	if (!filesystem) {
+		throw new Error("TypeScript tools require a filesystem-backed system driver");
+	}
+
+	await filesystem.mkdir("/tmp", { recursive: true });
+	const requestId = `${Date.now()}-${nextRuntimeRequestId++}`;
+	const requestPath = `/tmp/secure-exec-typescript-request-${requestId}.json`;
+	const runnerPath = `/tmp/secure-exec-typescript-runner-${requestId}.cjs`;
+	await filesystem.writeFile(requestPath, JSON.stringify(request));
+	await filesystem.writeFile(runnerPath, buildCompilerRuntimeScript(requestPath));
+
+	const kernel = createKernel({
+		filesystem,
+		permissions: normalizeKernelPermissions(options.systemDriver.permissions),
+		env: buildRuntimeEnv(options),
+		cwd: request.options.cwd ?? "/root",
+		mounts: [
+			{
+				path: "/node_modules",
+				fs: new NodeFileSystem({ root: hostNodeModules }),
+				readOnly: true,
+			},
+		],
+	});
+
+	try {
+		await kernel.mount(createNodeRuntime());
+		let stdout = "";
+		let stderr = "";
+		const child = kernel.spawn("node", [runnerPath], {
+			cpuTimeLimitMs: options.cpuTimeLimitMs,
+			onStdout: (chunk) => {
+				stdout += Buffer.from(chunk).toString("utf8");
+			},
+			onStderr: (chunk) => {
+				stderr += Buffer.from(chunk).toString("utf8");
+			},
+		});
+		const exitCode = await child.wait();
+		if (stdout.trim()) {
+			return parseRuntimeResponse(stdout);
+		}
+		if (exitCode !== 0) {
+			throw new Error(stderr.trim() || `TypeScript runtime exited ${exitCode}`);
+		}
+		throw new Error("TypeScript runtime produced no response");
+	} finally {
+		await kernel.dispose();
+		await removeVirtualFileIfExists(filesystem, requestPath);
+		await removeVirtualFileIfExists(filesystem, runnerPath);
+	}
+}
+
+function normalizeKernelPermissions(
+	permissions: TypeScriptToolsOptions["systemDriver"]["permissions"],
+): Permissions {
+	const normalized =
+		!permissions || typeof permissions !== "string"
+			? { ...(permissions ?? {}) }
+			: { fs: permissions };
+	if (!normalized.childProcess) {
+		normalized.childProcess = {
+			default: "deny",
+			rules: [{ mode: "allow", operations: ["*"], patterns: ["node"] }],
+		};
+	}
+	return normalized;
 }
 
 function findNearestNodeModules(startDir: string): string | null {
 	let currentDir = startDir;
 	while (true) {
 		const candidate = path.join(currentDir, "node_modules");
-		if (
-			moduleRequire.resolve("typescript/package.json", { paths: [candidate] })
-		) {
-			return candidate;
+		try {
+			const packageJsonPath = moduleRequire.resolve("typescript/package.json", {
+				paths: [currentDir],
+			});
+			const candidateRoot = realpathSync(candidate);
+			const packageRoot = realpathSync(path.dirname(packageJsonPath));
+			if (
+				packageRoot === candidateRoot ||
+				packageRoot.startsWith(`${candidateRoot}${path.sep}`)
+			) {
+				return candidate;
+			}
+		} catch {
+			// Keep walking toward the filesystem root.
 		}
 		const parentDir = path.dirname(currentDir);
 		if (parentDir === currentDir) {
@@ -214,80 +315,6 @@ function findNearestNodeModules(startDir: string): string | null {
 		}
 		currentDir = parentDir;
 	}
-}
-
-async function rewriteProjectConfigPaths(
-	request: CompilerRequest,
-	tempRoot: string,
-	ts: typeof import("typescript"),
-): Promise<void> {
-	const configFilePath = getProjectConfigPath(request);
-	if (!configFilePath) {
-		return;
-	}
-
-	try {
-		await fsPromises.access(configFilePath);
-	} catch {
-		return;
-	}
-
-	const configFile = ts.readConfigFile(configFilePath, ts.sys.readFile);
-	if (
-		configFile.error ||
-		!configFile.config ||
-		typeof configFile.config !== "object"
-	) {
-		return;
-	}
-
-	const config = configFile.config as {
-		compilerOptions?: Record<string, unknown>;
-	};
-	config.compilerOptions = mapConfigCompilerOptionsToHost(
-		tempRoot,
-		config.compilerOptions,
-	);
-	await fsPromises.writeFile(
-		configFilePath,
-		JSON.stringify(configFile.config, null, 2),
-	);
-}
-
-function getProjectConfigPath(request: CompilerRequest): string | null {
-	switch (request.kind) {
-		case "typecheckProject":
-		case "compileProject":
-			return (
-				request.options.configFilePath ??
-				(request.options.cwd
-					? path.join(request.options.cwd, "tsconfig.json")
-					: null)
-			);
-		case "typecheckSource":
-		case "compileSource":
-			return request.options.configFilePath ?? null;
-	}
-}
-
-function mapConfigCompilerOptionsToHost(
-	tempRoot: string,
-	compilerOptions: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
-	if (!compilerOptions) {
-		return compilerOptions;
-	}
-
-	const mapped = mapCompilerOptionsToHost(tempRoot, compilerOptions) ?? {};
-	for (const key of ["rootDirs", "typeRoots"]) {
-		const value = mapped[key];
-		if (Array.isArray(value)) {
-			mapped[key] = value.map((entry) =>
-				mapAbsoluteCompilerPath(tempRoot, entry),
-			);
-		}
-	}
-	return mapped;
 }
 
 function createFailureResult<TResult extends CompilerResponse>(
@@ -333,176 +360,101 @@ function normalizeCompilerFailureMessage(errorMessage?: string): string {
 	return message;
 }
 
-function toHostPath(tempRoot: string, virtualPath: string): string {
-	if (virtualPath === "/") {
-		return tempRoot;
+function buildRuntimeEnv(options: TypeScriptToolsOptions): Record<string, string> {
+	const env = { ...(options.systemDriver.runtime.process.env ?? {}) };
+	if (options.memoryLimit !== undefined) {
+		const limit = Math.max(1, Math.floor(options.memoryLimit));
+		env.NODE_OPTIONS = [env.NODE_OPTIONS, `--max-old-space-size=${limit}`]
+			.filter(Boolean)
+			.join(" ");
 	}
-	return path.join(tempRoot, virtualPath.replace(/^\/+/, ""));
+	return env;
 }
 
-function toVirtualPath(tempRoot: string, hostPath: string): string {
-	const relative = path.relative(tempRoot, hostPath);
-	if (!relative || relative === ".") {
-		return "/";
-	}
-	return `/${relative.split(path.sep).join("/")}`;
-}
+function buildCompilerRuntimeScript(requestPath: string): string {
+	return `
+const fs = require("node:fs");
+const path = require("node:path");
 
-function mapAbsoluteCompilerPath(tempRoot: string, value: unknown): unknown {
-	if (typeof value !== "string" || !value.startsWith("/")) {
-		return value;
-	}
-	return toHostPath(tempRoot, value);
-}
-
-function mapCompilerOptionsToHost(
-	tempRoot: string,
-	compilerOptions: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
-	if (!compilerOptions) {
-		return compilerOptions;
-	}
-	const mapped = { ...compilerOptions };
-	for (const key of [
-		"outDir",
-		"outFile",
-		"rootDir",
-		"baseUrl",
-		"declarationDir",
-		"tsBuildInfoFile",
-		"mapRoot",
-		"sourceRoot",
-	]) {
-		mapped[key] = mapAbsoluteCompilerPath(tempRoot, mapped[key]);
-	}
-	return mapped;
-}
-
-function mapRequestToHostPaths(
-	request: CompilerRequest,
-	tempRoot: string,
-): CompilerRequest {
-	switch (request.kind) {
-		case "typecheckProject":
-		case "compileProject":
-			return {
-				...request,
-				options: {
-					...request.options,
-					cwd: request.options.cwd
-						? toHostPath(tempRoot, request.options.cwd)
-						: request.options.cwd,
-					configFilePath: request.options.configFilePath?.startsWith("/")
-						? toHostPath(tempRoot, request.options.configFilePath)
-						: request.options.configFilePath,
-				},
-			};
-		case "typecheckSource":
-		case "compileSource":
-			return {
-				...request,
-				options: {
-					...request.options,
-					cwd: request.options.cwd
-						? toHostPath(tempRoot, request.options.cwd)
-						: request.options.cwd,
-					filePath: request.options.filePath?.startsWith("/")
-						? toHostPath(tempRoot, request.options.filePath)
-						: request.options.filePath,
-					configFilePath: request.options.configFilePath?.startsWith("/")
-						? toHostPath(tempRoot, request.options.configFilePath)
-						: request.options.configFilePath,
-					compilerOptions: mapCompilerOptionsToHost(
-						tempRoot,
-						request.options.compilerOptions,
-					),
-				},
-			};
-	}
-}
-
-async function mirrorVirtualTree(
-	filesystem: NonNullable<TypeScriptToolsOptions["systemDriver"]["filesystem"]>,
-	virtualPath: string,
-	tempRoot: string,
-): Promise<void> {
-	const hostPath = toHostPath(tempRoot, virtualPath);
-	const statInfo =
-		virtualPath === "/"
-			? await filesystem.stat(virtualPath)
-			: await filesystem.lstat(virtualPath);
-
-	if (statInfo.isSymbolicLink) {
-		await fsPromises.mkdir(path.dirname(hostPath), { recursive: true });
-		const target = await filesystem.readlink(virtualPath);
-		await fsPromises.symlink(
-			target.startsWith("/") ? toHostPath(tempRoot, target) : target,
-			hostPath,
-		);
-		return;
-	}
-
-	if (statInfo.isDirectory) {
-		await fsPromises.mkdir(hostPath, { recursive: true });
-		for (const entry of await filesystem.readDirWithTypes(virtualPath)) {
-			if (entry.name === "." || entry.name === "..") {
-				continue;
-			}
-			const childPath =
-				virtualPath === "/" ? `/${entry.name}` : `${virtualPath}/${entry.name}`;
-			await mirrorVirtualTree(filesystem, childPath, tempRoot);
-		}
-		return;
-	}
-
-	await fsPromises.mkdir(path.dirname(hostPath), { recursive: true });
-	await fsPromises.writeFile(hostPath, await filesystem.readFile(virtualPath));
-}
-
-async function loadTypeScriptCompiler(
-	compilerSpecifier: string,
-): Promise<typeof import("typescript")> {
+function loadTypeScriptCompiler(compilerSpecifier) {
 	const specifier =
-		compilerSpecifier === DEFAULT_COMPILER_SPECIFIER
+		compilerSpecifier === ${JSON.stringify(DEFAULT_COMPILER_SPECIFIER)}
 			? compilerSpecifier
 			: compilerSpecifier.startsWith("/")
-				? pathToFileURL(compilerSpecifier).href
-				: compilerSpecifier.startsWith("./") ||
-						compilerSpecifier.startsWith("../")
-					? pathToFileURL(path.resolve(compilerSpecifier)).href
+				? compilerSpecifier
+				: compilerSpecifier.startsWith("./") || compilerSpecifier.startsWith("../")
+					? path.resolve(process.cwd(), compilerSpecifier)
 					: compilerSpecifier;
-	const imported = await import(specifier);
-	return (imported.default ?? imported) as typeof import("typescript");
+	const imported = require(specifier);
+	return imported.default ?? imported;
 }
 
-async function mapHostResultToVirtualPaths<TResult extends CompilerResponse>(
-	result: TResult,
+try {
+	const request = JSON.parse(fs.readFileSync(${JSON.stringify(requestPath)}, "utf8"));
+	const ts = loadTypeScriptCompiler(request.compilerSpecifier);
+	const __name = (target) => target;
+	const result = (${compilerRuntimeMain.toString()})(request, ts);
+	process.stdout.write(JSON.stringify({ ok: true, result }));
+} catch (error) {
+	process.stdout.write(JSON.stringify({
+		ok: false,
+		errorMessage: error instanceof Error ? error.message : String(error),
+	}));
+	process.exitCode = 1;
+}
+`;
+}
+
+function buildCompilerRuntimeEval(request: CompilerRequest): string {
+	return `
+const path = require("node:path");
+
+function loadTypeScriptCompiler(compilerSpecifier) {
+	const specifier =
+		compilerSpecifier === ${JSON.stringify(DEFAULT_COMPILER_SPECIFIER)}
+			? compilerSpecifier
+			: compilerSpecifier.startsWith("/")
+				? compilerSpecifier
+				: compilerSpecifier.startsWith("./") || compilerSpecifier.startsWith("../")
+					? path.resolve(process.cwd(), compilerSpecifier)
+					: compilerSpecifier;
+	const imported = require(specifier);
+	return imported.default ?? imported;
+}
+
+const request = ${JSON.stringify(request)};
+try {
+	const ts = loadTypeScriptCompiler(request.compilerSpecifier);
+	const __name = (target) => target;
+	const result = (${compilerRuntimeMain.toString()})(request, ts);
+	return { ok: true, result };
+} catch (error) {
+	return {
+		ok: false,
+		errorMessage: error instanceof Error ? error.message : String(error),
+	};
+}
+`;
+}
+
+function parseRuntimeResponse(stdout: string): CompilerResponse {
+	return parseRuntimeEnvelope(JSON.parse(stdout.trim()) as RuntimeCompilerEnvelope);
+}
+
+function parseRuntimeEnvelope(payload: RuntimeCompilerEnvelope): CompilerResponse {
+	if (payload.ok) {
+		return payload.result;
+	}
+	throw new Error(payload.errorMessage ?? "TypeScript runtime failed");
+}
+
+async function removeVirtualFileIfExists(
 	filesystem: NonNullable<TypeScriptToolsOptions["systemDriver"]["filesystem"]>,
-	tempRoot: string,
-): Promise<TResult> {
-	for (const diagnostic of result.diagnostics) {
-		if (diagnostic.filePath) {
-			diagnostic.filePath = toVirtualPath(tempRoot, diagnostic.filePath);
-		}
-	}
-
-	if ("emittedFiles" in result) {
-		result.emittedFiles = await Promise.all(
-			result.emittedFiles.map(async (hostPath) => {
-				const virtualPath = toVirtualPath(tempRoot, hostPath);
-				await filesystem.mkdir(path.posix.dirname(virtualPath), {
-					recursive: true,
-				});
-				await filesystem.writeFile(
-					virtualPath,
-					new Uint8Array(await fsPromises.readFile(hostPath)),
-				);
-				return virtualPath;
-			}),
-		);
-	}
-
-	return result;
+	targetPath: string,
+): Promise<void> {
+	try {
+		await filesystem.removeFile(targetPath);
+	} catch {}
 }
 
 function compilerRuntimeMain(
