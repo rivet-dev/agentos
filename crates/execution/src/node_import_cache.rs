@@ -10435,6 +10435,13 @@ function processChildEvent(record, event) {
     return true;
   }
 
+  if (event.type === 'signal') {
+    dispatchWasmSignal(
+      typeof event.number === 'number' ? event.number : signalNumberFromName(event.signal),
+    );
+    return true;
+  }
+
   if (event.type === 'exit') {
     const exitCode =
       typeof event.exitCode === 'number' ? Math.trunc(event.exitCode) : null;
@@ -11347,6 +11354,11 @@ const hostProcessImport = {
                 continue;
               }
 
+              if (event.type === 'signal') {
+                processChildEvent(record, event);
+                continue;
+              }
+
               if (event.type === 'exit') {
                 processChildEvent(record, event);
                 if (writeGuestUint32(retStatusPtr, record.exitStatus ?? 1) !== WASI_ERRNO_SUCCESS) {
@@ -11389,13 +11401,17 @@ const hostProcessImport = {
             }
 
             const record = spawnedChildren.get(targetPid);
-            if (!record) {
-              return WASI_ERRNO_SRCH;
+            if (record) {
+              callSyncRpc('child_process.kill', [record.childId, signalName]);
+              return WASI_ERRNO_SUCCESS;
             }
 
-            callSyncRpc('child_process.kill', [record.childId, signalName]);
+            callSyncRpc('process.kill', [targetPid, signalName]);
             return WASI_ERRNO_SUCCESS;
-          } catch {
+          } catch (error) {
+            if (error?.code === 'ESRCH') {
+              return WASI_ERRNO_SRCH;
+            }
             return WASI_ERRNO_FAULT;
           }
         },
@@ -12517,6 +12533,28 @@ const instance = new WebAssembly.Instance(module, {
 if (instance.exports.memory instanceof WebAssembly.Memory) {
   instanceMemory = instance.exports.memory;
 }
+
+function dispatchWasmSignal(signal) {
+  const numeric = Number(signal) | 0;
+  if (
+    numeric > 0 &&
+    typeof instance?.exports?.__wasi_signal_trampoline === 'function'
+  ) {
+    instance.exports.__wasi_signal_trampoline(numeric);
+  }
+}
+
+Object.defineProperty(globalThis, '__agentOsWasmSignalDispatch', {
+  configurable: true,
+  writable: true,
+  value: (_eventType, payload) => {
+    const signal =
+      typeof payload?.number === 'number'
+        ? payload.number
+        : signalNumberFromName(payload?.signal);
+    dispatchWasmSignal(signal);
+  },
+});
 
 if (typeof instance.exports._start === 'function') {
   // The `RuntimeError: unreachable` reports that used to point at

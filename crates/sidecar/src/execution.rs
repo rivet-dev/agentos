@@ -3766,6 +3766,36 @@ where
         Some(current)
     }
 
+    fn active_process_by_owned_path_mut<'a>(
+        process: &'a mut ActiveProcess,
+        child_path: &[String],
+    ) -> Option<&'a mut ActiveProcess> {
+        let mut current = process;
+        for child_id in child_path {
+            current = current.child_processes.get_mut(child_id)?;
+        }
+        Some(current)
+    }
+
+    fn active_process_path_by_kernel_pid(
+        process: &ActiveProcess,
+        kernel_pid: u32,
+    ) -> Option<Vec<String>> {
+        if process.kernel_pid == kernel_pid {
+            return Some(Vec::new());
+        }
+
+        for (child_id, child) in &process.child_processes {
+            let Some(mut path) = Self::active_process_path_by_kernel_pid(child, kernel_pid) else {
+                continue;
+            };
+            path.insert(0, child_id.clone());
+            return Some(path);
+        }
+
+        None
+    }
+
     fn descendant_parent_process<'a>(
         vm: &'a VmState,
         process_id: &str,
@@ -6388,6 +6418,14 @@ where
                             registration,
                         );
                         Ok(Value::Null)
+                    } else if request.method == "process.kill" {
+                        self.handle_descendant_process_kill_rpc(
+                            vm_id,
+                            process_id,
+                            current_process_path,
+                            child_process_id,
+                            &request,
+                        )
                     } else if request.method.starts_with("child_process.") {
                         self.handle_descendant_javascript_child_process_rpc(
                             vm_id,
@@ -6437,6 +6475,22 @@ where
                     let Some(child) = parent.child_processes.get_mut(child_process_id) else {
                         return Ok(Value::Null);
                     };
+                    let parent_signal_event = response.as_ref().ok().and_then(|result| {
+                        let target_path_label =
+                            Self::child_process_path_label(process_id, current_process_path);
+                        if request.method != "process.kill"
+                            || result.get("action").and_then(Value::as_str) != Some("user")
+                            || result.get("targetProcessPath").and_then(Value::as_str)
+                                != Some(target_path_label.as_str())
+                        {
+                            return None;
+                        }
+                        Some(json!({
+                            "type": "signal",
+                            "signal": result.get("signal").and_then(Value::as_str).unwrap_or_default(),
+                            "number": result.get("number").and_then(Value::as_i64).unwrap_or_default(),
+                        }))
+                    });
                     match response {
                         Ok(result) => child
                             .execution
@@ -6450,6 +6504,9 @@ where
                                 error.to_string(),
                             )
                             .or_else(ignore_stale_javascript_sync_rpc_response)?,
+                    }
+                    if let Some(event) = parent_signal_event {
+                        return Ok(event);
                     }
                 }
                 ActiveExecutionEvent::PythonVfsRpcRequest(_) => {
@@ -6687,6 +6744,167 @@ where
         Ok(())
     }
 
+    fn handle_descendant_process_kill_rpc(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        current_process_path: &[&str],
+        child_process_id: &str,
+        request: &JavascriptSyncRpcRequest,
+    ) -> Result<Value, SidecarError> {
+        let target_pid = javascript_sync_rpc_arg_i32(&request.args, 0, "process.kill target pid")?;
+        let signal_name = javascript_sync_rpc_arg_str(&request.args, 1, "process.kill signal")?;
+        let signal = parse_signal(signal_name)?;
+
+        let mut source_path = current_process_path.to_vec();
+        source_path.push(child_process_id);
+        let Some(vm) = self.vms.get_mut(vm_id) else {
+            return Err(SidecarError::InvalidState(String::from(
+                "ESRCH: unknown VM during process.kill",
+            )));
+        };
+
+        if signal == 0 {
+            vm.kernel
+                .signal_process(EXECUTION_DRIVER_NAME, target_pid, signal)
+                .map_err(kernel_error)?;
+            return Ok(Value::Null);
+        }
+
+        let target_kernel_pid = u32::try_from(target_pid).map_err(|_| {
+            SidecarError::InvalidState(format!("EINVAL: invalid process pid {target_pid}"))
+        })?;
+        let (source_pid, target_path) = {
+            let Some(root) = vm.active_processes.get(process_id) else {
+                return Err(SidecarError::InvalidState(format!(
+                    "ESRCH: unknown process {process_id} during process.kill",
+                )));
+            };
+            let Some(source) = Self::active_process_by_path(root, &source_path) else {
+                return Err(SidecarError::InvalidState(format!(
+                    "ESRCH: unknown child process {child_process_id} during process.kill",
+                )));
+            };
+            vm.kernel
+                .signal_process(EXECUTION_DRIVER_NAME, target_pid, 0)
+                .map_err(kernel_error)?;
+            let Some(target_path) =
+                Self::active_process_path_by_kernel_pid(root, target_kernel_pid)
+            else {
+                return Err(SidecarError::InvalidState(format!(
+                    "ESRCH: unknown process pid {target_pid}"
+                )));
+            };
+            (source.kernel_pid, target_path)
+        };
+
+        if source_pid == target_kernel_pid {
+            let Some(root) = vm.active_processes.get_mut(process_id) else {
+                return Ok(Value::Null);
+            };
+            let Some(source) = Self::active_process_by_path_mut(root, &source_path) else {
+                return Ok(Value::Null);
+            };
+            source.pending_self_signal_exit = None;
+            if !matches!(
+                canonical_signal_name(signal),
+                Some("SIGWINCH" | "SIGCHLD" | "SIGCONT" | "SIGURG")
+            ) {
+                source.pending_self_signal_exit = Some(signal);
+            }
+            return Ok(json!({
+                "self": true,
+                "action": "default",
+            }));
+        }
+
+        let signal_key = target_path.last().map(String::as_str).unwrap_or(process_id);
+        let registration = vm
+            .signal_states
+            .get(signal_key)
+            .and_then(|handlers| handlers.get(&(signal as u32)))
+            .cloned();
+
+        let action = match registration
+            .as_ref()
+            .map(|registration| &registration.action)
+        {
+            Some(SignalDispositionAction::Ignore) => "ignore",
+            Some(SignalDispositionAction::User) => {
+                let Some(root) = vm.active_processes.get_mut(process_id) else {
+                    return Ok(Value::Null);
+                };
+                let Some(target) = Self::active_process_by_owned_path_mut(root, &target_path)
+                else {
+                    return Err(SidecarError::InvalidState(format!(
+                        "ESRCH: unknown process pid {target_pid}"
+                    )));
+                };
+                if let Some(session) = target.execution.javascript_v8_session_handle().filter(
+                    |_| matches!(&target.execution, ActiveExecution::Javascript(execution) if execution.uses_shared_v8_runtime())
+                        || matches!(&target.execution, ActiveExecution::Wasm(execution) if execution.uses_shared_v8_runtime()),
+                ) {
+                    dispatch_v8_session_signal_async(session, signal);
+                } else if !dispatch_v8_process_signal(target, signal)? {
+                    return Err(SidecarError::InvalidState(format!(
+                        "unsupported guest signal delivery for pid {target_pid}"
+                    )));
+                }
+                "user"
+            }
+            Some(SignalDispositionAction::Default) | None
+                if matches!(
+                    canonical_signal_name(signal),
+                    Some("SIGWINCH" | "SIGCHLD" | "SIGURG")
+                ) =>
+            {
+                "ignore"
+            }
+            Some(SignalDispositionAction::Default) | None => {
+                let Some(root) = vm.active_processes.get_mut(process_id) else {
+                    return Ok(Value::Null);
+                };
+                let Some(target) = Self::active_process_by_owned_path_mut(root, &target_path)
+                else {
+                    return Err(SidecarError::InvalidState(format!(
+                        "ESRCH: unknown process pid {target_pid}"
+                    )));
+                };
+                apply_active_process_default_signal(&mut vm.kernel, target, signal)?;
+                "default"
+            }
+        };
+
+        let target_path_label = Self::child_process_path_label(
+            process_id,
+            &target_path.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        emit_security_audit_event(
+            &self.bridge,
+            vm_id,
+            "security.process.kill",
+            audit_fields([
+                (String::from("source"), String::from("guest_process")),
+                (String::from("source_pid"), source_pid.to_string()),
+                (String::from("target_pid"), target_pid.to_string()),
+                (String::from("process_id"), process_id.to_owned()),
+                (
+                    String::from("target_process_path"),
+                    target_path_label.clone(),
+                ),
+                (String::from("signal"), signal_name.to_owned()),
+            ]),
+        );
+
+        Ok(json!({
+            "self": false,
+            "action": action,
+            "signal": signal_name,
+            "number": signal,
+            "targetProcessPath": target_path_label,
+        }))
+    }
+
     pub(crate) fn poll_javascript_child_process(
         &mut self,
         vm_id: &str,
@@ -6831,6 +7049,36 @@ where
         );
         Ok(())
     }
+}
+
+fn apply_active_process_default_signal(
+    kernel: &mut SidecarKernel,
+    process: &mut ActiveProcess,
+    signal: i32,
+) -> Result<(), SidecarError> {
+    if matches!(signal, libc::SIGSTOP | libc::SIGCONT) {
+        return kernel
+            .kill_process(EXECUTION_DRIVER_NAME, process.kernel_pid, signal)
+            .map_err(kernel_error);
+    }
+
+    if signal != 0 && matches!(process.execution, ActiveExecution::Python(_)) {
+        close_kernel_process_stdin(kernel, process)?;
+    }
+
+    if process.execution.uses_shared_v8_runtime() {
+        process.execution.terminate()?;
+        if signal != 0 && matches!(process.execution, ActiveExecution::Wasm(_)) {
+            process
+                .pending_execution_events
+                .push_back(ActiveExecutionEvent::Exited(128 + signal));
+        }
+        return Ok(());
+    }
+
+    kernel
+        .kill_process(EXECUTION_DRIVER_NAME, process.kernel_pid, signal)
+        .map_err(kernel_error)
 }
 
 fn map_wasm_signal_registration(
