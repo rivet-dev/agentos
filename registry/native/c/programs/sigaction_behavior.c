@@ -54,7 +54,7 @@ int main(void) {
     }
     printf("sigaction_query_mask_sigterm=%s\n", sigismember(&current.sa_mask, SIGTERM) == 1 ? "yes" : "no");
     printf("sigaction_query_flags=%s\n",
-        current.sa_flags == (SA_RESTART | SA_RESETHAND) ? "yes" : "no");
+        (current.sa_flags & (SA_RESTART | SA_RESETHAND)) == (SA_RESTART | SA_RESETHAND) ? "yes" : "no");
 
     /* SA_RESETHAND: first delivery runs the handler and resets to SIG_DFL. */
     if (install_action(SIGUSR1, reset_handler, SA_RESETHAND, 0) != 0) {
