@@ -283,6 +283,30 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
     expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/bash-output.txt'))).toBe('bash-ok');
   });
 
+  it('execSync unsupported redirection syntax falls back to the guest shell', async () => {
+    ctx = await createBridgeIntegrationKernel();
+
+    const chunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+    const proc = ctx.kernel.spawn('node', ['-e', `
+      const fs = require('fs');
+      const { execSync } = require('child_process');
+      execSync("echo ignored; echo fallback-ok > fallback-output.txt", { encoding: 'utf-8' });
+      console.log(fs.readFileSync('/tmp/fallback-output.txt', 'utf8'));
+    `], {
+      cwd: '/tmp',
+      onStdout: (data) => chunks.push(data),
+      onStderr: (data) => stderrChunks.push(data),
+    });
+
+    const code = await proc.wait();
+    const output = chunks.map(c => new TextDecoder().decode(c)).join('');
+    const stderr = stderrChunks.map(c => new TextDecoder().decode(c)).join('');
+    expect(code, `stdout:\n${output}\nstderr:\n${stderr}`).toBe(0);
+    expect(output).toContain('fallback-ok');
+    expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/fallback-output.txt'))).toBe('fallback-ok\n');
+  });
+
   it('execSync append redirection preserves non-missing read errors', async () => {
     ctx = await createBridgeIntegrationKernel();
 
