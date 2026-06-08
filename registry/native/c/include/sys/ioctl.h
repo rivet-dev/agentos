@@ -3,7 +3,7 @@
 
 #include_next <sys/ioctl.h>
 
-#ifndef __DEFINED_struct_winsize
+#if defined(__wasi__) && !defined(__DEFINED_struct_winsize)
 struct winsize {
 	unsigned short ws_row;
 	unsigned short ws_col;
