@@ -1761,6 +1761,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
   const __agentOsWasiErrnoNoent = 44;
   const __agentOsWasiErrnoNosys = 52;
   const __agentOsWasiErrnoNotdir = 54;
+  const __agentOsWasiErrnoPipe = 64;
   const __agentOsWasiErrnoRofs = 69;
   const __agentOsWasiFiletypeUnknown = 0;
   const __agentOsWasiFiletypeCharacterDevice = 2;
@@ -2056,6 +2057,13 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         return;
       }}
       pipe.chunks.push(chunk);
+    }}
+
+    _pipeHasReaders(pipe) {{
+      return (
+        (pipe?.readHandleCount ?? 0) > 0 ||
+        (pipe?.consumers?.size ?? 0) > 0
+      );
     }}
 
     _flushPipeConsumers(pipe) {{
@@ -2631,6 +2639,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         const descriptor = Number(fd) >>> 0;
         const handle = this._externalFdHandle(descriptor);
         if (handle?.kind === "pipe-write" && handle.pipe) {{
+          if (bytes.length > 0 && !this._pipeHasReaders(handle.pipe)) {{
+            return __agentOsWasiErrnoPipe;
+          }}
           this._enqueuePipeBytes(handle.pipe, bytes);
           this._flushPipeConsumers(handle.pipe);
           return this._writeUint32(nwrittenPtr, bytes.length);

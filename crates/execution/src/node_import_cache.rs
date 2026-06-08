@@ -8661,6 +8661,7 @@ const WASI_ERRNO_ACCES = 2;
 const WASI_ERRNO_BADF = 8;
 const WASI_ERRNO_CHILD = 10;
 const WASI_ERRNO_INVAL = 28;
+const WASI_ERRNO_PIPE = 64;
 const WASI_ERRNO_ROFS = 69;
 const WASI_ERRNO_SPIPE = 70;
 const WASI_ERRNO_SRCH = 71;
@@ -9899,6 +9900,13 @@ function enqueuePipeBytes(pipe, bytes) {
     return;
   }
   pipe.chunks.push(chunk);
+}
+
+function pipeHasReaders(pipe) {
+  return (
+    (pipe?.readHandleCount ?? 0) > 0 ||
+    (pipe?.consumers?.size ?? 0) > 0
+  );
 }
 
 function unregisterPipeProducer(pipe, producerKey) {
@@ -12193,6 +12201,9 @@ wasiImport.fd_write = (fd, iovs, iovsLen, nwrittenPtr) => {
   if (handle?.kind === 'pipe-write') {
     try {
       const bytes = collectGuestIovBytes(iovs, iovsLen);
+      if (bytes.length > 0 && !pipeHasReaders(handle.pipe)) {
+        return WASI_ERRNO_PIPE;
+      }
       enqueuePipeBytes(handle.pipe, bytes);
       flushPipeConsumers(handle.pipe);
       return writeGuestUint32(nwrittenPtr, bytes.length);
