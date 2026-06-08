@@ -247,11 +247,22 @@ fn permission_flags_single_star_paths_do_not_cross_path_separators() {
         PermissionsPolicy {
             fs: Some(FsPermissionScope::Rules(FsPermissionRuleSet {
                 default: Some(PermissionMode::Deny),
-                rules: vec![FsPermissionRule {
-                    mode: PermissionMode::Allow,
-                    operations: vec![String::from("create_dir"), String::from("stat")],
-                    paths: vec![String::from("/tmp/*")],
-                }],
+                rules: vec![
+                    FsPermissionRule {
+                        mode: PermissionMode::Allow,
+                        operations: vec![String::from("read")],
+                        paths: vec![String::from("/tmp")],
+                    },
+                    FsPermissionRule {
+                        mode: PermissionMode::Allow,
+                        operations: vec![
+                            String::from("create_dir"),
+                            String::from("read"),
+                            String::from("stat"),
+                        ],
+                        paths: vec![String::from("/tmp/*")],
+                    },
+                ],
             })),
             network: None,
             child_process: None,
@@ -304,11 +315,22 @@ fn permission_flags_double_star_paths_allow_nested_descendants() {
         PermissionsPolicy {
             fs: Some(FsPermissionScope::Rules(FsPermissionRuleSet {
                 default: Some(PermissionMode::Deny),
-                rules: vec![FsPermissionRule {
-                    mode: PermissionMode::Allow,
-                    operations: vec![String::from("create_dir"), String::from("stat")],
-                    paths: vec![String::from("/tmp/**")],
-                }],
+                rules: vec![
+                    FsPermissionRule {
+                        mode: PermissionMode::Allow,
+                        operations: vec![String::from("read")],
+                        paths: vec![String::from("/tmp")],
+                    },
+                    FsPermissionRule {
+                        mode: PermissionMode::Allow,
+                        operations: vec![
+                            String::from("create_dir"),
+                            String::from("read"),
+                            String::from("stat"),
+                        ],
+                        paths: vec![String::from("/tmp/**")],
+                    },
+                ],
             })),
             network: None,
             child_process: None,
