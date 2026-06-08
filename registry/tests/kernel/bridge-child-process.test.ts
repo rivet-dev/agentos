@@ -283,6 +283,47 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
     expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/bash-output.txt'))).toBe('bash-ok');
   });
 
+  it('execSync append redirection preserves non-missing read errors', async () => {
+    ctx = await createBridgeIntegrationKernel();
+
+    const chunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+    const proc = ctx.kernel.spawn('node', ['-e', `
+      const fs = require('fs');
+      const { execSync } = require('child_process');
+      fs.writeFileSync('/tmp/write-only.txt', 'original');
+      fs.chmodSync('/tmp/write-only.txt', 0o200);
+      try {
+        execSync("printf changed >> /tmp/write-only.txt", { encoding: 'utf-8' });
+        fs.chmodSync('/tmp/write-only.txt', 0o600);
+        console.log(JSON.stringify({
+          mode: 'loaded',
+          file: fs.readFileSync('/tmp/write-only.txt', 'utf8')
+        }));
+      } catch (error) {
+        fs.chmodSync('/tmp/write-only.txt', 0o600);
+        console.log(JSON.stringify({
+          mode: 'error',
+          message: String(error && error.message ? error.message : error),
+          file: fs.readFileSync('/tmp/write-only.txt', 'utf8')
+        }));
+      }
+    `], {
+      cwd: '/tmp',
+      onStdout: (data) => chunks.push(data),
+      onStderr: (data) => stderrChunks.push(data),
+    });
+
+    const code = await proc.wait();
+    const output = chunks.map(c => new TextDecoder().decode(c)).join('');
+    const stderr = stderrChunks.map(c => new TextDecoder().decode(c)).join('');
+    expect(code, `stdout:\n${output}\nstderr:\n${stderr}`).toBe(0);
+    const result = JSON.parse(output.trim());
+    expect(result.mode).toBe('error');
+    expect(result.file).toBe('original');
+    expect(result.message).toMatch(/EACCES|permission/i);
+  });
+
   it('execFileSync on node_modules/.bin shell shims unwraps to the node entrypoint', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'agent-os-node-bin-shim-'));
     cleanupPaths.push(projectRoot);

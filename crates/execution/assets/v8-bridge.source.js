@@ -9640,6 +9640,9 @@ var __bridge = (() => {
   function resolveChildProcessRedirectPath(cwd, targetPath) {
     return targetPath.startsWith("/") ? pathStdlibModuleNs.posix.normalize(targetPath) : pathStdlibModuleNs.posix.normalize(pathStdlibModuleNs.posix.join(cwd, targetPath));
   }
+  function isMissingFileError(error) {
+    return error && typeof error === "object" && (error.code === "ENOENT" || typeof error.message === "string" && error.message.includes("ENOENT"));
+  }
   function resolveExecShellInvocation(command) {
     const parsed = parseSimpleExecCommand(command);
     if (parsed && (parsed[0] === "sh" || parsed[0] === "/bin/sh") && parsed[1] === "-c" && parsed.length === 3) {
@@ -9790,7 +9793,10 @@ var __bridge = (() => {
         let existing = typeof Buffer !== "undefined" ? Buffer.from("") : "";
         try {
           existing = fs_default.readFileSync(stdoutPath);
-        } catch {
+        } catch (error) {
+          if (!isMissingFileError(error)) {
+            throw error;
+          }
         }
         fs_default.writeFileSync(stdoutPath, typeof Buffer !== "undefined" ? Buffer.concat([Buffer.from(existing), redirectedStdout]) : `${existing}${redirectedStdout}`);
       } else {

@@ -3973,6 +3973,11 @@ function createRpcBackedChildProcessModule(fromGuestDir = '/') {
     targetPath.startsWith('/')
       ? path.posix.normalize(targetPath)
       : path.posix.normalize(path.posix.join(cwd, targetPath));
+  const isMissingFileError = (error) =>
+    error &&
+    typeof error === 'object' &&
+    (error.code === 'ENOENT' ||
+      (typeof error.message === 'string' && error.message.includes('ENOENT')));
   const normalizeChildProcessSignal = (value) =>
     typeof value === 'string' && value.length > 0 ? value : 'SIGTERM';
   const normalizeChildProcessEncoding = (options) =>
@@ -4524,7 +4529,10 @@ function createRpcBackedChildProcessModule(fromGuestDir = '/') {
           let existing = Buffer.alloc(0);
           try {
             existing = Buffer.from(fs.readFileSync(stdoutPath));
-          } catch {
+          } catch (error) {
+            if (!isMissingFileError(error)) {
+              throw error;
+            }
             // Appending to a nonexistent file should create it.
           }
           fs.writeFileSync(stdoutPath, Buffer.concat([existing, redirectedStdout]));

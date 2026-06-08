@@ -355,6 +355,18 @@ function resolveRedirectPath(cwd: string, targetPath: string): string {
 		: posixPath.normalize(posixPath.join(cwd, targetPath));
 }
 
+function isMissingFileError(error: unknown): boolean {
+	if (!error || typeof error !== "object") {
+		return false;
+	}
+	const maybeError = error as { code?: unknown; message?: unknown };
+	return (
+		maybeError.code === "ENOENT" ||
+		(typeof maybeError.message === "string" &&
+			maybeError.message.includes("ENOENT"))
+	);
+}
+
 function canUseDirectExec(
 	driver: string | undefined,
 	commandName: string | undefined,
@@ -766,14 +778,17 @@ export class NativeSidecarKernelProxy {
 			);
 			const result = await runAndCapture(proc, stdinOverride);
 			if (stdoutRedirectPath) {
-					const redirectedStdout = concatChunks(redirectedStdoutChunks);
-					if (parsedRedirectCommand.appendStdout) {
-						let existing = new Uint8Array(0);
-						try {
-							existing = new Uint8Array(await this.readFile(stdoutRedirectPath));
-						} catch {
-							// Appending to a nonexistent file should create it.
+				const redirectedStdout = concatChunks(redirectedStdoutChunks);
+				if (parsedRedirectCommand.appendStdout) {
+					let existing = new Uint8Array(0);
+					try {
+						existing = new Uint8Array(await this.readFile(stdoutRedirectPath));
+					} catch (error) {
+						if (!isMissingFileError(error)) {
+							throw error;
 						}
+						// Appending to a nonexistent file should create it.
+					}
 					const combined = new Uint8Array(
 						existing.length + redirectedStdout.length,
 					);
@@ -1909,7 +1924,10 @@ export class NativeSidecarKernelProxy {
 			let existing = new Uint8Array(0);
 			try {
 				existing = new Uint8Array(await this.readFile(redirect.stdoutPath));
-			} catch {
+			} catch (error) {
+				if (!isMissingFileError(error)) {
+					throw error;
+				}
 				// Appending to a nonexistent file should create it.
 			}
 			const combined = new Uint8Array(

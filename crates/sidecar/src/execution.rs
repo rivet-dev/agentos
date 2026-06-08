@@ -5506,10 +5506,11 @@ where
             .get_mut(vm_id)
             .ok_or_else(|| missing_vm_error(vm_id))?;
         let contents = if redirect.append_stdout {
-            let mut existing = vm
-                .kernel
-                .read_file_for_process(EXECUTION_DRIVER_NAME, parent_kernel_pid, &guest_path)
-                .unwrap_or_default();
+            let mut existing = read_existing_redirect_stdout_for_append(
+                &mut vm.kernel,
+                parent_kernel_pid,
+                &guest_path,
+            )?;
             existing.extend_from_slice(stdout);
             existing
         } else {
@@ -10379,9 +10380,8 @@ fn apply_active_child_process_redirect_stdout(
     };
     let guest_path = resolve_shell_redirect_guest_path(&child.guest_cwd, &redirect.stdout_path);
     let contents = if redirect.append_stdout {
-        let mut existing = kernel
-            .read_file_for_process(EXECUTION_DRIVER_NAME, parent_kernel_pid, &guest_path)
-            .unwrap_or_default();
+        let mut existing =
+            read_existing_redirect_stdout_for_append(kernel, parent_kernel_pid, &guest_path)?;
         existing.extend_from_slice(&redirect.stdout);
         existing
     } else {
@@ -10396,6 +10396,18 @@ fn apply_active_child_process_redirect_stdout(
             None,
         )
         .map_err(kernel_error)
+}
+
+fn read_existing_redirect_stdout_for_append(
+    kernel: &mut SidecarKernel,
+    parent_kernel_pid: u32,
+    guest_path: &str,
+) -> Result<Vec<u8>, SidecarError> {
+    match kernel.read_file_for_process(EXECUTION_DRIVER_NAME, parent_kernel_pid, guest_path) {
+        Ok(existing) => Ok(existing),
+        Err(error) if error.code() == "ENOENT" => Ok(Vec::new()),
+        Err(error) => Err(kernel_error(error)),
+    }
 }
 
 fn resolve_shell_redirect_guest_path(child_guest_cwd: &str, redirect_path: &str) -> String {
