@@ -8831,6 +8831,7 @@ const passthroughHandles = new Map([
   [2, { kind: 'passthrough', targetFd: 2, displayFd: 2, refCount: 0, open: true }],
 ]);
 const retainedSyntheticHandlesByDisplayFd = new Map();
+const retainedSpawnOutputHandlesByFd = new Map();
 let nextSyntheticFd = 64;
 let nextSyntheticPipeId = 1;
 const syntheticWaitArray = new Int32Array(new SharedArrayBuffer(4));
@@ -9577,7 +9578,12 @@ function releaseDelegateFd(fd) {
 
 function lookupFdHandle(fd) {
   const numericFd = Number(fd) >>> 0;
-  return syntheticFdEntries.get(numericFd) ?? passthroughHandles.get(numericFd) ?? null;
+  return (
+    syntheticFdEntries.get(numericFd) ??
+    retainedSpawnOutputHandlesByFd.get(numericFd)?.handle ??
+    passthroughHandles.get(numericFd) ??
+    null
+  );
 }
 
 function lookupSyntheticHandleByDisplayFd(fd, expectedKind = null) {
@@ -9748,14 +9754,57 @@ function collectInactivePipeHandles(pipe) {
 }
 
 function resolveSpawnFd(fd) {
+  const numericFd = Number(fd) >>> 0;
   const handle = lookupFdHandle(fd);
   if (!handle) {
-    return Number(fd) >>> 0;
+    return numericFd;
   }
   if (handle.kind === 'passthrough') {
     return handle.targetFd >>> 0;
   }
+  if (handle.kind === 'guest-file') {
+    return numericFd;
+  }
   return handle.displayFd >>> 0;
+}
+
+function retainSpawnOutputHandle(fd) {
+  const numericFd = Number(fd) >>> 0;
+  if (numericFd <= 2) {
+    return null;
+  }
+
+  const retained = retainedSpawnOutputHandlesByFd.get(numericFd);
+  if (retained) {
+    retained.refCount += 1;
+    retained.handle.refCount += 1;
+    return { fd: numericFd, handle: retained.handle };
+  }
+
+  const handle = lookupFdHandle(numericFd);
+  if (handle?.kind !== 'guest-file') {
+    return null;
+  }
+
+  handle.refCount += 1;
+  retainedSpawnOutputHandlesByFd.set(numericFd, { handle, refCount: 1 });
+  return { fd: numericFd, handle };
+}
+
+function releaseSpawnOutputHandles(retainedHandles) {
+  for (const retained of retainedHandles ?? []) {
+    if (!retained || typeof retained.fd !== 'number' || !retained.handle) {
+      continue;
+    }
+    const retainedEntry = retainedSpawnOutputHandlesByFd.get(retained.fd);
+    if (retainedEntry?.handle === retained.handle) {
+      retainedEntry.refCount -= 1;
+      if (retainedEntry.refCount <= 0) {
+        retainedSpawnOutputHandlesByFd.delete(retained.fd);
+      }
+    }
+    releaseFdHandle(retained.handle);
+  }
 }
 
 function collectGuestIovBytes(iovs, iovsLen) {
@@ -10092,7 +10141,30 @@ function routeChunkToFd(fd, bytes) {
     return;
   }
 
+  if (handle.kind === 'guest-file') {
+    writeBytesToGuestFileHandle(handle, Buffer.from(bytes ?? []));
+    return;
+  }
+
   throw new Error(`bad file descriptor ${numericFd}`);
+}
+
+function writeBytesToGuestFileHandle(handle, bytes) {
+  const chunk = Buffer.from(bytes ?? []);
+  const position = handle.append ? null : (handle.position ?? 0);
+  const written = fsModule.writeSync(
+    handle.targetFd,
+    chunk,
+    0,
+    chunk.length,
+    position,
+  );
+  if (handle.append) {
+    handle.position = Number(fsModule.fstatSync(handle.targetFd).size ?? 0);
+  } else {
+    handle.position = (handle.position ?? 0) + written;
+  }
+  return written;
 }
 
 function routeChunkToDelegateFd(fd, bytes) {
@@ -10151,6 +10223,7 @@ function finalizeChildExit(record, exitCode, signal) {
       delegateManagedFdClose(fd);
     }
   }
+  releaseSpawnOutputHandles(record.retainedSpawnOutputHandles);
   unregisterChildPipeProducers(record);
   unregisterChildPipeConsumers(record);
   return status;
@@ -11001,6 +11074,10 @@ const hostProcessImport = {
             const stdinPipe = registerPipeConsumer(stdinTarget, result.childId, 'stdin');
             const stdoutPipe = registerPipeProducer(stdoutTarget, result.childId, 'stdout');
             const stderrPipe = registerPipeProducer(stderrTarget, result.childId, 'stderr');
+            const retainedSpawnOutputHandles = [stdoutTarget, stderrTarget]
+              .filter((fd, index, values) => values.indexOf(fd) === index)
+              .map((fd) => retainSpawnOutputHandle(fd))
+              .filter(Boolean);
             const delegateRetainedFds = [stdinTarget, stdoutTarget, stderrTarget].filter(
               (fd, index, values) =>
                 fd > 2 &&
@@ -11021,6 +11098,7 @@ const hostProcessImport = {
               stderrPipe,
               stdinReadyAtMs: Date.now() + 100,
               delegateRetainedFds,
+              retainedSpawnOutputHandles,
               exitStatus: null,
       };
             spawnedChildren.set(pid, record);
@@ -11934,13 +12012,7 @@ wasiImport.fd_write = (fd, iovs, iovsLen, nwrittenPtr) => {
   if (handle?.kind === 'guest-file') {
     try {
       const bytes = collectGuestIovBytes(iovs, iovsLen);
-      const position = handle.append ? null : (handle.position ?? 0);
-      const written = fsModule.writeSync(handle.targetFd, bytes, 0, bytes.length, position);
-      if (handle.append) {
-        handle.position = Number(fsModule.fstatSync(handle.targetFd).size ?? 0);
-      } else {
-        handle.position = (handle.position ?? 0) + written;
-      }
+      const written = writeBytesToGuestFileHandle(handle, bytes);
       return writeGuestUint32(nwrittenPtr, written);
     } catch {
       return WASI_ERRNO_FAULT;

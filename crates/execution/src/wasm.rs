@@ -2659,6 +2659,22 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
           );
           return this._writeUint32(nwrittenPtr, written);
         }}
+        if (handle?.kind === "guest-file" && typeof handle.targetFd === "number") {{
+          const position = handle.append ? null : (handle.position ?? 0);
+          const written = __agentOsFs().writeSync(
+            handle.targetFd,
+            bytes,
+            0,
+            bytes.length,
+            position,
+          );
+          if (handle.append) {{
+            handle.position = Number(__agentOsFs().fstatSync(handle.targetFd).size ?? 0);
+          }} else {{
+            handle.position = (handle.position ?? 0) + written;
+          }}
+          return this._writeUint32(nwrittenPtr, written);
+        }}
         const entry = this.fdTable.get(descriptor);
         if (!entry) {{
           return __agentOsWasiErrnoBadf;
