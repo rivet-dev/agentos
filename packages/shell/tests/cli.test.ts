@@ -30,7 +30,7 @@ describe("agent-os-shell cli", () => {
 				"--",
 				"node",
 				"-e",
-				"console.log(`SHELL_VM_COMMAND:${process.cwd()}`); process.exit(7);",
+				"console.log('SHELL_VM_COMMAND:' + process.cwd()); process.exit(7);",
 			],
 			{
 				cwd: packageRoot,
