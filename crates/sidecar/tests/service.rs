@@ -1270,6 +1270,25 @@ setInterval(() => {}, 1000);
             process_id: &str,
             allowed_node_builtins: &str,
         ) -> (String, String, Option<i32>) {
+            run_javascript_entry_with_env(
+                sidecar,
+                vm_id,
+                cwd,
+                process_id,
+                BTreeMap::from([(
+                    String::from("AGENT_OS_ALLOWED_NODE_BUILTINS"),
+                    allowed_node_builtins.to_owned(),
+                )]),
+            )
+        }
+
+        fn run_javascript_entry_with_env(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            vm_id: &str,
+            cwd: &Path,
+            process_id: &str,
+            env: BTreeMap<String, String>,
+        ) -> (String, String, Option<i32>) {
             let context =
                 sidecar
                     .javascript_engine
@@ -1278,17 +1297,13 @@ setInterval(() => {}, 1000);
                         bootstrap_module: None,
                         compile_cache_root: None,
                     });
-            let env = BTreeMap::from([(
-                String::from("AGENT_OS_ALLOWED_NODE_BUILTINS"),
-                allowed_node_builtins.to_owned(),
-            )]);
             let execution = sidecar
                 .javascript_engine
                 .start_execution(StartJavascriptExecutionRequest {
                     vm_id: vm_id.to_owned(),
                     context_id: context.context_id,
                     argv: vec![String::from("./entry.mjs")],
-                    env,
+                    env: env.clone(),
                     cwd: cwd.to_path_buf(),
                     inline_code: None,
                 })
@@ -1319,6 +1334,7 @@ setInterval(() => {}, 1000);
                         GuestRuntimeKind::JavaScript,
                         ActiveExecution::Javascript(execution),
                     )
+                    .with_env(env)
                     .with_host_cwd(cwd.to_path_buf()),
                 );
             }
@@ -9491,6 +9507,102 @@ console.log(
                 assert_eq!(stream, "abcd");
             }
         }
+
+        fn javascript_mapped_tmp_open_wx_uses_exclusive_create_once() {
+            assert_node_available();
+
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+            let cwd = temp_dir("agent-os-sidecar-js-open-wx-cwd");
+            let mapped_tmp = temp_dir("agent-os-sidecar-js-open-wx-mapped-tmp");
+            write_fixture(
+                &cwd.join("entry.mjs"),
+                r#"
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const target = path.join(os.tmpdir(), "exclusive-mapped.lock");
+try {
+  fs.unlinkSync(target);
+} catch {}
+
+const fd = fs.openSync(target, "wx", 0o600);
+fs.writeSync(fd, "lock");
+fs.closeSync(fd);
+
+let secondOpenCode = "";
+try {
+  fs.openSync(target, "wx", 0o600);
+  secondOpenCode = "opened";
+} catch (error) {
+  secondOpenCode = error.code;
+}
+
+console.log(
+  JSON.stringify({
+    tmpdir: os.tmpdir(),
+    text: fs.readFileSync(target, "utf8"),
+    secondOpenCode,
+    exists: fs.existsSync(target),
+  }),
+);
+"#,
+            );
+
+            let mapped_tmp_json = serde_json::to_string(&vec![mapped_tmp.display().to_string()])
+                .expect("serialize mapped tmp access roots");
+            let (stdout, stderr, exit_code) = run_javascript_entry_with_env(
+                &mut sidecar,
+                &vm_id,
+                &cwd,
+                "proc-js-open-wx",
+                BTreeMap::from([
+                    (
+                        String::from("AGENT_OS_ALLOWED_NODE_BUILTINS"),
+                        String::from("[\"buffer\",\"console\",\"fs\",\"os\",\"path\"]"),
+                    ),
+                    (
+                        String::from("AGENT_OS_GUEST_PATH_MAPPINGS"),
+                        serde_json::to_string(&vec![json!({
+                            "guestPath": "/tmp",
+                            "hostPath": mapped_tmp.display().to_string(),
+                        })])
+                        .expect("serialize mapped tmp path"),
+                    ),
+                    (
+                        String::from("AGENT_OS_EXTRA_FS_READ_PATHS"),
+                        mapped_tmp_json.clone(),
+                    ),
+                    (
+                        String::from("AGENT_OS_EXTRA_FS_WRITE_PATHS"),
+                        mapped_tmp_json,
+                    ),
+                ]),
+            );
+
+            assert_eq!(exit_code, Some(0), "stdout: {stdout}\nstderr: {stderr}");
+            assert!(stdout.contains("\"text\":\"lock\""), "stdout: {stdout}");
+            assert!(
+                stdout.contains("\"secondOpenCode\":\"EEXIST\""),
+                "stdout: {stdout}"
+            );
+            assert!(stdout.contains("\"exists\":true"), "stdout: {stdout}");
+            assert_eq!(
+                fs::read_to_string(mapped_tmp.join("exclusive-mapped.lock"))
+                    .expect("read mapped host lock file"),
+                "lock"
+            );
+        }
+
         fn javascript_fs_promises_batch_requests_before_waiting_on_sidecar_responses() {
             assert_node_available();
 
@@ -15128,6 +15240,7 @@ console.log(JSON.stringify({
             python_vfs_rpc_paths_are_scoped_to_workspace_root();
             javascript_fs_sync_rpc_resolves_proc_self_against_the_kernel_process();
             javascript_fd_and_stream_rpc_requests_proxy_into_the_vm_kernel_filesystem();
+            javascript_mapped_tmp_open_wx_uses_exclusive_create_once();
             javascript_fs_promises_batch_requests_before_waiting_on_sidecar_responses();
             javascript_crypto_basic_sync_rpcs_round_trip_through_sidecar();
             javascript_crypto_advanced_sync_rpcs_round_trip_through_sidecar();

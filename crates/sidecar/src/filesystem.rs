@@ -859,11 +859,9 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     let host_path = opened.host_path.clone();
                     return open_mapped_host_fd(
                         process,
-                        path,
                         host_path,
                         opened.handle.proc_path(),
                         flags,
-                        mode,
                     );
                 }
                 Some(MappedRuntimeHostAccess::ReadOnly(_)) => {
@@ -2364,11 +2362,9 @@ fn materialize_mapped_host_path_from_kernel(
 
 fn open_mapped_host_fd(
     process: &mut ActiveProcess,
-    guest_path: &str,
     host_path: PathBuf,
     proc_path: PathBuf,
     flags: u32,
-    mode: Option<u32>,
 ) -> Result<Value, SidecarError> {
     let access_mode = flags & libc::O_ACCMODE as u32;
     let mut options = OpenOptions::new();
@@ -2386,15 +2382,6 @@ fn open_mapped_host_fd(
     if flags & libc::O_APPEND as u32 != 0 {
         options.append(true);
     }
-    if flags & libc::O_CREAT as u32 != 0 {
-        options.create(true);
-    }
-    if flags & libc::O_EXCL as u32 != 0 {
-        options.create_new(true);
-    }
-    if flags & libc::O_TRUNC as u32 != 0 {
-        options.truncate(true);
-    }
 
     let masked_flags = flags
         & !(libc::O_ACCMODE as u32
@@ -2402,13 +2389,11 @@ fn open_mapped_host_fd(
             | libc::O_CREAT as u32
             | libc::O_EXCL as u32
             | libc::O_TRUNC as u32);
-    options.mode(mode.unwrap_or(0o666));
     options.custom_flags(masked_flags as i32);
 
     let file = options.open(&proc_path).map_err(|error| {
         SidecarError::Io(format!(
-            "failed to open mapped guest file {} -> {}: {error}",
-            guest_path,
+            "failed to open mapped guest file {}: {error}",
             host_path.display()
         ))
     })?;
