@@ -1,14 +1,14 @@
-# @rivet-dev/agent-os
+# @rivet-dev/agent-os-core
 
-A high-level SDK for running coding agents in isolated VMs. agentOS manages the full lifecycle of virtual machines — from filesystem setup and process management to launching AI agents via the Agent Communication Protocol (ACP).
+A high-level SDK for running coding agents in isolated VMs. agentOS manages the full lifecycle of virtual machines -- from filesystem setup and process management to launching AI agents via the Agent Communication Protocol (ACP).
 
-Agents run inside sandboxed VMs with their own filesystem, process table, and network stack. The host only communicates through well-defined APIs, keeping agent execution fully contained.
+Agents run inside isolated VMs with their own filesystem, process table, and network stack. The host only communicates through well-defined APIs, keeping agent execution fully contained.
 
 ## Features
 
 - **VM lifecycle** — create, configure, and dispose isolated virtual machines
 - **Sidecar placement** — reuse the default shared sidecar or inject an explicit sidecar handle
-- **Agent sessions (ACP)** — launch coding agents (PI, OpenCode) via JSON-RPC over stdio
+- **Agent sessions (ACP)** — launch coding agents (Pi, Pi CLI, OpenCode, Claude) via JSON-RPC over stdio
 - **Filesystem operations** — read, write, mkdir, stat, move, delete, recursive listing, batch read/write
 - **Process management** — spawn, exec, stop, kill processes; inspect process trees across all runtimes
 - **Agent registry** — discover available agents and their installation status
@@ -19,25 +19,25 @@ Agents run inside sandboxed VMs with their own filesystem, process table, and ne
 ## Quick Start
 
 ```bash
-npm install @rivet-dev/agent-os
+npm install @rivet-dev/agent-os-core
 # Install an agent adapter + its underlying agent
-npm install pi-acp @mariozechner/pi-coding-agent
+npm install @rivet-dev/agent-os-pi @mariozechner/pi-coding-agent
 ```
 
 ```typescript
-import { AgentOs } from "@rivet-dev/agent-os";
+import { AgentOs } from "@rivet-dev/agent-os-core";
 
 // 1. Create a VM
 const vm = await AgentOs.create();
 
 // 2. Create an agent session
-const session = await vm.createSession("pi");
+const { sessionId } = await vm.createSession("pi");
 
 // 3. Send a prompt
-const response = await session.prompt("Write a hello world in TypeScript");
+const response = await vm.prompt(sessionId, "Write a hello world in TypeScript");
 
 // 4. Clean up
-session.close();
+vm.closeSession(sessionId);
 await vm.dispose();
 ```
 
@@ -75,7 +75,7 @@ await vm.dispose();
 | `exists` | `exists(path: string): Promise<boolean>` | Check if a path exists |
 | `move` | `move(from: string, to: string): Promise<void>` | Rename/move a file or directory |
 | `delete` | `delete(path: string, options?: { recursive?: boolean }): Promise<void>` | Delete a file or directory |
-| `mountFs` | `mountFs(path: string, config: MountConfig): void` | Mount a filesystem at the given path |
+| `mountFs` | `mountFs(path: string, driver: VirtualFileSystem, options?: { readOnly?: boolean }): void` | Mount a filesystem driver at the given path |
 | `unmountFs` | `unmountFs(path: string): void` | Unmount a filesystem |
 
 ### Process Management
@@ -83,7 +83,7 @@ await vm.dispose();
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `exec` | `exec(command: string, options?: ExecOptions): Promise<ExecResult>` | Execute a shell command and wait for completion |
-| `spawn` | `spawn(command: string, args: string[], options?: SpawnOptions): ManagedProcess` | Spawn a long-running process |
+| `spawn` | `spawn(command: string, args: string[], options?: SpawnOptions): { pid: number }` | Spawn a long-running process |
 | `listProcesses` | `listProcesses(): SpawnedProcessInfo[]` | List processes started via `spawn()` |
 | `allProcesses` | `allProcesses(): ProcessInfo[]` | List all kernel processes across all runtimes |
 | `processTree` | `processTree(): ProcessTreeNode[]` | Get processes organized as a parent-child tree |
@@ -112,10 +112,9 @@ await vm.dispose();
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `createSession` | `createSession(agentType: AgentType, options?: CreateSessionOptions): Promise<Session>` | Launch an agent and return a session |
+| `createSession` | `createSession(agentType: AgentType \| string, options?: CreateSessionOptions): Promise<{ sessionId: string }>` | Launch an agent and return a session ID |
 | `listSessions` | `listSessions(): SessionInfo[]` | List active sessions |
-| `getSession` | `getSession(sessionId: string): Session` | Get a session by ID |
-| `resumeSession` | `resumeSession(sessionId: string): Session` | Retrieve an active session by ID |
+| `resumeSession` | `resumeSession(sessionId: string): { sessionId: string }` | Confirm and return an active session ID |
 | `destroySession` | `destroySession(sessionId: string): Promise<void>` | Gracefully cancel and close a session |
 
 ### Agent Registry
@@ -124,26 +123,23 @@ await vm.dispose();
 |--------|-----------|-------------|
 | `listAgents` | `listAgents(): AgentRegistryEntry[]` | List registered agents with installation status |
 
-### Session Class
+### Agent Session Operations
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `prompt` | `prompt(text: string): Promise<JsonRpcResponse>` | Send a prompt and wait for the response |
-| `cancel` | `cancel(): Promise<JsonRpcResponse>` | Cancel ongoing agent work |
-| `close` | `close(): void` | Kill the agent process and clean up |
-| `onSessionEvent` | `onSessionEvent(handler: SessionEventHandler): void` | Subscribe to session update notifications |
-| `onPermissionRequest` | `onPermissionRequest(handler: PermissionRequestHandler): void` | Subscribe to permission requests |
-| `respondPermission` | `respondPermission(permissionId: string, reply: PermissionReply): Promise<JsonRpcResponse>` | Reply to a permission request |
-| `setMode` | `setMode(modeId: string): Promise<JsonRpcResponse>` | Set the session mode (e.g., "plan") |
-| `getModes` | `getModes(): SessionModeState \| null` | Get available modes |
-| `setModel` | `setModel(model: string): Promise<JsonRpcResponse>` | Set the model |
-| `setThoughtLevel` | `setThoughtLevel(level: string): Promise<JsonRpcResponse>` | Set reasoning level |
-| `getConfigOptions` | `getConfigOptions(): SessionConfigOption[]` | Get available config options |
-| `getEvents` | `getEvents(options?: GetEventsOptions): JsonRpcNotification[]` | Get event history |
-| `getSequencedEvents` | `getSequencedEvents(options?: GetEventsOptions): SequencedEvent[]` | Get event history with sequence numbers |
+| `prompt` | `prompt(sessionId: string, text: string): Promise<PromptResult>` | Send a prompt and collect the agent text |
+| `cancelSession` | `cancelSession(sessionId: string): Promise<JsonRpcResponse>` | Cancel ongoing agent work |
+| `closeSession` | `closeSession(sessionId: string): void` | Kill the agent process and clean up |
+| `onSessionEvent` | `onSessionEvent(sessionId: string, handler: SessionEventHandler): () => void` | Subscribe to session update notifications |
+| `onPermissionRequest` | `onPermissionRequest(sessionId: string, handler: PermissionRequestHandler): () => void` | Subscribe to permission requests |
+| `respondPermission` | `respondPermission(sessionId: string, permissionId: string, reply: PermissionReply): Promise<JsonRpcResponse>` | Reply to a permission request |
+| `setSessionMode` | `setSessionMode(sessionId: string, modeId: string): Promise<JsonRpcResponse>` | Set the session mode |
+| `getSessionModes` | `getSessionModes(sessionId: string): SessionModeState \| null` | Get available modes |
+| `setSessionModel` | `setSessionModel(sessionId: string, model: string): Promise<JsonRpcResponse>` | Set the model |
+| `setSessionThoughtLevel` | `setSessionThoughtLevel(sessionId: string, level: string): Promise<JsonRpcResponse>` | Set reasoning level |
+| `getSessionConfigOptions` | `getSessionConfigOptions(sessionId: string): SessionConfigOption[]` | Get available config options |
+| `getSessionEvents` | `getSessionEvents(sessionId: string, options?: GetEventsOptions): SequencedEvent[]` | Get event history with sequence numbers |
 | `rawSend` | `rawSend(sessionId: string, method: string, params?: Record<string, unknown>): Promise<JsonRpcResponse>` | Send an arbitrary ACP request |
-
-**Session properties:** `sessionId`, `agentType`, `capabilities`, `agentInfo`, `closed`
 
 ### Exported Types
 
@@ -184,7 +180,7 @@ await vm.dispose();
 - `BatchReadResult` — Result of a batch read (path, content, error?)
 
 **Agent**
-- `AgentType` — `"pi" | "opencode"`
+- `AgentType` — `"pi" | "pi-cli" | "opencode" | "claude"`
 - `AgentConfig` — Agent configuration (acpAdapter, agentPackage, prepareInstructions)
 - `AgentRegistryEntry` — Registry entry (id, acpAdapter, agentPackage, installed)
 

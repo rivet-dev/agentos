@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  A portable open-source operating system for AI agents.<br/>Near-zero cold starts (~6 ms), up to 32x cheaper than sandboxes.<br/>Powered by WebAssembly and V8 isolates.<br/><br/>Supports Pi, Claude Code*, Codex*, Amp*, and OpenCode*<br/><sub>* coming soon</sub>
+  A portable open-source operating system for AI agents.<br/>Near-zero cold starts (~6 ms), up to 32x cheaper than sandboxes.<br/>Built-in ACP agents: Pi, Claude Code, and OpenCode
 </p>
 
 <p align="center">
@@ -28,11 +28,11 @@ You don't have to choose: agentOS works with sandboxes through the [sandbox exte
 ## Quick start
 
 ```bash
-npm install @rivet-dev/agent-os @rivet-dev/agent-os-common @rivet-dev/agent-os-pi
+npm install @rivet-dev/agent-os-core @rivet-dev/agent-os-common @rivet-dev/agent-os-pi
 ```
 
 ```ts
-import { AgentOs } from "@rivet-dev/agent-os";
+import { AgentOs } from "@rivet-dev/agent-os-core";
 import common from "@rivet-dev/agent-os-common";
 import pi from "@rivet-dev/agent-os-pi";
 
@@ -107,7 +107,7 @@ All benchmarks compare agentOS against the fastest/cheapest mainstream sandbox p
 ## Features
 
 ### Agents
-- **Multi-agent support**: Run Claude Code, OpenCode, Amp, Pi, and more with a unified API
+- **Multi-agent support**: Run built-in Pi, Claude Code, and OpenCode agents with a unified API, plus install registry command packages such as Codex as VM software
 - **[Sessions via ACP](https://rivet.dev/docs/agent-os/sessions)**: Create, manage, and resume agent sessions over the [Agent Communication Protocol](https://agentclientprotocol.com)
 - **Universal transcript format**: One transcript format across all agents for debugging, auditing, and comparison
 - **[Automatic persistence](https://rivet.dev/docs/agent-os/persistence)**: Every conversation is saved and replayable without extra code
@@ -128,16 +128,11 @@ All benchmarks compare agentOS against the fastest/cheapest mainstream sandbox p
 - **[Deny-by-default permissions](https://rivet.dev/docs/agent-os/security)**: Granular control over filesystem, network, process, and environment access
 - **[Programmatic network control](https://rivet.dev/docs/agent-os/networking)**: Allow, deny, or proxy any outbound connection
 - **[Resource limits](https://rivet.dev/docs/agent-os/security)**: Set precise CPU and memory limits per agent
-- **[V8 + WebAssembly isolation](https://rivet.dev/docs/agent-os/architecture)**: Each agent runs in its own isolate with no shared state
+- **[VM isolation](https://rivet.dev/docs/agent-os/architecture)**: Each agent runs in its own VM with no shared state
 
 ## Architecture
 
-agentOS is built on an in-process operating system kernel written in JavaScript. Three runtimes mount into the kernel:
-
-- **WebAssembly**: POSIX utilities (coreutils, grep, sed, etc.) compiled to WASM
-- **V8 isolates**: JavaScript/TypeScript agent code runs in sandboxed V8 contexts
-
-The kernel manages a virtual filesystem, process table, pipes, PTYs, and a virtual network stack. Everything runs inside the kernel -- nothing executes on the host.
+agentOS is built on an in-process operating system kernel. The kernel manages a virtual filesystem, process table, pipes, PTYs, and a virtual network stack. Everything runs inside the kernel -- nothing executes on the host.
 
 See the [Architecture docs](https://rivet.dev/docs/agent-os/architecture) for details.
 
@@ -146,7 +141,7 @@ See the [Architecture docs](https://rivet.dev/docs/agent-os/architecture) for de
 Browse pre-built agents, tools, filesystems, and software packages at the [agentOS Registry](https://rivet.dev/agent-os/registry).
 
 <!-- BEGIN PACKAGE TABLE -->
-### WASM Command Packages
+### VM Command Packages
 
 | Package | apt Equivalent | Description | Source | Combined Size | Gzipped |
 |---------|---------------|-------------|--------|---------------|---------|
@@ -177,8 +172,8 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 
 | Package | Description | Includes |
 |---------|-------------|----------|
-| `@rivet-dev/agent-os-build-essential` | Build-essential WASM command set (standard + make + git + curl) | standard, make, git, curl |
-| `@rivet-dev/agent-os-common` | Common WASM command set (coreutils + sed + grep + gawk + findutils + diffutils + tar + gzip) | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip |
+| `@rivet-dev/agent-os-build-essential` | Build-essential VM command set (standard + make + git + curl) | standard, make, git, curl |
+| `@rivet-dev/agent-os-common` | Common VM command set (coreutils + sed + grep + gawk + findutils + diffutils + tar + gzip) | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip |
 <!-- END PACKAGE TABLE -->
 
 ## License
