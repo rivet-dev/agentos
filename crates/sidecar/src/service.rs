@@ -126,6 +126,21 @@ impl AcpRequestError {
     }
 }
 
+/// Append `chunk` to a bounded stderr `buffer`, keeping only the last `cap` bytes. The tail is kept
+/// because adapter errors and stack traces land at the end of the stream. Truncation happens on a
+/// UTF-8 char boundary so the retained tail stays valid UTF-8.
+fn append_bounded_stderr(buffer: &mut String, chunk: &str, cap: usize) {
+    buffer.push_str(chunk);
+    if buffer.len() <= cap {
+        return;
+    }
+    let mut start = buffer.len() - cap;
+    while start < buffer.len() && !buffer.is_char_boundary(start) {
+        start += 1;
+    }
+    buffer.drain(..start);
+}
+
 pub(crate) fn parse_javascript_child_process_spawn_request(
     vm: &VmState,
     args: &[Value],
@@ -851,6 +866,9 @@ pub struct NativeSidecar<B> {
     pub(crate) vms: BTreeMap<String, VmState>,
     pub(crate) acp_sessions: BTreeMap<String, AcpSessionState>,
     pub(crate) acp_process_stdout_buffers: BTreeMap<String, String>,
+    /// Bounded tail of each ACP adapter process's stderr, keyed by process id. Retained even before
+    /// an ACP `sessionId` exists so an adapter that dies during `initialize` can report why.
+    pub(crate) acp_process_stderr_buffers: BTreeMap<String, String>,
     pub(crate) process_event_sender: UnboundedSender<ProcessEventEnvelope>,
     pub(crate) process_event_receiver: Option<UnboundedReceiver<ProcessEventEnvelope>>,
     pub(crate) pending_process_events: VecDeque<ProcessEventEnvelope>,
@@ -877,6 +895,10 @@ impl<B> fmt::Debug for NativeSidecar<B> {
                 "acp_process_stdout_buffer_count",
                 &self.acp_process_stdout_buffers.len(),
             )
+            .field(
+                "acp_process_stderr_buffer_count",
+                &self.acp_process_stderr_buffers.len(),
+            )
             .finish()
     }
 }
@@ -889,6 +911,9 @@ where
     const ACP_REQUEST_TIMEOUT_MS: u64 = 120_000;
     const ACP_CANCEL_FLUSH_GRACE: Duration = Duration::from_millis(50);
     const ACP_KILL_WAIT_GRACE: Duration = Duration::from_secs(5);
+    /// Maximum bytes of an ACP adapter's stderr retained for diagnostics. The tail is kept because
+    /// stack traces and the actual error message land at the end of the stream.
+    const ACP_STDERR_BUFFER_CAP: usize = 8 * 1024;
 
     pub fn new(bridge: B) -> Result<Self, SidecarError> {
         Self::with_config(bridge, NativeSidecarConfig::default())
@@ -937,6 +962,7 @@ where
             vms: BTreeMap::new(),
             acp_sessions: BTreeMap::new(),
             acp_process_stdout_buffers: BTreeMap::new(),
+            acp_process_stderr_buffers: BTreeMap::new(),
             process_event_sender,
             process_event_receiver: Some(process_event_receiver),
             pending_process_events: VecDeque::new(),
@@ -3033,6 +3059,7 @@ where
             .is_some_and(|vm| vm.active_processes.contains_key(process_id))
         {
             self.acp_process_stdout_buffers.remove(process_id);
+            self.acp_process_stderr_buffers.remove(process_id);
             if let Some(vm) = self.vms.get_mut(vm_id) {
                 vm.signal_states.remove(process_id);
             }
@@ -3070,6 +3097,7 @@ where
     fn kill_acp_process(&mut self, vm_id: &str, process_id: &str) {
         let _ = self.kill_process_internal(vm_id, process_id, "SIGKILL");
         self.acp_process_stdout_buffers.remove(process_id);
+        self.acp_process_stderr_buffers.remove(process_id);
         if let Some(vm) = self.vms.get_mut(vm_id) {
             vm.active_processes.remove(process_id);
             vm.signal_states.remove(process_id);
@@ -3156,6 +3184,7 @@ where
         }
 
         self.acp_process_stdout_buffers.remove(process_id);
+        self.acp_process_stderr_buffers.remove(process_id);
         if let Some(vm) = self.vms.get_mut(vm_id) {
             vm.active_processes.remove(process_id);
             vm.signal_states.remove(process_id);
@@ -3230,21 +3259,13 @@ where
                     }
                 }
                 if let Some(exit_code) = exited {
+                    let error =
+                        self.acp_process_exit_error(process_id, &request.method, exit_code);
                     self.terminate_acp_process(vm_id, process_id)
                         .await
                         .map_err(AcpRequestError::Sidecar)?;
                     return Ok((
-                        JsonRpcResponse::error_response(
-                            request.id.clone(),
-                            JsonRpcError {
-                                code: -32000,
-                                message: format!(
-                                    "ACP process exited while handling {} (exit code {exit_code})",
-                                    request.method
-                                ),
-                                data: None,
-                            },
-                        ),
+                        JsonRpcResponse::error_response(request.id.clone(), error),
                         events,
                     ));
                 }
@@ -3295,21 +3316,13 @@ where
                     }
                 }
                 if let Some(exit_code) = exited {
+                    let error =
+                        self.acp_process_exit_error(process_id, &request.method, exit_code);
                     self.terminate_acp_process(vm_id, process_id)
                         .await
                         .map_err(AcpRequestError::Sidecar)?;
                     return Ok((
-                        JsonRpcResponse::error_response(
-                            request.id.clone(),
-                            JsonRpcError {
-                                code: -32000,
-                                message: format!(
-                                    "ACP process exited while handling {} (exit code {exit_code})",
-                                    request.method
-                                ),
-                                data: None,
-                            },
-                        ),
+                        JsonRpcResponse::error_response(request.id.clone(), error),
                         events,
                     ));
                 }
@@ -3579,10 +3592,19 @@ where
                 Ok(matched_response)
             }
             ActiveExecutionEvent::Stderr(chunk) => {
+                let text = String::from_utf8_lossy(&chunk);
+                // Retain a bounded tail per process, even before an ACP `sessionId` exists, so an
+                // adapter that dies during `initialize` can report why it failed.
+                append_bounded_stderr(
+                    self.acp_process_stderr_buffers
+                        .entry(String::from(process_id))
+                        .or_default(),
+                    &text,
+                    Self::ACP_STDERR_BUFFER_CAP,
+                );
                 if let Some(session_id) = session_id {
                     if let Some(session) = self.acp_sessions.get_mut(session_id) {
-                        session
-                            .record_activity(format!("stderr {}", String::from_utf8_lossy(&chunk)));
+                        session.record_activity(format!("stderr {text}"));
                     }
                 }
                 Ok(None)
@@ -3617,6 +3639,41 @@ where
                 }
                 Ok(None)
             }
+        }
+    }
+
+    /// Build the JSON-RPC error returned when an ACP adapter process exits while a request is
+    /// in flight. The adapter's captured stderr tail is folded into the message (so it reaches the
+    /// client as part of `ClientError::Kernel`) and into `data` for programmatic callers. An empty
+    /// stderr buffer is itself reported: silence usually means the runtime died before the adapter
+    /// could print anything.
+    fn acp_process_exit_error(
+        &mut self,
+        process_id: &str,
+        method: &str,
+        exit_code: i32,
+    ) -> JsonRpcError {
+        let stderr = self
+            .acp_process_stderr_buffers
+            .remove(process_id)
+            .unwrap_or_default();
+        let stderr = stderr.trim();
+        let message = if stderr.is_empty() {
+            format!(
+                "ACP process exited while handling {method} (exit code {exit_code}); no stderr captured"
+            )
+        } else {
+            format!(
+                "ACP process exited while handling {method} (exit code {exit_code}); stderr: {stderr}"
+            )
+        };
+        JsonRpcError {
+            code: -32000,
+            message,
+            data: Some(json!({
+                "exitCode": exit_code,
+                "stderr": stderr,
+            })),
         }
     }
 

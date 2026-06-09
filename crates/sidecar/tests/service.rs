@@ -396,6 +396,89 @@ setInterval(() => {}, 1000);
             );
         }
 
+        fn append_bounded_stderr_retains_tail() {
+            // Under the cap, the buffer accumulates verbatim.
+            let mut buffer = String::new();
+            append_bounded_stderr(&mut buffer, "abc", 8);
+            append_bounded_stderr(&mut buffer, "def", 8);
+            assert_eq!(buffer, "abcdef");
+
+            // Exceeding the cap drops from the front and keeps the tail.
+            append_bounded_stderr(&mut buffer, "ghijk", 8);
+            assert_eq!(buffer, "defghijk");
+            assert!(buffer.len() <= 8);
+
+            // Truncation lands on a UTF-8 char boundary (each Greek letter is two bytes), advancing
+            // past a partial leading char so the retained tail stays valid UTF-8.
+            let mut multi = String::new();
+            append_bounded_stderr(&mut multi, "αβγδε", 5);
+            assert_eq!(multi, "δε");
+            assert!(std::str::from_utf8(multi.as_bytes()).is_ok());
+        }
+
+        fn acp_adapter_stderr_surfaces_on_initialize_exit() {
+            let mut sidecar = create_test_sidecar();
+            let process_id = "acp-agent-1";
+            let ownership = OwnershipScope::vm("conn-1", "session-1", "vm-1");
+            let mut events = Vec::new();
+
+            // stderr arriving before any ACP `sessionId` (the `initialize` window) must still be
+            // retained. This is the regression: previously the Stderr arm dropped the chunk when
+            // `session_id` was `None`, so an adapter that died during initialize said nothing.
+            let result = sidecar
+                .handle_acp_process_event(
+                    "vm-1",
+                    process_id,
+                    None,
+                    &ownership,
+                    ActiveExecutionEvent::Stderr(
+                        b"Error: Cannot find module 'pi'\n".to_vec(),
+                    ),
+                    &mut events,
+                )
+                .expect("handle stderr event");
+            assert!(result.is_none(), "stderr event yields no JSON-RPC response");
+            assert!(
+                sidecar
+                    .acp_process_stderr_buffers
+                    .get(process_id)
+                    .is_some_and(|buffer| buffer.contains("Cannot find module 'pi'")),
+                "stderr must be buffered even without a sessionId"
+            );
+
+            // On exit, the buffered stderr is folded into the surfaced error so it reaches the
+            // caller through `create_session` -> `ClientError::Kernel`.
+            let error = sidecar.acp_process_exit_error(process_id, "initialize", 1);
+            assert_eq!(error.code, -32000);
+            assert!(
+                error.message.contains("exit code 1"),
+                "message: {}",
+                error.message
+            );
+            assert!(
+                error.message.contains("Cannot find module 'pi'"),
+                "stderr must be in the error message: {}",
+                error.message
+            );
+            let data = error.data.expect("exit error carries data");
+            assert_eq!(data["exitCode"], json!(1));
+            assert!(data["stderr"]
+                .as_str()
+                .is_some_and(|stderr| stderr.contains("Cannot find module 'pi'")));
+
+            // The buffer is drained once consumed.
+            assert!(!sidecar.acp_process_stderr_buffers.contains_key(process_id));
+
+            // An adapter that dies before printing anything is reported as such: silence usually
+            // means the runtime failed before the adapter could emit a diagnostic.
+            let silent = sidecar.acp_process_exit_error("acp-agent-2", "initialize", 1);
+            assert!(
+                silent.message.contains("no stderr captured"),
+                "message: {}",
+                silent.message
+            );
+        }
+
         fn create_kernel_process_handle_for_tests() -> agent_os_kernel::kernel::KernelProcessHandle
         {
             let mut config = KernelVmConfig::new("vm-js-crypto-rpc");
@@ -14770,6 +14853,8 @@ console.log(JSON.stringify({
             // trip teardown/init crashes around V8-backed execution paths, so
             // keep the broad coverage in one top-level suite.
             session_timeout_response_includes_structured_diagnostics();
+            append_bounded_stderr_retains_tail();
+            acp_adapter_stderr_surfaces_on_initialize_exit();
             kernel_socket_queries_ignore_stale_sidecar_guest_addresses();
             find_listener_rejects_without_network_inspect_permission();
             find_listener_returns_listener_with_network_inspect_permission();
