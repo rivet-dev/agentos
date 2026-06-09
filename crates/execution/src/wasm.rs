@@ -1217,7 +1217,7 @@ fn translate_wasm_guest_path(
     internal_sync_rpc: &WasmInternalSyncRpc,
 ) -> Option<PathBuf> {
     if let Some(host_path) = translate_wasm_host_runtime_path(path, internal_sync_rpc) {
-        return Some(host_path);
+        return confine_wasm_host_path(host_path, internal_sync_rpc);
     }
 
     let normalized_path = if path.starts_with('/') {
@@ -1238,11 +1238,17 @@ fn translate_wasm_guest_path(
     }
     for mapping in &internal_sync_rpc.guest_path_mappings {
         if let Some(suffix) = strip_guest_prefix(&normalized_path, &mapping.guest_path) {
-            return Some(join_host_path(&mapping.host_path, &suffix));
+            return confine_wasm_host_path(
+                join_host_path(&mapping.host_path, &suffix),
+                internal_sync_rpc,
+            );
         }
     }
     if let Some(suffix) = strip_guest_prefix(&normalized_path, &internal_sync_rpc.guest_cwd) {
-        return Some(join_host_path(&internal_sync_rpc.host_cwd, &suffix));
+        return confine_wasm_host_path(
+            join_host_path(&internal_sync_rpc.host_cwd, &suffix),
+            internal_sync_rpc,
+        );
     }
     if normalized_path.starts_with('/') {
         let root_candidate = internal_sync_rpc
@@ -1251,7 +1257,7 @@ fn translate_wasm_guest_path(
             .map(|root| join_host_path(root, normalized_path.trim_start_matches('/')));
         if let Some(candidate) = root_candidate.as_ref() {
             if candidate.exists() {
-                return Some(candidate.clone());
+                return confine_wasm_host_path(candidate.clone(), internal_sync_rpc);
             }
         }
 
@@ -1269,7 +1275,7 @@ fn translate_wasm_guest_path(
                 {
                     let candidate = join_host_path(&mapping.host_path, &suffix);
                     if candidate.exists() {
-                        return Some(candidate);
+                        return confine_wasm_host_path(candidate, internal_sync_rpc);
                     }
                 }
             }
@@ -1278,12 +1284,70 @@ fn translate_wasm_guest_path(
             {
                 let candidate = join_host_path(&internal_sync_rpc.host_cwd, &suffix);
                 if candidate.exists() {
-                    return Some(candidate);
+                    return confine_wasm_host_path(candidate, internal_sync_rpc);
                 }
             }
         }
 
-        return root_candidate;
+        return root_candidate.and_then(|path| confine_wasm_host_path(path, internal_sync_rpc));
+    }
+    None
+}
+
+fn confine_wasm_host_path(
+    host_path: PathBuf,
+    internal_sync_rpc: &WasmInternalSyncRpc,
+) -> Option<PathBuf> {
+    if host_path == internal_sync_rpc.module_host_path {
+        return Some(host_path);
+    }
+
+    let allowed_roots = wasm_allowed_host_roots(internal_sync_rpc);
+    if allowed_roots.is_empty() {
+        return None;
+    }
+
+    if let Ok(canonical_path) = fs::canonicalize(&host_path) {
+        return wasm_canonical_path_is_allowed(&canonical_path, &allowed_roots)
+            .then_some(host_path);
+    }
+
+    let existing_ancestor = nearest_existing_wasm_host_ancestor(&host_path)?;
+    let canonical_ancestor = fs::canonicalize(existing_ancestor).ok()?;
+    wasm_canonical_path_is_allowed(&canonical_ancestor, &allowed_roots).then_some(host_path)
+}
+
+fn wasm_allowed_host_roots(internal_sync_rpc: &WasmInternalSyncRpc) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for root in internal_sync_rpc
+        .guest_path_mappings
+        .iter()
+        .map(|mapping| mapping.host_path.as_path())
+        .chain(std::iter::once(internal_sync_rpc.host_cwd.as_path()))
+        .chain(internal_sync_rpc.sandbox_root.as_deref())
+    {
+        if let Ok(canonical_root) = fs::canonicalize(root) {
+            if !roots.iter().any(|existing| existing == &canonical_root) {
+                roots.push(canonical_root);
+            }
+        }
+    }
+    roots
+}
+
+fn wasm_canonical_path_is_allowed(path: &Path, allowed_roots: &[PathBuf]) -> bool {
+    allowed_roots
+        .iter()
+        .any(|root| path == root || path.starts_with(root))
+}
+
+fn nearest_existing_wasm_host_ancestor(path: &Path) -> Option<&Path> {
+    let mut candidate = Some(path);
+    while let Some(current) = candidate {
+        if fs::symlink_metadata(current).is_ok() {
+            return Some(current);
+        }
+        candidate = current.parent();
     }
     None
 }
@@ -5044,6 +5108,7 @@ mod tests {
         let sandbox_root = temp.path().join("shadow-root");
         let cwd = temp.path().join("mounted-workspace");
         let mapped_root = temp.path().join("mounted-commands");
+        fs::create_dir_all(&sandbox_root).expect("create sandbox root");
         fs::create_dir_all(cwd.join("subdir")).expect("create cwd");
         fs::create_dir_all(&mapped_root).expect("create mapped root");
 
@@ -5095,6 +5160,41 @@ mod tests {
                 &internal_sync_rpc
             ),
             Some(sandbox_root.join("tmp/runtime.sock"))
+        );
+    }
+
+    #[test]
+    fn translate_wasm_guest_path_rejects_symlink_escape_from_sandbox_root() {
+        let temp = tempdir().expect("create temp dir");
+        let sandbox_root = temp.path().join("shadow-root");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&sandbox_root).expect("create sandbox root");
+        fs::create_dir_all(&outside).expect("create outside root");
+        fs::write(outside.join("secret.txt"), b"host secret").expect("write outside file");
+        symlink(&outside, sandbox_root.join("escape")).expect("create escape symlink");
+
+        let internal_sync_rpc = WasmInternalSyncRpc {
+            module_guest_paths: Vec::new(),
+            module_host_path: sandbox_root.join("module.wasm"),
+            guest_cwd: String::from("/"),
+            host_cwd: sandbox_root.clone(),
+            sandbox_root: Some(sandbox_root.clone()),
+            guest_path_mappings: vec![super::WasmGuestPathMapping {
+                guest_path: String::from("/"),
+                host_path: sandbox_root,
+            }],
+            next_fd: 64,
+            open_files: Default::default(),
+            pending_events: VecDeque::new(),
+        };
+
+        assert_eq!(
+            translate_wasm_guest_path("/escape/secret.txt", &internal_sync_rpc),
+            None
+        );
+        assert_eq!(
+            translate_wasm_guest_path("/escape/new.txt", &internal_sync_rpc),
+            None
         );
     }
 
