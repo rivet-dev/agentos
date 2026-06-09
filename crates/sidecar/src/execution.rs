@@ -8699,6 +8699,7 @@ fn runtime_guest_path_mappings(vm: &VmState) -> Vec<RuntimeGuestPathMapping> {
                         .map(|host_path| RuntimeGuestPathMapping {
                             guest_path: normalize_path(&mount.guest_path),
                             host_path: host_path.to_owned(),
+                            read_only: mount.read_only,
                         })
                 })
                 .flatten()
@@ -8720,6 +8721,7 @@ fn runtime_guest_path_mappings(vm: &VmState) -> Vec<RuntimeGuestPathMapping> {
                 .to_string_lossy()
                 .into_owned(),
             guest_path,
+            read_only: false,
         })
         .collect::<Vec<_>>();
     mappings.append(&mut command_root_mappings);
@@ -8731,6 +8733,7 @@ fn runtime_guest_path_mappings(vm: &VmState) -> Vec<RuntimeGuestPathMapping> {
                 RuntimeGuestPathMapping {
                     guest_path: String::from("/root/node_modules"),
                     host_path: host_root.to_string_lossy().into_owned(),
+                    read_only: mapping.read_only,
                 }
             })
         })
@@ -8739,6 +8742,7 @@ fn runtime_guest_path_mappings(vm: &VmState) -> Vec<RuntimeGuestPathMapping> {
     mappings.push(RuntimeGuestPathMapping {
         guest_path: String::from("/"),
         host_path: vm.cwd.to_string_lossy().into_owned(),
+        read_only: false,
     });
     mappings.sort_by(|left, right| right.guest_path.len().cmp(&left.guest_path.len()));
     mappings.dedup_by(|left, right| {
@@ -11058,6 +11062,8 @@ struct RuntimeGuestPathMapping {
     guest_path: String,
     #[serde(rename = "hostPath")]
     host_path: String,
+    #[serde(rename = "readOnly", default)]
+    read_only: bool,
 }
 
 pub(crate) fn host_path_from_runtime_guest_mappings(

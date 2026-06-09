@@ -6,6 +6,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -788,6 +789,8 @@ describe("native sidecar process client", () => {
 		const projectRoot = mkdtempSync(join(tmpdir(), "agent-os-node-modules-root-"));
 		const dependencyRoot = mkdtempSync(join(tmpdir(), "agent-os-node-modules-store-"));
 		cleanupPaths.push(projectRoot, dependencyRoot);
+		const packageJsonPath = join(dependencyRoot, "package.json");
+		writeFileSync(packageJsonPath, '{"name":"dependency"}\n');
 		mkdirSync(join(dependencyRoot, ".bin"), { recursive: true });
 		writeFileSync(join(dependencyRoot, ".bin", "astro"), "#!/bin/sh\nexit 0\n");
 		chmodSync(join(dependencyRoot, ".bin", "astro"), 0o755);
@@ -816,6 +819,11 @@ describe("native sidecar process client", () => {
 						"console.log('astro', fs.existsSync('/node_modules/.bin/astro'));",
 						"try { fs.writeFileSync('/node_modules/mutated.txt', 'blocked'); }",
 						"catch (err) { console.log('write', err.code); }",
+						"try { fs.linkSync('/node_modules/package.json', '/linked-package.json'); }",
+						"catch (err) { console.log('link', err.code); }",
+						"console.log('linked_exists', fs.existsSync('/linked-package.json'));",
+						"try { fs.chmodSync('/node_modules/package.json', 0o777); }",
+						"catch (err) { console.log('chmod', err.code); }",
 					].join(" "),
 				],
 				{
@@ -835,7 +843,102 @@ describe("native sidecar process client", () => {
 			expect(stdout).toContain("bin true");
 			expect(stdout).toContain("astro true");
 			expect(stdout).toContain("write EROFS");
+			expect(stdout).toMatch(/link (EROFS|EXDEV)/);
+			expect(stdout).toContain("linked_exists false");
+			expect(stdout).toContain("chmod EROFS");
 			expect(existsSync(join(dependencyRoot, "mutated.txt"))).toBe(false);
+			expect(readFileSync(packageJsonPath, "utf8")).toBe(
+				'{"name":"dependency"}\n',
+			);
+
+			let wasmReadStdout = "";
+			let wasmReadStderr = "";
+			const wasmReadChild = kernel.spawn("cat", ["/node_modules/package.json"], {
+				onStdout: (chunk) => {
+					wasmReadStdout += Buffer.from(chunk).toString("utf8");
+				},
+				onStderr: (chunk) => {
+					wasmReadStderr += Buffer.from(chunk).toString("utf8");
+				},
+			});
+			expect(await wasmReadChild.wait()).toBe(0);
+			expect(wasmReadStderr).toBe("");
+			expect(wasmReadStdout).toBe('{"name":"dependency"}\n');
+
+			let wasmStderr = "";
+			const wasmChild = kernel.spawn(
+				"sh",
+				["-c", "echo wasm > /node_modules/mutated-wasm.txt"],
+				{
+					onStderr: (chunk) => {
+						wasmStderr += Buffer.from(chunk).toString("utf8");
+					},
+				},
+			);
+			const wasmExitCode = await wasmChild.wait();
+			expect(wasmExitCode).not.toBe(0);
+			expect(wasmStderr).toMatch(/read-?only|EROFS/i);
+			expect(existsSync(join(dependencyRoot, "mutated-wasm.txt"))).toBe(
+				false,
+			);
+			expect(readFileSync(packageJsonPath, "utf8")).toBe(
+				'{"name":"dependency"}\n',
+			);
+
+			let wasmRelativeStderr = "";
+			const wasmRelativeChild = kernel.spawn(
+				"sh",
+				["-c", "echo wasm > relative-wasm.txt"],
+				{
+					cwd: "/node_modules",
+					onStderr: (chunk) => {
+						wasmRelativeStderr += Buffer.from(chunk).toString("utf8");
+					},
+				},
+			);
+			const wasmRelativeExitCode = await wasmRelativeChild.wait();
+			expect(wasmRelativeExitCode).not.toBe(0);
+			expect(wasmRelativeStderr).toMatch(/read-?only|EROFS/i);
+			expect(existsSync(join(dependencyRoot, "relative-wasm.txt"))).toBe(
+				false,
+			);
+
+			let wasmLinkStderr = "";
+			const wasmLinkChild = kernel.spawn(
+				"sh",
+				[
+					"-c",
+					"ln /node_modules/package.json /linked-wasm-package.json && echo alias > /linked-wasm-package.json",
+				],
+				{
+					onStderr: (chunk) => {
+						wasmLinkStderr += Buffer.from(chunk).toString("utf8");
+					},
+				},
+			);
+			const wasmLinkExitCode = await wasmLinkChild.wait();
+			expect(wasmLinkExitCode).not.toBe(0);
+			expect(wasmLinkStderr).toMatch(/read-?only|EROFS|cross-device|EXDEV/i);
+			expect(readFileSync(packageJsonPath, "utf8")).toBe(
+				'{"name":"dependency"}\n',
+			);
+
+			const modeBeforeChmod = statSync(packageJsonPath).mode & 0o777;
+			let chmodStderr = "";
+			const chmodChild = kernel.spawn(
+				"chmod",
+				["777", "/node_modules/package.json"],
+				{
+					onStderr: (chunk) => {
+						chmodStderr += Buffer.from(chunk).toString("utf8");
+					},
+				},
+			);
+			const chmodExitCode = await chmodChild.wait();
+			expect(chmodExitCode).not.toBe(0);
+			expect(chmodStderr.length).toBeGreaterThan(0);
+			expect(chmodStderr).not.toMatch(/not found|No such file|ENOENT/i);
+			expect(statSync(packageJsonPath).mode & 0o777).toBe(modeBeforeChmod);
 		} finally {
 			await kernel.dispose();
 		}

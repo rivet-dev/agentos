@@ -15,7 +15,7 @@ const NODE_IMPORT_CACHE_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_PATH";
 const NODE_IMPORT_CACHE_LOADER_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_LOADER_PATH";
 const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "53";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "54";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agent-os-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const PYODIDE_DIST_DIR: &str = "pyodide-dist";
@@ -2240,7 +2240,9 @@ function parseGuestPathMappings(value) {
           entry && typeof entry.hostPath === 'string'
             ? path.resolve(entry.hostPath)
             : null;
-        return guestPath && hostPath ? { guestPath, hostPath } : null;
+        return guestPath && hostPath
+          ? { guestPath, hostPath, readOnly: entry.readOnly === true }
+          : null;
       })
       .filter(Boolean)
       .sort((left, right) => right.guestPath.length - left.guestPath.length);
@@ -8763,6 +8765,10 @@ function isPathLike(specifier) {
 }
 
 function resolveModuleGuestPathToHostPath(guestPath) {
+  return resolveModuleGuestPathToHostMapping(guestPath)?.hostPath ?? null;
+}
+
+function resolveModuleGuestPathToHostMapping(guestPath) {
   if (typeof guestPath !== 'string') {
     return null;
   }
@@ -8771,7 +8777,10 @@ function resolveModuleGuestPathToHostPath(guestPath) {
   for (const mapping of GUEST_PATH_MAPPINGS) {
     if (mapping.guestPath === '/') {
       const suffix = normalized.replace(/^\/+/, '');
-      return suffix ? path.join(mapping.hostPath, suffix) : mapping.hostPath;
+      return {
+        hostPath: suffix ? path.join(mapping.hostPath, suffix) : mapping.hostPath,
+        readOnly: mapping.readOnly === true,
+      };
     }
 
     if (
@@ -8785,7 +8794,10 @@ function resolveModuleGuestPathToHostPath(guestPath) {
       normalized === mapping.guestPath
         ? ''
         : normalized.slice(mapping.guestPath.length + 1);
-    return suffix ? path.join(mapping.hostPath, ...suffix.split('/')) : mapping.hostPath;
+    return {
+      hostPath: suffix ? path.join(mapping.hostPath, ...suffix.split('/')) : mapping.hostPath,
+      readOnly: mapping.readOnly === true,
+    };
   }
 
   return null;
@@ -8823,7 +8835,9 @@ function parseGuestPathMappings(value) {
           entry && typeof entry.hostPath === 'string'
             ? path.resolve(entry.hostPath)
             : null;
-        return guestPath && hostPath ? { guestPath, hostPath } : null;
+        return guestPath && hostPath
+          ? { guestPath, hostPath, readOnly: entry.readOnly === true }
+          : null;
       })
       .filter(Boolean)
       .sort((left, right) => right.guestPath.length - left.guestPath.length);
@@ -9019,13 +9033,54 @@ function buildPreopenRights() {
   }
 }
 
-function createPreopen(hostPath) {
-  const rights = buildPreopenRights();
+function createPreopen(hostPath, readOnly = false) {
+  const rights =
+    readOnly === true
+      ? {
+          rightsBase: READ_ONLY_PREOPEN_RIGHTS_BASE,
+          rightsInheriting: READ_ONLY_PREOPEN_RIGHTS_INHERITING,
+        }
+      : buildPreopenRights();
   return {
     hostPath,
+    readOnly: readOnly === true,
     rightsBase: rights.rightsBase,
     rightsInheriting: rights.rightsInheriting,
   };
+}
+
+function mappingContainsGuestPath(mapping, guestPath) {
+  if (!mapping || typeof mapping.guestPath !== 'string' || typeof guestPath !== 'string') {
+    return false;
+  }
+  const normalized = path.posix.normalize(guestPath);
+  return (
+    normalized === mapping.guestPath ||
+    mapping.guestPath === '/' ||
+    normalized.startsWith(`${mapping.guestPath}/`)
+  );
+}
+
+function mappingContainsHostPath(mapping, hostPath) {
+  if (!mapping || typeof mapping.hostPath !== 'string' || typeof hostPath !== 'string') {
+    return false;
+  }
+  const normalized = path.resolve(hostPath);
+  const root = path.resolve(mapping.hostPath);
+  return normalized === root || normalized.startsWith(`${root}${path.sep}`);
+}
+
+function readOnlyForCwd(guestCwd) {
+  for (const mapping of GUEST_PATH_MAPPINGS) {
+    if (
+      mapping?.readOnly === true &&
+      (mappingContainsGuestPath(mapping, guestCwd) ||
+        mappingContainsHostPath(mapping, HOST_CWD))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function buildPreopens() {
@@ -9044,13 +9099,14 @@ function buildPreopens() {
             : null;
       const preopens = {};
       const seen = new Set();
-      preopens['.'] = createPreopen(HOST_CWD);
+      const cwdReadOnly = readOnlyForCwd(guestCwd);
+      preopens['.'] = createPreopen(HOST_CWD, cwdReadOnly);
       seen.add('.');
       const rootMapping = GUEST_PATH_MAPPINGS.find(
         (mapping) => mapping && mapping.guestPath === '/',
       );
       if (rootMapping) {
-        preopens['/'] = createPreopen(rootMapping.hostPath);
+        preopens['/'] = createPreopen(rootMapping.hostPath, rootMapping.readOnly);
         seen.add('/');
       }
       for (const mapping of GUEST_PATH_MAPPINGS) {
@@ -9065,16 +9121,16 @@ function buildPreopens() {
         ) {
           continue;
         }
-        preopens[guestPath] = createPreopen(mapping.hostPath);
+        preopens[guestPath] = createPreopen(mapping.hostPath, mapping.readOnly);
         seen.add(guestPath);
       }
       const cwdMount = guestCwd || '/workspace';
       if (!seen.has(cwdMount)) {
-        preopens[cwdMount] = createPreopen(HOST_CWD);
+        preopens[cwdMount] = createPreopen(HOST_CWD, cwdReadOnly);
         seen.add(cwdMount);
       }
       if (cwdMount !== '/workspace' && !seen.has('/workspace')) {
-        preopens['/workspace'] = createPreopen(HOST_CWD);
+        preopens['/workspace'] = createPreopen(HOST_CWD, cwdReadOnly);
         seen.add('/workspace');
       }
       return preopens;
@@ -9367,7 +9423,7 @@ function hasMutationOpenFlags(oflags) {
 }
 
 function denyReadOnlyMutation() {
-  return WASI_ERRNO_ACCES;
+  return WASI_ERRNO_ROFS;
 }
 
 function guestPathForPreopenKey(key) {
@@ -9395,6 +9451,21 @@ function resolvePathOpenGuestPath(fd, pathPtr, pathLen) {
   }
 
   return null;
+}
+
+function guestPathIsReadOnly(guestPath) {
+  return GUEST_PATH_MAPPINGS.some(
+    (mapping) => mapping?.readOnly === true && mappingContainsGuestPath(mapping, guestPath),
+  );
+}
+
+function resolvedGuestPathIsReadOnly(fd, pathPtr, pathLen) {
+  try {
+    const guestPath = resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+    return typeof guestPath === 'string' && guestPathIsReadOnly(guestPath);
+  } catch {
+    return false;
+  }
 }
 
 function precreatePathOpenTarget(fd, pathPtr, pathLen, oflags) {
@@ -9510,6 +9581,9 @@ function retainPathOpenDelegateFd(openedFdPtr, guestPath) {
         displayFd: openedFd,
         refCount: 0,
         open: true,
+        readOnly:
+          typeof guestPath === 'string' &&
+          resolveModuleGuestPathToHostMapping(guestPath)?.readOnly === true,
         ...(typeof guestPath === 'string' ? { guestPath } : {}),
       });
     }
@@ -10388,11 +10462,16 @@ function resolveSyntheticGuestPath(value, fromGuestDir = '/') {
 }
 
 function resolveSyntheticHostPath(value, fromGuestDir = '/') {
+  const mapping = resolveSyntheticHostMapping(value, fromGuestDir);
+  return mapping?.hostPath ?? null;
+}
+
+function resolveSyntheticHostMapping(value, fromGuestDir = '/') {
   const guestPath = resolveSyntheticGuestPath(value, fromGuestDir);
   if (typeof guestPath !== 'string') {
     return null;
   }
-  return resolveModuleGuestPathToHostPath(guestPath);
+  return resolveModuleGuestPathToHostMapping(guestPath);
 }
 
 function maybeCreateSyntheticCommandResult(command, args, cwd) {
@@ -10409,11 +10488,16 @@ function maybeCreateSyntheticCommandResult(command, args, cwd) {
     const mode = Number.parseInt(modeArg, 8) >>> 0;
     try {
       for (const targetArg of args.slice(1)) {
-        const hostPath = resolveSyntheticHostPath(targetArg, cwd || '/');
-        if (typeof hostPath !== 'string') {
+        const mapping = resolveSyntheticHostMapping(targetArg, cwd || '/');
+        if (!mapping || typeof mapping.hostPath !== 'string') {
           throw new Error(`No such file or directory: ${targetArg}`);
         }
-        fsModule.chmodSync(hostPath, mode);
+        if (mapping.readOnly) {
+          const error = new Error(`Read-only file system: ${targetArg}`);
+          error.code = 'EROFS';
+          throw error;
+        }
+        fsModule.chmodSync(mapping.hostPath, mode);
       }
       return { exitCode: 0, stdout: '', stderr: '' };
     } catch (error) {
@@ -12117,7 +12201,7 @@ const HOST_FS_GUEST_CWD =
 
 for (let index = 0; index < WASI_PREOPEN_ENTRIES.length; index += 1) {
   const fd = WASI_PREOPEN_FD_BASE + index;
-  const [guestPath] = WASI_PREOPEN_ENTRIES[index];
+  const [guestPath, preopenSpec] = WASI_PREOPEN_ENTRIES[index];
   if (!passthroughHandles.has(fd)) {
     retainDelegateFd(fd);
     closedPassthroughFds.delete(fd);
@@ -12128,6 +12212,7 @@ for (let index = 0; index < WASI_PREOPEN_ENTRIES.length; index += 1) {
       refCount: 0,
       open: true,
       guestPath: guestPathForPreopenKey(guestPath),
+      readOnly: preopenSpec?.readOnly === true,
     });
   }
 }
@@ -12138,11 +12223,15 @@ function hostFsModeFromStat(stat) {
 }
 
 function resolveHostFsPath(value, fromGuestDir = HOST_FS_GUEST_CWD) {
+  return resolveHostFsMapping(value, fromGuestDir)?.hostPath ?? null;
+}
+
+function resolveHostFsMapping(value, fromGuestDir = HOST_FS_GUEST_CWD) {
   const guestPath = resolveSyntheticGuestPath(value, fromGuestDir);
   if (typeof guestPath !== 'string') {
     return null;
   }
-  return resolveModuleGuestPathToHostPath(guestPath);
+  return resolveModuleGuestPathToHostMapping(guestPath);
 }
 
 const hostFsImport = {
@@ -12192,16 +12281,19 @@ const hostFsImport = {
   chmod(pathPtr, pathLen, mode) {
     try {
       const target = readGuestString(pathPtr, pathLen);
-      const hostPath = resolveHostFsPath(target);
-      if (typeof hostPath !== 'string') {
+      const mapping = resolveHostFsMapping(target);
+      if (!mapping || typeof mapping.hostPath !== 'string') {
+        return 1;
+      }
+      if (mapping.readOnly) {
         return 1;
       }
       traceHostProcess('host-fs-chmod', {
         target,
-        hostPath,
+        hostPath: mapping.hostPath,
         mode: Number(mode) >>> 0,
       });
-      fsModule.chmodSync(hostPath, Number(mode) >>> 0);
+      fsModule.chmodSync(mapping.hostPath, Number(mode) >>> 0);
       return 0;
     } catch {
       traceHostProcess('host-fs-chmod-fault', {});
@@ -12282,6 +12374,12 @@ if (delegatePathOpen) {
         ? passthroughDirHandle.targetFd
         : fd;
     const guestPath = resolvePathOpenGuestPath(fd, pathPtr, pathLen);
+    if (
+      guestPathIsReadOnly(guestPath) &&
+      (hasMutationOpenFlags(oflags) || hasWriteRights(rightsBase))
+    ) {
+      return denyReadOnlyMutation();
+    }
     if ((Number(oflags) & WASI_OFLAGS_CREAT) !== 0) {
       try {
         const syntheticResult = openGuestFileForPathOpen(
@@ -12352,6 +12450,47 @@ if (delegatePathOpen) {
     return result;
   };
 }
+
+function wrapReadOnlyPathMutation(name, shouldDeny) {
+  const delegate = typeof wasiImport[name] === 'function' ? wasiImport[name].bind(wasiImport) : null;
+  if (!delegate) {
+    return;
+  }
+  wasiImport[name] = (...args) => {
+    if (shouldDeny(...args)) {
+      return denyReadOnlyMutation();
+    }
+    return delegate(...args);
+  };
+}
+
+wrapReadOnlyPathMutation('path_create_directory', (fd, pathPtr, pathLen) =>
+  resolvedGuestPathIsReadOnly(fd, pathPtr, pathLen),
+);
+wrapReadOnlyPathMutation('path_filestat_set_times', (fd, _flags, pathPtr, pathLen) =>
+  resolvedGuestPathIsReadOnly(fd, pathPtr, pathLen),
+);
+wrapReadOnlyPathMutation(
+  'path_link',
+  (oldFd, _oldFlags, oldPathPtr, oldPathLen, newFd, newPathPtr, newPathLen) =>
+    resolvedGuestPathIsReadOnly(oldFd, oldPathPtr, oldPathLen) ||
+    resolvedGuestPathIsReadOnly(newFd, newPathPtr, newPathLen),
+);
+wrapReadOnlyPathMutation('path_remove_directory', (fd, pathPtr, pathLen) =>
+  resolvedGuestPathIsReadOnly(fd, pathPtr, pathLen),
+);
+wrapReadOnlyPathMutation(
+  'path_rename',
+  (oldFd, oldPathPtr, oldPathLen, newFd, newPathPtr, newPathLen) =>
+    resolvedGuestPathIsReadOnly(oldFd, oldPathPtr, oldPathLen) ||
+    resolvedGuestPathIsReadOnly(newFd, newPathPtr, newPathLen),
+);
+wrapReadOnlyPathMutation('path_symlink', (_oldPathPtr, _oldPathLen, fd, newPathPtr, newPathLen) =>
+  resolvedGuestPathIsReadOnly(fd, newPathPtr, newPathLen),
+);
+wrapReadOnlyPathMutation('path_unlink_file', (fd, pathPtr, pathLen) =>
+  resolvedGuestPathIsReadOnly(fd, pathPtr, pathLen),
+);
 
 if (isWorkspaceReadOnly()) {
 
@@ -12635,6 +12774,9 @@ wasiImport.fd_pwrite = (fd, iovs, iovsLen, offset, nwrittenPtr) => {
   }
 
   if (handle?.kind === 'passthrough') {
+    if (handle.readOnly === true) {
+      return WASI_ERRNO_ROFS;
+    }
     return delegateManagedFdPwrite
       ? delegateManagedFdPwrite(handle.targetFd, iovs, iovsLen, offset, nwrittenPtr)
       : WASI_ERRNO_BADF;
@@ -12833,6 +12975,9 @@ wasiImport.fd_filestat_set_size = (fd, size) => {
   }
 
   if (handle?.kind === 'passthrough') {
+    if (handle.readOnly === true) {
+      return WASI_ERRNO_ROFS;
+    }
     return delegateManagedFdFilestatSetSize
       ? delegateManagedFdFilestatSetSize(handle.targetFd, size)
       : WASI_ERRNO_BADF;
@@ -12917,6 +13062,9 @@ wasiImport.fd_write = (fd, iovs, iovsLen, nwrittenPtr) => {
   }
 
   if (handle?.kind === 'passthrough') {
+    if (handle.readOnly === true) {
+      return WASI_ERRNO_ROFS;
+    }
     return delegateManagedFdWrite
       ? delegateManagedFdWrite(handle.targetFd, iovs, iovsLen, nwrittenPtr)
       : WASI_ERRNO_BADF;
@@ -15783,13 +15931,35 @@ export async function loadPyodide(options) {
     #[test]
     fn wasm_runner_preopens_dot_before_root() {
         let dot_index = NODE_WASM_RUNNER_SOURCE
-            .find("preopens['.'] = createPreopen(HOST_CWD);")
+            .find("preopens['.'] = createPreopen(HOST_CWD, cwdReadOnly);")
             .expect("runner should preopen the current directory");
         let root_index = NODE_WASM_RUNNER_SOURCE
-            .find("preopens['/'] = createPreopen(rootMapping.hostPath);")
+            .find("preopens['/'] = createPreopen(rootMapping.hostPath, rootMapping.readOnly);")
             .expect("runner should preopen the guest root");
 
         assert!(dot_index < root_index);
+    }
+
+    #[test]
+    fn wasm_runner_preserves_read_only_mappings_in_preopens() {
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("? { guestPath, hostPath, readOnly: entry.readOnly === true }"));
+        assert!(NODE_WASM_RUNNER_SOURCE.contains("readOnly: readOnly === true,"));
+        assert!(NODE_WASM_RUNNER_SOURCE.contains("resolveModuleGuestPathToHostMapping"));
+        assert!(NODE_WASM_RUNNER_SOURCE.contains("rightsBase: READ_ONLY_PREOPEN_RIGHTS_BASE,"));
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("preopens[guestPath] = createPreopen(mapping.hostPath, mapping.readOnly);"));
+        assert!(NODE_WASM_RUNNER_SOURCE.contains("const cwdReadOnly = readOnlyForCwd(guestCwd);"));
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("preopens['.'] = createPreopen(HOST_CWD, cwdReadOnly);"));
+        assert!(
+            NODE_WASM_RUNNER_SOURCE.contains("if (mapping.readOnly) {\n        return 1;\n      }")
+        );
+        assert!(NODE_WASM_RUNNER_SOURCE.contains("readOnly: preopenSpec?.readOnly === true,"));
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("resolveModuleGuestPathToHostMapping(guestPath)?.readOnly === true"));
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("if (handle.readOnly === true) {\n      return WASI_ERRNO_ROFS;\n    }"));
     }
 
     #[test]

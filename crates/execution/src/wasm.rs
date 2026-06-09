@@ -318,6 +318,7 @@ struct WasmInternalSyncRpc {
 struct WasmGuestPathMapping {
     guest_path: String,
     host_path: PathBuf,
+    read_only: bool,
 }
 
 impl WasmExecution {
@@ -869,7 +870,24 @@ fn handle_internal_wasm_sync_rpc_request(
             return Ok(false);
         };
         let flags = request.args.get(1).unwrap_or(&Value::Null);
-        let file = open_wasm_guest_file(&host_path, flags)?;
+        if wasm_open_flags_require_write(flags)
+            && wasm_host_path_is_read_only(&host_path, internal_sync_rpc)
+        {
+            return respond_wasm_sync_rpc_value(
+                execution,
+                request,
+                path,
+                Err(wasm_read_only_filesystem_error(path)),
+            )
+            .map(|()| true);
+        }
+        let file = match open_wasm_guest_file(&host_path, flags) {
+            Ok(file) => file,
+            Err(error) => {
+                return respond_wasm_sync_rpc_value(execution, request, path, Err(error))
+                    .map(|()| true);
+            }
+        };
         let fd = internal_sync_rpc.next_fd;
         internal_sync_rpc.next_fd += 1;
         internal_sync_rpc.open_files.insert(fd, file);
@@ -954,6 +972,15 @@ fn handle_internal_wasm_sync_rpc_request(
         let Some(host_path) = translate_wasm_guest_path(path, internal_sync_rpc) else {
             return Ok(false);
         };
+        if wasm_host_path_is_read_only(&host_path, internal_sync_rpc) {
+            return respond_wasm_sync_rpc_unit(
+                execution,
+                request,
+                path,
+                Err(wasm_read_only_filesystem_error(path)),
+            )
+            .map(|()| true);
+        }
         let mode = request.args.get(1).and_then(Value::as_u64).unwrap_or(0) as u32;
         let result = (|| -> Result<(), std::io::Error> {
             let mut permissions = fs::metadata(&host_path)?.permissions();
@@ -972,6 +999,15 @@ fn handle_internal_wasm_sync_rpc_request(
         let Some(host_path) = translate_wasm_guest_path(path, internal_sync_rpc) else {
             return Ok(false);
         };
+        if wasm_host_path_is_read_only(&host_path, internal_sync_rpc) {
+            return respond_wasm_sync_rpc_unit(
+                execution,
+                request,
+                path,
+                Err(wasm_read_only_filesystem_error(path)),
+            )
+            .map(|()| true);
+        }
         let recursive = request
             .args
             .get(1)
@@ -1001,6 +1037,15 @@ fn handle_internal_wasm_sync_rpc_request(
         let Some(host_path) = translate_wasm_guest_path(path, internal_sync_rpc) else {
             return Ok(false);
         };
+        if wasm_host_path_is_read_only(&host_path, internal_sync_rpc) {
+            return respond_wasm_sync_rpc_unit(
+                execution,
+                request,
+                path,
+                Err(wasm_read_only_filesystem_error(path)),
+            )
+            .map(|()| true);
+        }
         return respond_wasm_sync_rpc_unit(execution, request, path, fs::remove_dir(&host_path))
             .map(|()| true);
     }
@@ -1014,6 +1059,15 @@ fn handle_internal_wasm_sync_rpc_request(
         let Some(host_path) = translate_wasm_guest_path(path, internal_sync_rpc) else {
             return Ok(false);
         };
+        if wasm_host_path_is_read_only(&host_path, internal_sync_rpc) {
+            return respond_wasm_sync_rpc_unit(
+                execution,
+                request,
+                path,
+                Err(wasm_read_only_filesystem_error(path)),
+            )
+            .map(|()| true);
+        }
         return respond_wasm_sync_rpc_unit(execution, request, path, fs::remove_file(&host_path))
             .map(|()| true);
     }
@@ -1036,6 +1090,19 @@ fn handle_internal_wasm_sync_rpc_request(
         else {
             return Ok(false);
         };
+        if wasm_mutation_touches_read_only_mapping(
+            &host_source,
+            &host_destination,
+            internal_sync_rpc,
+        ) {
+            return respond_wasm_sync_rpc_unit(
+                execution,
+                request,
+                source,
+                Err(wasm_read_only_filesystem_error(source)),
+            )
+            .map(|()| true);
+        }
         return respond_wasm_sync_rpc_unit(
             execution,
             request,
@@ -1063,6 +1130,17 @@ fn handle_internal_wasm_sync_rpc_request(
         else {
             return Ok(false);
         };
+        if wasm_host_path_is_read_only(&host_source, internal_sync_rpc)
+            || wasm_host_path_is_read_only(&host_destination, internal_sync_rpc)
+        {
+            return respond_wasm_sync_rpc_unit(
+                execution,
+                request,
+                source,
+                Err(wasm_read_only_filesystem_error(source)),
+            )
+            .map(|()| true);
+        }
         return respond_wasm_sync_rpc_unit(
             execution,
             request,
@@ -1094,6 +1172,15 @@ fn handle_internal_wasm_sync_rpc_request(
         let Some(host_link_path) = translate_wasm_guest_path(link_path, internal_sync_rpc) else {
             return Ok(false);
         };
+        if wasm_host_path_is_read_only(&host_link_path, internal_sync_rpc) {
+            return respond_wasm_sync_rpc_unit(
+                execution,
+                request,
+                link_path,
+                Err(wasm_read_only_filesystem_error(link_path)),
+            )
+            .map(|()| true);
+        }
         return respond_wasm_sync_rpc_unit(
             execution,
             request,
@@ -1429,6 +1516,56 @@ fn translate_wasm_host_symlink_target(
     None
 }
 
+fn wasm_host_path_is_read_only(host_path: &Path, internal_sync_rpc: &WasmInternalSyncRpc) -> bool {
+    let canonical_path = fs::canonicalize(host_path)
+        .ok()
+        .or_else(|| {
+            nearest_existing_wasm_host_ancestor(host_path)
+                .and_then(|ancestor| fs::canonicalize(ancestor).ok())
+        })
+        .unwrap_or_else(|| host_path.to_path_buf());
+
+    internal_sync_rpc
+        .guest_path_mappings
+        .iter()
+        .filter_map(|mapping| {
+            let root = fs::canonicalize(&mapping.host_path).ok()?;
+            (canonical_path == root || canonical_path.starts_with(&root))
+                .then_some((root.components().count(), mapping.read_only))
+        })
+        .max_by_key(|(depth, _)| *depth)
+        .is_some_and(|(_, read_only)| read_only)
+}
+
+fn wasm_mutation_touches_read_only_mapping(
+    source: &Path,
+    destination: &Path,
+    internal_sync_rpc: &WasmInternalSyncRpc,
+) -> bool {
+    wasm_host_path_is_read_only(source, internal_sync_rpc)
+        || wasm_host_path_is_read_only(destination, internal_sync_rpc)
+}
+
+fn wasm_open_flags_require_write(flags: &Value) -> bool {
+    match flags.as_str() {
+        Some(value) => value.contains('w') || value.contains('a') || value.contains('+'),
+        None if flags.as_u64().unwrap_or(0) == 0 => false,
+        _ => {
+            let numeric = flags.as_u64().unwrap_or(0);
+            (numeric & 0o1) != 0
+                || (numeric & 0o2) != 0
+                || (numeric & 0o100) != 0
+                || (numeric & 0o1000) != 0
+                || (numeric & 0o2000) != 0
+        }
+    }
+}
+
+fn wasm_read_only_filesystem_error(path: &str) -> std::io::Error {
+    let _ = path;
+    std::io::Error::from_raw_os_error(30)
+}
+
 fn respond_wasm_sync_rpc_metadata(
     execution: &mut JavascriptExecution,
     request: &JavascriptSyncRpcRequest,
@@ -1474,6 +1611,10 @@ fn respond_wasm_sync_rpc_value(
 
 fn wasm_sync_rpc_error_code(error: &std::io::Error) -> &'static str {
     use std::io::ErrorKind;
+
+    if error.raw_os_error() == Some(30) {
+        return "EROFS";
+    }
 
     match error.kind() {
         ErrorKind::NotFound => "ENOENT",
@@ -1535,7 +1676,7 @@ fn decode_wasm_bytes_arg(value: Option<&Value>) -> Option<Vec<u8>> {
         .ok()
 }
 
-fn open_wasm_guest_file(path: &Path, flags: &Value) -> Result<fs::File, WasmExecutionError> {
+fn open_wasm_guest_file(path: &Path, flags: &Value) -> std::io::Result<fs::File> {
     let mut options = OpenOptions::new();
     let flags_label = flags.to_string();
 
@@ -1560,9 +1701,10 @@ fn open_wasm_guest_file(path: &Path, flags: &Value) -> Result<fs::File, WasmExec
         }
         _ => {
             let numeric = flags.as_u64().ok_or_else(|| {
-                WasmExecutionError::RpcResponse(format!(
-                    "unsupported fs.openSync flags: {flags_label}"
-                ))
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("unsupported fs.openSync flags: {flags_label}"),
+                )
             })?;
             let write_only = (numeric & 0o1) != 0;
             let read_write = (numeric & 0o2) != 0;
@@ -1590,14 +1732,14 @@ fn open_wasm_guest_file(path: &Path, flags: &Value) -> Result<fs::File, WasmExec
     }
 
     options.open(path).map_err(|error| {
-        WasmExecutionError::Spawn(std::io::Error::new(
+        std::io::Error::new(
             error.kind(),
             format!(
                 "failed to open guest file {} with flags {}: {error}",
                 path.display(),
                 flags_label
             ),
-        ))
+        )
     })
 }
 
@@ -1928,6 +2070,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
           kind: "preopen",
           guestPath: String(guestPath),
           hostPath: normalized.hostPath,
+          readOnly: normalized.readOnly,
           rightsBase: normalized.rightsBase,
           rightsInheriting: normalized.rightsInheriting,
           fdFlags: 0,
@@ -2014,6 +2157,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       if (typeof value === "string") {{
         return {{
           hostPath: String(value),
+          readOnly: false,
           rightsBase: __agentOsWasiDefaultRightsBase,
           rightsInheriting: __agentOsWasiDefaultRightsInheriting,
         }};
@@ -2023,6 +2167,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       }}
       return {{
         hostPath: String(value.hostPath),
+        readOnly: value.readOnly === true,
         rightsBase: this._normalizeRights(
           value.rightsBase,
           __agentOsWasiDefaultRightsBase,
@@ -2420,6 +2565,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         displayFd: Number(fd) >>> 0,
         refCount: 1,
         open: true,
+        readOnly: entry.readOnly === true,
       }};
     }}
 
@@ -2563,7 +2709,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       return __agentOsPath().posix.normalize(pwd);
     }}
 
-    _resolveHostPathForGuestPath(guestPath) {{
+    _resolveHostMappingForGuestPath(guestPath) {{
       const normalized = __agentOsPath().posix.normalize(guestPath);
       const mappings = [];
       for (const entry of this.fdTable.values()) {{
@@ -2574,7 +2720,11 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         if (typeof guestRoot !== "string") {{
           continue;
         }}
-        mappings.push({{ guestRoot, hostPath: entry.hostPath }});
+        mappings.push({{
+          guestRoot,
+          hostPath: entry.hostPath,
+          readOnly: entry.readOnly === true,
+        }});
       }}
       mappings.sort((left, right) => right.guestRoot.length - left.guestRoot.length);
 
@@ -2592,12 +2742,19 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
             : mapping.guestRoot === "/"
               ? normalized.slice(1)
               : normalized.slice(mapping.guestRoot.length + 1);
-        return suffix
-          ? __agentOsPath().join(mapping.hostPath, ...suffix.split("/"))
-          : mapping.hostPath;
+        return {{
+          hostPath: suffix
+            ? __agentOsPath().join(mapping.hostPath, ...suffix.split("/"))
+            : mapping.hostPath,
+          readOnly: mapping.readOnly,
+        }};
       }}
 
       return null;
+    }}
+
+    _resolveHostPathForGuestPath(guestPath) {{
+      return this._resolveHostMappingForGuestPath(guestPath)?.hostPath ?? null;
     }}
 
     _rootRelativeTargetPrefersCwd(target) {{
@@ -2622,11 +2779,13 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
 
     _resolveRootRelativePath(target, preferCreateParent = false) {{
       const rootGuestPath = __agentOsPath().posix.resolve("/", target);
-      const rootHostPath = this._resolveHostPathForGuestPath(rootGuestPath);
+      const rootMapping = this._resolveHostMappingForGuestPath(rootGuestPath);
+      const rootHostPath = rootMapping?.hostPath ?? null;
       const cwdGuestPath = this._currentGuestCwd();
       if (cwdGuestPath !== "/") {{
         const cwdGuestTarget = __agentOsPath().posix.resolve(cwdGuestPath, target);
-        const cwdHostTarget = this._resolveHostPathForGuestPath(cwdGuestTarget);
+        const cwdMapping = this._resolveHostMappingForGuestPath(cwdGuestTarget);
+        const cwdHostTarget = cwdMapping?.hostPath ?? null;
         if (
           typeof cwdHostTarget === "string" &&
           (
@@ -2638,10 +2797,18 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
             )
           )
         ) {{
-          return {{ guestPath: cwdGuestTarget, hostPath: cwdHostTarget }};
+          return {{
+            guestPath: cwdGuestTarget,
+            hostPath: cwdHostTarget,
+            readOnly: cwdMapping?.readOnly === true,
+          }};
         }}
       }}
-      return {{ guestPath: rootGuestPath, hostPath: rootHostPath }};
+      return {{
+        guestPath: rootGuestPath,
+        hostPath: rootHostPath,
+        readOnly: rootMapping?.readOnly === true,
+      }};
     }}
 
     _resolveDescriptorPath(fd, pathPtr, pathLen, options = {{}}) {{
@@ -2665,7 +2832,10 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
             )
           : {{
               guestPath,
-              hostPath: this._resolveHostPathForGuestPath(guestPath),
+              ...(
+                this._resolveHostMappingForGuestPath(guestPath) ??
+                {{ hostPath: null, readOnly: false }}
+              ),
             }};
       const hostPath = mapped.hostPath;
       if (typeof hostPath !== "string") {{
@@ -2675,6 +2845,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         error: __agentOsWasiErrnoSuccess,
         guestPath: mapped.guestPath,
         hostPath,
+        readOnly: mapped.readOnly === true,
       }};
     }}
 
@@ -2758,6 +2929,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
           (handle?.kind === "passthrough" || handle?.kind === "host-passthrough") &&
           typeof handle.targetFd === "number"
         ) {{
+          if (handle.readOnly === true) {{
+            return __agentOsWasiErrnoRofs;
+          }}
           if (descriptor === 1 || descriptor === 2) {{
             const sidecarManagedProcess =
               typeof process?.env?.AGENT_OS_SANDBOX_ROOT === "string" &&
@@ -2822,6 +2996,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
             : (process.stderr.write(bytes), bytes.length);
           return this._writeUint32(nwrittenPtr, written);
         }}
+        if (entry.readOnly === true) {{
+          return __agentOsWasiErrnoRofs;
+        }}
         if (entry.kind === "file") {{
           const position = typeof entry.offset === "number" ? entry.offset : null;
           const written = __agentOsFs().writeSync(
@@ -2851,6 +3028,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
           (handle?.kind === "passthrough" || handle?.kind === "host-passthrough") &&
           typeof handle.targetFd === "number"
         ) {{
+          if (handle.readOnly === true) {{
+            return __agentOsWasiErrnoRofs;
+          }}
           const written = __agentOsFs().writeSync(
             handle.targetFd,
             bytes,
@@ -2863,6 +3043,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         const entry = this.fdTable.get(descriptor);
         if (!entry || entry.kind !== "file") {{
           return __agentOsWasiErrnoBadf;
+        }}
+        if (entry.readOnly === true) {{
+          return __agentOsWasiErrnoRofs;
         }}
         const written = __agentOsFs().writeSync(
           entry.realFd,
@@ -3191,6 +3374,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         if (!entry || entry.kind !== "file" || typeof entry.realFd !== "number") {{
           return __agentOsWasiErrnoBadf;
         }}
+        if (entry.readOnly === true) {{
+          return __agentOsWasiErrnoRofs;
+        }}
         __agentOsFs().ftruncateSync(entry.realFd, Number(size));
         return __agentOsWasiErrnoSuccess;
       }} catch (error) {{
@@ -3341,6 +3527,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         if (resolved.error !== __agentOsWasiErrnoSuccess) {{
           return resolved.error;
         }}
+        if (resolved.readOnly) {{
+          return __agentOsWasiErrnoRofs;
+        }}
         __agentOsFs().mkdirSync(resolved.hostPath);
         return __agentOsWasiErrnoSuccess;
       }} catch (error) {{
@@ -3357,6 +3546,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         const destination = this._resolveDescriptorPath(newFd, newPathPtr, newPathLen);
         if (destination.error !== __agentOsWasiErrnoSuccess) {{
           return destination.error;
+        }}
+        if (source.readOnly || destination.readOnly) {{
+          return __agentOsWasiErrnoRofs;
         }}
         __agentOsFs().linkSync(source.hostPath, destination.hostPath);
         return __agentOsWasiErrnoSuccess;
@@ -3410,6 +3602,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         ) {{
           return __agentOsWasiErrnoAcces;
         }}
+        if (requestedWriteAccess && resolved.readOnly) {{
+          return __agentOsWasiErrnoRofs;
+        }}
         const fsConstants = __agentOsFs().constants ?? {{}};
         let openFlags = requestedWriteAccess
           ? fsConstants.O_RDWR ?? 2
@@ -3441,6 +3636,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
           kind: stats.isDirectory() ? "directory" : "file",
           guestPath,
           hostPath,
+          readOnly: resolved.readOnly === true,
           realFd,
           offset: 0,
           rightsBase: requestedRightsBase & allowedRightsInheriting,
@@ -3459,6 +3655,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         if (resolved.error !== __agentOsWasiErrnoSuccess) {{
           return resolved.error;
         }}
+        if (resolved.readOnly) {{
+          return __agentOsWasiErrnoRofs;
+        }}
         const target = this._readString(targetPtr, targetLen);
         __agentOsFs().symlinkSync(target, resolved.hostPath);
         return __agentOsWasiErrnoSuccess;
@@ -3472,6 +3671,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen);
         if (resolved.error !== __agentOsWasiErrnoSuccess) {{
           return resolved.error;
+        }}
+        if (resolved.readOnly) {{
+          return __agentOsWasiErrnoRofs;
         }}
         __agentOsFs().rmdirSync(resolved.hostPath);
         return __agentOsWasiErrnoSuccess;
@@ -3490,6 +3692,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         if (destination.error !== __agentOsWasiErrnoSuccess) {{
           return destination.error;
         }}
+        if (source.readOnly || destination.readOnly) {{
+          return __agentOsWasiErrnoRofs;
+        }}
         __agentOsFs().renameSync(source.hostPath, destination.hostPath);
         return __agentOsWasiErrnoSuccess;
       }} catch (error) {{
@@ -3502,6 +3707,9 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         const resolved = this._resolveDescriptorPath(fd, pathPtr, pathLen);
         if (resolved.error !== __agentOsWasiErrnoSuccess) {{
           return resolved.error;
+        }}
+        if (resolved.readOnly) {{
+          return __agentOsWasiErrnoRofs;
         }}
         __agentOsFs().unlinkSync(resolved.hostPath);
         return __agentOsWasiErrnoSuccess;
@@ -4378,6 +4586,10 @@ fn wasm_guest_path_mappings(request: &StartWasmExecutionRequest) -> Vec<WasmGues
             Some(WasmGuestPathMapping {
                 guest_path: mapping.get("guestPath")?.as_str()?.to_owned(),
                 host_path: PathBuf::from(mapping.get("hostPath")?.as_str()?),
+                read_only: mapping
+                    .get("readOnly")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
             })
         })
         .collect::<Vec<_>>();
@@ -4418,6 +4630,7 @@ fn push_wasm_guest_path_mapping(
     mappings.push(WasmGuestPathMapping {
         guest_path,
         host_path,
+        read_only: false,
     });
 }
 
@@ -4429,6 +4642,7 @@ fn encode_wasm_guest_path_mappings(mappings: &[WasmGuestPathMapping]) -> String 
                 json!({
                     "guestPath": mapping.guest_path,
                     "hostPath": mapping.host_path.to_string_lossy(),
+                    "readOnly": mapping.read_only,
                 })
             })
             .collect::<Vec<_>>(),
@@ -4920,11 +5134,13 @@ fn resolve_path_like_specifier(cwd: &Path, specifier: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_wasm_runner_bootstrap, resolve_wasm_execution_timeout, resolve_wasm_prewarm_timeout,
-        resolved_module_path, translate_wasm_guest_path, translate_wasm_host_symlink_target,
-        wasm_guest_module_paths, wasm_memory_limit_pages, wasm_sandbox_root,
-        StartWasmExecutionRequest, WasmInternalSyncRpc, WasmPermissionTier, WASM_MAX_FUEL_ENV,
-        WASM_MAX_MEMORY_BYTES_ENV, WASM_PAGE_BYTES, WASM_PREWARM_TIMEOUT_MS_ENV,
+        build_wasm_runner_bootstrap, open_wasm_guest_file, resolve_wasm_execution_timeout,
+        resolve_wasm_prewarm_timeout, resolved_module_path, translate_wasm_guest_path,
+        translate_wasm_host_symlink_target, wasm_guest_module_paths, wasm_host_path_is_read_only,
+        wasm_memory_limit_pages, wasm_mutation_touches_read_only_mapping,
+        wasm_read_only_filesystem_error, wasm_sandbox_root, wasm_sync_rpc_error_code,
+        StartWasmExecutionRequest, Value, WasmInternalSyncRpc, WasmPermissionTier,
+        WASM_MAX_FUEL_ENV, WASM_MAX_MEMORY_BYTES_ENV, WASM_PAGE_BYTES, WASM_PREWARM_TIMEOUT_MS_ENV,
         WASM_SANDBOX_ROOT_ENV,
     };
     use std::collections::{BTreeMap, VecDeque};
@@ -5053,6 +5269,7 @@ mod tests {
             guest_path_mappings: vec![super::WasmGuestPathMapping {
                 guest_path: String::from("/"),
                 host_path: sandbox_root.clone(),
+                read_only: false,
             }],
             next_fd: 64,
             open_files: Default::default(),
@@ -5090,6 +5307,7 @@ mod tests {
             guest_path_mappings: vec![super::WasmGuestPathMapping {
                 guest_path: String::from("/workspace"),
                 host_path: cwd.clone(),
+                read_only: false,
             }],
             next_fd: 64,
             open_files: Default::default(),
@@ -5122,10 +5340,12 @@ mod tests {
                 super::WasmGuestPathMapping {
                     guest_path: String::from("/workspace"),
                     host_path: cwd.clone(),
+                    read_only: false,
                 },
                 super::WasmGuestPathMapping {
                     guest_path: String::from("/__agentos/commands/0"),
                     host_path: mapped_root.clone(),
+                    read_only: false,
                 },
             ],
             next_fd: 64,
@@ -5182,6 +5402,7 @@ mod tests {
             guest_path_mappings: vec![super::WasmGuestPathMapping {
                 guest_path: String::from("/"),
                 host_path: sandbox_root,
+                read_only: false,
             }],
             next_fd: 64,
             open_files: Default::default(),
@@ -5195,6 +5416,116 @@ mod tests {
         assert_eq!(
             translate_wasm_guest_path("/escape/new.txt", &internal_sync_rpc),
             None
+        );
+    }
+
+    #[test]
+    fn wasm_read_only_mapping_blocks_mutating_host_paths() {
+        let temp = tempdir().expect("create temp dir");
+        let sandbox_root = temp.path().join("shadow-root");
+        let readonly_root = temp.path().join("readonly");
+        fs::create_dir_all(&sandbox_root).expect("create sandbox root");
+        fs::create_dir_all(&readonly_root).expect("create readonly root");
+        fs::write(readonly_root.join("package.json"), b"{}").expect("write readonly file");
+
+        let internal_sync_rpc = WasmInternalSyncRpc {
+            module_guest_paths: Vec::new(),
+            module_host_path: sandbox_root.join("module.wasm"),
+            guest_cwd: String::from("/workspace"),
+            host_cwd: sandbox_root.clone(),
+            sandbox_root: Some(sandbox_root),
+            guest_path_mappings: vec![super::WasmGuestPathMapping {
+                guest_path: String::from("/node_modules"),
+                host_path: readonly_root.clone(),
+                read_only: true,
+            }],
+            next_fd: 64,
+            open_files: Default::default(),
+            pending_events: VecDeque::new(),
+        };
+
+        let host_path = translate_wasm_guest_path("/node_modules/package.json", &internal_sync_rpc)
+            .expect("read path should resolve");
+        assert_eq!(host_path, readonly_root.join("package.json"));
+        assert!(wasm_host_path_is_read_only(&host_path, &internal_sync_rpc));
+        assert!(wasm_host_path_is_read_only(
+            &readonly_root.join("new-package.json"),
+            &internal_sync_rpc
+        ));
+        assert_eq!(
+            wasm_sync_rpc_error_code(&wasm_read_only_filesystem_error("/node_modules")),
+            "EROFS"
+        );
+    }
+
+    #[test]
+    fn wasm_open_guest_file_errors_remain_sync_rpc_errors() {
+        let temp = tempdir().expect("create temp dir");
+        let missing_path = temp.path().join("missing.txt");
+
+        let error = open_wasm_guest_file(&missing_path, &Value::from(0))
+            .expect_err("missing file should return an open error");
+
+        assert_eq!(wasm_sync_rpc_error_code(&error), "ENOENT");
+    }
+
+    #[test]
+    fn wasm_hard_links_are_rejected_when_either_side_is_read_only() {
+        let temp = tempdir().expect("create temp dir");
+        let readonly_root = temp.path().join("readonly");
+        let writable_root = temp.path().join("writable");
+        fs::create_dir_all(&readonly_root).expect("create readonly root");
+        fs::create_dir_all(&writable_root).expect("create writable root");
+        let readonly_file = readonly_root.join("package.json");
+        let writable_file = writable_root.join("source.txt");
+        fs::write(&readonly_file, b"readonly").expect("write readonly source");
+        fs::write(&writable_file, b"writable").expect("write writable source");
+
+        let internal_sync_rpc = WasmInternalSyncRpc {
+            module_guest_paths: Vec::new(),
+            module_host_path: writable_root.join("module.wasm"),
+            guest_cwd: String::from("/workspace"),
+            host_cwd: writable_root.clone(),
+            sandbox_root: Some(writable_root.clone()),
+            guest_path_mappings: vec![
+                super::WasmGuestPathMapping {
+                    guest_path: String::from("/node_modules"),
+                    host_path: readonly_root.clone(),
+                    read_only: true,
+                },
+                super::WasmGuestPathMapping {
+                    guest_path: String::from("/workspace"),
+                    host_path: writable_root.clone(),
+                    read_only: false,
+                },
+            ],
+            next_fd: 64,
+            open_files: Default::default(),
+            pending_events: VecDeque::new(),
+        };
+
+        assert!(wasm_mutation_touches_read_only_mapping(
+            &readonly_file,
+            &writable_root.join("alias-from-readonly.json"),
+            &internal_sync_rpc
+        ));
+        assert!(wasm_mutation_touches_read_only_mapping(
+            &writable_file,
+            &readonly_root.join("alias-into-readonly.txt"),
+            &internal_sync_rpc
+        ));
+        assert!(!wasm_mutation_touches_read_only_mapping(
+            &writable_file,
+            &writable_root.join("alias.txt"),
+            &internal_sync_rpc
+        ));
+
+        let raw_alias = writable_root.join("raw-alias.json");
+        fs::hard_link(&readonly_file, &raw_alias).expect("host hard link would otherwise succeed");
+        fs::write(&raw_alias, b"mutated").expect("write through host hard link alias");
+        assert_eq!(
+            fs::read(&readonly_file).expect("read readonly source"),
+            b"mutated"
         );
     }
 
@@ -5217,6 +5548,7 @@ mod tests {
             guest_path_mappings: vec![super::WasmGuestPathMapping {
                 guest_path: String::from("/workspace"),
                 host_path: cwd,
+                read_only: false,
             }],
             next_fd: 64,
             open_files: Default::default(),
@@ -5322,6 +5654,19 @@ mod tests {
         assert!(
             bootstrap.contains("(entry?.kind === \"preopen\" || entry?.kind === \"directory\")")
         );
+    }
+
+    #[test]
+    fn wasm_runner_blocks_read_only_fd_write_paths() {
+        let bootstrap = build_wasm_runner_bootstrap(&BTreeMap::new(), None);
+
+        assert!(bootstrap.contains("readOnly: entry.readOnly === true,"));
+        assert!(bootstrap.contains(
+            "if (handle.readOnly === true) {\n            return __agentOsWasiErrnoRofs;\n          }"
+        ));
+        assert!(bootstrap.contains(
+            "if (entry.readOnly === true) {\n          return __agentOsWasiErrnoRofs;\n        }\n        const written = __agentOsFs().writeSync("
+        ));
     }
 
     #[test]
