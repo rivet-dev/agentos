@@ -608,43 +608,71 @@ impl GuestPathTranslator {
             if let Some(suffix) = strip_guest_prefix(&normalized, &mapping.guest_path) {
                 let candidate = join_host_path(&mapping.host_path, suffix);
                 if candidate.exists() {
-                    return Some(candidate);
+                    return self.confine_host_path(candidate);
                 }
                 if let Ok(real_mapping_path) = fs::canonicalize(&mapping.host_path) {
                     let real_candidate = join_host_path(&real_mapping_path, suffix);
                     if real_candidate.exists() {
-                        return Some(real_candidate);
+                        return self.confine_host_path(real_candidate);
                     }
                     if let Some(sibling_candidate) =
                         resolve_pnpm_sibling_host_path(&real_mapping_path, suffix)
                     {
-                        return Some(sibling_candidate);
+                        return self.confine_host_path(sibling_candidate);
                     }
                 }
                 fallback_candidate.get_or_insert(candidate);
             }
         }
         if let Some(suffix) = strip_guest_prefix(&normalized, &self.implicit_guest_cwd) {
-            return Some(join_host_path(&self.implicit_host_cwd, suffix));
+            return self.confine_host_path(join_host_path(&self.implicit_host_cwd, suffix));
         }
 
-        if fallback_candidate.is_some() {
-            return fallback_candidate;
+        if let Some(candidate) = fallback_candidate {
+            return self.confine_host_path(candidate);
         }
 
         if let Some(sandbox_root) = &self.sandbox_root {
-            return Some(join_host_path(
+            return self.confine_host_path(join_host_path(
                 sandbox_root,
                 normalized.trim_start_matches('/'),
             ));
         }
 
-        let path = PathBuf::from(&normalized);
-        if path.is_absolute() {
-            Some(path)
-        } else {
-            None
+        None
+    }
+
+    fn confine_host_path(&self, host_path: PathBuf) -> Option<PathBuf> {
+        let allowed_roots = self.allowed_canonical_host_roots();
+        if allowed_roots.is_empty() {
+            return None;
         }
+
+        if let Ok(canonical_path) = fs::canonicalize(&host_path) {
+            return canonical_path_is_allowed(&canonical_path, &allowed_roots).then_some(host_path);
+        }
+
+        let existing_ancestor = nearest_existing_host_ancestor(&host_path)?;
+        let canonical_ancestor = fs::canonicalize(existing_ancestor).ok()?;
+        canonical_path_is_allowed(&canonical_ancestor, &allowed_roots).then_some(host_path)
+    }
+
+    fn allowed_canonical_host_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        for root in self
+            .mappings
+            .iter()
+            .map(|mapping| mapping.host_path.as_path())
+            .chain(std::iter::once(self.implicit_host_cwd.as_path()))
+            .chain(self.sandbox_root.as_deref())
+        {
+            if let Ok(canonical_root) = fs::canonicalize(root) {
+                if !roots.iter().any(|existing| existing == &canonical_root) {
+                    roots.push(canonical_root);
+                }
+            }
+        }
+        roots
     }
 
     fn canonical_guest_path(&self, guest_path: &str) -> Option<String> {
@@ -708,6 +736,23 @@ fn sort_guest_path_mappings(mappings: &mut [GuestPathMapping]) {
                     .cmp(&left.host_path.components().count())
             })
     });
+}
+
+fn canonical_path_is_allowed(path: &Path, allowed_roots: &[PathBuf]) -> bool {
+    allowed_roots
+        .iter()
+        .any(|root| path == root || path.starts_with(root))
+}
+
+fn nearest_existing_host_ancestor(path: &Path) -> Option<&Path> {
+    let mut candidate = Some(path);
+    while let Some(current) = candidate {
+        if fs::symlink_metadata(current).is_ok() {
+            return Some(current);
+        }
+        candidate = current.parent();
+    }
+    None
 }
 
 #[doc(hidden)]

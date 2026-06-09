@@ -542,6 +542,43 @@ fn pnpm_candidate_dir_is_checked_without_flattened_package_symlink() {
 }
 
 #[test]
+fn symlinked_package_escape_is_not_resolved() {
+    let fixture = Fixture::new();
+    let outside = TempDir::new().expect("create outside temp dir");
+    fs::write(
+        outside.path().join("secret.js"),
+        "module.exports = 'secret';",
+    )
+    .expect("write outside file");
+    fixture.mkdir("node_modules");
+    symlink(outside.path(), fixture.host_path("node_modules/escape"))
+        .expect("create escape symlink");
+
+    let mut resolver = fixture.resolver();
+    assert_eq!(
+        resolver.resolve_require("escape/secret", "/root/project/index.js"),
+        None
+    );
+}
+
+#[test]
+fn absolute_host_path_fallback_is_not_resolved() {
+    let fixture = Fixture::new();
+    let outside = TempDir::new().expect("create outside temp dir");
+    let outside_module = outside.path().join("secret.js");
+    fs::write(&outside_module, "module.exports = 'secret';").expect("write outside file");
+
+    let mut resolver = fixture.resolver();
+    assert_eq!(
+        resolver.resolve_require(
+            outside_module.to_string_lossy().as_ref(),
+            "/root/project/index.js",
+        ),
+        None
+    );
+}
+
+#[test]
 fn pnpm_symlinked_referrer_can_resolve_sibling_dependency() {
     let fixture = Fixture::new();
     fixture.write(
