@@ -141,20 +141,49 @@ fn agent_config(agent_type: &str) -> Option<AgentConfigDef> {
 /// Resolve a package's VM bin entrypoint from the host `node_modules` (port of TS
 /// `_resolvePackageBin`, using `module_access_cwd` rather than software roots). Returns the
 /// guest-visible path `/root/node_modules/<package>/<bin>`.
+/// Find a package's real host directory under `<module_access_cwd>/node_modules`, supporting both
+/// flat (npm-hoisted, `node_modules/<pkg>`) and nested (pnpm, `node_modules/.pnpm/<key>/node_modules/<pkg>`)
+/// layouts. pnpm does not hoist transitive packages to the top level, so an agent adapter such as
+/// `@rivet-dev/agent-os-pi` only exists deep in the `.pnpm` store. Returns the package directory whose
+/// `package.json` exists, preferring the hoisted location.
+fn find_package_dir(module_access_cwd: &str, package_name: &str) -> Option<std::path::PathBuf> {
+    let node_modules = std::path::Path::new(module_access_cwd).join("node_modules");
+    let hoisted = node_modules.join(package_name);
+    if hoisted.join("package.json").is_file() {
+        return Some(hoisted);
+    }
+    let pnpm_store = node_modules.join(".pnpm");
+    for entry in std::fs::read_dir(&pnpm_store).ok()?.flatten() {
+        let candidate = entry.path().join("node_modules").join(package_name);
+        if candidate.join("package.json").is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Map a host path under `<module_access_cwd>/node_modules` to its guest path under
+/// `/root/node_modules`, since module access projects that tree there. Returns `None` if `host_path`
+/// is not within the projected `node_modules`.
+fn host_node_modules_path_to_guest(module_access_cwd: &str, host_path: &std::path::Path) -> Option<String> {
+    let node_modules = std::path::Path::new(module_access_cwd).join("node_modules");
+    let relative = host_path.strip_prefix(&node_modules).ok()?;
+    Some(format!("/root/node_modules/{}", relative.to_string_lossy()))
+}
+
 fn resolve_package_bin(
     module_access_cwd: &str,
     package_name: &str,
     bin_name: Option<&str>,
 ) -> std::result::Result<String, ClientError> {
-    let pkg_json_path = std::path::Path::new(module_access_cwd)
-        .join("node_modules")
-        .join(package_name)
-        .join("package.json");
-    let contents = std::fs::read_to_string(&pkg_json_path).map_err(|error| {
+    let package_dir = find_package_dir(module_access_cwd, package_name).ok_or_else(|| {
         ClientError::Sidecar(format!(
-            "cannot read {}: {error}",
-            pkg_json_path.display()
+            "package not found: {package_name} (looked under {module_access_cwd}/node_modules and its .pnpm store)"
         ))
+    })?;
+    let pkg_json_path = package_dir.join("package.json");
+    let contents = std::fs::read_to_string(&pkg_json_path).map_err(|error| {
+        ClientError::Sidecar(format!("cannot read {}: {error}", pkg_json_path.display()))
     })?;
     let pkg: Value = serde_json::from_str(&contents).map_err(|error| {
         ClientError::Sidecar(format!("invalid package.json for {package_name}: {error}"))
@@ -172,7 +201,99 @@ fn resolve_package_bin(
     let bin_entry = bin_entry.ok_or_else(|| {
         ClientError::Sidecar(format!("No bin entry found in {package_name}/package.json"))
     })?;
-    Ok(format!("/root/node_modules/{package_name}/{bin_entry}"))
+    let bin_host_path = package_dir.join(bin_entry.trim_start_matches("./"));
+    host_node_modules_path_to_guest(module_access_cwd, &bin_host_path).ok_or_else(|| {
+        ClientError::Sidecar(format!(
+            "resolved bin for {package_name} is outside module access node_modules: {}",
+            bin_host_path.display()
+        ))
+    })
+}
+
+#[cfg(test)]
+mod resolve_package_bin_tests {
+    use super::resolve_package_bin;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    /// Build a throwaway host fixture dir, returning its path. Cleaned by the caller.
+    fn fixture(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "agentos-resolve-bin-{}-{}",
+            std::process::id(),
+            label
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn write_pkg(root: &Path, rel_pkg_dir: &str, bin_json: &str) {
+        let pkg_dir = root.join(rel_pkg_dir);
+        fs::create_dir_all(&pkg_dir).expect("mkdir pkg");
+        fs::write(
+            pkg_dir.join("package.json"),
+            format!(r#"{{"name":"x","bin":{bin_json}}}"#),
+        )
+        .expect("write package.json");
+    }
+
+    #[test]
+    fn resolves_hoisted_package_to_top_level_guest_path() {
+        let root = fixture("hoisted");
+        write_pkg(
+            &root,
+            "node_modules/@scope/pkg",
+            r#"{"the-bin":"./dist/adapter.js"}"#,
+        );
+        let result = resolve_package_bin(root.to_str().unwrap(), "@scope/pkg", Some("the-bin"));
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            result.unwrap(),
+            "/root/node_modules/@scope/pkg/dist/adapter.js"
+        );
+    }
+
+    #[test]
+    fn resolves_pnpm_nested_package_to_its_real_deep_guest_path() {
+        // pnpm does not hoist transitive packages; the adapter only exists deep in the .pnpm store,
+        // and it must be launched from there so its relative dependency symlinks resolve.
+        let root = fixture("pnpm");
+        let key = "@scope+pkg@1.0.0_peer";
+        write_pkg(
+            &root,
+            &format!("node_modules/.pnpm/{key}/node_modules/@scope/pkg"),
+            r#"{"the-bin":"./dist/adapter.js"}"#,
+        );
+        let result = resolve_package_bin(root.to_str().unwrap(), "@scope/pkg", Some("the-bin"));
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            result.unwrap(),
+            format!("/root/node_modules/.pnpm/{key}/node_modules/@scope/pkg/dist/adapter.js")
+        );
+    }
+
+    #[test]
+    fn prefers_hoisted_over_pnpm_when_both_exist() {
+        let root = fixture("both");
+        write_pkg(&root, "node_modules/pkg", r#""./hoisted.js""#);
+        write_pkg(
+            &root,
+            "node_modules/.pnpm/pkg@1/node_modules/pkg",
+            r#""./nested.js""#,
+        );
+        let result = resolve_package_bin(root.to_str().unwrap(), "pkg", None);
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(result.unwrap(), "/root/node_modules/pkg/hoisted.js");
+    }
+
+    #[test]
+    fn missing_package_is_an_error() {
+        let root = fixture("missing");
+        fs::create_dir_all(root.join("node_modules")).expect("mkdir");
+        let result = resolve_package_bin(root.to_str().unwrap(), "nope", None);
+        let _ = fs::remove_dir_all(&root);
+        assert!(result.is_err());
+    }
 }
 
 /// MCP server config used by `create_session`.
