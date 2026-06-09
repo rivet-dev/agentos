@@ -18,7 +18,14 @@ pub fn ensure_sidecar_env() {
         if std::env::var("AGENT_OS_SIDECAR_BIN").is_err() {
             let bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../target/debug/agent-os-sidecar");
-            std::env::set_var("AGENT_OS_SIDECAR_BIN", bin);
+            // `std::env::set_var` is `unsafe` in the Rust 2024 edition (process-global mutation that
+            // can race other threads reading the environment). This runs once, single-threaded, under
+            // `Once::call_once` before any VM is created. The `allow` keeps it warning-free on the
+            // 2021 edition, where the call is still safe.
+            #[allow(unused_unsafe)]
+            unsafe {
+                std::env::set_var("AGENT_OS_SIDECAR_BIN", bin);
+            }
         }
     });
 }

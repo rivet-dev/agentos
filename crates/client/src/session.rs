@@ -1639,16 +1639,16 @@ impl AgentOs {
             (entry.event_tx.subscribe(), latest)
         })?;
 
-        let mut agent_text = String::new();
-        let mut last_delivered = start_after;
-        // Accumulate `agent_message_chunk` text from an event into the running buffer (dedup by
-        // sequence number). Mirrors the synchronous `SessionEventHandler` invoked inline by TS
-        // `_flushSessionEventHandlers`.
-        let mut accumulate = |event: &SequencedEvent, agent_text: &mut String| {
-            if event.sequence_number <= last_delivered {
+        // Collect `agent_message_chunk` text keyed by sequence number. A map (not a running string)
+        // dedups chunks seen on both the live broadcast and the final ring reconciliation, and keeps
+        // them in sequence order regardless of delivery order. Reconciling from the ring at the end is
+        // required because a fast/short reply can land entirely in one chunk that is recorded during
+        // the request's final hydration without ever reaching this no-replay broadcast subscription.
+        let mut chunks: BTreeMap<i64, String> = BTreeMap::new();
+        let accumulate = |event: &SequencedEvent, chunks: &mut BTreeMap<i64, String>| {
+            if event.sequence_number <= start_after {
                 return;
             }
-            last_delivered = event.sequence_number;
             let params = event.notification.params.clone().unwrap_or(Value::Null);
             let update = params.get("update").cloned().unwrap_or(Value::Null);
             if update.get("sessionUpdate").and_then(Value::as_str) == Some("agent_message_chunk") {
@@ -1657,7 +1657,7 @@ impl AgentOs {
                     .and_then(|content| content.get("text"))
                     .and_then(Value::as_str)
                 {
-                    agent_text.push_str(chunk);
+                    chunks.insert(event.sequence_number, chunk.to_string());
                 }
             }
         };
@@ -1677,7 +1677,7 @@ impl AgentOs {
                 result = &mut request => break result,
                 event = rx.recv() => {
                     match event {
-                        Ok(event) => accumulate(&event, &mut agent_text),
+                        Ok(event) => accumulate(&event, &mut chunks),
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                             // Channel closed; finish the request without further chunks.
@@ -1694,7 +1694,7 @@ impl AgentOs {
         // late (during the final hydrate) but not yet received are not dropped.
         loop {
             match rx.try_recv() {
-                Ok(event) => accumulate(&event, &mut agent_text),
+                Ok(event) => accumulate(&event, &mut chunks),
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
                 Err(tokio::sync::broadcast::error::TryRecvError::Empty)
                 | Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
@@ -1702,7 +1702,23 @@ impl AgentOs {
         }
         drop(rx);
 
+        // Reconcile from the authoritative event ring: a short reply can be recorded entirely during
+        // the request's final hydration, after the broadcast subscription stopped delivering. The map
+        // dedups by sequence, so chunks already seen on the broadcast are not double-counted.
+        if let Ok(ring_events) = self.get_session_events(
+            session_id,
+            GetEventsOptions {
+                since: Some(start_after),
+                method: None,
+            },
+        ) {
+            for event in &ring_events {
+                accumulate(event, &mut chunks);
+            }
+        }
+
         let response = response?;
+        let agent_text: String = chunks.into_values().collect();
         Ok(PromptResult {
             response,
             text: agent_text,
