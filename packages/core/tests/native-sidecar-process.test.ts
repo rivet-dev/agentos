@@ -814,6 +814,8 @@ describe("native sidecar process client", () => {
 						"console.log('node_modules', fs.existsSync('/node_modules'));",
 						"console.log('bin', fs.existsSync('/node_modules/.bin'));",
 						"console.log('astro', fs.existsSync('/node_modules/.bin/astro'));",
+						"try { fs.writeFileSync('/node_modules/mutated.txt', 'blocked'); }",
+						"catch (err) { console.log('write', err.code); }",
 					].join(" "),
 				],
 				{
@@ -832,6 +834,8 @@ describe("native sidecar process client", () => {
 			expect(stdout).toContain("node_modules true");
 			expect(stdout).toContain("bin true");
 			expect(stdout).toContain("astro true");
+			expect(stdout).toContain("write EROFS");
+			expect(existsSync(join(dependencyRoot, "mutated.txt"))).toBe(false);
 		} finally {
 			await kernel.dispose();
 		}

@@ -2050,7 +2050,7 @@ function planNodeFilesystemPassthroughMounts(
 		mounts.push({
 			path: guestPath,
 			fs: new NodeFileSystem({ root: hostPath }),
-			readOnly: false,
+			readOnly: true,
 		});
 	}
 
