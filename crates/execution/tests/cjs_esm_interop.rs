@@ -1063,6 +1063,70 @@ fn runtime_cjs_entrypoints_can_use_dynamic_import() {
     assert_eq!(output, json!({ "answer": 42 }));
 }
 
+fn runtime_export_star_reexport_with_own_static_exports_exposes_all_named_esm_imports() {
+    // Reproduces `@sinclair/typebox/compiler`: a tsc-compiled barrel that BOTH assigns its own
+    // export statically (`exports.ValueErrorType = ...`, which static extraction finds, so the set
+    // is non-empty) AND re-exports a submodule's names at runtime via `__exportStar` (which static
+    // extraction cannot see). Before the fix, a non-empty static set skipped the runtime fallback,
+    // so `TypeCompiler` was dropped and `import { TypeCompiler }` threw
+    // "does not provide an export named 'TypeCompiler'".
+    let fixture = Fixture::new();
+    fixture.write(
+        "sub.cjs",
+        r#"
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TypeCompiler = void 0;
+exports.TypeCompiler = "compiler";
+"#,
+    );
+    fixture.write(
+        "barrel.cjs",
+        r#"
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ValueErrorType = void 0;
+exports.ValueErrorType = 7;
+__exportStar(require("./sub.cjs"), exports);
+"#,
+    );
+    fixture.write(
+        "entry.mjs",
+        r#"
+import barrel, { ValueErrorType, TypeCompiler } from "./barrel.cjs";
+console.log(JSON.stringify({
+  ValueErrorType,
+  TypeCompiler,
+  defaultValueErrorType: barrel.ValueErrorType,
+  defaultTypeCompiler: barrel.TypeCompiler,
+}));
+"#,
+    );
+
+    let output = run_guest_json(&fixture, "./entry.mjs");
+    assert_eq!(
+        output,
+        json!({
+            "ValueErrorType": 7,
+            "TypeCompiler": "compiler",
+            "defaultValueErrorType": 7,
+            "defaultTypeCompiler": "compiler"
+        })
+    );
+}
+
 #[test]
 fn cjs_esm_interop_suite() {
     // Keep V8-backed integration coverage inside one top-level libtest case.
@@ -1080,6 +1144,7 @@ fn cjs_esm_interop_suite() {
     runtime_spread_based_module_exports_still_exposes_the_default_export_shape();
     runtime_object_create_descriptor_exports_expose_named_esm_imports_via_runtime_fallback();
     runtime_cjs_reexport_preserves_named_esm_imports_via_runtime_fallback();
+    runtime_export_star_reexport_with_own_static_exports_exposes_all_named_esm_imports();
     runtime_require_of_esm_only_packages_either_loads_or_throws_clearly();
     runtime_type_module_export_subpaths_keep_js_files_in_esm_mode();
     runtime_require_of_dual_packages_uses_the_cjs_entrypoint();

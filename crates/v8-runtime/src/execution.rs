@@ -5669,10 +5669,20 @@ fn build_cjs_esm_shim(
 ) -> String {
     use std::collections::HashSet;
 
+    // Static scanning only sees exports assigned with literal `exports.X =` /
+    // `Object.defineProperty(exports, "X", ...)` patterns in this file. It misses names introduced at
+    // runtime, e.g. tsc's `__exportStar(require("./sub"), exports)` re-export helper (used by
+    // `@sinclair/typebox/compiler` to surface `TypeCompiler`) or `Object.assign(exports, ...)`. When
+    // such a dynamic re-export pattern is present the static set is provably incomplete, so fall back
+    // to runtime extraction (require the module and enumerate the real `Object.keys(module.exports)`)
+    // and union the two. Only do this when static finds nothing or a dynamic re-export is detected:
+    // eagerly requiring every CJS module would add avoidable work and trigger side effects earlier
+    // than intended (see crates/execution/CLAUDE.md). Static still back-fills names that a
+    // partially-evaluated circular require may not have added to the exports object yet.
     let mut names = extract_cjs_export_names(raw_source)
         .into_iter()
         .collect::<HashSet<_>>();
-    if names.is_empty() {
+    if names.is_empty() || source_has_dynamic_cjs_reexports(raw_source) {
         names.extend(extract_runtime_cjs_export_names(scope, resolved_path));
     }
 
@@ -5999,6 +6009,17 @@ fn extract_cjs_export_names(source: &str) -> Vec<String> {
     let mut result: Vec<String> = names.into_iter().collect();
     result.sort();
     result
+}
+
+/// Whether CJS `source` re-exports names through a runtime pattern that static scanning in
+/// [`extract_cjs_export_names`] cannot resolve, so the named-export set is provably incomplete
+/// without evaluating the module. Covers tsc/tslib's `__exportStar(require("./sub"), exports)`
+/// helper (which copies a submodule's enumerable keys onto `exports` at runtime) and
+/// `Object.assign(exports, ...)` / `Object.assign(module.exports, ...)` bulk re-exports.
+fn source_has_dynamic_cjs_reexports(source: &str) -> bool {
+    source.contains("__exportStar")
+        || source.contains("Object.assign(exports")
+        || source.contains("Object.assign(module.exports")
 }
 
 fn add_esm_runtime_prelude(source: &str) -> String {
