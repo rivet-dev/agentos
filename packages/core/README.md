@@ -158,9 +158,11 @@ await vm.dispose();
 - `MountConfigMemory` — In-memory filesystem
 - `MountConfigCustom` — Caller-provided VirtualFileSystem
 - `NativeMountConfig` — Declarative sidecar mount plugin configuration
+- `MountConfigOverlay` — Copy-on-write overlay (lower + upper layers)
+
+**Companion Filesystem Packages**
 - `createGoogleDriveBackend()` — Declarative Google Drive native mount helper from `@rivet-dev/agent-os-google-drive`
 - `createS3Backend()` — Declarative S3-compatible native mount helper from `@rivet-dev/agent-os-s3`
-- `MountConfigOverlay` — Copy-on-write overlay (lower + upper layers)
 
 **MCP Servers**
 - `McpServerConfig` — Union of local and remote MCP configs

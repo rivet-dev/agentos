@@ -113,7 +113,7 @@ All benchmarks compare agentOS against the fastest/cheapest mainstream sandbox p
 - **[Automatic persistence](https://rivet.dev/docs/agent-os/persistence)**: Every conversation is saved and replayable without extra code
 
 ### Infrastructure
-- **[Mount anything as a filesystem](https://rivet.dev/docs/agent-os/filesystem)**: S3, Google Drive, SQLite, host directories, or custom backends
+- **[Mount external storage as a filesystem](https://rivet.dev/docs/agent-os/filesystem)**: S3-compatible storage, Google Drive, host directories, overlay filesystems, or custom backends
 - **[Host tools](https://rivet.dev/docs/agent-os/tools)**: Define JavaScript functions that agents call as CLI commands inside the VM
 - **[Cron](https://rivet.dev/docs/agent-os/cron), [webhooks](https://rivet.dev/docs/agent-os/webhooks), and [queues](https://rivet.dev/docs/agent-os/queues)**: Schedule tasks, receive external events, and serialize work with built-in primitives
 - **[Sandbox extension](https://rivet.dev/docs/agent-os/sandbox)**: Pair with full sandboxes (E2B, Daytona, etc.) for heavy workloads like browsers or native compilation
