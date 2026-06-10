@@ -1,20 +1,22 @@
-//! Metrics timer (stub — drop is a no-op).
+//! Metrics timer (stub).
 
-use crate::metrics::Result;
+use crate::metrics::{MetricsError, Result};
 
-/// Timer that records duration on drop (stub — no-op).
+/// Timer that records duration on drop.
 #[derive(Debug)]
-pub struct Timer;
+pub struct Timer {
+    _private: (),
+}
 
 impl Timer {
-    /// Record the elapsed duration with additional tags (stub — no-op).
+    /// Record the elapsed duration with additional tags.
     pub fn record(&self, _additional_tags: &[(&str, &str)]) -> Result<()> {
-        Ok(())
+        Err(MetricsError::ExporterDisabled)
     }
 }
 
 impl Drop for Timer {
     fn drop(&mut self) {
-        // No-op on WASI
+        // Metrics export is disabled in the WASI stub.
     }
 }
