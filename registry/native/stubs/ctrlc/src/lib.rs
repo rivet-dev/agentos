@@ -1,7 +1,8 @@
 //! WASM-compatible stub for the ctrlc crate.
-//! Signal handling is not available in WASM, so all handlers are no-ops.
+//! Signal handling is not available in WASM.
 
 use std::fmt;
+use std::io;
 
 /// Ctrl-C error.
 #[derive(Debug)]
@@ -37,18 +38,25 @@ pub enum SignalType {
     Other(Signal),
 }
 
-/// Register signal handler for Ctrl-C (no-op on WASM).
+fn unsupported_signal_registration() -> Error {
+    Error::System(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "signal handlers are not supported on WASI",
+    ))
+}
+
+/// Register signal handler for Ctrl-C.
 pub fn set_handler<F>(_user_handler: F) -> Result<(), Error>
 where
     F: FnMut() + 'static + Send,
 {
-    Ok(())
+    Err(unsupported_signal_registration())
 }
 
-/// Register signal handler, erroring if one already exists (no-op on WASM).
+/// Register signal handler, erroring if one already exists.
 pub fn try_set_handler<F>(_user_handler: F) -> Result<(), Error>
 where
     F: FnMut() + 'static + Send,
 {
-    Ok(())
+    Err(unsupported_signal_registration())
 }
