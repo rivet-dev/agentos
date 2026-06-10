@@ -145,6 +145,7 @@ members = [
     "crates/commands/git",
     "stubs/codex-otel",
     "stubs/ctrlc",
+    "stubs/hostname",
 ]
 
 [workspace.package]
