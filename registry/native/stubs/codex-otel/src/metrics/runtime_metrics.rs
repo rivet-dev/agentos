@@ -17,8 +17,8 @@ impl RuntimeMetricTotals {
 
     /// Merge another totals into this one.
     pub fn merge(&mut self, other: Self) {
-        self.input_tokens += other.input_tokens;
-        self.output_tokens += other.output_tokens;
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
     }
 }
 
@@ -39,7 +39,7 @@ impl RuntimeMetricsSummary {
 
     /// Merge another summary into this one.
     pub fn merge(&mut self, other: Self) {
-        self.input_tokens += other.input_tokens;
-        self.output_tokens += other.output_tokens;
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
     }
 }
