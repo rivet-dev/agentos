@@ -30,7 +30,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Try to detect if we're building for a specific utility by checking build configuration
     // This attempts to identify individual utility builds vs multicall binary builds
-    let target_utility = detect_target_utility();
+    let target_utility = detect_target_utility()?;
     let locales_to_embed = get_locales_to_embed();
 
     match target_utility {
@@ -77,7 +77,7 @@ fn project_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 /// Attempt to detect which specific utility is being built
-fn detect_target_utility() -> Option<String> {
+fn detect_target_utility() -> Result<Option<String>, Box<dyn std::error::Error>> {
     use std::fs;
 
     // Tell Cargo to rerun if this environment variable changes
@@ -86,15 +86,17 @@ fn detect_target_utility() -> Option<String> {
     // First check if an explicit environment variable was set
     if let Ok(target_util) = env::var("UUCORE_TARGET_UTIL") {
         if !target_util.is_empty() {
-            return Some(target_util);
+            validate_component_name(&target_util)?;
+            return Ok(Some(target_util));
         }
     }
 
     // Auto-detect utility name from CARGO_PKG_NAME if it's a uu_* package
     if let Ok(pkg_name) = env::var("CARGO_PKG_NAME") {
         if let Some(util_name) = pkg_name.strip_prefix("uu_") {
+            validate_component_name(util_name)?;
             println!("cargo:warning=Auto-detected utility name: {util_name}");
-            return Some(util_name.to_string());
+            return Ok(Some(util_name.to_string()));
         }
     }
 
@@ -104,7 +106,8 @@ fn detect_target_utility() -> Option<String> {
         if let Ok(content) = fs::read_to_string(&config_path) {
             let util_name = content.trim();
             if !util_name.is_empty() && util_name != "multicall" {
-                return Some(util_name.to_string());
+                validate_component_name(util_name)?;
+                return Ok(Some(util_name.to_string()));
             }
         }
     }
@@ -115,13 +118,14 @@ fn detect_target_utility() -> Option<String> {
         if let Ok(content) = fs::read_to_string(&config_path) {
             let util_name = content.trim();
             if !util_name.is_empty() && util_name != "multicall" {
-                return Some(util_name.to_string());
+                validate_component_name(util_name)?;
+                return Ok(Some(util_name.to_string()));
             }
         }
     }
 
     // If no configuration found, assume multicall build
-    None
+    Ok(None)
 }
 
 /// Embed locale for a single specific utility
@@ -276,7 +280,7 @@ fn embed_static_utility_locales(
 fn get_locales_to_embed() -> (String, Option<String>) {
     let system_locale = env::var("LANG").ok().and_then(|lang| {
         let locale = lang.split('.').next()?.replace('_', "-");
-        if locale != "en-US" && !locale.is_empty() {
+        if locale != "en-US" && is_valid_locale_name(&locale) {
             Some(locale)
         } else {
             None
@@ -356,7 +360,9 @@ fn embed_component_locales<F>(
 where
     F: Fn(&str) -> PathBuf,
 {
+    validate_component_name(component_name)?;
     for_each_locale(locales, |locale| {
+        validate_locale_name(locale)?;
         let locale_path = path_builder(locale);
         embed_locale_file(
             embedded_file,
@@ -368,129 +374,160 @@ where
     })
 }
 
+fn validate_component_name(component_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if is_valid_component_name(component_name) {
+        Ok(())
+    } else {
+        Err(format!("invalid uucore component name: {component_name:?}").into())
+    }
+}
+
+fn validate_locale_name(locale: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if is_valid_locale_name(locale) {
+        Ok(())
+    } else {
+        Err(format!("invalid locale name: {locale:?}").into())
+    }
+}
+
+fn is_valid_component_name(component_name: &str) -> bool {
+    !component_name.is_empty()
+        && component_name.len() <= 128
+        && component_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        && !component_name.starts_with('-')
+        && !component_name.ends_with('-')
+        && !component_name.contains("..")
+}
+
+fn is_valid_locale_name(locale: &str) -> bool {
+    !locale.is_empty()
+        && locale.len() <= 64
+        && locale
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        && !locale.starts_with('-')
+        && !locale.ends_with('-')
+        && !locale.contains("--")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::{OsStr, OsString};
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: Option<&OsStr>) -> Self {
+            let previous = env::var_os(key);
+            unsafe {
+                match value {
+                    Some(value) => env::set_var(key, value),
+                    None => env::remove_var(key),
+                }
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.previous {
+                    Some(previous) => env::set_var(self.key, previous),
+                    None => env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
+    fn with_lang<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().expect("env test lock poisoned");
+        let _lang = EnvVarGuard::set("LANG", value.map(OsStr::new));
+        f()
+    }
+
+    fn with_env_vars<T>(vars: &[(&'static str, Option<&str>)], f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().expect("env test lock poisoned");
+        let _vars: Vec<_> = vars
+            .iter()
+            .map(|(key, value)| EnvVarGuard::set(key, value.map(OsStr::new)))
+            .collect();
+        f()
+    }
 
     #[test]
     fn get_locales_to_embed_no_lang() {
-        unsafe {
-            env::remove_var("LANG");
-        }
-        let (en_locale, system_locale) = get_locales_to_embed();
-        assert_eq!(en_locale, "en-US");
-        assert_eq!(system_locale, None);
+        with_lang(None, || {
+            let (en_locale, system_locale) = get_locales_to_embed();
+            assert_eq!(en_locale, "en-US");
+            assert_eq!(system_locale, None);
+        });
 
-        unsafe {
-            env::set_var("LANG", "");
-        }
-        let (en_locale, system_locale) = get_locales_to_embed();
-        assert_eq!(en_locale, "en-US");
-        assert_eq!(system_locale, None);
-        unsafe {
-            env::remove_var("LANG");
-        }
+        with_lang(Some(""), || {
+            let (en_locale, system_locale) = get_locales_to_embed();
+            assert_eq!(en_locale, "en-US");
+            assert_eq!(system_locale, None);
+        });
 
-        unsafe {
-            env::set_var("LANG", "en_US.UTF-8");
-        }
-        let (en_locale, system_locale) = get_locales_to_embed();
-        assert_eq!(en_locale, "en-US");
-        assert_eq!(system_locale, None);
-        unsafe {
-            env::remove_var("LANG");
-        }
+        with_lang(Some("en_US.UTF-8"), || {
+            let (en_locale, system_locale) = get_locales_to_embed();
+            assert_eq!(en_locale, "en-US");
+            assert_eq!(system_locale, None);
+        });
     }
 
     #[test]
     fn get_locales_to_embed_with_lang() {
-        unsafe {
-            env::set_var("LANG", "fr_FR.UTF-8");
-        }
-        let (en_locale, system_locale) = get_locales_to_embed();
-        assert_eq!(en_locale, "en-US");
-        assert_eq!(system_locale, Some("fr-FR".to_string()));
-        unsafe {
-            env::remove_var("LANG");
-        }
+        with_lang(Some("fr_FR.UTF-8"), || {
+            let (en_locale, system_locale) = get_locales_to_embed();
+            assert_eq!(en_locale, "en-US");
+            assert_eq!(system_locale, Some("fr-FR".to_string()));
+        });
 
-        unsafe {
-            env::set_var("LANG", "zh_CN.UTF-8");
-        }
-        let (en_locale, system_locale) = get_locales_to_embed();
-        assert_eq!(en_locale, "en-US");
-        assert_eq!(system_locale, Some("zh-CN".to_string()));
-        unsafe {
-            env::remove_var("LANG");
-        }
+        with_lang(Some("zh_CN.UTF-8"), || {
+            let (en_locale, system_locale) = get_locales_to_embed();
+            assert_eq!(en_locale, "en-US");
+            assert_eq!(system_locale, Some("zh-CN".to_string()));
+        });
 
-        unsafe {
-            env::set_var("LANG", "de");
-        }
-        let (en_locale, system_locale) = get_locales_to_embed();
-        assert_eq!(en_locale, "en-US");
-        assert_eq!(system_locale, Some("de".to_string()));
-        unsafe {
-            env::remove_var("LANG");
-        }
+        with_lang(Some("de"), || {
+            let (en_locale, system_locale) = get_locales_to_embed();
+            assert_eq!(en_locale, "en-US");
+            assert_eq!(system_locale, Some("de".to_string()));
+        });
     }
 
     #[test]
     fn get_locales_to_embed_invalid_lang() {
-        // invalid locale format
-        unsafe {
-            env::set_var("LANG", "invalid");
-        }
-        let (en_locale, system_locale) = get_locales_to_embed();
-        assert_eq!(en_locale, "en-US");
-        assert_eq!(system_locale, Some("invalid".to_string()));
-        unsafe {
-            env::remove_var("LANG");
-        }
-
-        // numeric values
-        unsafe {
-            env::set_var("LANG", "123");
-        }
-        let (en_locale, system_locale) = get_locales_to_embed();
-        assert_eq!(en_locale, "en-US");
-        assert_eq!(system_locale, Some("123".to_string()));
-        unsafe {
-            env::remove_var("LANG");
+        for lang in [
+            "../en_US.UTF-8",
+            "en/US.UTF-8",
+            "@@@@",
+            "-en",
+            "en-",
+            "en--US",
+        ] {
+            with_lang(Some(lang), || {
+                let (en_locale, system_locale) = get_locales_to_embed();
+                assert_eq!(en_locale, "en-US");
+                assert_eq!(system_locale, None);
+            });
         }
 
-        // special characters
-        unsafe {
-            env::set_var("LANG", "@@@@");
-        }
-        let (en_locale, system_locale) = get_locales_to_embed();
-        assert_eq!(en_locale, "en-US");
-        assert_eq!(system_locale, Some("@@@@".to_string()));
-        unsafe {
-            env::remove_var("LANG");
-        }
-
-        // malformed locale (no country code but with encoding)
-        unsafe {
-            env::set_var("LANG", "en.UTF-8");
-        }
-        let (en_locale, system_locale) = get_locales_to_embed();
-        assert_eq!(en_locale, "en-US");
-        assert_eq!(system_locale, Some("en".to_string()));
-        unsafe {
-            env::remove_var("LANG");
-        }
-
-        // valid format but unusual locale
-        unsafe {
-            env::set_var("LANG", "XX_YY.UTF-8");
-        }
-        let (en_locale, system_locale) = get_locales_to_embed();
-        assert_eq!(en_locale, "en-US");
-        assert_eq!(system_locale, Some("XX-YY".to_string()));
-        unsafe {
-            env::remove_var("LANG");
-        }
+        with_lang(Some("XX_YY.UTF-8"), || {
+            let (en_locale, system_locale) = get_locales_to_embed();
+            assert_eq!(en_locale, "en-US");
+            assert_eq!(system_locale, Some("XX-YY".to_string()));
+        });
     }
 
     #[test]
@@ -528,5 +565,68 @@ mod tests {
         let result = for_each_locale(&locales, |_locale| Err("test error".into()));
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn validates_component_names() {
+        for component in ["uucore", "checksum_common", "sha256sum", "base32"] {
+            assert!(is_valid_component_name(component));
+        }
+
+        for component in ["", "../cat", "cat/../../x", "-cat", "cat-", "cat.name"] {
+            assert!(!is_valid_component_name(component));
+        }
+    }
+
+    #[test]
+    fn validates_locale_names() {
+        for locale in ["en-US", "fr-FR", "zh-Hans-CN", "de"] {
+            assert!(is_valid_locale_name(locale));
+        }
+
+        for locale in ["", "../en-US", "en/US", "-en", "en-", "en--US", "en_US"] {
+            assert!(!is_valid_locale_name(locale));
+        }
+    }
+
+    #[test]
+    fn detect_target_utility_rejects_invalid_env_value() {
+        with_env_vars(
+            &[
+                ("UUCORE_TARGET_UTIL", Some("../cat")),
+                ("CARGO_PKG_NAME", None),
+                ("CARGO_TARGET_DIR", None),
+            ],
+            || assert!(detect_target_utility().is_err()),
+        );
+    }
+
+    #[test]
+    fn detect_target_utility_rejects_invalid_package_name() {
+        with_env_vars(
+            &[
+                ("UUCORE_TARGET_UTIL", None),
+                ("CARGO_PKG_NAME", Some("uu_cat/../../sh")),
+                ("CARGO_TARGET_DIR", None),
+            ],
+            || assert!(detect_target_utility().is_err()),
+        );
+    }
+
+    #[test]
+    fn detect_target_utility_accepts_valid_package_name() {
+        with_env_vars(
+            &[
+                ("UUCORE_TARGET_UTIL", None),
+                ("CARGO_PKG_NAME", Some("uu_sha256sum")),
+                ("CARGO_TARGET_DIR", None),
+            ],
+            || {
+                assert_eq!(
+                    detect_target_utility().unwrap(),
+                    Some("sha256sum".to_string())
+                )
+            },
+        );
     }
 }
