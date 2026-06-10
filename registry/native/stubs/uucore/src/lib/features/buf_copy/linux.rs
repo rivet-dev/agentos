@@ -12,7 +12,7 @@ use crate::{
 
 /// Buffer-based copying utilities for unix (excluding Linux).
 use std::{
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     os::fd::{AsFd, AsRawFd},
 };
 
@@ -130,15 +130,24 @@ pub(crate) fn copy_exact(
 
     let mut left = num_bytes;
     let mut buf = [0; BUF_SIZE];
-    let mut written = 0;
+    let mut total_written = 0;
     while left > 0 {
-        let read = unistd::read(read_fd, &mut buf)?;
-        assert_ne!(read, 0, "unexpected end of pipe");
-        while written < read {
-            let n = unistd::write(write_fd, &buf[written..read])?;
-            written += n;
+        let read = unistd::read(read_fd, &mut buf[..left.min(BUF_SIZE)])?;
+        if read == 0 {
+            return Err(std::io::Error::new(
+                ErrorKind::UnexpectedEof,
+                "unexpected end of pipe",
+            ));
         }
+
+        let mut chunk_written = 0;
+        while chunk_written < read {
+            let n = unistd::write(write_fd, &buf[chunk_written..read])?;
+            chunk_written += n;
+        }
+
         left -= read;
+        total_written += chunk_written;
     }
-    Ok(written)
+    Ok(total_written)
 }

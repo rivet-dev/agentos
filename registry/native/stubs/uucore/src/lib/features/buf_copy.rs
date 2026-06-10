@@ -65,6 +65,32 @@ mod tests {
         assert_eq!(&buf[..n], data);
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn test_copy_exact_multiple_chunks() {
+        let (mut pipe_read, mut pipe_write) = pipes::pipe().unwrap();
+        let data = vec![b'x'; 1024 * 16 + 1];
+        let writer = thread::spawn(move || {
+            pipe_write.write_all(&data).unwrap();
+        });
+
+        let temp_dir = tempdir().unwrap();
+        let dest_path = temp_dir.path().join("dest.txt");
+        let dest_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&dest_path)
+            .unwrap();
+
+        let copied = copy_exact(&pipe_read, &dest_file, 1024 * 16 + 1).unwrap();
+        writer.join().unwrap();
+
+        assert_eq!(copied, 1024 * 16 + 1);
+        assert_eq!(std::fs::read(dest_path).unwrap(), vec![b'x'; 1024 * 16 + 1]);
+    }
+
     #[test]
     #[cfg(unix)]
     fn test_copy_stream() {
