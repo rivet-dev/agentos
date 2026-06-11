@@ -102,6 +102,7 @@ pub struct Parser<'parser> {
     pub default_unit: Option<&'parser str>,
 }
 
+#[derive(Clone, Copy)]
 enum NumberSystem {
     Decimal,
     Octal,
@@ -173,20 +174,9 @@ impl<'parser> Parser<'parser> {
         // Split the size argument into numeric and unit parts
         // For example, if the argument is "123K", the numeric part is "123", and
         // the unit is "K"
-        let numeric_string: String = match number_system {
-            NumberSystem::Hexadecimal => size
-                .chars()
-                .take(2)
-                .chain(size.chars().skip(2).take_while(char::is_ascii_hexdigit))
-                .collect(),
-            NumberSystem::Binary => size
-                .chars()
-                .take(2)
-                .chain(size.chars().skip(2).take_while(|c| c.is_digit(2)))
-                .collect(),
-            _ => size.chars().take_while(char::is_ascii_digit).collect(),
-        };
-        let mut unit: &str = &size[numeric_string.len()..];
+        let numeric_len = Self::numeric_prefix_len(size, number_system);
+        let numeric_string = &size[..numeric_len];
+        let mut unit: &str = &size[numeric_len..];
 
         if let Some(default_unit) = self.default_unit {
             // Check if `unit` is empty then assigns `default_unit` to `unit`
@@ -217,7 +207,7 @@ impl<'parser> Parser<'parser> {
         // Special case: for percentage, just compute the given fraction
         // of the total physical memory on the machine, if possible.
         if unit == "%" {
-            let number: u128 = Self::parse_number(&numeric_string, 10, size)?;
+            let number: u128 = Self::parse_number(numeric_string, 10, size)?;
             return match total_physical_memory() {
                 Ok(total) => Ok((number / 100) * total),
                 Err(_) => Err(ParseSizeError::PhysicalMem(size.to_string())),
@@ -265,7 +255,7 @@ impl<'parser> Parser<'parser> {
                 if numeric_string.is_empty() && !self.no_empty_numeric {
                     1
                 } else {
-                    Self::parse_number(&numeric_string, 10, size)?
+                    Self::parse_number(numeric_string, 10, size)?
                 }
             }
             NumberSystem::Octal => {
@@ -348,17 +338,37 @@ impl<'parser> Parser<'parser> {
             }
         }
 
-        let num_digits: usize = size
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect::<String>()
-            .len();
+        let num_digits = size.chars().take_while(char::is_ascii_digit).count();
         let all_zeros = size.chars().all(|c| c == '0');
         if size.starts_with('0') && num_digits > 1 && !all_zeros {
             return NumberSystem::Octal;
         }
 
         NumberSystem::Decimal
+    }
+
+    fn numeric_prefix_len(size: &str, number_system: NumberSystem) -> usize {
+        match number_system {
+            NumberSystem::Hexadecimal => {
+                2 + size[2..]
+                    .chars()
+                    .take_while(char::is_ascii_hexdigit)
+                    .map(char::len_utf8)
+                    .sum::<usize>()
+            }
+            NumberSystem::Binary => {
+                2 + size[2..]
+                    .chars()
+                    .take_while(|c| c.is_digit(2))
+                    .map(char::len_utf8)
+                    .sum::<usize>()
+            }
+            NumberSystem::Decimal | NumberSystem::Octal => size
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .map(char::len_utf8)
+                .sum(),
+        }
     }
 
     fn parse_number(
@@ -802,6 +812,14 @@ mod tests {
     fn parse_binary_size() {
         assert_eq!(Ok(44251), parse_size_u64("0b1010110011011011"));
         assert_eq!(Ok(44251 * 1024), parse_size_u64("0b1010110011011011K"));
+    }
+
+    #[test]
+    fn parse_size_rejects_multibyte_suffixes_and_invalid_prefixes() {
+        let test_strings = ["123∞", "0xA∞", "0b10∞", "0x", "0b2"];
+        for test_string in test_strings {
+            assert!(parse_size_u64(test_string).is_err());
+        }
     }
 
     #[test]
