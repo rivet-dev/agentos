@@ -357,54 +357,51 @@ where
                 )
                 .map_err(Self::kernel_error)?;
             let kernel_pid = kernel_handle.pid();
-            let (stdin_read_fd, stdin_write_fd) = vm
-                .kernel
-                .open_pipe(BROWSER_WORKER_DRIVER, kernel_pid)
-                .map_err(Self::kernel_error)?;
-            vm.kernel
-                .fd_dup2(BROWSER_WORKER_DRIVER, kernel_pid, stdin_read_fd, 0)
-                .map_err(Self::kernel_error)?;
-            let (_stdout_read_fd, stdout_write_fd) = vm
-                .kernel
-                .open_pipe(BROWSER_WORKER_DRIVER, kernel_pid)
-                .map_err(Self::kernel_error)?;
-            vm.kernel
-                .fd_dup2(BROWSER_WORKER_DRIVER, kernel_pid, stdout_write_fd, 1)
-                .map_err(Self::kernel_error)?;
-            let (_stderr_read_fd, stderr_write_fd) = vm
-                .kernel
-                .open_pipe(BROWSER_WORKER_DRIVER, kernel_pid)
-                .map_err(Self::kernel_error)?;
-            vm.kernel
-                .fd_dup2(BROWSER_WORKER_DRIVER, kernel_pid, stderr_write_fd, 2)
-                .map_err(Self::kernel_error)?;
-            (kernel_pid, stdin_write_fd)
+            match Self::configure_process_stdio(&mut vm.kernel, kernel_pid) {
+                Ok(stdin_write_fd) => (kernel_pid, stdin_write_fd),
+                Err(error) => {
+                    Self::cleanup_pending_kernel_process(&mut vm.kernel, kernel_pid)?;
+                    return Err(error);
+                }
+            }
         };
 
-        let worker = self
-            .bridge
-            .create_worker(BrowserWorkerSpawnRequest {
-                vm_id: request.vm_id.clone(),
-                context_id: request.context_id.clone(),
-                runtime: context.runtime,
-                entrypoint: context.entrypoint.clone(),
-            })
-            .map_err(Self::bridge_error)?;
+        let worker = match self.bridge.create_worker(BrowserWorkerSpawnRequest {
+            vm_id: request.vm_id.clone(),
+            context_id: request.context_id.clone(),
+            runtime: context.runtime,
+            entrypoint: context.entrypoint.clone(),
+        }) {
+            Ok(worker) => worker,
+            Err(error) => {
+                let vm = self.vm_mut(&request.vm_id)?;
+                Self::cleanup_pending_kernel_process(&mut vm.kernel, kernel_pid)?;
+                return Err(Self::bridge_error(error));
+            }
+        };
 
         let started = match self.bridge.start_execution(request.clone()) {
             Ok(started) => started,
             Err(error) => {
-                self.bridge
+                let cleanup_result = {
+                    let vm = self.vm_mut(&request.vm_id)?;
+                    Self::cleanup_pending_kernel_process(&mut vm.kernel, kernel_pid)
+                };
+                let terminate_result = self
+                    .bridge
                     .terminate_worker(BrowserWorkerHandleRequest {
                         vm_id: request.vm_id,
                         execution_id: String::from("pending"),
                         worker_id: worker.worker_id,
                     })
-                    .map_err(Self::bridge_error)?;
+                    .map_err(Self::bridge_error);
+                cleanup_result?;
+                terminate_result?;
                 return Err(Self::bridge_error(error));
             }
         };
 
+        let worker_id = worker.worker_id.clone();
         self.executions.insert(
             started.execution_id.clone(),
             ExecutionState {
@@ -432,7 +429,7 @@ where
                     String::from("runtime"),
                     runtime_label(context.runtime).to_string(),
                 ),
-                (String::from("worker_id"), worker.worker_id),
+                (String::from("worker_id"), worker_id),
             ]),
         )?;
         self.emit_lifecycle(
@@ -444,6 +441,42 @@ where
         )?;
 
         Ok(started)
+    }
+
+    fn configure_process_stdio(
+        kernel: &mut BrowserKernel,
+        kernel_pid: u32,
+    ) -> Result<u32, BrowserSidecarError> {
+        let (stdin_read_fd, stdin_write_fd) = kernel
+            .open_pipe(BROWSER_WORKER_DRIVER, kernel_pid)
+            .map_err(Self::kernel_error)?;
+        kernel
+            .fd_dup2(BROWSER_WORKER_DRIVER, kernel_pid, stdin_read_fd, 0)
+            .map_err(Self::kernel_error)?;
+        let (_stdout_read_fd, stdout_write_fd) = kernel
+            .open_pipe(BROWSER_WORKER_DRIVER, kernel_pid)
+            .map_err(Self::kernel_error)?;
+        kernel
+            .fd_dup2(BROWSER_WORKER_DRIVER, kernel_pid, stdout_write_fd, 1)
+            .map_err(Self::kernel_error)?;
+        let (_stderr_read_fd, stderr_write_fd) = kernel
+            .open_pipe(BROWSER_WORKER_DRIVER, kernel_pid)
+            .map_err(Self::kernel_error)?;
+        kernel
+            .fd_dup2(BROWSER_WORKER_DRIVER, kernel_pid, stderr_write_fd, 2)
+            .map_err(Self::kernel_error)?;
+        Ok(stdin_write_fd)
+    }
+
+    fn cleanup_pending_kernel_process(
+        kernel: &mut BrowserKernel,
+        kernel_pid: u32,
+    ) -> Result<(), BrowserSidecarError> {
+        kernel
+            .exit_process(BROWSER_WORKER_DRIVER, kernel_pid, 1)
+            .map_err(Self::kernel_error)?;
+        kernel.waitpid(kernel_pid).map_err(Self::kernel_error)?;
+        Ok(())
     }
 
     pub fn write_stdin(

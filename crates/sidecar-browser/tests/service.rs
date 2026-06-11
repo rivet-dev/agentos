@@ -8,6 +8,7 @@ use agent_os_bridge::{
 };
 use agent_os_kernel::kernel::KernelVmConfig;
 use agent_os_kernel::permissions::Permissions;
+use agent_os_kernel::resource_accounting::ResourceLimits;
 use agent_os_sidecar_browser::{
     BrowserSidecar, BrowserSidecarConfig, BrowserWorkerBridge, BrowserWorkerEntrypoint,
     BrowserWorkerHandle, BrowserWorkerHandleRequest, BrowserWorkerSpawnRequest,
@@ -21,6 +22,10 @@ impl BrowserWorkerBridge for RecordingBridge {
         &mut self,
         request: BrowserWorkerSpawnRequest,
     ) -> Result<BrowserWorkerHandle, Self::Error> {
+        if let Some(error) = self.next_worker_create_error() {
+            return Err(error);
+        }
+
         let kind = match request.runtime {
             GuestRuntime::JavaScript => "js",
             GuestRuntime::WebAssembly => "wasm",
@@ -32,10 +37,9 @@ impl BrowserWorkerBridge for RecordingBridge {
         })
     }
 
-    fn terminate_worker(
-        &mut self,
-        _request: BrowserWorkerHandleRequest,
-    ) -> Result<(), Self::Error> {
+    fn terminate_worker(&mut self, request: BrowserWorkerHandleRequest) -> Result<(), Self::Error> {
+        self.terminated_workers
+            .push((request.vm_id, request.execution_id, request.worker_id));
         Ok(())
     }
 }
@@ -300,4 +304,111 @@ fn browser_sidecar_routes_kernel_filesystem_and_execution_state_through_vm_state
             .expect("kernel ready after exit"),
         LifecycleState::Ready
     );
+}
+
+#[test]
+fn browser_sidecar_reaps_pending_kernel_process_when_worker_startup_fails() {
+    let mut bridge = RecordingBridge::default();
+    bridge.push_worker_create_error("worker startup failed");
+
+    let mut sidecar = BrowserSidecar::new(bridge, BrowserSidecarConfig::default());
+    let mut config = KernelVmConfig::new("vm-browser");
+    config.resources = ResourceLimits {
+        max_processes: Some(1),
+        ..ResourceLimits::default()
+    };
+    sidecar.create_vm(config).expect("create vm");
+
+    let context = sidecar
+        .create_javascript_context(CreateJavascriptContextRequest {
+            vm_id: String::from("vm-browser"),
+            bootstrap_module: Some(String::from("@rivet-dev/agent-os/browser")),
+        })
+        .expect("create JavaScript context");
+
+    let failed = sidecar
+        .start_execution(StartExecutionRequest {
+            vm_id: String::from("vm-browser"),
+            context_id: context.context_id.clone(),
+            argv: vec![String::from("node"), String::from("script.js")],
+            env: BTreeMap::new(),
+            cwd: String::from("/workspace"),
+        })
+        .expect_err("worker creation should fail");
+
+    assert!(failed.to_string().contains("worker startup failed"));
+    assert_eq!(sidecar.active_worker_count("vm-browser"), 0);
+    assert_eq!(
+        sidecar.kernel_state("vm-browser").expect("kernel ready"),
+        LifecycleState::Ready
+    );
+
+    let started = sidecar
+        .start_execution(StartExecutionRequest {
+            vm_id: String::from("vm-browser"),
+            context_id: context.context_id,
+            argv: vec![String::from("node"), String::from("script.js")],
+            env: BTreeMap::new(),
+            cwd: String::from("/workspace"),
+        })
+        .expect("leaked pending process would exhaust the one-process limit");
+
+    assert_eq!(started.execution_id, "exec-1");
+    assert_eq!(sidecar.active_worker_count("vm-browser"), 1);
+}
+
+#[test]
+fn browser_sidecar_reaps_pending_kernel_process_when_bridge_execution_start_fails() {
+    let mut bridge = RecordingBridge::default();
+    bridge.push_execution_start_error("execution start failed");
+
+    let mut sidecar = BrowserSidecar::new(bridge, BrowserSidecarConfig::default());
+    let mut config = KernelVmConfig::new("vm-browser");
+    config.resources = ResourceLimits {
+        max_processes: Some(1),
+        ..ResourceLimits::default()
+    };
+    sidecar.create_vm(config).expect("create vm");
+
+    let context = sidecar
+        .create_wasm_context(CreateWasmContextRequest {
+            vm_id: String::from("vm-browser"),
+            module_path: Some(String::from("/workspace/app.wasm")),
+        })
+        .expect("create WebAssembly context");
+
+    let failed = sidecar
+        .start_execution(StartExecutionRequest {
+            vm_id: String::from("vm-browser"),
+            context_id: context.context_id.clone(),
+            argv: vec![String::from("wasm"), String::from("/workspace/app.wasm")],
+            env: BTreeMap::new(),
+            cwd: String::from("/workspace"),
+        })
+        .expect_err("execution start should fail");
+
+    assert!(failed.to_string().contains("execution start failed"));
+    assert_eq!(sidecar.active_worker_count("vm-browser"), 0);
+    assert_eq!(
+        sidecar.kernel_state("vm-browser").expect("kernel ready"),
+        LifecycleState::Ready
+    );
+    assert_eq!(
+        sidecar.bridge().terminated_workers,
+        vec![(
+            String::from("vm-browser"),
+            String::from("pending"),
+            String::from("wasm-worker-wasm-context-1"),
+        )]
+    );
+
+    sidecar
+        .start_execution(StartExecutionRequest {
+            vm_id: String::from("vm-browser"),
+            context_id: context.context_id,
+            argv: vec![String::from("wasm"), String::from("/workspace/app.wasm")],
+            env: BTreeMap::new(),
+            cwd: String::from("/workspace"),
+        })
+        .expect("leaked pending process would exhaust the one-process limit");
 }

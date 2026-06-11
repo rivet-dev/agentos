@@ -20,6 +20,12 @@ pub struct StubError {
 }
 
 impl StubError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
     fn missing(kind: &'static str, key: &str) -> Self {
         Self {
             message: format!("missing {kind}: {key}"),
@@ -44,6 +50,8 @@ pub struct RecordingBridge {
     snapshots: BTreeMap<String, FilesystemSnapshot>,
     execution_events: VecDeque<ExecutionEvent>,
     permission_responses: VecDeque<Result<PermissionDecision, StubError>>,
+    worker_create_errors: VecDeque<StubError>,
+    execution_start_errors: VecDeque<StubError>,
     pub filesystem_permission_requests: Vec<FilesystemPermissionRequest>,
     pub permission_checks: Vec<String>,
     pub log_events: Vec<LogRecord>,
@@ -54,6 +62,8 @@ pub struct RecordingBridge {
     pub stdin_writes: Vec<WriteExecutionStdinRequest>,
     pub closed_executions: Vec<ExecutionHandleRequest>,
     pub killed_executions: Vec<KillExecutionRequest>,
+    #[allow(dead_code)]
+    pub terminated_workers: Vec<(String, String, String)>,
 }
 
 impl Default for RecordingBridge {
@@ -71,6 +81,8 @@ impl Default for RecordingBridge {
             snapshots: BTreeMap::new(),
             execution_events: VecDeque::new(),
             permission_responses: VecDeque::new(),
+            worker_create_errors: VecDeque::new(),
+            execution_start_errors: VecDeque::new(),
             filesystem_permission_requests: Vec::new(),
             permission_checks: Vec::new(),
             log_events: Vec::new(),
@@ -81,6 +93,7 @@ impl Default for RecordingBridge {
             stdin_writes: Vec::new(),
             closed_executions: Vec::new(),
             killed_executions: Vec::new(),
+            terminated_workers: Vec::new(),
         }
     }
 }
@@ -108,9 +121,21 @@ impl RecordingBridge {
     }
 
     pub fn push_permission_error(&mut self, message: impl Into<String>) {
-        self.permission_responses.push_back(Err(StubError {
-            message: message.into(),
-        }));
+        self.permission_responses
+            .push_back(Err(StubError::new(message)));
+    }
+
+    pub fn push_worker_create_error(&mut self, message: impl Into<String>) {
+        self.worker_create_errors.push_back(StubError::new(message));
+    }
+
+    pub fn push_execution_start_error(&mut self, message: impl Into<String>) {
+        self.execution_start_errors
+            .push_back(StubError::new(message));
+    }
+
+    pub fn next_worker_create_error(&mut self) -> Option<StubError> {
+        self.worker_create_errors.pop_front()
     }
 
     fn next_permission_response(&mut self) -> Result<PermissionDecision, StubError> {
@@ -395,6 +420,10 @@ impl ExecutionBridge for RecordingBridge {
         &mut self,
         _request: StartExecutionRequest,
     ) -> Result<StartedExecution, Self::Error> {
+        if let Some(error) = self.execution_start_errors.pop_front() {
+            return Err(error);
+        }
+
         let execution = StartedExecution {
             execution_id: format!("exec-{}", self.next_execution_id),
         };
