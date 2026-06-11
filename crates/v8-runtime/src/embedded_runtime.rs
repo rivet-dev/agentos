@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 
 use crate::host_call::CallIdRouter;
@@ -24,6 +24,8 @@ pub struct EmbeddedV8Runtime {
     session_outputs: Arc<Mutex<HashMap<String, SessionOutput>>>,
     snapshot_cache: Arc<SnapshotCache>,
     alive: Arc<AtomicBool>,
+    dispatch_shutdown_tx: crossbeam_channel::Sender<()>,
+    dispatch_thread: Mutex<Option<thread::JoinHandle<()>>>,
     next_output_generation: AtomicU64,
 }
 
@@ -47,6 +49,7 @@ impl EmbeddedV8Runtime {
 
         let snapshot_cache = Arc::new(SnapshotCache::new(4));
         let (event_tx, event_rx) = crossbeam_channel::bounded::<RuntimeEventEnvelope>(1024);
+        let (dispatch_shutdown_tx, dispatch_shutdown_rx) = crossbeam_channel::bounded::<()>(1);
         let call_id_router: CallIdRouter = Arc::new(Mutex::new(HashMap::new()));
         let session_mgr = Arc::new(Mutex::new(SessionManager::new(
             max_concurrency.unwrap_or_else(default_max_concurrency),
@@ -60,15 +63,25 @@ impl EmbeddedV8Runtime {
         let session_outputs_for_thread = Arc::clone(&session_outputs);
         let session_mgr_for_thread = Arc::clone(&session_mgr);
 
-        thread::Builder::new()
+        let dispatch_thread = thread::Builder::new()
             .name(String::from("agent-os-v8-runtime-dispatch"))
             .spawn(move || {
-                while let Ok(event) = event_rx.recv() {
-                    route_outbound_event(
-                        event,
-                        &session_outputs_for_thread,
-                        &session_mgr_for_thread,
-                    );
+                loop {
+                    crossbeam_channel::select! {
+                        recv(event_rx) -> event => {
+                            let Ok(event) = event else {
+                                break;
+                            };
+                            route_outbound_event(
+                                event,
+                                &session_outputs_for_thread,
+                                &session_mgr_for_thread,
+                            );
+                        }
+                        recv(dispatch_shutdown_rx) -> _ => {
+                            break;
+                        }
+                    }
                 }
                 alive_for_thread.store(false, Ordering::Release);
             })
@@ -79,6 +92,8 @@ impl EmbeddedV8Runtime {
             session_outputs,
             snapshot_cache,
             alive,
+            dispatch_shutdown_tx,
+            dispatch_thread: Mutex::new(Some(dispatch_thread)),
             next_output_generation: AtomicU64::new(1),
         })
     }
@@ -206,6 +221,27 @@ impl EmbeddedV8Runtime {
             .lock()
             .expect("embedded runtime session manager lock poisoned")
             .active_slot_count()
+    }
+}
+
+impl Drop for EmbeddedV8Runtime {
+    fn drop(&mut self) {
+        let session_handles = self
+            .session_mgr
+            .lock()
+            .map(|mut mgr| mgr.take_session_shutdown_handles())
+            .unwrap_or_default();
+        for handle in session_handles {
+            let _ = handle.join();
+        }
+        if let Ok(mut outputs) = self.session_outputs.lock() {
+            outputs.clear();
+        }
+        let _ = self.dispatch_shutdown_tx.try_send(());
+        if let Some(handle) = self.dispatch_thread.get_mut().ok().and_then(Option::take) {
+            let _ = handle.join();
+        }
+        bridge::release_embedded_cbor_codec();
     }
 }
 
@@ -613,6 +649,45 @@ mod tests {
         assert!(
             Arc::ptr_eq(&first, &second),
             "shared_embedded_runtime() should reuse the same runtime instance"
+        );
+    }
+
+    #[test]
+    fn embedded_runtime_drop_releases_codec_after_destroying_sessions() {
+        let codec_before = bridge::is_cbor_codec();
+        let alive = {
+            let runtime = EmbeddedV8Runtime::new(Some(1)).expect("embedded runtime");
+            let alive = Arc::clone(&runtime.alive);
+            assert!(
+                bridge::is_cbor_codec(),
+                "embedded runtime should enable the CBOR bridge codec while alive"
+            );
+            let (_receiver, _registration) = runtime
+                .register_session_with_output_registration("drop-lifecycle")
+                .expect("register session output");
+            runtime
+                .dispatch(RuntimeCommand::CreateSession {
+                    session_id: "drop-lifecycle".into(),
+                    heap_limit_mb: None,
+                    cpu_time_limit_ms: None,
+                })
+                .expect("create session");
+            assert_eq!(
+                runtime.session_count(),
+                1,
+                "test should drop a runtime with a live session"
+            );
+            alive
+        };
+
+        assert!(
+            !alive.load(Ordering::Acquire),
+            "dropping embedded runtime should stop the dispatch thread"
+        );
+        assert_eq!(
+            bridge::is_cbor_codec(),
+            codec_before,
+            "dropping embedded runtime should restore the prior codec state"
         );
     }
 

@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::execution;
 #[cfg(not(test))]
@@ -357,6 +357,32 @@ impl SessionManager {
         Ok(())
     }
 
+    pub(crate) fn take_session_shutdown_handles(&mut self) -> Vec<thread::JoinHandle<()>> {
+        self.call_id_router
+            .lock()
+            .expect("call_id router lock poisoned")
+            .clear();
+
+        self.sessions
+            .drain()
+            .filter_map(|(_, mut entry)| {
+                #[cfg(not(test))]
+                if let Some(handle) = entry
+                    .isolate_handle
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.as_ref().cloned())
+                {
+                    handle.terminate_execution();
+                }
+                signal_execution_abort(&entry.execution_abort, ExecutionAbortReason::Terminated);
+                let _ = entry.tx.try_send(SessionCommand::Shutdown);
+                drop(entry.tx);
+                entry.join_handle.take()
+            })
+            .collect()
+    }
+
     pub(crate) fn clear_call_route(&self, call_id: u64) {
         self.call_id_router
             .lock()
@@ -490,7 +516,10 @@ fn handle_late_session_message(
                 payload.len()
             ),
         ),
-        SessionMessage::StreamEvent(StreamEvent { event_type, payload }) => {
+        SessionMessage::StreamEvent(StreamEvent {
+            event_type,
+            payload,
+        }) => {
             if event_type == "timer" {
                 return;
             }
@@ -675,7 +704,10 @@ fn session_thread(
                                         )
                                     }
                                     Err(e) => {
-                                        eprintln!("snapshot creation failed, falling back to fresh isolate: {}", e);
+                                        eprintln!(
+                                            "snapshot creation failed, falling back to fresh isolate: {}",
+                                            e
+                                        );
                                         from_snapshot = false;
                                         isolate::create_isolate(heap_limit_mb)
                                     }
@@ -1583,7 +1615,7 @@ impl crate::host_call::BridgeResponseReceiver for ChannelResponseReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_os_bridge::{bridge_contract, BridgeCallConvention};
+    use agent_os_bridge::{BridgeCallConvention, bridge_contract};
     use std::collections::{HashMap, HashSet};
 
     /// Helper to create a SessionManager for tests
