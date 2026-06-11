@@ -120,6 +120,10 @@ const CONTROL_PIPE_FD = parseControlPipeFd(process.env.AGENT_OS_CONTROL_PIPE_FD)
 const SCHEMA_VERSION = '__NODE_IMPORT_CACHE_SCHEMA_VERSION__';
 const LOADER_VERSION = '__NODE_IMPORT_CACHE_LOADER_VERSION__';
 const ASSET_VERSION = '__NODE_IMPORT_CACHE_ASSET_VERSION__';
+const MAX_CACHE_RECORD_ENTRIES = 512;
+const MAX_CACHE_KEY_BYTES = 4096;
+const MAX_CACHE_VALUE_BYTES = 16 * 1024;
+const MAX_CACHE_STATE_BYTES = 4 * 1024 * 1024;
 const BUILTIN_PREFIX = '__AGENT_OS_BUILTIN_SPECIFIER_PREFIX__';
 const POLYFILL_PREFIX = '__AGENT_OS_POLYFILL_SPECIFIER_PREFIX__';
 const FS_ASSET_SPECIFIER = `${BUILTIN_PREFIX}fs`;
@@ -331,6 +335,10 @@ function loadCacheState() {
   }
 
   try {
+    const stat = fs.statSync(CACHE_PATH);
+    if (!stat.isFile() || stat.size > MAX_CACHE_STATE_BYTES) {
+      return emptyCacheState();
+    }
     const parsed = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
     if (!isCompatibleCacheState(parsed)) {
       return emptyCacheState();
@@ -352,18 +360,33 @@ function flushCacheState() {
 
     let merged = cacheState;
     try {
-      const existing = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
-      if (isCompatibleCacheState(existing)) {
-        merged = mergeCacheStates(normalizeCacheState(existing), cacheState);
+      const existingStat = fs.statSync(CACHE_PATH);
+      if (existingStat.isFile() && existingStat.size <= MAX_CACHE_STATE_BYTES) {
+        const existing = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+        if (isCompatibleCacheState(existing)) {
+          merged = mergeCacheStates(normalizeCacheState(existing), cacheState);
+        }
       }
     } catch {
       // Ignore missing or unreadable prior state and replace it with the in-memory view.
     }
 
+    merged = pruneCacheState(merged);
+    let serialized = JSON.stringify(merged);
+    if (byteLengthUtf8(serialized) > MAX_CACHE_STATE_BYTES) {
+      merged = pruneCacheState(merged, Math.floor(MAX_CACHE_RECORD_ENTRIES / 4));
+      serialized = JSON.stringify(merged);
+    }
+    if (byteLengthUtf8(serialized) > MAX_CACHE_STATE_BYTES) {
+      merged = emptyCacheState();
+      serialized = JSON.stringify(merged);
+    }
+
     const tempPath = `${CACHE_PATH}.${process.pid}.${Date.now()}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(merged));
+    fs.writeFileSync(tempPath, serialized);
     fs.renameSync(tempPath, CACHE_PATH);
     cacheState = merged;
+    pruneProjectedSourceFiles();
     dirty = false;
   } catch (error) {
     cacheWriteError = error instanceof Error ? error.message : String(error);
@@ -446,18 +469,18 @@ function isCompatibleCacheState(value) {
 }
 
 function normalizeCacheState(value) {
-  return {
+  return pruneCacheState({
     ...emptyCacheState(),
     ...value,
     resolutions: isRecord(value.resolutions) ? value.resolutions : {},
     packageTypes: isRecord(value.packageTypes) ? value.packageTypes : {},
     moduleFormats: isRecord(value.moduleFormats) ? value.moduleFormats : {},
     projectedSources: isRecord(value.projectedSources) ? value.projectedSources : {},
-  };
+  });
 }
 
 function mergeCacheStates(base, current) {
-  return {
+  return pruneCacheState({
     ...emptyCacheState(),
     resolutions: {
       ...base.resolutions,
@@ -475,7 +498,86 @@ function mergeCacheStates(base, current) {
       ...base.projectedSources,
       ...current.projectedSources,
     },
+  });
+}
+
+function pruneCacheState(state, maxEntries = MAX_CACHE_RECORD_ENTRIES) {
+  return {
+    ...emptyCacheState(),
+    ...state,
+    resolutions: pruneCacheRecord(state.resolutions, maxEntries),
+    packageTypes: pruneCacheRecord(state.packageTypes, maxEntries),
+    moduleFormats: pruneCacheRecord(state.moduleFormats, maxEntries),
+    projectedSources: pruneCacheRecord(state.projectedSources, maxEntries),
   };
+}
+
+function pruneCacheRecord(record, maxEntries) {
+  if (!isRecord(record)) {
+    return {};
+  }
+
+  const entries = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (
+      byteLengthUtf8(key) <= MAX_CACHE_KEY_BYTES &&
+      cacheValueLength(value) <= MAX_CACHE_VALUE_BYTES
+    ) {
+      entries.push([key, value]);
+    }
+  }
+
+  return Object.fromEntries(entries.slice(-maxEntries));
+}
+
+function cacheValueLength(value) {
+  try {
+    return byteLengthUtf8(JSON.stringify(value));
+  } catch {
+    return MAX_CACHE_VALUE_BYTES + 1;
+  }
+}
+
+function byteLengthUtf8(value) {
+  return Buffer.byteLength(String(value), 'utf8');
+}
+
+function pruneProjectedSourceFiles() {
+  if (!PROJECTED_SOURCE_CACHE_ROOT) {
+    return;
+  }
+
+  const retained = new Set();
+  for (const entry of Object.values(cacheState.projectedSources)) {
+    if (
+      isRecord(entry) &&
+      typeof entry.cachedPath === 'string' &&
+      path.dirname(entry.cachedPath) === PROJECTED_SOURCE_CACHE_ROOT
+    ) {
+      retained.add(path.resolve(entry.cachedPath));
+    }
+  }
+
+  let entries;
+  try {
+    entries = fs.readdirSync(PROJECTED_SOURCE_CACHE_ROOT, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const filePath = path.resolve(PROJECTED_SOURCE_CACHE_ROOT, entry.name);
+    if (!retained.has(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch {
+        // Best-effort cleanup. A failed unlink should not break module loading.
+      }
+    }
+  }
 }
 
 function loadProjectedPackageSource(url, filePath, format) {
@@ -15731,6 +15833,205 @@ export async function loadPyodide(options) {
             import_cache.root_dir.starts_with(temp_root.path()),
             "expected import cache root to stay inside the configured temp root"
         );
+    }
+
+    #[test]
+    fn materialized_loader_prunes_persisted_resolution_cache_state() {
+        assert_node_available();
+
+        let temp_root = tempdir().expect("create node import cache temp root");
+        let workspace = tempdir().expect("create loader test workspace");
+        let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let driver_path = workspace.path().join("drive-loader-cache.mjs");
+        write_fixture(
+            &driver_path,
+            r#"
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const [loaderPath, workspaceRoot] = process.argv.slice(2);
+const loader = await import(`${pathToFileURL(loaderPath).href}?case=${process.pid}-${Date.now()}`);
+const parentURL = pathToFileURL(path.join(workspaceRoot, 'entry.mjs')).href;
+
+for (let index = 0; index < 600; index += 1) {
+  const specifier = `pkg-${index}`;
+  const resolvedPath = path.join(workspaceRoot, 'node_modules', specifier, 'index.mjs');
+  await loader.resolve(specifier, { parentURL }, async () => ({
+    url: pathToFileURL(resolvedPath).href,
+    format: 'module',
+  }));
+}
+"#,
+        );
+
+        let output = Command::new(node_binary())
+            .arg(&driver_path)
+            .arg(&import_cache.loader_path)
+            .arg(workspace.path())
+            .env("AGENT_OS_NODE_IMPORT_CACHE_PATH", import_cache.cache_path())
+            .env(
+                "AGENT_OS_NODE_IMPORT_CACHE_ASSET_ROOT",
+                import_cache.asset_root(),
+            )
+            .output()
+            .expect("run loader cache driver");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+
+        let state: Value = serde_json::from_str(
+            &fs::read_to_string(import_cache.cache_path()).expect("read cache state"),
+        )
+        .expect("parse cache state");
+        let resolutions = state["resolutions"]
+            .as_object()
+            .expect("resolution cache object");
+
+        assert_eq!(resolutions.len(), 512);
+        assert!(
+            resolutions.keys().any(|key| key.contains("pkg-599")),
+            "newest resolution should be retained"
+        );
+        assert!(
+            !resolutions.keys().any(|key| key.contains("pkg-0\"")),
+            "oldest resolution should be pruned"
+        );
+    }
+
+    #[test]
+    fn materialized_loader_ignores_oversized_state_during_flush_merge() {
+        assert_node_available();
+
+        let temp_root = tempdir().expect("create node import cache temp root");
+        let workspace = tempdir().expect("create loader test workspace");
+        let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+        fs::create_dir_all(import_cache.cache_path().parent().expect("cache parent"))
+            .expect("create cache parent");
+        fs::write(import_cache.cache_path(), vec![b' '; 5 * 1024 * 1024])
+            .expect("seed oversized cache state");
+
+        let driver_path = workspace.path().join("drive-oversized-state.mjs");
+        write_fixture(
+            &driver_path,
+            r#"
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const [loaderPath, workspaceRoot] = process.argv.slice(2);
+const loader = await import(`${pathToFileURL(loaderPath).href}?case=oversized-${process.pid}-${Date.now()}`);
+const parentURL = pathToFileURL(path.join(workspaceRoot, 'entry.mjs')).href;
+await loader.resolve('pkg-fresh', { parentURL }, async () => ({
+  url: pathToFileURL(path.join(workspaceRoot, 'node_modules/pkg-fresh/index.mjs')).href,
+  format: 'module',
+}));
+"#,
+        );
+
+        let output = Command::new(node_binary())
+            .arg(&driver_path)
+            .arg(&import_cache.loader_path)
+            .arg(workspace.path())
+            .env("AGENT_OS_NODE_IMPORT_CACHE_PATH", import_cache.cache_path())
+            .env(
+                "AGENT_OS_NODE_IMPORT_CACHE_ASSET_ROOT",
+                import_cache.asset_root(),
+            )
+            .output()
+            .expect("run oversized state driver");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+
+        let state_contents =
+            fs::read_to_string(import_cache.cache_path()).expect("read rewritten cache state");
+        assert!(
+            state_contents.len() < 4 * 1024 * 1024,
+            "cache state should be rewritten below the hard limit"
+        );
+        let state: Value = serde_json::from_str(&state_contents).expect("parse cache state");
+        assert_eq!(
+            state["resolutions"]
+                .as_object()
+                .expect("resolution cache object")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn materialized_loader_prunes_unreferenced_projected_source_files() {
+        assert_node_available();
+
+        let temp_root = tempdir().expect("create node import cache temp root");
+        let workspace = tempdir().expect("create loader test workspace");
+        let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+        let node_modules = workspace.path().join("node_modules");
+        fs::create_dir_all(&node_modules).expect("create node_modules");
+        for index in 0..520 {
+            let package_dir = node_modules.join(format!("pkg-{index}"));
+            fs::create_dir_all(&package_dir).expect("create package dir");
+            fs::write(
+                package_dir.join("index.mjs"),
+                format!("import fs from 'node:fs';\nexport const value = {index};\n"),
+            )
+            .expect("write package source");
+        }
+
+        let driver_path = workspace.path().join("drive-projected-source-cache.mjs");
+        write_fixture(
+            &driver_path,
+            r#"
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const [loaderPath, workspaceRoot] = process.argv.slice(2);
+const loader = await import(`${pathToFileURL(loaderPath).href}?case=projected-${process.pid}-${Date.now()}`);
+
+for (let index = 0; index < 520; index += 1) {
+  const filePath = path.join(workspaceRoot, 'node_modules', `pkg-${index}`, 'index.mjs');
+  await loader.load(pathToFileURL(filePath).href, { format: 'module' }, async () => {
+    throw new Error('nextLoad should not run for projected package sources');
+  });
+}
+"#,
+        );
+
+        let guest_path_mappings = format!(
+            r#"[{{"guestPath":"/root/node_modules","hostPath":"{}"}}]"#,
+            node_modules.display()
+        );
+        let output = Command::new(node_binary())
+            .arg(&driver_path)
+            .arg(&import_cache.loader_path)
+            .arg(workspace.path())
+            .env("AGENT_OS_NODE_IMPORT_CACHE_PATH", import_cache.cache_path())
+            .env(
+                "AGENT_OS_NODE_IMPORT_CACHE_ASSET_ROOT",
+                import_cache.asset_root(),
+            )
+            .env("AGENT_OS_GUEST_PATH_MAPPINGS", guest_path_mappings)
+            .output()
+            .expect("run projected source cache driver");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+
+        let projected_source_root = import_cache
+            .cache_path()
+            .parent()
+            .expect("cache parent")
+            .join("projected-sources");
+        let cached_file_count = fs::read_dir(&projected_source_root)
+            .expect("read projected source cache")
+            .count();
+        assert_eq!(cached_file_count, 512);
     }
 
     #[test]
