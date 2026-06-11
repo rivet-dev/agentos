@@ -13,6 +13,10 @@ use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
+const POSIX_ACL_XATTR_VERSION: u32 = 2;
+const POSIX_ACL_XATTR_HEADER_LEN: usize = 4;
+const POSIX_ACL_XATTR_ENTRY_LEN: usize = 8;
+
 /// Copies extended attributes (xattrs) from one file or directory to another.
 ///
 /// # Arguments
@@ -138,39 +142,39 @@ pub fn get_acl_perm_bits_from_xattr<P: AsRef<Path>>(source: P) -> u32 {
     // Only default acl entries get inherited by objects under the path i.e. if child directories
     // will have their permissions modified.
     if let Ok(entries) = retrieve_xattrs(source) {
-        let mut perm: u32 = 0;
         if let Some(value) = entries.get(&OsString::from("system.posix_acl_default")) {
-            // value is xattr byte vector
-            // value follows a starts with a 4 byte header, and then has posix_acl_entries, each
-            // posix_acl_entry is separated by a u32 sequence i.e. 0xFFFFFFFF
-            //
-            // struct posix_acl_entries {
-            // e_tag: u16
-            //  e_perm: u16
-            //  e_id: u32
-            // }
-            //
-            // Reference: `https://github.com/torvalds/linux/blob/master/include/uapi/linux/posix_acl_xattr.h`
-            //
-            // The value of the header is 0x0002, so we skip the first four bytes of the value and
-            // process the rest
-
-            let acl_entries = value
-                .split_at(3)
-                .1
-                .iter()
-                .filter(|&x| *x != 255)
-                .copied()
-                .collect::<Vec<u8>>();
-
-            for entry in acl_entries.chunks_exact(4) {
-                // Third byte and fourth byte will be the perm bits
-                perm = (perm << 3) | u32::from(entry[2]) | u32::from(entry[3]);
-            }
-            return perm;
+            return acl_perm_bits_from_xattr_value(value);
         }
     }
     0
+}
+
+fn acl_perm_bits_from_xattr_value(value: &[u8]) -> u32 {
+    let Some(header) = value.get(..POSIX_ACL_XATTR_HEADER_LEN) else {
+        return 0;
+    };
+
+    let version = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+    if version != POSIX_ACL_XATTR_VERSION {
+        return 0;
+    }
+
+    let entries = &value[POSIX_ACL_XATTR_HEADER_LEN..];
+    if entries.len() % POSIX_ACL_XATTR_ENTRY_LEN != 0 {
+        return 0;
+    }
+
+    let mut perm: u32 = 0;
+    for entry in entries.chunks_exact(POSIX_ACL_XATTR_ENTRY_LEN) {
+        let entry_perm = u16::from_le_bytes([entry[2], entry[3]]);
+        if entry_perm > 0o7 {
+            return 0;
+        }
+
+        perm = (perm << 3) | u32::from(entry_perm);
+    }
+
+    perm
 }
 
 // FIXME: 3 tests failed on OpenBSD
@@ -220,6 +224,33 @@ mod tests {
                 .get(OsString::from(test_attr).as_os_str())
                 .unwrap(),
             test_value
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_perm_bits_from_xattr_value() {
+        let test_value = vec![
+            2, 0, 0, 0, 1, 0, 7, 0, 255, 255, 255, 255, 4, 0, 0, 0, 255, 255, 255, 255, 32, 0, 0,
+            0, 255, 255, 255, 255,
+        ];
+
+        assert_eq!(0o700, acl_perm_bits_from_xattr_value(&test_value));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_perm_bits_from_xattr_value_rejects_malformed_entries() {
+        assert_eq!(0, acl_perm_bits_from_xattr_value(&[]));
+        assert_eq!(0, acl_perm_bits_from_xattr_value(&[2, 0, 0]));
+        assert_eq!(
+            0,
+            acl_perm_bits_from_xattr_value(&[3, 0, 0, 0, 1, 0, 7, 0, 255, 255, 255, 255])
+        );
+        assert_eq!(0, acl_perm_bits_from_xattr_value(&[2, 0, 0, 0, 1, 0, 7, 0]));
+        assert_eq!(
+            0,
+            acl_perm_bits_from_xattr_value(&[2, 0, 0, 0, 1, 0, 8, 0, 255, 255, 255, 255])
         );
     }
 
