@@ -1,4 +1,7 @@
 use agent_os_kernel::device_layer::create_device_layer;
+use agent_os_kernel::kernel::{KernelVm, KernelVmConfig};
+use agent_os_kernel::permissions::Permissions;
+use agent_os_kernel::resource_accounting::ResourceLimits;
 use agent_os_kernel::vfs::{MemoryFileSystem, VfsResult, VirtualFileSystem};
 use std::fmt::Debug;
 
@@ -59,6 +62,34 @@ fn special_devices_expose_expected_read_and_write_behavior() {
     assert_not_trivial_pattern(&first);
     assert_not_trivial_pattern(&second[..1024]);
     assert_ne!(first, second);
+}
+
+#[test]
+fn kernel_direct_device_pread_obeys_resource_limits_before_allocation() {
+    let mut config = KernelVmConfig::new("vm-device-pread-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_pread_bytes: Some(4),
+        ..ResourceLimits::default()
+    };
+
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+
+    let error = kernel
+        .pread_file("/dev/zero", 0, 5)
+        .expect_err("oversized direct device pread should be rejected");
+    assert_eq!(error.code(), "EINVAL");
+    assert!(
+        error.to_string().contains("pread length 5"),
+        "unexpected error: {error}"
+    );
+
+    assert_eq!(
+        kernel
+            .pread_file("/dev/zero", 0, 4)
+            .expect("bounded direct device pread should succeed"),
+        vec![0; 4]
+    );
 }
 
 #[test]
