@@ -2,7 +2,7 @@ mod support;
 
 use agent_os_bridge::{LoadFilesystemStateRequest, PersistenceBridge};
 use agent_os_kernel::root_fs::{
-    decode_snapshot as decode_root_snapshot, ROOT_FILESYSTEM_SNAPSHOT_FORMAT,
+    ROOT_FILESYSTEM_SNAPSHOT_FORMAT, decode_snapshot as decode_root_snapshot,
 };
 use agent_os_sidecar::protocol::{
     BootstrapRootFilesystemRequest, GuestRuntimeKind, OwnershipScope, RequestPayload,
@@ -165,14 +165,18 @@ console.log(`js:${process.argv.slice(2).join(",")}`);
             assert_eq!(js_snapshot.format, ROOT_FILESYSTEM_SNAPSHOT_FORMAT);
             let js_root =
                 decode_root_snapshot(&js_snapshot.bytes).expect("decode js root snapshot");
-            assert!(js_root
-                .entries
-                .iter()
-                .any(|entry| entry.path == "/bin/node"));
-            assert!(js_root
-                .entries
-                .iter()
-                .any(|entry| entry.path == "/workspace/run.sh"));
+            assert!(
+                js_root
+                    .entries
+                    .iter()
+                    .any(|entry| entry.path == "/bin/node")
+            );
+            assert!(
+                js_root
+                    .entries
+                    .iter()
+                    .any(|entry| entry.path == "/workspace/run.sh")
+            );
 
             let wasm_snapshot = bridge
                 .load_filesystem_state(LoadFilesystemStateRequest {
@@ -181,6 +185,14 @@ console.log(`js:${process.argv.slice(2).join(",")}`);
                 .expect("load wasm snapshot")
                 .expect("persisted wasm snapshot");
             assert_eq!(wasm_snapshot.format, ROOT_FILESYSTEM_SNAPSHOT_FORMAT);
+            let wasm_root =
+                decode_root_snapshot(&wasm_snapshot.bytes).expect("decode wasm root snapshot");
+            assert!(
+                !wasm_root
+                    .entries
+                    .iter()
+                    .any(|entry| entry.path == "/workspace/run.sh")
+            );
             assert!(bridge.lifecycle_events.iter().any(|event| {
                 event.vm_id == js_vm_id && event.state == agent_os_bridge::LifecycleState::Busy
             }));
