@@ -1,4 +1,5 @@
 use crate::resource_accounting::FileSystemUsage;
+use crate::root_fs::RootFileSystem;
 use crate::vfs::{
     VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat, VirtualUtimeSpec,
 };
@@ -746,6 +747,35 @@ impl MountTable {
             .as_any_mut()
             .downcast_mut::<MountedVirtualFileSystem<T>>()
             .map(MountedVirtualFileSystem::inner_mut)
+    }
+
+    pub fn check_rename_copy_up_limits(
+        &mut self,
+        old_path: &str,
+        new_path: &str,
+        max_bytes: Option<u64>,
+        max_inodes: Option<usize>,
+    ) -> VfsResult<()> {
+        let (old_index, old_relative_path) = self.resolve_index(old_path)?;
+        let (new_index, new_relative_path) = self.resolve_index(new_path)?;
+        if old_index != new_index {
+            return Ok(());
+        }
+
+        let filesystem = &mut self.mounts[old_index].filesystem;
+        if let Some(root) = filesystem
+            .as_any_mut()
+            .downcast_mut::<MountedVirtualFileSystem<RootFileSystem>>()
+        {
+            root.inner_mut().check_rename_copy_up_limits(
+                &old_relative_path,
+                &new_relative_path,
+                max_bytes,
+                max_inodes,
+            )?;
+        }
+
+        Ok(())
     }
 
     pub fn root_usage(&mut self) -> VfsResult<FileSystemUsage> {

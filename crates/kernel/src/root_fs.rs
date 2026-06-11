@@ -234,6 +234,17 @@ impl RootFileSystem {
             entries: snapshot_virtual_filesystem(&mut self.overlay, "/")?,
         })
     }
+
+    pub fn check_rename_copy_up_limits(
+        &mut self,
+        old_path: &str,
+        new_path: &str,
+        max_bytes: Option<u64>,
+        max_inodes: Option<usize>,
+    ) -> VfsResult<()> {
+        self.overlay
+            .check_rename_copy_up_limits(old_path, new_path, max_bytes, max_inodes)
+    }
 }
 
 impl VirtualFileSystem for RootFileSystem {

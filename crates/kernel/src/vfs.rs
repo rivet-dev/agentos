@@ -415,6 +415,69 @@ impl MemoryFileSystem {
         filesystem
     }
 
+    pub fn read_dir_filtered_limited<F>(
+        &mut self,
+        path: &str,
+        max_entries: usize,
+        mut include: F,
+    ) -> VfsResult<Vec<String>>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        self.assert_directory_path(path, "scandir")?;
+        let resolved = self.resolve_path(path, 0)?;
+        self.inode_mut_for_existing_path(&resolved, "scandir", false)?
+            .metadata
+            .atime_ms = now_ms();
+        let prefix = if resolved == "/" {
+            String::from("/")
+        } else {
+            format!("{resolved}/")
+        };
+
+        let mut entries = BTreeMap::<String, String>::new();
+        for (candidate_path, _) in self.path_index.range(prefix.clone()..) {
+            if !candidate_path.starts_with(&prefix) {
+                break;
+            }
+
+            let rest = &candidate_path[prefix.len()..];
+            if rest.is_empty() || rest.contains('/') || !include(rest) {
+                continue;
+            }
+
+            entries.insert(String::from(rest), String::from(rest));
+            if entries.len() > max_entries {
+                return Err(VfsError::new(
+                    "ENOMEM",
+                    format!(
+                        "directory listing for '{path}' exceeds configured limit of {max_entries} entries"
+                    ),
+                ));
+            }
+        }
+
+        Ok(entries.into_values().collect())
+    }
+
+    pub fn link_count_in_subtree(&self, ino: u64, path: &str) -> usize {
+        let normalized = normalize_path(path);
+        let prefix = if normalized == "/" {
+            String::from("/")
+        } else {
+            format!("{normalized}/")
+        };
+
+        self.path_index
+            .iter()
+            .filter(|(candidate_path, candidate_ino)| {
+                **candidate_ino == ino
+                    && (candidate_path.as_str() == normalized
+                        || candidate_path.starts_with(&prefix))
+            })
+            .count()
+    }
+
     fn allocate_inode(&mut self, kind: InodeKind, mode: u32) -> u64 {
         let ino = self.next_ino;
         self.next_ino += 1;
@@ -824,40 +887,7 @@ impl VirtualFileSystem for MemoryFileSystem {
     }
 
     fn read_dir_limited(&mut self, path: &str, max_entries: usize) -> VfsResult<Vec<String>> {
-        self.assert_directory_path(path, "scandir")?;
-        let resolved = self.resolve_path(path, 0)?;
-        self.inode_mut_for_existing_path(&resolved, "scandir", false)?
-            .metadata
-            .atime_ms = now_ms();
-        let prefix = if resolved == "/" {
-            String::from("/")
-        } else {
-            format!("{resolved}/")
-        };
-
-        let mut entries = BTreeMap::<String, String>::new();
-        for (candidate_path, _) in self.path_index.range(prefix.clone()..) {
-            if !candidate_path.starts_with(&prefix) {
-                break;
-            }
-
-            let rest = &candidate_path[prefix.len()..];
-            if rest.is_empty() || rest.contains('/') {
-                continue;
-            }
-
-            entries.insert(String::from(rest), String::from(rest));
-            if entries.len() > max_entries {
-                return Err(VfsError::new(
-                    "ENOMEM",
-                    format!(
-                        "directory listing for '{path}' exceeds configured limit of {max_entries} entries"
-                    ),
-                ));
-            }
-        }
-
-        Ok(entries.into_values().collect())
+        self.read_dir_filtered_limited(path, max_entries, |_| true)
     }
 
     fn read_dir_with_types(&mut self, path: &str) -> VfsResult<Vec<VirtualDirEntry>> {

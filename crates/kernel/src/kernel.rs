@@ -915,6 +915,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         self.assert_not_terminated()?;
         self.reject_read_only_entry_write_path(old_path)?;
         self.reject_read_only_entry_write_path(new_path)?;
+        self.check_rename_copy_up_limits(old_path, new_path)?;
         Ok(self.filesystem.rename(old_path, new_path)?)
     }
 
@@ -3917,6 +3918,23 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     fn check_truncate_limits(&mut self, path: &str, length: u64) -> KernelResult<()> {
         self.check_path_resize_limits(path, length)
+    }
+
+    fn check_rename_copy_up_limits(&mut self, old_path: &str, new_path: &str) -> KernelResult<()> {
+        let max_bytes = self.resource_limits().max_filesystem_bytes;
+        let max_inodes = self.resource_limits().max_inode_count;
+        let filesystem_any = self.raw_filesystem_mut() as &mut dyn Any;
+
+        if let Some(root) = filesystem_any.downcast_mut::<RootFileSystem>() {
+            root.check_rename_copy_up_limits(old_path, new_path, max_bytes, max_inodes)?;
+            return Ok(());
+        }
+
+        if let Some(mount_table) = filesystem_any.downcast_mut::<MountTable>() {
+            mount_table.check_rename_copy_up_limits(old_path, new_path, max_bytes, max_inodes)?;
+        }
+
+        Ok(())
     }
 
     fn check_path_resize_limits(&mut self, path: &str, new_size: u64) -> KernelResult<()> {

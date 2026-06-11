@@ -43,6 +43,12 @@ struct OverlaySnapshotEntry {
     kind: OverlaySnapshotKind,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct OverlayCopyUpUsage {
+    total_bytes: u64,
+    inode_count: usize,
+}
+
 impl OverlayFileSystem {
     pub fn new(lowers: Vec<MemoryFileSystem>, mode: OverlayMode) -> Self {
         let mut effective_lowers = lowers;
@@ -84,6 +90,187 @@ impl OverlayFileSystem {
 
     fn normalized(path: &str) -> String {
         normalize_path(path)
+    }
+
+    fn parent_path(path: &str) -> String {
+        let normalized = Self::normalized(path);
+        if normalized == "/" {
+            return String::from("/");
+        }
+
+        match normalized.rsplit_once('/') {
+            Some(("", _)) | None => String::from("/"),
+            Some((parent, _)) => String::from(parent),
+        }
+    }
+
+    fn basename(path: &str) -> String {
+        let normalized = Self::normalized(path);
+        if normalized == "/" {
+            return String::from("/");
+        }
+        normalized
+            .rsplit('/')
+            .find(|component| !component.is_empty())
+            .unwrap_or("")
+            .to_owned()
+    }
+
+    fn validate_destination_parent(&mut self, path: &str) -> VfsResult<()> {
+        let parent = Self::parent_path(path);
+        let resolved_parent = self.resolve_merged_path(&parent, true, 0)?;
+        let stat = self.merged_lstat(&resolved_parent)?;
+        if !stat.is_directory {
+            return Err(Self::not_directory(&parent));
+        }
+        Ok(())
+    }
+
+    fn resolved_destination_path(&self, path: &str) -> VfsResult<String> {
+        let parent = Self::parent_path(path);
+        let resolved_parent = self.resolve_merged_path(&parent, true, 0)?;
+        Ok(Self::join_path(&resolved_parent, &Self::basename(path)))
+    }
+
+    fn resolve_merged_path(
+        &self,
+        path: &str,
+        follow_final_symlink: bool,
+        depth: usize,
+    ) -> VfsResult<String> {
+        if depth > MAX_SNAPSHOT_DEPTH {
+            return Err(VfsError::new(
+                "ELOOP",
+                format!("too many symbolic links while resolving '{path}'"),
+            ));
+        }
+
+        let normalized = Self::normalized(path);
+        if normalized == "/" {
+            return Ok(normalized);
+        }
+
+        let components: Vec<&str> = normalized
+            .split('/')
+            .filter(|component| !component.is_empty())
+            .collect();
+        let mut current = String::from("/");
+
+        for (index, component) in components.iter().enumerate() {
+            let candidate = Self::join_path(&current, component);
+            let is_final = index + 1 == components.len();
+            let should_follow = !is_final || follow_final_symlink;
+
+            if should_follow {
+                if let Ok(stat) = self.merged_lstat(&candidate) {
+                    if stat.is_symbolic_link {
+                        let target = self.read_link(&candidate)?;
+                        let target_path = if target.starts_with('/') {
+                            Self::normalized(&target)
+                        } else {
+                            Self::normalized(&Self::join_path(
+                                &Self::parent_path(&candidate),
+                                &target,
+                            ))
+                        };
+                        let remainder = components[index + 1..].join("/");
+                        let next_path = if remainder.is_empty() {
+                            target_path
+                        } else {
+                            Self::normalized(&Self::join_path(&target_path, &remainder))
+                        };
+                        return self.resolve_merged_path(
+                            &next_path,
+                            follow_final_symlink,
+                            depth + 1,
+                        );
+                    }
+
+                    if !is_final && !stat.is_directory {
+                        return Err(Self::not_directory(&candidate));
+                    }
+                }
+            } else if let Ok(stat) = self.merged_lstat(&candidate) {
+                if !is_final && !stat.is_directory {
+                    return Err(Self::not_directory(&candidate));
+                }
+            }
+
+            current = candidate;
+        }
+
+        Ok(current)
+    }
+
+    fn destination_parent_copy_up_paths(&self, path: &str) -> VfsResult<Vec<String>> {
+        let parent = Self::parent_path(path);
+        let mut paths = Vec::new();
+        let mut seen = BTreeSet::new();
+        self.collect_destination_parent_copy_up_paths(&parent, &mut paths, &mut seen, 0)?;
+        Ok(paths)
+    }
+
+    fn collect_destination_parent_copy_up_paths(
+        &self,
+        parent: &str,
+        paths: &mut Vec<String>,
+        seen: &mut BTreeSet<String>,
+        depth: usize,
+    ) -> VfsResult<()> {
+        if depth > MAX_SNAPSHOT_DEPTH {
+            return Err(VfsError::new(
+                "ELOOP",
+                format!("too many symbolic links while resolving '{parent}'"),
+            ));
+        }
+
+        let normalized = Self::normalized(parent);
+        if normalized == "/" {
+            return Ok(());
+        }
+
+        let components: Vec<&str> = normalized
+            .split('/')
+            .filter(|component| !component.is_empty())
+            .collect();
+        let mut current = String::from("/");
+        for (index, component) in components.iter().enumerate() {
+            current = Self::join_path(&current, component);
+            let stat = self.merged_lstat(&current)?;
+
+            if stat.is_symbolic_link {
+                if !self.has_entry_in_upper(&current) && seen.insert(current.clone()) {
+                    paths.push(current.clone());
+                }
+
+                let target = self.read_link(&current)?;
+                let target_path = if target.starts_with('/') {
+                    Self::normalized(&target)
+                } else {
+                    Self::normalized(&Self::join_path(&Self::parent_path(&current), &target))
+                };
+                let remainder = components[index + 1..].join("/");
+                let next_parent = if remainder.is_empty() {
+                    target_path
+                } else {
+                    Self::normalized(&Self::join_path(&target_path, &remainder))
+                };
+                return self.collect_destination_parent_copy_up_paths(
+                    &next_parent,
+                    paths,
+                    seen,
+                    depth + 1,
+                );
+            }
+
+            if self.find_lower_by_entry(&current).is_some() && !self.has_entry_in_upper(&current) {
+                if seen.insert(current.clone()) {
+                    paths.push(current.clone());
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn encode_marker_path(path: &str) -> String {
@@ -131,6 +318,325 @@ impl OverlayFileSystem {
 
         let entry_path = Self::join_path(path, entry);
         Self::marker_exists_in_upper(upper, OverlayMarkerKind::Whiteout, &entry_path)
+    }
+
+    fn check_copy_up_usage_limits(
+        usage: &OverlayCopyUpUsage,
+        max_bytes: Option<u64>,
+        max_inodes: Option<usize>,
+    ) -> VfsResult<()> {
+        if let Some(limit) = max_bytes {
+            if usage.total_bytes > limit {
+                return Err(VfsError::new(
+                    "ENOSPC",
+                    format!(
+                        "overlay rename copy-up bytes {} exceed configured limit {}",
+                        usage.total_bytes, limit
+                    ),
+                ));
+            }
+        }
+
+        if let Some(limit) = max_inodes {
+            if usage.inode_count > limit {
+                return Err(VfsError::new(
+                    "ENOSPC",
+                    format!(
+                        "overlay rename copy-up inodes {} exceed configured limit {}",
+                        usage.inode_count, limit
+                    ),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn add_copy_up_usage(
+        usage: &mut OverlayCopyUpUsage,
+        bytes: u64,
+        inodes: usize,
+        max_bytes: Option<u64>,
+        max_inodes: Option<usize>,
+    ) -> VfsResult<()> {
+        usage.total_bytes = usage.total_bytes.saturating_add(bytes);
+        usage.inode_count = usage.inode_count.saturating_add(inodes);
+        Self::check_copy_up_usage_limits(usage, max_bytes, max_inodes)
+    }
+
+    fn remaining_inode_budget(
+        usage: &OverlayCopyUpUsage,
+        max_inodes: Option<usize>,
+    ) -> Option<usize> {
+        max_inodes.map(|limit| limit.saturating_sub(usage.inode_count))
+    }
+
+    fn copy_up_directory_entries_limited(
+        &mut self,
+        path: &str,
+        max_entries: Option<usize>,
+    ) -> VfsResult<Vec<String>> {
+        let Some(max_entries) = max_entries else {
+            return self.read_dir(path);
+        };
+
+        match self.read_dir_limited(path, max_entries) {
+            Ok(entries) => Ok(entries),
+            Err(error) if error.code() == "ENOMEM" => Err(VfsError::new(
+                "ENOSPC",
+                format!("overlay rename copy-up directory '{path}' exceeds configured inode limit"),
+            )),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn directory_has_visible_entries_limited(&mut self, path: &str) -> VfsResult<bool> {
+        match self.read_dir_limited(path, 1) {
+            Ok(entries) => Ok(!entries.is_empty()),
+            Err(error) if error.code() == "ENOMEM" => Ok(true),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn memory_subtree_usage_limited(
+        filesystem: &mut MemoryFileSystem,
+        path: &str,
+        max_bytes: Option<u64>,
+        max_inodes: Option<usize>,
+    ) -> VfsResult<OverlayCopyUpUsage> {
+        let mut usage = OverlayCopyUpUsage::default();
+        let mut visited = BTreeSet::new();
+        let mut pending = vec![Self::normalized(path)];
+        while let Some(current_path) = pending.pop() {
+            let stat = filesystem.lstat(&current_path)?;
+            if visited.insert(stat.ino) {
+                let bytes = if stat.is_directory && !stat.is_symbolic_link {
+                    0
+                } else {
+                    stat.size
+                };
+                Self::add_copy_up_usage(&mut usage, bytes, 1, max_bytes, max_inodes)?;
+            }
+
+            if stat.is_directory && !stat.is_symbolic_link {
+                let remaining = Self::remaining_inode_budget(&usage, max_inodes);
+                let children = if let Some(max_entries) = remaining {
+                    filesystem.read_dir_limited(&current_path, max_entries)?
+                } else {
+                    filesystem.read_dir(&current_path)?
+                };
+                for entry in children.into_iter().rev() {
+                    if matches!(entry.as_str(), "." | "..") {
+                        continue;
+                    }
+                    if Self::should_hide_directory_entry(&current_path, &entry) {
+                        continue;
+                    }
+                    pending.push(Self::join_path(&current_path, &entry));
+                }
+            }
+        }
+
+        Ok(usage)
+    }
+
+    fn memory_subtree_released_usage(
+        filesystem: &mut MemoryFileSystem,
+        path: &str,
+    ) -> VfsResult<OverlayCopyUpUsage> {
+        let mut usage = OverlayCopyUpUsage::default();
+        let mut visited = BTreeSet::new();
+        let mut pending = vec![Self::normalized(path)];
+        while let Some(current_path) = pending.pop() {
+            let stat = filesystem.lstat(&current_path)?;
+            if visited.insert(stat.ino) {
+                let subtree_links = filesystem.link_count_in_subtree(stat.ino, path) as u64;
+                if stat.is_directory || stat.nlink <= subtree_links {
+                    let bytes = if stat.is_directory && !stat.is_symbolic_link {
+                        0
+                    } else {
+                        stat.size
+                    };
+                    Self::add_copy_up_usage(&mut usage, bytes, 1, None, None)?;
+                }
+            }
+
+            if stat.is_directory && !stat.is_symbolic_link {
+                for entry in filesystem.read_dir(&current_path)?.into_iter().rev() {
+                    if matches!(entry.as_str(), "." | "..") {
+                        continue;
+                    }
+                    if Self::should_hide_directory_entry(&current_path, &entry) {
+                        continue;
+                    }
+                    pending.push(Self::join_path(&current_path, &entry));
+                }
+            }
+        }
+
+        Ok(usage)
+    }
+
+    fn upper_usage_limited(
+        &mut self,
+        max_bytes: Option<u64>,
+        max_inodes: Option<usize>,
+    ) -> VfsResult<OverlayCopyUpUsage> {
+        let Some(upper) = self.upper.as_mut() else {
+            return Ok(OverlayCopyUpUsage::default());
+        };
+
+        Self::memory_subtree_usage_limited(upper, "/", max_bytes, max_inodes)
+    }
+
+    fn upper_subtree_released_usage(&mut self, path: &str) -> VfsResult<OverlayCopyUpUsage> {
+        let Some(upper) = self.upper.as_mut() else {
+            return Ok(OverlayCopyUpUsage::default());
+        };
+
+        if !upper.exists(path) {
+            return Ok(OverlayCopyUpUsage::default());
+        }
+
+        Self::memory_subtree_released_usage(upper, path)
+    }
+
+    fn collect_copy_up_usage_limited(
+        &mut self,
+        path: &str,
+        usage: &mut OverlayCopyUpUsage,
+        max_bytes: Option<u64>,
+        max_inodes: Option<usize>,
+    ) -> VfsResult<()> {
+        let mut pending = vec![(Self::normalized(path), 0usize)];
+        while let Some((current_path, depth)) = pending.pop() {
+            if depth > MAX_SNAPSHOT_DEPTH {
+                return Err(VfsError::new(
+                    "EINVAL",
+                    format!("overlay snapshot depth limit exceeded at '{current_path}'"),
+                ));
+            }
+
+            let stat = self.lstat(&current_path)?;
+            if !self.has_entry_in_upper(&current_path) {
+                let bytes = if stat.is_symbolic_link {
+                    self.read_link(&current_path)?.len() as u64
+                } else if stat.is_directory {
+                    0
+                } else {
+                    stat.size
+                };
+                Self::add_copy_up_usage(usage, bytes, 1, max_bytes, max_inodes)?;
+            }
+
+            if stat.is_directory && !stat.is_symbolic_link {
+                let children = self.copy_up_directory_entries_limited(&current_path, max_inodes)?;
+                for entry in children.into_iter().rev() {
+                    pending.push((Self::join_path(&current_path, &entry), depth + 1));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn collect_single_copy_up_usage_limited(
+        &mut self,
+        path: &str,
+        usage: &mut OverlayCopyUpUsage,
+        max_bytes: Option<u64>,
+        max_inodes: Option<usize>,
+    ) -> VfsResult<()> {
+        if self.has_entry_in_upper(path) {
+            return Ok(());
+        }
+
+        let stat = self.merged_lstat(path)?;
+        let bytes = if stat.is_symbolic_link {
+            self.read_link(path)?.len() as u64
+        } else if stat.is_directory {
+            0
+        } else {
+            stat.size
+        };
+        Self::add_copy_up_usage(usage, bytes, 1, max_bytes, max_inodes)
+    }
+
+    pub fn check_rename_copy_up_limits(
+        &mut self,
+        old_path: &str,
+        new_path: &str,
+        max_bytes: Option<u64>,
+        max_inodes: Option<usize>,
+    ) -> VfsResult<()> {
+        let old_normalized = Self::normalized(old_path);
+        let new_normalized = Self::normalized(new_path);
+        if Self::is_internal_metadata_path(&old_normalized)
+            || Self::is_internal_metadata_path(&new_normalized)
+        {
+            return Err(VfsError::permission_denied("rename", old_path));
+        }
+
+        if old_normalized == "/" {
+            return Err(VfsError::permission_denied("rename", old_path));
+        }
+
+        if old_normalized == new_normalized {
+            return Ok(());
+        }
+
+        let source_stat = self.merged_lstat(old_path)?;
+        if self.writes_locked {
+            self.writable_upper(&old_normalized)?;
+        }
+        self.validate_destination_parent(&new_normalized)?;
+        let resolved_new_normalized = self.resolved_destination_path(&new_normalized)?;
+
+        if old_normalized == resolved_new_normalized {
+            return Ok(());
+        }
+
+        if source_stat.is_directory
+            && resolved_new_normalized.starts_with(&(old_normalized.clone() + "/"))
+        {
+            return Err(VfsError::new(
+                "EINVAL",
+                format!(
+                    "cannot move '{}' into its own descendant '{}'",
+                    old_path, new_path
+                ),
+            ));
+        }
+
+        let destination_parent_copy_up_paths =
+            self.destination_parent_copy_up_paths(&new_normalized)?;
+
+        if let Ok(destination_stat) = self.merged_lstat(&resolved_new_normalized) {
+            if destination_stat.is_directory
+                && !destination_stat.is_symbolic_link
+                && self.directory_has_visible_entries_limited(&resolved_new_normalized)?
+            {
+                return Err(Self::not_empty(&resolved_new_normalized));
+            }
+        }
+
+        let mut usage = self.upper_usage_limited(None, None)?;
+        if self.has_entry_in_upper(&resolved_new_normalized) {
+            let destination_usage = self.upper_subtree_released_usage(&resolved_new_normalized)?;
+            usage.total_bytes = usage
+                .total_bytes
+                .saturating_sub(destination_usage.total_bytes);
+            usage.inode_count = usage
+                .inode_count
+                .saturating_sub(destination_usage.inode_count);
+        }
+        Self::check_copy_up_usage_limits(&usage, max_bytes, max_inodes)?;
+        for path in destination_parent_copy_up_paths {
+            self.collect_single_copy_up_usage_limited(&path, &mut usage, max_bytes, max_inodes)?;
+        }
+        self.collect_copy_up_usage_limited(&old_normalized, &mut usage, max_bytes, max_inodes)?;
+
+        Self::check_copy_up_usage_limits(&usage, max_bytes, max_inodes)
     }
 
     fn marker_exists(&self, kind: OverlayMarkerKind, path: &str) -> bool {
@@ -363,6 +869,31 @@ impl OverlayFileSystem {
         let data = self.lowers[lower_index].read_file(path)?;
         let upper = self.writable_upper(path)?;
         upper.write_file(path, data)?;
+        upper.chmod(path, stat.mode)?;
+        upper.chown(path, stat.uid, stat.gid)?;
+        Ok(())
+    }
+
+    fn materialize_destination_parent_in_upper(&mut self, path: &str) -> VfsResult<()> {
+        if self.has_entry_in_upper(path) {
+            return Ok(());
+        }
+
+        if self
+            .merged_lstat(path)
+            .is_ok_and(|stat| stat.is_symbolic_link)
+        {
+            return self.copy_up_path(path);
+        }
+
+        self.ensure_ancestor_directories_in_upper(path)?;
+        let stat = self.merged_lstat(path)?;
+        if !stat.is_directory || stat.is_symbolic_link {
+            return Err(Self::not_directory(path));
+        }
+
+        let upper = self.writable_upper(path)?;
+        upper.create_dir(path)?;
         upper.chmod(path, stat.mode)?;
         upper.chown(path, stat.uid, stat.gid)?;
         Ok(())
@@ -715,50 +1246,36 @@ impl VirtualFileSystem for OverlayFileSystem {
 
         if include_lowers {
             for lower in self.lowers.iter_mut().rev() {
-                if let Ok(lower_entries) = lower.read_dir(path) {
-                    directory_exists = true;
-                    for entry in lower_entries {
+                let lower_entries = match lower.read_dir_filtered_limited(
+                    path,
+                    max_entries.saturating_sub(entries.len()),
+                    |entry| {
                         if entry == "."
                             || entry == ".."
-                            || Self::should_hide_directory_entry(path, &entry)
+                            || Self::should_hide_directory_entry(path, entry)
                         {
-                            continue;
+                            return false;
                         }
                         let child_path = if normalized == "/" {
                             format!("/{entry}")
                         } else {
                             format!("{normalized}/{entry}")
                         };
-                        if !Self::marker_exists_in_upper(
+                        !Self::marker_exists_in_upper(
                             upper,
                             OverlayMarkerKind::Whiteout,
                             &child_path,
-                        ) {
-                            entries.insert(entry);
-                            if entries.len() > max_entries {
-                                return Err(VfsError::new(
-                                    "ENOMEM",
-                                    format!(
-                                        "directory listing for '{path}' exceeds configured limit of {max_entries} entries"
-                                    ),
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(upper) = self.upper.as_mut() {
-            if let Ok(upper_entries) = upper.read_dir(path) {
-                directory_exists = true;
-                for entry in upper_entries {
-                    if entry == "."
-                        || entry == ".."
-                        || Self::should_hide_directory_entry(path, &entry)
-                    {
+                        ) && !entries.contains(entry)
+                    },
+                ) {
+                    Ok(entries) => entries,
+                    Err(error) if error.code() == "ENOENT" || error.code() == "ENOTDIR" => {
                         continue;
                     }
+                    Err(error) => return Err(error),
+                };
+                directory_exists = true;
+                for entry in lower_entries {
                     entries.insert(entry);
                     if entries.len() > max_entries {
                         return Err(VfsError::new(
@@ -768,6 +1285,39 @@ impl VirtualFileSystem for OverlayFileSystem {
                             ),
                         ));
                     }
+                }
+            }
+        }
+
+        if let Some(upper) = self.upper.as_mut() {
+            let upper_entries = match upper.read_dir_filtered_limited(
+                path,
+                max_entries.saturating_sub(entries.len()),
+                |entry| {
+                    entry != "."
+                        && entry != ".."
+                        && !Self::should_hide_directory_entry(path, entry)
+                        && !entries.contains(entry)
+                },
+            ) {
+                Ok(entries) => entries,
+                Err(error) if error.code() == "ENOENT" => Vec::new(),
+                Err(error) => return Err(error),
+            };
+            directory_exists = directory_exists || upper.exists(path);
+            for entry in upper_entries {
+                if entry == "." || entry == ".." || Self::should_hide_directory_entry(path, &entry)
+                {
+                    continue;
+                }
+                entries.insert(entry);
+                if entries.len() > max_entries {
+                    return Err(VfsError::new(
+                        "ENOMEM",
+                        format!(
+                            "directory listing for '{path}' exceeds configured limit of {max_entries} entries"
+                        ),
+                    ));
                 }
             }
         }
@@ -1028,7 +1578,16 @@ impl VirtualFileSystem for OverlayFileSystem {
         }
 
         let source_stat = self.merged_lstat(old_path)?;
-        if source_stat.is_directory && new_normalized.starts_with(&(old_normalized.clone() + "/")) {
+        self.validate_destination_parent(&new_normalized)?;
+        let resolved_new_normalized = self.resolved_destination_path(&new_normalized)?;
+
+        if old_normalized == resolved_new_normalized {
+            return Ok(());
+        }
+
+        if source_stat.is_directory
+            && resolved_new_normalized.starts_with(&(old_normalized.clone() + "/"))
+        {
             return Err(VfsError::new(
                 "EINVAL",
                 format!(
@@ -1038,33 +1597,37 @@ impl VirtualFileSystem for OverlayFileSystem {
             ));
         }
 
+        for path in self.destination_parent_copy_up_paths(&new_normalized)? {
+            self.materialize_destination_parent_in_upper(&path)?;
+        }
+
         let mut snapshot_entries = Vec::new();
         self.collect_snapshot_entries(&old_normalized, &mut snapshot_entries)?;
 
-        if let Ok(destination_stat) = self.merged_lstat(&new_normalized) {
+        if let Ok(destination_stat) = self.merged_lstat(&resolved_new_normalized) {
             if destination_stat.is_directory
                 && !destination_stat.is_symbolic_link
-                && !self.read_dir(&new_normalized)?.is_empty()
+                && self.directory_has_visible_entries_limited(&resolved_new_normalized)?
             {
-                return Err(Self::not_empty(&new_normalized));
+                return Err(Self::not_empty(&resolved_new_normalized));
             }
 
-            if self.has_entry_in_upper(&new_normalized) {
+            if self.has_entry_in_upper(&resolved_new_normalized) {
                 if destination_stat.is_directory && !destination_stat.is_symbolic_link {
-                    self.writable_upper(&new_normalized)?
-                        .remove_dir(&new_normalized)?;
+                    self.writable_upper(&resolved_new_normalized)?
+                        .remove_dir(&resolved_new_normalized)?;
                 } else {
-                    self.writable_upper(&new_normalized)?
-                        .remove_file(&new_normalized)?;
+                    self.writable_upper(&resolved_new_normalized)?
+                        .remove_file(&resolved_new_normalized)?;
                 }
             }
-            self.clear_subtree_metadata(&new_normalized)?;
+            self.clear_subtree_metadata(&resolved_new_normalized)?;
         }
 
         self.stage_snapshot_entries_in_upper(&snapshot_entries)?;
-        self.copy_subtree_metadata(&old_normalized, &new_normalized)?;
+        self.copy_subtree_metadata(&old_normalized, &resolved_new_normalized)?;
         self.writable_upper(&old_normalized)?
-            .rename(&old_normalized, &new_normalized)?;
+            .rename(&old_normalized, &resolved_new_normalized)?;
         self.remove_snapshot_entries(&snapshot_entries)
     }
 

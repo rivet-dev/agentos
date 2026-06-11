@@ -7,6 +7,10 @@ use agent_os_kernel::resource_accounting::{
     ResourceLimits, DEFAULT_MAX_CONNECTIONS, DEFAULT_MAX_OPEN_FDS, DEFAULT_MAX_PIPES,
     DEFAULT_MAX_PROCESSES, DEFAULT_MAX_PTYS, DEFAULT_MAX_SOCKETS, DEFAULT_VIRTUAL_CPU_COUNT,
 };
+use agent_os_kernel::root_fs::{
+    FilesystemEntry, RootFileSystem, RootFilesystemDescriptor, RootFilesystemMode,
+    RootFilesystemSnapshot,
+};
 use agent_os_kernel::vfs::{MemoryFileSystem, VirtualFileSystem};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -370,6 +374,585 @@ fn filesystem_limits_ignore_read_only_mount_usage() {
     kernel
         .write_file("/tmp/a.txt", b"ok".to_vec())
         .expect("mounted files should not count against root filesystem byte limits");
+}
+
+#[test]
+fn filesystem_limits_reject_overlay_rename_copy_up_before_materializing_lower_tree() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-copy-up-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(8),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/lower"),
+                FilesystemEntry::file("/lower/big.bin", vec![b'x'; 32]),
+            ],
+        }],
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    let error = kernel
+        .rename("/lower", "/moved")
+        .expect_err("copying up lower tree should exceed byte limit");
+    assert_eq!(error.code(), "ENOSPC");
+    assert_eq!(
+        kernel
+            .read_file("/lower/big.bin")
+            .expect("source tree should remain readable"),
+        vec![b'x'; 32]
+    );
+    assert!(!kernel.exists("/moved").expect("check destination"));
+}
+
+#[test]
+fn filesystem_limits_preserve_read_only_error_before_overlay_rename_copy_up_limit() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-copy-up-read-only");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(8),
+        ..ResourceLimits::default()
+    };
+
+    let mut root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::ReadOnly,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/lower"),
+                FilesystemEntry::file("/lower/big.bin", vec![b'x'; 32]),
+            ],
+        }],
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("build root filesystem");
+    root.finish_bootstrap();
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    let error = kernel
+        .rename("/lower", "/moved")
+        .expect_err("read-only root should reject before copy-up accounting");
+    assert_eq!(error.code(), "EROFS");
+}
+
+#[test]
+fn filesystem_limits_preserve_missing_destination_parent_before_overlay_rename_copy_up_limit() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-copy-up-missing-parent");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(8),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/lower"),
+                FilesystemEntry::file("/lower/big.bin", vec![b'x'; 32]),
+            ],
+        }],
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    let error = kernel
+        .rename("/lower", "/missing/moved")
+        .expect_err("missing destination parent should reject before copy-up accounting");
+    assert_eq!(error.code(), "ENOENT");
+}
+
+#[test]
+fn filesystem_limits_allow_overlay_rename_into_lower_only_destination_parent() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-lower-destination-parent");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_inode_count: Some(3),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/dest"),
+                FilesystemEntry::file("/dest/keep.txt", b"keep".to_vec()),
+                FilesystemEntry::file("/src.bin", b"src".to_vec()),
+            ],
+        }],
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    kernel
+        .rename("/src.bin", "/dest/src.bin")
+        .expect("lower-only destination parent should be materialized first");
+    assert_eq!(
+        kernel
+            .read_file("/dest/src.bin")
+            .expect("renamed file should be readable"),
+        b"src".to_vec()
+    );
+    assert_eq!(
+        kernel
+            .read_file("/dest/keep.txt")
+            .expect("lower sibling should remain visible"),
+        b"keep".to_vec()
+    );
+    assert!(!kernel.exists("/src.bin").expect("source should be hidden"));
+}
+
+#[test]
+fn filesystem_limits_allow_overlay_rename_through_lower_symlink_destination_parent() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-symlink-destination-parent");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_inode_count: Some(5),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/real"),
+                FilesystemEntry::symlink("/link", "/real"),
+                FilesystemEntry::file("/src.bin", b"src".to_vec()),
+            ],
+        }],
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    kernel
+        .rename("/src.bin", "/link/src.bin")
+        .expect("symlink destination parent should resolve to materialized target");
+    assert_eq!(
+        kernel
+            .read_file("/real/src.bin")
+            .expect("renamed file should be readable through target"),
+        b"src".to_vec()
+    );
+    assert!(!kernel.exists("/src.bin").expect("source should be hidden"));
+}
+
+#[test]
+fn filesystem_limits_allow_overlay_rename_through_lower_symlink_ancestor() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-symlink-destination-ancestor");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_inode_count: Some(5),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/real"),
+                FilesystemEntry::directory("/real/subdir"),
+                FilesystemEntry::symlink("/link", "/real"),
+                FilesystemEntry::file("/src.bin", b"src".to_vec()),
+            ],
+        }],
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    kernel
+        .rename("/src.bin", "/link/subdir/src.bin")
+        .expect("symlink ancestor should resolve to materialized target");
+    assert_eq!(
+        kernel
+            .read_file("/real/subdir/src.bin")
+            .expect("renamed file should be readable through target"),
+        b"src".to_vec()
+    );
+    assert_eq!(
+        kernel
+            .read_file("/link/subdir/src.bin")
+            .expect("renamed file should be readable through symlink"),
+        b"src".to_vec()
+    );
+    assert!(!kernel.exists("/src.bin").expect("source should be hidden"));
+}
+
+#[test]
+fn filesystem_limits_allow_overlay_rename_through_chained_lower_symlink_destination_parent() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-chained-symlink-destination-parent");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_inode_count: Some(7),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/a"),
+                FilesystemEntry::directory("/real"),
+                FilesystemEntry::directory("/other"),
+                FilesystemEntry::symlink("/a/link", "/real"),
+                FilesystemEntry::symlink("/real/subdir", "/other"),
+                FilesystemEntry::file("/src.bin", b"src".to_vec()),
+            ],
+        }],
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    kernel
+        .rename("/src.bin", "/a/link/subdir/src.bin")
+        .expect("chained symlink destination parent should resolve to materialized target");
+    assert_eq!(
+        kernel
+            .read_file("/other/src.bin")
+            .expect("renamed file should be readable through final target"),
+        b"src".to_vec()
+    );
+    assert_eq!(
+        kernel
+            .read_file("/a/link/subdir/src.bin")
+            .expect("renamed file should be readable through symlink chain"),
+        b"src".to_vec()
+    );
+    assert!(!kernel.exists("/src.bin").expect("source should be hidden"));
+}
+
+#[test]
+fn filesystem_limits_allow_overlay_rename_through_upper_symlink_to_lower_destination_parent() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-upper-symlink-to-lower-parent");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_inode_count: Some(5),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/real"),
+                FilesystemEntry::directory("/real/subdir"),
+                FilesystemEntry::file("/src.bin", b"src".to_vec()),
+            ],
+        }],
+        bootstrap_entries: vec![FilesystemEntry::symlink("/link", "/real")],
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    kernel
+        .rename("/src.bin", "/link/subdir/src.bin")
+        .expect("upper symlink should resolve to lower destination parent");
+    assert_eq!(
+        kernel
+            .read_file("/real/subdir/src.bin")
+            .expect("renamed file should be readable through target"),
+        b"src".to_vec()
+    );
+    assert_eq!(
+        kernel
+            .read_file("/link/subdir/src.bin")
+            .expect("renamed file should be readable through symlink"),
+        b"src".to_vec()
+    );
+    assert!(!kernel.exists("/src.bin").expect("source should be hidden"));
+}
+
+#[test]
+fn filesystem_limits_reject_overlay_rename_copy_up_against_existing_upper_usage() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-copy-up-existing-usage-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(8),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/lower"),
+                FilesystemEntry::file("/lower/small.bin", vec![b'x'; 7]),
+            ],
+        }],
+        bootstrap_entries: vec![FilesystemEntry::file("/existing.bin", vec![b'y'; 7])],
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    let error = kernel
+        .rename("/lower", "/moved")
+        .expect_err("copy-up should include current upper usage");
+    assert_eq!(error.code(), "ENOSPC");
+    assert_eq!(
+        kernel
+            .read_file("/lower/small.bin")
+            .expect("source tree should remain readable"),
+        vec![b'x'; 7]
+    );
+    assert_eq!(
+        kernel
+            .read_file("/existing.bin")
+            .expect("existing upper file should remain readable"),
+        vec![b'y'; 7]
+    );
+    assert!(!kernel.exists("/moved").expect("check destination"));
+}
+
+#[test]
+fn filesystem_limits_allow_overlay_rename_copy_up_when_replacing_upper_destination_within_limit() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-copy-up-replace-destination");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(13),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![FilesystemEntry::file("/src.bin", vec![b'x'; 7])],
+        }],
+        bootstrap_entries: vec![FilesystemEntry::file("/dst.bin", vec![b'y'; 7])],
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    kernel
+        .rename("/src.bin", "/dst.bin")
+        .expect("destination replacement should subtract removed upper usage");
+    assert_eq!(
+        kernel
+            .read_file("/dst.bin")
+            .expect("destination should contain renamed source"),
+        vec![b'x'; 7]
+    );
+    assert!(!kernel.exists("/src.bin").expect("source should be hidden"));
+}
+
+#[test]
+fn filesystem_limits_reject_overlay_rename_copy_up_when_replaced_destination_hardlink_remains() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-copy-up-hardlink-destination");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(8),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![FilesystemEntry::file("/src.bin", vec![b'x'; 7])],
+        }],
+        bootstrap_entries: vec![FilesystemEntry::file("/dst.bin", vec![b'y'; 7])],
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+    kernel
+        .link("/dst.bin", "/alias.bin")
+        .expect("create destination hardlink");
+
+    let error = kernel
+        .rename("/src.bin", "/dst.bin")
+        .expect_err("destination alias should keep old inode usage live");
+    assert_eq!(error.code(), "ENOSPC");
+    assert_eq!(
+        kernel
+            .read_file("/dst.bin")
+            .expect("destination should remain unchanged"),
+        vec![b'y'; 7]
+    );
+    assert_eq!(
+        kernel
+            .read_file("/alias.bin")
+            .expect("alias should remain readable"),
+        vec![b'y'; 7]
+    );
+}
+
+#[test]
+fn filesystem_limits_reject_overlay_rename_copy_up_against_inode_limit() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-copy-up-inode-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_inode_count: Some(2),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/lower"),
+                FilesystemEntry::directory("/lower/child"),
+            ],
+        }],
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    let error = kernel
+        .rename("/lower", "/moved")
+        .expect_err("copy-up should include current upper inode usage");
+    assert_eq!(error.code(), "ENOSPC");
+    assert!(kernel.exists("/lower/child").expect("source child remains"));
+    assert!(!kernel.exists("/moved").expect("check destination"));
+}
+
+#[test]
+fn filesystem_limits_allow_upper_only_overlay_directory_rename_at_inode_limit() {
+    let mut config = KernelVmConfig::new("vm-overlay-upper-only-rename-at-inode-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_inode_count: Some(3),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: Vec::new(),
+        bootstrap_entries: vec![
+            FilesystemEntry::directory("/dir"),
+            FilesystemEntry::file("/dir/file.txt", b"upper".to_vec()),
+        ],
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    kernel
+        .rename("/dir", "/renamed")
+        .expect("upper-only rename should not allocate inodes");
+    assert_eq!(
+        kernel
+            .read_file("/renamed/file.txt")
+            .expect("renamed file should remain readable"),
+        b"upper".to_vec()
+    );
+    assert!(!kernel.exists("/dir").expect("old directory should be gone"));
+}
+
+#[test]
+fn filesystem_limits_do_not_double_count_upper_hardlinks_during_overlay_rename_preflight() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-hardlink-accounting");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(8),
+        ..ResourceLimits::default()
+    };
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: Vec::new(),
+        bootstrap_entries: vec![FilesystemEntry::file("/existing.bin", vec![b'x'; 7])],
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+    kernel
+        .link("/existing.bin", "/alias.bin")
+        .expect("create hardlink");
+
+    kernel
+        .rename("/existing.bin", "/renamed.bin")
+        .expect("hardlinked upper inode should be counted once");
+    assert_eq!(
+        kernel
+            .read_file("/renamed.bin")
+            .expect("renamed hardlink source should remain readable"),
+        vec![b'x'; 7]
+    );
+    assert_eq!(
+        kernel
+            .read_file("/alias.bin")
+            .expect("alias should remain readable"),
+        vec![b'x'; 7]
+    );
+}
+
+#[test]
+fn filesystem_limits_preserve_not_directory_errors_for_upper_files() {
+    let mut config = KernelVmConfig::new("vm-overlay-read-dir-upper-file");
+    config.permissions = Permissions::allow_all();
+
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: Vec::new(),
+        bootstrap_entries: vec![FilesystemEntry::file("/file.txt", b"upper".to_vec())],
+    })
+    .expect("build root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    let error = kernel
+        .read_dir("/file.txt")
+        .expect_err("upper file should not read as an empty directory");
+    assert_eq!(error.code(), "ENOTDIR");
+}
+
+#[test]
+fn filesystem_limits_reject_overlay_rename_copy_up_in_nested_root_mount() {
+    let mut config = KernelVmConfig::new("vm-overlay-rename-copy-up-nested-mount-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(8),
+        ..ResourceLimits::default()
+    };
+
+    let mounted_root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/lower"),
+                FilesystemEntry::file("/lower/big.bin", vec![b'x'; 32]),
+            ],
+        }],
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("build mounted root filesystem");
+    let mut kernel = KernelVm::new(MountTable::new(MemoryFileSystem::new()), config);
+    kernel
+        .mount_filesystem("/mnt", mounted_root, MountOptions::new("root"))
+        .expect("mount root filesystem");
+
+    let error = kernel
+        .rename("/mnt/lower", "/mnt/moved")
+        .expect_err("nested mount copy-up should exceed byte limit");
+    assert_eq!(error.code(), "ENOSPC");
+    assert_eq!(
+        kernel
+            .read_file("/mnt/lower/big.bin")
+            .expect("source tree should remain readable"),
+        vec![b'x'; 32]
+    );
+    assert!(!kernel.exists("/mnt/moved").expect("check destination"));
 }
 
 #[test]
