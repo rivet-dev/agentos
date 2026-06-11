@@ -20,6 +20,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const TEST_AUTH_TOKEN: &str = "sidecar-test-token";
+const MAX_COLLECTED_PROCESS_STREAM_BYTES: usize = 1024 * 1024;
 
 pub fn acquire_sidecar_runtime_test_lock() {
     static LOCK_FILE: OnceLock<Flock<std::fs::File>> = OnceLock::new();
@@ -261,8 +262,8 @@ pub fn collect_process_output_with_timeout(
 ) -> (String, String, i32) {
     let ownership = OwnershipScope::session(connection_id, session_id);
     let deadline = Instant::now() + timeout;
-    let mut stdout = String::new();
-    let mut stderr = String::new();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
     let mut exit = None;
 
     loop {
@@ -280,32 +281,87 @@ pub fn collect_process_output_with_timeout(
                     process_id: event_process_id,
                     channel,
                     chunk,
-                }) if event_process_id == process_id => match channel {
-                    agent_os_sidecar::protocol::StreamChannel::Stdout => {
-                        stdout.push_str(&String::from_utf8_lossy(&chunk));
+                }) => {
+                    if event_process_id == process_id {
+                        match channel {
+                            agent_os_sidecar::protocol::StreamChannel::Stdout => {
+                                append_process_stream_chunk(
+                                    &mut stdout,
+                                    &chunk,
+                                    process_id,
+                                    "stdout",
+                                );
+                            }
+                            agent_os_sidecar::protocol::StreamChannel::Stderr => {
+                                append_process_stream_chunk(
+                                    &mut stderr,
+                                    &chunk,
+                                    process_id,
+                                    "stderr",
+                                );
+                            }
+                        }
                     }
-                    agent_os_sidecar::protocol::StreamChannel::Stderr => {
-                        stderr.push_str(&String::from_utf8_lossy(&chunk));
-                    }
-                },
+                }
                 EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
                     exit = Some((exited.exit_code, Instant::now()));
                 }
-                _ => {}
+                EventPayload::ProcessExited(_)
+                | EventPayload::VmLifecycle(_)
+                | EventPayload::Structured(_) => {}
             }
         }
 
         if let Some((exit_code, seen_at)) = exit {
             if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
-                return (stdout, stderr, exit_code);
+                return (
+                    process_stream_to_string(&stdout),
+                    process_stream_to_string(&stderr),
+                    exit_code,
+                );
             }
         }
 
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for process events\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            "timed out waiting for process events; stdout bytes: {}; stderr bytes: {}",
+            stdout.len(),
+            stderr.len()
         );
     }
+}
+
+fn append_process_stream_chunk(
+    stream: &mut Vec<u8>,
+    chunk: &[u8],
+    process_id: &str,
+    stream_name: &str,
+) {
+    assert!(
+        stream.len().saturating_add(chunk.len()) <= MAX_COLLECTED_PROCESS_STREAM_BYTES,
+        "process {process_id} {stream_name} exceeded {MAX_COLLECTED_PROCESS_STREAM_BYTES} bytes"
+    );
+    stream.extend_from_slice(chunk);
+}
+
+fn process_stream_to_string(stream: &[u8]) -> String {
+    String::from_utf8_lossy(stream).into_owned()
+}
+
+#[test]
+fn collect_process_output_stream_append_is_bounded() {
+    let mut stream = Vec::new();
+    append_process_stream_chunk(&mut stream, &[b'a'; 16], "proc-limit", "stdout");
+    assert_eq!(stream.len(), 16);
+
+    let overflow = std::panic::catch_unwind(|| {
+        let mut stream = vec![b'a'; MAX_COLLECTED_PROCESS_STREAM_BYTES];
+        append_process_stream_chunk(&mut stream, b"!", "proc-limit", "stdout");
+    });
+    assert!(
+        overflow.is_err(),
+        "oversized process output should fail the shared test harness"
+    );
 }
 
 pub fn dispose_vm_and_close_session(
