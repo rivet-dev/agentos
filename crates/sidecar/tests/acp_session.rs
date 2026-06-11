@@ -6,25 +6,26 @@ mod acp;
 mod protocol;
 
 use acp::compat::{
+    PENDING_PERMISSION_REQUEST_RETENTION_LIMIT, SEEN_INBOUND_REQUEST_ID_RETENTION_LIMIT,
     is_cancel_method_not_found, maybe_normalize_permission_response,
     normalize_inbound_permission_request,
 };
-use acp::session::{AcpSessionState, ACP_SESSION_EVENT_RETENTION_LIMIT};
+use acp::session::{ACP_SESSION_EVENT_RETENTION_LIMIT, AcpSessionState};
 use acp::{
-    deserialize_message, serialize_message, AcpClient, AcpClientError, AcpClientOptions,
-    InboundRequestHandler, InboundRequestOutcome, JsonRpcError, JsonRpcId, JsonRpcMessage,
-    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+    AcpClient, AcpClientError, AcpClientOptions, InboundRequestHandler, InboundRequestOutcome,
+    JsonRpcError, JsonRpcId, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+    deserialize_message, serialize_message,
 };
-use serde::ser::Error as _;
 use serde::Serialize;
-use serde_json::{json, Map, Value};
+use serde::ser::Error as _;
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
-use tokio::io::{split, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream};
+use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream, split};
 
 fn sample_init_result() -> Map<String, Value> {
     Map::from_iter([
@@ -285,10 +286,12 @@ fn session_state_tracks_metadata_and_derived_model_option() {
         created.modes.expect("modes")["currentModeId"],
         Value::String(String::from("build"))
     );
-    assert!(created
-        .config_options
-        .iter()
-        .any(|option| { option.get("id").and_then(Value::as_str) == Some("model") }));
+    assert!(
+        created
+            .config_options
+            .iter()
+            .any(|option| { option.get("id").and_then(Value::as_str) == Some("model") })
+    );
 
     let state = session.state_response().expect("session state");
     assert_eq!(state.session_id, "mock-agent-session");
@@ -425,6 +428,67 @@ fn permission_requests_are_normalized_and_deduped() {
 }
 
 #[test]
+fn session_permission_reply_survives_unrelated_seen_request_id_eviction() {
+    let mut session = session("pi");
+    let request = JsonRpcRequest {
+        jsonrpc: String::from("2.0"),
+        id: JsonRpcId::String(String::from("perm-late")),
+        method: String::from("session/request_permission"),
+        params: Some(json!({ "sessionId": "mock-agent-session" })),
+    };
+
+    normalize_inbound_permission_request(
+        &request,
+        &mut session.seen_inbound_request_ids,
+        &mut session.pending_permission_requests,
+    )
+    .expect("normalized permission request");
+
+    for request_id in 0..=SEEN_INBOUND_REQUEST_ID_RETENTION_LIMIT {
+        session
+            .seen_inbound_request_ids
+            .insert(JsonRpcId::Number(request_id as i64));
+    }
+
+    let (reply_id, result) = maybe_normalize_permission_response(
+        "request/permission",
+        Some(json!({
+            "permissionId": "perm-late",
+            "reply": "once",
+        })),
+        &mut session.pending_permission_requests,
+    )
+    .expect("permission reply should remain pending after unrelated seen-id churn");
+    assert_eq!(reply_id, JsonRpcId::String(String::from("perm-late")));
+    assert_eq!(result["outcome"]["optionId"], "allow_once");
+}
+
+#[test]
+fn session_pending_permission_requests_are_bounded_independently() {
+    let mut session = session("pi");
+
+    for request_id in 0..=PENDING_PERMISSION_REQUEST_RETENTION_LIMIT {
+        let request = JsonRpcRequest {
+            jsonrpc: String::from("2.0"),
+            id: JsonRpcId::Number(request_id as i64),
+            method: String::from("session/request_permission"),
+            params: Some(json!({ "sessionId": "mock-agent-session" })),
+        };
+        normalize_inbound_permission_request(
+            &request,
+            &mut session.seen_inbound_request_ids,
+            &mut session.pending_permission_requests,
+        )
+        .expect("normalized permission request");
+    }
+
+    assert_eq!(
+        session.pending_permission_requests.len(),
+        PENDING_PERMISSION_REQUEST_RETENTION_LIMIT
+    );
+}
+
+#[test]
 fn notifications_record_sequence_numbers_and_session_updates() {
     let mut session = session("pi");
     session.record_notification(JsonRpcNotification {
@@ -503,10 +567,12 @@ fn session_state_event_buffer_is_bounded_and_drains_acknowledged_sequences() {
         .acknowledged_state_response(Some(acknowledged))
         .expect("acknowledged session state");
 
-    assert!(state
-        .events
-        .iter()
-        .all(|event| event.sequence_number > acknowledged));
+    assert!(
+        state
+            .events
+            .iter()
+            .all(|event| event.sequence_number > acknowledged)
+    );
     assert_eq!(
         session
             .events
@@ -749,9 +815,11 @@ fn acp_state_response_returns_typed_error_for_unserializable_notification_payloa
     let error = session
         .state_response_with_test_notification(99, &FailingNotification)
         .expect_err("test notification should fail serialization");
-    assert!(error
-        .to_string()
-        .contains("failed to serialize ACP notification"));
+    assert!(
+        error
+            .to_string()
+            .contains("failed to serialize ACP notification")
+    );
 
     let healthy = session.state_response().expect("healthy session state");
     assert_eq!(healthy.events.len(), 1);
@@ -1010,9 +1078,11 @@ async fn acp_request_method_timeout_overrides_apply_to_initialize_and_prompt() {
         .expect_err("initialize should time out");
     assert!(matches!(initialize_error, AcpClientError::Timeout(_)));
     assert!(initialize_started.elapsed() < Duration::from_millis(20));
-    assert!(initialize_error
-        .to_string()
-        .contains("ACP request initialize (id=1) timed out after 5ms"));
+    assert!(
+        initialize_error
+            .to_string()
+            .contains("ACP request initialize (id=1) timed out after 5ms")
+    );
 
     let prompt = tokio::spawn({
         let client = client.clone();

@@ -1,5 +1,5 @@
 use crate::acp::json_rpc::{JsonRpcId, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub(crate) const LEGACY_PERMISSION_METHOD: &str = "request/permission";
@@ -8,6 +8,7 @@ pub(crate) const ACP_CANCEL_METHOD: &str = "session/cancel";
 pub(crate) const RECENT_ACTIVITY_LIMIT: usize = 20;
 pub(crate) const ACTIVITY_TEXT_LIMIT: usize = 240;
 pub(crate) const SEEN_INBOUND_REQUEST_ID_RETENTION_LIMIT: usize = 4_096;
+pub(crate) const PENDING_PERMISSION_REQUEST_RETENTION_LIMIT: usize = 4_096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentCompatibilityKind {
@@ -20,6 +21,111 @@ pub(crate) struct PendingPermissionRequest {
     pub(crate) id: JsonRpcId,
     pub(crate) method: String,
     pub(crate) options: Option<Vec<Map<String, Value>>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PendingPermissionRequests {
+    pending: BTreeMap<JsonRpcId, PendingPermissionRequest>,
+    permission_ids: BTreeMap<String, JsonRpcId>,
+    order: VecDeque<JsonRpcId>,
+    limit: usize,
+}
+
+impl PendingPermissionRequests {
+    pub(crate) fn new(limit: usize) -> Self {
+        Self {
+            pending: BTreeMap::new(),
+            permission_ids: BTreeMap::new(),
+            order: VecDeque::new(),
+            limit,
+        }
+    }
+
+    pub(crate) fn insert(&mut self, request: PendingPermissionRequest) -> String {
+        self.remove_existing_permission_id(&request.id);
+        if !self.pending.contains_key(&request.id) {
+            self.order.push_back(request.id.clone());
+        }
+        let permission_id = self.assign_permission_id(&request.id);
+        let request_id = request.id.clone();
+        self.pending.insert(request.id.clone(), request);
+        self.permission_ids
+            .insert(permission_id.clone(), request_id);
+        self.evict_oldest();
+        permission_id
+    }
+
+    pub(crate) fn remove_by_permission_id(
+        &mut self,
+        permission_id: &str,
+    ) -> Option<PendingPermissionRequest> {
+        let id = self.permission_ids.remove(permission_id)?;
+        self.order.retain(|existing| existing != &id);
+        self.pending.remove(&id)
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.pending.clear();
+        self.permission_ids.clear();
+        self.order.clear();
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn len(&self) -> usize {
+        self.pending.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn contains_id(&self, id: &JsonRpcId) -> bool {
+        self.pending.contains_key(id)
+    }
+
+    fn evict_oldest(&mut self) {
+        while self.order.len() > self.limit {
+            if let Some(oldest) = self.order.pop_front() {
+                self.pending.remove(&oldest);
+                self.remove_existing_permission_id(&oldest);
+            }
+        }
+    }
+
+    fn assign_permission_id(&self, id: &JsonRpcId) -> String {
+        let display_id = id.to_string();
+        if !self.permission_ids.contains_key(&display_id) {
+            return display_id;
+        }
+
+        let encoded = serde_json::to_string(id).expect("JSON-RPC id should serialize");
+        let mut candidate = format!("jsonrpc:{encoded}");
+        let mut suffix = 2usize;
+        while self.permission_ids.contains_key(&candidate) {
+            candidate = format!("jsonrpc:{encoded}:{suffix}");
+            suffix += 1;
+        }
+        candidate
+    }
+
+    fn remove_existing_permission_id(&mut self, id: &JsonRpcId) {
+        let existing = self
+            .permission_ids
+            .iter()
+            .find_map(|(permission_id, pending_id)| {
+                if pending_id == id {
+                    Some(permission_id.clone())
+                } else {
+                    None
+                }
+            });
+        if let Some(permission_id) = existing {
+            self.permission_ids.remove(&permission_id);
+        }
+    }
+}
+
+impl Default for PendingPermissionRequests {
+    fn default() -> Self {
+        Self::new(PENDING_PERMISSION_REQUEST_RETENTION_LIMIT)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -85,7 +191,7 @@ pub(crate) fn compatibility_for(agent_type: &str) -> AgentCompatibilityKind {
 pub(crate) fn normalize_inbound_permission_request(
     request: &JsonRpcRequest,
     seen_inbound_request_ids: &mut SeenInboundRequestIds,
-    pending_permission_requests: &mut BTreeMap<String, PendingPermissionRequest>,
+    pending_permission_requests: &mut PendingPermissionRequests,
 ) -> Option<JsonRpcNotification> {
     if request.method != ACP_PERMISSION_METHOD {
         return None;
@@ -97,24 +203,20 @@ pub(crate) fn normalize_inbound_permission_request(
     seen_inbound_request_ids.insert(request.id.clone());
 
     let params = to_record(request.params.clone());
-    let permission_id = request.id.to_string();
-    pending_permission_requests.insert(
-        permission_id.clone(),
-        PendingPermissionRequest {
-            id: request.id.clone(),
-            method: request.method.clone(),
-            options: params
-                .get("options")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_object)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                }),
-        },
-    );
+    let permission_id = pending_permission_requests.insert(PendingPermissionRequest {
+        id: request.id.clone(),
+        method: request.method.clone(),
+        options: params
+            .get("options")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_object)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            }),
+    });
 
     let mut normalized = params;
     normalized.insert(String::from("permissionId"), Value::String(permission_id));
@@ -132,7 +234,7 @@ pub(crate) fn normalize_inbound_permission_request(
 pub(crate) fn maybe_normalize_permission_response(
     method: &str,
     params: Option<Value>,
-    pending_permission_requests: &mut BTreeMap<String, PendingPermissionRequest>,
+    pending_permission_requests: &mut PendingPermissionRequests,
 ) -> Option<(JsonRpcId, Value)> {
     if method != LEGACY_PERMISSION_METHOD && method != ACP_PERMISSION_METHOD {
         return None;
@@ -145,7 +247,7 @@ pub(crate) fn maybe_normalize_permission_response(
         _ => return None,
     };
 
-    let pending = pending_permission_requests.remove(&permission_id)?;
+    let pending = pending_permission_requests.remove_by_permission_id(&permission_id)?;
     if pending.method != ACP_PERMISSION_METHOD {
         return None;
     }
@@ -399,5 +501,115 @@ mod tests {
         assert!(!seen.contains(&first));
         assert!(seen.contains(&second));
         assert!(seen.contains(&third));
+    }
+
+    #[test]
+    fn permission_requests_evict_pending_entries_with_seen_request_window() {
+        let mut seen = SeenInboundRequestIds::new(2);
+        let mut pending = PendingPermissionRequests::new(2);
+
+        for request_id in 1..=3 {
+            let request = JsonRpcRequest {
+                jsonrpc: String::from("2.0"),
+                id: JsonRpcId::Number(request_id),
+                method: String::from("session/request_permission"),
+                params: Some(json!({ "path": format!("/tmp/{request_id}.txt") })),
+            };
+            let notification =
+                normalize_inbound_permission_request(&request, &mut seen, &mut pending)
+                    .expect("permission request should normalize");
+            assert_eq!(notification.method, LEGACY_PERMISSION_METHOD);
+        }
+
+        assert_eq!(seen.len(), 2);
+        assert_eq!(pending.len(), 2);
+        assert!(!pending.contains_id(&JsonRpcId::Number(1)));
+        assert!(pending.contains_id(&JsonRpcId::Number(2)));
+        assert!(pending.contains_id(&JsonRpcId::Number(3)));
+    }
+
+    #[test]
+    fn pending_permission_eviction_uses_typed_json_rpc_ids() {
+        let mut pending = PendingPermissionRequests::new(2);
+
+        for id in [
+            JsonRpcId::Number(1),
+            JsonRpcId::String(String::from("1")),
+            JsonRpcId::Number(2),
+        ] {
+            pending.insert(PendingPermissionRequest {
+                id,
+                method: String::from(ACP_PERMISSION_METHOD),
+                options: None,
+            });
+        }
+
+        assert_eq!(pending.len(), 2);
+        assert!(!pending.contains_id(&JsonRpcId::Number(1)));
+        assert!(pending.contains_id(&JsonRpcId::String(String::from("1"))));
+        assert!(pending.contains_id(&JsonRpcId::Number(2)));
+    }
+
+    #[test]
+    fn permission_ids_are_collision_safe_for_string_and_number_ids() {
+        let mut seen = SeenInboundRequestIds::new(4);
+        let mut pending = PendingPermissionRequests::new(4);
+
+        let number_request = JsonRpcRequest {
+            jsonrpc: String::from("2.0"),
+            id: JsonRpcId::Number(1),
+            method: String::from("session/request_permission"),
+            params: Some(json!({ "path": "/tmp/number.txt" })),
+        };
+        let string_request = JsonRpcRequest {
+            jsonrpc: String::from("2.0"),
+            id: JsonRpcId::String(String::from("1")),
+            method: String::from("session/request_permission"),
+            params: Some(json!({ "path": "/tmp/string.txt" })),
+        };
+
+        let number_notification =
+            normalize_inbound_permission_request(&number_request, &mut seen, &mut pending)
+                .expect("number permission request should normalize");
+        let string_notification =
+            normalize_inbound_permission_request(&string_request, &mut seen, &mut pending)
+                .expect("string permission request should normalize");
+
+        let number_permission_id = number_notification
+            .params
+            .as_ref()
+            .and_then(|params| params.get("permissionId"))
+            .and_then(Value::as_str)
+            .expect("number permission id");
+        let string_permission_id = string_notification
+            .params
+            .as_ref()
+            .and_then(|params| params.get("permissionId"))
+            .and_then(Value::as_str)
+            .expect("string permission id");
+        assert_eq!(number_permission_id, "1");
+        assert_ne!(string_permission_id, "1");
+
+        let (string_reply_id, _) = maybe_normalize_permission_response(
+            LEGACY_PERMISSION_METHOD,
+            Some(json!({
+                "permissionId": string_permission_id,
+                "reply": "reject",
+            })),
+            &mut pending,
+        )
+        .expect("string permission reply should resolve");
+        assert_eq!(string_reply_id, JsonRpcId::String(String::from("1")));
+
+        let (number_reply_id, _) = maybe_normalize_permission_response(
+            LEGACY_PERMISSION_METHOD,
+            Some(json!({
+                "permissionId": number_permission_id,
+                "reply": "reject",
+            })),
+            &mut pending,
+        )
+        .expect("number permission reply should resolve");
+        assert_eq!(number_reply_id, JsonRpcId::Number(1));
     }
 }

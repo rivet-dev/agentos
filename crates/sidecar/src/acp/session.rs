@@ -1,8 +1,8 @@
-use crate::acp::compat::{
-    derive_config_options, synthetic_config_update, synthetic_mode_update,
-    PendingPermissionRequest, SeenInboundRequestIds, RECENT_ACTIVITY_LIMIT,
-};
 use crate::acp::AcpTimeoutDiagnostics;
+use crate::acp::compat::{
+    PendingPermissionRequests, RECENT_ACTIVITY_LIMIT, SeenInboundRequestIds, derive_config_options,
+    synthetic_config_update, synthetic_mode_update,
+};
 use crate::acp::{JsonRpcError, JsonRpcId, JsonRpcNotification};
 use crate::protocol::{SequencedNotification, SessionCreatedResponse, SessionStateResponse};
 use serde::Serialize;
@@ -229,7 +229,7 @@ pub(crate) struct AcpSessionState {
     pub(crate) agent_capabilities: Option<Value>,
     pub(crate) agent_info: Option<Value>,
     pub(crate) recent_activity: VecDeque<String>,
-    pub(crate) pending_permission_requests: BTreeMap<String, PendingPermissionRequest>,
+    pub(crate) pending_permission_requests: PendingPermissionRequests,
     pub(crate) seen_inbound_request_ids: SeenInboundRequestIds,
     pub(crate) terminals: BTreeMap<String, AcpTerminalState>,
     pub(crate) next_terminal_id: u64,
@@ -292,7 +292,7 @@ impl AcpSessionState {
             agent_capabilities: init_result.get("agentCapabilities").cloned(),
             agent_info: init_result.get("agentInfo").cloned(),
             recent_activity: VecDeque::with_capacity(RECENT_ACTIVITY_LIMIT),
-            pending_permission_requests: BTreeMap::new(),
+            pending_permission_requests: PendingPermissionRequests::default(),
             seen_inbound_request_ids: SeenInboundRequestIds::default(),
             terminals: BTreeMap::new(),
             next_terminal_id: 1,

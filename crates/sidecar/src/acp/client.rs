@@ -1,10 +1,12 @@
-use crate::acp::compat::SeenInboundRequestIds;
-use crate::acp::json_rpc::{
-    serialize_message, JsonRpcError, JsonRpcId, JsonRpcMessage, JsonRpcNotification,
-    JsonRpcRequest, JsonRpcResponse,
-};
 use crate::acp::AcpTimeoutDiagnostics;
-use serde_json::{json, Map, Value};
+use crate::acp::compat::{
+    PendingPermissionRequest, PendingPermissionRequests, SeenInboundRequestIds,
+};
+use crate::acp::json_rpc::{
+    JsonRpcError, JsonRpcId, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+    serialize_message,
+};
+use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
@@ -12,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::sync::{broadcast, oneshot, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, broadcast, oneshot};
 
 const DEFAULT_TIMEOUT_MS: Duration = Duration::from_millis(120_000);
 const INITIALIZE_TIMEOUT_MS: Duration = Duration::from_millis(10_000);
@@ -89,17 +91,11 @@ impl std::fmt::Display for AcpClientError {
 
 impl std::error::Error for AcpClientError {}
 
-struct PendingPermissionRequest {
-    id: JsonRpcId,
-    method: String,
-    options: Option<Vec<Map<String, Value>>>,
-}
-
 struct AcpClientInner {
     writer: AsyncMutex<Pin<Box<dyn AsyncWrite + Send>>>,
     pending: Mutex<BTreeMap<JsonRpcId, oneshot::Sender<Result<JsonRpcResponse, AcpClientError>>>>,
     seen_inbound_request_ids: Mutex<SeenInboundRequestIds>,
-    pending_permission_requests: Mutex<BTreeMap<String, PendingPermissionRequest>>,
+    pending_permission_requests: Mutex<PendingPermissionRequests>,
     request_handler: Mutex<Option<InboundRequestHandler>>,
     notification_tx: broadcast::Sender<JsonRpcNotification>,
     recent_activity: Mutex<VecDeque<String>>,
@@ -124,7 +120,7 @@ impl AcpClient {
             writer: AsyncMutex::new(Box::pin(writer)),
             pending: Mutex::new(BTreeMap::new()),
             seen_inbound_request_ids: Mutex::new(SeenInboundRequestIds::default()),
-            pending_permission_requests: Mutex::new(BTreeMap::new()),
+            pending_permission_requests: Mutex::new(PendingPermissionRequests::default()),
             request_handler: Mutex::new(options.request_handler),
             notification_tx,
             recent_activity: Mutex::new(VecDeque::with_capacity(RECENT_ACTIVITY_LIMIT)),
@@ -310,7 +306,7 @@ impl AcpClient {
             .pending_permission_requests
             .lock()
             .expect("permission lock poisoned")
-            .remove(&permission_id);
+            .remove_by_permission_id(&permission_id);
         let Some(pending) = pending else {
             return Ok(None);
         };
@@ -575,28 +571,24 @@ async fn handle_inbound_request(inner: Arc<AcpClientInner>, request: JsonRpcRequ
 
     if request.method == ACP_PERMISSION_METHOD {
         let params = to_record(request.params.clone());
-        let permission_id = request.id.to_string();
-        inner
+        let permission_id = inner
             .pending_permission_requests
             .lock()
             .expect("permission lock poisoned")
-            .insert(
-                permission_id.clone(),
-                PendingPermissionRequest {
-                    id: request.id.clone(),
-                    method: request.method.clone(),
-                    options: params
-                        .get("options")
-                        .and_then(Value::as_array)
-                        .map(|items| {
-                            items
-                                .iter()
-                                .filter_map(Value::as_object)
-                                .cloned()
-                                .collect::<Vec<_>>()
-                        }),
-                },
-            );
+            .insert(PendingPermissionRequest {
+                id: request.id.clone(),
+                method: request.method.clone(),
+                options: params
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_object)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    }),
+            });
 
         let mut notification_params = params;
         notification_params.insert(
@@ -680,6 +672,14 @@ impl AcpClient {
             .seen_inbound_request_ids
             .lock()
             .expect("seen request ids lock poisoned")
+            .len()
+    }
+
+    fn pending_permission_request_count_for_tests(&self) -> usize {
+        self.inner
+            .pending_permission_requests
+            .lock()
+            .expect("permission lock poisoned")
             .len()
     }
 
@@ -895,7 +895,7 @@ fn summarize_inbound_message(message: &JsonRpcMessage) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
     use tokio::time::timeout;
 
     #[tokio::test(flavor = "current_thread")]
@@ -944,6 +944,221 @@ mod tests {
             client.seen_inbound_request_id_count_for_tests(),
             crate::acp::compat::SEEN_INBOUND_REQUEST_ID_RETENTION_LIMIT
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn client_pending_permission_requests_stay_bounded_with_seen_request_ids() {
+        let (client_stream, server_stream) = tokio::io::duplex(8 * 1024);
+        let (client_reader, client_writer) = split(client_stream);
+        let (_server_reader, mut server_writer) = split(server_stream);
+        let client = AcpClient::new(client_reader, client_writer, AcpClientOptions::default());
+        let mut notifications = client.subscribe_notifications();
+
+        for request_id in 0..=crate::acp::compat::PENDING_PERMISSION_REQUEST_RETENTION_LIMIT {
+            let message = JsonRpcMessage::Request(JsonRpcRequest {
+                jsonrpc: String::from("2.0"),
+                id: JsonRpcId::Number(request_id as i64),
+                method: String::from("session/request_permission"),
+                params: Some(json!({ "path": format!("/tmp/{request_id}.txt") })),
+            });
+            let encoded = serialize_message(&message).expect("encode request");
+            server_writer
+                .write_all(encoded.as_bytes())
+                .await
+                .expect("write request");
+            server_writer.flush().await.expect("flush request");
+            let notification = notifications.recv().await.expect("permission notification");
+            assert_eq!(notification.method, LEGACY_PERMISSION_METHOD);
+        }
+
+        assert_eq!(
+            client.seen_inbound_request_id_count_for_tests(),
+            crate::acp::compat::SEEN_INBOUND_REQUEST_ID_RETENTION_LIMIT
+        );
+        assert_eq!(
+            client.pending_permission_request_count_for_tests(),
+            crate::acp::compat::PENDING_PERMISSION_REQUEST_RETENTION_LIMIT
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn client_permission_reply_survives_unrelated_seen_request_id_eviction() {
+        let (client_stream, server_stream) = tokio::io::duplex(16 * 1024);
+        let (client_reader, client_writer) = split(client_stream);
+        let (server_reader, mut server_writer) = split(server_stream);
+        let client = AcpClient::new(client_reader, client_writer, AcpClientOptions::default());
+        let mut notifications = client.subscribe_notifications();
+        let mut outbound_lines = BufReader::new(server_reader).lines();
+
+        let permission_request = JsonRpcMessage::Request(JsonRpcRequest {
+            jsonrpc: String::from("2.0"),
+            id: JsonRpcId::String(String::from("perm-late")),
+            method: String::from("session/request_permission"),
+            params: Some(json!({ "path": "/tmp/late.txt" })),
+        });
+        let encoded = serialize_message(&permission_request).expect("encode permission request");
+        server_writer
+            .write_all(encoded.as_bytes())
+            .await
+            .expect("write permission request");
+        server_writer
+            .flush()
+            .await
+            .expect("flush permission request");
+        let notification = notifications.recv().await.expect("permission notification");
+        assert_eq!(notification.method, LEGACY_PERMISSION_METHOD);
+
+        for request_id in 0..=crate::acp::compat::SEEN_INBOUND_REQUEST_ID_RETENTION_LIMIT {
+            let message = JsonRpcMessage::Request(JsonRpcRequest {
+                jsonrpc: String::from("2.0"),
+                id: JsonRpcId::Number(request_id as i64),
+                method: String::from("fs/read_text_file"),
+                params: Some(json!({ "path": format!("/tmp/{request_id}.txt") })),
+            });
+            let encoded = serialize_message(&message).expect("encode request");
+            server_writer
+                .write_all(encoded.as_bytes())
+                .await
+                .expect("write request");
+            server_writer.flush().await.expect("flush request");
+            outbound_lines
+                .next_line()
+                .await
+                .expect("read method-not-found response")
+                .expect("method-not-found response should exist");
+        }
+
+        let permission_response = client
+            .request(
+                "request/permission",
+                Some(json!({
+                    "permissionId": "perm-late",
+                    "reply": "once",
+                })),
+            )
+            .await
+            .expect("late permission response should still match pending request");
+        assert_eq!(
+            permission_response.result(),
+            Some(&json!({
+                "outcome": {
+                    "outcome": "selected",
+                    "optionId": "allow_once",
+                }
+            }))
+        );
+
+        let outbound_permission = outbound_lines
+            .next_line()
+            .await
+            .expect("read permission response")
+            .expect("permission response should exist");
+        let outbound_permission =
+            crate::acp::deserialize_message(&outbound_permission).expect("decode response");
+        match outbound_permission {
+            JsonRpcMessage::Response(response) => {
+                assert_eq!(response.id, JsonRpcId::String(String::from("perm-late")));
+            }
+            other => panic!("unexpected outbound permission frame: {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn client_permission_ids_are_collision_safe_for_string_and_number_ids() {
+        let (client_stream, server_stream) = tokio::io::duplex(8 * 1024);
+        let (client_reader, client_writer) = split(client_stream);
+        let (server_reader, mut server_writer) = split(server_stream);
+        let client = AcpClient::new(client_reader, client_writer, AcpClientOptions::default());
+        let mut notifications = client.subscribe_notifications();
+        let mut outbound_lines = BufReader::new(server_reader).lines();
+
+        for id in [JsonRpcId::Number(1), JsonRpcId::String(String::from("1"))] {
+            let message = JsonRpcMessage::Request(JsonRpcRequest {
+                jsonrpc: String::from("2.0"),
+                id,
+                method: String::from("session/request_permission"),
+                params: Some(json!({ "path": "/tmp/collide.txt" })),
+            });
+            let encoded = serialize_message(&message).expect("encode permission request");
+            server_writer
+                .write_all(encoded.as_bytes())
+                .await
+                .expect("write permission request");
+            server_writer
+                .flush()
+                .await
+                .expect("flush permission request");
+        }
+
+        let first = notifications.recv().await.expect("first permission");
+        let second = notifications.recv().await.expect("second permission");
+        let first_permission_id = first
+            .params
+            .as_ref()
+            .and_then(|params| params.get("permissionId"))
+            .and_then(Value::as_str)
+            .expect("first permission id");
+        let second_permission_id = second
+            .params
+            .as_ref()
+            .and_then(|params| params.get("permissionId"))
+            .and_then(Value::as_str)
+            .expect("second permission id");
+        assert_eq!(first_permission_id, "1");
+        assert_ne!(second_permission_id, "1");
+
+        let second_response = client
+            .request(
+                "request/permission",
+                Some(json!({
+                    "permissionId": second_permission_id,
+                    "reply": "reject",
+                })),
+            )
+            .await
+            .expect("second permission response should match string id");
+        assert_eq!(
+            second_response.result(),
+            Some(&json!({
+                "outcome": {
+                    "outcome": "selected",
+                    "optionId": "reject_once",
+                }
+            }))
+        );
+        let outbound_second = outbound_lines
+            .next_line()
+            .await
+            .expect("read second permission response")
+            .expect("second permission response should exist");
+        match crate::acp::deserialize_message(&outbound_second).expect("decode response") {
+            JsonRpcMessage::Response(response) => {
+                assert_eq!(response.id, JsonRpcId::String(String::from("1")));
+            }
+            other => panic!("unexpected second permission frame: {other:?}"),
+        }
+
+        client
+            .request(
+                "request/permission",
+                Some(json!({
+                    "permissionId": first_permission_id,
+                    "reply": "reject",
+                })),
+            )
+            .await
+            .expect("first permission response should still match number id");
+        let outbound_first = outbound_lines
+            .next_line()
+            .await
+            .expect("read first permission response")
+            .expect("first permission response should exist");
+        match crate::acp::deserialize_message(&outbound_first).expect("decode response") {
+            JsonRpcMessage::Response(response) => {
+                assert_eq!(response.id, JsonRpcId::Number(1));
+            }
+            other => panic!("unexpected first permission frame: {other:?}"),
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
