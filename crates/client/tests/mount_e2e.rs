@@ -1,10 +1,10 @@
 mod common;
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use agent_os_client::config::{AgentOsConfig, MountConfig, MountPlugin};
 use agent_os_client::AgentOs;
+use agent_os_client::config::{AgentOsConfig, MountConfig, MountPlugin};
 use uuid::Uuid;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -15,11 +15,10 @@ async fn create_forwards_native_mounts() {
         );
     }
 
-    let host_root = std::env::temp_dir().join(format!("agent-os-client-mount-{}", Uuid::new_v4()));
-    fs::create_dir_all(&host_root).expect("create host mount root");
-    fs::write(host_root.join("marker.txt"), b"mounted").expect("write host marker");
+    let host_root = TempMountRoot::new();
+    fs::write(host_root.path().join("marker.txt"), b"mounted").expect("write host marker");
 
-    let os = create_vm_with_host_mount(&host_root).await;
+    let os = create_vm_with_host_mount(host_root.path()).await;
     let contents = os
         .read_file("/mnt/host/marker.txt")
         .await
@@ -28,7 +27,6 @@ async fn create_forwards_native_mounts() {
     assert_eq!(contents, b"mounted");
 
     os.shutdown().await.expect("shutdown VM");
-    fs::remove_dir_all(host_root).expect("remove host mount root");
 }
 
 async fn create_vm_with_host_mount(host_root: &Path) -> AgentOs {
@@ -49,4 +47,26 @@ async fn create_vm_with_host_mount(host_root: &Path) -> AgentOs {
     })
     .await
     .expect("create VM with native host-dir mount")
+}
+
+struct TempMountRoot {
+    path: PathBuf,
+}
+
+impl TempMountRoot {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!("agent-os-client-mount-{}", Uuid::new_v4()));
+        fs::create_dir_all(&path).expect("create host mount root");
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempMountRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
