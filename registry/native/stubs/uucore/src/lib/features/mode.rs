@@ -11,6 +11,8 @@
 // WASI has no umask syscall so we stub it below.
 #[cfg(not(any(unix, target_os = "wasi")))]
 use libc::umask;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use std::fs;
 
 pub fn parse_numeric(fperm: u32, mut mode: &str, considering_dir: bool) -> Result<u32, String> {
     let (op, pos) = parse_op(mode).map_or_else(|_| (None, 0), |(op, pos)| (Some(op), pos));
@@ -172,15 +174,29 @@ pub fn parse(mode_string: &str, considering_dir: bool, umask: u32) -> Result<u32
     parse_chmod(0, mode_string, considering_dir, umask)
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn parse_proc_status_umask(status: &str) -> Option<u32> {
+    status.lines().find_map(|line| {
+        let raw_umask = line.strip_prefix("Umask:")?.trim();
+        u32::from_str_radix(raw_umask, 8)
+            .ok()
+            .filter(|mask| *mask <= 0o777)
+    })
+}
+
 pub fn get_umask() -> u32 {
     // There's no portable way to read the umask without changing it.
-    // We have to replace it and then quickly set it back, hopefully before
-    // some other thread is affected.
-    // On modern Linux kernels the current umask could instead be read
-    // from /proc/self/status. But that's a lot of work.
+    // On Linux, read /proc/self/status first to avoid changing process state.
     #[cfg(unix)]
     {
         use nix::sys::stat::{Mode, umask};
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if let Ok(status) = fs::read_to_string("/proc/self/status") {
+            if let Some(mask) = parse_proc_status_umask(&status) {
+                return mask;
+            }
+        }
 
         let mask = umask(Mode::empty());
         let _ = umask(mask);
@@ -341,5 +357,23 @@ mod tests {
 
         // First add user write, then set to 755 (should override)
         assert_eq!(parse("u+w,755", false, 0).unwrap(), 0o755);
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn test_parse_proc_status_umask() {
+        assert_eq!(
+            super::parse_proc_status_umask("Name:\ttest\nUmask:\t0022\nState:\tR\n"),
+            Some(0o022)
+        );
+        assert_eq!(
+            super::parse_proc_status_umask("Name:\ttest\nUmask:\tbad\n"),
+            None
+        );
+        assert_eq!(
+            super::parse_proc_status_umask("Name:\ttest\nUmask:\t1000\n"),
+            None
+        );
+        assert_eq!(super::parse_proc_status_umask("Name:\ttest\n"), None);
     }
 }
