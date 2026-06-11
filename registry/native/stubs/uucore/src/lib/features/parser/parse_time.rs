@@ -249,6 +249,15 @@ mod tests {
     }
 
     #[test]
+    fn test_error_oversized_partial_magnitude() {
+        let long_digits = "1".repeat(8193);
+        assert!(from_str(&long_digits, true).is_err());
+        assert!(from_str(&format!("1{}s", "2".repeat(8192)), true).is_err());
+        assert!(from_str(&format!("1{}x", "2".repeat(8192)), true).is_err());
+        assert!(from_str(&format!("1e1{}", "2".repeat(8192)), true).is_err());
+    }
+
+    #[test]
     fn test_error_only_point() {
         assert!(from_str(".", true).is_err());
         assert!(from_str(".", false).is_err());
