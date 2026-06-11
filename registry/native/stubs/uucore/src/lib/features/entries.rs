@@ -280,8 +280,6 @@ mod wasi_impl {
     unsafe extern "C" {
         fn getuid(ret_uid: *mut u32) -> u32;
         fn getgid(ret_gid: *mut u32) -> u32;
-        fn geteuid(ret_uid: *mut u32) -> u32;
-        fn getegid(ret_gid: *mut u32) -> u32;
         fn getpwuid(uid: u32, buf_ptr: *mut u8, buf_len: u32, ret_len: *mut u32) -> u32;
     }
 
@@ -302,6 +300,21 @@ mod wasi_impl {
             fields[5].to_string(), // home
             fields[6].to_string(), // shell
         ))
+    }
+
+    fn host_user_id(
+        op: &str,
+        read: unsafe extern "C" fn(ret_value: *mut u32) -> u32,
+    ) -> IOResult<u32> {
+        let mut value: u32 = 0;
+        let errno = unsafe { read(&mut value) };
+        if errno == 0 {
+            Ok(value)
+        } else {
+            Err(IOError::other(format!(
+                "host_user.{op} failed with errno {errno}"
+            )))
+        }
     }
 
     /// Call host_user.getpwuid and parse the response.
@@ -330,29 +343,18 @@ mod wasi_impl {
     }
 
     /// Get the current real UID via host_user.
-    fn current_uid() -> u32 {
-        let mut uid: u32 = 0;
-        unsafe { getuid(&mut uid) };
-        uid
+    fn current_uid() -> IOResult<u32> {
+        host_user_id("getuid", getuid)
     }
 
     /// Get the current real GID via host_user.
-    fn current_gid() -> u32 {
-        let mut gid: u32 = 0;
-        unsafe { getgid(&mut gid) };
-        gid
-    }
-
-    /// Get the effective GID via host_user.
-    fn current_egid() -> u32 {
-        let mut gid: u32 = 0;
-        unsafe { getegid(&mut gid) };
-        gid
+    fn current_gid() -> IOResult<u32> {
+        host_user_id("getgid", getgid)
     }
 
     pub fn get_groups() -> IOResult<Vec<gid_t>> {
         // WASI: return just the primary group
-        Ok(vec![current_gid()])
+        Ok(vec![current_gid()?])
     }
 
     #[derive(Clone, Debug)]
@@ -402,11 +404,15 @@ mod wasi_impl {
                 return Passwd::locate(uid);
             }
             // Try known UIDs: 0 (root) and current uid
-            for uid in [0, current_uid()] {
-                if let Some(pw) = lookup_pwuid(uid) {
-                    if pw.name == name {
-                        return Ok(pw);
-                    }
+            if let Some(pw) = lookup_pwuid(0) {
+                if pw.name == name {
+                    return Ok(pw);
+                }
+            }
+
+            if let Some(pw) = lookup_pwuid(current_uid()?) {
+                if pw.name == name {
+                    return Ok(pw);
                 }
             }
             Err(IOError::new(ErrorKind::NotFound, format!("Not found: {name}")))
@@ -421,7 +427,7 @@ mod wasi_impl {
                 0 => "root".to_string(),
                 _ => {
                     // Try current user's passwd entry
-                    let cur_uid = current_uid();
+                    let cur_uid = current_uid()?;
                     if let Some(pw) = lookup_pwuid(cur_uid) {
                         if pw.gid == gid {
                             pw.name.clone()
@@ -452,7 +458,7 @@ mod wasi_impl {
                 });
             }
             // Try to match current user's primary group
-            let cur_uid = current_uid();
+            let cur_uid = current_uid()?;
             if let Some(pw) = lookup_pwuid(cur_uid) {
                 if pw.name == name {
                     return Ok(Group {
