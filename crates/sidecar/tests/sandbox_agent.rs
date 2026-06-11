@@ -3,7 +3,10 @@ mod sandbox_agent {
 
     mod tests {
         use super::test_support::MockSandboxAgentServer;
-        use super::{SandboxAgentFilesystem, SandboxAgentMountConfig, SandboxAgentMountPlugin};
+        use super::{
+            validate_sandbox_agent_base_url_with_resolver, SandboxAgentFilesystem,
+            SandboxAgentMountConfig, SandboxAgentMountPlugin,
+        };
         use agent_os_kernel::mount_plugin::{FileSystemPluginFactory, OpenFileSystemPluginRequest};
         use agent_os_kernel::vfs::VirtualFileSystem;
         use nix::unistd::{Gid, Uid};
@@ -26,7 +29,7 @@ mod sandbox_agent {
                 headers: None,
                 base_path: None,
                 timeout_ms: Some(5_000),
-                max_full_read_bytes: Some(128),
+                max_full_read_bytes: Some(200 * 1024),
             })
             .expect("create sandbox_agent filesystem");
 
@@ -85,7 +88,7 @@ mod sandbox_agent {
                 headers: None,
                 base_path: None,
                 timeout_ms: Some(5_000),
-                max_full_read_bytes: Some(128),
+                max_full_read_bytes: Some(200 * 1024),
             })
             .expect("create sandbox_agent filesystem");
 
@@ -109,6 +112,217 @@ mod sandbox_agent {
             );
             assert_eq!(pread_request.response_status, 200);
             assert_eq!(pread_request.response_body_bytes, large_file.len());
+        }
+
+        #[test]
+        fn filesystem_pread_rejects_full_fetch_fallback_above_limit() {
+            let server = MockSandboxAgentServer::start_without_range_support(
+                "agent-os-sandbox-plugin-limit",
+                None,
+            );
+            fs::write(server.root().join("large.bin"), vec![b'x'; 4096]).expect("seed large file");
+
+            let mut filesystem = SandboxAgentFilesystem::from_config(SandboxAgentMountConfig {
+                base_url: server.base_url().to_owned(),
+                token: None,
+                headers: None,
+                base_path: None,
+                timeout_ms: Some(5_000),
+                max_full_read_bytes: Some(128),
+            })
+            .expect("create sandbox_agent filesystem");
+
+            let error = filesystem
+                .pread("/large.bin", 0, 64)
+                .expect_err("full fetch fallback should be capped");
+            assert_eq!(error.code(), "EIO");
+            assert!(
+                error.to_string().contains("exceeded 128 byte limit"),
+                "unexpected error: {error}"
+            );
+        }
+
+        #[test]
+        fn filesystem_pread_rejects_streamed_full_fetch_fallback_above_limit() {
+            let server = MockSandboxAgentServer::start_without_range_support(
+                "agent-os-sandbox-plugin-stream-limit",
+                None,
+            );
+            fs::write(server.root().join("stream-over-limit"), vec![b'x'; 4096])
+                .expect("seed large file");
+
+            let mut filesystem = SandboxAgentFilesystem::from_config(SandboxAgentMountConfig {
+                base_url: server.base_url().to_owned(),
+                token: None,
+                headers: None,
+                base_path: None,
+                timeout_ms: Some(5_000),
+                max_full_read_bytes: Some(128),
+            })
+            .expect("create sandbox_agent filesystem");
+
+            let error = filesystem
+                .pread("/stream-over-limit", 0, 64)
+                .expect_err("close-delimited full fetch fallback should be capped");
+            assert_eq!(error.code(), "EIO");
+            assert!(
+                error.to_string().contains("exceeded 128 byte limit"),
+                "unexpected error: {error}"
+            );
+
+            let logged_requests = server.requests();
+            let pread_request = logged_requests
+                .iter()
+                .find(|request| {
+                    request.method == "GET"
+                        && request.path == "/v1/fs/file"
+                        && request.query.get("path") == Some(&String::from("/stream-over-limit"))
+                })
+                .expect("log pread request");
+            assert_eq!(pread_request.response_status, 200);
+            assert_eq!(pread_request.response_body_bytes, 4096);
+        }
+
+        #[test]
+        fn sandbox_agent_client_does_not_follow_redirects() {
+            let server = MockSandboxAgentServer::start("agent-os-sandbox-plugin-redirect", None);
+
+            let mut filesystem = SandboxAgentFilesystem::from_config(SandboxAgentMountConfig {
+                base_url: server.base_url().to_owned(),
+                token: None,
+                headers: None,
+                base_path: None,
+                timeout_ms: Some(5_000),
+                max_full_read_bytes: Some(128),
+            })
+            .expect("create sandbox_agent filesystem");
+
+            let error = filesystem
+                .read_file("/redirect-to-private")
+                .expect_err("sandbox_agent client should not follow redirects");
+            assert_eq!(error.code(), "EIO");
+            assert!(
+                error.to_string().contains("status 302"),
+                "unexpected redirect error: {error}"
+            );
+
+            let logged_requests = server.requests();
+            assert_eq!(logged_requests.len(), 1);
+            assert_eq!(logged_requests[0].response_status, 302);
+        }
+
+        #[test]
+        fn sandbox_agent_base_url_accepts_explicit_loopback_targets() {
+            for base_url in [
+                "http://localhost:1234",
+                "http://127.0.0.1:1234",
+                "http://[::1]:1234",
+            ] {
+                assert_eq!(
+                    validate_sandbox_agent_base_url_with_resolver(base_url, |_, _| {
+                        panic!("loopback literals should not need DNS")
+                    })
+                    .expect("loopback baseUrl should be accepted"),
+                    base_url
+                );
+            }
+        }
+
+        #[test]
+        fn sandbox_agent_base_url_rejects_private_and_local_non_loopback_literals() {
+            for base_url in [
+                "http://10.0.0.1:8080",
+                "https://169.254.169.254/latest",
+                "https://100.64.0.1:8080",
+                "https://192.0.0.8:8080",
+                "https://192.88.99.2:8080",
+                "https://[::ffff:10.0.0.1]:8080",
+                "https://[fc00::1]:8080",
+                "https://[fe80::1]:8080",
+                "https://[2001:db8::1]:8080",
+                "https://[3fff::1]:8080",
+            ] {
+                let error = validate_sandbox_agent_base_url_with_resolver(base_url, |_, _| {
+                    panic!("literal baseUrl should not need DNS")
+                })
+                .expect_err("private or local baseUrl should be rejected");
+                assert!(
+                    error.to_string().contains("private or local/non-global"),
+                    "unexpected error for {base_url}: {error}"
+                );
+            }
+        }
+
+        #[test]
+        fn sandbox_agent_base_url_requires_https_for_non_local_targets() {
+            let error = validate_sandbox_agent_base_url_with_resolver(
+                "http://sandbox.example.com",
+                |_, _| panic!("http hostname should be rejected before DNS"),
+            )
+            .expect_err("http hostname should be rejected");
+            assert!(
+                error.to_string().contains("must use https"),
+                "unexpected hostname error: {error}"
+            );
+
+            let error =
+                validate_sandbox_agent_base_url_with_resolver("http://93.184.216.34", |_, _| {
+                    panic!("literal IP should not need DNS")
+                })
+                .expect_err("http public literal should be rejected");
+            assert!(
+                error.to_string().contains("must use https"),
+                "unexpected literal error: {error}"
+            );
+        }
+
+        #[test]
+        fn sandbox_agent_base_url_allows_https_public_targets() {
+            assert_eq!(
+                validate_sandbox_agent_base_url_with_resolver(
+                    "https://sandbox.example.com/api/",
+                    |host, port| {
+                        assert_eq!(host, "sandbox.example.com");
+                        assert_eq!(port, 443);
+                        Ok(vec!["93.184.216.34:443".parse().expect("socket addr")])
+                    },
+                )
+                .expect("public https hostname should be accepted"),
+                "https://sandbox.example.com/api"
+            );
+
+            assert_eq!(
+                validate_sandbox_agent_base_url_with_resolver(
+                    "https://93.184.216.34",
+                    |_, _| panic!("literal IP should not need DNS"),
+                )
+                .expect("public https literal should be accepted"),
+                "https://93.184.216.34"
+            );
+        }
+
+        #[test]
+        fn sandbox_agent_base_url_rejects_hostnames_resolving_private_or_local() {
+            for address in [
+                "127.0.0.1:443",
+                "10.0.0.1:443",
+                "169.254.169.254:443",
+                "[::1]:443",
+                "[fc00::1]:443",
+                "[2001:db8::1]:443",
+            ] {
+                let error = validate_sandbox_agent_base_url_with_resolver(
+                    "https://sandbox.example.com",
+                    |_, _| Ok(vec![address.parse().expect("socket addr")]),
+                )
+                .expect_err("private DNS result should be rejected");
+                assert!(
+                    error
+                        .to_string()
+                        .contains("resolved to a private or local/non-global"),
+                    "unexpected error for {address}: {error}"
+                );
+            }
         }
 
         #[test]
