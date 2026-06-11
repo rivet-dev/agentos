@@ -694,6 +694,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     pub fn pread_file(&mut self, path: &str, offset: u64, length: usize) -> KernelResult<Vec<u8>> {
         self.assert_not_terminated()?;
+        self.resources.check_pread_length(length)?;
         Ok(VirtualFileSystem::pread(
             &mut self.filesystem,
             path,
@@ -1978,6 +1979,8 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                 },
             )?);
         }
+
+        self.resources.check_pread_length(length)?;
 
         if is_proc_path(entry.description.path()) {
             let bytes = self.proc_read_file_from_open_path(Some(pid), entry.description.path())?;

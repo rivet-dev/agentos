@@ -538,6 +538,81 @@ fn resource_limits_reject_oversized_pread_and_write_operations() {
 }
 
 #[test]
+fn resource_limits_reject_oversized_direct_pread_before_device_allocation() {
+    let mut config = KernelVmConfig::new("vm-direct-pread-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_pread_bytes: Some(4),
+        ..ResourceLimits::default()
+    };
+
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+
+    let error = kernel
+        .pread_file("/dev/zero", 0, 5)
+        .expect_err("oversized direct pread should be rejected");
+    assert_eq!(error.code(), "EINVAL");
+    assert!(
+        error.to_string().contains("pread length 5"),
+        "unexpected error: {error}"
+    );
+
+    assert_eq!(
+        kernel
+            .pread_file("/dev/zero", 0, 4)
+            .expect("bounded direct pread should succeed"),
+        vec![0; 4]
+    );
+}
+
+#[test]
+fn resource_limits_reject_oversized_fd_read_before_device_allocation() {
+    let mut config = KernelVmConfig::new("vm-fd-read-device-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_pread_bytes: Some(4),
+        ..ResourceLimits::default()
+    };
+
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+    let process = kernel
+        .spawn_process(
+            "sh",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("shell")),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn shell");
+    let fd = kernel
+        .fd_open("shell", process.pid(), "/dev/zero", 0, None)
+        .expect("open device");
+
+    let error = kernel
+        .fd_read("shell", process.pid(), fd, 5)
+        .expect_err("oversized fd read should be rejected");
+    assert_eq!(error.code(), "EINVAL");
+    assert!(
+        error.to_string().contains("pread length 5"),
+        "unexpected error: {error}"
+    );
+
+    assert_eq!(
+        kernel
+            .fd_read("shell", process.pid(), fd, 4)
+            .expect("bounded fd read should succeed"),
+        vec![0; 4]
+    );
+
+    process.finish(0);
+    kernel.wait_and_reap(process.pid()).expect("reap shell");
+}
+
+#[test]
 fn resource_limits_reject_oversized_readdir_batches() {
     let mut config = KernelVmConfig::new("vm-readdir-limit");
     config.permissions = Permissions::allow_all();
