@@ -849,7 +849,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                         kernel,
                         kernel_pid,
                         path,
-                        &mapped_host.host_path,
+                        &mapped_host,
                     )?;
                     let opened = open_mapped_runtime_beneath(
                         &mapped_host,
@@ -968,7 +968,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     kernel,
                     kernel_pid,
                     path,
-                    &mapped_host.host_path,
+                    &mapped_host,
                 )?;
                 let opened = open_mapped_runtime_beneath(
                     &mapped_host,
@@ -1047,7 +1047,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     kernel,
                     kernel_pid,
                     path,
-                    &mapped_host.host_path,
+                    &mapped_host,
                 )?;
                 let opened = open_mapped_runtime_beneath(
                     &mapped_host,
@@ -1076,7 +1076,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     kernel,
                     kernel_pid,
                     path,
-                    &mapped_host.host_path,
+                    &mapped_host,
                 )?;
                 let metadata = mapped_runtime_symlink_metadata(&mapped_host, "fs.lstat")?;
                 return Ok(javascript_sync_rpc_host_stat_value(&metadata));
@@ -1181,7 +1181,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     kernel,
                     kernel_pid,
                     path,
-                    &mapped_host.host_path,
+                    &mapped_host,
                 )?;
                 let opened = open_mapped_runtime_beneath(
                     &mapped_host,
@@ -1448,7 +1448,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                         kernel,
                         kernel_pid,
                         path,
-                        &mapped_host.host_path,
+                        &mapped_host,
                     )?;
                     let opened = open_mapped_runtime_beneath(
                         &mapped_host,
@@ -1533,7 +1533,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                                 kernel,
                                 kernel_pid,
                                 path,
-                                &mapped_host.host_path,
+                                &mapped_host,
                             )?;
                             fs::symlink_metadata(&mapped_host.host_path).is_ok()
                         }
@@ -2280,8 +2280,9 @@ fn materialize_mapped_host_path_from_kernel(
     kernel: &mut SidecarKernel,
     kernel_pid: u32,
     guest_path: &str,
-    host_path: &Path,
+    mapped: &MappedRuntimeHostPath,
 ) -> Result<(), SidecarError> {
+    let host_path = &mapped.host_path;
     match fs::symlink_metadata(host_path) {
         Ok(_) => return Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -2305,58 +2306,65 @@ fn materialize_mapped_host_path_from_kernel(
         .lstat_for_process(EXECUTION_DRIVER_NAME, kernel_pid, guest_path)
         .map_err(kernel_error)?;
 
-    if let Some(parent) = host_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            SidecarError::Io(format!(
-                "failed to create mapped host parent for {} -> {}: {error}",
-                guest_path,
-                host_path.display()
-            ))
-        })?;
-    }
-
     if stat.is_symbolic_link {
         let target = kernel
             .read_link_for_process(EXECUTION_DRIVER_NAME, kernel_pid, guest_path)
             .map_err(kernel_error)?;
-        symlink(&target, host_path).map_err(|error| {
+        ensure_mapped_runtime_parent_dirs(mapped, "fs.materialize")?;
+        let parent = open_mapped_runtime_parent_beneath(mapped, "fs.materialize")?;
+        symlink(&target, mapped_runtime_parent_child_path(&parent)).map_err(|error| {
             SidecarError::Io(format!(
                 "failed to materialize mapped guest symlink {} -> {} ({target}): {error}",
                 guest_path,
-                host_path.display()
+                parent.host_path.join(&parent.child_name).display()
             ))
         })?;
         return Ok(());
     } else if stat.is_directory {
-        fs::create_dir_all(host_path).map_err(|error| {
-            SidecarError::Io(format!(
-                "failed to materialize mapped guest directory {} -> {}: {error}",
-                guest_path,
-                host_path.display()
-            ))
-        })?;
+        if mapped_runtime_relative_path(mapped)? == Path::new(".") {
+            create_mapped_runtime_root_directory(mapped, true)?;
+        } else {
+            ensure_mapped_runtime_parent_dirs(mapped, "fs.materialize")?;
+            let parent = open_mapped_runtime_parent_beneath(mapped, "fs.materialize")?;
+            create_mapped_runtime_directory(&parent, guest_path, true)?;
+        }
     } else {
         let bytes = kernel
             .read_file_for_process(EXECUTION_DRIVER_NAME, kernel_pid, guest_path)
             .map_err(kernel_error)?;
-        fs::write(host_path, bytes).map_err(|error| {
+        ensure_mapped_runtime_parent_dirs(mapped, "fs.materialize")?;
+        let opened = open_mapped_runtime_beneath(
+            mapped,
+            "fs.materialize",
+            OFlag::O_CREAT | OFlag::O_TRUNC | OFlag::O_WRONLY,
+            Mode::from_bits_truncate(stat.mode & 0o7777),
+        )?;
+        fs::write(opened.handle.proc_path(), bytes).map_err(|error| {
             SidecarError::Io(format!(
                 "failed to materialize mapped guest file {} -> {}: {error}",
                 guest_path,
-                host_path.display()
+                opened.host_path.display()
             ))
         })?;
     }
 
-    fs::set_permissions(host_path, fs::Permissions::from_mode(stat.mode & 0o7777)).map_err(
-        |error| {
-            SidecarError::Io(format!(
-                "failed to set permissions for materialized mapped guest path {} -> {}: {error}",
-                guest_path,
-                host_path.display()
-            ))
-        },
+    let opened = open_mapped_runtime_beneath(
+        mapped,
+        "fs.materialize",
+        OFlag::O_PATH,
+        Mode::empty(),
     )?;
+    fs::set_permissions(
+        opened.handle.proc_path(),
+        fs::Permissions::from_mode(stat.mode & 0o7777),
+    )
+    .map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to set permissions for materialized mapped guest path {} -> {}: {error}",
+            guest_path,
+            opened.host_path.display()
+        ))
+    })?;
 
     Ok(())
 }
@@ -3126,11 +3134,19 @@ mod tests {
     use super::{
         create_mapped_runtime_directory, create_mapped_runtime_root_directory,
         mapped_runtime_relative_path, mapped_runtime_symlink_metadata,
-        open_mapped_runtime_parent_beneath, read_mapped_runtime_link, rename_mapped_host_path,
-        MappedRuntimeHostAccess, MappedRuntimeHostPath, SidecarError,
+        materialize_mapped_host_path_from_kernel, open_mapped_runtime_parent_beneath,
+        read_mapped_runtime_link, rename_mapped_host_path, MappedRuntimeHostAccess,
+        MappedRuntimeHostPath, SidecarError,
     };
     use crate::execution::javascript_sync_rpc_error_code;
+    use crate::state::{SidecarKernel, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND};
+    use agent_os_kernel::command_registry::CommandDriver;
+    use agent_os_kernel::kernel::{KernelVmConfig, SpawnOptions};
+    use agent_os_kernel::mount_table::MountTable;
+    use agent_os_kernel::permissions::Permissions;
+    use agent_os_kernel::vfs::MemoryFileSystem;
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -3141,6 +3157,42 @@ mod tests {
             host_path: host_root.join("file.txt"),
             host_root: host_root.clone(),
         })
+    }
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "{prefix}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).expect("create temp dir");
+        path
+    }
+
+    fn test_kernel_with_process() -> (SidecarKernel, u32) {
+        let mut config = KernelVmConfig::new("vm-mapped-materialize");
+        config.permissions = Permissions::allow_all();
+        let mut kernel = SidecarKernel::new(MountTable::new(MemoryFileSystem::new()), config);
+        kernel
+            .register_driver(CommandDriver::new(
+                EXECUTION_DRIVER_NAME,
+                [JAVASCRIPT_COMMAND],
+            ))
+            .expect("register execution driver");
+        let handle = kernel
+            .spawn_process(
+                JAVASCRIPT_COMMAND,
+                Vec::new(),
+                SpawnOptions {
+                    requester_driver: Some(String::from(EXECUTION_DRIVER_NAME)),
+                    cwd: Some(String::from("/")),
+                    ..SpawnOptions::default()
+                },
+            )
+            .expect("spawn kernel process");
+        (kernel, handle.pid())
     }
 
     #[test]
@@ -3304,6 +3356,87 @@ mod tests {
         assert!(
             matches!(non_recursive_error, SidecarError::Io(ref message) if message.contains("File exists")),
             "expected File exists error, got {non_recursive_error:?}"
+        );
+
+        fs::remove_dir_all(&host_root).expect("remove mapped host root");
+    }
+
+    #[test]
+    fn materialize_mapped_host_path_does_not_follow_symlinked_parents() {
+        let host_root = temp_dir("agent-os-sidecar-fs-materialize-root");
+        let outside = temp_dir("agent-os-sidecar-fs-materialize-outside");
+        std::os::unix::fs::symlink(&outside, host_root.join("link"))
+            .expect("create escape symlink");
+
+        let (mut kernel, pid) = test_kernel_with_process();
+        kernel
+            .write_file_for_process(
+                EXECUTION_DRIVER_NAME,
+                pid,
+                "/workspace/link/out.txt",
+                b"secret".to_vec(),
+                Some(0o644),
+            )
+            .expect("seed guest file");
+        let mapped = MappedRuntimeHostPath {
+            guest_path: String::from("/workspace/link/out.txt"),
+            host_root: host_root.clone(),
+            host_path: host_root.join("link/out.txt"),
+        };
+
+        materialize_mapped_host_path_from_kernel(
+            &mut kernel,
+            pid,
+            "/workspace/link/out.txt",
+            &mapped,
+        )
+        .expect_err("symlinked parent must not be followed during materialization");
+
+        assert!(
+            !outside.join("out.txt").exists(),
+            "materialization wrote through a symlinked mapped parent"
+        );
+
+        fs::remove_dir_all(&host_root).expect("remove mapped host root");
+        fs::remove_dir_all(&outside).expect("remove outside dir");
+    }
+
+    #[test]
+    fn materialize_mapped_host_path_writes_regular_files_beneath_root() {
+        let host_root = temp_dir("agent-os-sidecar-fs-materialize-file");
+        let (mut kernel, pid) = test_kernel_with_process();
+        kernel
+            .write_file_for_process(
+                EXECUTION_DRIVER_NAME,
+                pid,
+                "/workspace/out.txt",
+                b"secret".to_vec(),
+                Some(0o640),
+            )
+            .expect("seed guest file");
+        let mapped = MappedRuntimeHostPath {
+            guest_path: String::from("/workspace/out.txt"),
+            host_root: host_root.clone(),
+            host_path: host_root.join("out.txt"),
+        };
+
+        materialize_mapped_host_path_from_kernel(
+            &mut kernel,
+            pid,
+            "/workspace/out.txt",
+            &mapped,
+        )
+        .expect("materialize regular mapped file");
+
+        let host_path = host_root.join("out.txt");
+        assert_eq!(fs::read(&host_path).expect("read materialized file"), b"secret");
+        assert_eq!(
+            fs::metadata(&host_path)
+                .expect("materialized metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640
         );
 
         fs::remove_dir_all(&host_root).expect("remove mapped host root");
