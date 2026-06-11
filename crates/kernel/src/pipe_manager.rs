@@ -531,6 +531,10 @@ impl PipeManager {
         Ok(pipe.waiting_reads.len())
     }
 
+    pub fn pending_read_waiter_count(&self) -> usize {
+        lock_or_recover(&self.inner.state).waiters.len()
+    }
+
     pub fn create_pipe_fds(&self, fd_table: &mut ProcessFdTable) -> FdResult<(u32, u32)> {
         let pipe = self.create_pipe();
         let read_fd =

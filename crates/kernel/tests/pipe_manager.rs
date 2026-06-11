@@ -19,18 +19,21 @@ fn assert_fd_error<T: Debug>(result: FdResult<T>, expected: &str) {
 }
 
 fn wait_for_waiting_reader(manager: &PipeManager, description_id: u64) {
+    wait_for_waiting_readers(manager, description_id, 1);
+}
+
+fn wait_for_waiting_readers(manager: &PipeManager, description_id: u64, expected: usize) {
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
-        if manager
+        let count = manager
             .waiting_reader_count(description_id)
-            .expect("pipe should still exist")
-            > 0
-        {
+            .expect("pipe should still exist");
+        if count >= expected {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "reader never blocked on pipe description {description_id}"
+            "expected {expected} waiting readers on pipe description {description_id}, got {count}"
         );
         thread::sleep(Duration::from_millis(1));
     }
@@ -262,6 +265,70 @@ fn direct_handoff_honors_waiting_reader_length_and_buffers_the_remainder() {
     assert_eq!(first, vec![7; 10]);
     assert_eq!(second.len(), 1014);
     assert!(second.iter().all(|byte| *byte == 7));
+}
+
+#[test]
+fn many_waiting_readers_are_cleaned_up_when_the_write_end_closes() {
+    let manager = PipeManager::new();
+    let pipe = manager.create_pipe();
+    let read_id = pipe.read.description.id();
+    let write_id = pipe.write.description.id();
+    let mut handles = Vec::new();
+
+    for _ in 0..32 {
+        let reader = manager.clone();
+        handles.push(thread::spawn(move || {
+            reader.read(read_id, 1024).expect("blocking read")
+        }));
+    }
+
+    wait_for_waiting_readers(&manager, read_id, handles.len());
+    manager.close(write_id);
+
+    for handle in handles {
+        assert_eq!(handle.join().expect("reader thread should finish"), None);
+    }
+    assert_eq!(manager.pending_read_waiter_count(), 0);
+    assert_eq!(
+        manager
+            .waiting_reader_count(read_id)
+            .expect("pipe should remain until read end closes"),
+        0
+    );
+}
+
+#[test]
+fn many_timed_out_readers_are_removed_from_the_waiting_queue() {
+    let manager = PipeManager::new();
+    let pipe = manager.create_pipe();
+    let read_id = pipe.read.description.id();
+    let mut handles = Vec::new();
+
+    for _ in 0..32 {
+        let reader = manager.clone();
+        handles.push(thread::spawn(move || {
+            reader
+                .read_with_timeout(read_id, 1024, Some(Duration::from_secs(2)))
+                .expect_err("read should time out")
+                .code()
+                .to_owned()
+        }));
+    }
+
+    wait_for_waiting_readers(&manager, read_id, handles.len());
+    for handle in handles {
+        assert_eq!(
+            handle.join().expect("reader thread should finish"),
+            "EAGAIN"
+        );
+    }
+    assert_eq!(manager.pending_read_waiter_count(), 0);
+    assert_eq!(
+        manager
+            .waiting_reader_count(read_id)
+            .expect("pipe should remain open"),
+        0
+    );
 }
 
 #[test]
