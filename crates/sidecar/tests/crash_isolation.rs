@@ -4,9 +4,11 @@ use agent_os_sidecar::protocol::{EventPayload, GuestRuntimeKind, OwnershipScope,
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 use support::{
-    assert_node_available, authenticate, collect_process_output, create_vm, execute, new_sidecar,
-    open_session, temp_dir, write_fixture,
+    assert_node_available, authenticate, create_vm, execute, new_sidecar, open_session, temp_dir,
+    write_fixture,
 };
+
+const PROCESS_OUTPUT_BYTE_LIMIT: usize = 1024 * 1024;
 
 #[derive(Debug, Default)]
 struct ProcessResult {
@@ -109,20 +111,26 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
         match event.payload {
             EventPayload::ProcessOutput(output) => match output.channel {
                 StreamChannel::Stdout => {
-                    result
-                        .stdout
-                        .push_str(&String::from_utf8_lossy(&output.chunk));
+                    append_process_output(
+                        &mut result.stdout,
+                        &output.chunk,
+                        &output.process_id,
+                        "stdout",
+                    );
                 }
                 StreamChannel::Stderr => {
-                    result
-                        .stderr
-                        .push_str(&String::from_utf8_lossy(&output.chunk));
+                    append_process_output(
+                        &mut result.stderr,
+                        &output.chunk,
+                        &output.process_id,
+                        "stderr",
+                    );
                 }
             },
             EventPayload::ProcessExited(exited) => {
                 result.exit_code = Some(exited.exit_code);
             }
-            _ => {}
+            EventPayload::VmLifecycle(_) | EventPayload::Structured(_) => {}
         }
     }
 
@@ -153,7 +161,7 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
         &healthy_entry,
         Vec::new(),
     );
-    let (_stdout, stderr, exit_code) = collect_process_output(
+    let (_stdout, stderr, exit_code) = collect_crash_process_output(
         &mut sidecar,
         &connection_id,
         &session_id,
@@ -163,4 +171,76 @@ fn guest_failure_in_one_vm_does_not_break_peer_vm_execution() {
 
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty(), "unexpected follow-up stderr: {stderr}");
+}
+
+fn collect_crash_process_output(
+    sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+) -> (String, String, i32) {
+    let ownership = OwnershipScope::session(connection_id, session_id);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit = None;
+
+    loop {
+        let event = sidecar
+            .poll_event_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll crash-isolation follow-up event");
+        if let Some(event) = event {
+            assert_eq!(
+                event.ownership,
+                OwnershipScope::vm(connection_id, session_id, vm_id)
+            );
+
+            match event.payload {
+                EventPayload::ProcessOutput(output) if output.process_id == process_id => {
+                    match output.channel {
+                        StreamChannel::Stdout => append_process_output(
+                            &mut stdout,
+                            &output.chunk,
+                            &output.process_id,
+                            "stdout",
+                        ),
+                        StreamChannel::Stderr => append_process_output(
+                            &mut stderr,
+                            &output.chunk,
+                            &output.process_id,
+                            "stderr",
+                        ),
+                    }
+                }
+                EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
+                    exit = Some((exited.exit_code, Instant::now()));
+                }
+                EventPayload::ProcessOutput(_)
+                | EventPayload::ProcessExited(_)
+                | EventPayload::VmLifecycle(_)
+                | EventPayload::Structured(_) => {}
+            }
+        }
+
+        if let Some((exit_code, seen_at)) = exit {
+            if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
+                return (stdout, stderr, exit_code);
+            }
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for crash-isolation process {process_id}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+fn append_process_output(buffer: &mut String, chunk: &[u8], process_id: &str, channel: &str) {
+    let text = String::from_utf8_lossy(chunk);
+    assert!(
+        buffer.len().saturating_add(text.len()) <= PROCESS_OUTPUT_BYTE_LIMIT,
+        "crash-isolation process {process_id} exceeded {PROCESS_OUTPUT_BYTE_LIMIT} bytes on {channel}"
+    );
+    buffer.push_str(&text);
 }
