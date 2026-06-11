@@ -146,7 +146,7 @@ fn getgroups_and_getgrgid_use_kernel_managed_group_state() {
         gid: Some(123),
         username: Some(String::from("deploy")),
         group_name: Some(String::from("deployers")),
-        supplementary_gids: vec![456, 123, 789],
+        supplementary_gids: vec![456, 123, 456, 789],
         ..UserConfig::default()
     });
 
@@ -158,6 +158,10 @@ fn getgroups_and_getgrgid_use_kernel_managed_group_state() {
     assert_eq!(
         user.getgrgid(456),
         Some(String::from("group456:x:456:deploy"))
+    );
+    assert_eq!(
+        user.getgrgid(789),
+        Some(String::from("group789:x:789:deploy"))
     );
     assert_eq!(user.getgrgid(999), None);
 }

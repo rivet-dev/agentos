@@ -30,6 +30,8 @@ pub struct UserConfig {
     pub shell: Option<String>,
     pub gecos: Option<String>,
     pub group_name: Option<String>,
+    /// Supplementary groups are VM configuration, not guest-mutable state.
+    /// The primary gid is always injected and duplicate gids are dropped.
     pub supplementary_gids: Vec<u32>,
 }
 
@@ -112,6 +114,8 @@ impl UserManager {
         }
 
         if self.supplementary_gids.contains(&gid) {
+            // Supplementary group names are synthetic because only numeric
+            // secondary group ids are configured for the VM.
             let group_name = format!("group{gid}");
             return Some(format!("{group_name}:x:{gid}:{}", self.username));
         }
