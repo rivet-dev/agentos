@@ -342,7 +342,11 @@ impl DirFd {
     pub fn open_file_at(&self, name: &OsStr) -> io::Result<fs::File> {
         let name_cstr =
             CString::new(name.as_bytes()).map_err(|_| SafeTraversalError::PathContainsNull)?;
-        let flags = OFlag::O_CREAT | OFlag::O_WRONLY | OFlag::O_TRUNC | OFlag::O_CLOEXEC;
+        let flags = OFlag::O_CREAT
+            | OFlag::O_WRONLY
+            | OFlag::O_TRUNC
+            | OFlag::O_CLOEXEC
+            | OFlag::O_NOFOLLOW;
         let mode = Mode::from_bits_truncate(0o666); // Default file permissions
 
         let fd: OwnedFd = openat(self.fd.as_fd(), name_cstr.as_c_str(), flags, mode)
@@ -1127,6 +1131,21 @@ mod tests {
 
         let content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(content, "new");
+    }
+
+    #[test]
+    fn test_open_file_at_does_not_follow_symlink() {
+        let temp_dir = TempDir::new().unwrap();
+        let target_path = temp_dir.path().join("target.txt");
+        let link_path = temp_dir.path().join("link.txt");
+        fs::write(&target_path, "target content").unwrap();
+        symlink(&target_path, &link_path).unwrap();
+
+        let dir_fd = DirFd::open(temp_dir.path(), SymlinkBehavior::Follow).unwrap();
+        let result = dir_fd.open_file_at(OsStr::new("link.txt"));
+
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(&target_path).unwrap(), "target content");
     }
 
     #[test]
