@@ -291,9 +291,14 @@ impl ProcessInformation {
     ///
     /// # Error
     ///
-    /// If parsing failed, this function will return [io::ErrorKind::InvalidInput]
+    /// If parsing failed, this function will return an I/O error.
     pub fn run_state(&mut self) -> Result<RunState, io::Error> {
-        RunState::try_from(self.stat().get(2).unwrap().as_str())
+        RunState::try_from(
+            self.stat()
+                .get(2)
+                .ok_or(io::ErrorKind::InvalidData)?
+                .as_str(),
+        )
     }
 
     /// This function will scan the `/proc/<pid>/fd` directory
@@ -372,28 +377,18 @@ impl Hash for ProcessInformation {
 ///
 /// TODO: If possible, test and use regex to replace this algorithm.
 fn stat_split(stat: &str) -> Vec<String> {
-    let stat = String::from(stat);
-
-    let mut buf = String::with_capacity(stat.len());
-
-    let l = stat.find('(');
-    let r = stat.find(')');
-    let content = if let (Some(l), Some(r)) = (l, r) {
-        let replaced = stat[(l + 1)..r].replace(' ', "$$");
-
-        buf.push_str(&stat[..l]);
-        buf.push_str(&replaced);
-        buf.push_str(&stat[(r + 1)..stat.len()]);
-
-        &buf
-    } else {
-        &stat
-    };
-
-    content
-        .split_whitespace()
-        .map(|it| it.replace("$$", " "))
-        .collect()
+    if let (Some(left), Some(right)) = (stat.find('('), stat.rfind(')')) {
+        if left < right {
+            let mut fields = stat[..left]
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            fields.push(stat[(left + 1)..right].to_owned());
+            fields.extend(stat[(right + 1)..].split_whitespace().map(str::to_owned));
+            return fields;
+        }
+    }
+    stat.split_whitespace().map(str::to_owned).collect()
 }
 
 /// Iterating pid in current system
@@ -506,6 +501,26 @@ mod tests {
 
         let case = "47246 (kworker /10:1-events) I 2 0 0 0 -1 69238880 0 0 0 0 17 29 0 0 20 0 1 0 1396260 0 0 18446744073709551615 0 0 0 0 0 0 0 2147483647 0 0 0 0 17 10 0 0 0 0 0 0 0 0 0 0 0 0 0";
         assert_eq!(stat_split(case)[1], "kworker /10:1-events");
+
+        let case = "123 (name ) with paren) S 1 2 3";
+        let fields = stat_split(case);
+        assert_eq!(fields[0], "123");
+        assert_eq!(fields[1], "name ) with paren");
+        assert_eq!(fields[2], "S");
+        assert_eq!(fields[3], "1");
+    }
+
+    #[test]
+    fn test_run_state_rejects_malformed_stat() {
+        let mut pid_entry = ProcessInformation {
+            inner_stat: "123 (missing-state)".into(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            pid_entry.run_state().unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 
     #[test]
