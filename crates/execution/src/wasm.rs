@@ -52,6 +52,8 @@ const DEFAULT_WASM_GUEST_PATH: &str =
 // instead of burning minutes on a stalled prewarm session.
 const DEFAULT_WASM_PREWARM_TIMEOUT_MS: u64 = 30_000;
 const MAX_SYNC_WASM_PREWARM_MODULE_BYTES: u64 = 16 * 1024 * 1024;
+const WASM_CAPTURED_OUTPUT_LIMIT_BYTES: usize = 16 * 1024 * 1024;
+const WASM_SYNC_READ_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 const WASM_INLINE_RUNNER_ENTRYPOINT: &str = "./__agent_os_wasm_runner__.mjs";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -478,8 +480,12 @@ impl WasmExecution {
                 .unwrap_or_else(|| Duration::from_millis(50));
 
             match self.poll_event_blocking(poll_timeout)? {
-                Some(WasmExecutionEvent::Stdout(chunk)) => stdout.extend(chunk),
-                Some(WasmExecutionEvent::Stderr(chunk)) => stderr.extend(chunk),
+                Some(WasmExecutionEvent::Stdout(chunk)) => {
+                    append_wasm_captured_output(&mut stdout, &chunk, "stdout")?;
+                }
+                Some(WasmExecutionEvent::Stderr(chunk)) => {
+                    append_wasm_captured_output(&mut stderr, &chunk, "stderr")?;
+                }
                 Some(WasmExecutionEvent::SyncRpcRequest(request)) => {
                     if self.handle_wait_sync_rpc_request(&request, &mut stdout, &mut stderr)? {
                         continue;
@@ -504,7 +510,11 @@ impl WasmExecution {
             if let Some(limit) = self.execution_timeout {
                 if started.elapsed() >= limit {
                     let _ = self.inner.terminate();
-                    stderr.extend_from_slice(b"WebAssembly fuel budget exhausted\n");
+                    append_wasm_captured_output(
+                        &mut stderr,
+                        b"WebAssembly fuel budget exhausted\n",
+                        "stderr",
+                    )?;
                     return Ok(WasmExecutionResult {
                         execution_id: self.execution_id,
                         exit_code: WASM_TIMEOUT_EXIT_CODE,
@@ -591,17 +601,36 @@ impl WasmExecution {
             StreamChannel::Stdout => &mut self.stdout_stream_buffer,
             StreamChannel::Stderr => &mut self.stderr_stream_buffer,
         };
+        let stream = match channel {
+            StreamChannel::Stdout => "stdout",
+            StreamChannel::Stderr => "stderr",
+        };
+        ensure_wasm_output_capacity(buffer.len(), chunk.len(), stream)?;
         buffer.extend_from_slice(&chunk);
 
+        let mut pending_stream_chunk = Vec::new();
         while let Some(newline_index) = buffer.iter().position(|byte| *byte == b'\n') {
             let line = buffer.drain(..=newline_index).collect::<Vec<_>>();
             if let Some(signal_state) = parse_wasm_signal_state_line(&line)? {
+                if !pending_stream_chunk.is_empty() {
+                    self.pending_events.push_back(match channel {
+                        StreamChannel::Stdout => {
+                            WasmExecutionEvent::Stdout(std::mem::take(&mut pending_stream_chunk))
+                        }
+                        StreamChannel::Stderr => {
+                            WasmExecutionEvent::Stderr(std::mem::take(&mut pending_stream_chunk))
+                        }
+                    });
+                }
                 self.pending_events.push_back(signal_state);
                 continue;
             }
+            pending_stream_chunk.extend_from_slice(&line);
+        }
+        if !pending_stream_chunk.is_empty() {
             self.pending_events.push_back(match channel {
-                StreamChannel::Stdout => WasmExecutionEvent::Stdout(line),
-                StreamChannel::Stderr => WasmExecutionEvent::Stderr(line),
+                StreamChannel::Stdout => WasmExecutionEvent::Stdout(pending_stream_chunk),
+                StreamChannel::Stderr => WasmExecutionEvent::Stderr(pending_stream_chunk),
             });
         }
 
@@ -646,15 +675,15 @@ impl WasmExecution {
                 "missing __kernel_stdio_write descriptor",
             )));
         };
-        let Some(bytes) = decode_wasm_bytes_arg(request.args.get(1)) else {
-            return Err(WasmExecutionError::RpcResponse(String::from(
-                "missing __kernel_stdio_write payload bytes",
-            )));
-        };
+        let bytes = decode_wasm_bytes_arg(
+            request.args.get(1),
+            "__kernel_stdio_write payload bytes",
+            WASM_CAPTURED_OUTPUT_LIMIT_BYTES,
+        )?;
 
         match descriptor {
-            1 => stdout.extend_from_slice(&bytes),
-            2 => stderr.extend_from_slice(&bytes),
+            1 => append_wasm_captured_output(stdout, &bytes, "stdout")?,
+            2 => append_wasm_captured_output(stderr, &bytes, "stderr")?,
             other => {
                 return Err(WasmExecutionError::RpcResponse(format!(
                     "unsupported __kernel_stdio_write descriptor {other}",
@@ -1248,17 +1277,20 @@ fn handle_internal_wasm_sync_rpc_request(
                 "missing fs.writeSync fd",
             )));
         };
-        let bytes = decode_wasm_bytes_arg(request.args.get(1)).ok_or_else(|| {
-            WasmExecutionError::RpcResponse(String::from("missing fs.writeSync bytes"))
-        })?;
+        let bytes = decode_wasm_bytes_arg(
+            request.args.get(1),
+            "fs.writeSync bytes",
+            WASM_CAPTURED_OUTPUT_LIMIT_BYTES,
+        )?;
         if fd == 1 || fd == 2 {
+            let bytes_len = bytes.len();
             internal_sync_rpc.pending_events.push_back(if fd == 1 {
-                WasmExecutionEvent::Stdout(bytes.clone())
+                WasmExecutionEvent::Stdout(bytes)
             } else {
-                WasmExecutionEvent::Stderr(bytes.clone())
+                WasmExecutionEvent::Stderr(bytes)
             });
             execution
-                .respond_sync_rpc_success(request.id, json!(bytes.len()))
+                .respond_sync_rpc_success(request.id, json!(bytes_len))
                 .map_err(map_javascript_error)?;
             return Ok(true);
         }
@@ -1284,7 +1316,7 @@ fn handle_internal_wasm_sync_rpc_request(
                 "missing fs.readSync fd",
             )));
         };
-        let length = request.args.get(1).and_then(Value::as_u64).unwrap_or(0) as usize;
+        let length = wasm_sync_read_length(request.args.get(1).and_then(Value::as_u64))?;
         let position = request.args.get(2).and_then(Value::as_u64);
         let Some(file) = internal_sync_rpc.open_files.get_mut(&(fd as u32)) else {
             return Ok(false);
@@ -1681,12 +1713,91 @@ fn join_host_path(base: &Path, suffix: &str) -> PathBuf {
         .fold(base.to_path_buf(), |path, segment| path.join(segment))
 }
 
-fn decode_wasm_bytes_arg(value: Option<&Value>) -> Option<Vec<u8>> {
-    let value = value?;
-    let base64 = value.as_object()?.get("base64")?.as_str()?;
+fn decode_wasm_bytes_arg(
+    value: Option<&Value>,
+    label: &'static str,
+    limit: usize,
+) -> Result<Vec<u8>, WasmExecutionError> {
+    let base64 = value
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("base64"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| WasmExecutionError::RpcResponse(format!("missing {label}")))?;
+    let decoded_len = base64_decoded_len(base64)
+        .ok_or_else(|| WasmExecutionError::RpcResponse(format!("invalid {label} base64")))?;
+    if decoded_len > limit {
+        return Err(WasmExecutionError::OutputBufferExceeded {
+            stream: label,
+            limit,
+        });
+    }
     base64::engine::general_purpose::STANDARD
         .decode(base64)
-        .ok()
+        .map_err(|_| WasmExecutionError::RpcResponse(format!("invalid {label} base64")))
+}
+
+fn base64_decoded_len(base64: &str) -> Option<usize> {
+    let len = base64.len();
+    let padding = base64
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .take(2)
+        .count();
+    let full_quads = len / 4;
+    let remainder = len % 4;
+    let base_len = full_quads.checked_mul(3)?.checked_sub(padding)?;
+    match remainder {
+        0 => Some(base_len),
+        1 => None,
+        2 => base_len.checked_add(1),
+        3 => base_len.checked_add(2),
+        _ => None,
+    }
+}
+
+fn append_wasm_captured_output(
+    buffer: &mut Vec<u8>,
+    chunk: &[u8],
+    stream: &'static str,
+) -> Result<(), WasmExecutionError> {
+    ensure_wasm_output_capacity(buffer.len(), chunk.len(), stream)?;
+    buffer.extend_from_slice(chunk);
+    Ok(())
+}
+
+fn ensure_wasm_output_capacity(
+    current_len: usize,
+    chunk_len: usize,
+    stream: &'static str,
+) -> Result<(), WasmExecutionError> {
+    let Some(next_len) = current_len.checked_add(chunk_len) else {
+        return Err(WasmExecutionError::OutputBufferExceeded {
+            stream,
+            limit: WASM_CAPTURED_OUTPUT_LIMIT_BYTES,
+        });
+    };
+    if next_len > WASM_CAPTURED_OUTPUT_LIMIT_BYTES {
+        return Err(WasmExecutionError::OutputBufferExceeded {
+            stream,
+            limit: WASM_CAPTURED_OUTPUT_LIMIT_BYTES,
+        });
+    }
+    Ok(())
+}
+
+fn wasm_sync_read_length(length: Option<u64>) -> Result<usize, WasmExecutionError> {
+    let length = length.unwrap_or(0);
+    let length = usize::try_from(length).map_err(|_| {
+        WasmExecutionError::InvalidLimit(format!("fs.readSync length {length} exceeds host usize"))
+    })?;
+    if length > WASM_SYNC_READ_LIMIT_BYTES {
+        return Err(WasmExecutionError::InvalidLimit(format!(
+            "fs.readSync length {length} exceeds maximum {WASM_SYNC_READ_LIMIT_BYTES}"
+        )));
+    }
+    Ok(length)
 }
 
 fn open_wasm_guest_file(path: &Path, flags: &Value) -> std::io::Result<fs::File> {
@@ -2042,6 +2153,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
   const __agentOsWasiWhenceSet = 0;
   const __agentOsWasiWhenceCur = 1;
   const __agentOsWasiWhenceEnd = 2;
+  const __agentOsWasmSyncReadLimitBytes = {WASM_SYNC_READ_LIMIT_BYTES};
   const __agentOsKernelStdioSyncRpcEnabled = () =>
     process?.env?.AGENT_OS_WASI_STDIO_SYNC_RPC === "1";
   const __agentOsWasiDebugEnabled = () => process?.env?.AGENT_OS_WASM_WASI_DEBUG === "1";
@@ -2156,6 +2268,21 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         throw new Error("WASI memory export is unavailable");
       }}
       return new Uint8Array(memory.buffer);
+    }}
+
+    _boundedIovLength(iovs, iovsLen) {{
+      const view = this._memoryView();
+      let length = 0;
+      for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {{
+        const entryOffset = (Number(iovs) >>> 0) + index * 8;
+        length += view.getUint32(entryOffset + 4, true);
+        if (length > __agentOsWasmSyncReadLimitBytes) {{
+          throw new RangeError(
+            `WASI read iov length ${{length}} exceeds ${{__agentOsWasmSyncReadLimitBytes}}`,
+          );
+        }}
+      }}
+      return length >>> 0;
     }}
 
     _normalizeRights(value, fallback) {{
@@ -2454,6 +2581,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
     }}
 
     _collectIovs(iovs, iovsLen) {{
+      const totalLength = this._boundedIovLength(iovs, iovsLen);
       const view = this._memoryView();
       const chunks = [];
       for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {{
@@ -2462,7 +2590,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         const len = view.getUint32(entryOffset + 4, true);
         chunks.push(this._readBytes(ptr, len));
       }}
-      return Buffer.concat(chunks);
+      return Buffer.concat(chunks, totalLength);
     }}
 
     _writeToIovs(iovs, iovsLen, bytes) {{
@@ -3077,15 +3205,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
       try {{
         const descriptor = Number(fd) >>> 0;
         const explicitOffset = Number(offset) >>> 0;
-        const totalLength = (() => {{
-          const view = this._memoryView();
-          let length = 0;
-          for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {{
-            const entryOffset = (Number(iovs) >>> 0) + index * 8;
-            length += view.getUint32(entryOffset + 4, true);
-          }}
-          return length >>> 0;
-        }})();
+        const totalLength = this._boundedIovLength(iovs, iovsLen);
         const buffer = Buffer.alloc(totalLength);
         const handle = this._externalFdHandle(descriptor);
         if (
@@ -3125,15 +3245,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         const descriptor = Number(fd) >>> 0;
         const handle = this._externalFdHandle(descriptor);
         if (handle?.kind === "pipe-read" && handle.pipe) {{
-          const totalLength = (() => {{
-            const view = this._memoryView();
-            let length = 0;
-            for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {{
-              const entryOffset = (Number(iovs) >>> 0) + index * 8;
-              length += view.getUint32(entryOffset + 4, true);
-            }}
-            return length >>> 0;
-          }})();
+          const totalLength = this._boundedIovLength(iovs, iovsLen);
           while (handle.pipe.chunks.length === 0) {{
             if (handle.pipe.writeHandleCount === 0 && handle.pipe.producers.size === 0) {{
               return this._writeUint32(nreadPtr, 0);
@@ -3149,15 +3261,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
           return __agentOsWasiErrnoBadf;
         }}
         if (entry.kind === "stdin") {{
-          const totalLength = (() => {{
-            const view = this._memoryView();
-            let length = 0;
-            for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {{
-              const entryOffset = (Number(iovs) >>> 0) + index * 8;
-              length += view.getUint32(entryOffset + 4, true);
-            }}
-            return length >>> 0;
-          }})();
+          const totalLength = this._boundedIovLength(iovs, iovsLen);
           const syncRpc =
             typeof globalThis?.__agentOsSyncRpc?.callSync === "function"
               ? globalThis.__agentOsSyncRpc
@@ -3221,15 +3325,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
           (handle?.kind === "passthrough" || handle?.kind === "host-passthrough") &&
           typeof handle.targetFd === "number"
         ) {{
-          const totalLength = (() => {{
-            const view = this._memoryView();
-            let length = 0;
-            for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {{
-              const entryOffset = (Number(iovs) >>> 0) + index * 8;
-              length += view.getUint32(entryOffset + 4, true);
-            }}
-            return length >>> 0;
-          }})();
+          const totalLength = this._boundedIovLength(iovs, iovsLen);
           const buffer = Buffer.alloc(totalLength);
           const bytesRead = __agentOsFs().readSync(
             handle.targetFd,
@@ -3244,15 +3340,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOsWasiModule =
         if (entry.kind !== "file") {{
           return __agentOsWasiErrnoBadf;
         }}
-        const totalLength = (() => {{
-          const view = this._memoryView();
-          let length = 0;
-          for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {{
-            const entryOffset = (Number(iovs) >>> 0) + index * 8;
-            length += view.getUint32(entryOffset + 4, true);
-          }}
-          return length >>> 0;
-        }})();
+        const totalLength = this._boundedIovLength(iovs, iovsLen);
         const buffer = Buffer.alloc(totalLength);
         const position = typeof entry.offset === "number" ? entry.offset : null;
         const bytesRead = __agentOsFs().readSync(
@@ -4380,8 +4468,12 @@ fn prewarm_wasm_path(
             .poll_event_blocking(poll_timeout)
             .map_err(map_javascript_error)?
         {
-            Some(JavascriptExecutionEvent::Stdout(chunk)) => stdout.extend(chunk),
-            Some(JavascriptExecutionEvent::Stderr(chunk)) => stderr.extend(chunk),
+            Some(JavascriptExecutionEvent::Stdout(chunk)) => {
+                append_wasm_captured_output(&mut stdout, &chunk, "stdout")?;
+            }
+            Some(JavascriptExecutionEvent::Stderr(chunk)) => {
+                append_wasm_captured_output(&mut stderr, &chunk, "stderr")?;
+            }
             Some(JavascriptExecutionEvent::Exited(exit_code)) => {
                 if exit_code != 0 {
                     return Err(WasmExecutionError::WarmupFailed {
@@ -5151,10 +5243,11 @@ mod tests {
         resolve_wasm_prewarm_timeout, resolved_module_path, translate_wasm_guest_path,
         translate_wasm_host_symlink_target, wasm_guest_module_paths, wasm_host_path_is_read_only,
         wasm_memory_limit_pages, wasm_mutation_touches_read_only_mapping,
-        wasm_read_only_filesystem_error, wasm_sandbox_root, wasm_sync_rpc_error_code,
-        StartWasmExecutionRequest, Value, WasmInternalSyncRpc, WasmPermissionTier,
+        wasm_read_only_filesystem_error, wasm_sandbox_root, wasm_sync_read_length,
+        wasm_sync_rpc_error_code, StartWasmExecutionRequest, Value, WasmExecutionError,
+        WasmInternalSyncRpc, WasmPermissionTier, WASM_CAPTURED_OUTPUT_LIMIT_BYTES,
         WASM_MAX_FUEL_ENV, WASM_MAX_MEMORY_BYTES_ENV, WASM_PAGE_BYTES, WASM_PREWARM_TIMEOUT_MS_ENV,
-        WASM_SANDBOX_ROOT_ENV,
+        WASM_SANDBOX_ROOT_ENV, WASM_SYNC_READ_LIMIT_BYTES,
     };
     use std::collections::{BTreeMap, VecDeque};
     use std::fs;
@@ -5212,6 +5305,73 @@ mod tests {
             resolve_wasm_prewarm_timeout(&request).expect("prewarm timeout"),
             Duration::from_millis(750)
         );
+    }
+
+    #[test]
+    fn wasm_captured_output_rejects_output_over_limit() {
+        let mut stdout = vec![b'x'; WASM_CAPTURED_OUTPUT_LIMIT_BYTES - 1];
+        super::append_wasm_captured_output(&mut stdout, b"y", "stdout").expect("fill to limit");
+        assert_eq!(stdout.len(), WASM_CAPTURED_OUTPUT_LIMIT_BYTES);
+
+        let error = super::append_wasm_captured_output(&mut stdout, b"z", "stdout")
+            .expect_err("captured output over limit should fail");
+        assert!(matches!(
+            error,
+            WasmExecutionError::OutputBufferExceeded {
+                stream: "stdout",
+                limit: WASM_CAPTURED_OUTPUT_LIMIT_BYTES,
+            }
+        ));
+    }
+
+    #[test]
+    fn wasm_sync_read_length_rejects_oversized_guest_lengths() {
+        assert_eq!(
+            wasm_sync_read_length(Some(WASM_SYNC_READ_LIMIT_BYTES as u64))
+                .expect("max read length should be accepted"),
+            WASM_SYNC_READ_LIMIT_BYTES
+        );
+
+        let error = wasm_sync_read_length(Some(WASM_SYNC_READ_LIMIT_BYTES as u64 + 1))
+            .expect_err("oversized read length should fail before allocation");
+        assert!(
+            matches!(error, WasmExecutionError::InvalidLimit(message) if message.contains("fs.readSync length"))
+        );
+    }
+
+    #[test]
+    fn wasm_bytes_arg_rejects_payloads_over_limit_before_decode() {
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            String::from("base64"),
+            Value::String(String::from("YWJjZA==")),
+        );
+
+        let error =
+            super::decode_wasm_bytes_arg(Some(&Value::Object(payload)), "fs.writeSync bytes", 3)
+                .expect_err("decoded bytes over limit should fail before allocation");
+
+        assert!(matches!(
+            error,
+            WasmExecutionError::OutputBufferExceeded {
+                stream: "fs.writeSync bytes",
+                limit: 3,
+            }
+        ));
+    }
+
+    #[test]
+    fn wasm_runner_bootstrap_caps_wasi_iov_lengths_before_allocation() {
+        let bootstrap = build_wasm_runner_bootstrap(&BTreeMap::new(), None);
+
+        assert!(bootstrap.contains(&format!(
+            "const __agentOsWasmSyncReadLimitBytes = {WASM_SYNC_READ_LIMIT_BYTES};"
+        )));
+        assert!(bootstrap.contains("_boundedIovLength(iovs, iovsLen)"));
+        assert!(bootstrap.contains("const totalLength = this._boundedIovLength(iovs, iovsLen);\n      const view = this._memoryView();"));
+        assert!(bootstrap.contains("return Buffer.concat(chunks, totalLength);"));
+        assert!(bootstrap.contains("const totalLength = this._boundedIovLength(iovs, iovsLen);"));
+        assert!(!bootstrap.contains("const totalLength = (() => {"));
     }
 
     #[test]
