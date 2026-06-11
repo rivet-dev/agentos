@@ -17,10 +17,10 @@ use crate::show_error;
 
 use clap::{Arg, ArgMatches, Command};
 
-#[cfg(unix)]
-use libc::{gid_t, uid_t};
 #[cfg(target_os = "wasi")]
 use crate::features::entries::{gid_t, uid_t};
+#[cfg(unix)]
+use libc::{gid_t, uid_t};
 
 use options::traverse;
 use std::ffi::OsString;
@@ -322,14 +322,30 @@ impl ChownExecutor {
             return 1;
         }
 
+        #[cfg(target_os = "linux")]
+        let mut root_dir_fd = None;
+        #[cfg(target_os = "linux")]
+        let mut root_dir_open_failed = false;
+
         let ret = if self.matched(meta.uid(), meta.gid()) {
             #[cfg(target_os = "linux")]
-            let chown_result = if path.is_dir() {
+            let chown_result = if meta.is_dir() {
                 match DirFd::open(path, SymlinkBehavior::Follow) {
-                    Ok(dir_fd) => self
-                        .safe_chown_dir(&dir_fd, path, &meta)
-                        .map(|_| String::new()),
-                    Err(_e) => Ok(String::new()),
+                    Ok(dir_fd) => {
+                        let result = self
+                            .safe_chown_dir(&dir_fd, path, &meta)
+                            .map(|_| String::new());
+                        root_dir_fd = Some(dir_fd);
+                        result
+                    }
+                    Err(e) => {
+                        root_dir_open_failed = true;
+                        Err(format!(
+                            "cannot access {}: {}",
+                            path.quote(),
+                            strip_errno(&e)
+                        ))
+                    }
                 }
             } else {
                 wrap_chown(
@@ -378,7 +394,15 @@ impl ChownExecutor {
         if self.recursive {
             #[cfg(target_os = "linux")]
             {
-                ret | self.safe_dive_into(&root)
+                if let Some(dir_fd) = root_dir_fd.as_ref() {
+                    let mut recursive_ret = 0;
+                    self.safe_traverse_dir(dir_fd, path, &mut recursive_ret);
+                    ret | recursive_ret
+                } else if root_dir_open_failed {
+                    ret
+                } else {
+                    ret | self.safe_dive_into(&root)
+                }
             }
             #[cfg(all(not(target_os = "linux"), unix))]
             {
@@ -643,7 +667,11 @@ impl ChownExecutor {
             Ok(e) => e,
             Err(e) => {
                 if self.verbosity.level != VerbosityLevel::Silent {
-                    show_error!("cannot read directory {}: {}", root.quote(), strip_errno(&e));
+                    show_error!(
+                        "cannot read directory {}: {}",
+                        root.quote(),
+                        strip_errno(&e)
+                    );
                 }
                 return 1;
             }
@@ -664,11 +692,24 @@ impl ChownExecutor {
             };
             if self.matched(meta.uid(), meta.gid()) {
                 match wrap_chown(
-                    &path, &meta, self.dest_uid, self.dest_gid,
-                    self.dereference, self.verbosity.clone(),
+                    &path,
+                    &meta,
+                    self.dest_uid,
+                    self.dest_gid,
+                    self.dereference,
+                    self.verbosity.clone(),
                 ) {
-                    Ok(n) => { if !n.is_empty() { show_error!("{n}"); } }
-                    Err(e) => { ret = 1; if self.verbosity.level != VerbosityLevel::Silent { show_error!("{e}"); } }
+                    Ok(n) => {
+                        if !n.is_empty() {
+                            show_error!("{n}");
+                        }
+                    }
+                    Err(e) => {
+                        ret = 1;
+                        if self.verbosity.level != VerbosityLevel::Silent {
+                            show_error!("{e}");
+                        }
+                    }
                 }
             }
             if meta.is_dir() {
