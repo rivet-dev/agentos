@@ -1,6 +1,7 @@
 use agent_os_kernel::command_registry::CommandDriver;
 use agent_os_kernel::kernel::{KernelProcessHandle, KernelVm, KernelVmConfig, SpawnOptions};
 use agent_os_kernel::permissions::Permissions;
+use agent_os_kernel::resource_accounting::ResourceLimits;
 use agent_os_kernel::socket_table::{InetSocketAddress, SocketShutdown, SocketSpec, SocketState};
 use agent_os_kernel::vfs::MemoryFileSystem;
 
@@ -181,4 +182,63 @@ fn tcp_shutdown_and_close_propagate_eof_and_broken_pipe() {
     let snapshot = kernel.resource_snapshot();
     assert_eq!(snapshot.sockets, 0);
     assert_eq!(snapshot.socket_connections, 0);
+}
+
+#[test]
+fn tcp_writes_respect_socket_buffer_backpressure() {
+    let mut config = KernelVmConfig::new("vm-tcp-buffer-backpressure");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_socket_buffered_bytes: Some(5),
+        ..ResourceLimits::default()
+    };
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+    let client = spawn_shell(&mut kernel);
+    let server = spawn_shell(&mut kernel);
+
+    let client_socket = kernel
+        .socket_create("shell", client.pid(), SocketSpec::tcp())
+        .expect("create client socket");
+    let server_socket = kernel
+        .socket_create("shell", server.pid(), SocketSpec::tcp())
+        .expect("create server socket");
+    kernel
+        .socket_connect_pair("shell", client.pid(), client_socket, server_socket)
+        .expect("connect pair");
+
+    let written = kernel
+        .socket_write("shell", client.pid(), client_socket, b"12345")
+        .expect("fill server receive buffer");
+    assert_eq!(written, 5);
+    let error = kernel
+        .socket_write("shell", client.pid(), client_socket, b"6")
+        .expect_err("extra byte should exceed socket buffer limit");
+    assert_eq!(error.code(), "EAGAIN");
+    assert_eq!(
+        kernel
+            .socket_get(server_socket)
+            .expect("server socket")
+            .buffered_read_bytes(),
+        5
+    );
+
+    let drained = kernel
+        .socket_read("shell", server.pid(), server_socket, 5)
+        .expect("read server payload")
+        .expect("payload should be available");
+    assert_eq!(drained, b"12345");
+    let written = kernel
+        .socket_write("shell", client.pid(), client_socket, b"6")
+        .expect("write should succeed after draining buffer");
+    assert_eq!(written, 1);
+    assert_eq!(
+        kernel
+            .socket_get(server_socket)
+            .expect("server socket after recovery")
+            .buffered_read_bytes(),
+        1
+    );
 }
