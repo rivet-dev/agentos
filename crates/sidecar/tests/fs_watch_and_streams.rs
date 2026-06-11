@@ -1,15 +1,17 @@
 mod support;
 
 use agent_os_sidecar::protocol::{
-    CreateVmRequest, GuestRuntimeKind, OwnershipScope, PermissionsPolicy, RequestPayload,
-    ResponsePayload, RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryEncoding,
-    RootFilesystemEntryKind,
+    CreateVmRequest, EventPayload, GuestRuntimeKind, OwnershipScope, PermissionsPolicy,
+    ProcessOutputEvent, RequestPayload, ResponsePayload, RootFilesystemDescriptor,
+    RootFilesystemEntry, RootFilesystemEntryEncoding, RootFilesystemEntryKind, StreamChannel,
 };
 use std::time::Duration;
 use support::{
-    assert_node_available, authenticate, collect_process_output_with_timeout, execute, new_sidecar,
-    open_session, request, temp_dir, write_fixture,
+    assert_node_available, authenticate, execute, new_sidecar, open_session, request, temp_dir,
+    write_fixture,
 };
+
+const PROCESS_OUTPUT_BYTE_LIMIT: usize = 1024 * 1024;
 
 #[test]
 fn javascript_fs_watch_and_streams_work_against_the_vm_kernel_filesystem() {
@@ -153,7 +155,7 @@ console.log(
         Vec::new(),
     );
 
-    let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
+    let (stdout, stderr, exit_code) = collect_fs_process_output(
         &mut sidecar,
         &connection_id,
         &session_id,
@@ -179,4 +181,73 @@ console.log(
     assert_eq!(payload["watchEvents"][0]["filename"], "watch.txt");
     assert_eq!(payload["watchFileEvents"][0]["prevSize"], 6);
     assert_eq!(payload["watchFileEvents"][0]["currSize"], 7);
+}
+
+fn collect_fs_process_output(
+    sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+    timeout: Duration,
+) -> (String, String, i32) {
+    let ownership = OwnershipScope::session(connection_id, session_id);
+    let deadline = std::time::Instant::now() + timeout;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit = None;
+
+    loop {
+        let event = sidecar
+            .poll_event_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll fs watch process event");
+        if let Some(event) = event {
+            assert_eq!(
+                event.ownership,
+                OwnershipScope::vm(connection_id, session_id, vm_id)
+            );
+
+            match event.payload {
+                EventPayload::ProcessOutput(ProcessOutputEvent {
+                    process_id: event_process_id,
+                    channel,
+                    chunk,
+                }) if event_process_id == process_id => match channel {
+                    StreamChannel::Stdout => {
+                        append_process_output(&mut stdout, &chunk, &event_process_id, "stdout")
+                    }
+                    StreamChannel::Stderr => {
+                        append_process_output(&mut stderr, &chunk, &event_process_id, "stderr")
+                    }
+                },
+                EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
+                    exit = Some((exited.exit_code, std::time::Instant::now()));
+                }
+                EventPayload::ProcessOutput(_)
+                | EventPayload::ProcessExited(_)
+                | EventPayload::VmLifecycle(_)
+                | EventPayload::Structured(_) => {}
+            }
+        }
+
+        if let Some((exit_code, seen_at)) = exit {
+            if std::time::Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
+                return (stdout, stderr, exit_code);
+            }
+        }
+
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for fs watch process {process_id}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+fn append_process_output(buffer: &mut String, chunk: &[u8], process_id: &str, channel: &str) {
+    let text = String::from_utf8_lossy(chunk);
+    assert!(
+        buffer.len().saturating_add(text.len()) <= PROCESS_OUTPUT_BYTE_LIMIT,
+        "fs watch process {process_id} exceeded {PROCESS_OUTPUT_BYTE_LIMIT} bytes on {channel}"
+    );
+    buffer.push_str(&text);
 }
