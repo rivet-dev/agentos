@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -1509,37 +1509,63 @@ impl PythonManagedPathKind {
 }
 
 fn python_managed_path_kind(pyodide_dist_path: &Path, path: &str) -> PythonManagedResolvedPath {
-    if let Some(normalized) = path.strip_prefix(PYODIDE_GUEST_ROOT) {
-        let relative = normalized.trim_start_matches('/');
+    let cache_path = pyodide_cache_path(pyodide_dist_path);
+
+    if let Some(normalized) = strip_guest_managed_root(path, PYODIDE_GUEST_ROOT) {
+        let root = canonicalize_existing_or_self(pyodide_dist_path);
+        let relative = normalize_relative_guest_suffix(normalized);
+        let host_path = if relative.as_os_str().is_empty() {
+            root.clone()
+        } else {
+            root.join(relative)
+        };
+        if confined_managed_path(&host_path, &root) {
+            return PythonManagedResolvedPath {
+                kind: PythonManagedPathKind::GuestPyodide,
+                host_path: Some(host_path),
+            };
+        }
         return PythonManagedResolvedPath {
-            kind: PythonManagedPathKind::GuestPyodide,
-            host_path: Some(if relative.is_empty() {
-                pyodide_dist_path.to_path_buf()
-            } else {
-                pyodide_dist_path.join(relative)
-            }),
+            kind: PythonManagedPathKind::Unmanaged,
+            host_path: None,
         };
     }
 
-    let cache_path = pyodide_cache_path(pyodide_dist_path);
-    if let Some(normalized) = path.strip_prefix(PYODIDE_CACHE_GUEST_ROOT) {
-        let relative = normalized.trim_start_matches('/');
+    if let Some(normalized) = strip_guest_managed_root(path, PYODIDE_CACHE_GUEST_ROOT) {
+        let root = canonicalize_existing_or_self(&cache_path);
+        let relative = normalize_relative_guest_suffix(normalized);
+        let host_path = if relative.as_os_str().is_empty() {
+            root.clone()
+        } else {
+            root.join(relative)
+        };
+        if confined_managed_path(&host_path, &root) {
+            return PythonManagedResolvedPath {
+                kind: PythonManagedPathKind::GuestCache,
+                host_path: Some(host_path),
+            };
+        }
         return PythonManagedResolvedPath {
-            kind: PythonManagedPathKind::GuestCache,
-            host_path: Some(if relative.is_empty() {
-                cache_path
-            } else {
-                cache_path.join(relative)
-            }),
+            kind: PythonManagedPathKind::Unmanaged,
+            host_path: None,
         };
     }
 
     let candidate = PathBuf::from(path);
+    let pyodide_root = canonicalize_existing_or_self(pyodide_dist_path);
+    let cache_root = canonicalize_existing_or_self(&cache_path);
     if candidate.is_absolute()
-        && (candidate == pyodide_dist_path
-            || path_is_within_root(&candidate, pyodide_dist_path)
-            || candidate == cache_path
-            || path_is_within_root(&candidate, &cache_path))
+        && !path_has_parent_or_prefix_component(&candidate)
+        && confined_managed_path(&candidate, &pyodide_root)
+    {
+        return PythonManagedResolvedPath {
+            kind: PythonManagedPathKind::HostManaged,
+            host_path: Some(candidate),
+        };
+    }
+    if candidate.is_absolute()
+        && !path_has_parent_or_prefix_component(&candidate)
+        && confined_managed_path(&candidate, &cache_root)
     {
         return PythonManagedResolvedPath {
             kind: PythonManagedPathKind::HostManaged,
@@ -1570,8 +1596,70 @@ impl PythonManagedResolvedPath {
     }
 }
 
-fn path_is_within_root(path: &Path, root: &Path) -> bool {
-    path == root || path.starts_with(root)
+fn strip_guest_managed_root<'a>(path: &'a str, root: &str) -> Option<&'a str> {
+    if path == root {
+        return Some("");
+    }
+    path.strip_prefix(root)?.strip_prefix('/')
+}
+
+fn normalize_relative_guest_suffix(suffix: &str) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for segment in suffix.trim_start_matches('/').split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            normalized.pop();
+        } else {
+            normalized.push(segment);
+        }
+    }
+    normalized
+}
+
+fn path_has_parent_or_prefix_component(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
+}
+
+fn canonicalize_existing_or_self(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn confined_managed_path(path: &Path, root: &Path) -> bool {
+    let canonical_root = canonicalize_existing_or_self(root);
+    let Some(canonical_path) = canonicalize_managed_candidate(path) else {
+        return false;
+    };
+
+    canonical_path == canonical_root || canonical_path.starts_with(canonical_root)
+}
+
+fn canonicalize_managed_candidate(path: &Path) -> Option<PathBuf> {
+    let mut missing_components = Vec::new();
+    let mut current = path;
+    loop {
+        match fs::canonicalize(current) {
+            Ok(mut canonical) => {
+                for component in missing_components.iter().rev() {
+                    canonical.push(component);
+                }
+                return Some(canonical);
+            }
+            Err(_) => {
+                let file_name = current.file_name()?.to_owned();
+                if Path::new(&file_name)
+                    .components()
+                    .any(|component| !matches!(component, Component::Normal(_)))
+                {
+                    return None;
+                }
+                missing_components.push(file_name);
+                current = current.parent()?;
+            }
+        }
+    }
 }
 
 fn python_host_path_to_guest(pyodide_dist_path: &Path, host_path: &Path) -> Option<String> {
@@ -1761,4 +1849,128 @@ fn warmup_metrics_line(
         )
         .into_bytes(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        python_managed_path_kind, PythonManagedPathKind, PYODIDE_CACHE_GUEST_ROOT,
+        PYODIDE_GUEST_ROOT,
+    };
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+    use tempfile::tempdir;
+
+    #[test]
+    fn python_managed_guest_paths_normalize_dot_dot_inside_root() {
+        let temp = tempdir().expect("create temp dir");
+        let pyodide = temp.path().join("pyodide");
+        fs::create_dir_all(pyodide.join("lib")).expect("create pyodide lib");
+
+        let resolved = python_managed_path_kind(
+            &pyodide,
+            &format!("{PYODIDE_GUEST_ROOT}/lib/../pyodide.mjs"),
+        );
+
+        assert!(matches!(resolved.kind, PythonManagedPathKind::GuestPyodide));
+        assert_eq!(
+            resolved.host_path().expect("host path"),
+            pyodide.join("pyodide.mjs")
+        );
+    }
+
+    #[test]
+    fn python_managed_guest_paths_clamp_dot_dot_escape_to_root() {
+        let temp = tempdir().expect("create temp dir");
+        let pyodide = temp.path().join("pyodide");
+        fs::create_dir_all(&pyodide).expect("create pyodide root");
+
+        let resolved =
+            python_managed_path_kind(&pyodide, &format!("{PYODIDE_GUEST_ROOT}/../../outside.txt"));
+
+        assert!(matches!(resolved.kind, PythonManagedPathKind::GuestPyodide));
+        assert_eq!(
+            resolved.host_path().expect("host path"),
+            pyodide.join("outside.txt")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn python_managed_guest_paths_reject_symlink_escape() {
+        let temp = tempdir().expect("create temp dir");
+        let pyodide = temp.path().join("pyodide");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&pyodide).expect("create pyodide root");
+        fs::create_dir_all(&outside).expect("create outside dir");
+        symlink(&outside, pyodide.join("escape")).expect("create escape symlink");
+
+        let resolved =
+            python_managed_path_kind(&pyodide, &format!("{PYODIDE_GUEST_ROOT}/escape/file.txt"));
+
+        assert!(matches!(resolved.kind, PythonManagedPathKind::Unmanaged));
+        assert!(resolved.host_path().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn python_managed_guest_paths_reject_symlink_escape_to_missing_descendant() {
+        let temp = tempdir().expect("create temp dir");
+        let pyodide = temp.path().join("pyodide");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&pyodide).expect("create pyodide root");
+        fs::create_dir_all(&outside).expect("create outside dir");
+        symlink(&outside, pyodide.join("escape")).expect("create escape symlink");
+
+        let resolved = python_managed_path_kind(
+            &pyodide,
+            &format!("{PYODIDE_GUEST_ROOT}/escape/missing/file.txt"),
+        );
+
+        assert!(matches!(resolved.kind, PythonManagedPathKind::Unmanaged));
+        assert!(resolved.host_path().is_none());
+    }
+
+    #[test]
+    fn python_managed_host_paths_accept_canonical_root_descendants() {
+        let temp = tempdir().expect("create temp dir");
+        let pyodide = temp.path().join("pyodide");
+        fs::create_dir_all(pyodide.join("pkg")).expect("create pyodide package dir");
+        let candidate = pyodide.join("pkg/module.py");
+
+        let resolved = python_managed_path_kind(&pyodide, &candidate.display().to_string());
+
+        assert!(matches!(resolved.kind, PythonManagedPathKind::HostManaged));
+        assert_eq!(resolved.host_path().expect("host path"), candidate);
+    }
+
+    #[test]
+    fn python_managed_host_paths_reject_unresolved_dot_dot_escape() {
+        let temp = tempdir().expect("create temp dir");
+        let pyodide = temp.path().join("pyodide");
+        fs::create_dir_all(&pyodide).expect("create pyodide root");
+        let candidate = pyodide.join("missing/../../outside.txt");
+
+        let resolved = python_managed_path_kind(&pyodide, &candidate.display().to_string());
+
+        assert!(matches!(resolved.kind, PythonManagedPathKind::Unmanaged));
+        assert!(resolved.host_path().is_none());
+    }
+
+    #[test]
+    fn python_managed_cache_guest_paths_resolve_inside_cache_root() {
+        let temp = tempdir().expect("create temp dir");
+        let pyodide = temp.path().join("pyodide");
+        fs::create_dir_all(&pyodide).expect("create pyodide root");
+
+        let resolved = python_managed_path_kind(
+            &pyodide,
+            &format!("{PYODIDE_CACHE_GUEST_ROOT}/wheels/pkg.whl"),
+        );
+        let host_path = resolved.host_path().expect("host path");
+
+        assert!(matches!(resolved.kind, PythonManagedPathKind::GuestCache));
+        assert!(host_path.ends_with("pyodide-package-cache/wheels/pkg.whl"));
+    }
 }
