@@ -17,6 +17,8 @@ use num_traits::Zero;
 
 use crate::extendedbigdecimal::ExtendedBigDecimal;
 
+const MAX_PARSED_DIGITS: i64 = 8192;
+
 /// Base for number parsing
 #[derive(Clone, Copy, PartialEq)]
 enum Base {
@@ -76,6 +78,17 @@ impl Base {
         let mut count_tmp: i64 = 0;
         let mut mul_tmp: u64 = 1;
         while let Some(d) = rest.chars().next().and_then(|c| self.digit(c)) {
+            let has_nonzero =
+                digits.as_ref().is_some_and(|digits| !digits.is_zero()) || digits_tmp != 0;
+            if count + count_tmp >= MAX_PARSED_DIGITS {
+                if has_nonzero || d != 0 {
+                    break;
+                }
+                count += 1;
+                rest = &rest[1..];
+                continue;
+            }
+
             (digits_tmp, count_tmp, mul_tmp) = (
                 digits_tmp * self as u64 + d,
                 count_tmp + 1,
@@ -85,10 +98,8 @@ impl Base {
             // In base 16, we parse 4 bits at a time, so we can parse 16 digits at most in a u64.
             if count_tmp >= 15 {
                 // Accumulate what we have so far
-                (digits, count) = (
-                    Some(digits.unwrap_or_default() * mul_tmp + digits_tmp),
-                    count + count_tmp,
-                );
+                digits = Some(digits.unwrap_or_default() * mul_tmp + digits_tmp);
+                count += count_tmp;
                 // Reset state
                 (digits_tmp, count_tmp, mul_tmp) = (0, 0, 1);
             }
@@ -914,6 +925,62 @@ mod tests {
         assert_eq!(
             Err(ExtendedParserError::NotNumeric),
             ExtendedBigDecimal::extended_parse("+e10")
+        );
+    }
+
+    #[test]
+    fn test_oversized_numeric_input_is_bounded() {
+        let oversized_numeric = "1".repeat(super::MAX_PARSED_DIGITS as usize + 1);
+        assert!(matches!(
+            ExtendedBigDecimal::extended_parse(&oversized_numeric),
+            Err(ExtendedParserError::PartialMatch(_, rest)) if rest == "1"
+        ));
+
+        let oversized_zeros = "0".repeat(super::MAX_PARSED_DIGITS as usize + 1);
+        assert_eq!(
+            ExtendedBigDecimal::extended_parse(&oversized_zeros),
+            Ok(ExtendedBigDecimal::zero())
+        );
+
+        let oversized_nonnumeric = "x".repeat(super::MAX_PARSED_DIGITS as usize + 1);
+        assert_eq!(
+            ExtendedBigDecimal::extended_parse(&oversized_nonnumeric),
+            Err(ExtendedParserError::NotNumeric)
+        );
+
+        let oversized_dot = ".".to_string() + &"x".repeat(super::MAX_PARSED_DIGITS as usize + 1);
+        assert_eq!(
+            ExtendedBigDecimal::extended_parse(&oversized_dot),
+            Err(ExtendedParserError::NotNumeric)
+        );
+
+        let oversized_fraction = format!("0.1{}", "2".repeat(super::MAX_PARSED_DIGITS as usize));
+        assert!(matches!(
+            ExtendedBigDecimal::extended_parse(&oversized_fraction),
+            Err(ExtendedParserError::PartialMatch(_, rest)) if rest == "2"
+        ));
+
+        let oversized_exponent = format!("1e1{}", "2".repeat(super::MAX_PARSED_DIGITS as usize));
+        assert!(matches!(
+            ExtendedBigDecimal::extended_parse(&oversized_exponent),
+            Err(ExtendedParserError::PartialMatch(_, rest)) if rest == "2"
+        ));
+    }
+
+    #[test]
+    fn test_oversized_input_preserves_partial_matches() {
+        let long_junk = "x".repeat(super::MAX_PARSED_DIGITS as usize + 1);
+        assert!(matches!(
+            ExtendedBigDecimal::extended_parse(&format!("1{long_junk}")),
+            Err(ExtendedParserError::PartialMatch(_, rest)) if rest == long_junk
+        ));
+
+        assert_eq!(
+            ExtendedBigDecimal::extended_parse(&format!("inf{long_junk}")),
+            Err(ExtendedParserError::PartialMatch(
+                ExtendedBigDecimal::Infinity,
+                long_junk
+            ))
         );
     }
 
