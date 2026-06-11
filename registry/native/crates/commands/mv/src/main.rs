@@ -74,6 +74,17 @@ fn run_simple_mv(operands: &[PathBuf]) -> io::Result<()> {
 }
 
 fn move_path(source: &Path, destination: &Path) -> io::Result<()> {
+    if paths_are_same_existing_file(source, destination)? {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "'{}' and '{}' are the same file",
+                source.display(),
+                destination.display()
+            ),
+        ));
+    }
+
     let metadata = fs::symlink_metadata(source)?;
     let file_type = metadata.file_type();
 
@@ -106,7 +117,7 @@ fn move_symlink(source: &Path, destination: &Path) -> io::Result<()> {
 }
 
 fn move_dir(source: &Path, destination: &Path) -> io::Result<()> {
-    if destination.starts_with(source) {
+    if destination_resolves_inside_source(source, destination)? {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
@@ -128,10 +139,8 @@ fn move_dir(source: &Path, destination: &Path) -> io::Result<()> {
 
     fs::create_dir(destination)?;
 
-    let mut entries = fs::read_dir(source)?.collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by_key(|entry| entry.file_name());
-
-    for entry in entries {
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
         let child_source = entry.path();
         let child_destination = destination.join(entry.file_name());
         move_path(&child_source, &child_destination)?;
@@ -153,6 +162,63 @@ fn remove_existing_non_dir(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn paths_are_same_existing_file(source: &Path, destination: &Path) -> io::Result<bool> {
+    if metadata_if_exists(destination)?.is_none() {
+        return Ok(false);
+    }
+
+    let Some(source) = canonicalize_existing_path(source)? else {
+        return Ok(false);
+    };
+    let Some(destination) = canonicalize_existing_path(destination)? else {
+        return Ok(false);
+    };
+
+    Ok(source == destination)
+}
+
+fn canonicalize_existing_path(path: &Path) -> io::Result<Option<PathBuf>> {
+    match fs::canonicalize(path) {
+        Ok(path) => Ok(Some(path)),
+        Err(_) if fs::symlink_metadata(path)?.file_type().is_symlink() => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn destination_resolves_inside_source(source: &Path, destination: &Path) -> io::Result<bool> {
+    let source = fs::canonicalize(source)?;
+    let Some(parent) = destination.parent() else {
+        return Ok(false);
+    };
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    let Some(parent) = canonical_existing_ancestor(parent)? else {
+        return Ok(false);
+    };
+
+    Ok(parent.starts_with(source))
+}
+
+fn canonical_existing_ancestor(path: &Path) -> io::Result<Option<PathBuf>> {
+    for ancestor in path.ancestors() {
+        let ancestor = if ancestor.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            ancestor
+        };
+        match fs::canonicalize(ancestor) {
+            Ok(path) => return Ok(Some(path)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok(None)
+}
+
 fn metadata_if_exists(path: &Path) -> io::Result<Option<fs::Metadata>> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => Ok(Some(metadata)),
@@ -171,6 +237,5 @@ fn file_name(path: &Path) -> io::Result<&OsStr> {
 }
 
 fn is_ignorable_permission_copy_error(error: &io::Error) -> bool {
-    error.kind() == io::ErrorKind::Unsupported
-        || matches!(error.raw_os_error(), Some(52 | 95))
+    error.kind() == io::ErrorKind::Unsupported || matches!(error.raw_os_error(), Some(52 | 95))
 }
