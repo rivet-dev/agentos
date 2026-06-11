@@ -20,6 +20,8 @@ const BENCHMARK_RUN_STATE_FILE: &str = "run-state.json";
 const TRANSPORT_RTT_CHANNEL: &str = "execution-stdio-echo";
 const TRANSPORT_RTT_PAYLOAD_BYTES: [usize; 3] = [32, 4 * 1024, 64 * 1024];
 const TRANSPORT_POLL_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_BENCHMARK_ITERATIONS: usize = 1_000;
+const MAX_BENCHMARK_WARMUP_ITERATIONS: usize = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JavascriptBenchmarkConfig {
@@ -1480,11 +1482,7 @@ impl From<JavascriptExecutionError> for JavascriptBenchmarkError {
 pub fn run_javascript_benchmarks(
     config: &JavascriptBenchmarkConfig,
 ) -> Result<JavascriptBenchmarkReport, JavascriptBenchmarkError> {
-    if config.iterations == 0 {
-        return Err(JavascriptBenchmarkError::InvalidConfig(
-            "iterations must be greater than zero",
-        ));
-    }
+    validate_benchmark_config(config)?;
 
     let repo_root = workspace_root()?;
     let host = benchmark_host()?;
@@ -1970,11 +1968,7 @@ pub fn run_javascript_benchmarks_with_recovery(
     config: &JavascriptBenchmarkConfig,
     baseline_path: Option<&Path>,
 ) -> Result<JavascriptBenchmarkRunOutput, JavascriptBenchmarkError> {
-    if config.iterations == 0 {
-        return Err(JavascriptBenchmarkError::InvalidConfig(
-            "iterations must be greater than zero",
-        ));
-    }
+    validate_benchmark_config(config)?;
 
     let repo_root = workspace_root()?;
     let host = benchmark_host()?;
@@ -2014,11 +2008,7 @@ where
     RunScenario:
         FnMut(ScenarioDefinition) -> Result<BenchmarkScenarioReport, JavascriptBenchmarkError>,
 {
-    if config.iterations == 0 {
-        return Err(JavascriptBenchmarkError::InvalidConfig(
-            "iterations must be greater than zero",
-        ));
-    }
+    validate_benchmark_config(config)?;
 
     fs::create_dir_all(artifact_dir)?;
 
@@ -2048,6 +2038,28 @@ where
         resumed_stage_count,
         state_path,
     ))
+}
+
+fn validate_benchmark_config(
+    config: &JavascriptBenchmarkConfig,
+) -> Result<(), JavascriptBenchmarkError> {
+    if config.iterations == 0 {
+        return Err(JavascriptBenchmarkError::InvalidConfig(
+            "iterations must be greater than zero",
+        ));
+    }
+    if config.iterations > MAX_BENCHMARK_ITERATIONS {
+        return Err(JavascriptBenchmarkError::InvalidConfig(
+            "iterations must be less than or equal to 1000",
+        ));
+    }
+    if config.warmup_iterations > MAX_BENCHMARK_WARMUP_ITERATIONS {
+        return Err(JavascriptBenchmarkError::InvalidConfig(
+            "warmup iterations must be less than or equal to 1000",
+        ));
+    }
+
+    Ok(())
 }
 
 fn benchmark_scenarios() -> [ScenarioDefinition; 21] {
@@ -3430,6 +3442,37 @@ mod tests {
             arch: "x86_64",
             logical_cpus: 8,
         }
+    }
+
+    #[test]
+    fn javascript_benchmark_config_rejects_unbounded_iteration_counts() {
+        assert!(matches!(
+            validate_benchmark_config(&JavascriptBenchmarkConfig {
+                iterations: 0,
+                warmup_iterations: 0,
+            }),
+            Err(JavascriptBenchmarkError::InvalidConfig(
+                "iterations must be greater than zero"
+            ))
+        ));
+        assert!(matches!(
+            validate_benchmark_config(&JavascriptBenchmarkConfig {
+                iterations: MAX_BENCHMARK_ITERATIONS + 1,
+                warmup_iterations: 0,
+            }),
+            Err(JavascriptBenchmarkError::InvalidConfig(
+                "iterations must be less than or equal to 1000"
+            ))
+        ));
+        assert!(matches!(
+            validate_benchmark_config(&JavascriptBenchmarkConfig {
+                iterations: 1,
+                warmup_iterations: MAX_BENCHMARK_WARMUP_ITERATIONS + 1,
+            }),
+            Err(JavascriptBenchmarkError::InvalidConfig(
+                "warmup iterations must be less than or equal to 1000"
+            ))
+        ));
     }
 
     #[test]
