@@ -157,7 +157,9 @@ struct StubRuntimeEventSender;
 
 impl RuntimeEventSender for StubRuntimeEventSender {
     fn send_event(&self, _event: RuntimeEvent) -> Result<(), String> {
-        panic!("stub bridge function called during snapshot creation — bridge IIFE must not call bridge functions at setup time")
+        panic!(
+            "stub bridge function called during snapshot creation — bridge IIFE must not call bridge functions at setup time"
+        )
     }
 }
 
@@ -168,7 +170,9 @@ struct StubBridgeResponseReceiver;
 
 impl BridgeResponseReceiver for StubBridgeResponseReceiver {
     fn recv_response(&self, _expected_call_id: u64) -> Result<BridgeResponse, String> {
-        panic!("stub bridge function called during snapshot creation — bridge IIFE must not call bridge functions at setup time")
+        panic!(
+            "stub bridge function called during snapshot creation — bridge IIFE must not call bridge functions at setup time"
+        )
     }
 }
 
@@ -280,6 +284,7 @@ impl BridgeCallContext {
 
         // Remove from pending
         self.pending_calls.lock().unwrap().remove(&call_id);
+        self.remove_call_route(call_id);
 
         // Validate and extract BridgeResponse
         if response.status == 1 {
@@ -659,6 +664,30 @@ mod tests {
             RuntimeEvent::BridgeCall { method, .. } => assert_eq!(method, "_fsReadFile"),
             _ => panic!("expected BridgeCall"),
         }
+    }
+
+    #[test]
+    fn sync_call_success_clears_call_id_route() {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let response_bytes = make_response_bytes(1, Some(vec![0xAB, 0xCD]), None);
+        let router: super::CallIdRouter = Arc::new(Mutex::new(HashMap::new()));
+
+        let ctx = BridgeCallContext::with_receiver(
+            Box::new(super::ChannelRuntimeEventSender::new(tx, None)),
+            Box::new(super::ReaderBridgeResponseReceiver::new(Box::new(
+                Cursor::new(response_bytes),
+            ))),
+            "test-session".into(),
+            Arc::clone(&router),
+            Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        );
+
+        let result = ctx.sync_call("_fsReadFile", vec![0x01]).unwrap();
+        assert_eq!(result, Some(vec![0xAB, 0xCD]));
+        assert!(
+            router.lock().unwrap().is_empty(),
+            "sync bridge response completion should clear the call_id route"
+        );
     }
 
     #[test]
