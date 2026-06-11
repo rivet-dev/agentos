@@ -11,8 +11,7 @@ use icu_provider::prelude::*;
 
 use crate::i18n::get_numeric_locale;
 
-/// Return the decimal separator for the given locale
-fn get_decimal_separator(loc: Locale) -> String {
+fn load_decimal_symbols(loc: Locale) -> Option<DataResponse<DecimalSymbolsV1>> {
     let data_locale = DataLocale::from(loc);
 
     let request = DataRequest {
@@ -20,10 +19,14 @@ fn get_decimal_separator(loc: Locale) -> String {
         metadata: DataRequestMetadata::default(),
     };
 
-    let response: DataResponse<DecimalSymbolsV1> =
-        icu_decimal::provider::Baked.load(request).unwrap();
+    icu_decimal::provider::Baked.load(request).ok()
+}
 
-    response.payload.get().decimal_separator().to_string()
+/// Return the decimal separator for the given locale
+fn get_decimal_separator(loc: Locale) -> String {
+    load_decimal_symbols(loc)
+        .map(|response| response.payload.get().decimal_separator().to_string())
+        .unwrap_or_else(|| ".".to_string())
 }
 
 /// Return the decimal separator from the language we're working with.
@@ -39,17 +42,13 @@ pub fn locale_decimal_separator() -> &'static str {
 
 /// Return the grouping separator for the given locale
 fn get_grouping_separator(loc: Locale) -> String {
-    let data_locale = DataLocale::from(loc);
+    if loc == locale!("und") {
+        return String::new();
+    }
 
-    let request = DataRequest {
-        id: DataIdentifierBorrowed::for_locale(&data_locale),
-        metadata: DataRequestMetadata::default(),
-    };
-
-    let response: DataResponse<DecimalSymbolsV1> =
-        icu_decimal::provider::Baked.load(request).unwrap();
-
-    response.payload.get().grouping_separator().to_string()
+    load_decimal_symbols(loc)
+        .map(|response| response.payload.get().grouping_separator().to_string())
+        .unwrap_or_default()
 }
 
 /// Return the grouping separator from the language we're working with.
@@ -87,5 +86,11 @@ mod tests {
     fn test_simple_grouping_separator() {
         assert_eq!(get_grouping_separator(locale!("en")), ",");
         assert_eq!(get_grouping_separator(locale!("fr")), "\u{202f}");
+    }
+
+    #[test]
+    fn test_default_locale_separators_do_not_panic() {
+        assert_eq!(get_decimal_separator(locale!("und")), ".");
+        assert_eq!(get_grouping_separator(locale!("und")), "");
     }
 }
