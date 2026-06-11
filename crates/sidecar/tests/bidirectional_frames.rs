@@ -7,9 +7,32 @@ use agent_os_sidecar::protocol::{
 use serde_json::json;
 use support::{authenticate, create_vm, new_sidecar, open_session, temp_dir};
 
-#[test]
-fn native_sidecar_tracks_sidecar_initiated_requests_and_responses() {
-    let mut sidecar = new_sidecar("bidirectional-frames");
+const SIDECAR_CALLBACK_LIMIT: usize = 10_000;
+
+fn tool_invocation(index: usize) -> SidecarRequestPayload {
+    SidecarRequestPayload::ToolInvocation(ToolInvocationRequest {
+        invocation_id: format!("invoke-{index}"),
+        tool_key: "toolkit:tool".to_string(),
+        input: json!({ "prompt": "ping", "index": index }),
+        timeout_ms: 1_000,
+    })
+}
+
+fn tool_invocation_response(index: usize) -> SidecarResponsePayload {
+    SidecarResponsePayload::ToolInvocationResult(ToolInvocationResultResponse {
+        invocation_id: format!("invoke-{index}"),
+        result: Some(json!({ "ok": true })),
+        error: None,
+    })
+}
+
+fn new_vm_scope(
+    name: &str,
+) -> (
+    agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
+    OwnershipScope,
+) {
+    let mut sidecar = new_sidecar(name);
     let connection_id = authenticate(&mut sidecar, "client-hint");
     let session_id = open_session(&mut sidecar, 2, &connection_id);
     let (vm_id, _) = create_vm(
@@ -18,19 +41,20 @@ fn native_sidecar_tracks_sidecar_initiated_requests_and_responses() {
         &connection_id,
         &session_id,
         GuestRuntimeKind::JavaScript,
-        &temp_dir("bidirectional-vm"),
+        &temp_dir(&format!("{name}-vm")),
     );
+    (
+        sidecar,
+        OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+    )
+}
+
+#[test]
+fn native_sidecar_tracks_sidecar_initiated_requests_and_responses() {
+    let (mut sidecar, ownership) = new_vm_scope("bidirectional-frames");
 
     let request_id = sidecar
-        .queue_sidecar_request(
-            OwnershipScope::vm(&connection_id, &session_id, &vm_id),
-            SidecarRequestPayload::ToolInvocation(ToolInvocationRequest {
-                invocation_id: "invoke-1".to_string(),
-                tool_key: "toolkit:tool".to_string(),
-                input: json!({ "prompt": "ping" }),
-                timeout_ms: 1_000,
-            }),
-        )
+        .queue_sidecar_request(ownership.clone(), tool_invocation(1))
         .expect("queue sidecar request");
     assert_eq!(request_id, -1);
 
@@ -43,11 +67,7 @@ fn native_sidecar_tracks_sidecar_initiated_requests_and_responses() {
         .accept_sidecar_response(SidecarResponseFrame::new(
             outbound.request_id,
             outbound.ownership.clone(),
-            SidecarResponsePayload::ToolInvocationResult(ToolInvocationResultResponse {
-                invocation_id: "invoke-1".to_string(),
-                result: Some(json!({ "ok": true })),
-                error: None,
-            }),
+            tool_invocation_response(1),
         ))
         .expect("accept sidecar response");
 
@@ -59,4 +79,85 @@ fn native_sidecar_tracks_sidecar_initiated_requests_and_responses() {
         completed.payload,
         SidecarResponsePayload::ToolInvocationResult(_)
     ));
+}
+
+#[test]
+fn native_sidecar_bounds_undrained_outbound_sidecar_requests() {
+    let (mut sidecar, ownership) = new_vm_scope("bidirectional-outbound-bound");
+
+    for index in 0..SIDECAR_CALLBACK_LIMIT {
+        sidecar
+            .queue_sidecar_request(ownership.clone(), tool_invocation(index))
+            .expect("queue sidecar request within outbound limit");
+    }
+
+    let error = sidecar
+        .queue_sidecar_request(ownership, tool_invocation(SIDECAR_CALLBACK_LIMIT))
+        .expect_err("undrained outbound queue should be bounded");
+    assert!(
+        error
+            .to_string()
+            .contains("outbound sidecar request queue exceeded"),
+        "unexpected outbound queue error: {error}"
+    );
+}
+
+#[test]
+fn native_sidecar_bounds_popped_unanswered_sidecar_requests() {
+    let (mut sidecar, ownership) = new_vm_scope("bidirectional-pending-bound");
+
+    for index in 0..SIDECAR_CALLBACK_LIMIT {
+        sidecar
+            .queue_sidecar_request(ownership.clone(), tool_invocation(index))
+            .expect("queue sidecar request within pending limit");
+        sidecar
+            .pop_sidecar_request()
+            .expect("pop queued sidecar request");
+    }
+
+    let error = sidecar
+        .queue_sidecar_request(ownership, tool_invocation(SIDECAR_CALLBACK_LIMIT))
+        .expect_err("pending response tracker should be bounded");
+    assert!(
+        error
+            .to_string()
+            .contains("sidecar response tracker exceeded"),
+        "unexpected pending tracker error: {error}"
+    );
+}
+
+#[test]
+fn native_sidecar_bounds_completed_sidecar_responses() {
+    let (mut sidecar, ownership) = new_vm_scope("bidirectional-completed-bound");
+    let mut latest_request_id = 0;
+
+    for index in 0..=SIDECAR_CALLBACK_LIMIT {
+        let request_id = sidecar
+            .queue_sidecar_request(ownership.clone(), tool_invocation(index))
+            .expect("queue sidecar request");
+        let outbound = sidecar
+            .pop_sidecar_request()
+            .expect("pop queued sidecar request");
+        assert_eq!(outbound.request_id, request_id);
+        sidecar
+            .accept_sidecar_response(SidecarResponseFrame::new(
+                request_id,
+                ownership.clone(),
+                tool_invocation_response(index),
+            ))
+            .expect("accept sidecar response");
+        latest_request_id = request_id;
+    }
+
+    assert!(
+        sidecar.take_sidecar_response(-1).is_none(),
+        "oldest completed response should be evicted"
+    );
+    assert_eq!(
+        sidecar
+            .take_sidecar_response(latest_request_id)
+            .expect("latest completed response should remain")
+            .request_id,
+        latest_request_id
+    );
 }

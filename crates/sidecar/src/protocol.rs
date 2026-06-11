@@ -2533,6 +2533,10 @@ impl SidecarResponseTracker {
         }
     }
 
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
+
     pub fn completed_count(&self) -> usize {
         self.completed.len()
     }
