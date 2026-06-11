@@ -9,12 +9,12 @@ use agent_os_kernel::vfs::{
 };
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
+use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::config::Builder as S3ConfigBuilder;
 use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::Client as S3Client;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
@@ -113,7 +113,9 @@ impl S3BackedFilesystem {
         )?;
 
         let (inner, persisted_manifest, chunk_keys) = match store.load_manifest(&manifest_key)? {
-            Some(manifest_bytes) => load_filesystem_from_manifest(&store, &manifest_bytes)?,
+            Some(manifest_bytes) => {
+                load_filesystem_from_manifest(&store, &manifest_bytes, &chunk_key_prefix)?
+            }
             None => {
                 let inner = MemoryFileSystem::new();
                 let manifest = manifest_from_empty_filesystem(&inner);
@@ -953,6 +955,7 @@ fn manifest_from_empty_filesystem(inner: &MemoryFileSystem) -> PersistedFilesyst
 fn load_filesystem_from_manifest(
     store: &S3ObjectStore,
     manifest_bytes: &[u8],
+    chunk_key_prefix: &str,
 ) -> Result<
     (
         MemoryFileSystem,
@@ -991,6 +994,7 @@ fn load_filesystem_from_manifest(
                         chunks.sort_by_key(|chunk| chunk.index);
                         let expected_size = validate_manifest_file_size(size, "s3", ino)?;
                         validate_chunk_indexes(&chunks, "s3", ino)?;
+                        validate_manifest_chunk_keys(&chunks, chunk_key_prefix, ino)?;
                         let mut data = Vec::with_capacity(expected_size);
                         for chunk in chunks {
                             let remaining = expected_size.saturating_sub(data.len());
@@ -1050,6 +1054,22 @@ fn load_filesystem_from_manifest(
         persisted_manifest,
         chunk_keys,
     ))
+}
+
+fn validate_manifest_chunk_keys(
+    chunks: &[PersistedChunkRef],
+    chunk_key_prefix: &str,
+    ino: u64,
+) -> Result<(), PluginError> {
+    for chunk in chunks {
+        if !chunk.key.starts_with(chunk_key_prefix) {
+            return Err(PluginError::invalid_input(format!(
+                "s3 manifest inode {ino} references chunk outside mount prefix"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_manifest_file_size(size: u64, backend: &str, ino: u64) -> Result<usize, PluginError> {

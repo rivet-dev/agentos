@@ -81,9 +81,9 @@ mod s3 {
                 |host, port| {
                     assert_eq!(host, "metadata.test");
                     assert_eq!(port, 443);
-                    Ok(vec!["169.254.169.254:443"
-                        .parse()
-                        .expect("private address")])
+                    Ok(vec![
+                        "169.254.169.254:443".parse().expect("private address"),
+                    ])
                 },
             ) {
                 Ok(_) => panic!("private DNS endpoint should fail"),
@@ -526,6 +526,65 @@ mod s3 {
                 error.message().contains("limit is 1"),
                 "unexpected error message: {}",
                 error.message()
+            );
+        }
+
+        #[test]
+        fn s3_plugin_manifest_rejects_chunk_keys_outside_mount_prefix() {
+            let server = MockS3Server::start();
+            let manifest = PersistedFilesystemManifest {
+                format: String::from(MANIFEST_FORMAT),
+                path_index: BTreeMap::from([
+                    (String::from("/"), 1),
+                    (String::from("/escaped.bin"), 2),
+                ]),
+                inodes: BTreeMap::from([
+                    (
+                        1,
+                        PersistedFilesystemInode {
+                            metadata: snapshot_metadata(1, 0o040755),
+                            kind: PersistedFilesystemInodeKind::Directory,
+                        },
+                    ),
+                    (
+                        2,
+                        PersistedFilesystemInode {
+                            metadata: snapshot_metadata(2, 0o100644),
+                            kind: PersistedFilesystemInodeKind::File {
+                                storage: PersistedFileStorage::Chunked {
+                                    size: 4,
+                                    chunks: vec![PersistedChunkRef {
+                                        index: 0,
+                                        key: String::from("outside-prefix/blocks/2/0"),
+                                    }],
+                                },
+                            },
+                        },
+                    ),
+                ]),
+                next_ino: 3,
+            };
+            server.put_object(
+                "test-bucket/safe-prefix/filesystem-manifest.json",
+                serde_json::to_vec(&manifest).expect("serialize escaped manifest"),
+            );
+            server.put_object("test-bucket/outside-prefix/blocks/2/0", b"evil".to_vec());
+
+            let error = match S3BackedFilesystem::from_config(test_config(&server, "safe-prefix")) {
+                Ok(_) => panic!("escaped chunk key should be rejected"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code(), "EINVAL");
+            assert!(
+                error.message().contains("outside mount prefix"),
+                "unexpected error message: {}",
+                error.message()
+            );
+            assert!(
+                server
+                    .object_keys()
+                    .contains(&String::from("test-bucket/outside-prefix/blocks/2/0")),
+                "escaped chunk object should not be deleted as a stale safe-prefix chunk"
             );
         }
 
