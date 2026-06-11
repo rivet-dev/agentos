@@ -6,6 +6,7 @@ use std::sync::Once;
 use crate::ipc::ExecutionError;
 
 static V8_INIT: Once = Once::new();
+const MAX_UNHANDLED_PROMISE_REJECTIONS: usize = 1024;
 
 #[repr(align(16))]
 struct AlignedBytes<const N: usize>([u8; N]);
@@ -17,6 +18,43 @@ static ICU_COMMON_DATA: AlignedBytes<
 #[derive(Default)]
 pub struct PromiseRejectState {
     pub unhandled: HashMap<i32, ExecutionError>,
+    overflow_count: usize,
+}
+
+impl PromiseRejectState {
+    fn record_unhandled(&mut self, promise_id: i32, error: ExecutionError) {
+        if self.unhandled.contains_key(&promise_id) {
+            self.unhandled.insert(promise_id, error);
+            return;
+        }
+        if self.unhandled.len() < MAX_UNHANDLED_PROMISE_REJECTIONS {
+            self.unhandled.insert(promise_id, error);
+            return;
+        }
+        self.overflow_count = self.overflow_count.saturating_add(1);
+    }
+
+    fn mark_handled(&mut self, promise_id: i32) {
+        if self.unhandled.remove(&promise_id).is_none() && self.overflow_count > 0 {
+            self.overflow_count -= 1;
+        }
+    }
+
+    pub fn take_next_unhandled(&mut self) -> Option<ExecutionError> {
+        if self.overflow_count > 0 {
+            self.overflow_count = 0;
+            self.unhandled.clear();
+            return Some(ExecutionError {
+                error_type: "Error".into(),
+                message: format!(
+                    "unhandled promise rejection registry exceeded limit of {MAX_UNHANDLED_PROMISE_REJECTIONS} rejections"
+                ),
+                stack: String::new(),
+                code: Some("ERR_AGENT_OS_UNHANDLED_REJECTION_LIMIT".into()),
+            });
+        }
+        self.unhandled.drain().next().map(|(_, err)| err)
+    }
 }
 
 extern "C" fn promise_reject_callback(msg: v8::PromiseRejectMessage) {
@@ -32,12 +70,12 @@ extern "C" fn promise_reject_callback(msg: v8::PromiseRejectMessage) {
                 crate::execution::extract_error_info(scope, value)
             };
             if let Some(state) = scope.get_slot_mut::<PromiseRejectState>() {
-                state.unhandled.insert(promise_id, error);
+                state.record_unhandled(promise_id, error);
             }
         }
         v8::PromiseRejectEvent::PromiseHandlerAddedAfterReject => {
             if let Some(state) = scope.get_slot_mut::<PromiseRejectState>() {
-                state.unhandled.remove(&promise_id);
+                state.mark_handled(promise_id);
             }
         }
         _ => {}
