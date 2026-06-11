@@ -40,6 +40,7 @@ pub const ALGORITHM_OPTIONS_BLAKE3: &str = "blake3";
 pub const ALGORITHM_OPTIONS_SM3: &str = "sm3";
 pub const ALGORITHM_OPTIONS_SHAKE128: &str = "shake128";
 pub const ALGORITHM_OPTIONS_SHAKE256: &str = "shake256";
+pub const MAX_SHAKE_OUTPUT_BITS: usize = 8 * 1024 * 1024;
 
 pub const SUPPORTED_ALGORITHMS: [&str; 17] = [
     ALGORITHM_OPTIONS_SYSV,
@@ -283,6 +284,20 @@ impl SizedAlgoKind {
             (ak::Sha1, _) => Ok(Self::Sha1),
             (ak::Blake3, _) => Ok(Self::Blake3),
 
+            (ak::Shake128, Some(l)) if l > MAX_SHAKE_OUTPUT_BITS => {
+                show_error!("{}", ChecksumError::InvalidLength(l.to_string()));
+                Err(
+                    ChecksumError::LengthTooBigForShake("SHAKE128".into(), MAX_SHAKE_OUTPUT_BITS)
+                        .into(),
+                )
+            }
+            (ak::Shake256, Some(l)) if l > MAX_SHAKE_OUTPUT_BITS => {
+                show_error!("{}", ChecksumError::InvalidLength(l.to_string()));
+                Err(
+                    ChecksumError::LengthTooBigForShake("SHAKE256".into(), MAX_SHAKE_OUTPUT_BITS)
+                        .into(),
+                )
+            }
             (ak::Shake128, l) => Ok(Self::Shake128(l)),
             (ak::Shake256, l) => Ok(Self::Shake256(l)),
             (ak::Sha2, Some(l)) => Ok(Self::Sha2(ShaLength::try_from(l)?)),
@@ -292,9 +307,15 @@ impl SizedAlgoKind {
             }
             // [`calculate_blake2b_length`] expects a length in bits but we
             // have a length in bytes.
-            (ak::Blake2b, Some(l)) => Ok(Self::Blake2b(calculate_blake2b_length_str(
-                &(8 * l).to_string(),
-            )?)),
+            (ak::Blake2b, Some(l)) => {
+                let bit_length = l.checked_mul(8).ok_or_else(|| {
+                    show_error!("{}", ChecksumError::InvalidLength(l.to_string()));
+                    ChecksumError::LengthTooBigForBlake("BLAKE2b".into())
+                })?;
+                Ok(Self::Blake2b(calculate_blake2b_length_str(
+                    &bit_length.to_string(),
+                )?))
+            }
             (ak::Blake2b, None) => Ok(Self::Blake2b(None)),
 
             (ak::Sha224, None) => Ok(Self::Sha2(ShaLength::Len224)),
@@ -390,6 +411,8 @@ pub enum ChecksumError {
     InvalidLength(String),
     #[error("maximum digest length for {} is 512 bits", .0.quote())]
     LengthTooBigForBlake(String),
+    #[error("maximum digest length for {} is {} bits", .0.quote(), .1)]
+    LengthTooBigForShake(String, usize),
     #[error("length is not a multiple of 8")]
     LengthNotMultipleOf8,
     #[error("digest length for {} must be 224, 256, 384, or 512", .0.quote())]
@@ -629,5 +652,23 @@ mod tests {
         assert!(calculate_blake2b_length_str("520").is_err());
         assert_eq!(calculate_blake2b_length_str("512").unwrap(), None);
         assert_eq!(calculate_blake2b_length_str("256").unwrap(), Some(32));
+    }
+
+    #[test]
+    fn test_blake2b_byte_length_overflow_is_rejected() {
+        let overflowing_length = usize::MAX / 8 + 1;
+        let err = SizedAlgoKind::from_unsized(AlgoKind::Blake2b, Some(overflowing_length))
+            .expect_err("overflowing byte length should be rejected");
+        assert!(err.to_string().contains("BLAKE2b"));
+    }
+
+    #[test]
+    fn test_shake_output_length_is_bounded() {
+        assert!(
+            SizedAlgoKind::from_unsized(AlgoKind::Shake128, Some(MAX_SHAKE_OUTPUT_BITS)).is_ok()
+        );
+        let err = SizedAlgoKind::from_unsized(AlgoKind::Shake256, Some(MAX_SHAKE_OUTPUT_BITS + 1))
+            .expect_err("oversized SHAKE output length should be rejected");
+        assert!(err.to_string().contains("SHAKE256"));
     }
 }
