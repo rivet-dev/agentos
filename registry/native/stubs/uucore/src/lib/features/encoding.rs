@@ -493,6 +493,7 @@ impl SupportsFastDecodeAndEncode for EncodingWrapper {
                 output.truncate(output_len + us);
             }
             Err(_de) => {
+                output.truncate(output_len);
                 return Err(USimpleError::new(1, "error: invalid input"));
             }
         }
@@ -597,5 +598,22 @@ impl SupportsFastDecodeAndEncode for Base32Wrapper {
 
     fn supports_partial_decode(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use data_encoding::BASE32;
+
+    #[test]
+    fn encoding_wrapper_decode_error_preserves_existing_output() {
+        let wrapper = EncodingWrapper::new(BASE32, 8, 5, b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567");
+        let mut output = vec![b'x'];
+
+        let result = wrapper.decode_into_vec(b"!!!!", &mut output);
+
+        assert!(result.is_err());
+        assert_eq!(output, b"x");
     }
 }
