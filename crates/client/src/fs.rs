@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 
 use agent_os_sidecar::protocol::{
@@ -656,7 +656,7 @@ impl AgentOs {
         recursive: bool,
     ) -> futures::future::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let stat = self.kernel_stat(path).await?;
+            let stat = self.kernel_lstat(path).await?;
             if stat.is_directory {
                 if recursive {
                     let entries = self.kernel_readdir(path).await?;
@@ -798,7 +798,7 @@ impl AgentOs {
                     continue;
                 }
                 let full_path = Self::join_child(&dir_path, &name);
-                let s = self.kernel_stat(&full_path).await?;
+                let s = self.kernel_lstat(&full_path).await?;
                 if s.is_symbolic_link {
                     results.push(DirEntry {
                         path: full_path,
@@ -918,7 +918,7 @@ impl AgentOs {
         self.delete(from, DeleteOptions { recursive: true }).await
     }
 
-    /// Delete a path. `stat` to discriminate; recursive manually recurses children then `remove_dir`;
+    /// Delete a path. `lstat` to discriminate; recursive manually recurses children then `remove_dir`;
     /// non-recursive dir -> `remove_dir` (ENOTEMPTY if non-empty).
     pub async fn delete(&self, path: &str, options: DeleteOptions) -> Result<()> {
         Self::assert_writable_absolute_path(path)?;
