@@ -1,6 +1,7 @@
 use agent_os_kernel::command_registry::CommandDriver;
 use agent_os_kernel::kernel::{KernelProcessHandle, KernelVm, KernelVmConfig, SpawnOptions};
 use agent_os_kernel::permissions::Permissions;
+use agent_os_kernel::resource_accounting::ResourceLimits;
 use agent_os_kernel::socket_table::{InetSocketAddress, SocketSpec, SocketState};
 use agent_os_kernel::vfs::MemoryFileSystem;
 
@@ -170,6 +171,84 @@ fn kernel_loopback_connect_matches_wildcard_listener_bindings() {
 }
 
 #[test]
+fn kernel_loopback_tcp_delivery_respects_receive_buffer_limit() {
+    let mut config = KernelVmConfig::new("vm-loopback-tcp-buffer-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_socket_buffered_bytes: Some(5),
+        ..ResourceLimits::default()
+    };
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+    let server = spawn_shell(&mut kernel);
+    let client = spawn_shell(&mut kernel);
+
+    let listener = kernel
+        .socket_create("shell", server.pid(), SocketSpec::tcp())
+        .expect("create listener");
+    kernel
+        .socket_bind_inet(
+            "shell",
+            server.pid(),
+            listener,
+            InetSocketAddress::new("127.0.0.1", 43136),
+        )
+        .expect("bind listener");
+    kernel
+        .socket_listen("shell", server.pid(), listener, 1)
+        .expect("listen");
+
+    let client_socket = kernel
+        .socket_create("shell", client.pid(), SocketSpec::tcp())
+        .expect("create client socket");
+    kernel
+        .socket_bind_inet(
+            "shell",
+            client.pid(),
+            client_socket,
+            InetSocketAddress::new("127.0.0.1", 54036),
+        )
+        .expect("bind client");
+    kernel
+        .socket_connect_inet_loopback(
+            "shell",
+            client.pid(),
+            client_socket,
+            InetSocketAddress::new("127.0.0.1", 43136),
+        )
+        .expect("connect loopback client");
+    let accepted = kernel
+        .socket_accept("shell", server.pid(), listener)
+        .expect("accept loopback connection");
+
+    kernel
+        .socket_write("shell", client.pid(), client_socket, b"12345")
+        .expect("fill receive buffer");
+    let error = kernel
+        .socket_write("shell", client.pid(), client_socket, b"6")
+        .expect_err("extra stream byte should exceed receive buffer limit");
+    assert_eq!(error.code(), "EAGAIN");
+    assert_eq!(
+        kernel
+            .socket_get(accepted)
+            .expect("accepted stream")
+            .buffered_read_bytes(),
+        5
+    );
+
+    let drained = kernel
+        .socket_read("shell", server.pid(), accepted, 5)
+        .expect("drain receive buffer")
+        .expect("stream payload");
+    assert_eq!(drained, b"12345");
+    kernel
+        .socket_write("shell", client.pid(), client_socket, b"6")
+        .expect("write succeeds after draining receive buffer");
+}
+
+#[test]
 fn kernel_loopback_stream_bind_rejects_wildcard_after_loopback_specific() {
     let mut kernel = new_kernel("vm-loopback-bind-specific-first");
     let server = spawn_shell(&mut kernel);
@@ -328,4 +407,86 @@ fn kernel_loopback_udp_delivery_stays_within_socket_table() {
             .queued_datagrams(),
         0
     );
+}
+
+#[test]
+fn kernel_loopback_udp_delivery_respects_datagram_queue_limit() {
+    let mut config = KernelVmConfig::new("vm-loopback-udp-queue-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_socket_datagram_queue_len: Some(1),
+        ..ResourceLimits::default()
+    };
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+    let sender = spawn_shell(&mut kernel);
+    let receiver = spawn_shell(&mut kernel);
+
+    let sender_socket = kernel
+        .socket_create("shell", sender.pid(), SocketSpec::udp())
+        .expect("create sender socket");
+    kernel
+        .socket_bind_inet(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 54042),
+        )
+        .expect("bind sender");
+
+    let receiver_socket = kernel
+        .socket_create("shell", receiver.pid(), SocketSpec::udp())
+        .expect("create receiver socket");
+    kernel
+        .socket_bind_inet(
+            "shell",
+            receiver.pid(),
+            receiver_socket,
+            InetSocketAddress::new("127.0.0.1", 43142),
+        )
+        .expect("bind receiver");
+
+    kernel
+        .socket_send_to_inet_loopback(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 43142),
+            b"one",
+        )
+        .expect("send first datagram");
+    let error = kernel
+        .socket_send_to_inet_loopback(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 43142),
+            b"two",
+        )
+        .expect_err("second datagram should exceed queue limit");
+    assert_eq!(error.code(), "EAGAIN");
+    assert_eq!(
+        kernel
+            .socket_get(receiver_socket)
+            .expect("receiver socket")
+            .queued_datagrams(),
+        1
+    );
+
+    let datagram = kernel
+        .socket_recv_datagram("shell", receiver.pid(), receiver_socket, 16)
+        .expect("receive datagram")
+        .expect("datagram payload");
+    assert_eq!(datagram.payload(), b"one");
+    kernel
+        .socket_send_to_inet_loopback(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 43142),
+            b"two",
+        )
+        .expect("send succeeds after draining datagram queue");
 }
