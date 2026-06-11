@@ -5,16 +5,16 @@
 // spell-checker:ignore bigdecimal prec cppreference
 //! Utilities for formatting numbers in various formats
 
-use bigdecimal::BigDecimal;
 use bigdecimal::num_bigint::ToBigInt;
+use bigdecimal::BigDecimal;
 use num_traits::Signed;
 use num_traits::Zero;
 use std::cmp::min;
 use std::io::Write;
 
 use super::{
-    ExtendedBigDecimal, FormatError,
     spec::{CanAsterisk, Spec},
+    ExtendedBigDecimal, FormatError,
 };
 
 pub trait Formatter<T> {
@@ -82,13 +82,19 @@ impl Formatter<i64> for SignedInt {
     fn fmt(&self, writer: impl Write, x: i64) -> std::io::Result<()> {
         // -i64::MIN is actually 1 larger than i64::MAX, so we need to cast to i128 first.
         let abs = (x as i128).abs();
+        let raw = abs.to_string();
+        let sign_indicator = get_sign_indicator(self.positive_sign, x.is_negative());
+        checked_format_size(
+            self.precision
+                .max(raw.len())
+                .checked_add(sign_indicator.len()),
+        )?;
+
         let s = if self.precision > 0 {
             format!("{abs:0>width$}", width = self.precision)
         } else {
-            abs.to_string()
+            raw
         };
-
-        let sign_indicator = get_sign_indicator(self.positive_sign, x.is_negative());
 
         write_output(writer, sign_indicator, s, self.width, self.alignment)
     }
@@ -153,6 +159,7 @@ impl Formatter<u64> for UnsignedInt {
             _ => "",
         };
 
+        checked_format_size(self.precision.max(s.len()).checked_add(prefix.len()))?;
         s = format!("{prefix}{s:0>width$}", width = self.precision);
         write_output(writer, String::new(), s, self.width, self.alignment)
     }
@@ -239,6 +246,8 @@ impl Default for Float {
 
 impl Formatter<&ExtendedBigDecimal> for Float {
     fn fmt(&self, writer: impl Write, e: &ExtendedBigDecimal) -> std::io::Result<()> {
+        check_float_bounds(e, self.variant, self.precision, self.force_decimal)?;
+
         /* TODO: Might be nice to implement Signed trait for ExtendedBigDecimal (for abs)
          * at some point, but that requires implementing a _lot_ of traits.
          * Note that "negative" would be the output of "is_sign_negative" on a f64:
@@ -324,6 +333,262 @@ impl Formatter<&ExtendedBigDecimal> for Float {
             precision,
         })
     }
+}
+
+fn check_precision(precision: usize) -> std::io::Result<()> {
+    super::check_width(precision)
+}
+
+fn checked_format_size(size: Option<usize>) -> std::io::Result<()> {
+    super::check_width(size.unwrap_or(usize::MAX))
+}
+
+fn check_float_bounds(
+    e: &ExtendedBigDecimal,
+    variant: FloatVariant,
+    precision: Option<usize>,
+    force_decimal: ForceDecimal,
+) -> std::io::Result<()> {
+    let ExtendedBigDecimal::BigDecimal(bd) = e else {
+        return Ok(());
+    };
+
+    let Some(precision) = precision else {
+        return match variant {
+            FloatVariant::Decimal => check_decimal_float_size(bd, 6, force_decimal),
+            FloatVariant::Hexadecimal => check_hexadecimal_float_size(bd, 15),
+            FloatVariant::Scientific => check_scientific_float_size(bd, 6, force_decimal),
+            FloatVariant::Shortest => check_shortest_float_size(bd, 6, force_decimal),
+        };
+    };
+
+    if bd.is_zero()
+        && matches!(variant, FloatVariant::Shortest)
+        && force_decimal == ForceDecimal::No
+    {
+        return Ok(());
+    }
+
+    check_precision(precision)?;
+    match variant {
+        FloatVariant::Decimal => {
+            check_decimal_float_size(bd, precision, force_decimal)?;
+        }
+        FloatVariant::Scientific => {
+            check_scientific_float_size(bd, precision, force_decimal)?;
+        }
+        FloatVariant::Shortest => {
+            check_shortest_float_size(bd, precision.max(1), force_decimal)?;
+        }
+        FloatVariant::Hexadecimal => {
+            check_hexadecimal_float_size(bd, precision)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn checked_add(left: usize, right: usize) -> Option<usize> {
+    left.checked_add(right)
+}
+
+fn decimal_digit_count(mut value: usize) -> usize {
+    let mut count = 1;
+    while value >= 10 {
+        value /= 10;
+        count += 1;
+    }
+    count
+}
+
+fn exponent_suffix_bound(bd: &BigDecimal, min_exponent_digits: usize) -> Option<usize> {
+    let (digits, scale) = bd.as_bigint_and_scale();
+    if digits.is_zero() {
+        return 2usize.checked_add(min_exponent_digits);
+    }
+
+    let digit_count = digits.abs().to_str_radix(10).len();
+    let scale_magnitude = usize::try_from(scale.unsigned_abs()).ok()?;
+    let exponent_magnitude = digit_count.checked_add(scale_magnitude)?.checked_add(1)?;
+    2usize.checked_add(decimal_digit_count(exponent_magnitude).max(min_exponent_digits))
+}
+
+fn decimal_exponent_estimate(bd: &BigDecimal) -> Option<i128> {
+    let (digits, scale) = bd.as_bigint_and_scale();
+    if digits.is_zero() {
+        return Some(0);
+    }
+
+    let digit_count = i128::try_from(digits.abs().to_str_radix(10).len()).ok()?;
+    Some(digit_count - i128::from(scale) - 1)
+}
+
+fn rounded_digit_bound(bd: &BigDecimal, precision: usize) -> Option<usize> {
+    let (digits, scale) = bd.as_bigint_and_scale();
+    let digit_count = if scale < 0 {
+        let extra_digits = usize::try_from(scale.unsigned_abs()).ok()?;
+        digits
+            .abs()
+            .to_str_radix(10)
+            .len()
+            .checked_add(extra_digits)?
+    } else {
+        digits.abs().to_str_radix(10).len()
+    };
+    Some(precision.min(digit_count.checked_add(1)?))
+}
+
+fn checked_i128_to_usize(value: i128) -> Option<usize> {
+    usize::try_from(value).ok()
+}
+
+fn check_scientific_float_size(
+    bd: &BigDecimal,
+    precision: usize,
+    force_decimal: ForceDecimal,
+) -> std::io::Result<()> {
+    let dot_len = if precision > 0 || force_decimal == ForceDecimal::Yes {
+        1
+    } else {
+        0
+    };
+    if bd.is_zero() {
+        let size = checked_add(1, precision)
+            .and_then(|size| checked_add(size, dot_len))
+            .and_then(|size| checked_add(size, 4));
+        return checked_format_size(size);
+    }
+
+    check_scale_magnitude(bd)?;
+
+    let suffix_len = exponent_suffix_bound(bd, 2);
+    let size = checked_add(1, precision)
+        .and_then(|size| checked_add(size, dot_len))
+        .and_then(|size| checked_add(size, suffix_len?));
+    checked_format_size(size)
+}
+
+fn check_shortest_float_size(
+    bd: &BigDecimal,
+    precision: usize,
+    force_decimal: ForceDecimal,
+) -> std::io::Result<()> {
+    if bd.is_zero() {
+        return if force_decimal == ForceDecimal::Yes {
+            checked_format_size(precision.checked_add(1))
+        } else {
+            Ok(())
+        };
+    }
+
+    check_scale_magnitude(bd)?;
+
+    if let Some(exponent) = decimal_exponent_estimate(bd) {
+        let precision_i128 = i128::try_from(precision).ok();
+        let digit_bound = if force_decimal == ForceDecimal::Yes {
+            Some(precision)
+        } else {
+            rounded_digit_bound(bd, precision)
+        };
+        let split = checked_i128_to_usize(exponent.saturating_add(1));
+        let decimal_form = exponent >= -4
+            && precision_i128.is_some_and(|precision| exponent < precision)
+            && (precision_i128.is_some_and(|precision| exponent.saturating_add(1) < precision)
+                || (force_decimal == ForceDecimal::No
+                    && digit_bound
+                        .zip(split)
+                        .is_some_and(|(digit_bound, split)| digit_bound <= split)));
+
+        if decimal_form {
+            let size = if exponent < 0 {
+                checked_i128_to_usize(-exponent)
+                    .and_then(|zero_count| checked_add(1, zero_count))
+                    .and_then(|size| checked_add(size, digit_bound?))
+            } else {
+                digit_bound.and_then(|digit_bound| {
+                    if force_decimal == ForceDecimal::No
+                        && split.is_some_and(|split| digit_bound <= split)
+                    {
+                        Some(digit_bound)
+                    } else {
+                        digit_bound.checked_add(1)
+                    }
+                })
+            };
+            return checked_format_size(size);
+        }
+    }
+
+    let suffix_len = exponent_suffix_bound(bd, 2);
+    let size = checked_add(precision, 1).and_then(|size| checked_add(size, suffix_len?));
+    checked_format_size(size)
+}
+
+fn check_decimal_float_size(
+    bd: &BigDecimal,
+    precision: usize,
+    force_decimal: ForceDecimal,
+) -> std::io::Result<()> {
+    let (digits, scale) = bd.as_bigint_and_scale();
+    if digits.is_zero() {
+        return checked_format_size(checked_add(
+            1,
+            if precision > 0 || force_decimal == ForceDecimal::Yes {
+                precision.checked_add(1).unwrap_or(usize::MAX)
+            } else {
+                0
+            },
+        ));
+    }
+
+    let digit_count = digits.abs().to_str_radix(10).len();
+    let integral_digits = if scale < 0 {
+        let extra_digits = usize::try_from(scale.unsigned_abs()).unwrap_or(usize::MAX);
+        digit_count.checked_add(extra_digits).unwrap_or(usize::MAX)
+    } else {
+        let fractional_digits = usize::try_from(scale).unwrap_or(usize::MAX);
+        digit_count.saturating_sub(fractional_digits).max(1)
+    };
+
+    let fractional_output = if precision > 0 || force_decimal == ForceDecimal::Yes {
+        precision.checked_add(1).unwrap_or(usize::MAX)
+    } else {
+        0
+    };
+    checked_format_size(integral_digits.checked_add(fractional_output))
+}
+
+fn check_hexadecimal_float_size(bd: &BigDecimal, precision: usize) -> std::io::Result<()> {
+    if bd.is_zero() {
+        return checked_format_size(precision.checked_add(7));
+    }
+
+    check_scale_magnitude(bd)?;
+
+    let suffix_len = hexadecimal_exponent_suffix_bound(bd);
+    let size = checked_add(precision, 4).and_then(|size| checked_add(size, suffix_len?));
+    checked_format_size(size)
+}
+
+fn check_scale_magnitude(bd: &BigDecimal) -> std::io::Result<()> {
+    let (_digits, scale) = bd.as_bigint_and_scale();
+    let scale_magnitude = usize::try_from(scale.unsigned_abs()).unwrap_or(usize::MAX);
+    checked_format_size(Some(scale_magnitude))
+}
+
+fn hexadecimal_exponent_suffix_bound(bd: &BigDecimal) -> Option<usize> {
+    let (digits, scale) = bd.as_bigint_and_scale();
+    if digits.is_zero() {
+        return Some(3);
+    }
+
+    let digit_count = digits.abs().to_str_radix(10).len();
+    let scale_magnitude = usize::try_from(scale.unsigned_abs()).ok()?;
+    let binary_exponent_magnitude = digit_count
+        .checked_add(scale_magnitude)?
+        .checked_add(1)?
+        .checked_mul(4)?;
+    2usize.checked_add(decimal_digit_count(binary_exponent_magnitude).max(1))
 }
 
 fn get_sign_indicator(sign: PositiveSign, negative: bool) -> String {
@@ -741,8 +1006,8 @@ mod test {
     use std::str::FromStr;
 
     use crate::format::{
-        ExtendedBigDecimal, Format,
         num_format::{Case, Float, ForceDecimal, UnsignedInt},
+        ExtendedBigDecimal, Format,
     };
 
     use super::{Formatter, SignedInt};
@@ -766,6 +1031,249 @@ mod test {
         assert_eq!(f(0), "0");
         assert_eq!(f(5), "05");
         assert_eq!(f(8), "010");
+    }
+
+    #[test]
+    fn numeric_formatters_reject_oversized_precision() {
+        use std::io::ErrorKind;
+
+        use super::{FloatVariant, NumberAlignment, Prefix, UnsignedInt, UnsignedIntVariant};
+
+        let oversized_precision = 1_000_001;
+        let assert_out_of_memory = |result: std::io::Result<()>| {
+            assert_eq!(ErrorKind::OutOfMemory, result.unwrap_err().kind());
+        };
+
+        let mut output = Vec::new();
+        assert_out_of_memory(
+            SignedInt {
+                width: 0,
+                precision: oversized_precision,
+                positive_sign: super::PositiveSign::None,
+                alignment: NumberAlignment::Left,
+            }
+            .fmt(&mut output, 1),
+        );
+
+        output.clear();
+        assert_out_of_memory(
+            SignedInt {
+                width: 0,
+                precision: 1_000_000,
+                positive_sign: super::PositiveSign::None,
+                alignment: NumberAlignment::Left,
+            }
+            .fmt(&mut output, -1),
+        );
+
+        output.clear();
+        assert_out_of_memory(
+            UnsignedInt {
+                variant: UnsignedIntVariant::Octal(Prefix::No),
+                width: 0,
+                precision: oversized_precision,
+                alignment: NumberAlignment::Left,
+            }
+            .fmt(&mut output, 1),
+        );
+
+        output.clear();
+        assert_out_of_memory(
+            UnsignedInt {
+                variant: UnsignedIntVariant::Hexadecimal(Case::Lowercase, Prefix::Yes),
+                width: 0,
+                precision: 999_999,
+                alignment: NumberAlignment::Left,
+            }
+            .fmt(&mut output, 1),
+        );
+
+        output.clear();
+        assert_out_of_memory(
+            Float {
+                variant: FloatVariant::Decimal,
+                precision: Some(oversized_precision),
+                ..Float::default()
+            }
+            .fmt(&mut output, &ExtendedBigDecimal::one()),
+        );
+
+        output.clear();
+        assert_out_of_memory(
+            Float {
+                variant: FloatVariant::Hexadecimal,
+                precision: Some(oversized_precision),
+                ..Float::default()
+            }
+            .fmt(&mut output, &ExtendedBigDecimal::one()),
+        );
+    }
+
+    #[test]
+    fn float_bounds_allow_non_finite_values_with_oversized_precision() {
+        use super::FloatVariant;
+
+        let mut output = Vec::new();
+        Float {
+            variant: FloatVariant::Decimal,
+            precision: Some(1_000_001),
+            ..Float::default()
+        }
+        .fmt(&mut output, &ExtendedBigDecimal::Infinity)
+        .unwrap();
+
+        assert_eq!("inf", String::from_utf8(output).unwrap());
+    }
+
+    #[test]
+    fn shortest_zero_allows_ignored_oversized_precision() {
+        use super::FloatVariant;
+
+        let mut output = Vec::new();
+        Float {
+            variant: FloatVariant::Shortest,
+            precision: Some(1_000_001),
+            ..Float::default()
+        }
+        .fmt(&mut output, &ExtendedBigDecimal::zero())
+        .unwrap();
+
+        assert_eq!(b"0", output.as_slice());
+    }
+
+    #[test]
+    fn float_bounds_include_exponent_overhead() {
+        use std::io::ErrorKind;
+
+        use super::FloatVariant;
+
+        let mut output = Vec::new();
+        let assert_out_of_memory = |result: std::io::Result<()>| {
+            assert_eq!(ErrorKind::OutOfMemory, result.unwrap_err().kind());
+        };
+
+        Float {
+            variant: FloatVariant::Scientific,
+            precision: Some(999_980),
+            ..Float::default()
+        }
+        .fmt(&mut output, &ExtendedBigDecimal::one())
+        .unwrap();
+        assert!(output.len() < 1_000_000);
+
+        output.clear();
+        assert_out_of_memory(
+            Float {
+                variant: FloatVariant::Scientific,
+                precision: Some(999_995),
+                ..Float::default()
+            }
+            .fmt(&mut output, &ExtendedBigDecimal::one()),
+        );
+
+        output.clear();
+        Float {
+            variant: FloatVariant::Shortest,
+            precision: Some(999_996),
+            ..Float::default()
+        }
+        .fmt(&mut output, &ExtendedBigDecimal::one())
+        .unwrap();
+        assert_eq!(b"1", output.as_slice());
+
+        output.clear();
+        let exact_cap_integral =
+            ExtendedBigDecimal::BigDecimal(BigDecimal::from_bigint(1.into(), -999_999));
+        Float {
+            variant: FloatVariant::Shortest,
+            precision: Some(1_000_000),
+            ..Float::default()
+        }
+        .fmt(&mut output, &exact_cap_integral)
+        .unwrap();
+        assert_eq!(1_000_000, output.len());
+
+        output.clear();
+        assert_out_of_memory(
+            Float {
+                variant: FloatVariant::Shortest,
+                precision: Some(1_000_000),
+                force_decimal: ForceDecimal::Yes,
+                ..Float::default()
+            }
+            .fmt(&mut output, &ExtendedBigDecimal::one()),
+        );
+    }
+
+    #[test]
+    fn hexadecimal_float_precision_uses_output_width_bound() {
+        use super::FloatVariant;
+
+        let mut output = Vec::new();
+        Float {
+            variant: FloatVariant::Hexadecimal,
+            precision: Some(999_990),
+            ..Float::default()
+        }
+        .fmt(&mut output, &ExtendedBigDecimal::one())
+        .unwrap();
+
+        assert!(output.len() < 1_000_000);
+
+        output.clear();
+        assert_eq!(
+            std::io::ErrorKind::OutOfMemory,
+            Float {
+                variant: FloatVariant::Hexadecimal,
+                precision: Some(999_994),
+                ..Float::default()
+            }
+            .fmt(&mut output, &ExtendedBigDecimal::zero())
+            .unwrap_err()
+            .kind()
+        );
+    }
+
+    #[test]
+    fn exponent_float_variants_reject_extreme_scale() {
+        use std::io::ErrorKind;
+
+        use super::FloatVariant;
+
+        let huge_scale_zero =
+            ExtendedBigDecimal::BigDecimal(BigDecimal::from_bigint(0.into(), 1_000_001));
+        let mut output = Vec::new();
+        Float {
+            variant: FloatVariant::Scientific,
+            ..Float::default()
+        }
+        .fmt(&mut output, &huge_scale_zero)
+        .unwrap();
+        assert_eq!(b"0.000000e+00", output.as_slice());
+
+        let huge_scale =
+            ExtendedBigDecimal::BigDecimal(BigDecimal::from_bigint(1.into(), 1_000_001));
+        output.clear();
+        let assert_out_of_memory = |result: std::io::Result<()>| {
+            assert_eq!(ErrorKind::OutOfMemory, result.unwrap_err().kind());
+        };
+
+        assert_out_of_memory(
+            Float {
+                variant: FloatVariant::Scientific,
+                ..Float::default()
+            }
+            .fmt(&mut output, &huge_scale),
+        );
+
+        output.clear();
+        assert_out_of_memory(
+            Float {
+                variant: FloatVariant::Shortest,
+                ..Float::default()
+            }
+            .fmt(&mut output, &huge_scale),
+        );
     }
 
     #[test]
