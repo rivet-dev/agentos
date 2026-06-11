@@ -7,8 +7,8 @@ use agent_os_kernel::vfs::{
     MemoryFileSystemSnapshotInodeKind, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem,
     VirtualStat,
 };
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -117,7 +117,9 @@ impl GoogleDriveBackedFilesystem {
         )?;
 
         let (inner, chunk_keys) = match store.load_manifest(&manifest_key)? {
-            Some(manifest_bytes) => load_filesystem_from_manifest(&mut store, &manifest_bytes)?,
+            Some(manifest_bytes) => {
+                load_filesystem_from_manifest(&mut store, &manifest_bytes, &chunk_key_prefix)?
+            }
             None => (MemoryFileSystem::new(), BTreeSet::new()),
         };
 
@@ -780,6 +782,7 @@ fn persist_manifest_from_snapshot(
 fn load_filesystem_from_manifest(
     store: &mut GoogleDriveObjectStore,
     manifest_bytes: &[u8],
+    chunk_key_prefix: &str,
 ) -> Result<(MemoryFileSystem, BTreeSet<String>), PluginError> {
     let manifest: PersistedFilesystemManifest =
         serde_json::from_slice(manifest_bytes).map_err(|error| {
@@ -813,6 +816,7 @@ fn load_filesystem_from_manifest(
                         let expected_size = validate_manifest_file_size(size, "google drive", ino)?;
                         let mut data = Vec::with_capacity(expected_size);
                         for chunk in chunks {
+                            validate_manifest_chunk_key(&chunk.key, chunk_key_prefix, ino)?;
                             let remaining = expected_size.saturating_sub(data.len());
                             if remaining == 0 {
                                 return Err(PluginError::invalid_input(format!(
@@ -869,6 +873,20 @@ fn load_filesystem_from_manifest(
         }),
         chunk_keys,
     ))
+}
+
+fn validate_manifest_chunk_key(
+    key: &str,
+    chunk_key_prefix: &str,
+    ino: u64,
+) -> Result<(), PluginError> {
+    if key.starts_with(chunk_key_prefix) {
+        return Ok(());
+    }
+
+    Err(PluginError::invalid_input(format!(
+        "google drive manifest inode {ino} references chunk outside mount prefix"
+    )))
 }
 
 fn validate_manifest_file_size(size: u64, backend: &str, ino: u64) -> Result<usize, PluginError> {
@@ -1049,7 +1067,9 @@ fn now_unix_seconds() -> u64 {
 }
 
 fn read_response_bytes(response: ureq::Response, max_bytes: usize) -> std::io::Result<Vec<u8>> {
-    let mut reader = response.into_reader().take(max_bytes.saturating_add(1) as u64);
+    let mut reader = response
+        .into_reader()
+        .take(max_bytes.saturating_add(1) as u64);
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
     if bytes.len() > max_bytes {

@@ -312,13 +312,9 @@ oFnGY0OFksX/ye0/XGpy2SFxYRwGU98HPYeBvAQQrVjdkzfy7BmXQQ==\n\
             validate_inline_manifest_data_size_with_limit("AAAAAA==", "google drive", 6, 4)
                 .expect("padded inline data at the limit should be accepted");
 
-            let error = validate_inline_manifest_data_size_with_limit(
-                "AAAAAAAAAAAA",
-                "google drive",
-                7,
-                8,
-            )
-            .expect_err("inline data estimate should be bounded");
+            let error =
+                validate_inline_manifest_data_size_with_limit("AAAAAAAAAAAA", "google drive", 7, 8)
+                    .expect_err("inline data estimate should be bounded");
 
             assert_eq!(error.code(), "EINVAL");
             assert!(
@@ -384,7 +380,11 @@ oFnGY0OFksX/ye0/XGpy2SFxYRwGU98HPYeBvAQQrVjdkzfy7BmXQQ==\n\
                 "folder-123",
                 serde_json::to_vec(&manifest).expect("serialize malicious manifest"),
             );
-            server.insert_file("chunk-overflow/blocks/2/0", "folder-123", b"123456".to_vec());
+            server.insert_file(
+                "chunk-overflow/blocks/2/0",
+                "folder-123",
+                b"123456".to_vec(),
+            );
 
             let error = match GoogleDriveBackedFilesystem::from_config(test_config(
                 &server,
@@ -398,6 +398,68 @@ oFnGY0OFksX/ye0/XGpy2SFxYRwGU98HPYeBvAQQrVjdkzfy7BmXQQ==\n\
                 error.message().contains("exceeded 5 byte limit"),
                 "unexpected error message: {}",
                 error.message()
+            );
+        }
+
+        #[test]
+        fn google_drive_manifest_rejects_chunk_keys_outside_mount_prefix() {
+            let server = MockGoogleDriveServer::start();
+            let manifest = PersistedFilesystemManifest {
+                format: String::from(MANIFEST_FORMAT),
+                path_index: BTreeMap::from([
+                    (String::from("/"), 1),
+                    (String::from("/escaped.bin"), 2),
+                ]),
+                inodes: BTreeMap::from([
+                    (
+                        1,
+                        PersistedFilesystemInode {
+                            metadata: manifest_metadata(1, 0o040755),
+                            kind: PersistedFilesystemInodeKind::Directory,
+                        },
+                    ),
+                    (
+                        2,
+                        PersistedFilesystemInode {
+                            metadata: manifest_metadata(2, 0o100644),
+                            kind: PersistedFilesystemInodeKind::File {
+                                storage: PersistedFileStorage::Chunked {
+                                    size: 4,
+                                    chunks: vec![PersistedChunkRef {
+                                        index: 0,
+                                        key: String::from("outside-prefix/blocks/2/0"),
+                                    }],
+                                },
+                            },
+                        },
+                    ),
+                ]),
+                next_ino: 3,
+            };
+            server.insert_file(
+                "safe-prefix/filesystem-manifest.json",
+                "folder-123",
+                serde_json::to_vec(&manifest).expect("serialize escaped manifest"),
+            );
+            server.insert_file("outside-prefix/blocks/2/0", "folder-123", b"evil".to_vec());
+
+            let error =
+                match GoogleDriveBackedFilesystem::from_config(test_config(&server, "safe-prefix"))
+                {
+                    Ok(_) => panic!("escaped chunk key should be rejected"),
+                    Err(error) => error,
+                };
+            assert_eq!(error.code(), "EINVAL");
+            assert!(
+                error.message().contains("outside mount prefix"),
+                "unexpected error message: {}",
+                error.message()
+            );
+            assert!(
+                server
+                    .file_names()
+                    .contains(&String::from("outside-prefix/blocks/2/0")),
+                "escaped chunk object should not be deleted as a stale safe-prefix chunk"
             );
         }
     }
