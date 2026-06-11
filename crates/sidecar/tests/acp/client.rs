@@ -1,13 +1,13 @@
 use agent_os_sidecar::acp::{
-    deserialize_message, AcpClient, AcpClientError, AcpClientOptions, AcpClientProcessState,
-    InboundRequestHandler, InboundRequestOutcome, JsonRpcError, JsonRpcId, JsonRpcMessage,
-    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+    AcpClient, AcpClientError, AcpClientOptions, AcpClientProcessState, InboundRequestHandler,
+    InboundRequestOutcome, JsonRpcError, JsonRpcId, JsonRpcMessage, JsonRpcNotification,
+    JsonRpcRequest, JsonRpcResponse, deserialize_message,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{split, AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, split};
 
 fn new_client(
     options: AcpClientOptions,
@@ -476,6 +476,54 @@ async fn client_timeout_errors_include_recent_activity() {
     assert!(message.contains("received notification session/update"));
     assert!(message.contains("process exitCode=137"));
     assert!(message.contains("killed=true"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn client_rejects_adapter_lines_over_configured_limit() {
+    let (client, mut reader, mut writer) = new_client(AcpClientOptions {
+        timeout: Duration::from_secs(1),
+        method_timeouts: BTreeMap::new(),
+        request_handler: None,
+        process_state_provider: None,
+        max_read_line_bytes: 32,
+    });
+
+    let request_task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .request(
+                    "session/prompt",
+                    Some(json!({ "sessionId": "oversized-line" })),
+                )
+                .await
+        }
+    });
+
+    let outbound_request = read_message(&mut reader).await;
+    match outbound_request {
+        JsonRpcMessage::Request(request) => {
+            assert_eq!(request.method, "session/prompt");
+        }
+        other => panic!("unexpected request frame: {other:?}"),
+    }
+
+    write_raw(&mut writer, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n").await;
+
+    let error = request_task
+        .await
+        .expect("request task")
+        .expect_err("oversized line should fail the request");
+    assert!(
+        matches!(error, AcpClientError::Io(_)),
+        "unexpected error: {error:?}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("ACP adapter emitted a line longer than 32 bytes"),
+        "unexpected oversized-line error: {error}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
