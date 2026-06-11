@@ -6,7 +6,7 @@ use agent_os_kernel::kernel::{KernelVm, KernelVmConfig, SpawnOptions};
 use agent_os_kernel::permissions::Permissions;
 use agent_os_kernel::process_table::{
     DriverProcess, ProcessContext, ProcessExitCallback, ProcessResult, ProcessTable,
-    ProcessWaitEvent, WaitPidFlags, SIGCHLD, SIGTERM,
+    ProcessWaitEvent, SIGCHLD, SIGTERM, WaitPidFlags,
 };
 use agent_os_kernel::vfs::MemoryFileSystem;
 use agent_os_sidecar::protocol::{
@@ -44,6 +44,14 @@ fn null_separated_bytes(parts: &[&str]) -> Vec<u8> {
     let mut bytes = parts.join("\0").into_bytes();
     bytes.push(0);
     bytes
+}
+
+fn chunk_contains(chunk: &[u8], needle: &str) -> bool {
+    let needle = needle.as_bytes();
+    if needle.is_empty() {
+        return true;
+    }
+    chunk.windows(needle.len()).any(|window| window == needle)
 }
 
 fn new_kernel(name: &str) -> KernelVm<MemoryFileSystem> {
@@ -88,21 +96,18 @@ fn wait_for_process_output(
     let deadline = Instant::now() + Duration::from_secs(10);
 
     loop {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for process output"
+        );
         let event = sidecar
             .poll_event_blocking(&ownership, Duration::from_millis(100))
             .expect("poll sidecar event");
-        let Some(event) = event else {
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for process output"
-            );
-            continue;
-        };
+        let Some(event) = event else { continue };
 
         match event.payload {
             EventPayload::ProcessOutput(output)
-                if output.process_id == process_id
-                    && String::from_utf8_lossy(&output.chunk).contains(expected) =>
+                if output.process_id == process_id && chunk_contains(&output.chunk, expected) =>
             {
                 return;
             }
@@ -437,20 +442,18 @@ fn v8_guest_process_receives_sigterm_delivery() {
     let mut exit_code = None;
 
     while exit_code.is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for SIGTERM delivery"
+        );
         let event = sidecar
             .poll_event_blocking(&ownership, Duration::from_millis(100))
             .expect("poll sigterm events");
-        let Some(event) = event else {
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for SIGTERM delivery"
-            );
-            continue;
-        };
+        let Some(event) = event else { continue };
 
         match event.payload {
             EventPayload::ProcessOutput(output) if output.process_id == "sigterm-guest" => {
-                saw_sigterm |= String::from_utf8_lossy(&output.chunk).contains("sigterm:1");
+                saw_sigterm |= chunk_contains(&output.chunk, "sigterm:1");
             }
             EventPayload::ProcessExited(exited) if exited.process_id == "sigterm-guest" => {
                 exit_code = Some(exited.exit_code);
