@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
 fn assert_node_available() {
@@ -147,10 +147,18 @@ export async function loadPyodide(options) {
     assert!(execution.uses_shared_v8_runtime());
     assert_eq!(execution.child_pid(), 0);
 
+    let ready_deadline = Instant::now() + Duration::from_secs(5);
     let mut saw_ready = false;
     while !saw_ready {
+        if Instant::now() >= ready_deadline {
+            panic!("timed out waiting for Python execution readiness");
+        }
         match execution
-            .poll_event_blocking(Duration::from_secs(5))
+            .poll_event_blocking(
+                ready_deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(100)),
+            )
             .expect("poll Python event before kill")
         {
             Some(PythonExecutionEvent::Stdout(chunk)) => {
@@ -176,10 +184,18 @@ export async function loadPyodide(options) {
 
     execution.kill().expect("kill hanging Python execution");
 
+    let kill_deadline = Instant::now() + Duration::from_secs(5);
     let mut exit_code = None;
     while exit_code.is_none() {
+        if Instant::now() >= kill_deadline {
+            panic!("timed out waiting for killed Python execution to exit");
+        }
         match execution
-            .poll_event_blocking(Duration::from_millis(100))
+            .poll_event_blocking(
+                kill_deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(100)),
+            )
             .expect("poll Python event after kill")
         {
             Some(PythonExecutionEvent::Exited(code)) => exit_code = Some(code),
