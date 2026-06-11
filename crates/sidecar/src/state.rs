@@ -626,7 +626,7 @@ pub(crate) enum Http2SessionCommand {
     },
     StreamRespondWithFile {
         stream_id: u64,
-        path: String,
+        body: Vec<u8>,
         headers_json: String,
         options_json: String,
         respond_to: Sender<Result<Value, String>>,

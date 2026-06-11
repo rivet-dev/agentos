@@ -914,7 +914,7 @@ struct JavascriptDgramSyncRpcServiceRequest<'a, B> {
 
 struct JavascriptHttp2SyncRpcServiceRequest<'a, B> {
     bridge: &'a SharedBridge<B>,
-    kernel: &'a SidecarKernel,
+    kernel: &'a mut SidecarKernel,
     vm_id: &'a str,
     dns: &'a VmDnsConfig,
     socket_paths: &'a JavascriptSocketPathContext,
@@ -18142,18 +18142,11 @@ fn spawn_http2_server_session(
                                 );
                                 let _ = respond_to.send(Ok(Value::Null));
                             }
-                            Http2SessionCommand::StreamRespondWithFile { stream_id, path, headers_json, options_json, respond_to } => {
+                            Http2SessionCommand::StreamRespondWithFile { stream_id, body, headers_json, options_json, respond_to } => {
                                 let options: JavascriptHttp2FileResponseOptions =
                                     serde_json::from_str(&options_json).unwrap_or_default();
                                 let response = match build_http2_response(&headers_json) {
                                     Ok(response) => response,
-                                    Err(error) => {
-                                        let _ = respond_to.send(Err(error.to_string()));
-                                        continue;
-                                    }
-                                };
-                                let body = match fs::read(&path) {
-                                    Ok(body) => body,
                                     Err(error) => {
                                         let _ = respond_to.send(Err(error.to_string()));
                                         continue;
@@ -18942,10 +18935,12 @@ where
             )?;
             let stream = http2_stream_for_id(process, stream_id)?;
             let session = http2_session_for_id(process, stream.session_id)?;
+            let guest_path = resolve_http2_file_response_guest_path(process, path);
+            let body = kernel.read_file(&guest_path).map_err(kernel_error)?;
             send_http2_command(&session, |respond_to| {
                 Http2SessionCommand::StreamRespondWithFile {
                     stream_id,
-                    path: path.to_owned(),
+                    body,
                     headers_json: headers_json.to_owned(),
                     options_json: options_json.to_owned(),
                     respond_to,
@@ -18960,6 +18955,14 @@ where
 
 const JAVASCRIPT_NET_POLL_MAX_WAIT: Duration = Duration::from_millis(50);
 const EXITED_PROCESS_SNAPSHOT_RETENTION: Duration = Duration::from_secs(2);
+
+fn resolve_http2_file_response_guest_path(process: &ActiveProcess, path: &str) -> String {
+    if Path::new(path).is_absolute() {
+        normalize_path(path)
+    } else {
+        normalize_path(&format!("{}/{}", process.guest_cwd, path))
+    }
+}
 
 pub(crate) fn clamp_javascript_net_poll_wait(wait_ms: u64) -> Duration {
     // WASM net.poll runs on the sidecar's sync-RPC main thread. Guest-controlled waits
