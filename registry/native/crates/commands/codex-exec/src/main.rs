@@ -9,6 +9,7 @@ use std::io::{self, Read};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SESSION_TURN_DISABLED: &str =
     "codex-exec --session-turn is disabled until the real Codex agent package is wired";
+const MAX_PROMPT_BYTES: usize = 64 * 1024;
 
 use codex_network_proxy::NetworkProxy;
 use codex_otel::SessionTelemetry;
@@ -40,11 +41,30 @@ fn main() {
     }
 
     let prompt = if args.len() > 1 {
-        args[1..].join(" ")
+        let prompt = args[1..].join(" ");
+        if prompt.len() > MAX_PROMPT_BYTES {
+            eprintln!("codex-exec: prompt exceeds {} byte limit", MAX_PROMPT_BYTES);
+            std::process::exit(1);
+        }
+        prompt
     } else {
-        let mut input = String::new();
-        match io::stdin().read_to_string(&mut input) {
-            Ok(_) => input.trim().to_string(),
+        let mut input = Vec::new();
+        let mut stdin = io::stdin().take((MAX_PROMPT_BYTES + 1) as u64);
+        match stdin.read_to_end(&mut input) {
+            Ok(_) if input.len() > MAX_PROMPT_BYTES => {
+                eprintln!(
+                    "codex-exec: stdin prompt exceeds {} byte limit",
+                    MAX_PROMPT_BYTES
+                );
+                std::process::exit(1);
+            }
+            Ok(_) => match String::from_utf8(input) {
+                Ok(input) => input.trim().to_string(),
+                Err(error) => {
+                    eprintln!("codex-exec: stdin prompt is not valid UTF-8: {}", error);
+                    std::process::exit(1);
+                }
+            },
             Err(error) => {
                 eprintln!("codex-exec: failed to read stdin: {}", error);
                 std::process::exit(1);
@@ -59,7 +79,7 @@ fn main() {
     }
 
     eprintln!("codex-exec: headless prompt mode is not wired to the provider yet");
-    eprintln!("prompt: {}", prompt);
+    eprintln!("prompt received ({} bytes)", prompt.len());
     std::process::exit(0);
 }
 

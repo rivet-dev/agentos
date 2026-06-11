@@ -150,6 +150,7 @@ describeIf(!skipReason(), 'wasi-spawn: WasiChild host_process integration', { ti
   it('codex-exec headless prompt mode exits cleanly', async () => {
     const result = await kernel.exec('codex-exec echo hello');
     expect(result.exitCode).toBe(0);
-    expect(result.stderr).toContain('prompt: echo hello');
+    expect(result.stderr).toContain('prompt received');
+    expect(result.stderr).not.toContain('echo hello');
   });
 });

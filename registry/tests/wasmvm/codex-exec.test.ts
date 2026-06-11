@@ -148,9 +148,26 @@ describeIf(hasWasmBinaries, 'codex-exec command (WasmVM)', { timeout: 30_000 }, 
   it('accepts prompt as argument and exits cleanly', async () => {
     ({ kernel } = await createTestKernel());
     const result = await kernel.exec('codex-exec "list all files"');
-    // Prompt mode is currently a placeholder that echoes the prompt to stderr.
+    // Prompt mode is currently a placeholder that accepts the prompt without echoing it.
     expect(result.stderr).toContain('headless prompt mode is not wired to the provider yet');
-    expect(result.stderr).toContain('list all files');
+    expect(result.stderr).toContain('prompt received');
+    expect(result.stderr).not.toContain('list all files');
+  });
+
+  it('accepts prompt from stdin without echoing it', async () => {
+    ({ kernel } = await createTestKernel());
+    const result = await kernel.exec('codex-exec', { stdin: 'stdin secret prompt\n' });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain('headless prompt mode is not wired to the provider yet');
+    expect(result.stderr).toContain('prompt received');
+    expect(result.stderr).not.toContain('stdin secret prompt');
+  });
+
+  it('rejects oversized stdin prompts', async () => {
+    ({ kernel } = await createTestKernel());
+    const result = await kernel.exec('codex-exec', { stdin: 'x'.repeat(64 * 1024 + 1) });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('stdin prompt exceeds');
   });
 
   it('prints error when no prompt is provided via arg', async () => {
@@ -182,7 +199,8 @@ describeIf(hasWasmBinaries, 'codex-exec command (WasmVM)', { timeout: 30_000 }, 
     const result = await kernel.exec('codex-exec "test prompt"');
     // Headless mode outputs to stderr
     expect(result.stderr.length).toBeGreaterThan(0);
-    expect(result.stderr).toContain('prompt: test prompt');
+    expect(result.stderr).toContain('prompt received');
+    expect(result.stderr).not.toContain('test prompt');
   });
 
   it('exits cleanly after completing a single prompt', async () => {
@@ -190,7 +208,8 @@ describeIf(hasWasmBinaries, 'codex-exec command (WasmVM)', { timeout: 30_000 }, 
     const result = await kernel.exec('codex-exec "hello world"');
     // The process exits with code 0 (brush-shell wraps it)
     // Verify it doesn't hang — the exec() call resolves
-    expect(result.stderr).toContain('hello world');
+    expect(result.stderr).toContain('prompt received');
+    expect(result.stderr).not.toContain('hello world');
   });
 
   it('session-turn mode fails fast instead of calling a bespoke provider loop', async () => {
