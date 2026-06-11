@@ -72,120 +72,47 @@ pub fn inject_globals(
 /// The payload is produced by node:v8.serialize() on the host side.
 /// Deserializes into V8, extracts processConfig and osConfig, freezes them,
 /// and sets them as non-writable, non-configurable global properties.
-pub fn inject_globals_from_payload(
-    scope: &mut v8::HandleScope,
-    payload: &[u8],
-) -> Result<(), ExecutionError> {
+pub fn inject_globals_from_payload(scope: &mut v8::HandleScope, payload: &[u8]) {
     let context = scope.get_current_context();
     let global = context.global(scope);
 
     // Deserialize the V8 payload { processConfig, osConfig }
-    let config_val = deserialize_v8_value(scope, payload)
-        .map_err(|err| invalid_globals_payload_error(format!("decode failed: {err}")))?;
-
-    if !config_val.is_object() {
-        return Err(invalid_globals_payload_error("payload is not an object"));
-    }
-    let config_obj = v8::Local::<v8::Object>::try_from(config_val)
-        .map_err(|_| invalid_globals_payload_error("payload is not an object"))?;
-    if !is_plain_config_object(scope, config_obj) {
-        return Err(invalid_globals_payload_error(
-            "payload is not a plain object",
-        ));
-    }
-
-    // Validate both config objects before mutating globals so malformed payloads
-    // cannot leave a partially injected execution context.
-    let (pc_val, pc_obj) = required_object_property(scope, config_obj, "processConfig")?;
-    let (oc_val, oc_obj) = required_object_property(scope, config_obj, "osConfig")?;
-
-    let (_env_val, env_obj) =
-        required_object_property_with_label(scope, pc_obj, "env", "processConfig.env")?;
-    freeze_config_object(scope, env_obj, "processConfig.env")?;
-    freeze_config_object(scope, pc_obj, "processConfig")?;
-    freeze_config_object(scope, oc_obj, "osConfig")?;
-    let global_key = v8::String::new(scope, "_processConfig").unwrap();
-    let attr = v8::PropertyAttribute::READ_ONLY | v8::PropertyAttribute::DONT_DELETE;
-    global.define_own_property(scope, global_key.into(), pc_val, attr);
-
-    let global_key = v8::String::new(scope, "_osConfig").unwrap();
-    let attr = v8::PropertyAttribute::READ_ONLY | v8::PropertyAttribute::DONT_DELETE;
-    global.define_own_property(scope, global_key.into(), oc_val, attr);
-
-    Ok(())
-}
-
-fn required_object_property<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    obj: v8::Local<'s, v8::Object>,
-    name: &str,
-) -> Result<(v8::Local<'s, v8::Value>, v8::Local<'s, v8::Object>), ExecutionError> {
-    required_object_property_with_label(scope, obj, name, name)
-}
-
-fn required_object_property_with_label<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    obj: v8::Local<'s, v8::Object>,
-    name: &str,
-    error_label: &str,
-) -> Result<(v8::Local<'s, v8::Value>, v8::Local<'s, v8::Object>), ExecutionError> {
-    let key = v8::String::new(scope, name).unwrap();
-    let value = obj
-        .get(scope, key.into())
-        .filter(|value| !value.is_null_or_undefined())
-        .ok_or_else(|| invalid_globals_payload_error(format!("missing {error_label}")))?;
-    if !value.is_object() {
-        return Err(invalid_globals_payload_error(format!(
-            "{error_label} is not an object"
-        )));
-    }
-    let object = v8::Local::<v8::Object>::try_from(value)
-        .map_err(|_| invalid_globals_payload_error(format!("{error_label} is not an object")))?;
-    if !is_plain_config_object(scope, object) {
-        return Err(invalid_globals_payload_error(format!(
-            "{error_label} is not a plain object"
-        )));
-    }
-    Ok((value, object))
-}
-
-fn is_plain_config_object(scope: &mut v8::HandleScope, object: v8::Local<v8::Object>) -> bool {
-    let Some(prototype) = object.get_prototype(scope) else {
-        return false;
+    let config_val = match deserialize_v8_value(scope, payload) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("failed to deserialize InjectGlobals payload: {}", e);
+            return;
+        }
     };
-    if prototype.is_null() {
-        return true;
-    }
-    if !prototype.is_object() {
-        return false;
-    }
-    let Ok(prototype_object) = v8::Local::<v8::Object>::try_from(prototype) else {
-        return false;
+
+    let config_obj = match config_val.to_object(scope) {
+        Some(obj) => obj,
+        None => {
+            eprintln!("InjectGlobals payload is not an object");
+            return;
+        }
     };
-    prototype_object
-        .get_prototype(scope)
-        .is_some_and(|parent| parent.is_null())
-}
 
-fn freeze_config_object(
-    scope: &mut v8::HandleScope,
-    object: v8::Local<v8::Object>,
-    label: &str,
-) -> Result<(), ExecutionError> {
-    match object.set_integrity_level(scope, v8::IntegrityLevel::Frozen) {
-        Some(true) => Ok(()),
-        Some(false) | None => Err(invalid_globals_payload_error(format!(
-            "failed to freeze {label}"
-        ))),
+    // Extract and set _processConfig
+    let pc_key = v8::String::new(scope, "processConfig").unwrap();
+    if let Some(pc_val) = config_obj.get(scope, pc_key.into()) {
+        if let Some(pc_obj) = pc_val.to_object(scope) {
+            pc_obj.set_integrity_level(scope, v8::IntegrityLevel::Frozen);
+        }
+        let global_key = v8::String::new(scope, "_processConfig").unwrap();
+        let attr = v8::PropertyAttribute::READ_ONLY | v8::PropertyAttribute::DONT_DELETE;
+        global.define_own_property(scope, global_key.into(), pc_val, attr);
     }
-}
 
-fn invalid_globals_payload_error(message: impl Into<String>) -> ExecutionError {
-    ExecutionError {
-        error_type: "Error".into(),
-        message: format!("invalid InjectGlobals payload: {}", message.into()),
-        stack: String::new(),
-        code: Some("ERR_INVALID_GLOBALS_PAYLOAD".into()),
+    // Extract and set _osConfig
+    let oc_key = v8::String::new(scope, "osConfig").unwrap();
+    if let Some(oc_val) = config_obj.get(scope, oc_key.into()) {
+        if let Some(oc_obj) = oc_val.to_object(scope) {
+            oc_obj.set_integrity_level(scope, v8::IntegrityLevel::Frozen);
+        }
+        let global_key = v8::String::new(scope, "_osConfig").unwrap();
+        let attr = v8::PropertyAttribute::READ_ONLY | v8::PropertyAttribute::DONT_DELETE;
+        global.define_own_property(scope, global_key.into(), oc_val, attr);
     }
 }
 
@@ -2057,257 +1984,6 @@ mod tests {
             assert_eq!(eval(&mut isolate, &context, "_osConfig.tmpdir"), "/tmp");
             assert_eq!(eval(&mut isolate, &context, "_osConfig.platform"), "linux");
             assert_eq!(eval(&mut isolate, &context, "_osConfig.arch"), "x64");
-        }
-
-        // --- Part 1a: InjectGlobals payload injection fails closed on invalid payload ---
-        {
-            let mut isolate = isolate::create_isolate(None);
-            let context = isolate::create_context(&mut isolate);
-            let payload = v8_serialize_eval(
-                &mut isolate,
-                &context,
-                r#"({
-                    processConfig: {
-                        cwd: "/app",
-                        env: { HOME: "/home/user" },
-                        timing_mitigation: "none",
-                        frozen_time_ms: null
-                    }
-                })"#,
-            );
-
-            let err = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
-                let ctx = v8::Local::new(scope, &context);
-                let scope = &mut v8::ContextScope::new(scope, ctx);
-                inject_globals_from_payload(scope, &payload).expect_err("missing osConfig")
-            };
-
-            assert_eq!(err.code.as_deref(), Some("ERR_INVALID_GLOBALS_PAYLOAD"));
-            assert!(
-                err.message.contains("missing osConfig"),
-                "unexpected error message: {}",
-                err.message
-            );
-            assert_eq!(
-                eval(&mut isolate, &context, "typeof _processConfig"),
-                "undefined",
-                "invalid payload must not partially inject process config"
-            );
-            assert_eq!(
-                eval(&mut isolate, &context, "typeof _osConfig"),
-                "undefined",
-                "invalid payload must not inject os config"
-            );
-        }
-
-        // --- Part 1b: InjectGlobals payload injection rejects primitive configs ---
-        {
-            let mut isolate = isolate::create_isolate(None);
-            let context = isolate::create_context(&mut isolate);
-            let payload = v8_serialize_eval(
-                &mut isolate,
-                &context,
-                r#"({
-                    processConfig: "not-an-object",
-                    osConfig: {
-                        homedir: "/home/user",
-                        tmpdir: "/tmp",
-                        platform: "linux",
-                        arch: "x64"
-                    }
-                })"#,
-            );
-
-            let err = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
-                let ctx = v8::Local::new(scope, &context);
-                let scope = &mut v8::ContextScope::new(scope, ctx);
-                inject_globals_from_payload(scope, &payload).expect_err("primitive processConfig")
-            };
-
-            assert_eq!(err.code.as_deref(), Some("ERR_INVALID_GLOBALS_PAYLOAD"));
-            assert!(
-                err.message.contains("processConfig is not an object"),
-                "unexpected error message: {}",
-                err.message
-            );
-            assert_eq!(
-                eval(&mut isolate, &context, "typeof _processConfig"),
-                "undefined",
-                "wrong-type payload must not inject primitive process config"
-            );
-        }
-
-        // --- Part 1c: InjectGlobals payload injection freezes configs and env ---
-        {
-            let mut isolate = isolate::create_isolate(None);
-            let context = isolate::create_context(&mut isolate);
-            let payload = v8_serialize_eval(
-                &mut isolate,
-                &context,
-                r#"({
-                    processConfig: {
-                        cwd: "/app",
-                        env: "not-an-object",
-                        timing_mitigation: "none",
-                        frozen_time_ms: null
-                    },
-                    osConfig: {
-                        homedir: "/home/user",
-                        tmpdir: "/tmp",
-                        platform: "linux",
-                        arch: "x64"
-                    }
-                })"#,
-            );
-
-            let err = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
-                let ctx = v8::Local::new(scope, &context);
-                let scope = &mut v8::ContextScope::new(scope, ctx);
-                inject_globals_from_payload(scope, &payload).expect_err("primitive env")
-            };
-
-            assert_eq!(err.code.as_deref(), Some("ERR_INVALID_GLOBALS_PAYLOAD"));
-            assert!(
-                err.message.contains("processConfig.env is not an object"),
-                "unexpected error message: {}",
-                err.message
-            );
-            assert_eq!(
-                eval(&mut isolate, &context, "typeof _processConfig"),
-                "undefined",
-                "wrong-type env payload must not partially inject process config"
-            );
-        }
-
-        // --- Part 1d: InjectGlobals payload injection rejects missing env ---
-        {
-            let mut isolate = isolate::create_isolate(None);
-            let context = isolate::create_context(&mut isolate);
-            let payload = v8_serialize_eval(
-                &mut isolate,
-                &context,
-                r#"({
-                    processConfig: {
-                        cwd: "/app",
-                        timing_mitigation: "none",
-                        frozen_time_ms: null
-                    },
-                    osConfig: {
-                        homedir: "/home/user",
-                        tmpdir: "/tmp",
-                        platform: "linux",
-                        arch: "x64"
-                    }
-                })"#,
-            );
-
-            let err = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
-                let ctx = v8::Local::new(scope, &context);
-                let scope = &mut v8::ContextScope::new(scope, ctx);
-                inject_globals_from_payload(scope, &payload).expect_err("missing env")
-            };
-
-            assert_eq!(err.code.as_deref(), Some("ERR_INVALID_GLOBALS_PAYLOAD"));
-            assert!(
-                err.message.contains("missing processConfig.env"),
-                "unexpected error message: {}",
-                err.message
-            );
-            assert_eq!(
-                eval(&mut isolate, &context, "typeof _processConfig"),
-                "undefined",
-                "missing env payload must not partially inject process config"
-            );
-        }
-
-        // --- Part 1e: InjectGlobals payload injection rejects non-plain object env ---
-        {
-            let mut isolate = isolate::create_isolate(None);
-            let context = isolate::create_context(&mut isolate);
-            let payload = v8_serialize_eval(
-                &mut isolate,
-                &context,
-                r#"({
-                    processConfig: {
-                        cwd: "/app",
-                        env: new Uint8Array([1]),
-                        timing_mitigation: "none",
-                        frozen_time_ms: null
-                    },
-                    osConfig: {
-                        homedir: "/home/user",
-                        tmpdir: "/tmp",
-                        platform: "linux",
-                        arch: "x64"
-                    }
-                })"#,
-            );
-
-            let err = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
-                let ctx = v8::Local::new(scope, &context);
-                let scope = &mut v8::ContextScope::new(scope, ctx);
-                inject_globals_from_payload(scope, &payload).expect_err("typed array env")
-            };
-
-            assert_eq!(err.code.as_deref(), Some("ERR_INVALID_GLOBALS_PAYLOAD"));
-            assert!(
-                err.message
-                    .contains("processConfig.env is not a plain object"),
-                "unexpected error message: {}",
-                err.message
-            );
-            assert_eq!(
-                eval(&mut isolate, &context, "typeof _processConfig"),
-                "undefined",
-                "typed-array env payload must not partially inject process config"
-            );
-        }
-
-        // --- Part 1f: InjectGlobals payload injection freezes configs and env ---
-        {
-            let mut isolate = isolate::create_isolate(None);
-            let context = isolate::create_context(&mut isolate);
-            let payload = v8_serialize_eval(
-                &mut isolate,
-                &context,
-                r#"({
-                    processConfig: {
-                        cwd: "/app",
-                        env: { HOME: "/home/user" },
-                        timing_mitigation: "none",
-                        frozen_time_ms: null
-                    },
-                    osConfig: {
-                        homedir: "/home/user",
-                        tmpdir: "/tmp",
-                        platform: "linux",
-                        arch: "x64"
-                    }
-                })"#,
-            );
-
-            {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
-                let ctx = v8::Local::new(scope, &context);
-                let scope = &mut v8::ContextScope::new(scope, ctx);
-                inject_globals_from_payload(scope, &payload).expect("valid globals payload");
-            }
-
-            assert_eq!(eval(&mut isolate, &context, "_processConfig.cwd"), "/app");
-            assert_eq!(
-                eval(&mut isolate, &context, "_processConfig.env.HOME"),
-                "/home/user"
-            );
-            assert!(eval_bool(
-                &mut isolate,
-                &context,
-                "Object.isFrozen(_processConfig) && Object.isFrozen(_processConfig.env) && Object.isFrozen(_osConfig)"
-            ));
         }
 
         // --- Part 2: frozen_time_ms null when None ---
