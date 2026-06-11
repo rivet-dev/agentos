@@ -522,7 +522,7 @@ pub fn bridge_contract() -> &'static BridgeContract {
 
 #[cfg(test)]
 mod tests {
-    use super::{bridge_contract, BridgeCallConvention};
+    use super::{BridgeCallConvention, bridge_contract};
 
     #[test]
     fn bridge_contract_has_version_and_unique_method_names() {
