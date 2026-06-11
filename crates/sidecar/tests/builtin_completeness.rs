@@ -32,7 +32,19 @@ const BUILTIN_EXPECTATIONS: &[BuiltinExpectation] = &[
         status: BuiltinStatus::KernelBacked,
     },
     BuiltinExpectation {
+        name: "fs/promises",
+        status: BuiltinStatus::KernelBacked,
+    },
+    BuiltinExpectation {
         name: "path",
+        status: BuiltinStatus::Polyfilled,
+    },
+    BuiltinExpectation {
+        name: "path/posix",
+        status: BuiltinStatus::Polyfilled,
+    },
+    BuiltinExpectation {
+        name: "path/win32",
         status: BuiltinStatus::Polyfilled,
     },
     BuiltinExpectation {
@@ -106,6 +118,10 @@ const BUILTIN_EXPECTATIONS: &[BuiltinExpectation] = &[
     BuiltinExpectation {
         name: "querystring",
         status: BuiltinStatus::Polyfilled,
+    },
+    BuiltinExpectation {
+        name: "sqlite",
+        status: BuiltinStatus::KernelBacked,
     },
     BuiltinExpectation {
         name: "string_decoder",
@@ -323,6 +339,8 @@ try {
 }
 "#;
 
+const PROBE_OUTPUT_BYTE_LIMIT: usize = 1024 * 1024;
+
 fn allowed_builtins_json() -> String {
     let allowed = BUILTIN_EXPECTATIONS
         .iter()
@@ -396,8 +414,12 @@ fn run_guest_probe(entrypoint: &Path, arg: &str) -> Value {
                     channel,
                     chunk,
                 }) if event_process_id == process_id => match channel {
-                    StreamChannel::Stdout => stdout.push_str(&String::from_utf8_lossy(&chunk)),
-                    StreamChannel::Stderr => stderr.push_str(&String::from_utf8_lossy(&chunk)),
+                    StreamChannel::Stdout => {
+                        append_probe_output(&mut stdout, &chunk, arg, "stdout")
+                    }
+                    StreamChannel::Stderr => {
+                        append_probe_output(&mut stderr, &chunk, arg, "stderr")
+                    }
                 },
                 EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
                     exit = Some((exited.exit_code, Instant::now()));
@@ -427,6 +449,15 @@ fn run_guest_probe(entrypoint: &Path, arg: &str) -> Value {
     }
 }
 
+fn append_probe_output(buffer: &mut String, chunk: &[u8], arg: &str, channel: &str) {
+    let text = String::from_utf8_lossy(chunk);
+    assert!(
+        buffer.len().saturating_add(text.len()) <= PROBE_OUTPUT_BYTE_LIMIT,
+        "builtin probe {arg} exceeded {PROBE_OUTPUT_BYTE_LIMIT} bytes on {channel}"
+    );
+    buffer.push_str(&text);
+}
+
 #[test]
 fn every_guest_builtin_is_classified_and_never_silently_missing() {
     let cwd = temp_dir("builtin-completeness");
@@ -441,8 +472,7 @@ fn every_guest_builtin_is_classified_and_never_silently_missing() {
         .map(|value| value.as_str().expect("builtin module string"))
         .collect::<Vec<_>>();
     assert_eq!(
-        actual_inventory,
-        EXPECTED_RUNTIME_BUILTINS,
+        actual_inventory, EXPECTED_RUNTIME_BUILTINS,
         "guest builtin inventory changed; classify the added/removed modules in builtin_completeness.rs"
     );
 
