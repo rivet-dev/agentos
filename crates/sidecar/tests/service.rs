@@ -46,8 +46,8 @@ mod service {
         use crate::protocol::{
             AuthenticateRequest, BootstrapRootFilesystemRequest, CloseStdinRequest,
             ConfigureVmRequest, CreateSessionRequest, CreateVmRequest, DisposeReason,
-            DisposeVmRequest, EventPayload, FindBoundUdpRequest, FindListenerRequest, FsPermissionRule,
-            FsPermissionRuleSet, FsPermissionScope, GetProcessSnapshotRequest,
+            DisposeVmRequest, EventPayload, FindBoundUdpRequest, FindListenerRequest,
+            FsPermissionRule, FsPermissionRuleSet, FsPermissionScope, GetProcessSnapshotRequest,
             GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestFilesystemOperation,
             GuestRuntimeKind, MountDescriptor, MountPluginDescriptor, OpenSessionRequest,
             OwnershipScope, PatternPermissionRule, PatternPermissionRuleSet,
@@ -61,8 +61,8 @@ mod service {
         use crate::state::{
             ActiveCipherSession, ActiveDiffieHellmanSession, ActiveEcdhSession, ActiveExecution,
             ActiveExecutionEvent, ActiveProcess, ActiveSqliteDatabase, ActiveSqliteStatement,
-            ActiveTcpListener, ActiveUdpSocket, ProcessEventEnvelope, SidecarKernel,
-            ToolExecution, VmListenPolicy, EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND,
+            ActiveTcpListener, ActiveUdpSocket, ProcessEventEnvelope, SidecarKernel, ToolExecution,
+            VmListenPolicy, EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND,
             LOOPBACK_EXEMPT_PORTS_ENV, PYTHON_COMMAND, VM_DNS_SERVERS_METADATA_KEY,
             VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, VM_LISTEN_PORT_MAX_METADATA_KEY,
             VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND, WASM_STDIO_SYNC_RPC_ENV,
@@ -121,6 +121,7 @@ mod service {
         use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
         const TEST_AUTH_TOKEN: &str = "sidecar-test-token";
+        const MAX_SERVICE_PROCESS_STREAM_BYTES: usize = 1024 * 1024;
         const TLS_TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\n\
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQClvETzHfSyd1Y+\n\
 sjCfGkuyGxFMzwQlYjUrE0iwdMF774LYHFdpvtEo3sLOW6/b1xfXS/55jq+aggxS\n\
@@ -1955,13 +1956,30 @@ setInterval(() => {}, 1000);
             name.parse().expect("valid fixture DNS name")
         }
 
+        fn append_process_stream_chunk(
+            stream: &mut Vec<u8>,
+            chunk: &[u8],
+            process_id: &str,
+            stream_name: &str,
+        ) {
+            assert!(
+                stream.len().saturating_add(chunk.len()) <= MAX_SERVICE_PROCESS_STREAM_BYTES,
+                "process {process_id} {stream_name} exceeded {MAX_SERVICE_PROCESS_STREAM_BYTES} bytes"
+            );
+            stream.extend_from_slice(chunk);
+        }
+
+        fn process_stream_to_string(stream: &[u8]) -> String {
+            String::from_utf8_lossy(stream).into_owned()
+        }
+
         fn drain_process_output(
             sidecar: &mut NativeSidecar<RecordingBridge>,
             vm_id: &str,
             process_id: &str,
         ) -> (String, String, Option<i32>) {
-            let mut stdout = String::new();
-            let mut stderr = String::new();
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
             let mut exit_code = None;
             for _ in 0..64 {
                 let next_event = {
@@ -1989,15 +2007,17 @@ setInterval(() => {}, 1000);
 
                 match &event {
                     ActiveExecutionEvent::Stdout(chunk) => {
-                        stdout.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(&mut stdout, chunk, process_id, "stdout");
                     }
                     ActiveExecutionEvent::Stderr(chunk) => {
-                        stderr.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(&mut stderr, chunk, process_id, "stderr");
                     }
                     ActiveExecutionEvent::Exited(code) => {
                         exit_code = Some(*code);
                     }
-                    _ => {}
+                    ActiveExecutionEvent::JavascriptSyncRpcRequest(_)
+                    | ActiveExecutionEvent::PythonVfsRpcRequest(_)
+                    | ActiveExecutionEvent::SignalState { .. } => {}
                 }
 
                 sidecar
@@ -2005,7 +2025,11 @@ setInterval(() => {}, 1000);
                     .expect("handle process event");
             }
 
-            (stdout, stderr, exit_code)
+            (
+                process_stream_to_string(&stdout),
+                process_stream_to_string(&stderr),
+                exit_code,
+            )
         }
 
         fn wasm_stdout_module(message: &str) -> Vec<u8> {
@@ -8143,7 +8167,7 @@ setInterval(() => {}, 1000);
                     .expect("attach stdout pty");
 
             let mut pty_text = None;
-            let mut stderr = String::new();
+            let mut stderr = Vec::new();
             let mut exit_code = None;
 
             for _ in 0..64 {
@@ -8168,7 +8192,7 @@ setInterval(() => {}, 1000);
                 };
 
                 if let ActiveExecutionEvent::Stderr(chunk) = &event {
-                    stderr.push_str(&String::from_utf8_lossy(chunk));
+                    append_process_stream_chunk(&mut stderr, chunk, "proc-wasm-pty", "stderr");
                 }
                 if let ActiveExecutionEvent::Exited(code) = &event {
                     exit_code = Some(*code);
@@ -8221,6 +8245,7 @@ setInterval(() => {}, 1000);
             }
 
             let pty_text = pty_text.expect("pty master should receive stdout");
+            let stderr = process_stream_to_string(&stderr);
             assert!(
                 pty_text.replace("\r\n", "\n").contains("PTY_MARKER\n"),
                 "pty output should contain routed marker: {pty_text:?}"
@@ -10003,8 +10028,8 @@ console.log(
                 );
             }
 
-            let mut stdout = String::new();
-            let mut stderr = String::new();
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
             let mut exit_code = None;
             for _ in 0..64 {
                 let next_event = {
@@ -10028,15 +10053,17 @@ console.log(
 
                 match &event {
                     ActiveExecutionEvent::Stdout(chunk) => {
-                        stdout.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(&mut stdout, chunk, "proc-js-fd", "stdout");
                     }
                     ActiveExecutionEvent::Stderr(chunk) => {
-                        stderr.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(&mut stderr, chunk, "proc-js-fd", "stderr");
                     }
                     ActiveExecutionEvent::Exited(code) => {
                         exit_code = Some(*code);
                     }
-                    _ => {}
+                    ActiveExecutionEvent::JavascriptSyncRpcRequest(_)
+                    | ActiveExecutionEvent::PythonVfsRpcRequest(_)
+                    | ActiveExecutionEvent::SignalState { .. } => {}
                 }
 
                 sidecar
@@ -10044,6 +10071,8 @@ console.log(
                     .expect("handle javascript fd rpc event");
             }
 
+            let stdout = process_stream_to_string(&stdout);
+            let stderr = process_stream_to_string(&stderr);
             assert_eq!(exit_code, Some(0), "stdout: {stdout}\nstderr: {stderr}");
             assert!(stdout.contains("\"text\":\"bcdef\""), "stdout: {stdout}");
             assert!(stdout.contains("\"bytesRead\":5"), "stdout: {stdout}");
@@ -11341,8 +11370,8 @@ console.log(JSON.stringify({ lookup, resolve4 }));
                 );
             }
 
-            let mut stdout = String::new();
-            let mut stderr = String::new();
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
             let mut exit_code = None;
             for _ in 0..64 {
                 let next_event = {
@@ -11366,15 +11395,17 @@ console.log(JSON.stringify({ lookup, resolve4 }));
 
                 match &event {
                     ActiveExecutionEvent::Stdout(chunk) => {
-                        stdout.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(&mut stdout, chunk, "proc-js-dns", "stdout");
                     }
                     ActiveExecutionEvent::Stderr(chunk) => {
-                        stderr.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(&mut stderr, chunk, "proc-js-dns", "stderr");
                     }
                     ActiveExecutionEvent::Exited(code) => {
                         exit_code = Some(*code);
                     }
-                    _ => {}
+                    ActiveExecutionEvent::JavascriptSyncRpcRequest(_)
+                    | ActiveExecutionEvent::PythonVfsRpcRequest(_)
+                    | ActiveExecutionEvent::SignalState { .. } => {}
                 }
 
                 sidecar
@@ -11382,6 +11413,8 @@ console.log(JSON.stringify({ lookup, resolve4 }));
                     .expect("handle javascript dns rpc event");
             }
 
+            let stdout = process_stream_to_string(&stdout);
+            let stderr = process_stream_to_string(&stderr);
             assert_eq!(exit_code, Some(0), "stderr: {stderr}");
             let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse dns JSON");
             assert!(
@@ -11528,8 +11561,8 @@ process.exit(0);
                 );
             }
 
-            let mut stdout = String::new();
-            let mut stderr = String::new();
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
             let mut exit_code = None;
             for _ in 0..64 {
                 let next_event = {
@@ -11553,15 +11586,27 @@ process.exit(0);
 
                 match &event {
                     ActiveExecutionEvent::Stdout(chunk) => {
-                        stdout.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(
+                            &mut stdout,
+                            chunk,
+                            "proc-js-ssrf-protection",
+                            "stdout",
+                        );
                     }
                     ActiveExecutionEvent::Stderr(chunk) => {
-                        stderr.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(
+                            &mut stderr,
+                            chunk,
+                            "proc-js-ssrf-protection",
+                            "stderr",
+                        );
                     }
                     ActiveExecutionEvent::Exited(code) => {
                         exit_code = Some(*code);
                     }
-                    _ => {}
+                    ActiveExecutionEvent::JavascriptSyncRpcRequest(_)
+                    | ActiveExecutionEvent::PythonVfsRpcRequest(_)
+                    | ActiveExecutionEvent::SignalState { .. } => {}
                 }
 
                 sidecar
@@ -11569,6 +11614,8 @@ process.exit(0);
                     .expect("handle javascript ssrf event");
             }
 
+            let stdout = process_stream_to_string(&stdout);
+            let stderr = process_stream_to_string(&stderr);
             assert_eq!(exit_code, Some(0), "stderr: {stderr}");
             let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse ssrf JSON");
             assert_eq!(
@@ -12225,8 +12272,8 @@ console.log(JSON.stringify(summary));
                 );
             }
 
-            let mut stdout = String::new();
-            let mut stderr = String::new();
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
             let mut exit_code = None;
             for _ in 0..192 {
                 let next_event = {
@@ -12250,15 +12297,17 @@ console.log(JSON.stringify(summary));
 
                 match &event {
                     ActiveExecutionEvent::Stdout(chunk) => {
-                        stdout.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(&mut stdout, chunk, "proc-js-tls", "stdout");
                     }
                     ActiveExecutionEvent::Stderr(chunk) => {
-                        stderr.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(&mut stderr, chunk, "proc-js-tls", "stderr");
                     }
                     ActiveExecutionEvent::Exited(code) => {
                         exit_code = Some(*code);
                     }
-                    _ => {}
+                    ActiveExecutionEvent::JavascriptSyncRpcRequest(_)
+                    | ActiveExecutionEvent::PythonVfsRpcRequest(_)
+                    | ActiveExecutionEvent::SignalState { .. } => {}
                 }
 
                 sidecar
@@ -12266,6 +12315,8 @@ console.log(JSON.stringify(summary));
                     .expect("handle javascript tls rpc event");
             }
 
+            let stdout = process_stream_to_string(&stdout);
+            let stderr = process_stream_to_string(&stderr);
             assert_eq!(exit_code, Some(0), "stderr: {stderr}");
             let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse tls JSON");
             assert_eq!(parsed["response"], Value::String(String::from("pong:ping")));
@@ -15064,8 +15115,8 @@ console.log(JSON.stringify({
                 );
             }
 
-            let mut stdout = String::new();
-            let mut stderr = String::new();
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
             let mut exit_code = None;
             for _ in 0..96 {
                 let next_event = {
@@ -15089,13 +15140,15 @@ console.log(JSON.stringify({
 
                 match &event {
                     ActiveExecutionEvent::Stdout(chunk) => {
-                        stdout.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(&mut stdout, chunk, "proc-js-child", "stdout");
                     }
                     ActiveExecutionEvent::Stderr(chunk) => {
-                        stderr.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(&mut stderr, chunk, "proc-js-child", "stderr");
                     }
                     ActiveExecutionEvent::Exited(code) => exit_code = Some(*code),
-                    _ => {}
+                    ActiveExecutionEvent::JavascriptSyncRpcRequest(_)
+                    | ActiveExecutionEvent::PythonVfsRpcRequest(_)
+                    | ActiveExecutionEvent::SignalState { .. } => {}
                 }
 
                 sidecar
@@ -15103,6 +15156,8 @@ console.log(JSON.stringify({
                     .expect("handle javascript child_process event");
             }
 
+            let stdout = process_stream_to_string(&stdout);
+            let stderr = process_stream_to_string(&stderr);
             assert_eq!(exit_code, Some(0), "stderr: {stderr}");
             let parsed: Value =
                 serde_json::from_str(stdout.trim()).expect("parse child_process JSON");
@@ -15273,8 +15328,8 @@ console.log(JSON.stringify({
                 );
             }
 
-            let mut stdout = String::new();
-            let mut stderr = String::new();
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
             let mut exit_code = None;
             for _ in 0..128 {
                 let next_event = {
@@ -15298,13 +15353,25 @@ console.log(JSON.stringify({
 
                 match &event {
                     ActiveExecutionEvent::Stdout(chunk) => {
-                        stdout.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(
+                            &mut stdout,
+                            chunk,
+                            "proc-js-nested-sigchld",
+                            "stdout",
+                        );
                     }
                     ActiveExecutionEvent::Stderr(chunk) => {
-                        stderr.push_str(&String::from_utf8_lossy(chunk));
+                        append_process_stream_chunk(
+                            &mut stderr,
+                            chunk,
+                            "proc-js-nested-sigchld",
+                            "stderr",
+                        );
                     }
                     ActiveExecutionEvent::Exited(code) => exit_code = Some(*code),
-                    _ => {}
+                    ActiveExecutionEvent::JavascriptSyncRpcRequest(_)
+                    | ActiveExecutionEvent::PythonVfsRpcRequest(_)
+                    | ActiveExecutionEvent::SignalState { .. } => {}
                 }
 
                 sidecar
@@ -15312,6 +15379,8 @@ console.log(JSON.stringify({
                     .expect("handle nested SIGCHLD event");
             }
 
+            let stdout = process_stream_to_string(&stdout);
+            let stderr = process_stream_to_string(&stderr);
             assert_eq!(exit_code, Some(0), "stderr: {stderr}");
             let parsed: Value =
                 serde_json::from_str(stdout.trim()).expect("parse nested SIGCHLD JSON");
@@ -15600,6 +15669,22 @@ console.log(JSON.stringify({
         fn service_toolkit_registry_is_bounded() {
             tools_register_toolkit_rejects_registry_overflow_without_mutating_vm();
             tools_register_toolkit_rejects_total_tool_overflow_without_mutating_vm();
+        }
+
+        #[test]
+        fn service_process_output_collectors_are_bounded() {
+            let mut stream = Vec::new();
+            append_process_stream_chunk(&mut stream, &[b'a'; 16], "proc-capture-limit", "stdout");
+            assert_eq!(stream.len(), 16);
+
+            let overflow = std::panic::catch_unwind(|| {
+                let mut stream = vec![b'a'; MAX_SERVICE_PROCESS_STREAM_BYTES];
+                append_process_stream_chunk(&mut stream, b"!", "proc-capture-limit", "stdout");
+            });
+            assert!(
+                overflow.is_err(),
+                "oversized process output should fail the test harness"
+            );
         }
 
         #[test]
