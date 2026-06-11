@@ -1,9 +1,9 @@
-use agent_os_v8_runtime::embedded_runtime::{shared_embedded_runtime, EmbeddedV8Runtime};
+use agent_os_v8_runtime::embedded_runtime::{EmbeddedV8Runtime, shared_embedded_runtime};
 use agent_os_v8_runtime::runtime_protocol::{RuntimeCommand, RuntimeEvent, SessionMessage};
 use std::io;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -218,6 +218,49 @@ fn assert_snapshot_rebuild_on_bridge_change() -> io::Result<()> {
     Ok(())
 }
 
+fn assert_execute_rejects_oversized_bridge_code() -> io::Result<()> {
+    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
+    let session_id = next_session_id();
+    let receiver = register_and_create_session(&runtime, &session_id)?;
+    let oversized_bridge_code = " ".repeat(16 * 1024 * 1024 + 1);
+
+    dispatch_execute(
+        runtime.as_ref(),
+        &session_id,
+        0,
+        &oversized_bridge_code,
+        "globalThis.__should_not_run = true;",
+    )?;
+
+    let event = wait_for_execution_result(&receiver, &session_id);
+    match event {
+        RuntimeEvent::ExecutionResult {
+            exit_code,
+            error: Some(error),
+            ..
+        } => {
+            assert_eq!(exit_code, 1);
+            assert_eq!(error.code, "ERR_V8_BRIDGE_CODE_LIMIT");
+            assert!(
+                error
+                    .message
+                    .contains("bridge code too large for V8 bridge setup")
+            );
+        }
+        other => panic!("expected bridge-code limit execution error, got {other:?}"),
+    }
+
+    runtime.dispatch(RuntimeCommand::DestroySession {
+        session_id: session_id.clone(),
+    })?;
+    runtime.unregister_session(&session_id);
+    wait_until(
+        "expected oversized-bridge session to drain after rejection",
+        || runtime.session_count() == 0 && runtime.active_slot_count() == 0,
+    );
+    Ok(())
+}
+
 fn assert_queued_work_waits_for_slot_release() -> io::Result<()> {
     let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
     let session_a = next_session_id();
@@ -327,7 +370,9 @@ fn assert_shared_runtime_handles_share_concurrency_quota() -> io::Result<()> {
         || runtime.active_slot_count() == 3 && runtime.session_count() == 4,
     );
     assert!(
-        receivers[3].recv_timeout(Duration::from_millis(150)).is_err(),
+        receivers[3]
+            .recv_timeout(Duration::from_millis(150))
+            .is_err(),
         "the fourth client should stay queued while the first three handles occupy the shared slots"
     );
 
@@ -424,6 +469,7 @@ fn embedded_runtime_session_consolidated_behaviors() -> io::Result<()> {
     assert_create_destroy_reuses_session_ids()?;
     assert_warmed_snapshot_bridge_state()?;
     assert_snapshot_rebuild_on_bridge_change()?;
+    assert_execute_rejects_oversized_bridge_code()?;
     assert_queued_work_waits_for_slot_release()?;
     assert_shared_runtime_handles_share_concurrency_quota()?;
     assert_terminate_interrupts_sync_bridge_wait()?;

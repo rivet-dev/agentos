@@ -709,12 +709,34 @@ fn session_thread(
                     {
                         let session_id = session_id.clone();
                         // Use cached bridge code when host sends empty (0-length = use cached)
+                        let should_update_cached_bridge_code = !bridge_code.is_empty();
                         let effective_bridge_code = if bridge_code.is_empty() {
                             last_bridge_code.as_deref().unwrap_or("").to_string()
                         } else {
-                            last_bridge_code = Some(bridge_code.clone());
                             bridge_code
                         };
+
+                        if let Err(message) =
+                            snapshot::validate_bridge_code_size(&effective_bridge_code)
+                        {
+                            let result_frame = RuntimeEvent::ExecutionResult {
+                                session_id,
+                                exit_code: 1,
+                                exports: None,
+                                error: Some(ExecutionErrorBin {
+                                    error_type: "Error".into(),
+                                    message,
+                                    stack: String::new(),
+                                    code: snapshot::V8_BRIDGE_CODE_LIMIT_ERROR_CODE.into(),
+                                }),
+                            };
+                            send_event_with_generation(&event_tx, output_generation, result_frame);
+                            continue;
+                        }
+
+                        if should_update_cached_bridge_code {
+                            last_bridge_code = Some(effective_bridge_code.clone());
+                        }
 
                         if v8_isolate.is_some()
                             && isolate_bridge_code.as_deref()

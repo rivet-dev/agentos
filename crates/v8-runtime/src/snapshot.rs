@@ -10,6 +10,20 @@ use crate::session::{ASYNC_BRIDGE_FNS, SYNC_BRIDGE_FNS};
 /// Maximum allowed snapshot blob size (50MB).
 /// Prevents resource exhaustion from degenerate bridge code.
 const MAX_SNAPSHOT_BLOB_BYTES: usize = 50 * 1024 * 1024;
+const MAX_V8_BRIDGE_CODE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const V8_BRIDGE_CODE_LIMIT_ERROR_CODE: &str = "ERR_V8_BRIDGE_CODE_LIMIT";
+
+pub(crate) fn validate_bridge_code_size(bridge_code: &str) -> Result<(), String> {
+    if bridge_code.len() > MAX_V8_BRIDGE_CODE_BYTES {
+        return Err(format!(
+            "{V8_BRIDGE_CODE_LIMIT_ERROR_CODE}: bridge code too large for V8 bridge setup: {} bytes (max {})",
+            bridge_code.len(),
+            MAX_V8_BRIDGE_CODE_BYTES
+        ));
+    }
+
+    Ok(())
+}
 
 /// Create a V8 startup snapshot with a fully-initialized bridge context.
 ///
@@ -23,6 +37,8 @@ const MAX_SNAPSHOT_BLOB_BYTES: usize = 50 * 1024 * 1024;
 /// Returns an error if the bridge code fails to compile or the resulting
 /// snapshot exceeds MAX_SNAPSHOT_BLOB_BYTES.
 pub fn create_snapshot(bridge_code: &str) -> Result<v8::StartupData, String> {
+    validate_bridge_code_size(bridge_code)?;
+
     init_v8_platform();
 
     let mut isolate = v8::Isolate::snapshot_creator(Some(external_refs()), None);
@@ -291,6 +307,39 @@ fn siphash(s: &str) -> u64 {
     hasher.finish()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_snapshot_rejects_oversized_bridge_code_before_v8_creation() {
+        let bridge_code = " ".repeat(MAX_V8_BRIDGE_CODE_BYTES + 1);
+        let error = match create_snapshot(&bridge_code) {
+            Ok(_) => panic!("oversized bridge code should be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains(V8_BRIDGE_CODE_LIMIT_ERROR_CODE));
+        assert!(error.contains("bridge code too large for V8 bridge setup"));
+        assert!(error.contains(&MAX_V8_BRIDGE_CODE_BYTES.to_string()));
+    }
+
+    #[test]
+    fn snapshot_cache_rejects_oversized_bridge_code_without_retaining_in_flight_state() {
+        let cache = SnapshotCache::new(1);
+        let bridge_code = " ".repeat(MAX_V8_BRIDGE_CODE_BYTES + 1);
+
+        for _ in 0..2 {
+            let error = match cache.get_or_create(&bridge_code) {
+                Ok(_) => panic!("oversized bridge code should be rejected"),
+                Err(error) => error,
+            };
+
+            assert!(error.contains(V8_BRIDGE_CODE_LIMIT_ERROR_CODE));
+        }
+    }
+}
+
 #[doc(hidden)]
 pub fn run_snapshot_consolidated_checks() {
     fn eval(isolate: &mut v8::OwnedIsolate, code: &str) -> String {
@@ -553,7 +602,7 @@ pub fn run_snapshot_consolidated_checks() {
     // correctly dispatch to Rust bridge callbacks via external_refs().
     {
         use crate::bridge::{
-            register_async_bridge_fns, register_sync_bridge_fns, PendingPromises, SessionBuffers,
+            PendingPromises, SessionBuffers, register_async_bridge_fns, register_sync_bridge_fns,
         };
         use crate::host_call::BridgeCallContext;
         use std::cell::RefCell;
@@ -897,10 +946,10 @@ pub fn run_snapshot_consolidated_checks() {
         let result_str = result.to_rust_string_lossy(scope);
 
         assert_eq!(
-                result_str,
-                "_fs=true;_fs.readFile=true;myLog=true;require=true;console.log=true;console.error=true;__initialCwd=/;__part16_setup=true",
-                "restored context should have all bridge infrastructure from the IIFE"
-            );
+            result_str,
+            "_fs=true;_fs.readFile=true;myLog=true;require=true;console.log=true;console.error=true;__initialCwd=/;__part16_setup=true",
+            "restored context should have all bridge infrastructure from the IIFE"
+        );
     }
 
     // --- Part 17: SnapshotCache works with context-snapshot create_snapshot ---
@@ -933,7 +982,7 @@ pub fn run_snapshot_consolidated_checks() {
     // stubs, restore, replace stubs with real bridge functions, verify the
     // replaced functions dispatch to the real Rust callbacks.
     {
-        use crate::bridge::{replace_bridge_fns, PendingPromises, SessionBuffers};
+        use crate::bridge::{PendingPromises, SessionBuffers, replace_bridge_fns};
         use crate::host_call::BridgeCallContext;
         use std::cell::RefCell;
 
@@ -1006,10 +1055,10 @@ pub fn run_snapshot_consolidated_checks() {
         let script = v8::Script::compile(scope, check, None).unwrap();
         let result = script.run(scope).unwrap();
         assert_eq!(
-                result.to_rust_string_lossy(scope),
-                "__bridge_ready=true;_fs_exists=true;_fs.readFile_type=function;_log_type=function;_scheduleTimer_type=function",
-                "restored context should have bridge IIFE state + replaced functions"
-            );
+            result.to_rust_string_lossy(scope),
+            "__bridge_ready=true;_fs_exists=true;_fs.readFile_type=function;_log_type=function;_scheduleTimer_type=function",
+            "restored context should have bridge IIFE state + replaced functions"
+        );
     }
 
     // --- Part 19: _processConfig is overridable after restore ---
