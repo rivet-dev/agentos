@@ -1,6 +1,7 @@
 use agent_os_kernel::command_registry::CommandDriver;
 use agent_os_kernel::kernel::{KernelProcessHandle, KernelVm, KernelVmConfig, SpawnOptions};
 use agent_os_kernel::permissions::Permissions;
+use agent_os_kernel::resource_accounting::ResourceLimits;
 use agent_os_kernel::socket_table::{
     DatagramSocketOption, InetSocketAddress, SocketMulticastMembership, SocketSpec,
 };
@@ -216,6 +217,103 @@ fn udp_send_and_receive_require_bound_sockets_and_bound_targets() {
         .socket_recv_datagram("shell", receiver.pid(), receiver_socket, 64)
         .expect_err("unbound receiver should fail");
     assert_eq!(unbound_recv_error.code(), "EINVAL");
+}
+
+#[test]
+fn udp_datagram_queue_limit_rejects_extra_datagrams_without_mutating_queue() {
+    let mut config = KernelVmConfig::new("vm-udp-queue-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_socket_datagram_queue_len: Some(1),
+        ..ResourceLimits::default()
+    };
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+    let sender = spawn_shell(&mut kernel);
+    let receiver = spawn_shell(&mut kernel);
+
+    let sender_socket = kernel
+        .socket_create("shell", sender.pid(), SocketSpec::udp())
+        .expect("create sender socket");
+    kernel
+        .socket_bind_inet(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 54054),
+        )
+        .expect("bind sender");
+
+    let receiver_socket = kernel
+        .socket_create("shell", receiver.pid(), SocketSpec::udp())
+        .expect("create receiver socket");
+    kernel
+        .socket_bind_inet(
+            "shell",
+            receiver.pid(),
+            receiver_socket,
+            InetSocketAddress::new("127.0.0.1", 43154),
+        )
+        .expect("bind receiver");
+
+    kernel
+        .socket_send_to_inet_loopback(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 43154),
+            b"one",
+        )
+        .expect("send first datagram");
+    let queue_error = kernel
+        .socket_send_to_inet_loopback(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 43154),
+            b"two",
+        )
+        .expect_err("second datagram should exceed queue length limit");
+    assert_eq!(queue_error.code(), "EAGAIN");
+    let receiver_record = kernel
+        .socket_get(receiver_socket)
+        .expect("receiver after rejected datagram");
+    assert_eq!(receiver_record.queued_datagrams(), 1);
+    assert_eq!(receiver_record.queued_datagram_bytes(), 3);
+
+    let datagram = kernel
+        .socket_recv_datagram("shell", receiver.pid(), receiver_socket, 16)
+        .expect("receive queued datagram")
+        .expect("datagram payload");
+    assert_eq!(datagram.payload(), b"one");
+    let receiver_record = kernel
+        .socket_get(receiver_socket)
+        .expect("receiver after drain");
+    assert_eq!(receiver_record.queued_datagrams(), 0);
+    assert_eq!(receiver_record.queued_datagram_bytes(), 0);
+
+    let written = kernel
+        .socket_send_to_inet_loopback(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 43154),
+            b"two",
+        )
+        .expect("send should succeed after draining datagram queue");
+    assert_eq!(written, 3);
+    let receiver_record = kernel
+        .socket_get(receiver_socket)
+        .expect("receiver after resumed send");
+    assert_eq!(receiver_record.queued_datagrams(), 1);
+    assert_eq!(receiver_record.queued_datagram_bytes(), 3);
+    let datagram = kernel
+        .socket_recv_datagram("shell", receiver.pid(), receiver_socket, 16)
+        .expect("receive resumed datagram")
+        .expect("resumed datagram payload");
+    assert_eq!(datagram.payload(), b"two");
 }
 
 #[test]
