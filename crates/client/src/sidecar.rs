@@ -4,8 +4,8 @@
 //! Ported from `packages/core/src/agent-os.ts` (`AgentOsSidecar`). The shared-sidecar pool is a
 //! process-global map (default pool `"default"`).
 
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use once_cell::sync::OnceCell;
 use scc::HashMap as SccHashMap;
@@ -19,6 +19,9 @@ use agent_os_sidecar::protocol::{
 use crate::agent_os::AgentOs;
 use crate::error::ClientError;
 use crate::transport::SidecarTransport;
+
+/// Maximum shared sidecar pool entries retained process-wide.
+const SHARED_SIDECAR_POOL_LIMIT: usize = 1024;
 
 /// The lazily-established shared sidecar process + authenticated connection. Multiple VMs in the same
 /// (shared) sidecar reuse this single process/connection, each opening its own session + VM on it.
@@ -176,7 +179,7 @@ impl AgentOsSidecar {
             _ => {
                 return Err(ClientError::Sidecar(
                     "unexpected authenticate response".to_string(),
-                ))
+                ));
             }
         };
         let max_frame = authed.max_frame_bytes as usize;
@@ -243,8 +246,9 @@ impl AgentOsSidecar {
 
         if let Some(pool) = self.shared_pool.as_deref() {
             // Only remove the cached entry if it still points at this exact sidecar instance.
-            let self_id = self.sidecar_id.as_str();
-            let _ = shared_sidecars().remove_if(pool, |cached| cached.sidecar_id == self_id);
+            let self_ptr = self as *const AgentOsSidecar;
+            let _ = shared_sidecars()
+                .remove_if(pool, |cached| std::ptr::eq(Arc::as_ptr(cached), self_ptr));
         }
 
         if errors.is_empty() {
@@ -301,10 +305,53 @@ impl AgentOsSidecarVmLease {
 
 /// Process-global shared-sidecar pool, keyed by pool name (default `"default"`).
 static SHARED_SIDECARS: OnceCell<SccHashMap<String, Arc<AgentOsSidecar>>> = OnceCell::new();
+static SHARED_SIDECAR_POOL_LOCK: OnceCell<parking_lot::Mutex<()>> = OnceCell::new();
 
 /// Access (initializing on first use) the process-global shared-sidecar pool.
 pub(crate) fn shared_sidecars() -> &'static SccHashMap<String, Arc<AgentOsSidecar>> {
     SHARED_SIDECARS.get_or_init(SccHashMap::new)
+}
+
+fn shared_sidecar_pool_lock() -> &'static parking_lot::Mutex<()> {
+    SHARED_SIDECAR_POOL_LOCK.get_or_init(parking_lot::Mutex::default)
+}
+
+fn shared_sidecar_pool_len(cache: &SccHashMap<String, Arc<AgentOsSidecar>>) -> usize {
+    let mut len = 0;
+    cache.scan(|_, _| {
+        len += 1;
+    });
+    len
+}
+
+fn prune_disposed_shared_sidecars(cache: &SccHashMap<String, Arc<AgentOsSidecar>>) {
+    let mut disposed_pools = Vec::new();
+    cache.scan(|pool, sidecar| {
+        if sidecar.describe().state == SidecarState::Disposed {
+            disposed_pools.push(pool.clone());
+        }
+    });
+    for pool in disposed_pools {
+        let _ = cache.remove_if(&pool, |sidecar| {
+            sidecar.describe().state == SidecarState::Disposed
+        });
+    }
+}
+
+#[cfg(test)]
+fn ensure_shared_sidecar_pool_capacity(
+    cache: &SccHashMap<String, Arc<AgentOsSidecar>>,
+) -> Result<(), ClientError> {
+    if shared_sidecar_pool_len(cache) >= SHARED_SIDECAR_POOL_LIMIT {
+        return Err(shared_sidecar_pool_limit_error());
+    }
+    Ok(())
+}
+
+fn shared_sidecar_pool_limit_error() -> ClientError {
+    ClientError::Sidecar(format!(
+        "shared sidecar pool limit exceeded: at most {SHARED_SIDECAR_POOL_LIMIT} pools can be cached"
+    ))
 }
 
 impl AgentOs {
@@ -337,6 +384,7 @@ impl AgentOs {
     ) -> Result<Arc<AgentOsSidecar>, ClientError> {
         let pool = pool.unwrap_or_else(|| "default".to_string());
         let cache = shared_sidecars();
+        let _guard = shared_sidecar_pool_lock().lock();
 
         // Fast path: reuse a cached, non-disposed sidecar for this pool.
         if let Some(existing) = cache.read(&pool, |_, sidecar| sidecar.clone()) {
@@ -344,6 +392,7 @@ impl AgentOs {
                 return Ok(existing);
             }
         }
+        prune_disposed_shared_sidecars(cache);
 
         // Parity: TypeScript builds placement `{ kind: "shared", ...(pool ? { pool } : {}) }`, so an
         // empty-string pool (a non-nullish value that survives `?? "default"`) is OMITTED from the
@@ -364,6 +413,7 @@ impl AgentOs {
 
         // Insert atomically, replacing a stale (disposed) entry but yielding to a live one that a
         // concurrent caller may have just installed.
+        let cache_len = shared_sidecar_pool_len(cache);
         match cache.entry(pool) {
             scc::hash_map::Entry::Occupied(mut occupied) => {
                 if occupied.get().describe().state == SidecarState::Disposed {
@@ -374,9 +424,126 @@ impl AgentOs {
                 }
             }
             scc::hash_map::Entry::Vacant(vacant) => {
+                if cache_len >= SHARED_SIDECAR_POOL_LIMIT {
+                    return Err(shared_sidecar_pool_limit_error());
+                }
                 vacant.insert_entry(sidecar.clone());
                 Ok(sidecar)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shared(pool: &str, state: SidecarState) -> Arc<AgentOsSidecar> {
+        let sidecar = Arc::new(AgentOsSidecar::new(
+            format!("agent-os-shared-sidecar:{pool}"),
+            AgentOsSidecarPlacement::Shared {
+                pool: Some(pool.to_string()),
+            },
+            Some(pool.to_string()),
+        ));
+        sidecar.state.store(state.as_u8(), Ordering::SeqCst);
+        sidecar
+    }
+
+    #[test]
+    fn prune_disposed_shared_sidecars_keeps_live_entries() {
+        let cache = SccHashMap::new();
+        let _ = cache.insert("live".to_string(), shared("live", SidecarState::Ready));
+        let _ = cache.insert(
+            "disposed".to_string(),
+            shared("disposed", SidecarState::Disposed),
+        );
+
+        prune_disposed_shared_sidecars(&cache);
+
+        assert_eq!(shared_sidecar_pool_len(&cache), 1);
+        assert!(cache.read("live", |_, _| ()).is_some());
+        assert!(cache.read("disposed", |_, _| ()).is_none());
+    }
+
+    #[test]
+    fn shared_sidecar_pool_capacity_rejects_full_live_cache() {
+        let cache = SccHashMap::new();
+        for index in 0..SHARED_SIDECAR_POOL_LIMIT {
+            let pool = format!("pool-{index}");
+            let _ = cache.insert(pool.clone(), shared(&pool, SidecarState::Ready));
+        }
+
+        let error =
+            ensure_shared_sidecar_pool_capacity(&cache).expect_err("full cache should reject");
+
+        assert!(
+            error
+                .to_string()
+                .contains("shared sidecar pool limit exceeded"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn shared_sidecar_pool_capacity_allows_after_pruning_disposed_entries() {
+        let cache = SccHashMap::new();
+        for index in 0..SHARED_SIDECAR_POOL_LIMIT {
+            let pool = format!("pool-{index}");
+            let state = if index == 0 {
+                SidecarState::Disposed
+            } else {
+                SidecarState::Ready
+            };
+            let _ = cache.insert(pool.clone(), shared(&pool, state));
+        }
+
+        prune_disposed_shared_sidecars(&cache);
+
+        ensure_shared_sidecar_pool_capacity(&cache).expect("pruned cache should admit one entry");
+        assert_eq!(
+            shared_sidecar_pool_len(&cache),
+            SHARED_SIDECAR_POOL_LIMIT - 1
+        );
+    }
+
+    #[tokio::test]
+    async fn get_shared_sidecar_inserts_vacant_pool_without_reentrant_scan() {
+        let pool = format!("unit-{}", Uuid::new_v4());
+        let sidecar = AgentOs::get_shared_sidecar(Some(pool.clone()))
+            .await
+            .expect("shared sidecar");
+
+        assert_eq!(sidecar.shared_pool.as_deref(), Some(pool.as_str()));
+
+        sidecar.dispose().await.expect("dispose shared sidecar");
+    }
+
+    #[test]
+    fn dispose_removes_only_same_shared_sidecar_instance() {
+        let pool = format!("dispose-race-{}", Uuid::new_v4());
+        let old = shared(&pool, SidecarState::Ready);
+        let replacement = shared(&pool, SidecarState::Ready);
+        let cache = shared_sidecars();
+        let _guard = shared_sidecar_pool_lock().lock();
+
+        let _ = cache.insert(pool.clone(), replacement.clone());
+        old.state
+            .store(SidecarState::Disposing.as_u8(), Ordering::SeqCst);
+        old.active_vm_count.store(0, Ordering::SeqCst);
+        old.state
+            .store(SidecarState::Disposed.as_u8(), Ordering::SeqCst);
+        let old_ptr = Arc::as_ptr(&old);
+        let _ = cache.remove_if(&pool, |cached| std::ptr::eq(Arc::as_ptr(cached), old_ptr));
+
+        let cached = cache
+            .read(&pool, |_, cached| cached.clone())
+            .expect("replacement should remain cached");
+        assert!(Arc::ptr_eq(&cached, &replacement));
+
+        let replacement_ptr = Arc::as_ptr(&replacement);
+        let _ = cache.remove_if(&pool, |cached| {
+            std::ptr::eq(Arc::as_ptr(cached), replacement_ptr)
+        });
     }
 }
