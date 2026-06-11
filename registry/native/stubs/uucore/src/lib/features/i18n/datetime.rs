@@ -18,6 +18,18 @@ use std::sync::OnceLock;
 
 use crate::i18n::get_locale_from_env;
 
+#[derive(Default)]
+struct StrftimeReplacements {
+    year: Option<String>,
+    month: Option<String>,
+    day_zero_padded: Option<String>,
+    day_space_padded: Option<String>,
+    month_long: Option<String>,
+    month_abbrev: Option<String>,
+    weekday_long: Option<String>,
+    weekday_short: Option<String>,
+}
+
 /// Get the locale for time/date formatting from LC_TIME environment variable
 pub fn get_time_locale() -> &'static (Locale, super::UEncoding) {
     static TIME_LOCALE: OnceLock<(Locale, super::UEncoding)> = OnceLock::new();
@@ -69,12 +81,10 @@ pub enum CalendarType {
 
 /// Transform a strftime format string to use locale-specific calendar values
 pub fn localize_format_string(format: &str, date: JiffDate) -> String {
-    const PERCENT_PLACEHOLDER: &str = "\x00\x00";
-
     let (locale, _) = get_time_locale();
     let iso_date = Date::<Iso>::convert_from(date);
 
-    let mut fmt = format.replace("%%", PERCENT_PLACEHOLDER);
+    let mut replacements = StrftimeReplacements::default();
 
     // For non-Gregorian calendars, replace date components with converted values
     let calendar_type = get_locale_calendar_type(locale);
@@ -94,22 +104,21 @@ pub fn localize_format_string(format: &str, date: JiffDate) -> String {
             }
             CalendarType::Gregorian => unreachable!(),
         };
-        fmt = fmt
-            .replace("%Y", &cal_year.to_string())
-            .replace("%m", &format!("{cal_month:02}"))
-            .replace("%d", &format!("{cal_day:02}"))
-            .replace("%e", &format!("{cal_day:2}"));
+        replacements.year = Some(cal_year.to_string());
+        replacements.month = Some(format!("{cal_month:02}"));
+        replacements.day_zero_padded = Some(format!("{cal_day:02}"));
+        replacements.day_space_padded = Some(format!("{cal_day:2}"));
     }
 
     // Format localized names using ICU DateTimeFormatter
     let locale_prefs = locale.clone().into();
 
-    if fmt.contains("%B") {
+    if format.contains("%B") {
         if let Ok(f) = DateTimeFormatter::try_new(locale_prefs, fieldsets::M::long()) {
-            fmt = fmt.replace("%B", &f.format(&iso_date).to_string());
+            replacements.month_long = Some(f.format(&iso_date).to_string());
         }
     }
-    if fmt.contains("%b") || fmt.contains("%h") {
+    if format.contains("%b") || format.contains("%h") {
         if let Ok(f) = DateTimeFormatter::try_new(locale_prefs, fieldsets::M::medium()) {
             // ICU's medium format may include trailing periods (e.g., "febr." for Hungarian),
             // which when combined with locale format strings that also add periods after
@@ -118,23 +127,100 @@ pub fn localize_format_string(format: &str, date: JiffDate) -> String {
             // WITHOUT trailing periods, so we strip them here for consistency.
             let month_abbrev = f.format(&iso_date).to_string();
             let month_abbrev = month_abbrev.trim_end_matches('.').to_string();
-            fmt = fmt
-                .replace("%b", &month_abbrev)
-                .replace("%h", &month_abbrev);
+            replacements.month_abbrev = Some(month_abbrev);
         }
     }
-    if fmt.contains("%A") {
+    if format.contains("%A") {
         if let Ok(f) = DateTimeFormatter::try_new(locale_prefs, fieldsets::E::long()) {
-            fmt = fmt.replace("%A", &f.format(&iso_date).to_string());
+            replacements.weekday_long = Some(f.format(&iso_date).to_string());
         }
     }
-    if fmt.contains("%a") {
+    if format.contains("%a") {
         if let Ok(f) = DateTimeFormatter::try_new(locale_prefs, fieldsets::E::short()) {
-            fmt = fmt.replace("%a", &f.format(&iso_date).to_string());
+            replacements.weekday_short = Some(f.format(&iso_date).to_string());
         }
     }
 
-    fmt.replace(PERCENT_PLACEHOLDER, "%%")
+    replace_strftime_components(format, &replacements)
+}
+
+fn replace_strftime_components(format: &str, replacements: &StrftimeReplacements) -> String {
+    let mut replaced = String::with_capacity(format.len());
+    let mut chars = format.chars();
+
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            replaced.push(ch);
+            continue;
+        }
+
+        let Some(next) = chars.next() else {
+            replaced.push('%');
+            break;
+        };
+
+        match next {
+            '%' => replaced.push_str("%%"),
+            'Y' => push_replacement_or_directive(&mut replaced, next, replacements.year.as_deref()),
+            'm' => {
+                push_replacement_or_directive(&mut replaced, next, replacements.month.as_deref())
+            }
+            'd' => push_replacement_or_directive(
+                &mut replaced,
+                next,
+                replacements.day_zero_padded.as_deref(),
+            ),
+            'e' => push_replacement_or_directive(
+                &mut replaced,
+                next,
+                replacements.day_space_padded.as_deref(),
+            ),
+            'B' => {
+                push_replacement_or_directive(
+                    &mut replaced,
+                    next,
+                    replacements.month_long.as_deref(),
+                );
+            }
+            'b' | 'h' => {
+                push_replacement_or_directive(
+                    &mut replaced,
+                    next,
+                    replacements.month_abbrev.as_deref(),
+                );
+            }
+            'A' => {
+                push_replacement_or_directive(
+                    &mut replaced,
+                    next,
+                    replacements.weekday_long.as_deref(),
+                );
+            }
+            'a' => {
+                push_replacement_or_directive(
+                    &mut replaced,
+                    next,
+                    replacements.weekday_short.as_deref(),
+                );
+            }
+            _ => push_replacement_or_directive(&mut replaced, next, None),
+        }
+    }
+
+    replaced
+}
+
+fn push_replacement_or_directive(
+    replaced: &mut String,
+    directive: char,
+    replacement: Option<&str>,
+) {
+    if let Some(replacement) = replacement {
+        replaced.push_str(replacement);
+    } else {
+        replaced.push('%');
+        replaced.push(directive);
+    }
 }
 
 #[cfg(test)]
@@ -159,6 +245,38 @@ mod tests {
         assert_eq!(
             get_locale_calendar_type(&locale!("en-US")),
             CalendarType::Gregorian
+        );
+    }
+
+    #[test]
+    fn test_replace_strftime_components_preserves_escaped_percent() {
+        let replacements = StrftimeReplacements {
+            year: Some("2026".to_string()),
+            month: Some("06".to_string()),
+            day_zero_padded: Some("07".to_string()),
+            month_long: Some("June".to_string()),
+            month_abbrev: Some("Jun".to_string()),
+            weekday_long: Some("Sunday".to_string()),
+            weekday_short: Some("Sun".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            "2026-%%m-07-June-Jun-Jun-Sunday-Sun %% %q % %%B %%a",
+            replace_strftime_components("%Y-%%m-%d-%B-%b-%h-%A-%a %% %q % %%B %%a", &replacements,)
+        );
+    }
+
+    #[test]
+    fn test_replace_strftime_components_preserves_literal_nuls() {
+        let replacements = StrftimeReplacements {
+            year: Some("2026".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            "\0\02026",
+            replace_strftime_components("\0\0%Y", &replacements)
         );
     }
 }
