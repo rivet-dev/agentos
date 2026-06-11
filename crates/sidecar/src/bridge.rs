@@ -1086,7 +1086,9 @@ where
                         "fs",
                         Some(&request.path),
                     )
-                    .unwrap_or_else(PermissionDecision::allow)
+                    .unwrap_or_else(|| {
+                        PermissionDecision::deny("missing fs.mount_sensitive permission policy")
+                    })
             } else {
                 filesystem_bridge.filesystem_decision(&filesystem_vm_id, &request.path, access)
             };
