@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
 const PYTHON_WARMUP_METRICS_PREFIX: &str = "__AGENT_OS_PYTHON_WARMUP_METRICS__:";
@@ -1011,10 +1011,18 @@ export async function loadPyodide(options) {
     let child_pid = execution.child_pid();
     let uses_shared_v8_runtime = execution.uses_shared_v8_runtime();
 
+    let ready_deadline = Instant::now() + Duration::from_secs(5);
     let mut saw_ready = false;
     while !saw_ready {
+        if Instant::now() >= ready_deadline {
+            panic!("timed out waiting for Python execution readiness");
+        }
         match execution
-            .poll_event_blocking(Duration::from_secs(5))
+            .poll_event_blocking(
+                ready_deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(100)),
+            )
             .expect("poll Python event before kill")
         {
             Some(PythonExecutionEvent::Stdout(chunk)) => {
@@ -1040,10 +1048,18 @@ export async function loadPyodide(options) {
 
     execution.kill().expect("kill hanging Python execution");
 
+    let kill_deadline = Instant::now() + Duration::from_secs(5);
     let mut exit_code = None;
     while exit_code.is_none() {
+        if Instant::now() >= kill_deadline {
+            panic!("timed out waiting for killed Python execution to exit");
+        }
         match execution
-            .poll_event_blocking(Duration::from_millis(100))
+            .poll_event_blocking(
+                kill_deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(100)),
+            )
             .expect("poll Python event after kill")
         {
             Some(PythonExecutionEvent::Exited(code)) => exit_code = Some(code),
