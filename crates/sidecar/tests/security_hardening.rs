@@ -1,8 +1,8 @@
 mod support;
 
 use agent_os_sidecar::protocol::{
-    ConfigureVmRequest, CreateVmRequest, GuestRuntimeKind, OwnershipScope, PermissionsPolicy,
-    RequestPayload, ResponsePayload, WriteStdinRequest,
+    ConfigureVmRequest, CreateVmRequest, EventPayload, GuestRuntimeKind, OwnershipScope,
+    PermissionsPolicy, RequestPayload, ResponsePayload, StreamChannel, WriteStdinRequest,
 };
 use agent_os_sidecar::{NativeSidecar, NativeSidecarConfig};
 use serde_json::Value;
@@ -11,17 +11,18 @@ use std::ffi::OsStr;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use support::{
-    acquire_sidecar_runtime_test_lock, assert_node_available, authenticate, collect_process_output,
-    create_vm, create_vm_with_metadata, execute, open_session, request, temp_dir, write_fixture,
-    RecordingBridge, TEST_AUTH_TOKEN,
+    RecordingBridge, TEST_AUTH_TOKEN, acquire_sidecar_runtime_test_lock, assert_node_available,
+    authenticate, create_vm, create_vm_with_metadata, execute, open_session, request, temp_dir,
+    write_fixture,
 };
 
 const ARG_PREFIX: &str = "ARG=";
 const INVOCATION_BREAK: &str = "--END--";
 const DEFAULT_GUEST_PATH_ENV: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const DEFAULT_GUEST_HOME: &str = "/home/user";
+const MAX_SECURITY_HARDENING_STREAM_BYTES: usize = 1024 * 1024;
 struct EnvVarGuard {
     key: &'static str,
     previous: Option<String>,
@@ -83,6 +84,77 @@ fn parse_invocations(log_path: &Path) -> Vec<Vec<String>> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+fn append_process_chunk(stream: &mut Vec<u8>, chunk: &[u8], label: &str) {
+    assert!(
+        stream.len().saturating_add(chunk.len()) <= MAX_SECURITY_HARDENING_STREAM_BYTES,
+        "{label} exceeded {MAX_SECURITY_HARDENING_STREAM_BYTES} bytes"
+    );
+    stream.extend_from_slice(chunk);
+}
+
+fn collect_process_output_bounded(
+    sidecar: &mut NativeSidecar<RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+) -> (String, String, i32) {
+    let ownership = OwnershipScope::session(connection_id, session_id);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut exit = None;
+
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for process events; stdout bytes: {}; stderr bytes: {}",
+            stdout.len(),
+            stderr.len()
+        );
+
+        let event = sidecar
+            .poll_event_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll sidecar event");
+        if let Some(event) = event {
+            assert_eq!(
+                event.ownership,
+                OwnershipScope::vm(connection_id, session_id, vm_id)
+            );
+
+            match event.payload {
+                EventPayload::ProcessOutput(output) if output.process_id == process_id => {
+                    match output.channel {
+                        StreamChannel::Stdout => {
+                            append_process_chunk(&mut stdout, &output.chunk, "stdout");
+                        }
+                        StreamChannel::Stderr => {
+                            append_process_chunk(&mut stderr, &output.chunk, "stderr");
+                        }
+                    }
+                }
+                EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
+                    exit = Some((exited.exit_code, Instant::now()));
+                }
+                EventPayload::ProcessOutput(_)
+                | EventPayload::ProcessExited(_)
+                | EventPayload::VmLifecycle(_)
+                | EventPayload::Structured(_) => {}
+            }
+        }
+
+        if let Some((exit_code, seen_at)) = exit {
+            if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
+                return (
+                    String::from_utf8_lossy(&stdout).into_owned(),
+                    String::from_utf8_lossy(&stderr).into_owned(),
+                    exit_code,
+                );
+            }
+        }
+    }
 }
 
 fn sidecar_rejects_oversized_request_frames_before_dispatch() {
@@ -204,7 +276,7 @@ console.log(JSON.stringify(result));
         &entry,
         Vec::new(),
     );
-    let (_stdout, stderr, exit_code) = collect_process_output(
+    let (_stdout, stderr, exit_code) = collect_process_output_bounded(
         &mut sidecar,
         &connection_id,
         &session_id,
@@ -300,7 +372,7 @@ fn vm_resource_limits_cap_active_processes_without_poisoning_followup_execs() {
         other => panic!("unexpected resource-limit response: {other:?}"),
     }
 
-    let (_stdout, stderr, exit_code) = collect_process_output(
+    let (_stdout, stderr, exit_code) = collect_process_output_bounded(
         &mut sidecar,
         &connection_id,
         &session_id,
@@ -321,7 +393,7 @@ fn vm_resource_limits_cap_active_processes_without_poisoning_followup_execs() {
         &fast_entry,
         Vec::new(),
     );
-    let (_stdout, stderr, exit_code) = collect_process_output(
+    let (_stdout, stderr, exit_code) = collect_process_output_bounded(
         &mut sidecar,
         &connection_id,
         &session_id,
@@ -513,7 +585,7 @@ fn execute_ignores_host_node_binary_override_for_javascript_runtime() {
     }
 
     let (_stdout, stderr, exit_code) =
-        collect_process_output(&mut sidecar, &connection_id, &session_id, &vm_id, "proc-1");
+        collect_process_output_bounded(&mut sidecar, &connection_id, &session_id, &vm_id, "proc-1");
     assert_eq!(exit_code, 0);
     assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
 
