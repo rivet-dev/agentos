@@ -8,6 +8,9 @@ use serde_json::json;
 #[derive(Debug)]
 struct SeededMemoryPlugin;
 
+#[derive(Debug)]
+struct NamedPlugin(&'static str);
+
 impl FileSystemPluginFactory<()> for SeededMemoryPlugin {
     fn plugin_id(&self) -> &'static str {
         "seeded_memory"
@@ -22,6 +25,21 @@ impl FileSystemPluginFactory<()> for SeededMemoryPlugin {
             .write_file("/hello.txt", b"hello".to_vec())
             .expect("seed plugin filesystem");
         Ok(Box::new(MountedVirtualFileSystem::new(filesystem)))
+    }
+}
+
+impl FileSystemPluginFactory<()> for NamedPlugin {
+    fn plugin_id(&self) -> &'static str {
+        self.0
+    }
+
+    fn open(
+        &self,
+        _request: OpenFileSystemPluginRequest<'_, ()>,
+    ) -> Result<Box<dyn agent_os_kernel::mount_table::MountedFileSystem>, PluginError> {
+        Ok(Box::new(MountedVirtualFileSystem::new(
+            MemoryFileSystem::new(),
+        )))
     }
 }
 
@@ -51,6 +69,23 @@ fn plugin_registry_opens_registered_plugins() {
             .expect("read plugin file"),
         b"hello".to_vec()
     );
+}
+
+#[test]
+fn plugin_registry_rejects_ids_that_are_not_mount_type_tokens() {
+    for plugin_id in ["", "bad/id", "bad id", "bad\nid", "bad:id", "bad😀id"] {
+        let mut registry = FileSystemPluginRegistry::new();
+        let error = registry
+            .register(NamedPlugin(plugin_id))
+            .expect_err("invalid plugin id should be rejected");
+
+        assert_eq!(error.code(), "EINVAL");
+        assert!(
+            error.message().contains("invalid filesystem plugin id"),
+            "unexpected error: {error}"
+        );
+        assert!(registry.plugin_ids().is_empty());
+    }
 }
 
 #[test]

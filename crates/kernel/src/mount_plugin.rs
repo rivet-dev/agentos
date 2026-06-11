@@ -93,6 +93,7 @@ impl<Context> FileSystemPluginRegistry<Context> {
         factory: impl FileSystemPluginFactory<Context> + 'static,
     ) -> Result<(), PluginError> {
         let plugin_id = factory.plugin_id();
+        validate_plugin_id(plugin_id)?;
         if self.factories.contains_key(plugin_id) {
             return Err(PluginError::already_exists(format!(
                 "filesystem plugin already registered: {plugin_id}"
@@ -121,4 +122,18 @@ impl<Context> FileSystemPluginRegistry<Context> {
     pub fn plugin_ids(&self) -> Vec<String> {
         self.factories.keys().cloned().collect()
     }
+}
+
+fn validate_plugin_id(plugin_id: &str) -> Result<(), PluginError> {
+    if plugin_id.is_empty()
+        || !plugin_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(PluginError::invalid_input(format!(
+            "invalid filesystem plugin id {plugin_id:?}"
+        )));
+    }
+
+    Ok(())
 }
