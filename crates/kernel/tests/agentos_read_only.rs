@@ -31,6 +31,25 @@ fn seeded_kernel() -> KernelVm<MemoryFileSystem> {
     kernel
 }
 
+fn seeded_kernel_with_hardlink_alias() -> KernelVm<MemoryFileSystem> {
+    let mut filesystem = MemoryFileSystem::new();
+    filesystem
+        .write_file(INSTRUCTIONS, b"original instructions".to_vec())
+        .expect("seed instructions before kernel starts");
+    filesystem.mkdir("/tmp", true).expect("seed tmp directory");
+    filesystem
+        .link(INSTRUCTIONS, "/tmp/instructions-hardlink.md")
+        .expect("seed hardlink alias before kernel starts");
+
+    let mut config = KernelVmConfig::new("vm-agentos-hardlink-read-only");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(filesystem, config);
+    kernel
+        .register_driver(CommandDriver::new(DRIVER, ["sh"]))
+        .expect("register shell driver");
+    kernel
+}
+
 fn spawn_shell(kernel: &mut KernelVm<MemoryFileSystem>) -> u32 {
     kernel
         .spawn_process(
@@ -170,6 +189,61 @@ fn agentos_protection_follows_symlink_aliases() {
     assert_eq!(
         read_instructions(&mut kernel).expect("read instructions after removing alias"),
         "original instructions"
+    );
+}
+
+#[test]
+fn agentos_protection_rejects_preexisting_hardlink_aliases() {
+    let mut kernel = seeded_kernel_with_hardlink_alias();
+    let pid = spawn_shell(&mut kernel);
+    let alias = "/tmp/instructions-hardlink.md";
+    let symlink_alias = "/tmp/instructions-symlink-to-hardlink.md";
+
+    assert_eq!(
+        kernel
+            .read_file(alias)
+            .expect("read hardlink alias to instructions"),
+        b"original instructions".to_vec()
+    );
+    assert_erofs(kernel.write_file(alias, "tampered"));
+    assert_erofs(kernel.write_file_for_process(DRIVER, pid, alias, "tampered", Some(0o644)));
+    assert_erofs(kernel.truncate(alias, 0));
+    assert_erofs(kernel.chmod(alias, 0o777));
+    assert_erofs(kernel.chown(alias, 1000, 1000));
+    assert_erofs(kernel.utimes(alias, 1, 1));
+    assert_erofs(kernel.remove_file(alias));
+    assert_erofs(kernel.rename(alias, "/tmp/moved-hardlink.md"));
+
+    let fd = kernel
+        .fd_open(DRIVER, pid, alias, O_RDONLY, None)
+        .expect("open hardlink alias read-only");
+    assert_erofs(kernel.fd_write(DRIVER, pid, fd, b"tampered"));
+    assert_erofs(kernel.fd_pwrite(DRIVER, pid, fd, b"tampered", 0));
+    assert_erofs(kernel.fd_open(DRIVER, pid, alias, O_WRONLY, None));
+    assert_erofs(kernel.futimes(
+        DRIVER,
+        pid,
+        fd,
+        VirtualUtimeSpec::Set(VirtualTimeSpec::from_millis(1)),
+        VirtualUtimeSpec::Set(VirtualTimeSpec::from_millis(1)),
+    ));
+
+    kernel
+        .symlink(alias, symlink_alias)
+        .expect("create symlink to hardlink alias");
+    assert_erofs(kernel.write_file(symlink_alias, "tampered"));
+    assert_erofs(kernel.truncate(symlink_alias, 0));
+    assert_erofs(kernel.fd_open(DRIVER, pid, symlink_alias, O_WRONLY, None));
+
+    assert_eq!(
+        read_instructions(&mut kernel).expect("read instructions after hardlink writes"),
+        "original instructions"
+    );
+    assert_eq!(
+        kernel
+            .read_file(alias)
+            .expect("hardlink alias should still exist"),
+        b"original instructions".to_vec()
     );
 }
 

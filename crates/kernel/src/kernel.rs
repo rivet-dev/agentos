@@ -2790,6 +2790,12 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             if is_agentos_path(&resolved) {
                 return Err(read_only_filesystem_error(&resolved));
             }
+            if self.has_agentos_hardlink_alias(&resolved)? {
+                return Err(read_only_filesystem_error(&resolved));
+            }
+        }
+        if self.has_agentos_hardlink_alias(path)? {
+            return Err(read_only_filesystem_error(path));
         }
 
         Ok(())
@@ -2802,9 +2808,56 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             if is_agentos_path(&resolved) {
                 return Err(read_only_filesystem_error(&resolved));
             }
+            if self.has_agentos_hardlink_alias(&resolved)? {
+                return Err(read_only_filesystem_error(&resolved));
+            }
+        }
+        if self.has_agentos_hardlink_alias(path)? {
+            return Err(read_only_filesystem_error(path));
         }
 
         Ok(())
+    }
+
+    fn has_agentos_hardlink_alias(&mut self, path: &str) -> KernelResult<bool> {
+        let Some(target) = self.storage_lstat(path)? else {
+            return Ok(false);
+        };
+        if target.is_directory || target.is_symbolic_link {
+            return Ok(false);
+        }
+
+        self.agentos_subtree_contains_inode("/etc/agentos", target.dev, target.ino)
+    }
+
+    fn agentos_subtree_contains_inode(
+        &mut self,
+        path: &str,
+        target_dev: u64,
+        target_ino: u64,
+    ) -> KernelResult<bool> {
+        let Some(stat) = self.storage_lstat(path)? else {
+            return Ok(false);
+        };
+        if !stat.is_directory && !stat.is_symbolic_link {
+            return Ok(stat.dev == target_dev && stat.ino == target_ino);
+        }
+        if !stat.is_directory {
+            return Ok(false);
+        }
+
+        let children = self.raw_filesystem_mut().read_dir_with_types(path)?;
+        for child in children {
+            if child.name == "." || child.name == ".." {
+                continue;
+            }
+            let child_path = join_absolute_path(path, &child.name);
+            if self.agentos_subtree_contains_inode(&child_path, target_dev, target_ino)? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     fn resolve_write_guard_path(
