@@ -1344,22 +1344,32 @@ invalid-syntax = This is { $missing
     #[test]
     fn test_setup_localization_fallback_to_embedded() {
         std::thread::spawn(|| {
+            let original_lang = env::var("LANG").ok();
+
             // Force English locale for this test
             unsafe {
                 env::set_var("LANG", "en-US");
             }
 
-            // Test with a utility name that has embedded locales
-            // This should fall back to embedded English when filesystem files aren't found
-            let result = setup_localization("test");
+            // Test a missing utility-specific locale directory. The standalone
+            // stub still embeds common uucore strings for English fallback.
+            let result = setup_localization("missing-utility");
             if let Err(e) = &result {
                 eprintln!("Setup localization failed: {e}");
             }
             assert!(result.is_ok());
 
-            // Verify we can get messages (using embedded English)
-            let message = get_message("test-about");
-            assert_eq!(message, "Check file types and compare values."); // Should use embedded English
+            let message = get_message("common-error");
+            assert_eq!(message, "error");
+
+            match original_lang {
+                Some(value) => unsafe {
+                    env::set_var("LANG", value);
+                },
+                None => unsafe {
+                    env::remove_var("LANG");
+                },
+            }
         })
         .join()
         .unwrap();
