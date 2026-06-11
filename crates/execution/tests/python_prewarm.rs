@@ -5,8 +5,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::thread;
-use std::time::Duration;
 use tempfile::tempdir;
 
 const PYTHON_WARMUP_METRICS_PREFIX: &str = "__AGENT_OS_PYTHON_WARMUP_METRICS__:";
@@ -96,7 +94,6 @@ fn python_execution_invalidates_prewarm_stamp_when_pyodide_bundle_changes() {
         "executed"
     );
 
-    thread::sleep(Duration::from_millis(25));
     let original = fs::read_to_string(&pyodide_mjs).expect("read pyodide module");
     fs::write(
         &pyodide_mjs,
