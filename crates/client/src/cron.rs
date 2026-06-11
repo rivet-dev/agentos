@@ -12,8 +12,8 @@
 //!
 //! Cron fields are interpreted in the host LOCAL timezone, matching croner's default behavior.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, Timelike, Utc, Weekday};
 use scc::HashMap as SccHashMap;
@@ -159,6 +159,7 @@ pub(crate) struct CronJobState {
 /// Owns scheduled jobs, the schedule driver, and the cron event broadcast.
 pub struct CronManager {
     pub(crate) jobs: SccHashMap<String, CronJobState>,
+    pub(crate) schedule_lock: parking_lot::Mutex<()>,
     pub(crate) driver: Arc<dyn ScheduleDriver>,
     pub(crate) event_tx: broadcast::Sender<CronEvent>,
 }
@@ -169,6 +170,7 @@ impl CronManager {
         let (event_tx, _rx) = broadcast::channel(256);
         Self {
             jobs: SccHashMap::new(),
+            schedule_lock: parking_lot::Mutex::new(()),
             driver,
             event_tx,
         }
@@ -179,6 +181,7 @@ impl CronManager {
     /// Mirrors TS `CronManager.cancel`: cancel the driver-armed timer (`this.driver.cancel(handle)`)
     /// and remove the job from the registry.
     pub(crate) fn cancel_job(&self, id: &str) {
+        let _guard = self.schedule_lock.lock();
         if let Some((_, state)) = self.jobs.remove(id) {
             self.driver.cancel(&state.handle);
         }
@@ -189,6 +192,7 @@ impl CronManager {
     /// Mirrors TS `CronManager.dispose`: cancel every armed timer through the driver, clear the
     /// registry, then call `this.driver.dispose()` to tear down all driver-held timer state.
     pub(crate) fn dispose(&self) {
+        let _guard = self.schedule_lock.lock();
         self.jobs.scan(|_, state| {
             self.driver.cancel(&state.handle);
         });
@@ -1114,36 +1118,15 @@ impl AgentOs {
             })
         });
 
-        // Ask the driver to arm the timer.
-        let handle = cron.driver.schedule(ScheduleEntry {
-            id: id.clone(),
-            schedule: options.schedule.clone(),
-            callback,
-        });
-
-        let state = CronJobState {
-            schedule: options.schedule.clone(),
-            action: options.action,
-            overlap,
-            last_run: parking_lot::Mutex::new(None),
-            next_run: parking_lot::Mutex::new(next_run),
-            run_count: std::sync::atomic::AtomicU64::new(0),
-            running: AtomicBool::new(false),
-            queued: AtomicBool::new(false),
-            handle,
-        };
-
-        // Insert; if the id already exists, cancel its driver-armed timer first, mirroring the TS
-        // `Map.set` overwrite over a freshly-armed handle.
-        if let Some((_, old)) = cron.jobs.remove(&id) {
-            cron.driver.cancel(&old.handle);
-        }
-        let _ = cron.jobs.insert(id.clone(), state);
-
-        Ok(CronJobHandle {
+        register_cron_job(
+            cron,
             id,
-            manager: Arc::clone(cron),
-        })
+            options.schedule,
+            options.action,
+            overlap,
+            next_run,
+            callback,
+        )
     }
 
     /// Snapshot all cron jobs. Mirrors TS `CronManager.list`.
@@ -1173,5 +1156,161 @@ impl AgentOs {
     /// equivalent. Each run emits `Fire` then `Complete`|`Error`. Mirrors TS `AgentOs.onCronEvent`.
     pub fn cron_events(&self) -> broadcast::Receiver<CronEvent> {
         self.cron().event_tx.subscribe()
+    }
+}
+
+fn ensure_cron_capacity(cron: &CronManager, id: &str) -> std::result::Result<(), ClientError> {
+    if cron.jobs.contains(id) || cron.jobs.len() < crate::CRON_JOB_LIMIT {
+        return Ok(());
+    }
+
+    Err(ClientError::Sidecar(format!(
+        "cron job limit exceeded: at most {} jobs can be scheduled per VM",
+        crate::CRON_JOB_LIMIT
+    )))
+}
+
+fn register_cron_job(
+    cron: &Arc<CronManager>,
+    id: String,
+    schedule: String,
+    action: CronAction,
+    overlap: CronOverlap,
+    next_run: Option<DateTime<Utc>>,
+    callback: crate::config::ScheduleCallback,
+) -> std::result::Result<CronJobHandle, ClientError> {
+    let _guard = cron.schedule_lock.lock();
+    ensure_cron_capacity(cron, &id)?;
+
+    // If replacing an existing id, cancel the old driver-armed timer before scheduling the new one.
+    // The default timer driver's handles are id-based, so cancelling after the new schedule would
+    // cancel the replacement.
+    if let Some((_, old)) = cron.jobs.remove(&id) {
+        cron.driver.cancel(&old.handle);
+    }
+
+    let handle = cron.driver.schedule(ScheduleEntry {
+        id: id.clone(),
+        schedule: schedule.clone(),
+        callback,
+    });
+
+    let state = CronJobState {
+        schedule,
+        action,
+        overlap,
+        last_run: parking_lot::Mutex::new(None),
+        next_run: parking_lot::Mutex::new(next_run),
+        run_count: std::sync::atomic::AtomicU64::new(0),
+        running: AtomicBool::new(false),
+        queued: AtomicBool::new(false),
+        handle,
+    };
+
+    let _ = cron.jobs.insert(id.clone(), state);
+
+    Ok(CronJobHandle {
+        id,
+        manager: Arc::clone(cron),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CronAction, CronJobState, CronManager, CronOverlap, ScheduleDriver, ScheduleEntry,
+        ScheduleHandle, ensure_cron_capacity, register_cron_job,
+    };
+    use crate::CRON_JOB_LIMIT;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    #[derive(Default)]
+    struct RecordingScheduleDriver {
+        calls: parking_lot::Mutex<Vec<String>>,
+    }
+
+    impl ScheduleDriver for RecordingScheduleDriver {
+        fn schedule(&self, entry: ScheduleEntry) -> ScheduleHandle {
+            self.calls.lock().push(format!("schedule:{}", entry.id));
+            ScheduleHandle { id: entry.id }
+        }
+
+        fn cancel(&self, handle: &ScheduleHandle) {
+            self.calls.lock().push(format!("cancel:{}", handle.id));
+        }
+
+        fn dispose(&self) {}
+    }
+
+    fn dummy_state(id: String) -> CronJobState {
+        CronJobState {
+            schedule: "0 0 * * *".to_string(),
+            action: CronAction::Callback {
+                callback: Arc::new(|| Box::pin(async {})),
+            },
+            overlap: CronOverlap::Allow,
+            last_run: parking_lot::Mutex::new(None),
+            next_run: parking_lot::Mutex::new(None),
+            run_count: std::sync::atomic::AtomicU64::new(0),
+            running: AtomicBool::new(false),
+            queued: AtomicBool::new(false),
+            handle: ScheduleHandle { id },
+        }
+    }
+
+    #[test]
+    fn cron_capacity_rejects_new_jobs_at_limit_but_allows_replacements() {
+        let manager = CronManager::new(Arc::new(RecordingScheduleDriver::default()));
+        for index in 0..CRON_JOB_LIMIT {
+            let id = format!("job-{index}");
+            assert!(
+                manager.jobs.insert(id.clone(), dummy_state(id)).is_ok(),
+                "seed cron job"
+            );
+        }
+
+        let error = ensure_cron_capacity(&manager, "overflow").expect_err("limit should reject");
+        assert!(
+            error.to_string().contains("cron job limit exceeded"),
+            "unexpected limit error: {error}"
+        );
+        ensure_cron_capacity(&manager, "job-0").expect("replacement should be allowed");
+    }
+
+    #[test]
+    fn cron_replacement_cancels_old_timer_before_scheduling_new_timer() {
+        let driver = Arc::new(RecordingScheduleDriver::default());
+        let manager = Arc::new(CronManager::new(driver.clone()));
+        let callback: crate::config::ScheduleCallback = Arc::new(|| Box::pin(async {}));
+
+        register_cron_job(
+            &manager,
+            "same-id".to_string(),
+            "0 0 * * *".to_string(),
+            CronAction::Callback {
+                callback: callback.clone(),
+            },
+            CronOverlap::Allow,
+            None,
+            callback.clone(),
+        )
+        .expect("initial schedule");
+        register_cron_job(
+            &manager,
+            "same-id".to_string(),
+            "0 1 * * *".to_string(),
+            CronAction::Callback { callback },
+            CronOverlap::Allow,
+            None,
+            Arc::new(|| Box::pin(async {})),
+        )
+        .expect("replacement schedule");
+
+        assert_eq!(
+            *driver.calls.lock(),
+            vec!["schedule:same-id", "cancel:same-id", "schedule:same-id"]
+        );
+        assert_eq!(manager.jobs.len(), 1);
     }
 }
