@@ -1048,7 +1048,8 @@ pub fn run_snapshot_consolidated_checks() {
         let payload_bytes = serialize_v8_value(scope, payload_val).expect("serialize payload");
 
         // Inject per-session globals (overrides snapshot defaults)
-        crate::execution::inject_globals_from_payload(scope, &payload_bytes);
+        crate::execution::inject_globals_from_payload(scope, &payload_bytes)
+            .expect("inject globals payload");
 
         // Verify _processConfig was overridden
         let check = v8::String::new(scope, "_processConfig.cwd").unwrap();

@@ -745,7 +745,27 @@ fn session_thread(
                             let scope = &mut v8::HandleScope::new(iso);
                             let ctx = v8::Local::new(scope, &exec_context);
                             let scope = &mut v8::ContextScope::new(scope, ctx);
-                            execution::inject_globals_from_payload(scope, payload);
+                            if let Err(error) =
+                                execution::inject_globals_from_payload(scope, payload)
+                            {
+                                let result_frame = RuntimeEvent::ExecutionResult {
+                                    session_id,
+                                    exit_code: 1,
+                                    exports: None,
+                                    error: Some(ExecutionErrorBin {
+                                        error_type: error.error_type,
+                                        message: error.message,
+                                        stack: error.stack,
+                                        code: error.code.unwrap_or_default(),
+                                    }),
+                                };
+                                send_event_with_generation(
+                                    &event_tx,
+                                    output_generation,
+                                    result_frame,
+                                );
+                                continue;
+                            }
                         }
 
                         // Arm a per-execution abort channel so timeouts and external
