@@ -29,6 +29,20 @@ fn register_and_create_session(
     Ok(receiver)
 }
 
+fn register_and_create_session_with_cpu_time_limit(
+    runtime: &Arc<EmbeddedV8Runtime>,
+    session_id: &str,
+    cpu_time_limit_ms: Option<u32>,
+) -> io::Result<mpsc::Receiver<RuntimeEvent>> {
+    let receiver = runtime.register_session(session_id)?;
+    runtime.dispatch(RuntimeCommand::CreateSession {
+        session_id: session_id.to_owned(),
+        heap_limit_mb: None,
+        cpu_time_limit_ms,
+    })?;
+    Ok(receiver)
+}
+
 fn dispatch_execute(
     runtime: &EmbeddedV8Runtime,
     session_id: &str,
@@ -261,6 +275,31 @@ fn assert_execute_rejects_oversized_bridge_code() -> io::Result<()> {
     Ok(())
 }
 
+fn assert_direct_zero_cpu_time_limit_disables_timeout() -> io::Result<()> {
+    let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
+    let session_id = next_session_id();
+    let receiver = register_and_create_session_with_cpu_time_limit(&runtime, &session_id, Some(0))?;
+
+    dispatch_execute(
+        runtime.as_ref(),
+        &session_id,
+        0,
+        "",
+        "let total = 0; for (let i = 0; i < 100000; i++) { total += i; }",
+    )?;
+    assert_execution_ok(&receiver, &session_id);
+
+    runtime.dispatch(RuntimeCommand::DestroySession {
+        session_id: session_id.clone(),
+    })?;
+    runtime.unregister_session(&session_id);
+    wait_until(
+        "expected zero-timeout session to drain after successful execution",
+        || runtime.session_count() == 0 && runtime.active_slot_count() == 0,
+    );
+    Ok(())
+}
+
 fn assert_queued_work_waits_for_slot_release() -> io::Result<()> {
     let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1))?);
     let session_a = next_session_id();
@@ -470,6 +509,7 @@ fn embedded_runtime_session_consolidated_behaviors() -> io::Result<()> {
     assert_warmed_snapshot_bridge_state()?;
     assert_snapshot_rebuild_on_bridge_change()?;
     assert_execute_rejects_oversized_bridge_code()?;
+    assert_direct_zero_cpu_time_limit_disables_timeout()?;
     assert_queued_work_waits_for_slot_release()?;
     assert_shared_runtime_handles_share_concurrency_quota()?;
     assert_terminate_interrupts_sync_bridge_wait()?;

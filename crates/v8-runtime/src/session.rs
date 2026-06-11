@@ -49,6 +49,10 @@ const SESSION_COMMAND_CHANNEL_CAPACITY: usize = 256;
 const MAX_DEFERRED_SESSION_COMMANDS: usize = SESSION_COMMAND_CHANNEL_CAPACITY;
 const MAX_DEFERRED_SYNC_MESSAGES: usize = SESSION_COMMAND_CHANNEL_CAPACITY;
 
+fn normalize_cpu_time_limit_ms(cpu_time_limit_ms: Option<u32>) -> Option<u32> {
+    cpu_time_limit_ms.filter(|timeout_ms| *timeout_ms > 0)
+}
+
 /// Internal entry for a running session
 struct SessionEntry {
     /// Output receiver generation current when this session was created.
@@ -213,6 +217,7 @@ impl SessionManager {
             return Err(format!("session {} already exists", session_id));
         }
 
+        let cpu_time_limit_ms = normalize_cpu_time_limit_ms(cpu_time_limit_ms);
         let (tx, rx) = crossbeam_channel::bounded(SESSION_COMMAND_CHANNEL_CAPACITY);
         let slot_control = Arc::clone(&self.slot_control);
         let max = self.max_concurrency;
@@ -1746,6 +1751,13 @@ mod tests {
         let snap_cache = Arc::new(SnapshotCache::new(4));
         let manager = SessionManager::new(max, tx, router, snap_cache);
         (manager, _rx)
+    }
+
+    #[test]
+    fn zero_cpu_time_limit_is_normalized_to_no_timeout() {
+        assert_eq!(normalize_cpu_time_limit_ms(None), None);
+        assert_eq!(normalize_cpu_time_limit_ms(Some(0)), None);
+        assert_eq!(normalize_cpu_time_limit_ms(Some(1)), Some(1));
     }
 
     fn expect_late_message_warning(
