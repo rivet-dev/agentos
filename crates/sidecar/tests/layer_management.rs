@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 use std::fs::{create_dir_all, write};
 use support::{authenticate, create_vm, new_sidecar, open_session, request, temp_dir};
 
+const MAX_VM_LAYERS_UNDER_TEST: usize = 256;
+
 #[test]
 fn vm_layer_lifecycle_round_trips_snapshots_and_invalidates_sealed_ids() {
     let mut sidecar = new_sidecar("layer-lifecycle");
@@ -287,6 +289,121 @@ fn vm_layer_ids_are_reused_per_vm_without_cross_vm_leakage() {
     assert!(!second_entries
         .iter()
         .any(|entry| entry.path == "/workspace/first.txt"));
+}
+
+#[test]
+fn vm_layer_store_rejects_new_layers_at_limit() {
+    let mut sidecar = new_sidecar("layer-store-limit");
+    let cwd = temp_dir("layer-store-limit-cwd");
+
+    let connection_id = authenticate(&mut sidecar, "conn-1");
+    let session_id = open_session(&mut sidecar, 2, &connection_id);
+    let (vm_id, _) = create_vm(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::JavaScript,
+        &cwd,
+    );
+
+    let mut first_layer_id = String::new();
+    for index in 0..MAX_VM_LAYERS_UNDER_TEST {
+        let layer_id = match sidecar
+            .dispatch_blocking(request(
+                4 + index as i64,
+                OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                RequestPayload::ImportSnapshot(ImportSnapshotRequest {
+                    entries: vec![RootFilesystemEntry {
+                        path: format!("/layer-{index}.txt"),
+                        kind: RootFilesystemEntryKind::File,
+                        content: Some(format!("layer {index}")),
+                        executable: false,
+                        ..Default::default()
+                    }],
+                }),
+            ))
+            .expect("import snapshot at layer limit")
+            .response
+            .payload
+        {
+            ResponsePayload::SnapshotImported(response) => response.layer_id,
+            other => panic!("unexpected import snapshot response: {other:?}"),
+        };
+        if index == 0 {
+            first_layer_id = layer_id;
+        }
+    }
+
+    for (offset, payload) in [
+        (
+            0,
+            RequestPayload::ImportSnapshot(ImportSnapshotRequest {
+                entries: vec![RootFilesystemEntry {
+                    path: String::from("/overflow-import.txt"),
+                    kind: RootFilesystemEntryKind::File,
+                    content: Some(String::from("overflow")),
+                    executable: false,
+                    ..Default::default()
+                }],
+            }),
+        ),
+        (
+            1,
+            RequestPayload::CreateLayer(CreateLayerRequest::default()),
+        ),
+        (
+            2,
+            RequestPayload::CreateOverlay(CreateOverlayRequest {
+                mode: RootFilesystemMode::Ephemeral,
+                upper_layer_id: None,
+                lower_layer_ids: vec![first_layer_id.clone()],
+            }),
+        ),
+        (
+            3,
+            RequestPayload::CreateOverlay(CreateOverlayRequest {
+                mode: RootFilesystemMode::Ephemeral,
+                upper_layer_id: None,
+                lower_layer_ids: vec![String::from("missing-layer")],
+            }),
+        ),
+    ] {
+        let rejected = sidecar
+            .dispatch_blocking(request(
+                300 + offset,
+                OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                payload,
+            ))
+            .expect("dispatch layer overflow request");
+        match rejected.response.payload {
+            ResponsePayload::Rejected(response) => {
+                assert_eq!(response.code, "invalid_state");
+                assert!(
+                    response.message.contains("VM layer limit exceeded"),
+                    "unexpected rejection: {response:?}"
+                );
+            }
+            other => panic!("expected layer limit rejection, got {other:?}"),
+        }
+    }
+
+    let rejected = sidecar
+        .dispatch_blocking(request(
+            400,
+            OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+            RequestPayload::ExportSnapshot(ExportSnapshotRequest {
+                layer_id: String::from("layer-257"),
+            }),
+        ))
+        .expect("export overflow layer id should reject");
+    match rejected.response.payload {
+        ResponsePayload::Rejected(response) => {
+            assert_eq!(response.code, "invalid_state");
+            assert!(response.message.contains("unknown layer"));
+        }
+        other => panic!("expected unknown overflow layer rejection, got {other:?}"),
+    }
 }
 
 #[test]

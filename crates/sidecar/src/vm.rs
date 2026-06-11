@@ -7,7 +7,7 @@ use crate::bootstrap::{
     apply_root_filesystem_entry, build_root_filesystem, discover_command_guest_paths,
     root_snapshot_entries, root_snapshot_entry, root_snapshot_from_entries,
 };
-use crate::bridge::{bridge_permissions, MountPluginContext};
+use crate::bridge::{MountPluginContext, bridge_permissions};
 use crate::protocol::{
     ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest, DisposeReason, EventFrame,
     ExportSnapshotRequest, ImportSnapshotRequest, LayerCreatedResponse, LayerSealedResponse,
@@ -23,9 +23,9 @@ use crate::service::{
     plugin_error, root_filesystem_error, validate_permissions_policy,
 };
 use crate::state::{
-    BridgeError, VmConfiguration, VmDnsConfig, VmLayer, VmLayerStore, VmOverlayLayer, VmState,
-    DISPOSE_VM_SIGKILL_GRACE, DISPOSE_VM_SIGTERM_GRACE, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND,
-    PYTHON_COMMAND, WASM_COMMAND,
+    BridgeError, DISPOSE_VM_SIGKILL_GRACE, DISPOSE_VM_SIGTERM_GRACE, EXECUTION_DRIVER_NAME,
+    JAVASCRIPT_COMMAND, PYTHON_COMMAND, VmConfiguration, VmDnsConfig, VmLayer, VmLayerStore,
+    VmOverlayLayer, VmState, WASM_COMMAND,
 };
 use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};
 
@@ -39,10 +39,10 @@ use agent_os_kernel::mount_table::MountOptions;
 use agent_os_kernel::permissions::filter_env;
 use agent_os_kernel::resource_accounting::ResourceLimits;
 use agent_os_kernel::root_fs::{
-    decode_snapshot_with_import_limits, encode_snapshot as encode_root_snapshot, RootFileSystem,
+    ROOT_FILESYSTEM_SNAPSHOT_FORMAT, RootFileSystem,
     RootFilesystemDescriptor as KernelRootFilesystemDescriptor, RootFilesystemImportLimits,
     RootFilesystemMode as KernelRootFilesystemMode, RootFilesystemSnapshot,
-    ROOT_FILESYSTEM_SNAPSHOT_FORMAT,
+    decode_snapshot_with_import_limits, encode_snapshot as encode_root_snapshot,
 };
 use agent_os_kernel::vfs::VirtualFileSystem;
 use base64::Engine;
@@ -99,6 +99,7 @@ const SHADOW_ROOT_BOOTSTRAP_DIRS: &[(&str, u32)] = &[
 pub(crate) const DEFAULT_GUEST_PATH_ENV: &str =
     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const KERNEL_COMMAND_STUB: &[u8] = b"#!/bin/sh\n# kernel command stub\n";
+pub(crate) const MAX_VM_LAYERS: usize = 256;
 
 // ---------------------------------------------------------------------------
 // NativeSidecar VM lifecycle methods
@@ -446,9 +447,10 @@ where
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
         let vm = self.vms.get_mut(&vm_id).expect("owned VM should exist");
+        vm.layers.ensure_layer_capacity()?;
         let layer_id = vm
             .layers
-            .import_snapshot(root_snapshot_from_entries(&payload.entries)?);
+            .import_snapshot(root_snapshot_from_entries(&payload.entries)?)?;
 
         Ok(DispatchResult {
             response: self.respond(
@@ -913,45 +915,76 @@ fn append_module_access_symlink_mount(
 }
 
 impl VmLayerStore {
-    fn allocate_layer_id(&mut self) -> String {
+    fn ensure_layer_capacity(&self) -> Result<(), SidecarError> {
+        if self.layers.len() >= MAX_VM_LAYERS {
+            return Err(SidecarError::InvalidState(format!(
+                "VM layer limit exceeded: limit is {MAX_VM_LAYERS}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn allocate_layer_id(&mut self) -> Result<String, SidecarError> {
         let layer_id = format!("layer-{}", self.next_layer_id);
-        self.next_layer_id += 1;
-        layer_id
+        self.next_layer_id = self
+            .next_layer_id
+            .checked_add(1)
+            .ok_or_else(|| SidecarError::InvalidState(String::from("VM layer id overflow")))?;
+        Ok(layer_id)
     }
 
     fn create_writable_layer(&mut self) -> Result<String, SidecarError> {
-        let layer_id = self.allocate_layer_id();
+        self.ensure_layer_capacity()?;
+        let filesystem = new_writable_layer()?;
+        let layer_id = self.allocate_layer_id()?;
         self.layers
-            .insert(layer_id.clone(), VmLayer::Writable(new_writable_layer()?));
+            .insert(layer_id.clone(), VmLayer::Writable(filesystem));
         Ok(layer_id)
     }
 
     fn seal_layer(&mut self, layer_id: &str) -> Result<String, SidecarError> {
-        let layer = self
-            .layers
-            .remove(layer_id)
-            .ok_or_else(|| SidecarError::InvalidState(format!("unknown layer: {layer_id}")))?;
-        let snapshot = match layer {
-            VmLayer::Writable(mut filesystem) => {
+        let snapshot = match self.layers.get_mut(layer_id) {
+            Some(VmLayer::Writable(filesystem)) => {
                 filesystem.snapshot().map_err(root_filesystem_error)?
             }
+            Some(VmLayer::Snapshot(_)) | Some(VmLayer::Overlay(_)) => {
+                return Err(SidecarError::InvalidState(format!(
+                    "layer {layer_id} is not writable"
+                )));
+            }
+            None => {
+                return Err(SidecarError::InvalidState(format!(
+                    "unknown layer: {layer_id}"
+                )));
+            }
+        };
+        let sealed_layer_id = self.allocate_layer_id()?;
+        match self
+            .layers
+            .remove(layer_id)
+            .expect("layer should still exist after snapshot")
+        {
+            VmLayer::Writable(_) => {}
             VmLayer::Snapshot(_) | VmLayer::Overlay(_) => {
                 return Err(SidecarError::InvalidState(format!(
                     "layer {layer_id} is not writable"
                 )));
             }
-        };
-        let sealed_layer_id = self.allocate_layer_id();
+        }
         self.layers
             .insert(sealed_layer_id.clone(), VmLayer::Snapshot(snapshot));
         Ok(sealed_layer_id)
     }
 
-    fn import_snapshot(&mut self, snapshot: RootFilesystemSnapshot) -> String {
-        let layer_id = self.allocate_layer_id();
+    fn import_snapshot(
+        &mut self,
+        snapshot: RootFilesystemSnapshot,
+    ) -> Result<String, SidecarError> {
+        self.ensure_layer_capacity()?;
+        let layer_id = self.allocate_layer_id()?;
         self.layers
             .insert(layer_id.clone(), VmLayer::Snapshot(snapshot));
-        layer_id
+        Ok(layer_id)
     }
 
     fn export_snapshot(&mut self, layer_id: &str) -> Result<RootFilesystemSnapshot, SidecarError> {
@@ -964,6 +997,7 @@ impl VmLayerStore {
         upper_layer_id: Option<String>,
         lower_layer_ids: Vec<String>,
     ) -> Result<String, SidecarError> {
+        self.ensure_layer_capacity()?;
         for layer_id in &lower_layer_ids {
             if !self.layers.contains_key(layer_id) {
                 return Err(SidecarError::InvalidState(format!(
@@ -979,7 +1013,7 @@ impl VmLayerStore {
             }
         }
 
-        let layer_id = self.allocate_layer_id();
+        let layer_id = self.allocate_layer_id()?;
         self.layers.insert(
             layer_id.clone(),
             VmLayer::Overlay(VmOverlayLayer {
@@ -1714,7 +1748,7 @@ mod tests {
     use agent_os_bridge::FilesystemSnapshot;
     use agent_os_kernel::resource_accounting::ResourceLimits;
     use agent_os_kernel::root_fs::{
-        encode_snapshot, FilesystemEntry, RootFilesystemSnapshot, ROOT_FILESYSTEM_SNAPSHOT_FORMAT,
+        FilesystemEntry, ROOT_FILESYSTEM_SNAPSHOT_FORMAT, RootFilesystemSnapshot, encode_snapshot,
     };
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
