@@ -34,9 +34,213 @@ mod s3 {
                 Err(error) => error,
             };
             assert!(
+                error.to_string().contains(
+                    "s3 mount endpoint must not target a private or local/non-global IP address"
+                ),
+                "unexpected error: {error}"
+            );
+        }
+
+        #[test]
+        fn s3_plugin_accepts_https_hostname_endpoints_with_public_dns() {
+            let endpoint = validate_s3_endpoint_with_resolver(
+                "https://s3-compatible.example.com",
+                |host, port| {
+                    assert_eq!(host, "s3-compatible.example.com");
+                    assert_eq!(port, 443);
+                    Ok(vec!["93.184.216.34:443".parse().expect("public address")])
+                },
+            )
+            .expect("https hostname endpoint with public DNS should pass");
+            assert_eq!(endpoint, "https://s3-compatible.example.com");
+        }
+
+        #[test]
+        fn s3_plugin_rejects_http_hostname_endpoints_to_avoid_dns_rebinding() {
+            let error = match validate_s3_endpoint_with_resolver(
+                "http://s3-compatible.example.com",
+                |_, _| panic!("http hostname endpoint should fail before DNS"),
+            ) {
+                Ok(_) => panic!("http hostname endpoint should fail"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code(), "EINVAL");
+            assert!(
+                error
+                    .message()
+                    .contains("hostname endpoints must use https"),
+                "unexpected error: {}",
+                error.message()
+            );
+        }
+
+        #[test]
+        fn s3_plugin_rejects_endpoint_hosts_resolving_to_private_ips() {
+            let error = match validate_s3_endpoint_with_resolver(
+                "https://metadata.test/latest",
+                |host, port| {
+                    assert_eq!(host, "metadata.test");
+                    assert_eq!(port, 443);
+                    Ok(vec!["169.254.169.254:443"
+                        .parse()
+                        .expect("private address")])
+                },
+            ) {
+                Ok(_) => panic!("private DNS endpoint should fail"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code(), "EINVAL");
+            assert!(
+                error
+                    .message()
+                    .contains("resolved to a private or local/non-global IP address"),
+                "unexpected error: {}",
+                error.message()
+            );
+        }
+
+        #[test]
+        fn s3_plugin_rejects_ipv4_mapped_private_ipv6_endpoint_hosts() {
+            let error = match validate_s3_endpoint("http://[::ffff:169.254.169.254]/latest") {
+                Ok(_) => panic!("IPv4-mapped private endpoint should fail"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code(), "EINVAL");
+            assert!(
+                error
+                    .message()
+                    .contains("private or local/non-global IP address"),
+                "unexpected error: {}",
+                error.message()
+            );
+        }
+
+        #[test]
+        fn s3_plugin_accepts_global_literal_endpoint_ips() {
+            for endpoint in [
+                "https://93.184.216.34",
+                "https://192.0.0.9",
+                "https://192.0.0.10",
+                "https://[64:ff9b::808:808]",
+                "https://[2001:1::1]",
+                "https://[2001:3::1]",
+                "https://[2001:20::1]",
+                "https://[3ff0::1]",
+                "https://[2606:4700:4700::1111]",
+            ] {
+                let normalized = validate_s3_endpoint(endpoint)
+                    .unwrap_or_else(|error| panic!("global endpoint {endpoint} failed: {error}"));
+                assert_eq!(normalized, endpoint);
+            }
+        }
+
+        #[test]
+        fn s3_plugin_rejects_non_global_literal_endpoint_ips() {
+            for endpoint in [
+                "http://100.64.0.1",
+                "http://192.0.0.8",
+                "http://192.0.0.170",
+                "http://192.0.0.171",
+                "http://192.0.2.1",
+                "http://192.88.99.2",
+                "http://198.18.0.1",
+                "http://203.0.113.1",
+                "http://[100::1]",
+                "http://[100:0:0:1::1]",
+                "http://[fec0::1]",
+                "http://[2001:db8::1]",
+                "http://[2001::1]",
+                "http://[2001:2::1]",
+                "http://[2001:10::1]",
+                "http://[2002::1]",
+                "http://[3fff::1]",
+                "http://[5f00::1]",
+            ] {
+                let error = match validate_s3_endpoint(endpoint) {
+                    Ok(_) => panic!("non-global endpoint {endpoint} should fail"),
+                    Err(error) => error,
+                };
+                assert_eq!(error.code(), "EINVAL");
+                assert!(
+                    error
+                        .message()
+                        .contains("private or local/non-global IP address"),
+                    "unexpected error for {endpoint}: {}",
+                    error.message()
+                );
+            }
+        }
+
+        #[test]
+        fn s3_plugin_rejects_oversized_inline_manifest_data_before_decode() {
+            let error = validate_inline_manifest_data_size_with_limit("YWJjZGVm", "s3", 2, 5)
+                .expect_err("oversized inline payload should fail");
+            assert_eq!(error.code(), "EINVAL");
+            assert!(
+                error
+                    .message()
+                    .contains("may decode to 6 bytes, limit is 5"),
+                "unexpected error: {}",
+                error.message()
+            );
+        }
+
+        #[test]
+        fn s3_plugin_rejects_oversized_persisted_manifest_before_upload() {
+            let error =
+                validate_persisted_manifest_size(6, 5).expect_err("oversized manifest should fail");
+            assert!(
                 error
                     .to_string()
-                    .contains("s3 mount endpoint must not target a private or local IP address"),
+                    .contains("s3 manifest is 6 bytes, limit is 5"),
+                "unexpected error: {error}"
+            );
+        }
+
+        #[test]
+        fn s3_plugin_rejects_oversized_persisted_file_entries_before_upload() {
+            let error = validate_persisted_manifest_file_size_with_limit(6, "s3", 2, 5)
+                .expect_err("oversized persisted file should fail");
+            assert!(
+                error
+                    .to_string()
+                    .contains("s3 manifest inode 2 has 6 bytes, limit is 5"),
+                "unexpected error: {error}"
+            );
+        }
+
+        #[test]
+        fn s3_plugin_rejects_streaming_object_bodies_above_limit() {
+            let runtime = Runtime::new().expect("create test runtime");
+            let error = runtime
+                .block_on(collect_s3_body_limited(
+                    ByteStream::from(b"too large".to_vec()),
+                    "streaming-object",
+                    1,
+                ))
+                .expect_err("oversized streaming body should fail");
+            assert!(
+                error
+                    .to_string()
+                    .contains("s3 object 'streaming-object' exceeded 1 byte limit"),
+                "unexpected error: {error}"
+            );
+        }
+
+        #[test]
+        fn s3_plugin_rejects_object_loads_above_requested_limit() {
+            let server = MockS3Server::start();
+            let filesystem =
+                S3BackedFilesystem::from_config(test_config(&server, "limited-object"))
+                    .expect("open s3 fs");
+            server.put_object("test-bucket/limited-object/blob", b"too large".to_vec());
+
+            let error = filesystem
+                .store
+                .load_bytes_limited("limited-object/blob", 1)
+                .expect_err("oversized object load should fail");
+            assert!(
+                error.to_string().contains("limit is 1"),
                 "unexpected error: {error}"
             );
         }
@@ -269,6 +473,199 @@ mod s3 {
                 "unexpected error message: {}",
                 error.message()
             );
+        }
+
+        #[test]
+        fn s3_plugin_rejects_chunk_objects_larger_than_remaining_manifest_size() {
+            let server = MockS3Server::start();
+            let manifest = PersistedFilesystemManifest {
+                format: String::from(MANIFEST_FORMAT),
+                path_index: BTreeMap::from([(String::from("/"), 1), (String::from("/one.bin"), 2)]),
+                inodes: BTreeMap::from([
+                    (
+                        1,
+                        PersistedFilesystemInode {
+                            metadata: snapshot_metadata(1, 0o040755),
+                            kind: PersistedFilesystemInodeKind::Directory,
+                        },
+                    ),
+                    (
+                        2,
+                        PersistedFilesystemInode {
+                            metadata: snapshot_metadata(2, 0o100644),
+                            kind: PersistedFilesystemInodeKind::File {
+                                storage: PersistedFileStorage::Chunked {
+                                    size: 1,
+                                    chunks: vec![PersistedChunkRef {
+                                        index: 0,
+                                        key: String::from("oversized-chunk/blocks/2/0"),
+                                    }],
+                                },
+                            },
+                        },
+                    ),
+                ]),
+                next_ino: 3,
+            };
+            server.put_object(
+                "test-bucket/oversized-chunk/filesystem-manifest.json",
+                serde_json::to_vec(&manifest).expect("serialize oversized chunk manifest"),
+            );
+            server.put_object(
+                "test-bucket/oversized-chunk/blocks/2/0",
+                b"too large".to_vec(),
+            );
+
+            let error =
+                match S3BackedFilesystem::from_config(test_config(&server, "oversized-chunk")) {
+                    Ok(_) => panic!("oversized chunk object should be rejected"),
+                    Err(error) => error,
+                };
+            assert_eq!(error.code(), "EIO");
+            assert!(
+                error.message().contains("limit is 1"),
+                "unexpected error message: {}",
+                error.message()
+            );
+        }
+
+        #[test]
+        fn s3_plugin_rejects_short_chunk_reconstruction() {
+            let server = MockS3Server::start();
+            let manifest = PersistedFilesystemManifest {
+                format: String::from(MANIFEST_FORMAT),
+                path_index: BTreeMap::from([
+                    (String::from("/"), 1),
+                    (String::from("/short.bin"), 2),
+                ]),
+                inodes: BTreeMap::from([
+                    (
+                        1,
+                        PersistedFilesystemInode {
+                            metadata: snapshot_metadata(1, 0o040755),
+                            kind: PersistedFilesystemInodeKind::Directory,
+                        },
+                    ),
+                    (
+                        2,
+                        PersistedFilesystemInode {
+                            metadata: snapshot_metadata(2, 0o100644),
+                            kind: PersistedFilesystemInodeKind::File {
+                                storage: PersistedFileStorage::Chunked {
+                                    size: 3,
+                                    chunks: vec![PersistedChunkRef {
+                                        index: 0,
+                                        key: String::from("short-chunk/blocks/2/0"),
+                                    }],
+                                },
+                            },
+                        },
+                    ),
+                ]),
+                next_ino: 3,
+            };
+            server.put_object(
+                "test-bucket/short-chunk/filesystem-manifest.json",
+                serde_json::to_vec(&manifest).expect("serialize short chunk manifest"),
+            );
+            server.put_object("test-bucket/short-chunk/blocks/2/0", b"no".to_vec());
+
+            let error = match S3BackedFilesystem::from_config(test_config(&server, "short-chunk")) {
+                Ok(_) => panic!("short chunk reconstruction should be rejected"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code(), "EINVAL");
+            assert!(
+                error.message().contains("restored 2 bytes but declared 3"),
+                "unexpected error message: {}",
+                error.message()
+            );
+        }
+
+        #[test]
+        fn s3_plugin_rejects_non_contiguous_chunk_indexes_before_loading_chunks() {
+            let server = MockS3Server::start();
+            let manifest = PersistedFilesystemManifest {
+                format: String::from(MANIFEST_FORMAT),
+                path_index: BTreeMap::from([
+                    (String::from("/"), 1),
+                    (String::from("/gapped.bin"), 2),
+                ]),
+                inodes: BTreeMap::from([
+                    (
+                        1,
+                        PersistedFilesystemInode {
+                            metadata: snapshot_metadata(1, 0o040755),
+                            kind: PersistedFilesystemInodeKind::Directory,
+                        },
+                    ),
+                    (
+                        2,
+                        PersistedFilesystemInode {
+                            metadata: snapshot_metadata(2, 0o100644),
+                            kind: PersistedFilesystemInodeKind::File {
+                                storage: PersistedFileStorage::Chunked {
+                                    size: 2,
+                                    chunks: vec![
+                                        PersistedChunkRef {
+                                            index: 0,
+                                            key: String::from("gapped-chunk/blocks/2/0"),
+                                        },
+                                        PersistedChunkRef {
+                                            index: 2,
+                                            key: String::from("gapped-chunk/blocks/2/2"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                    ),
+                ]),
+                next_ino: 3,
+            };
+            server.put_object(
+                "test-bucket/gapped-chunk/filesystem-manifest.json",
+                serde_json::to_vec(&manifest).expect("serialize gapped chunk manifest"),
+            );
+
+            let error = match S3BackedFilesystem::from_config(test_config(&server, "gapped-chunk"))
+            {
+                Ok(_) => panic!("gapped chunk manifest should be rejected"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code(), "EINVAL");
+            assert!(
+                error.message().contains("chunk indexes must be contiguous"),
+                "unexpected error message: {}",
+                error.message()
+            );
+            assert!(
+                !server
+                    .requests()
+                    .iter()
+                    .any(|request| request.path.contains("/blocks/")),
+                "chunk objects should not be loaded after index validation fails"
+            );
+        }
+
+        fn snapshot_metadata(
+            ino: u64,
+            mode: u32,
+        ) -> agent_os_kernel::vfs::MemoryFileSystemSnapshotMetadata {
+            agent_os_kernel::vfs::MemoryFileSystemSnapshotMetadata {
+                mode,
+                uid: 0,
+                gid: 0,
+                nlink: 1,
+                ino,
+                atime_ms: 0,
+                atime_nsec: 0,
+                mtime_ms: 0,
+                mtime_nsec: 0,
+                ctime_ms: 0,
+                ctime_nsec: 0,
+                birthtime_ms: 0,
+            }
         }
     }
 }

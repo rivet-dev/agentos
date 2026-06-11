@@ -17,7 +17,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use tokio::runtime::Runtime;
 use url::Url;
 
@@ -25,6 +25,7 @@ const DEFAULT_CHUNK_SIZE: usize = 4 * 1024 * 1024;
 const DEFAULT_INLINE_THRESHOLD: usize = 64 * 1024;
 const MANIFEST_FORMAT: &str = "agent_os_s3_filesystem_manifest_v1";
 const DEFAULT_REGION: &str = "us-east-1";
+const MAX_PERSISTED_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PERSISTED_MANIFEST_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -153,6 +154,7 @@ impl S3BackedFilesystem {
 
         let manifest_bytes = serde_json::to_vec(&manifest)
             .map_err(|error| VfsError::io(format!("serialize s3 manifest: {error}")))?;
+        validate_persisted_manifest_bytes(&manifest_bytes).map_err(storage_error_to_vfs)?;
         self.store
             .put_bytes(&self.manifest_key, &manifest_bytes)
             .map_err(storage_error_to_vfs)?;
@@ -430,6 +432,9 @@ impl S3ObjectStore {
         endpoint: Option<String>,
         credentials: Option<S3MountCredentials>,
     ) -> Result<Self, PluginError> {
+        let endpoint = endpoint
+            .map(|endpoint| validate_s3_endpoint(&endpoint))
+            .transpose()?;
         let shared_config = std::thread::spawn(move || -> Result<_, PluginError> {
             let runtime = Runtime::new().map_err(|error| {
                 PluginError::unsupported(format!("create tokio runtime: {error}"))
@@ -455,7 +460,7 @@ impl S3ObjectStore {
 
         let mut builder = S3ConfigBuilder::from(&shared_config).force_path_style(true);
         if let Some(endpoint) = endpoint {
-            builder = builder.endpoint_url(validate_s3_endpoint(&endpoint)?);
+            builder = builder.endpoint_url(endpoint);
         }
 
         Ok(Self {
@@ -465,11 +470,15 @@ impl S3ObjectStore {
     }
 
     fn load_manifest(&self, key: &str) -> Result<Option<Vec<u8>>, PluginError> {
-        self.load_bytes(key)
+        self.load_bytes_limited(key, MAX_PERSISTED_MANIFEST_BYTES)
             .map_err(|error| PluginError::new("EIO", error.to_string()))
     }
 
-    fn load_bytes(&self, key: &str) -> Result<Option<Vec<u8>>, StorageError> {
+    fn load_bytes_limited(
+        &self,
+        key: &str,
+        max_bytes: usize,
+    ) -> Result<Option<Vec<u8>>, StorageError> {
         let bucket = self.bucket.clone();
         let key = key.to_owned();
         let client = self.client.clone();
@@ -481,15 +490,14 @@ impl S3ObjectStore {
             runtime.block_on(async move {
                 match client.get_object().bucket(bucket).key(&key).send().await {
                     Ok(response) => {
-                        let bytes = response
-                            .body
-                            .collect()
-                            .await
-                            .map_err(|error| {
-                                StorageError::new(format!("read s3 object '{key}': {error}"))
-                            })?
-                            .into_bytes()
-                            .to_vec();
+                        if let Some(content_length) = response.content_length() {
+                            if content_length < 0 || content_length as u64 > max_bytes as u64 {
+                                return Err(StorageError::new(format!(
+                                    "s3 object '{key}' declares {content_length} bytes, limit is {max_bytes}"
+                                )));
+                            }
+                        }
+                        let bytes = collect_s3_body_limited(response.body, &key, max_bytes).await?;
                         Ok(Some(bytes))
                     }
                     Err(error) => {
@@ -571,6 +579,13 @@ impl S3ObjectStore {
 }
 
 fn validate_s3_endpoint(raw: &str) -> Result<String, PluginError> {
+    validate_s3_endpoint_with_resolver(raw, resolve_s3_endpoint_host)
+}
+
+fn validate_s3_endpoint_with_resolver(
+    raw: &str,
+    resolve_host: impl FnOnce(&str, u16) -> std::io::Result<Vec<SocketAddr>>,
+) -> Result<String, PluginError> {
     let normalized = raw.trim().trim_end_matches('/').to_owned();
     if normalized.is_empty() {
         return Err(PluginError::invalid_input(
@@ -584,42 +599,123 @@ fn validate_s3_endpoint(raw: &str) -> Result<String, PluginError> {
     let host = url
         .host_str()
         .ok_or_else(|| PluginError::invalid_input("s3 mount endpoint must include a host"))?;
+    let host_for_address = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    let scheme = url.scheme();
+    let port = match scheme {
+        "http" => url.port().unwrap_or(80),
+        "https" => url.port().unwrap_or(443),
+        _ => {
+            return Err(PluginError::invalid_input(
+                "s3 mount endpoint must use http or https",
+            ));
+        }
+    };
 
-    if is_allowed_test_endpoint_host(host) {
+    if is_allowed_test_endpoint_host(host_for_address) {
         return Ok(normalized);
     }
 
-    if host.eq_ignore_ascii_case("localhost") {
+    if host_for_address.eq_ignore_ascii_case("localhost") {
         return Err(PluginError::invalid_input(
             "s3 mount endpoint must not target localhost",
         ));
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_disallowed_s3_endpoint_ip(ip) {
-            return Err(PluginError::invalid_input(format!(
-                "s3 mount endpoint must not target a private or local IP address ({host})"
-            )));
+
+    match host_for_address.parse::<IpAddr>() {
+        Ok(ip) => {
+            if is_disallowed_s3_endpoint_ip(ip) {
+                return Err(PluginError::invalid_input(format!(
+                    "s3 mount endpoint must not target a private or local/non-global IP address ({host})"
+                )));
+            }
+        }
+        Err(_) => {
+            if scheme != "https" {
+                return Err(PluginError::invalid_input(
+                    "s3 mount hostname endpoints must use https",
+                ));
+            }
+            let addresses = resolve_host(host_for_address, port).map_err(|error| {
+                PluginError::invalid_input(format!(
+                    "could not resolve s3 mount endpoint host '{host}': {error}"
+                ))
+            })?;
+            if addresses.is_empty() {
+                return Err(PluginError::invalid_input(format!(
+                    "could not resolve s3 mount endpoint host '{host}'"
+                )));
+            }
+            for address in addresses {
+                if is_disallowed_s3_endpoint_ip(address.ip()) {
+                    return Err(PluginError::invalid_input(format!(
+                        "s3 mount endpoint host '{host}' resolved to a private or local/non-global IP address ({})",
+                        address.ip()
+                    )));
+                }
+            }
         }
     }
 
     Ok(normalized)
 }
 
+fn resolve_s3_endpoint_host(host: &str, port: u16) -> std::io::Result<Vec<SocketAddr>> {
+    (host, port)
+        .to_socket_addrs()
+        .map(|addresses| addresses.collect())
+}
+
 fn is_disallowed_s3_endpoint_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
+            let [first, second, third, fourth] = ip.octets();
             ip.is_private()
                 || ip.is_loopback()
                 || ip.is_link_local()
                 || ip.is_multicast()
                 || ip.is_unspecified()
+                || first == 0
+                || (first == 100 && (second & 0b1100_0000) == 64)
+                || (first == 192
+                    && second == 0
+                    && third == 0
+                    && (fourth <= 8 || fourth == 170 || fourth == 171))
+                || (first == 192 && second == 0 && third == 2)
+                || (first == 192 && second == 88 && third == 99 && fourth == 2)
+                || (first == 198 && (second == 18 || second == 19))
+                || (first == 198 && second == 51 && third == 100)
+                || (first == 203 && second == 0 && third == 113)
+                || first >= 240
+                || (first == 255 && second == 255 && third == 255 && fourth == 255)
         }
         IpAddr::V6(ip) => {
+            if let Some(mapped) = ip.to_ipv4_mapped() {
+                return is_disallowed_s3_endpoint_ip(IpAddr::V4(mapped));
+            }
+
+            let segments = ip.segments();
             ip.is_loopback()
                 || ip.is_unique_local()
                 || ip.is_unicast_link_local()
                 || ip.is_multicast()
                 || ip.is_unspecified()
+                || (segments[0] & 0xffc0) == 0xfec0
+                || (segments[0..6] == [0, 0, 0, 0, 0, 0])
+                || (segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 0x0001)
+                || (segments[0] == 0x0100
+                    && segments[1] == 0
+                    && segments[2] == 0
+                    && (segments[3] == 0 || segments[3] == 1))
+                || (segments[0] == 0x2001 && segments[1] == 0)
+                || (segments[0] == 0x2001 && segments[1] == 0x0002 && segments[2] == 0)
+                || (segments[0] == 0x2001 && (segments[1] & 0xfff0) == 0x0010)
+                || (segments[0] == 0x2001 && segments[1] == 0x0db8)
+                || (segments[0] == 0x3fff && (segments[1] & 0xf000) == 0)
+                || segments[0] == 0x5f00
+                || segments[0] == 0x2002
         }
     }
 }
@@ -798,6 +894,8 @@ fn persist_file_inode(
         }
     }
 
+    validate_persisted_manifest_file_size(data.len(), "s3", ino)?;
+
     let storage = if data.len() <= inline_threshold {
         PersistedFileStorage::Inline {
             data_base64: BASE64.encode(data),
@@ -880,19 +978,29 @@ fn load_filesystem_from_manifest(
             PersistedFilesystemInodeKind::File { storage } => {
                 let data = match storage {
                     PersistedFileStorage::Inline { data_base64 } => {
-                        BASE64.decode(data_base64).map_err(|error| {
+                        validate_inline_manifest_data_size(&data_base64, "s3", ino)?;
+                        let data = BASE64.decode(data_base64).map_err(|error| {
                             PluginError::invalid_input(format!(
                                 "decode inline s3 file data for inode {ino}: {error}"
                             ))
-                        })?
+                        })?;
+                        validate_manifest_file_size(data.len() as u64, "s3", ino)?;
+                        data
                     }
                     PersistedFileStorage::Chunked { size, mut chunks } => {
                         chunks.sort_by_key(|chunk| chunk.index);
                         let expected_size = validate_manifest_file_size(size, "s3", ino)?;
+                        validate_chunk_indexes(&chunks, "s3", ino)?;
                         let mut data = Vec::with_capacity(expected_size);
                         for chunk in chunks {
+                            let remaining = expected_size.saturating_sub(data.len());
+                            if remaining == 0 {
+                                return Err(PluginError::invalid_input(format!(
+                                    "s3 manifest inode {ino} has chunk data beyond declared size {size}"
+                                )));
+                            }
                             let bytes = store
-                                .load_bytes(&chunk.key)
+                                .load_bytes_limited(&chunk.key, remaining)
                                 .map_err(|error| PluginError::new("EIO", error.to_string()))?
                                 .ok_or_else(|| {
                                     PluginError::new(
@@ -902,11 +1010,16 @@ fn load_filesystem_from_manifest(
                                             chunk.key, ino
                                         ),
                                     )
-                                })?;
+                            })?;
                             chunk_keys.insert(chunk.key);
                             data.extend_from_slice(&bytes);
                         }
-                        data.truncate(expected_size);
+                        if data.len() != expected_size {
+                            return Err(PluginError::invalid_input(format!(
+                                "s3 manifest inode {ino} restored {} bytes but declared {size}",
+                                data.len()
+                            )));
+                        }
                         data
                     }
                 };
@@ -951,6 +1064,123 @@ fn validate_manifest_file_size(size: u64, backend: &str, ino: u64) -> Result<usi
             "{backend} manifest inode {ino} size {size} does not fit on this platform"
         ))
     })
+}
+
+fn validate_persisted_manifest_file_size(
+    size: usize,
+    backend: &str,
+    ino: u64,
+) -> Result<(), StorageError> {
+    validate_persisted_manifest_file_size_with_limit(
+        size,
+        backend,
+        ino,
+        MAX_PERSISTED_MANIFEST_FILE_BYTES,
+    )
+}
+
+fn validate_persisted_manifest_file_size_with_limit(
+    size: usize,
+    backend: &str,
+    ino: u64,
+    max_bytes: u64,
+) -> Result<(), StorageError> {
+    if u64::try_from(size).map_or(true, |size| size > max_bytes) {
+        return Err(StorageError::new(format!(
+            "{backend} manifest inode {ino} has {size} bytes, limit is {max_bytes}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_chunk_indexes(
+    chunks: &[PersistedChunkRef],
+    backend: &str,
+    ino: u64,
+) -> Result<(), PluginError> {
+    for (expected, chunk) in chunks.iter().enumerate() {
+        let expected = expected as u64;
+        if chunk.index != expected {
+            return Err(PluginError::invalid_input(format!(
+                "{backend} manifest inode {ino} chunk indexes must be contiguous from 0; expected {expected}, found {}",
+                chunk.index
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_inline_manifest_data_size(
+    data_base64: &str,
+    backend: &str,
+    ino: u64,
+) -> Result<(), PluginError> {
+    validate_inline_manifest_data_size_with_limit(
+        data_base64,
+        backend,
+        ino,
+        MAX_PERSISTED_MANIFEST_FILE_BYTES,
+    )
+}
+
+fn validate_inline_manifest_data_size_with_limit(
+    data_base64: &str,
+    backend: &str,
+    ino: u64,
+    max_bytes: u64,
+) -> Result<(), PluginError> {
+    let padding = data_base64
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count()
+        .min(2);
+    let estimated_decoded = data_base64
+        .len()
+        .div_ceil(4)
+        .saturating_mul(3)
+        .saturating_sub(padding);
+    if estimated_decoded as u64 > max_bytes {
+        return Err(PluginError::invalid_input(format!(
+            "{backend} manifest inode {ino} inline data may decode to {estimated_decoded} bytes, limit is {max_bytes}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_persisted_manifest_bytes(bytes: &[u8]) -> Result<(), StorageError> {
+    validate_persisted_manifest_size(bytes.len(), MAX_PERSISTED_MANIFEST_BYTES)
+}
+
+fn validate_persisted_manifest_size(size: usize, max_bytes: usize) -> Result<(), StorageError> {
+    if size > max_bytes {
+        return Err(StorageError::new(format!(
+            "s3 manifest is {size} bytes, limit is {max_bytes}"
+        )));
+    }
+    Ok(())
+}
+
+async fn collect_s3_body_limited(
+    mut body: ByteStream,
+    key: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>, StorageError> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body
+        .try_next()
+        .await
+        .map_err(|error| StorageError::new(format!("read s3 object '{key}': {error}")))?
+    {
+        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(StorageError::new(format!(
+                "s3 object '{key}' exceeded {max_bytes} byte limit"
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 fn normalize_prefix(raw: Option<&str>) -> String {
