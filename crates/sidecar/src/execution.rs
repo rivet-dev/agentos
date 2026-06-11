@@ -23,7 +23,8 @@ use crate::protocol::{
 use crate::service::{
     audit_fields, dirname, emit_security_audit_event, emit_structured_event, javascript_error,
     kernel_error, log_stale_process_event, normalize_host_path, normalize_path,
-    parse_javascript_child_process_spawn_request, path_is_within_root, python_error, wasm_error,
+    parse_javascript_child_process_spawn_request, path_is_within_root,
+    process_event_queue_overflow_error, python_error, wasm_error, MAX_PROCESS_EVENT_QUEUE,
 };
 use crate::state::{
     ActiveChildProcessRedirect, ActiveCipherSession, ActiveDhSession, ActiveDiffieHellmanSession,
@@ -359,6 +360,17 @@ impl ActiveProcess {
         }
     }
 
+    pub(crate) fn queue_pending_execution_event(
+        &mut self,
+        event: ActiveExecutionEvent,
+    ) -> Result<(), SidecarError> {
+        if self.pending_execution_events.len() >= MAX_PROCESS_EVENT_QUEUE {
+            return Err(process_event_queue_overflow_error());
+        }
+        self.pending_execution_events.push_back(event);
+        Ok(())
+    }
+
     pub(crate) fn with_host_cwd(mut self, host_cwd: PathBuf) -> Self {
         self.host_cwd = host_cwd;
         self
@@ -513,6 +525,36 @@ impl ActiveProcess {
 
         counts
     }
+}
+
+fn poll_tool_process_event(
+    execution: &ToolExecution,
+) -> Result<Option<ActiveExecutionEvent>, SidecarError> {
+    let event = execution
+        .pending_events
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .pop_front();
+    if event.is_some() {
+        return Ok(event);
+    }
+    if execution.events_overflowed.load(Ordering::Relaxed) {
+        return Err(process_event_queue_overflow_error());
+    }
+    Ok(None)
+}
+
+fn descendant_pending_execution_event_capacity(
+    root: &ActiveProcess,
+    child_path: &[&str],
+) -> Option<usize> {
+    let mut child = root;
+    for child_process_id in child_path {
+        child = child.child_processes.get(*child_process_id)?;
+    }
+    Some(MAX_PROCESS_EVENT_QUEUE.saturating_sub(
+        child.pending_execution_events.len(),
+    ))
 }
 
 fn poll_child_execution_after_exit(
@@ -2638,9 +2680,9 @@ impl ActiveExecution {
                     })
                 })
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(_) => {
+            Self::Tool(execution) => {
                 let _ = timeout;
-                Ok(None)
+                poll_tool_process_event(execution)
             }
         }
     }
@@ -2712,35 +2754,51 @@ impl ActiveExecution {
                     })
                 })
                 .map_err(|error| SidecarError::Execution(error.to_string())),
-            Self::Tool(_) => {
+            Self::Tool(execution) => {
                 let _ = timeout;
-                Ok(None)
+                poll_tool_process_event(execution)
             }
         }
     }
 }
 
 struct ToolProcessEventRequest {
-    sender: tokio::sync::mpsc::UnboundedSender<ProcessEventEnvelope>,
     sidecar_requests: SharedSidecarRequestClient,
     connection_id: String,
     session_id: String,
     vm_id: String,
-    process_id: String,
     tool_resolution: ToolCommandResolution,
     cancelled: Arc<AtomicBool>,
+    pending_events: Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
+    events_overflowed: Arc<AtomicBool>,
+}
+
+pub(crate) fn send_tool_process_event(
+    pending_events: &Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
+    events_overflowed: &AtomicBool,
+    event: ActiveExecutionEvent,
+) -> bool {
+    let mut pending_events = pending_events
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if pending_events.len() >= MAX_PROCESS_EVENT_QUEUE {
+        events_overflowed.store(true, Ordering::Relaxed);
+        return false;
+    }
+    pending_events.push_back(event);
+    true
 }
 
 fn spawn_tool_process_events(request: ToolProcessEventRequest) {
     let ToolProcessEventRequest {
-        sender,
         sidecar_requests,
         connection_id,
         session_id,
         vm_id,
-        process_id,
         tool_resolution,
         cancelled,
+        pending_events,
+        events_overflowed,
     } = request;
     std::thread::spawn(move || match tool_resolution {
         ToolCommandResolution::Immediate {
@@ -2752,30 +2810,28 @@ fn spawn_tool_process_events(request: ToolProcessEventRequest) {
                 return;
             }
             if !stdout.is_empty() {
-                let _ = sender.send(ProcessEventEnvelope {
-                    connection_id: connection_id.clone(),
-                    session_id: session_id.clone(),
-                    vm_id: vm_id.clone(),
-                    process_id: process_id.clone(),
-                    event: ActiveExecutionEvent::Stdout(stdout),
-                });
+                if !send_tool_process_event(
+                    &pending_events,
+                    &events_overflowed,
+                    ActiveExecutionEvent::Stdout(stdout),
+                ) {
+                    return;
+                }
             }
             if !stderr.is_empty() {
-                let _ = sender.send(ProcessEventEnvelope {
-                    connection_id: connection_id.clone(),
-                    session_id: session_id.clone(),
-                    vm_id: vm_id.clone(),
-                    process_id: process_id.clone(),
-                    event: ActiveExecutionEvent::Stderr(stderr),
-                });
+                if !send_tool_process_event(
+                    &pending_events,
+                    &events_overflowed,
+                    ActiveExecutionEvent::Stderr(stderr),
+                ) {
+                    return;
+                }
             }
-            let _ = sender.send(ProcessEventEnvelope {
-                connection_id,
-                session_id,
-                vm_id,
-                process_id,
-                event: ActiveExecutionEvent::Exited(exit_code),
-            });
+            let _ = send_tool_process_event(
+                &pending_events,
+                &events_overflowed,
+                ActiveExecutionEvent::Exited(exit_code),
+            );
         }
         ToolCommandResolution::Invoke { request, timeout } => {
             let response = sidecar_requests.invoke(
@@ -2799,77 +2855,67 @@ fn spawn_tool_process_events(request: ToolProcessEventRequest) {
                                 "failed to serialize tool result: {error}"
                             ))
                         });
-                        let _ = sender.send(ProcessEventEnvelope {
-                            connection_id: connection_id.clone(),
-                            session_id: session_id.clone(),
-                            vm_id: vm_id.clone(),
-                            process_id: process_id.clone(),
-                            event: ActiveExecutionEvent::Stdout(stdout),
-                        });
-                        let _ = sender.send(ProcessEventEnvelope {
-                            connection_id,
-                            session_id,
-                            vm_id,
-                            process_id: process_id.clone(),
-                            event: ActiveExecutionEvent::Exited(0),
-                        });
+                        if !send_tool_process_event(
+                            &pending_events,
+                            &events_overflowed,
+                            ActiveExecutionEvent::Stdout(stdout),
+                        ) {
+                            return;
+                        }
+                        let _ = send_tool_process_event(
+                            &pending_events,
+                            &events_overflowed,
+                            ActiveExecutionEvent::Exited(0),
+                        );
                     } else {
                         let message = result
                             .error
                             .unwrap_or_else(|| String::from("tool invocation returned no result"));
-                        let _ = sender.send(ProcessEventEnvelope {
-                            connection_id: connection_id.clone(),
-                            session_id: session_id.clone(),
-                            vm_id: vm_id.clone(),
-                            process_id: process_id.clone(),
-                            event: ActiveExecutionEvent::Stderr(format_tool_failure_output(
-                                &message,
-                            )),
-                        });
-                        let _ = sender.send(ProcessEventEnvelope {
-                            connection_id,
-                            session_id,
-                            vm_id,
-                            process_id: process_id.clone(),
-                            event: ActiveExecutionEvent::Exited(1),
-                        });
+                        if !send_tool_process_event(
+                            &pending_events,
+                            &events_overflowed,
+                            ActiveExecutionEvent::Stderr(format_tool_failure_output(&message)),
+                        ) {
+                            return;
+                        }
+                        let _ = send_tool_process_event(
+                            &pending_events,
+                            &events_overflowed,
+                            ActiveExecutionEvent::Exited(1),
+                        );
                     }
                 }
                 Ok(_) => {
-                    let _ = sender.send(ProcessEventEnvelope {
-                        connection_id: connection_id.clone(),
-                        session_id: session_id.clone(),
-                        vm_id: vm_id.clone(),
-                        process_id: process_id.clone(),
-                        event: ActiveExecutionEvent::Stderr(format_tool_failure_output(
+                    if !send_tool_process_event(
+                        &pending_events,
+                        &events_overflowed,
+                        ActiveExecutionEvent::Stderr(format_tool_failure_output(
                             "unexpected sidecar tool response",
                         )),
-                    });
-                    let _ = sender.send(ProcessEventEnvelope {
-                        connection_id,
-                        session_id,
-                        vm_id,
-                        process_id,
-                        event: ActiveExecutionEvent::Exited(1),
-                    });
+                    ) {
+                        return;
+                    }
+                    let _ = send_tool_process_event(
+                        &pending_events,
+                        &events_overflowed,
+                        ActiveExecutionEvent::Exited(1),
+                    );
                 }
                 Err(error) => {
-                    let _ = sender.send(ProcessEventEnvelope {
-                        connection_id: connection_id.clone(),
-                        session_id: session_id.clone(),
-                        vm_id: vm_id.clone(),
-                        process_id: process_id.clone(),
-                        event: ActiveExecutionEvent::Stderr(format_tool_failure_output(
+                    if !send_tool_process_event(
+                        &pending_events,
+                        &events_overflowed,
+                        ActiveExecutionEvent::Stderr(format_tool_failure_output(
                             &error.to_string(),
                         )),
-                    });
-                    let _ = sender.send(ProcessEventEnvelope {
-                        connection_id,
-                        session_id,
-                        vm_id,
-                        process_id,
-                        event: ActiveExecutionEvent::Exited(1),
-                    });
+                    ) {
+                        return;
+                    }
+                    let _ = send_tool_process_event(
+                        &pending_events,
+                        &events_overflowed,
+                        ActiveExecutionEvent::Exited(1),
+                    );
                 }
             }
         }
@@ -2928,6 +2974,8 @@ where
                 let kernel_pid = kernel_handle.pid();
                 let tool_execution = ToolExecution::default();
                 let cancelled = tool_execution.cancelled.clone();
+                let pending_events = tool_execution.pending_events.clone();
+                let events_overflowed = tool_execution.events_overflowed.clone();
                 vm.active_processes.insert(
                     payload.process_id.clone(),
                     ActiveProcess::new(
@@ -2941,14 +2989,14 @@ where
                 );
                 self.bridge.emit_lifecycle(&vm_id, LifecycleState::Busy)?;
                 spawn_tool_process_events(ToolProcessEventRequest {
-                    sender: self.process_event_sender.clone(),
                     sidecar_requests: self.sidecar_requests.clone(),
                     connection_id: connection_id.clone(),
                     session_id: session_id.clone(),
                     vm_id: vm_id.clone(),
-                    process_id: payload.process_id.clone(),
                     tool_resolution,
                     cancelled,
+                    pending_events,
+                    events_overflowed,
                 });
 
                 return Ok(DispatchResult {
@@ -3572,13 +3620,9 @@ where
                 };
                 if signal != 0 {
                     execution.cancelled.store(true, Ordering::Relaxed);
-                    let _ = self.process_event_sender.send(ProcessEventEnvelope {
-                        connection_id: vm.connection_id.clone(),
-                        session_id: vm.session_id.clone(),
-                        vm_id: vm_id.to_owned(),
-                        process_id: process_id.to_owned(),
-                        event: ActiveExecutionEvent::Exited(128 + signal),
-                    });
+                    process.queue_pending_execution_event(ActiveExecutionEvent::Exited(
+                        128 + signal,
+                    ))?;
                 }
             }
             KillBehavior::SharedV8StateOnly => {
@@ -3602,9 +3646,9 @@ where
                 }
                 process.execution.terminate()?;
                 if signal != 0 && matches!(process.execution, ActiveExecution::Wasm(_)) {
-                    process
-                        .pending_execution_events
-                        .push_back(ActiveExecutionEvent::Exited(128 + signal));
+                    process.queue_pending_execution_event(ActiveExecutionEvent::Exited(
+                        128 + signal,
+                    ))?;
                 }
             }
             KillBehavior::SharedV8DispatchOrTerminate => {
@@ -3645,20 +3689,31 @@ where
     ) -> Result<bool, SidecarError> {
         let mut emitted_any = false;
 
+        let mut queued_envelopes = Vec::new();
         {
+            let pending_capacity = self.pending_process_event_capacity();
             let receiver = self.process_event_receiver.as_mut().ok_or_else(|| {
                 SidecarError::InvalidState(String::from("process event receiver unavailable"))
             })?;
             loop {
+                if queued_envelopes.len() >= pending_capacity {
+                    if receiver.is_empty() {
+                        break;
+                    }
+                    return Err(process_event_queue_overflow_error());
+                }
                 match receiver.try_recv() {
                     Ok(envelope) => {
-                        self.pending_process_events.push_back(envelope);
+                        queued_envelopes.push(envelope);
                         emitted_any = true;
                     }
                     Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
                     Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
                 }
             }
+        }
+        for envelope in queued_envelopes {
+            self.queue_pending_process_event(envelope)?;
         }
 
         let vm_ids = self.vm_ids_for_scope(ownership)?;
@@ -3731,13 +3786,13 @@ where
                         continue;
                     };
 
-                    let _ = self.process_event_sender.send(ProcessEventEnvelope {
+                    self.queue_pending_process_event(ProcessEventEnvelope {
                         connection_id: connection_id.clone(),
                         session_id: session_id.clone(),
                         vm_id: vm_id.clone(),
                         process_id: process_id.clone(),
                         event,
-                    });
+                    })?;
                     emitted_any = true;
                     emitted_this_pass = true;
                 }
@@ -4001,36 +4056,36 @@ where
                     };
                     match event {
                         ActiveExecutionEvent::Stdout(chunk) => {
-                            self.pending_process_events.push_back(ProcessEventEnvelope {
+                            self.queue_pending_process_event(ProcessEventEnvelope {
                                 connection_id,
                                 session_id,
                                 vm_id: vm_id.to_owned(),
                                 process_id: detached_process_id.clone(),
                                 event: ActiveExecutionEvent::Stdout(chunk),
-                            });
+                            })?;
                             emitted_any = true;
                         }
                         ActiveExecutionEvent::Stderr(chunk) => {
-                            self.pending_process_events.push_back(ProcessEventEnvelope {
+                            self.queue_pending_process_event(ProcessEventEnvelope {
                                 connection_id,
                                 session_id,
                                 vm_id: vm_id.to_owned(),
                                 process_id: detached_process_id.clone(),
                                 event: ActiveExecutionEvent::Stderr(chunk),
-                            });
+                            })?;
                             emitted_any = true;
                         }
                         ActiveExecutionEvent::Exited(exit_code) => {
                             if let Some(vm) = self.vms.get_mut(vm_id) {
                                 vm.detached_child_processes.remove(&detached_process_id);
                             }
-                            self.pending_process_events.push_back(ProcessEventEnvelope {
+                            self.queue_pending_process_event(ProcessEventEnvelope {
                                 connection_id,
                                 session_id,
                                 vm_id: vm_id.to_owned(),
                                 process_id: detached_process_id.clone(),
                                 event: ActiveExecutionEvent::Exited(exit_code),
-                            });
+                            })?;
                             emitted_any = true;
                             break;
                         }
@@ -4151,7 +4206,7 @@ where
                 let Some(envelope) = envelope else {
                     break;
                 };
-                self.pending_process_events.push_back(envelope);
+                self.queue_pending_process_event(envelope)?;
                 emitted_any = true;
 
                 if event_type == "exit" {
@@ -4162,7 +4217,7 @@ where
 
         Ok(emitted_any)
     }
-    fn drain_queued_descendant_javascript_child_process_events(
+    pub(crate) fn drain_queued_descendant_javascript_child_process_events(
         &mut self,
         vm_id: &str,
         process_id: &str,
@@ -4172,14 +4227,27 @@ where
             return Ok(());
         }
         let target_process_id = Self::child_process_path_label(process_id, child_path);
+        let mut child_capacity = self
+            .vms
+            .get(vm_id)
+            .and_then(|vm| vm.active_processes.get(process_id))
+            .and_then(|root| descendant_pending_execution_event_capacity(root, child_path));
 
         let mut deferred = VecDeque::new();
         while let Some(envelope) = self.pending_process_events.pop_front() {
             if envelope.vm_id == vm_id && envelope.process_id == target_process_id {
+                if matches!(child_capacity, Some(0)) {
+                    self.pending_process_events.push_front(envelope);
+                    while let Some(deferred_envelope) = deferred.pop_back() {
+                        self.pending_process_events.push_front(deferred_envelope);
+                    }
+                    return Err(process_event_queue_overflow_error());
+                }
                 if let Some(vm) = self.vms.get_mut(vm_id) {
                     if let Some(root) = vm.active_processes.get_mut(process_id) {
                         if let Some(child) = Self::active_process_by_path_mut(root, child_path) {
-                            child.pending_execution_events.push_back(envelope.event);
+                            child.queue_pending_execution_event(envelope.event)?;
+                            child_capacity = child_capacity.map(|capacity| capacity - 1);
                             continue;
                         }
                     }
@@ -4191,11 +4259,24 @@ where
 
         let mut queued = Vec::new();
         {
+            let transfer_capacity = self
+                .pending_process_event_capacity()
+                .min(child_capacity.unwrap_or(usize::MAX));
             let receiver = self.process_event_receiver.as_mut().ok_or_else(|| {
                 SidecarError::InvalidState(String::from("process event receiver unavailable"))
             })?;
-            while let Ok(envelope) = receiver.try_recv() {
-                queued.push(envelope);
+            loop {
+                if queued.len() >= transfer_capacity {
+                    if receiver.is_empty() {
+                        break;
+                    }
+                    return Err(process_event_queue_overflow_error());
+                }
+                match receiver.try_recv() {
+                    Ok(envelope) => queued.push(envelope),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                }
             }
         }
         for envelope in queued {
@@ -4203,13 +4284,13 @@ where
                 if let Some(vm) = self.vms.get_mut(vm_id) {
                     if let Some(root) = vm.active_processes.get_mut(process_id) {
                         if let Some(child) = Self::active_process_by_path_mut(root, child_path) {
-                            child.pending_execution_events.push_back(envelope.event);
+                            child.queue_pending_execution_event(envelope.event)?;
                             continue;
                         }
                     }
                 }
             }
-            self.pending_process_events.push_back(envelope);
+            self.queue_pending_process_event(envelope)?;
         }
 
         Ok(())
@@ -4341,15 +4422,22 @@ where
         Ok(Some(vm.active_processes.is_empty()))
     }
 
-    pub(crate) fn drain_process_events_blocking(
+    pub(crate) fn drain_process_events_blocking_with_limit(
         &mut self,
         vm_id: &str,
         process_id: &str,
+        max_events: usize,
     ) -> Result<Vec<ActiveExecutionEvent>, SidecarError> {
         let mut events = Vec::new();
+        if max_events == 0 {
+            return Ok(events);
+        }
         let mut deadline = Instant::now() + Duration::from_millis(150);
 
         loop {
+            if events.len() >= max_events {
+                break;
+            }
             let event = {
                 let Some(vm) = self.vms.get_mut(vm_id) else {
                     break;
@@ -4374,6 +4462,9 @@ where
                 }
                 let blocking_wait = deadline.saturating_duration_since(Instant::now());
                 if blocking_wait.is_zero() {
+                    break;
+                }
+                if events.len() >= max_events {
                     break;
                 }
                 let delayed_event = {
@@ -5130,10 +5221,6 @@ where
                 .ok_or_else(|| missing_process_error(vm_id, process_id))?;
             (process.kernel_pid, process.allocate_child_process_id())
         };
-        let child_runtime_process_id =
-            Self::child_process_path_label(process_id, &[child_process_id.as_str()]);
-
-        let process_event_sender = self.process_event_sender.clone();
         let sidecar_requests = self.sidecar_requests.clone();
         let vm = self
             .vms
@@ -5171,15 +5258,17 @@ where
             let kernel_pid = kernel_handle.pid();
             let tool_execution = ToolExecution::default();
             let cancelled = tool_execution.cancelled.clone();
+            let pending_events = tool_execution.pending_events.clone();
+            let events_overflowed = tool_execution.events_overflowed.clone();
             spawn_tool_process_events(ToolProcessEventRequest {
-                sender: process_event_sender.clone(),
                 sidecar_requests: sidecar_requests.clone(),
                 connection_id: vm.connection_id.clone(),
                 session_id: vm.session_id.clone(),
                 vm_id: vm_id.to_owned(),
-                process_id: child_runtime_process_id.clone(),
                 tool_resolution,
                 cancelled,
+                pending_events,
+                events_overflowed,
             });
             (
                 kernel_pid,
@@ -5659,7 +5748,6 @@ where
             )
         };
 
-        let process_event_sender = self.process_event_sender.clone();
         let sidecar_requests = self.sidecar_requests.clone();
         let vm = self
             .vms
@@ -5680,7 +5768,6 @@ where
         };
         let mut child_path = current_process_path.to_vec();
         child_path.push(child_process_id.as_str());
-        let child_runtime_process_id = Self::child_process_path_label(process_id, &child_path);
         let (kernel_pid, kernel_handle, execution, kernel_stdin_writer_fd) = if resolved
             .tool_command
         {
@@ -5713,15 +5800,17 @@ where
             let kernel_pid = kernel_handle.pid();
             let tool_execution = ToolExecution::default();
             let cancelled = tool_execution.cancelled.clone();
+            let pending_events = tool_execution.pending_events.clone();
+            let events_overflowed = tool_execution.events_overflowed.clone();
             spawn_tool_process_events(ToolProcessEventRequest {
-                sender: process_event_sender.clone(),
                 sidecar_requests: sidecar_requests.clone(),
                 connection_id: vm.connection_id.clone(),
                 session_id: vm.session_id.clone(),
                 vm_id: vm_id.to_owned(),
-                process_id: child_runtime_process_id.clone(),
                 tool_resolution,
                 cancelled,
+                pending_events,
+                events_overflowed,
             });
             (
                 kernel_pid,
@@ -6329,15 +6418,15 @@ where
                             if matches!(next, ActiveExecutionEvent::Exited(_)) {
                                 continue;
                             }
-                            child.pending_execution_events.push_back(next);
+                            child.queue_pending_execution_event(next)?;
                             if Instant::now() >= deadline {
                                 break;
                             }
                         }
                         if !child.pending_execution_events.is_empty() {
-                            child
-                                .pending_execution_events
-                                .push_back(ActiveExecutionEvent::Exited(exit_code));
+                            child.queue_pending_execution_event(ActiveExecutionEvent::Exited(
+                                exit_code,
+                            ))?;
                             true
                         } else {
                             false
@@ -6759,9 +6848,7 @@ where
         if should_terminate_shared_runtime {
             child.execution.terminate()?;
             child.pending_self_signal_exit = Some(signal);
-            child
-                .pending_execution_events
-                .push_back(ActiveExecutionEvent::Exited(128 + signal));
+            child.queue_pending_execution_event(ActiveExecutionEvent::Exited(128 + signal))?;
         } else {
             vm.kernel
                 .kill_process(EXECUTION_DRIVER_NAME, child.kernel_pid, signal)
@@ -7067,9 +7154,7 @@ where
         if should_terminate_shared_runtime {
             child.execution.terminate()?;
             child.pending_self_signal_exit = Some(signal);
-            child
-                .pending_execution_events
-                .push_back(ActiveExecutionEvent::Exited(128 + signal));
+            child.queue_pending_execution_event(ActiveExecutionEvent::Exited(128 + signal))?;
         } else {
             vm.kernel
                 .kill_process(EXECUTION_DRIVER_NAME, child.kernel_pid, signal)
@@ -7113,9 +7198,7 @@ fn apply_active_process_default_signal(
     if process.execution.uses_shared_v8_runtime() {
         process.execution.terminate()?;
         if signal != 0 && matches!(process.execution, ActiveExecution::Wasm(_)) {
-            process
-                .pending_execution_events
-                .push_back(ActiveExecutionEvent::Exited(128 + signal));
+            process.queue_pending_execution_event(ActiveExecutionEvent::Exited(128 + signal))?;
         }
         return Ok(());
     }
@@ -15938,7 +16021,7 @@ fn service_javascript_kernel_stdio_write_sync_rpc(
     } else {
         ActiveExecutionEvent::Stderr(chunk)
     };
-    process.pending_execution_events.push_back(event);
+    process.queue_pending_execution_event(event)?;
 
     Ok(json!(written))
 }

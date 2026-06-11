@@ -927,7 +927,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 } else {
                     ActiveExecutionEvent::Stderr(contents.clone())
                 };
-                process.pending_execution_events.push_back(event);
+                process.queue_pending_execution_event(event)?;
             }
             Ok(json!(written))
         }

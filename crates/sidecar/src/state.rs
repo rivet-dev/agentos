@@ -909,12 +909,16 @@ pub(crate) enum ActiveExecution {
 #[derive(Debug, Clone)]
 pub(crate) struct ToolExecution {
     pub(crate) cancelled: Arc<AtomicBool>,
+    pub(crate) pending_events: Arc<Mutex<VecDeque<ActiveExecutionEvent>>>,
+    pub(crate) events_overflowed: Arc<AtomicBool>,
 }
 
 impl Default for ToolExecution {
     fn default() -> Self {
         Self {
             cancelled: Arc::new(AtomicBool::new(false)),
+            pending_events: Arc::new(Mutex::new(VecDeque::new())),
+            events_overflowed: Arc::new(AtomicBool::new(false)),
         }
     }
 }

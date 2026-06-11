@@ -46,7 +46,7 @@ mod service {
         use crate::protocol::{
             AuthenticateRequest, BootstrapRootFilesystemRequest, CloseStdinRequest,
             ConfigureVmRequest, CreateSessionRequest, CreateVmRequest, DisposeReason,
-            DisposeVmRequest, FindBoundUdpRequest, FindListenerRequest, FsPermissionRule,
+            DisposeVmRequest, EventPayload, FindBoundUdpRequest, FindListenerRequest, FsPermissionRule,
             FsPermissionRuleSet, FsPermissionScope, GetProcessSnapshotRequest,
             GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestFilesystemOperation,
             GuestRuntimeKind, MountDescriptor, MountPluginDescriptor, OpenSessionRequest,
@@ -351,6 +351,269 @@ setInterval(() => {}, 1000);
         fn create_test_sidecar() -> NativeSidecar<RecordingBridge> {
             create_test_sidecar_with_config(NativeSidecarConfig::default())
         }
+
+        fn test_process_event(index: usize) -> ProcessEventEnvelope {
+            ProcessEventEnvelope {
+                connection_id: String::from("conn-queue"),
+                session_id: String::from("session-queue"),
+                vm_id: String::from("vm-queue"),
+                process_id: format!("proc-queue-{index}"),
+                event: ActiveExecutionEvent::Stdout(Vec::new()),
+            }
+        }
+
+        fn insert_tool_process(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            vm_id: &str,
+            process_id: &str,
+        ) {
+            let kernel_handle = create_kernel_process_handle_for_tests();
+            let process = ActiveProcess::new(
+                kernel_handle.pid(),
+                kernel_handle,
+                GuestRuntimeKind::JavaScript,
+                ActiveExecution::Tool(ToolExecution::default()),
+            );
+            sidecar
+                .vms
+                .get_mut(vm_id)
+                .expect("test vm")
+                .active_processes
+                .insert(process_id.to_owned(), process);
+        }
+
+        fn process_event_sender_is_bounded() {
+            let sidecar = create_test_sidecar();
+
+            for index in 0..MAX_PROCESS_EVENT_QUEUE {
+                sidecar
+                    .process_event_sender
+                    .try_send(test_process_event(index))
+                    .expect("bounded process event sender should accept capacity");
+            }
+
+            assert!(matches!(
+                sidecar
+                    .process_event_sender
+                    .try_send(test_process_event(MAX_PROCESS_EVENT_QUEUE)),
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_))
+            ));
+        }
+
+        fn pending_process_events_are_bounded() {
+            let mut sidecar = create_test_sidecar();
+
+            for index in 0..MAX_PROCESS_EVENT_QUEUE {
+                sidecar
+                    .queue_pending_process_event(test_process_event(index))
+                    .expect("pending process event queue should accept capacity");
+            }
+
+            let error = sidecar
+                .queue_pending_process_event(test_process_event(MAX_PROCESS_EVENT_QUEUE))
+                .expect_err("pending process event queue should reject overflow");
+            assert!(
+                error.to_string().contains("process event queue exceeded"),
+                "unexpected overflow error: {error}"
+            );
+        }
+
+        fn process_event_receiver_overflow_preserves_queued_event() {
+            let mut sidecar = create_test_sidecar();
+
+            for index in 0..MAX_PROCESS_EVENT_QUEUE {
+                sidecar
+                    .queue_pending_process_event(test_process_event(index))
+                    .expect("pending process event queue should accept capacity");
+            }
+
+            let expected_process_id = format!("proc-queue-{MAX_PROCESS_EVENT_QUEUE}");
+            sidecar
+                .process_event_sender
+                .try_send(test_process_event(MAX_PROCESS_EVENT_QUEUE))
+                .expect("queue process event behind full pending queue");
+
+            let error = sidecar
+                .take_matching_process_event_envelope("vm-queue", &expected_process_id)
+                .expect_err("receiver drain should reject overflow before consuming event");
+            assert!(
+                error.to_string().contains("process event queue exceeded"),
+                "unexpected overflow error: {error}"
+            );
+
+            let preserved = sidecar
+                .process_event_receiver
+                .as_mut()
+                .expect("process event receiver")
+                .try_recv()
+                .expect("overflowing receiver event should remain queued");
+            assert_eq!(preserved.process_id, expected_process_id);
+        }
+
+        fn tool_execution_event_overflow_is_reported() {
+            let tool_execution = ToolExecution::default();
+            for _ in 0..MAX_PROCESS_EVENT_QUEUE {
+                assert!(crate::execution::send_tool_process_event(
+                    &tool_execution.pending_events,
+                    &tool_execution.events_overflowed,
+                    ActiveExecutionEvent::Stdout(Vec::new()),
+                ));
+            }
+            assert!(!crate::execution::send_tool_process_event(
+                &tool_execution.pending_events,
+                &tool_execution.events_overflowed,
+                ActiveExecutionEvent::Exited(0),
+            ));
+
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("create tokio runtime");
+            let local = tokio::task::LocalSet::new();
+            runtime.block_on(local.run_until(async move {
+                let mut execution = ActiveExecution::Tool(tool_execution);
+                for _ in 0..MAX_PROCESS_EVENT_QUEUE {
+                    assert!(matches!(
+                        execution
+                            .poll_event(Duration::ZERO)
+                            .await
+                            .expect("poll queued tool event"),
+                        Some(ActiveExecutionEvent::Stdout(_))
+                    ));
+                }
+                let error = execution
+                    .poll_event(Duration::ZERO)
+                    .await
+                    .expect_err("tool event overflow should be reported");
+                assert!(
+                    error.to_string().contains("process event queue exceeded"),
+                    "unexpected overflow error: {error}"
+                );
+            }));
+        }
+
+        fn descendant_transfer_overflow_preserves_global_queue() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate sidecar");
+            let vm_id = create_vm_with_metadata(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+                BTreeMap::new(),
+            )
+            .expect("create vm");
+            insert_tool_process(&mut sidecar, &vm_id, "root-proc");
+            let child = {
+                let kernel_handle = create_kernel_process_handle_for_tests();
+                let mut child = ActiveProcess::new(
+                    kernel_handle.pid(),
+                    kernel_handle,
+                    GuestRuntimeKind::JavaScript,
+                    ActiveExecution::Tool(ToolExecution::default()),
+                );
+                for _ in 0..MAX_PROCESS_EVENT_QUEUE {
+                    child
+                        .queue_pending_execution_event(ActiveExecutionEvent::Stdout(Vec::new()))
+                        .expect("fill child event queue");
+                }
+                child
+            };
+            sidecar
+                .vms
+                .get_mut(&vm_id)
+                .expect("test vm")
+                .active_processes
+                .get_mut("root-proc")
+                .expect("root process")
+                .child_processes
+                .insert(String::from("child-1"), child);
+
+            sidecar
+                .queue_pending_process_event(ProcessEventEnvelope {
+                    connection_id: connection_id.clone(),
+                    session_id: session_id.clone(),
+                    vm_id: vm_id.clone(),
+                    process_id: String::from("root-proc/child-1"),
+                    event: ActiveExecutionEvent::Stdout(b"preserve".to_vec()),
+                })
+                .expect("queue descendant event");
+
+            let error = sidecar
+                .drain_queued_descendant_javascript_child_process_events(
+                    &vm_id,
+                    "root-proc",
+                    &["child-1"],
+                )
+                .expect_err("full child queue should reject transfer");
+            assert!(
+                error.to_string().contains("process event queue exceeded"),
+                "unexpected overflow error: {error}"
+            );
+            assert_eq!(sidecar.pending_process_events.len(), 1);
+            assert_eq!(
+                sidecar
+                    .pending_process_events
+                    .front()
+                    .expect("preserved global event")
+                    .process_id,
+                "root-proc/child-1"
+            );
+        }
+
+        fn exit_trailing_requeue_preserves_exit_when_queue_is_full() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate sidecar");
+            let vm_id = create_vm_with_metadata(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+                BTreeMap::new(),
+            )
+            .expect("create vm");
+            insert_tool_process(&mut sidecar, &vm_id, "proc-exit");
+
+            for index in 0..(MAX_PROCESS_EVENT_QUEUE - 1) {
+                sidecar
+                    .queue_pending_process_event(test_process_event(index))
+                    .expect("fill unrelated global queue");
+            }
+            sidecar
+                .queue_pending_process_event(ProcessEventEnvelope {
+                    connection_id: connection_id.clone(),
+                    session_id: session_id.clone(),
+                    vm_id: vm_id.clone(),
+                    process_id: String::from("proc-exit"),
+                    event: ActiveExecutionEvent::Stdout(b"trailing".to_vec()),
+                })
+                .expect("queue trailing process event");
+
+            let frame = sidecar
+                .handle_process_event_envelope(ProcessEventEnvelope {
+                    connection_id,
+                    session_id,
+                    vm_id: vm_id.clone(),
+                    process_id: String::from("proc-exit"),
+                    event: ActiveExecutionEvent::Exited(0),
+                })
+                .expect("handle exit with full queue")
+                .expect("trailing output should emit immediately");
+
+            assert!(matches!(frame.payload, EventPayload::ProcessOutput(_)));
+            let preserved_exit = sidecar
+                .pending_process_events
+                .iter()
+                .find(|envelope| envelope.process_id == "proc-exit")
+                .expect("exit should remain queued");
+            assert!(matches!(
+                preserved_exit.event,
+                ActiveExecutionEvent::Exited(0)
+            ));
+        }
+
         fn session_timeout_response_includes_structured_diagnostics() {
             let mut session = AcpSessionState::new(
                 String::from("acp-session-1"),
@@ -5317,7 +5580,7 @@ setInterval(() => {}, 1000);
 
                     sidecar
                         .process_event_sender
-                        .send(crate::state::ProcessEventEnvelope {
+                        .try_send(crate::state::ProcessEventEnvelope {
                             connection_id: connection_id.clone(),
                             session_id: session_id.clone(),
                             vm_id: vm_id.clone(),
@@ -5329,7 +5592,7 @@ setInterval(() => {}, 1000);
                         .expect("queue stale stdout envelope");
                     sidecar
                         .process_event_sender
-                        .send(crate::state::ProcessEventEnvelope {
+                        .try_send(crate::state::ProcessEventEnvelope {
                             connection_id: connection_id.clone(),
                             session_id: session_id.clone(),
                             vm_id: vm_id.clone(),
@@ -5386,7 +5649,7 @@ setInterval(() => {}, 1000);
                 let send_thread = thread::spawn(move || {
                     sender_barrier.wait();
                     sender
-                        .send(crate::state::ProcessEventEnvelope {
+                        .try_send(crate::state::ProcessEventEnvelope {
                             connection_id: sender_connection_id,
                             session_id: sender_session_id,
                             vm_id: sender_vm_id,
@@ -14967,10 +15230,26 @@ console.log(JSON.stringify({
             javascript_net_rpc_listens_and_connects_over_unix_domain_sockets();
             javascript_child_process_rpc_spawns_nested_node_processes_inside_vm_kernel();
             javascript_child_process_rpc_preserves_nested_sigchld_registrations();
+            process_event_sender_is_bounded();
+            pending_process_events_are_bounded();
+            process_event_receiver_overflow_preserves_queued_event();
+            tool_execution_event_overflow_is_reported();
+            descendant_transfer_overflow_preserves_global_queue();
+            exit_trailing_requeue_preserves_exit_when_queue_is_full();
             javascript_child_process_poll_reports_echild_when_child_disappears_after_drain();
             javascript_child_process_internal_bootstrap_env_is_allowlisted();
             javascript_net_poll_clamps_guest_wait_to_sidecar_ceiling();
             javascript_net_poll_timeout_does_not_block_concurrent_vm_dispose();
+        }
+
+        #[test]
+        fn service_process_event_queues_are_bounded() {
+            process_event_sender_is_bounded();
+            pending_process_events_are_bounded();
+            process_event_receiver_overflow_preserves_queued_event();
+            tool_execution_event_overflow_is_reported();
+            descendant_transfer_overflow_preserves_global_queue();
+            exit_trailing_requeue_preserves_exit_when_queue_is_full();
         }
 
         #[test]
