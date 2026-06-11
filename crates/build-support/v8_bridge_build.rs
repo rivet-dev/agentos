@@ -182,7 +182,8 @@ fn emit_rerun_dir(dir: &Path) -> io::Result<()> {
 
     for entry in entries {
         let path = entry.path();
-        if path.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
             emit_rerun_dir(&path)?;
         } else {
             println!("cargo:rerun-if-changed={}", path.display());
@@ -190,4 +191,38 @@ fn emit_rerun_dir(dir: &Path) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::emit_rerun_dir;
+    use std::fs;
+    use std::io;
+    use std::path::PathBuf;
+
+    fn temp_test_dir(name: &str) -> io::Result<PathBuf> {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "agent-os-v8-bridge-build-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir(&path)?;
+        Ok(path)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn emit_rerun_dir_does_not_follow_directory_symlinks() -> io::Result<()> {
+        let dir = temp_test_dir("symlink-cycle")?;
+        fs::write(dir.join("shim.js"), b"export {};")?;
+        std::os::unix::fs::symlink(&dir, dir.join("self"))?;
+
+        let result = emit_rerun_dir(&dir);
+        let cleanup = fs::remove_dir_all(&dir);
+
+        result?;
+        cleanup?;
+        Ok(())
+    }
 }

@@ -14,3 +14,7 @@ signal-hook = "0.3"
 libc = "0.2"
 ciborium = "0.2"
 openssl = "0.10"
+
+[[test]]
+name = "v8_bridge_build"
+path = "../build-support/v8_bridge_build.rs"
