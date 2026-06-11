@@ -26,6 +26,7 @@ const DEFAULT_API_BASE_URL: &str = "https://www.googleapis.com";
 const GOOGLE_TOKEN_HOSTS: &[&str] = &["oauth2.googleapis.com"];
 const GOOGLE_API_BASE_HOSTS: &[&str] = &["www.googleapis.com"];
 const TOKEN_REFRESH_SKEW_SECONDS: u64 = 60;
+const MAX_PERSISTED_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PERSISTED_MANIFEST_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -144,6 +145,7 @@ impl GoogleDriveBackedFilesystem {
 
         let manifest_bytes = serde_json::to_vec(&manifest)
             .map_err(|error| VfsError::io(format!("serialize google drive manifest: {error}")))?;
+        validate_persisted_manifest_bytes(&manifest_bytes).map_err(storage_error_to_vfs)?;
         self.store
             .put_bytes(&self.manifest_key, &manifest_bytes)
             .map_err(storage_error_to_vfs)?;
@@ -288,21 +290,25 @@ impl GoogleDriveObjectStore {
     }
 
     fn load_manifest(&mut self, key: &str) -> Result<Option<Vec<u8>>, PluginError> {
-        self.load_bytes(key)
+        self.load_bytes_limited(key, MAX_PERSISTED_MANIFEST_BYTES)
             .map_err(|error| PluginError::new("EIO", error.to_string()))
     }
 
-    fn load_bytes(&mut self, key: &str) -> Result<Option<Vec<u8>>, StorageError> {
+    fn load_bytes_limited(
+        &mut self,
+        key: &str,
+        max_bytes: usize,
+    ) -> Result<Option<Vec<u8>>, StorageError> {
         let Some(file_id) = self.find_file_id(key)? else {
             return Ok(None);
         };
 
-        match self.download_file(&file_id) {
+        match self.download_file(&file_id, max_bytes) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(error) if error.is_not_found() => {
                 self.file_id_cache.remove(key);
                 if let Some(file_id) = self.lookup_file_id(key)? {
-                    let bytes = self.download_file(&file_id)?;
+                    let bytes = self.download_file(&file_id, max_bytes)?;
                     Ok(Some(bytes))
                 } else {
                     Ok(None)
@@ -398,7 +404,7 @@ impl GoogleDriveObjectStore {
         }
     }
 
-    fn download_file(&mut self, file_id: &str) -> Result<Vec<u8>, StorageError> {
+    fn download_file(&mut self, file_id: &str, max_bytes: usize) -> Result<Vec<u8>, StorageError> {
         let token = self.auth.access_token()?;
         let url = format!("{}/drive/v3/files/{}", self.api_base_url, file_id);
 
@@ -408,7 +414,7 @@ impl GoogleDriveObjectStore {
             .set("Authorization", &format!("Bearer {token}"))
             .call()
         {
-            Ok(response) => read_response_bytes(response).map_err(|error| {
+            Ok(response) => read_response_bytes(response, max_bytes).map_err(|error| {
                 StorageError::new(format!("read google drive file '{file_id}': {error}"))
             }),
             Err(ureq::Error::Status(status, response)) => Err(response_error(
@@ -793,19 +799,28 @@ fn load_filesystem_from_manifest(
             PersistedFilesystemInodeKind::File { storage } => {
                 let data = match storage {
                     PersistedFileStorage::Inline { data_base64 } => {
-                        BASE64.decode(data_base64).map_err(|error| {
+                        validate_inline_manifest_data_size(&data_base64, "google drive", ino)?;
+                        let data = BASE64.decode(data_base64).map_err(|error| {
                             PluginError::invalid_input(format!(
                                 "decode inline google drive file data for inode {ino}: {error}"
                             ))
-                        })?
+                        })?;
+                        validate_manifest_file_size(data.len() as u64, "google drive", ino)?;
+                        data
                     }
                     PersistedFileStorage::Chunked { size, mut chunks } => {
                         chunks.sort_by_key(|chunk| chunk.index);
                         let expected_size = validate_manifest_file_size(size, "google drive", ino)?;
                         let mut data = Vec::with_capacity(expected_size);
                         for chunk in chunks {
+                            let remaining = expected_size.saturating_sub(data.len());
+                            if remaining == 0 {
+                                return Err(PluginError::invalid_input(format!(
+                                    "google drive manifest inode {ino} has chunk data beyond declared size {size}"
+                                )));
+                            }
                             let bytes = store
-                                .load_bytes(&chunk.key)
+                                .load_bytes_limited(&chunk.key, remaining)
                                 .map_err(|error| PluginError::new("EIO", error.to_string()))?
                                 .ok_or_else(|| {
                                     PluginError::new(
@@ -819,7 +834,12 @@ fn load_filesystem_from_manifest(
                             chunk_keys.insert(chunk.key);
                             data.extend_from_slice(&bytes);
                         }
-                        data.truncate(expected_size);
+                        if data.len() != expected_size {
+                            return Err(PluginError::invalid_input(format!(
+                                "google drive manifest inode {ino} restored {} bytes but declared {size}",
+                                data.len()
+                            )));
+                        }
                         data
                     }
                 };
@@ -863,6 +883,58 @@ fn validate_manifest_file_size(size: u64, backend: &str, ino: u64) -> Result<usi
             "{backend} manifest inode {ino} size {size} does not fit on this platform"
         ))
     })
+}
+
+fn validate_inline_manifest_data_size(
+    data_base64: &str,
+    backend: &str,
+    ino: u64,
+) -> Result<(), PluginError> {
+    validate_inline_manifest_data_size_with_limit(
+        data_base64,
+        backend,
+        ino,
+        MAX_PERSISTED_MANIFEST_FILE_BYTES,
+    )
+}
+
+fn validate_inline_manifest_data_size_with_limit(
+    data_base64: &str,
+    backend: &str,
+    ino: u64,
+    max_bytes: u64,
+) -> Result<(), PluginError> {
+    let padding = data_base64
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count()
+        .min(2);
+    let estimated_decoded = data_base64
+        .len()
+        .div_ceil(4)
+        .saturating_mul(3)
+        .saturating_sub(padding);
+    if estimated_decoded as u64 > max_bytes {
+        return Err(PluginError::invalid_input(format!(
+            "{backend} manifest inode {ino} inline data may decode to {estimated_decoded} bytes, limit is {max_bytes}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_persisted_manifest_bytes(bytes: &[u8]) -> Result<(), StorageError> {
+    validate_persisted_manifest_size(bytes.len(), MAX_PERSISTED_MANIFEST_BYTES)
+}
+
+fn validate_persisted_manifest_size(size: usize, max_bytes: usize) -> Result<(), StorageError> {
+    if size > max_bytes {
+        return Err(StorageError::new(format!(
+            "google drive manifest is {size} bytes, limit is {max_bytes}"
+        )));
+    }
+    Ok(())
 }
 
 fn normalize_prefix(raw: Option<&str>) -> String {
@@ -976,10 +1048,16 @@ fn now_unix_seconds() -> u64 {
         .as_secs()
 }
 
-fn read_response_bytes(response: ureq::Response) -> std::io::Result<Vec<u8>> {
-    let mut reader = response.into_reader();
+fn read_response_bytes(response: ureq::Response, max_bytes: usize) -> std::io::Result<Vec<u8>> {
+    let mut reader = response.into_reader().take(max_bytes.saturating_add(1) as u64);
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("response exceeded {max_bytes} byte limit"),
+        ));
+    }
     Ok(bytes)
 }
 

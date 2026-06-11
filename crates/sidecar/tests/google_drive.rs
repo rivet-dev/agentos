@@ -99,6 +99,26 @@ oFnGY0OFksX/ye0/XGpy2SFxYRwGU98HPYeBvAQQrVjdkzfy7BmXQQ==\n\
             );
         }
 
+        fn manifest_metadata(
+            ino: u64,
+            mode: u32,
+        ) -> agent_os_kernel::vfs::MemoryFileSystemSnapshotMetadata {
+            agent_os_kernel::vfs::MemoryFileSystemSnapshotMetadata {
+                mode,
+                uid: 0,
+                gid: 0,
+                nlink: 1,
+                ino,
+                atime_ms: 0,
+                atime_nsec: 0,
+                mtime_ms: 0,
+                mtime_nsec: 0,
+                ctime_ms: 0,
+                ctime_nsec: 0,
+                birthtime_ms: 0,
+            }
+        }
+
         #[test]
         fn google_drive_plugin_persists_files_across_reopen_and_preserves_links() {
             let server = MockGoogleDriveServer::start();
@@ -282,6 +302,100 @@ oFnGY0OFksX/ye0/XGpy2SFxYRwGU98HPYeBvAQQrVjdkzfy7BmXQQ==\n\
             assert_eq!(error.code(), "EINVAL");
             assert!(
                 error.message().contains("limit"),
+                "unexpected error message: {}",
+                error.message()
+            );
+        }
+
+        #[test]
+        fn google_drive_manifest_rejects_oversized_inline_estimates() {
+            validate_inline_manifest_data_size_with_limit("AAAAAA==", "google drive", 6, 4)
+                .expect("padded inline data at the limit should be accepted");
+
+            let error = validate_inline_manifest_data_size_with_limit(
+                "AAAAAAAAAAAA",
+                "google drive",
+                7,
+                8,
+            )
+            .expect_err("inline data estimate should be bounded");
+
+            assert_eq!(error.code(), "EINVAL");
+            assert!(
+                error.message().contains("inline data may decode"),
+                "unexpected error message: {}",
+                error.message()
+            );
+        }
+
+        #[test]
+        fn google_drive_persist_rejects_manifest_bytes_above_reader_limit() {
+            validate_persisted_manifest_size(8, 8)
+                .expect("manifest at reader limit should be accepted");
+
+            let error = validate_persisted_manifest_size(9, 8)
+                .expect_err("persist should reject unreadable manifest size");
+
+            assert!(
+                error
+                    .to_string()
+                    .contains("google drive manifest is 9 bytes, limit is 8"),
+                "unexpected error: {error}"
+            );
+        }
+
+        #[test]
+        fn google_drive_manifest_rejects_chunks_larger_than_declared_size() {
+            let server = MockGoogleDriveServer::start();
+            let manifest = PersistedFilesystemManifest {
+                format: String::from(MANIFEST_FORMAT),
+                path_index: BTreeMap::from([
+                    (String::from("/"), 1),
+                    (String::from("/small.bin"), 2),
+                ]),
+                inodes: BTreeMap::from([
+                    (
+                        1,
+                        PersistedFilesystemInode {
+                            metadata: manifest_metadata(1, 0o040755),
+                            kind: PersistedFilesystemInodeKind::Directory,
+                        },
+                    ),
+                    (
+                        2,
+                        PersistedFilesystemInode {
+                            metadata: manifest_metadata(2, 0o100644),
+                            kind: PersistedFilesystemInodeKind::File {
+                                storage: PersistedFileStorage::Chunked {
+                                    size: 5,
+                                    chunks: vec![PersistedChunkRef {
+                                        index: 0,
+                                        key: String::from("chunk-overflow/blocks/2/0"),
+                                    }],
+                                },
+                            },
+                        },
+                    ),
+                ]),
+                next_ino: 3,
+            };
+            server.insert_file(
+                "chunk-overflow/filesystem-manifest.json",
+                "folder-123",
+                serde_json::to_vec(&manifest).expect("serialize malicious manifest"),
+            );
+            server.insert_file("chunk-overflow/blocks/2/0", "folder-123", b"123456".to_vec());
+
+            let error = match GoogleDriveBackedFilesystem::from_config(test_config(
+                &server,
+                "chunk-overflow",
+            )) {
+                Ok(_) => panic!("oversized chunk payload should be rejected"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code(), "EIO");
+            assert!(
+                error.message().contains("exceeded 5 byte limit"),
                 "unexpected error message: {}",
                 error.message()
             );
