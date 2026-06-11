@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
 
+use openssl::sha::sha256;
+
 use crate::bridge::{external_refs, register_stub_bridge_fns};
 use crate::isolate::init_v8_platform;
 use crate::session::{ASYNC_BRIDGE_FNS, SYNC_BRIDGE_FNS};
@@ -182,7 +184,9 @@ where
     isolate
 }
 
-/// Thread-safe snapshot cache keyed by bridge code hash.
+type SnapshotCacheKey = [u8; 32];
+
+/// Thread-safe snapshot cache keyed by bridge code digest.
 ///
 /// Uses two-phase locking with per-key in-flight tracking so concurrent
 /// callers requesting different bridge code variants are not blocked by
@@ -195,13 +199,13 @@ pub struct SnapshotCache {
 
 struct CacheInner {
     entries: Vec<CacheEntry>,
-    /// Per-key in-flight tracking: callers for the same hash wait on the
+    /// Per-key in-flight tracking: callers for the same digest wait on the
     /// condvar instead of creating duplicate snapshots.
-    in_flight: HashMap<u64, Arc<InFlightEntry>>,
+    in_flight: HashMap<SnapshotCacheKey, Arc<InFlightEntry>>,
 }
 
 struct CacheEntry {
-    bridge_hash: u64,
+    key: SnapshotCacheKey,
     /// Snapshot blob bytes (copied from v8::StartupData).
     /// Stored as Vec<u8> rather than StartupData because StartupData
     /// contains raw pointers that are not Send/Sync.
@@ -232,14 +236,14 @@ impl SnapshotCache {
     /// inserts, never during snapshot creation. Per-key in-flight tracking
     /// prevents duplicate snapshot creation for the same bridge code.
     pub fn get_or_create(&self, bridge_code: &str) -> Result<Arc<Vec<u8>>, String> {
-        let hash = siphash(bridge_code);
+        let key = bridge_cache_key(bridge_code);
 
         // Phase 1: short lock — check cache, check in-flight, or claim creation
         let in_flight = {
             let mut inner = self.inner.lock().unwrap();
 
             // Cache hit — move to end (most recently used)
-            if let Some(pos) = inner.entries.iter().position(|e| e.bridge_hash == hash) {
+            if let Some(pos) = inner.entries.iter().position(|e| e.key == key) {
                 let entry = inner.entries.remove(pos);
                 let blob = Arc::clone(&entry.blob);
                 inner.entries.push(entry);
@@ -247,7 +251,7 @@ impl SnapshotCache {
             }
 
             // Another thread is already creating this snapshot — wait on it
-            if let Some(entry) = inner.in_flight.get(&hash) {
+            if let Some(entry) = inner.in_flight.get(&key) {
                 Some(Arc::clone(entry))
             } else {
                 // We're the creator — register in-flight and release the lock
@@ -255,7 +259,7 @@ impl SnapshotCache {
                     result: Mutex::new(None),
                     done: Condvar::new(),
                 });
-                inner.in_flight.insert(hash, Arc::clone(&entry));
+                inner.in_flight.insert(key, Arc::clone(&entry));
                 None
             }
         };
@@ -283,13 +287,13 @@ impl SnapshotCache {
                     inner.entries.remove(0);
                 }
                 inner.entries.push(CacheEntry {
-                    bridge_hash: hash,
+                    key,
                     blob: Arc::clone(arc),
                 });
             }
 
             // Publish result to waiters and remove in-flight entry
-            if let Some(entry) = inner.in_flight.remove(&hash) {
+            if let Some(entry) = inner.in_flight.remove(&key) {
                 let mut result = entry.result.lock().unwrap();
                 *result = Some(creation_result.clone());
                 entry.done.notify_all();
@@ -300,16 +304,25 @@ impl SnapshotCache {
     }
 }
 
-fn siphash(s: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    s.hash(&mut hasher);
-    hasher.finish()
+fn bridge_cache_key(bridge_code: &str) -> SnapshotCacheKey {
+    sha256(bridge_code.as_bytes())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bridge_cache_key_uses_full_sha256_digest() {
+        assert_eq!(
+            bridge_cache_key("abc"),
+            [
+                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
+                0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
+                0xf2, 0x00, 0x15, 0xad,
+            ]
+        );
+    }
 
     #[test]
     fn create_snapshot_rejects_oversized_bridge_code_before_v8_creation() {
