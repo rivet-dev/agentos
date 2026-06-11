@@ -23,6 +23,7 @@ static USE_CBOR_CODEC: AtomicBool = AtomicBool::new(false);
 static EMBEDDED_CBOR_USERS: AtomicUsize = AtomicUsize::new(0);
 const MAX_CBOR_BRIDGE_DEPTH: usize = 64;
 const MAX_CBOR_BRIDGE_CONTAINER_ITEMS: usize = 100_000;
+const MAX_VM_CONTEXTS: usize = 1024;
 
 /// Initialize the codec from the SECURE_EXEC_V8_CODEC environment variable.
 /// Call once at process startup before any sessions are created.
@@ -958,6 +959,68 @@ thread_local! {
     static NEXT_VM_CONTEXT_ID: Cell<u32> = const { Cell::new(1) };
 }
 
+fn vm_context_capacity_error(current_contexts: usize) -> Option<String> {
+    if current_contexts >= MAX_VM_CONTEXTS {
+        return Some(format!(
+            "node:vm context registry exceeded limit of {MAX_VM_CONTEXTS} contexts"
+        ));
+    }
+    None
+}
+
+fn reserve_vm_context_slot<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    context: v8::Local<'s, v8::Context>,
+) -> Result<u32, String> {
+    VM_CONTEXTS.with(|contexts| {
+        let mut contexts = contexts.borrow_mut();
+        if let Some(error) = vm_context_capacity_error(contexts.len()) {
+            return Err(error);
+        }
+
+        let context_id = next_vm_context_id();
+        contexts.insert(
+            context_id,
+            VmContextState {
+                context: v8::Global::new(scope, context),
+                baseline_keys: HashSet::new(),
+                mirrored_keys: HashSet::new(),
+            },
+        );
+        Ok(context_id)
+    })
+}
+
+fn update_vm_context_slot(
+    context_id: u32,
+    baseline_keys: HashSet<String>,
+    mirrored_keys: HashSet<String>,
+) {
+    VM_CONTEXTS.with(|contexts| {
+        if let Some(state) = contexts.borrow_mut().get_mut(&context_id) {
+            state.baseline_keys = baseline_keys;
+            state.mirrored_keys = mirrored_keys;
+        }
+    });
+}
+
+fn remove_vm_context_slot(context_id: u32) {
+    VM_CONTEXTS.with(|contexts| {
+        contexts.borrow_mut().remove(&context_id);
+    });
+}
+
+#[cfg(test)]
+fn clear_vm_context_registry_for_test() {
+    VM_CONTEXTS.with(|contexts| contexts.borrow_mut().clear());
+    NEXT_VM_CONTEXT_ID.with(|next_id| next_id.set(1));
+}
+
+#[cfg(test)]
+fn vm_context_registry_len_for_test() -> usize {
+    VM_CONTEXTS.with(|contexts| contexts.borrow().len())
+}
+
 fn next_vm_context_id() -> u32 {
     NEXT_VM_CONTEXT_ID.with(|next_id| {
         let id = next_id.get();
@@ -1295,6 +1358,17 @@ fn vm_create_context_value<'s>(
         .to_object(scope)
         .ok_or_else(|| String::from("vm.createContext expected an object sandbox"))?;
     let context = v8::Context::new(scope, Default::default());
+    let context_id = match reserve_vm_context_slot(scope, context) {
+        Ok(context_id) => context_id,
+        Err(message) => {
+            return Ok(vm_throw_error(
+                scope,
+                &message,
+                Some("ERR_AGENT_OS_VM_CONTEXT_LIMIT"),
+                false,
+            ));
+        }
+    };
     {
         let context_scope = &mut v8::ContextScope::new(scope, context);
         let global = context.global(context_scope);
@@ -1317,23 +1391,39 @@ fn vm_create_context_value<'s>(
         let global = context.global(context_scope);
         vm_collect_object_keys(context_scope, global)
     };
-    let mirrored_keys = {
-        let context_scope = &mut v8::ContextScope::new(scope, context);
-        let global = context.global(context_scope);
-        vm_copy_sandbox_into_context(context_scope, sandbox, global, &HashSet::new())
+    let mirrored_keys = match {
+        let tc = &mut v8::TryCatch::new(scope);
+        let mirrored_keys = {
+            let context_scope = &mut v8::ContextScope::new(tc, context);
+            let global = context.global(context_scope);
+            vm_copy_sandbox_into_context(context_scope, sandbox, global, &HashSet::new())
+        };
+        if tc.has_caught() {
+            Err(tc
+                .exception()
+                .map(|exception| v8::Global::new(tc, exception)))
+        } else {
+            Ok(mirrored_keys)
+        }
+    } {
+        Ok(mirrored_keys) => mirrored_keys,
+        Err(exception) => {
+            remove_vm_context_slot(context_id);
+            if let Some(exception) = exception {
+                let exception = v8::Local::new(scope, &exception);
+                scope.throw_exception(exception);
+                return Ok(exception);
+            }
+            return Ok(vm_throw_error(
+                scope,
+                "vm.createContext failed while mirroring sandbox properties",
+                None,
+                false,
+            ));
+        }
     };
 
-    let context_id = next_vm_context_id();
-    VM_CONTEXTS.with(|contexts| {
-        contexts.borrow_mut().insert(
-            context_id,
-            VmContextState {
-                context: v8::Global::new(scope, context),
-                baseline_keys,
-                mirrored_keys,
-            },
-        );
-    });
+    update_vm_context_slot(context_id, baseline_keys, mirrored_keys);
     Ok(v8::Integer::new_from_unsigned(scope, context_id).into())
 }
 
@@ -1896,10 +1986,15 @@ fn is_errno_segment(segment: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_CBOR_BRIDGE_CONTAINER_ITEMS, MAX_CBOR_BRIDGE_DEPTH, bridge_error_code,
-        deserialize_cbor_value, serialize_cbor_value,
+        MAX_CBOR_BRIDGE_CONTAINER_ITEMS, MAX_CBOR_BRIDGE_DEPTH, MAX_VM_CONTEXTS, SessionBuffers,
+        bridge_error_code, clear_vm_context_registry_for_test, deserialize_cbor_value,
+        register_sync_bridge_fns, serialize_cbor_value, vm_context_capacity_error,
+        vm_context_registry_len_for_test,
     };
+    use crate::host_call::BridgeCallContext;
     use crate::isolate;
+    use std::cell::RefCell;
+    use std::io::Cursor;
 
     #[test]
     fn bridge_error_code_rejects_guest_controlled_errno_segments() {
@@ -1925,7 +2020,7 @@ mod tests {
     }
 
     #[test]
-    fn cbor_codec_rejects_cycles_and_excessive_depth() {
+    fn bridge_v8_hardening_rejects_cbor_abuse_and_vm_context_reentry_overflow() {
         isolate::init_v8_platform();
 
         let mut isolate = isolate::create_isolate(None);
@@ -1990,6 +2085,134 @@ mod tests {
                 "item count {} exceeds limit",
                 MAX_CBOR_BRIDGE_CONTAINER_ITEMS + 1
             )),
+            "unexpected error: {error}"
+        );
+
+        clear_vm_context_registry_for_test();
+        let bridge_ctx = BridgeCallContext::new(
+            Box::new(Vec::new()),
+            Box::new(Cursor::new(Vec::new())),
+            String::from("test-session"),
+        );
+        let session_buffers = RefCell::new(SessionBuffers::new());
+        let _bridge_fns = register_sync_bridge_fns(
+            scope,
+            &bridge_ctx as *const BridgeCallContext,
+            &session_buffers as *const RefCell<SessionBuffers>,
+            &["_vmCreateContext"],
+        );
+
+        let source = format!(
+            r#"
+            for (let i = 0; i < {fill_count}; i++) {{
+                _vmCreateContext({{}});
+            }}
+
+            let innerCode;
+            const sandbox = {{}};
+            Object.defineProperty(sandbox, "x", {{
+                get() {{
+                    try {{
+                        _vmCreateContext({{}});
+                    }} catch (error) {{
+                        innerCode = error && error.code;
+                    }}
+                    return 1;
+                }},
+                enumerable: true,
+            }});
+
+            const outerId = _vmCreateContext(sandbox);
+            let limitCode;
+            try {{
+                _vmCreateContext({{}});
+            }} catch (error) {{
+                limitCode = error && error.code;
+            }}
+
+            JSON.stringify({{
+                innerCode,
+                limitCode,
+                outerIsInteger: Number.isInteger(outerId),
+            }})
+            "#,
+            fill_count = MAX_VM_CONTEXTS - 1,
+        );
+        {
+            let tc = &mut v8::TryCatch::new(scope);
+            let source = v8::String::new(tc, &source).unwrap();
+            let script = v8::Script::compile(tc, source, None).unwrap();
+            let result = script.run(tc);
+            assert!(
+                !tc.has_caught(),
+                "unexpected exception while testing vm cap"
+            );
+            let details = result
+                .expect("vm context cap script result")
+                .to_rust_string_lossy(tc);
+            assert_eq!(
+                details,
+                r#"{"innerCode":"ERR_AGENT_OS_VM_CONTEXT_LIMIT","limitCode":"ERR_AGENT_OS_VM_CONTEXT_LIMIT","outerIsInteger":true}"#,
+                "vm context cap script should observe limit errors"
+            );
+        }
+        assert_eq!(vm_context_registry_len_for_test(), MAX_VM_CONTEXTS);
+        clear_vm_context_registry_for_test();
+
+        let source = r#"
+            (() => {
+                let thrownMessage;
+                const sandbox = {};
+                Object.defineProperty(sandbox, "x", {
+                    get() {
+                        throw new Error("sandbox getter failed");
+                    },
+                    enumerable: true,
+                });
+                try {
+                    _vmCreateContext(sandbox);
+                } catch (error) {
+                    thrownMessage = error && error.message;
+                }
+
+                const nextId = _vmCreateContext({});
+                return JSON.stringify({
+                    thrownMessage,
+                    nextIsInteger: Number.isInteger(nextId),
+                });
+            })()
+        "#;
+        {
+            let tc = &mut v8::TryCatch::new(scope);
+            let source = v8::String::new(tc, source).unwrap();
+            let script = v8::Script::compile(tc, source, None).unwrap();
+            let result = script.run(tc);
+            if tc.has_caught() {
+                let exception = tc
+                    .exception()
+                    .map(|exception| exception.to_rust_string_lossy(tc))
+                    .unwrap_or_else(|| String::from("<missing exception>"));
+                panic!("unexpected exception while testing vm rollback: {exception}");
+            }
+            let details = result
+                .expect("vm context rollback script result")
+                .to_rust_string_lossy(tc);
+            assert_eq!(
+                details, r#"{"thrownMessage":"sandbox getter failed","nextIsInteger":true}"#,
+                "vm context rollback script should preserve the getter exception and keep registry usable"
+            );
+        }
+        assert_eq!(vm_context_registry_len_for_test(), 1);
+        clear_vm_context_registry_for_test();
+    }
+
+    #[test]
+    fn vm_context_capacity_error_trips_at_registry_limit() {
+        assert!(vm_context_capacity_error(MAX_VM_CONTEXTS - 1).is_none());
+
+        let error = vm_context_capacity_error(MAX_VM_CONTEXTS).expect("limit error");
+        assert!(
+            error.contains(&format!("limit of {MAX_VM_CONTEXTS} contexts")),
             "unexpected error: {error}"
         );
     }
