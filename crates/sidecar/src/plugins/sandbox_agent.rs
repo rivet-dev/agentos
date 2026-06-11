@@ -3,8 +3,8 @@ use agent_os_kernel::mount_plugin::{
 };
 use agent_os_kernel::mount_table::{MountedFileSystem, MountedVirtualFileSystem};
 use agent_os_kernel::vfs::{
-    normalize_path, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat, S_IFDIR,
-    S_IFREG,
+    S_IFDIR, S_IFREG, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
+    normalize_path,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -62,11 +62,7 @@ impl SandboxAgentFilesystem {
 
         let timeout_ms = config.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
         let timeout = Duration::from_millis(timeout_ms);
-        let base_path = match config.base_path.as_deref() {
-            None | Some("") | Some("/") => String::from("/"),
-            Some(path) if path.starts_with('/') => normalize_path(path),
-            Some(path) => path.trim_end_matches('/').to_owned(),
-        };
+        let base_path = normalize_sandbox_agent_base_path(config.base_path.as_deref());
 
         Ok(Self {
             client: SandboxAgentFilesystemClient::new(
@@ -169,29 +165,45 @@ impl SandboxAgentFilesystem {
 
     fn scoped_target(&self, target: &str) -> String {
         if target.starts_with('/') {
-            self.scoped_path(target)
+            let scoped = self.scoped_path(target);
+            if scoped.starts_with('/') {
+                scoped
+            } else {
+                format!("/{scoped}")
+            }
         } else {
             target.to_owned()
         }
     }
 
     fn strip_base_path_prefix<'a>(&self, target: &'a str) -> Option<&'a str> {
-        if self.base_path == "/" || !target.starts_with('/') {
+        if self.base_path == "/" {
             return None;
         }
-        if target == self.base_path {
+
+        let base_path = self.base_path.trim_end_matches('/');
+        if target == base_path {
             Some("")
+        } else if let Some(stripped) = target
+            .strip_prefix(base_path)
+            .filter(|stripped| stripped.starts_with('/'))
+        {
+            Some(stripped)
+        } else if !base_path.starts_with('/') {
+            let absolute_base_path = format!("/{base_path}");
+            if target == absolute_base_path {
+                Some("")
+            } else {
+                target
+                    .strip_prefix(&absolute_base_path)
+                    .filter(|stripped| stripped.starts_with('/'))
+            }
         } else {
-            target
-                .strip_prefix(self.base_path.as_str())
-                .filter(|stripped| stripped.starts_with('/'))
+            None
         }
     }
 
     fn unscoped_target(&self, target: String) -> String {
-        if !target.starts_with('/') {
-            return target;
-        }
         match self.strip_base_path_prefix(&target) {
             Some(stripped) => format!("/{}", stripped.trim_start_matches('/')),
             None => target,
@@ -660,7 +672,7 @@ impl RemoteProcessRuntime {
                 SandboxAgentProcessRunRequest {
                     command: self.command().to_owned(),
                     args: process_args,
-                    cwd: None,
+                    cwd: Some(String::from("/")),
                     env: None,
                     max_output_bytes: None,
                     timeout_ms: Some(DEFAULT_PROCESS_TIMEOUT_MS),
@@ -675,7 +687,7 @@ impl RemoteProcessRuntime {
                 SandboxAgentProcessRunRequest {
                     command: self.command().to_owned(),
                     args: process_args,
-                    cwd: None,
+                    cwd: Some(String::from("/")),
                     env: None,
                     max_output_bytes: None,
                     timeout_ms: Some(DEFAULT_PROCESS_TIMEOUT_MS),
@@ -1370,6 +1382,22 @@ fn dirname(path: &str) -> String {
     match normalized.rsplit_once('/') {
         Some((head, _)) if !head.is_empty() => head.to_owned(),
         _ => String::from("/"),
+    }
+}
+
+fn normalize_sandbox_agent_base_path(raw: Option<&str>) -> String {
+    match raw {
+        None | Some("") | Some("/") => String::from("/"),
+        Some(path) if path.starts_with('/') => normalize_path(path),
+        Some(path) => {
+            let normalized = normalize_path(&format!("/{path}"));
+            let relative = normalized.trim_start_matches('/');
+            if relative.is_empty() {
+                String::from("/")
+            } else {
+                relative.to_owned()
+            }
+        }
     }
 }
 
@@ -2424,8 +2452,9 @@ pub(crate) mod test_support {
         body: &[u8],
     ) -> ResponseOutcome {
         let status_text = status_text(status);
-        let headers =
-            format!("HTTP/1.1 {status} {status_text}\r\nContent-Type: {content_type}\r\nConnection: close\r\n\r\n");
+        let headers = format!(
+            "HTTP/1.1 {status} {status_text}\r\nContent-Type: {content_type}\r\nConnection: close\r\n\r\n"
+        );
         let _ = stream.write_all(headers.as_bytes());
         let _ = stream.write_all(body);
         let _ = stream.flush();

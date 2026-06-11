@@ -4,8 +4,8 @@ mod sandbox_agent {
     mod tests {
         use super::test_support::MockSandboxAgentServer;
         use super::{
-            validate_sandbox_agent_base_url_with_resolver, SandboxAgentFilesystem,
-            SandboxAgentMountConfig, SandboxAgentMountPlugin,
+            SandboxAgentFilesystem, SandboxAgentMountConfig, SandboxAgentMountPlugin,
+            validate_sandbox_agent_base_url_with_resolver,
         };
         use agent_os_kernel::mount_plugin::{FileSystemPluginFactory, OpenFileSystemPluginRequest};
         use agent_os_kernel::vfs::VirtualFileSystem;
@@ -434,6 +434,88 @@ mod sandbox_agent {
             assert!(logged_requests.iter().any(|request| {
                 request.headers.get("x-sandbox-test") == Some(&String::from("enabled"))
             }));
+        }
+
+        #[test]
+        fn plugin_normalizes_relative_base_path_before_scoping_requests() {
+            let server = MockSandboxAgentServer::start("agent-os-sandbox-plugin-base-path", None);
+            fs::create_dir_all(server.root().join("scoped")).expect("create scoped root");
+            fs::write(
+                server.root().join("scoped/hello.txt"),
+                "relative scoped hello",
+            )
+            .expect("seed scoped file");
+
+            let mut filesystem = SandboxAgentFilesystem::from_config(SandboxAgentMountConfig {
+                base_url: server.base_url().to_owned(),
+                token: None,
+                headers: None,
+                base_path: Some(String::from("raw/../scoped/")),
+                timeout_ms: Some(5_000),
+                max_full_read_bytes: Some(128),
+            })
+            .expect("create sandbox_agent filesystem");
+
+            assert_eq!(
+                filesystem
+                    .read_text_file("/hello.txt")
+                    .expect("read scoped file"),
+                "relative scoped hello"
+            );
+
+            let logged_requests = server.requests();
+            let read_request = logged_requests
+                .iter()
+                .find(|request| request.method == "GET" && request.path == "/v1/fs/file")
+                .expect("log read request");
+            assert_eq!(
+                read_request.query.get("path"),
+                Some(&String::from("scoped/hello.txt"))
+            );
+        }
+
+        #[test]
+        fn plugin_unscopes_process_helper_targets_for_relative_base_path() {
+            let server =
+                MockSandboxAgentServer::start("agent-os-sandbox-plugin-relative-process", None);
+            fs::create_dir_all(server.root().join("scoped")).expect("create scoped root");
+            fs::write(
+                server.root().join("scoped/original.txt"),
+                "relative symlink target",
+            )
+            .expect("seed scoped file");
+
+            let mut filesystem = SandboxAgentFilesystem::from_config(SandboxAgentMountConfig {
+                base_url: server.base_url().to_owned(),
+                token: None,
+                headers: None,
+                base_path: Some(String::from("raw/../scoped/")),
+                timeout_ms: Some(5_000),
+                max_full_read_bytes: Some(128),
+            })
+            .expect("create sandbox_agent filesystem");
+
+            filesystem
+                .symlink("/original.txt", "/alias.txt")
+                .expect("create scoped symlink");
+            assert_eq!(
+                filesystem.read_link("/alias.txt").expect("read symlink"),
+                "/original.txt"
+            );
+            assert_eq!(
+                filesystem.realpath("/alias.txt").expect("resolve symlink"),
+                "/original.txt"
+            );
+
+            filesystem
+                .symlink("scoped/original.txt", "/relative-alias.txt")
+                .expect("create relative scoped symlink");
+            assert_eq!(
+                filesystem
+                    .read_link("/relative-alias.txt")
+                    .expect("read relative symlink"),
+                "scoped/original.txt"
+            );
         }
 
         #[test]
