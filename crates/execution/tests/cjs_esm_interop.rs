@@ -204,6 +204,22 @@ fn resolution_require_prefers_cjs_entry_for_dual_packages() {
     );
 }
 
+fn resolution_invalid_utf8_file_url_specifiers_are_rejected() {
+    let fixture = Fixture::new();
+    fixture.write("entry.mjs", "export default 1;");
+    fixture.write("node_modules/file:/%FF.js", "export default 'fallback';");
+
+    let mut resolver = fixture.resolver();
+    assert_eq!(
+        resolver.resolve_import("file:///%FF", "/root/project/index.mjs"),
+        None
+    );
+    assert_eq!(
+        resolver.resolve_import("file:///%Fé", "/root/project/index.mjs"),
+        None
+    );
+}
+
 fn runtime_exports_dot_named_exports_are_available_to_esm_imports() {
     let fixture = Fixture::new();
     fixture.write(
@@ -1254,6 +1270,7 @@ fn cjs_esm_interop_suite() {
     resolution_nested_exports_conditions_recurse_three_levels();
     resolution_exports_array_and_condition_nesting_uses_first_valid_target();
     resolution_require_prefers_cjs_entry_for_dual_packages();
+    resolution_invalid_utf8_file_url_specifiers_are_rejected();
     runtime_exports_dot_named_exports_are_available_to_esm_imports();
     runtime_minified_type_module_js_is_not_misclassified_as_cjs();
     runtime_object_define_property_exports_are_available_to_esm_imports();

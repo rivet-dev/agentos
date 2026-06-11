@@ -2775,8 +2775,9 @@ impl LocalBridgeState {
 
         let resolved = if let Some(builtin) = normalize_builtin_specifier(specifier) {
             Some(builtin)
-        } else if let Some(file_path) = guest_path_from_file_url(specifier) {
-            self.resolve_path(&file_path, mode)
+        } else if specifier.starts_with("file:") {
+            guest_path_from_file_url(specifier)
+                .and_then(|file_path| self.resolve_path(&file_path, mode))
         } else if specifier.starts_with('/') {
             self.resolve_path(specifier, mode)
         } else if specifier.starts_with("./")
@@ -3149,10 +3150,10 @@ fn guest_path_from_file_url(specifier: &str) -> Option<String> {
         pathname = &pathname[slash_index..];
     }
 
-    Some(normalize_guest_path(&percent_decode(pathname)))
+    Some(normalize_guest_path(&percent_decode(pathname)?))
 }
 
-fn percent_decode(raw: &str) -> String {
+fn percent_decode(raw: &str) -> Option<String> {
     let bytes = raw.as_bytes();
     let mut index = 0;
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -3163,7 +3164,10 @@ fn percent_decode(raw: &str) -> String {
                 index += 1;
             }
             b'%' if index + 2 < bytes.len() => {
-                if let Ok(value) = u8::from_str_radix(&raw[index + 1..index + 3], 16) {
+                if let (Some(high), Some(low)) =
+                    (hex_digit(bytes[index + 1]), hex_digit(bytes[index + 2]))
+                {
+                    let value = (high << 4) | low;
                     decoded.push(value);
                     index += 3;
                 } else {
@@ -3177,7 +3181,16 @@ fn percent_decode(raw: &str) -> String {
             }
         }
     }
-    String::from_utf8(decoded).expect("decode file URL path")
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 impl LocalKernelStdinBridge {
