@@ -7,7 +7,6 @@
 
 //! A module for handling ranges of values.
 
-use std::cmp::max;
 use std::str::FromStr;
 
 use crate::display::Quotable;
@@ -97,16 +96,18 @@ impl Range {
     fn merge(mut ranges: Vec<Self>) -> Vec<Self> {
         ranges.sort();
 
-        // merge overlapping ranges
-        for i in 0..ranges.len() {
-            let j = i + 1;
-
-            while j < ranges.len() && ranges[j].low <= ranges[i].high {
-                let j_high = ranges.remove(j).high;
-                ranges[i].high = max(ranges[i].high, j_high);
+        let mut merged: Vec<Self> = Vec::with_capacity(ranges.len());
+        for range in ranges {
+            if let Some(previous) = merged.last_mut() {
+                if range.low <= previous.high {
+                    previous.high = previous.high.max(range.high);
+                    continue;
+                }
             }
+
+            merged.push(range);
         }
-        ranges
+        merged
     }
 }
 
@@ -215,6 +216,13 @@ mod test {
 
         // Don't merge adjacent ranges
         m(vec![r(1, 3), r(4, 6)], &[r(1, 3), r(4, 6)]);
+    }
+
+    #[test]
+    fn merging_overlapping_chain() {
+        let ranges = (1..=1000).map(|i| r(i, i + 1)).collect();
+
+        m(ranges, &[r(1, 1001)]);
     }
 
     #[test]
