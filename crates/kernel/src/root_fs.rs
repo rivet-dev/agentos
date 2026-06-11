@@ -1,9 +1,14 @@
 use crate::overlay_fs::{OverlayFileSystem, OverlayMode};
+use crate::resource_accounting::{
+    ResourceLimits, DEFAULT_MAX_FILESYSTEM_BYTES, DEFAULT_MAX_INODE_COUNT,
+};
 use crate::vfs::{
     normalize_path, MemoryFileSystem, VfsError, VfsResult, VirtualFileSystem, VirtualUtimeSpec,
+    MAX_PATH_LENGTH,
 };
 use base64::Engine;
 use serde::Deserialize;
+use std::collections::BTreeSet;
 
 // The base filesystem fixture is staged into OUT_DIR by build.rs: copied from
 // the canonical `packages/core/fixtures/base-filesystem.json` during in-tree
@@ -12,6 +17,8 @@ use serde::Deserialize;
 const BUNDLED_BASE_FILESYSTEM_JSON: &str =
     include_str!(concat!(env!("OUT_DIR"), "/base-filesystem.json"));
 pub const ROOT_FILESYSTEM_SNAPSHOT_FORMAT: &str = "agent_os_filesystem_snapshot_v1";
+const ROOT_FILESYSTEM_SNAPSHOT_FIXED_OVERHEAD_BYTES: usize = 4 * 1024;
+const ROOT_FILESYSTEM_SNAPSHOT_ENTRY_OVERHEAD_BYTES: usize = MAX_PATH_LENGTH + 1024;
 const DEFAULT_ROOT_DIRECTORIES: &[&str] = &[
     "/",
     "/dev",
@@ -144,6 +151,39 @@ pub struct RootFilesystemSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RootFilesystemImportLimits {
+    pub max_encoded_snapshot_bytes: Option<usize>,
+    pub max_filesystem_bytes: Option<u64>,
+    pub max_inode_count: Option<usize>,
+}
+
+impl RootFilesystemImportLimits {
+    pub fn from_resource_limits(limits: &ResourceLimits) -> Self {
+        Self {
+            max_encoded_snapshot_bytes: encoded_snapshot_limit(
+                limits.max_filesystem_bytes,
+                limits.max_inode_count,
+            ),
+            max_filesystem_bytes: limits.max_filesystem_bytes,
+            max_inode_count: limits.max_inode_count,
+        }
+    }
+}
+
+impl Default for RootFilesystemImportLimits {
+    fn default() -> Self {
+        Self {
+            max_encoded_snapshot_bytes: encoded_snapshot_limit(
+                Some(DEFAULT_MAX_FILESYSTEM_BYTES),
+                Some(DEFAULT_MAX_INODE_COUNT),
+            ),
+            max_filesystem_bytes: Some(DEFAULT_MAX_FILESYSTEM_BYTES),
+            max_inode_count: Some(DEFAULT_MAX_INODE_COUNT),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RootFilesystemMode {
     Ephemeral,
     ReadOnly,
@@ -179,12 +219,25 @@ impl RootFileSystem {
     pub fn from_descriptor(
         descriptor: RootFilesystemDescriptor,
     ) -> Result<Self, RootFilesystemError> {
+        Self::from_descriptor_with_import_limits(descriptor, &RootFilesystemImportLimits::default())
+    }
+
+    pub fn from_descriptor_with_import_limits(
+        descriptor: RootFilesystemDescriptor,
+        limits: &RootFilesystemImportLimits,
+    ) -> Result<Self, RootFilesystemError> {
         let mut lower_snapshots = descriptor.lowers.clone();
         if !descriptor.disable_default_base_layer {
-            lower_snapshots.push(load_bundled_base_snapshot()?);
+            lower_snapshots.push(load_bundled_base_snapshot_with_limits(limits)?);
         } else if lower_snapshots.is_empty() {
             lower_snapshots.push(minimal_root_snapshot());
         }
+        validate_descriptor_import_limits(
+            &lower_snapshots,
+            &descriptor.bootstrap_entries,
+            limits,
+            "root filesystem descriptor",
+        )?;
 
         let lowers = lower_snapshots
             .iter()
@@ -456,6 +509,14 @@ pub fn encode_snapshot(snapshot: &RootFilesystemSnapshot) -> Result<Vec<u8>, Roo
 }
 
 pub fn decode_snapshot(bytes: &[u8]) -> Result<RootFilesystemSnapshot, RootFilesystemError> {
+    decode_snapshot_with_import_limits(bytes, &RootFilesystemImportLimits::default())
+}
+
+pub fn decode_snapshot_with_import_limits(
+    bytes: &[u8],
+    limits: &RootFilesystemImportLimits,
+) -> Result<RootFilesystemSnapshot, RootFilesystemError> {
+    validate_encoded_snapshot_size(bytes, limits, "root snapshot")?;
     let raw: RawSnapshotExport = serde_json::from_slice(bytes)
         .map_err(|error| RootFilesystemError::new(format!("parse root snapshot: {error}")))?;
     if raw.format != ROOT_FILESYSTEM_SNAPSHOT_FORMAT {
@@ -464,29 +525,22 @@ pub fn decode_snapshot(bytes: &[u8]) -> Result<RootFilesystemSnapshot, RootFiles
             raw.format
         )));
     }
-    Ok(RootFilesystemSnapshot {
-        entries: raw
-            .filesystem
-            .entries
-            .into_iter()
-            .map(convert_raw_entry)
-            .collect::<Result<Vec<_>, _>>()?,
-    })
+    raw_entries_to_snapshot(raw.filesystem.entries, limits, "root snapshot")
 }
 
-fn load_bundled_base_snapshot() -> Result<RootFilesystemSnapshot, RootFilesystemError> {
+fn load_bundled_base_snapshot_with_limits(
+    limits: &RootFilesystemImportLimits,
+) -> Result<RootFilesystemSnapshot, RootFilesystemError> {
+    validate_encoded_snapshot_size(
+        BUNDLED_BASE_FILESYSTEM_JSON.as_bytes(),
+        limits,
+        "bundled base filesystem",
+    )?;
     let raw: RawBaseFilesystemSnapshot = serde_json::from_str(BUNDLED_BASE_FILESYSTEM_JSON)
         .map_err(|error| {
             RootFilesystemError::new(format!("parse bundled base filesystem: {error}"))
         })?;
-    Ok(RootFilesystemSnapshot {
-        entries: raw
-            .filesystem
-            .entries
-            .into_iter()
-            .map(convert_raw_entry)
-            .collect::<Result<Vec<_>, _>>()?,
-    })
+    raw_entries_to_snapshot(raw.filesystem.entries, limits, "bundled base filesystem")
 }
 
 fn minimal_root_snapshot() -> RootFilesystemSnapshot {
@@ -537,6 +591,209 @@ fn convert_raw_entry(raw: RawFilesystemEntry) -> Result<FilesystemEntry, RootFil
         content,
         target: raw.target,
     })
+}
+
+fn raw_entries_to_snapshot(
+    raw_entries: Vec<RawFilesystemEntry>,
+    limits: &RootFilesystemImportLimits,
+    context: &str,
+) -> Result<RootFilesystemSnapshot, RootFilesystemError> {
+    if let Some(limit) = limits.max_inode_count {
+        if raw_entries.len() > limit {
+            return Err(RootFilesystemError::new(format!(
+                "{context} contains {} entries, exceeding limit {limit}",
+                raw_entries.len()
+            )));
+        }
+    }
+
+    let entries = raw_entries
+        .into_iter()
+        .map(convert_raw_entry)
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_entry_import_limits(&entries, limits, context)?;
+    Ok(RootFilesystemSnapshot { entries })
+}
+
+pub fn validate_snapshot_import_limits(
+    snapshot: &RootFilesystemSnapshot,
+    limits: &RootFilesystemImportLimits,
+    context: &str,
+) -> Result<(), RootFilesystemError> {
+    validate_entry_import_limits(&snapshot.entries, limits, context)
+}
+
+fn validate_descriptor_import_limits(
+    lowers: &[RootFilesystemSnapshot],
+    bootstrap_entries: &[FilesystemEntry],
+    limits: &RootFilesystemImportLimits,
+    context: &str,
+) -> Result<(), RootFilesystemError> {
+    let explicit_entry_count = lowers
+        .iter()
+        .map(|snapshot| snapshot.entries.len())
+        .sum::<usize>()
+        .saturating_add(bootstrap_entries.len());
+    let mut inode_paths = BTreeSet::new();
+    for snapshot in lowers {
+        collect_materialized_entry_paths(&snapshot.entries, &mut inode_paths);
+    }
+    collect_materialized_entry_paths(bootstrap_entries, &mut inode_paths);
+    let inode_count = inode_paths.len();
+    if let Some(limit) = limits.max_inode_count {
+        if explicit_entry_count > limit {
+            return Err(RootFilesystemError::new(format!(
+                "{context} contains {explicit_entry_count} entries, exceeding limit {limit}"
+            )));
+        }
+
+        if inode_count > limit {
+            return Err(RootFilesystemError::new(format!(
+                "{context} contains {inode_count} entries, exceeding limit {limit}"
+            )));
+        }
+    }
+
+    let mut bytes = 0_u64;
+    for snapshot in lowers {
+        bytes = bytes.saturating_add(entry_content_bytes(&snapshot.entries));
+    }
+    bytes = bytes.saturating_add(entry_content_bytes(bootstrap_entries));
+    if let Some(limit) = limits.max_filesystem_bytes {
+        if bytes > limit {
+            return Err(RootFilesystemError::new(format!(
+                "{context} contains {bytes} bytes, exceeding limit {limit}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_entry_import_limits(
+    entries: &[FilesystemEntry],
+    limits: &RootFilesystemImportLimits,
+    context: &str,
+) -> Result<(), RootFilesystemError> {
+    if let Some(limit) = limits.max_inode_count {
+        if entries.len() > limit {
+            return Err(RootFilesystemError::new(format!(
+                "{context} contains {} entries, exceeding limit {limit}",
+                entries.len()
+            )));
+        }
+
+        let inode_count = materialized_entry_inode_count(entries);
+        if inode_count > limit {
+            return Err(RootFilesystemError::new(format!(
+                "{context} contains {inode_count} entries, exceeding limit {limit}"
+            )));
+        }
+    }
+
+    let bytes = entry_content_bytes(entries);
+    if let Some(limit) = limits.max_filesystem_bytes {
+        if bytes > limit {
+            return Err(RootFilesystemError::new(format!(
+                "{context} contains {bytes} bytes, exceeding limit {limit}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_encoded_snapshot_size(
+    bytes: &[u8],
+    limits: &RootFilesystemImportLimits,
+    context: &str,
+) -> Result<(), RootFilesystemError> {
+    if let Some(limit) = limits.max_encoded_snapshot_bytes {
+        if bytes.len() > limit {
+            return Err(RootFilesystemError::new(format!(
+                "{context} contains {} encoded bytes, exceeding limit {limit}",
+                bytes.len()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn entry_content_bytes(entries: &[FilesystemEntry]) -> u64 {
+    entries.iter().fold(0_u64, |total, entry| {
+        total.saturating_add(match entry.kind {
+            FilesystemEntryKind::File => entry
+                .content
+                .as_ref()
+                .map(|content| usize_to_u64(content.len()))
+                .unwrap_or(0),
+            FilesystemEntryKind::Directory => 0,
+            FilesystemEntryKind::Symlink => entry
+                .target
+                .as_ref()
+                .map(|target| usize_to_u64(target.len()))
+                .unwrap_or(0),
+        })
+    })
+}
+
+fn materialized_entry_inode_count(entries: &[FilesystemEntry]) -> usize {
+    let mut paths = BTreeSet::new();
+    collect_materialized_entry_paths(entries, &mut paths);
+    paths.len()
+}
+
+fn collect_materialized_entry_paths(entries: &[FilesystemEntry], paths: &mut BTreeSet<String>) {
+    for entry in entries {
+        collect_materialized_path(&entry.path, paths);
+    }
+}
+
+fn collect_materialized_path(path: &str, paths: &mut BTreeSet<String>) {
+    let normalized = normalize_path(path);
+    paths.insert(normalized.clone());
+
+    let mut parent = String::new();
+    let segments = normalized
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
+        parent.push('/');
+        parent.push_str(segment);
+        paths.insert(parent.clone());
+    }
+}
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+const fn u64_limit_to_usize(value: u64) -> usize {
+    if value > usize::MAX as u64 {
+        usize::MAX
+    } else {
+        value as usize
+    }
+}
+
+const fn encoded_snapshot_limit(
+    max_filesystem_bytes: Option<u64>,
+    max_inode_count: Option<usize>,
+) -> Option<usize> {
+    let Some(max_filesystem_bytes) = max_filesystem_bytes else {
+        return None;
+    };
+
+    Some(
+        u64_limit_to_usize(max_filesystem_bytes)
+            .saturating_mul(2)
+            .saturating_add(match max_inode_count {
+                Some(max_inode_count) => {
+                    max_inode_count.saturating_mul(ROOT_FILESYSTEM_SNAPSHOT_ENTRY_OVERHEAD_BYTES)
+                }
+                None => 0,
+            })
+            .saturating_add(ROOT_FILESYSTEM_SNAPSHOT_FIXED_OVERHEAD_BYTES),
+    )
 }
 
 fn snapshot_to_memory_filesystem(
@@ -621,8 +878,9 @@ fn ensure_parent_directories(
     filesystem: &mut impl VirtualFileSystem,
     path: &str,
 ) -> Result<(), RootFilesystemError> {
+    let normalized = normalize_path(path);
     let mut current = String::new();
-    let segments = path
+    let segments = normalized
         .split('/')
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();

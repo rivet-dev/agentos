@@ -1,7 +1,9 @@
 use agent_os_kernel::overlay_fs::{OverlayFileSystem, OverlayMode};
+use agent_os_kernel::resource_accounting::ResourceLimits;
 use agent_os_kernel::root_fs::{
-    decode_snapshot, encode_snapshot, FilesystemEntry, RootFileSystem, RootFilesystemDescriptor,
-    RootFilesystemMode, RootFilesystemSnapshot,
+    decode_snapshot, decode_snapshot_with_import_limits, encode_snapshot, FilesystemEntry,
+    RootFileSystem, RootFilesystemDescriptor, RootFilesystemImportLimits, RootFilesystemMode,
+    RootFilesystemSnapshot,
 };
 use agent_os_kernel::vfs::{MemoryFileSystem, VirtualFileSystem, S_IFDIR, S_IFLNK, S_IFREG};
 
@@ -478,6 +480,238 @@ fn decode_snapshot_accepts_zero_mode_strings() {
         .find(|entry| entry.path == "/zero-dir")
         .expect("zero dir entry");
     assert_eq!(zero_dir.mode, 0);
+}
+
+#[test]
+fn decode_snapshot_rejects_encoded_payloads_that_exceed_import_limits() {
+    let limits = RootFilesystemImportLimits {
+        max_encoded_snapshot_bytes: Some(16),
+        max_filesystem_bytes: Some(1024),
+        max_inode_count: Some(16),
+    };
+
+    let error = decode_snapshot_with_import_limits(
+        br#"{
+            "format": "agent_os_filesystem_snapshot_v1",
+            "filesystem": { "entries": [] }
+        }"#,
+        &limits,
+    )
+    .expect_err("oversized encoded snapshot should be rejected");
+
+    assert!(error.to_string().contains("encoded bytes"));
+}
+
+#[test]
+fn decode_snapshot_rejects_entry_counts_that_exceed_import_limits() {
+    let limits = RootFilesystemImportLimits {
+        max_encoded_snapshot_bytes: Some(4096),
+        max_filesystem_bytes: Some(1024),
+        max_inode_count: Some(1),
+    };
+
+    let error = decode_snapshot_with_import_limits(
+        br#"{
+            "format": "agent_os_filesystem_snapshot_v1",
+            "filesystem": {
+                "entries": [
+                    {
+                        "path": "/one",
+                        "type": "directory",
+                        "mode": "755",
+                        "uid": 0,
+                        "gid": 0
+                    },
+                    {
+                        "path": "/two",
+                        "type": "directory",
+                        "mode": "755",
+                        "uid": 0,
+                        "gid": 0
+                    }
+                ]
+            }
+        }"#,
+        &limits,
+    )
+    .expect_err("snapshot entry count should be rejected");
+
+    assert!(error.to_string().contains("exceeding limit 1"));
+}
+
+#[test]
+fn decode_snapshot_rejects_content_bytes_that_exceed_import_limits() {
+    let limits = RootFilesystemImportLimits {
+        max_encoded_snapshot_bytes: Some(4096),
+        max_filesystem_bytes: Some(3),
+        max_inode_count: Some(16),
+    };
+
+    let error = decode_snapshot_with_import_limits(
+        br#"{
+            "format": "agent_os_filesystem_snapshot_v1",
+            "filesystem": {
+                "entries": [
+                    {
+                        "path": "/large.txt",
+                        "type": "file",
+                        "mode": "644",
+                        "uid": 0,
+                        "gid": 0,
+                        "content": "four",
+                        "encoding": "utf8"
+                    }
+                ]
+            }
+        }"#,
+        &limits,
+    )
+    .expect_err("snapshot content bytes should be rejected");
+
+    assert!(error.to_string().contains("exceeding limit 3"));
+}
+
+#[test]
+fn decode_snapshot_allows_metadata_heavy_entries_within_import_limits() {
+    let path = format!("/{}", "a".repeat(4000));
+    let snapshot = format!(
+        r#"{{
+            "format": "agent_os_filesystem_snapshot_v1",
+            "filesystem": {{
+                "entries": [
+                    {{
+                        "path": "{path}",
+                        "type": "file",
+                        "mode": "644",
+                        "uid": 0,
+                        "gid": 0
+                    }}
+                ]
+            }}
+        }}"#
+    );
+    let limits = RootFilesystemImportLimits::from_resource_limits(&ResourceLimits {
+        max_filesystem_bytes: Some(0),
+        max_inode_count: Some(1),
+        ..ResourceLimits::default()
+    });
+
+    let decoded = decode_snapshot_with_import_limits(snapshot.as_bytes(), &limits)
+        .expect("metadata-heavy empty file should fit decoded byte and inode limits");
+
+    assert_eq!(decoded.entries.len(), 1);
+    assert_eq!(decoded.entries[0].path, path);
+}
+
+#[test]
+fn root_filesystem_rejects_descriptor_snapshots_that_exceed_import_limits() {
+    let limits = RootFilesystemImportLimits {
+        max_encoded_snapshot_bytes: Some(4096),
+        max_filesystem_bytes: Some(3),
+        max_inode_count: Some(16),
+    };
+
+    let error = RootFileSystem::from_descriptor_with_import_limits(
+        RootFilesystemDescriptor {
+            mode: RootFilesystemMode::Ephemeral,
+            disable_default_base_layer: true,
+            lowers: vec![RootFilesystemSnapshot {
+                entries: vec![
+                    FilesystemEntry::directory("/workspace"),
+                    FilesystemEntry::file("/workspace/large.txt", b"four".to_vec()),
+                ],
+            }],
+            bootstrap_entries: Vec::new(),
+        },
+        &limits,
+    )
+    .expect_err("descriptor snapshot content bytes should be rejected");
+
+    assert!(error.to_string().contains("exceeding limit 3"));
+}
+
+#[test]
+fn root_filesystem_rejects_implicit_parent_directories_that_exceed_import_limits() {
+    let limits = RootFilesystemImportLimits {
+        max_encoded_snapshot_bytes: Some(4096),
+        max_filesystem_bytes: Some(16),
+        max_inode_count: Some(1),
+    };
+
+    let error = RootFileSystem::from_descriptor_with_import_limits(
+        RootFilesystemDescriptor {
+            mode: RootFilesystemMode::Ephemeral,
+            disable_default_base_layer: true,
+            lowers: vec![RootFilesystemSnapshot {
+                entries: vec![FilesystemEntry::file(
+                    "/deep/nested/file.txt",
+                    b"x".to_vec(),
+                )],
+            }],
+            bootstrap_entries: Vec::new(),
+        },
+        &limits,
+    )
+    .expect_err("implicit parent directories should count against inode limits");
+
+    assert!(error.to_string().contains("exceeding limit 1"));
+}
+
+#[test]
+fn root_filesystem_rejects_duplicate_descriptor_entries_that_exceed_import_limits() {
+    let limits = RootFilesystemImportLimits {
+        max_encoded_snapshot_bytes: Some(4096),
+        max_filesystem_bytes: Some(16),
+        max_inode_count: Some(1),
+    };
+
+    let error = RootFileSystem::from_descriptor_with_import_limits(
+        RootFilesystemDescriptor {
+            mode: RootFilesystemMode::Ephemeral,
+            disable_default_base_layer: true,
+            lowers: vec![RootFilesystemSnapshot {
+                entries: vec![
+                    FilesystemEntry::file("/dup.txt", Vec::new()),
+                    FilesystemEntry::file("/dup.txt", Vec::new()),
+                ],
+            }],
+            bootstrap_entries: Vec::new(),
+        },
+        &limits,
+    )
+    .expect_err("duplicate descriptor entries should count against import limits");
+
+    assert!(error.to_string().contains("exceeding limit 1"));
+}
+
+#[test]
+fn root_filesystem_normalizes_import_paths_before_creating_parent_directories() {
+    let limits = RootFilesystemImportLimits {
+        max_encoded_snapshot_bytes: Some(4096),
+        max_filesystem_bytes: Some(16),
+        max_inode_count: Some(2),
+    };
+
+    let mut root = RootFileSystem::from_descriptor_with_import_limits(
+        RootFilesystemDescriptor {
+            mode: RootFilesystemMode::Ephemeral,
+            disable_default_base_layer: true,
+            lowers: vec![RootFilesystemSnapshot {
+                entries: vec![FilesystemEntry::file("/a/../b/file.txt", b"x".to_vec())],
+            }],
+            bootstrap_entries: Vec::new(),
+        },
+        &limits,
+    )
+    .expect("normalized import path should fit inode limit");
+
+    assert!(!root.exists("/a"));
+    assert!(root.exists("/b"));
+    assert_eq!(
+        root.read_file("/b/file.txt")
+            .expect("read normalized import file"),
+        b"x".to_vec()
+    );
 }
 
 #[test]

@@ -10,10 +10,11 @@ use crate::state::SidecarKernel;
 use crate::SidecarError;
 
 use agent_os_bridge::FilesystemSnapshot;
+use agent_os_kernel::resource_accounting::ResourceLimits;
 use agent_os_kernel::root_fs::{
-    decode_snapshot as decode_root_snapshot, FilesystemEntry as KernelFilesystemEntry,
+    decode_snapshot_with_import_limits, FilesystemEntry as KernelFilesystemEntry,
     FilesystemEntryKind as KernelFilesystemEntryKind, RootFileSystem,
-    RootFilesystemDescriptor as KernelRootFilesystemDescriptor,
+    RootFilesystemDescriptor as KernelRootFilesystemDescriptor, RootFilesystemImportLimits,
     RootFilesystemMode as KernelRootFilesystemMode, RootFilesystemSnapshot,
     ROOT_FILESYSTEM_SNAPSHOT_FORMAT,
 };
@@ -30,11 +31,14 @@ const BUNDLED_BASE_FILESYSTEM_JSON: &[u8] =
 pub(crate) fn build_root_filesystem(
     descriptor: &RootFilesystemDescriptor,
     loaded_snapshot: Option<&FilesystemSnapshot>,
+    resource_limits: &ResourceLimits,
 ) -> Result<RootFileSystem, SidecarError> {
+    let import_limits = RootFilesystemImportLimits::from_resource_limits(resource_limits);
     let restored_snapshot = match loaded_snapshot {
-        Some(snapshot) if snapshot.format == ROOT_FILESYSTEM_SNAPSHOT_FORMAT => {
-            Some(decode_root_snapshot(&snapshot.bytes).map_err(root_filesystem_error)?)
-        }
+        Some(snapshot) if snapshot.format == ROOT_FILESYSTEM_SNAPSHOT_FORMAT => Some(
+            decode_snapshot_with_import_limits(&snapshot.bytes, &import_limits)
+                .map_err(root_filesystem_error)?,
+        ),
         _ => None,
     };
     let has_restored_snapshot = restored_snapshot.is_some();
@@ -52,19 +56,22 @@ pub(crate) fn build_root_filesystem(
         lowers.push(load_bundled_base_snapshot()?);
     }
 
-    RootFileSystem::from_descriptor(KernelRootFilesystemDescriptor {
-        mode: match descriptor.mode {
-            RootFilesystemMode::Ephemeral => KernelRootFilesystemMode::Ephemeral,
-            RootFilesystemMode::ReadOnly => KernelRootFilesystemMode::ReadOnly,
+    RootFileSystem::from_descriptor_with_import_limits(
+        KernelRootFilesystemDescriptor {
+            mode: match descriptor.mode {
+                RootFilesystemMode::Ephemeral => KernelRootFilesystemMode::Ephemeral,
+                RootFilesystemMode::ReadOnly => KernelRootFilesystemMode::ReadOnly,
+            },
+            disable_default_base_layer: true,
+            lowers,
+            bootstrap_entries: descriptor
+                .bootstrap_entries
+                .iter()
+                .map(convert_root_filesystem_entry)
+                .collect::<Result<Vec<_>, _>>()?,
         },
-        disable_default_base_layer: true,
-        lowers,
-        bootstrap_entries: descriptor
-            .bootstrap_entries
-            .iter()
-            .map(convert_root_filesystem_entry)
-            .collect::<Result<Vec<_>, _>>()?,
-    })
+        &import_limits,
+    )
     .map_err(root_filesystem_error)
 }
 

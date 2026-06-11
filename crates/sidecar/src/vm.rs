@@ -12,10 +12,11 @@ use crate::protocol::{
     ConfigureVmRequest, CreateLayerRequest, CreateOverlayRequest, DisposeReason, EventFrame,
     ExportSnapshotRequest, ImportSnapshotRequest, LayerCreatedResponse, LayerSealedResponse,
     MountDescriptor, MountPluginDescriptor, OverlayCreatedResponse, PermissionsPolicy,
-    ResponsePayload, RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemLowerDescriptor,
-    RootFilesystemMode, RootFilesystemSnapshotResponse, SealLayerRequest, SnapshotExportedResponse,
-    SnapshotImportedResponse, SnapshotRootFilesystemRequest, VmConfiguredResponse,
-    VmCreatedResponse, VmDisposedResponse, VmLifecycleState,
+    ResponsePayload, RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryEncoding,
+    RootFilesystemLowerDescriptor, RootFilesystemMode, RootFilesystemSnapshotResponse,
+    SealLayerRequest, SnapshotExportedResponse, SnapshotImportedResponse,
+    SnapshotRootFilesystemRequest, VmConfiguredResponse, VmCreatedResponse, VmDisposedResponse,
+    VmLifecycleState,
 };
 use crate::service::{
     audit_fields, emit_security_audit_event, emit_structured_event, kernel_error, normalize_path,
@@ -38,8 +39,8 @@ use agent_os_kernel::mount_table::MountOptions;
 use agent_os_kernel::permissions::filter_env;
 use agent_os_kernel::resource_accounting::ResourceLimits;
 use agent_os_kernel::root_fs::{
-    decode_snapshot as decode_root_snapshot, encode_snapshot as encode_root_snapshot,
-    RootFileSystem, RootFilesystemDescriptor as KernelRootFilesystemDescriptor,
+    decode_snapshot_with_import_limits, encode_snapshot as encode_root_snapshot, RootFileSystem,
+    RootFilesystemDescriptor as KernelRootFilesystemDescriptor, RootFilesystemImportLimits,
     RootFilesystemMode as KernelRootFilesystemMode, RootFilesystemSnapshot,
     ROOT_FILESYSTEM_SNAPSHOT_FORMAT,
 };
@@ -146,6 +147,7 @@ where
             &cwd,
             &payload.root_filesystem,
             loaded_snapshot.as_ref(),
+            &resource_limits,
         )?;
 
         let mut config = KernelVmConfig::new(vm_id.clone());
@@ -156,9 +158,12 @@ where
             name_servers: dns.name_servers.clone(),
             overrides: dns.overrides.clone(),
         };
+        let root_filesystem = build_root_filesystem(
+            &payload.root_filesystem,
+            loaded_snapshot.as_ref(),
+            &resource_limits,
+        )?;
         config.resources = resource_limits;
-        let root_filesystem =
-            build_root_filesystem(&payload.root_filesystem, loaded_snapshot.as_ref())?;
         let mut kernel = KernelVm::new(
             agent_os_kernel::mount_table::MountTable::new(root_filesystem),
             config,
@@ -1153,15 +1158,21 @@ fn materialize_shadow_root_snapshot_entries(
     shadow_root: &Path,
     descriptor: &RootFilesystemDescriptor,
     loaded_snapshot: Option<&FilesystemSnapshot>,
+    resource_limits: &ResourceLimits,
 ) -> Result<(), SidecarError> {
+    let import_limits = RootFilesystemImportLimits::from_resource_limits(resource_limits);
     if let Some(snapshot) = loaded_snapshot
         .filter(|snapshot| snapshot.format == ROOT_FILESYSTEM_SNAPSHOT_FORMAT)
-        .map(|snapshot| decode_root_snapshot(&snapshot.bytes).map_err(root_filesystem_error))
+        .map(|snapshot| {
+            decode_snapshot_with_import_limits(&snapshot.bytes, &import_limits)
+                .map_err(root_filesystem_error)
+        })
         .transpose()?
     {
         return materialize_shadow_entries(shadow_root, &root_snapshot_entries(&snapshot));
     }
 
+    validate_shadow_descriptor_import_limits(descriptor, &import_limits)?;
     for lower in &descriptor.lowers {
         if let RootFilesystemLowerDescriptor::Snapshot { entries } = lower {
             materialize_shadow_entries(shadow_root, entries)?;
@@ -1169,6 +1180,129 @@ fn materialize_shadow_root_snapshot_entries(
     }
     materialize_shadow_entries(shadow_root, &descriptor.bootstrap_entries)?;
     Ok(())
+}
+
+fn validate_shadow_descriptor_import_limits(
+    descriptor: &RootFilesystemDescriptor,
+    limits: &RootFilesystemImportLimits,
+) -> Result<(), SidecarError> {
+    let mut explicit_entry_count = descriptor.bootstrap_entries.len();
+    let mut inode_paths = BTreeSet::new();
+    collect_root_protocol_entry_paths(&descriptor.bootstrap_entries, &mut inode_paths);
+    let mut bytes = root_protocol_entry_content_bytes(&descriptor.bootstrap_entries)?;
+
+    for lower in &descriptor.lowers {
+        match lower {
+            RootFilesystemLowerDescriptor::Snapshot { entries } => {
+                explicit_entry_count = explicit_entry_count.saturating_add(entries.len());
+                collect_root_protocol_entry_paths(entries, &mut inode_paths);
+                bytes = bytes.saturating_add(root_protocol_entry_content_bytes(entries)?);
+            }
+            RootFilesystemLowerDescriptor::BundledBaseFilesystem => {}
+        }
+    }
+
+    if let Some(limit) = limits.max_inode_count {
+        if explicit_entry_count > limit {
+            return Err(root_filesystem_error(format!(
+                "root filesystem descriptor contains {explicit_entry_count} entries, exceeding limit {limit}"
+            )));
+        }
+
+        let entry_count = inode_paths.len();
+        if entry_count > limit {
+            return Err(root_filesystem_error(format!(
+                "root filesystem descriptor contains {entry_count} entries, exceeding limit {limit}"
+            )));
+        }
+    }
+
+    if let Some(limit) = limits.max_filesystem_bytes {
+        if bytes > limit {
+            return Err(root_filesystem_error(format!(
+                "root filesystem descriptor contains {bytes} bytes, exceeding limit {limit}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_root_protocol_entry_paths(
+    entries: &[RootFilesystemEntry],
+    paths: &mut BTreeSet<String>,
+) {
+    for entry in entries {
+        collect_root_protocol_path(&entry.path, paths);
+    }
+}
+
+fn collect_root_protocol_path(path: &str, paths: &mut BTreeSet<String>) {
+    let normalized = normalize_guest_path(path);
+    paths.insert(normalized.clone());
+
+    let mut parent = String::new();
+    let segments = normalized
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
+        parent.push('/');
+        parent.push_str(segment);
+        paths.insert(parent.clone());
+    }
+}
+
+fn root_protocol_entry_content_bytes(entries: &[RootFilesystemEntry]) -> Result<u64, SidecarError> {
+    entries.iter().try_fold(0_u64, |total, entry| {
+        let bytes = match entry.kind {
+            crate::protocol::RootFilesystemEntryKind::Directory => 0,
+            crate::protocol::RootFilesystemEntryKind::File => {
+                root_protocol_file_content_bytes(entry)?
+            }
+            crate::protocol::RootFilesystemEntryKind::Symlink => entry
+                .target
+                .as_ref()
+                .map(|target| usize_to_u64(target.len()))
+                .unwrap_or(0),
+        };
+        Ok(total.saturating_add(bytes))
+    })
+}
+
+fn root_protocol_file_content_bytes(entry: &RootFilesystemEntry) -> Result<u64, SidecarError> {
+    let Some(content) = entry.content.as_deref() else {
+        return Ok(0);
+    };
+
+    let bytes = match entry
+        .encoding
+        .clone()
+        .unwrap_or(RootFilesystemEntryEncoding::Utf8)
+    {
+        RootFilesystemEntryEncoding::Utf8 => content.len(),
+        RootFilesystemEntryEncoding::Base64 => estimated_base64_decoded_len(content),
+    };
+    Ok(usize_to_u64(bytes))
+}
+
+fn estimated_base64_decoded_len(content: &str) -> usize {
+    let padding = content
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count()
+        .min(2);
+    content
+        .len()
+        .div_ceil(4)
+        .saturating_mul(3)
+        .saturating_sub(padding)
+}
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 fn materialize_shadow_entries(
@@ -1574,6 +1708,11 @@ mod tests {
         RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
         RootFilesystemLowerDescriptor,
     };
+    use agent_os_bridge::FilesystemSnapshot;
+    use agent_os_kernel::resource_accounting::ResourceLimits;
+    use agent_os_kernel::root_fs::{
+        encode_snapshot, FilesystemEntry, RootFilesystemSnapshot, ROOT_FILESYSTEM_SNAPSHOT_FORMAT,
+    };
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1612,6 +1751,164 @@ mod tests {
             "/tmp should preserve its sticky-bit mode in the shadow root"
         );
 
+        fs::remove_dir_all(&root).expect("temp shadow root should be removed");
+    }
+
+    #[test]
+    fn materialize_shadow_root_snapshot_entries_rejects_oversized_restored_snapshots() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("agent-os-sidecar-shadow-limit-{unique}"));
+        fs::create_dir_all(&root).expect("temp shadow root should be created");
+        bootstrap_shadow_root(&root).expect("shadow bootstrap should succeed");
+
+        let snapshot = RootFilesystemSnapshot {
+            entries: vec![FilesystemEntry::file("/large.txt", b"four".to_vec())],
+        };
+        let loaded_snapshot = FilesystemSnapshot {
+            format: String::from(ROOT_FILESYSTEM_SNAPSHOT_FORMAT),
+            bytes: encode_snapshot(&snapshot).expect("encode restored snapshot"),
+        };
+        let mut resource_limits = ResourceLimits::default();
+        resource_limits.max_filesystem_bytes = Some(3);
+
+        let error = materialize_shadow_root_snapshot_entries(
+            &root,
+            &RootFilesystemDescriptor::default(),
+            Some(&loaded_snapshot),
+            &resource_limits,
+        )
+        .expect_err("oversized restored snapshot should be rejected");
+
+        assert!(error.to_string().contains("exceeding limit 3"));
+        fs::remove_dir_all(&root).expect("temp shadow root should be removed");
+    }
+
+    #[test]
+    fn materialize_shadow_root_snapshot_entries_rejects_oversized_descriptor_before_writes() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("agent-os-sidecar-shadow-descriptor-{unique}"));
+        fs::create_dir_all(&root).expect("temp shadow root should be created");
+        bootstrap_shadow_root(&root).expect("shadow bootstrap should succeed");
+
+        let descriptor = RootFilesystemDescriptor {
+            lowers: vec![RootFilesystemLowerDescriptor::Snapshot {
+                entries: vec![RootFilesystemEntry {
+                    path: String::from("/large.txt"),
+                    kind: RootFilesystemEntryKind::File,
+                    mode: Some(0o644),
+                    uid: Some(0),
+                    gid: Some(0),
+                    content: Some(String::from("four")),
+                    encoding: Some(crate::protocol::RootFilesystemEntryEncoding::Utf8),
+                    target: None,
+                    executable: false,
+                }],
+            }],
+            ..RootFilesystemDescriptor::default()
+        };
+        let mut resource_limits = ResourceLimits::default();
+        resource_limits.max_filesystem_bytes = Some(3);
+
+        let error =
+            materialize_shadow_root_snapshot_entries(&root, &descriptor, None, &resource_limits)
+                .expect_err("oversized descriptor should be rejected");
+
+        assert!(error.to_string().contains("exceeding limit 3"));
+        assert!(
+            !shadow_path_for_guest(&root, "/large.txt").exists(),
+            "oversized descriptor must be rejected before materializing files"
+        );
+        fs::remove_dir_all(&root).expect("temp shadow root should be removed");
+    }
+
+    #[test]
+    fn materialize_shadow_root_snapshot_entries_counts_implicit_parent_directories() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("agent-os-sidecar-shadow-parents-{unique}"));
+        fs::create_dir_all(&root).expect("temp shadow root should be created");
+        bootstrap_shadow_root(&root).expect("shadow bootstrap should succeed");
+
+        let descriptor = RootFilesystemDescriptor {
+            lowers: vec![RootFilesystemLowerDescriptor::Snapshot {
+                entries: vec![RootFilesystemEntry {
+                    path: String::from("/deep/nested/file.txt"),
+                    kind: RootFilesystemEntryKind::File,
+                    mode: Some(0o644),
+                    uid: Some(0),
+                    gid: Some(0),
+                    content: Some(String::from("x")),
+                    encoding: Some(crate::protocol::RootFilesystemEntryEncoding::Utf8),
+                    target: None,
+                    executable: false,
+                }],
+            }],
+            ..RootFilesystemDescriptor::default()
+        };
+        let mut resource_limits = ResourceLimits::default();
+        resource_limits.max_inode_count = Some(1);
+
+        let error =
+            materialize_shadow_root_snapshot_entries(&root, &descriptor, None, &resource_limits)
+                .expect_err("implicit parents should be rejected");
+
+        assert!(error.to_string().contains("exceeding limit 1"));
+        assert!(
+            !shadow_path_for_guest(&root, "/deep").exists(),
+            "implicit parents must not be materialized after rejection"
+        );
+        fs::remove_dir_all(&root).expect("temp shadow root should be removed");
+    }
+
+    #[test]
+    fn materialize_shadow_root_snapshot_entries_rejects_duplicate_descriptor_entries() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("agent-os-sidecar-shadow-duplicates-{unique}"));
+        fs::create_dir_all(&root).expect("temp shadow root should be created");
+        bootstrap_shadow_root(&root).expect("shadow bootstrap should succeed");
+
+        let duplicate_entry = RootFilesystemEntry {
+            path: String::from("/dup.txt"),
+            kind: RootFilesystemEntryKind::File,
+            mode: Some(0o644),
+            uid: Some(0),
+            gid: Some(0),
+            content: Some(String::new()),
+            encoding: Some(crate::protocol::RootFilesystemEntryEncoding::Utf8),
+            target: None,
+            executable: false,
+        };
+        let descriptor = RootFilesystemDescriptor {
+            lowers: vec![RootFilesystemLowerDescriptor::Snapshot {
+                entries: vec![duplicate_entry.clone(), duplicate_entry],
+            }],
+            ..RootFilesystemDescriptor::default()
+        };
+        let mut resource_limits = ResourceLimits::default();
+        resource_limits.max_inode_count = Some(1);
+
+        let error =
+            materialize_shadow_root_snapshot_entries(&root, &descriptor, None, &resource_limits)
+                .expect_err("duplicate descriptor entries should be rejected");
+
+        assert!(error.to_string().contains("exceeding limit 1"));
+        assert!(
+            !shadow_path_for_guest(&root, "/dup.txt").exists(),
+            "duplicate descriptor must be rejected before materializing files"
+        );
         fs::remove_dir_all(&root).expect("temp shadow root should be removed");
     }
 
@@ -1655,8 +1952,13 @@ mod tests {
             ..RootFilesystemDescriptor::default()
         };
 
-        materialize_shadow_root_snapshot_entries(&root, &descriptor, None)
-            .expect("snapshot entries should materialize into the shadow root");
+        materialize_shadow_root_snapshot_entries(
+            &root,
+            &descriptor,
+            None,
+            &ResourceLimits::default(),
+        )
+        .expect("snapshot entries should materialize into the shadow root");
 
         assert_eq!(
             fs::read_to_string(shadow_path_for_guest(&root, "/hello.txt"))
