@@ -279,6 +279,62 @@ fn long_lived_parent_retains_zombies_until_waited_under_pressure() {
 }
 
 #[test]
+fn allocate_pid_wraps_without_reusing_live_or_zombie_entries() {
+    let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
+    let max_pid = i32::MAX as u32;
+    let cursor_seed = MockDriverProcess::new();
+    let live_high = MockDriverProcess::new();
+    let zombie_high = MockDriverProcess::new();
+    let live_one = MockDriverProcess::new();
+
+    // Registering max_pid - 2 after the high PIDs moves the public allocation cursor back to max_pid - 1.
+    table.register(
+        max_pid - 1,
+        "wasmvm",
+        "live-high",
+        Vec::new(),
+        create_context(0),
+        live_high,
+    );
+    table.register(
+        max_pid,
+        "wasmvm",
+        "zombie-high",
+        Vec::new(),
+        create_context(0),
+        zombie_high.clone(),
+    );
+    table.register(
+        max_pid - 2,
+        "wasmvm",
+        "cursor-seed",
+        Vec::new(),
+        create_context(0),
+        cursor_seed,
+    );
+    table.register(
+        1,
+        "wasmvm",
+        "live-one",
+        Vec::new(),
+        create_context(0),
+        live_one,
+    );
+    zombie_high.exit(0);
+
+    assert_eq!(
+        table
+            .get(max_pid)
+            .expect("zombie high PID should remain allocated")
+            .status,
+        ProcessStatus::Exited
+    );
+
+    assert_eq!(table.allocate_pid().expect("allocate wrapped pid"), 2);
+    assert_eq!(table.allocate_pid().expect("allocate next pid"), 3);
+}
+
+#[test]
 fn waitpid_for_supports_wnohang_and_waiting_for_any_child() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
     let parent = MockDriverProcess::new();
