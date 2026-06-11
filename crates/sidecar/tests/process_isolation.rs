@@ -8,10 +8,20 @@ use support::{
     write_fixture,
 };
 
+const MAX_PROCESS_STDERR_BYTES: usize = 1024 * 1024;
+
 #[derive(Debug, Default)]
 struct ProcessResult {
-    stderr: String,
+    stderr: Vec<u8>,
     exit_code: Option<i32>,
+}
+
+fn append_stderr(result: &mut ProcessResult, chunk: &[u8]) {
+    assert!(
+        result.stderr.len().saturating_add(chunk.len()) <= MAX_PROCESS_STDERR_BYTES,
+        "process stderr exceeded {MAX_PROCESS_STDERR_BYTES} bytes"
+    );
+    result.stderr.extend_from_slice(chunk);
 }
 
 #[test]
@@ -76,16 +86,14 @@ fn concurrent_vm_processes_stay_isolated_with_vm_scoped_events() {
     let ownership = OwnershipScope::session(&connection_id, &session_id);
 
     while results.values().any(|result| result.exit_code.is_none()) {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for isolated process events"
+        );
         let event = sidecar
             .poll_event_blocking(&ownership, Duration::from_millis(100))
             .expect("poll process-isolation event");
-        let Some(event) = event else {
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for isolated process events"
-            );
-            continue;
-        };
+        let Some(event) = event else { continue };
 
         let OwnershipScope::Vm { vm_id, .. } = event.ownership else {
             panic!("expected VM-scoped process event");
@@ -95,19 +103,20 @@ fn concurrent_vm_processes_stay_isolated_with_vm_scoped_events() {
             .unwrap_or_else(|| panic!("unexpected vm event for {vm_id}"));
 
         match event.payload {
-            EventPayload::ProcessOutput(output) => match output.channel {
-                StreamChannel::Stdout => {}
-                StreamChannel::Stderr => {
-                    result
-                        .stderr
-                        .push_str(&String::from_utf8_lossy(&output.chunk));
+            EventPayload::ProcessOutput(output) => {
+                assert_eq!(output.process_id, "proc");
+                match output.channel {
+                    StreamChannel::Stdout => {}
+                    StreamChannel::Stderr => {
+                        append_stderr(result, &output.chunk);
+                    }
                 }
-            },
+            }
             EventPayload::ProcessExited(exited) => {
                 assert_eq!(exited.process_id, "proc");
                 result.exit_code = Some(exited.exit_code);
             }
-            _ => {}
+            EventPayload::VmLifecycle(_) | EventPayload::Structured(_) => {}
         }
     }
 
@@ -116,14 +125,16 @@ fn concurrent_vm_processes_stay_isolated_with_vm_scoped_events() {
 
     assert_eq!(slow.exit_code, Some(0));
     assert_eq!(fast.exit_code, Some(0));
+    let slow_stderr = String::from_utf8_lossy(&slow.stderr);
+    let fast_stderr = String::from_utf8_lossy(&fast.stderr);
     assert!(
-        slow.stderr.is_empty(),
+        slow_stderr.is_empty(),
         "unexpected slow stderr: {}",
-        slow.stderr
+        slow_stderr
     );
     assert!(
-        fast.stderr.is_empty(),
+        fast_stderr.is_empty(),
         "unexpected fast stderr: {}",
-        fast.stderr
+        fast_stderr
     );
 }
