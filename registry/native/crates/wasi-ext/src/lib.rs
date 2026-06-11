@@ -42,6 +42,14 @@ fn validate_poll_buffer_len(buffer_len: usize, nfds: u32) -> Result<(), Errno> {
     }
 }
 
+fn validate_poll_ready_count(ready: u32, nfds: u32) -> Result<u32, Errno> {
+    if ready <= nfds {
+        Ok(ready)
+    } else {
+        Err(ERRNO_INVAL)
+    }
+}
+
 // ============================================================
 // host_process module — process management and FD operations
 // ============================================================
@@ -679,7 +687,7 @@ pub fn poll(fds: &mut [u8], nfds: u32, timeout_ms: i32) -> Result<u32, Errno> {
     let mut ready: u32 = 0;
     let errno = unsafe { net_poll(fds.as_mut_ptr(), nfds, timeout_ms, &mut ready) };
     if errno == ERRNO_SUCCESS {
-        Ok(ready)
+        validate_poll_ready_count(ready, nfds)
     } else {
         Err(errno)
     }
@@ -893,5 +901,12 @@ mod tests {
     fn returned_lengths_must_fit_in_the_supplied_buffer() {
         assert_eq!(validate_returned_len(4, 4), Ok(4));
         assert_eq!(validate_returned_len(5, 4), Err(ERRNO_INVAL));
+    }
+
+    #[test]
+    fn poll_ready_count_must_not_exceed_nfds() {
+        assert_eq!(validate_poll_ready_count(0, 0), Ok(0));
+        assert_eq!(validate_poll_ready_count(2, 2), Ok(2));
+        assert_eq!(validate_poll_ready_count(3, 2), Err(ERRNO_INVAL));
     }
 }

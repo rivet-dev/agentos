@@ -750,6 +750,10 @@ index 0000000..975e62a
 +        errno = (int)err;
 +        return -1;
 +    }
++    if (ready > (uint32_t)nfds) {
++        errno = EINVAL;
++        return -1;
++    }
 +    return (int)ready;
 +}
 +
