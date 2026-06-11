@@ -355,9 +355,9 @@ pub fn preserve_security_context(from_path: &Path, to_path: &Path) -> Result<(),
 
 /// Gets the SELinux security context for a file using getfattr.
 ///
-/// This function is primarily used for testing purposes to verify that SELinux
-/// contexts have been properly set on files. It uses the `getfattr` command
-/// to retrieve the security.selinux extended attribute.
+/// This test helper verifies that SELinux contexts have been properly set on
+/// files. It uses the `getfattr` command to retrieve the security.selinux
+/// extended attribute.
 ///
 /// # Arguments
 ///
@@ -373,15 +373,7 @@ pub fn preserve_security_context(from_path: &Path, to_path: &Path) -> Result<(),
 /// This function will panic if:
 /// - The `getfattr` command fails to execute
 /// - The `getfattr` command returns a non-zero exit status
-///
-/// # Examples
-///
-/// ```no_run
-/// use uucore::selinux::get_getfattr_output;
-///
-/// let context = get_getfattr_output("/path/to/file");
-/// println!("SELinux context: {context}");
-/// ```
+#[cfg(test)]
 pub fn get_getfattr_output(f: &str) -> String {
     use std::process::Command;
 
