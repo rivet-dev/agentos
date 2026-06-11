@@ -1,12 +1,12 @@
 mod support;
 
 use agent_os_sidecar::protocol::{
-    AuthenticateRequest, CreateVmRequest, GuestRuntimeKind, OwnershipScope, RequestPayload,
-    ResponsePayload,
+    AuthenticateRequest, CreateVmRequest, GuestRuntimeKind, OpenSessionRequest, OwnershipScope,
+    RequestPayload, ResponsePayload, SidecarPlacement,
 };
 use support::{
-    authenticate, authenticate_with_token, new_sidecar, new_sidecar_with_auth_token, open_session,
-    request, temp_dir, TEST_AUTH_TOKEN,
+    TEST_AUTH_TOKEN, authenticate, authenticate_with_token, new_sidecar,
+    new_sidecar_with_auth_token, open_session, request, temp_dir,
 };
 
 #[test]
@@ -59,7 +59,8 @@ fn authenticate_ignores_client_connection_hints_and_preserves_existing_owners() 
 fn authenticate_rejects_invalid_auth_tokens() {
     let mut sidecar = new_sidecar_with_auth_token("connection-auth-invalid", "expected-token");
 
-    let result = authenticate_with_token(&mut sidecar, 1, "client-a", "wrong-token");
+    let rejected_connection = "client-a";
+    let result = authenticate_with_token(&mut sidecar, 1, rejected_connection, "wrong-token");
 
     match result.response.payload {
         ResponsePayload::Rejected(response) => {
@@ -68,16 +69,20 @@ fn authenticate_rejects_invalid_auth_tokens() {
         }
         other => panic!("unexpected invalid auth response: {other:?}"),
     }
+
+    assert_rejected_auth_does_not_open_connection(&mut sidecar, 2, rejected_connection);
+    assert_rejected_auth_does_not_open_connection(&mut sidecar, 3, "conn-1");
 }
 
 #[test]
 fn authenticate_rejects_bridge_contract_version_mismatch() {
     let mut sidecar = new_sidecar("connection-auth-bridge-version");
+    let rejected_connection = "client-a";
 
     let result = sidecar
         .dispatch_blocking(request(
             1,
-            OwnershipScope::connection("client-a"),
+            OwnershipScope::connection(rejected_connection),
             RequestPayload::Authenticate(AuthenticateRequest {
                 client_name: String::from("bridge-version-test"),
                 auth_token: String::from(TEST_AUTH_TOKEN),
@@ -93,5 +98,33 @@ fn authenticate_rejects_bridge_contract_version_mismatch() {
             assert!(response.message.contains("got"));
         }
         other => panic!("unexpected bridge version auth response: {other:?}"),
+    }
+
+    assert_rejected_auth_does_not_open_connection(&mut sidecar, 2, rejected_connection);
+    assert_rejected_auth_does_not_open_connection(&mut sidecar, 3, "conn-1");
+}
+
+fn assert_rejected_auth_does_not_open_connection(
+    sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
+    request_id: i64,
+    connection_id: &str,
+) {
+    let result = sidecar
+        .dispatch_blocking(request(
+            request_id,
+            OwnershipScope::connection(connection_id),
+            RequestPayload::OpenSession(OpenSessionRequest {
+                placement: SidecarPlacement::Shared { pool: None },
+                metadata: Default::default(),
+            }),
+        ))
+        .expect("dispatch open session after rejected authenticate");
+
+    match result.response.payload {
+        ResponsePayload::Rejected(response) => {
+            assert_eq!(response.code, "invalid_state");
+            assert!(response.message.contains("has not authenticated"));
+        }
+        other => panic!("unexpected post-rejection session response: {other:?}"),
     }
 }
