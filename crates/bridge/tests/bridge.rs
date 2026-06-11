@@ -37,12 +37,14 @@ where
             contents: b"world".to_vec(),
         })
         .expect("write file");
-    assert!(bridge
-        .exists(PathRequest {
-            vm_id: String::from("vm-1"),
-            path: String::from("/workspace/output.txt"),
-        })
-        .expect("exists after write"));
+    assert!(
+        bridge
+            .exists(PathRequest {
+                vm_id: String::from("vm-1"),
+                path: String::from("/workspace/output.txt"),
+            })
+            .expect("exists after write")
+    );
 
     let directory = bridge
         .read_dir(ReadDirRequest {
