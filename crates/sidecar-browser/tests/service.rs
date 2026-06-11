@@ -358,6 +358,45 @@ fn browser_sidecar_reaps_pending_kernel_process_when_worker_startup_fails() {
 }
 
 #[test]
+fn browser_sidecar_reaps_pending_kernel_process_when_stdio_setup_fails() {
+    let mut sidecar =
+        BrowserSidecar::new(RecordingBridge::default(), BrowserSidecarConfig::default());
+    let mut config = KernelVmConfig::new("vm-browser");
+    config.resources = ResourceLimits {
+        max_processes: Some(1),
+        max_pipes: Some(0),
+        ..ResourceLimits::default()
+    };
+    sidecar.create_vm(config).expect("create vm");
+
+    let context = sidecar
+        .create_javascript_context(CreateJavascriptContextRequest {
+            vm_id: String::from("vm-browser"),
+            bootstrap_module: Some(String::from("@rivet-dev/agent-os/browser")),
+        })
+        .expect("create JavaScript context");
+
+    for _ in 0..2 {
+        let failed = sidecar
+            .start_execution(StartExecutionRequest {
+                vm_id: String::from("vm-browser"),
+                context_id: context.context_id.clone(),
+                argv: vec![String::from("node"), String::from("script.js")],
+                env: BTreeMap::new(),
+                cwd: String::from("/workspace"),
+            })
+            .expect_err("stdio setup should fail before worker creation");
+
+        assert!(failed.to_string().contains("maximum pipe count reached"));
+        assert_eq!(sidecar.active_worker_count("vm-browser"), 0);
+        assert_eq!(
+            sidecar.kernel_state("vm-browser").expect("kernel ready"),
+            LifecycleState::Ready
+        );
+    }
+}
+
+#[test]
 fn browser_sidecar_reaps_pending_kernel_process_when_bridge_execution_start_fails() {
     let mut bridge = RecordingBridge::default();
     bridge.push_execution_start_error("execution start failed");
