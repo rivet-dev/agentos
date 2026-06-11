@@ -63,6 +63,7 @@ impl<B> FileSystemPluginFactory<MountPluginContext<B>> for JsBridgeMountPlugin {
                 request.context.sidecar_requests.clone(),
                 ownership,
                 mount_id,
+                request.context.max_pread_bytes,
             ),
         )))
     }
@@ -74,6 +75,7 @@ struct JsBridgeFilesystem {
     ownership: OwnershipScope,
     mount_id: String,
     next_call_id: Arc<AtomicU64>,
+    max_read_bytes: Option<usize>,
 }
 
 impl JsBridgeFilesystem {
@@ -81,12 +83,14 @@ impl JsBridgeFilesystem {
         requests: crate::state::SharedSidecarRequestClient,
         ownership: OwnershipScope,
         mount_id: String,
+        max_read_bytes: Option<usize>,
     ) -> Self {
         Self {
             requests,
             ownership,
             mount_id,
             next_call_id: Arc::new(AtomicU64::new(1)),
+            max_read_bytes,
         }
     }
 
@@ -176,37 +180,108 @@ impl JsBridgeFilesystem {
         path: &str,
         result: Option<Value>,
     ) -> VfsResult<Vec<u8>> {
+        self.parse_bytes_limited(operation, path, result, None)
+    }
+
+    fn parse_bytes_limited(
+        &self,
+        operation: &str,
+        path: &str,
+        result: Option<Value>,
+        operation_max_bytes: Option<usize>,
+    ) -> VfsResult<Vec<u8>> {
+        let max_bytes = effective_read_limit(self.max_read_bytes, operation_max_bytes);
         match result.ok_or_else(|| {
             VfsError::io(format!(
                 "js_bridge returned no payload for {operation} '{path}'"
             ))
         })? {
-            Value::String(encoded) => BASE64_STANDARD.decode(encoded).map_err(|error| {
-                VfsError::io(format!(
-                    "invalid js_bridge base64 payload for {operation} '{path}': {error}"
-                ))
-            }),
-            Value::Array(values) => values
-                .into_iter()
-                .map(|value| match value {
-                    Value::Number(number) => number
-                        .as_u64()
-                        .and_then(|value| u8::try_from(value).ok())
-                        .ok_or_else(|| {
-                            VfsError::io(format!(
-                                "invalid js_bridge byte payload for {operation} '{path}'"
-                            ))
-                        }),
-                    _ => Err(VfsError::io(format!(
-                        "invalid js_bridge byte payload for {operation} '{path}'"
-                    ))),
-                })
-                .collect(),
+            Value::String(encoded) => {
+                let estimated_len = estimated_base64_decoded_len(&encoded).ok_or_else(|| {
+                    VfsError::io(format!(
+                        "js_bridge base64 payload length overflows for {operation} '{path}'"
+                    ))
+                })?;
+                Self::check_read_length(operation, path, estimated_len, max_bytes)?;
+                let decoded = BASE64_STANDARD.decode(encoded).map_err(|error| {
+                    VfsError::io(format!(
+                        "invalid js_bridge base64 payload for {operation} '{path}': {error}"
+                    ))
+                })?;
+                Self::check_read_length(operation, path, decoded.len(), max_bytes)?;
+                Ok(decoded)
+            }
+            Value::Array(values) => {
+                Self::check_read_length(operation, path, values.len(), max_bytes)?;
+                values
+                    .into_iter()
+                    .map(|value| match value {
+                        Value::Number(number) => number
+                            .as_u64()
+                            .and_then(|value| u8::try_from(value).ok())
+                            .ok_or_else(|| {
+                                VfsError::io(format!(
+                                    "invalid js_bridge byte payload for {operation} '{path}'"
+                                ))
+                            }),
+                        _ => Err(VfsError::io(format!(
+                            "invalid js_bridge byte payload for {operation} '{path}'"
+                        ))),
+                    })
+                    .collect()
+            }
             other => Err(VfsError::io(format!(
                 "unsupported js_bridge payload for {operation} '{path}': {other:?}"
             ))),
         }
     }
+
+    fn check_read_length(
+        operation: &str,
+        path: &str,
+        length: usize,
+        max_bytes: Option<usize>,
+    ) -> VfsResult<()> {
+        if let Some(limit) = max_bytes {
+            if length <= limit {
+                return Ok(());
+            }
+
+            return Err(VfsError::new(
+                "EINVAL",
+                format!(
+                    "js_bridge payload length {length} exceeds configured read limit {limit}, {operation} '{path}'"
+                ),
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+fn effective_read_limit(
+    mount_max_bytes: Option<usize>,
+    operation_max_bytes: Option<usize>,
+) -> Option<usize> {
+    match (mount_max_bytes, operation_max_bytes) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(limit), None) | (None, Some(limit)) => Some(limit),
+        (None, None) => None,
+    }
+}
+
+fn estimated_base64_decoded_len(encoded: &str) -> Option<usize> {
+    let padding = encoded
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count()
+        .min(2);
+    encoded
+        .len()
+        .checked_add(3)
+        .map(|length| (length / 4).saturating_mul(3).saturating_sub(padding))
 }
 
 #[derive(Debug, Deserialize)]
@@ -504,7 +579,7 @@ impl VirtualFileSystem for JsBridgeFilesystem {
                 "length": length,
             }),
         )?;
-        self.parse_bytes("pread", path, result)
+        self.parse_bytes_limited("pread", path, result, Some(length))
     }
 
     fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
