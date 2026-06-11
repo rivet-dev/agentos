@@ -198,6 +198,10 @@ fn create_context(ppid: u32) -> ProcessContext {
     }
 }
 
+fn allocate_pid(table: &ProcessTable) -> u32 {
+    table.allocate_pid().expect("allocate pid")
+}
+
 #[test]
 fn proc_filesystem_reports_kernel_identity_and_sanitized_process_metadata() {
     let mut kernel = new_kernel("vm-posix-procfs");
@@ -464,8 +468,8 @@ fn process_table_delivers_sigchld_and_reaps_zombies_via_waitpid() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
     let parent = MockDriverProcess::new();
     let child = MockDriverProcess::new();
-    let parent_pid = table.allocate_pid();
-    let child_pid = table.allocate_pid();
+    let parent_pid = allocate_pid(&table);
+    let child_pid = allocate_pid(&table);
 
     table.register(
         parent_pid,
@@ -517,8 +521,8 @@ fn process_table_negative_pid_kill_targets_entire_process_groups() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
     let leader = MockDriverProcess::new();
     let peer = MockDriverProcess::new();
-    let leader_pid = table.allocate_pid();
-    let peer_pid = table.allocate_pid();
+    let leader_pid = allocate_pid(&table);
+    let peer_pid = allocate_pid(&table);
 
     table.register(
         leader_pid,

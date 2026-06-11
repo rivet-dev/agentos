@@ -1201,7 +1201,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
         mut ctx: ProcessContext,
         requester_driver: Option<&str>,
     ) -> KernelResult<KernelProcessHandle> {
-        let pid = self.processes.allocate_pid();
+        let pid = self.processes.allocate_pid()?;
         ctx.pid = pid;
 
         {
@@ -4615,7 +4615,7 @@ mod tests {
     fn setpgid_rejects_joining_a_process_group_owned_by_another_driver() {
         let kernel = KernelVm::new(MemoryFileSystem::new(), KernelVmConfig::new("vm-setpgid"));
 
-        let leader_pid = kernel.processes.allocate_pid();
+        let leader_pid = kernel.processes.allocate_pid().expect("allocate pid");
         kernel.processes.register(
             leader_pid,
             String::from("driver-a"),
@@ -4635,7 +4635,7 @@ mod tests {
             Arc::new(StubDriverProcess::default()),
         );
 
-        let peer_pid = kernel.processes.allocate_pid();
+        let peer_pid = kernel.processes.allocate_pid().expect("allocate pid");
         kernel.processes.register(
             peer_pid,
             String::from("driver-b"),

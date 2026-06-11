@@ -10,6 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const ZOMBIE_TTL: Duration = Duration::from_secs(60);
 const INIT_PID: u32 = 1;
+const MAX_ALLOCATED_PID: u32 = i32::MAX as u32;
 pub const DEFAULT_PROCESS_UMASK: u32 = 0o022;
 pub const SIGHUP: i32 = 1;
 pub const SIGCHLD: i32 = 17;
@@ -67,6 +68,13 @@ impl ProcessTableError {
         Self {
             code: "ECHILD",
             message: format!("process {waiter_pid} has no matching child for waitpid({pid})"),
+        }
+    }
+
+    fn pid_space_exhausted() -> Self {
+        Self {
+            code: "EAGAIN",
+            message: String::from("process id space exhausted"),
         }
     }
 
@@ -398,11 +406,22 @@ impl ProcessTable {
         table
     }
 
-    pub fn allocate_pid(&self) -> u32 {
+    pub fn allocate_pid(&self) -> ProcessResult<u32> {
         let mut state = self.inner.lock_state();
-        let pid = state.next_pid;
-        state.next_pid += 1;
-        pid
+        let start = normalize_next_pid(state.next_pid);
+        let mut pid = start;
+
+        loop {
+            if !state.entries.contains_key(&pid) {
+                state.next_pid = next_allocated_pid_after(pid);
+                return Ok(pid);
+            }
+
+            pid = next_allocated_pid_after(pid);
+            if pid == start {
+                return Err(ProcessTableError::pid_space_exhausted());
+            }
+        }
     }
 
     pub fn set_on_process_exit(&self, callback: Option<Arc<dyn Fn(u32) + Send + Sync + 'static>>) {
@@ -450,7 +469,9 @@ impl ProcessTable {
             }
         }));
 
-        self.inner.lock_state().entries.insert(
+        let mut state = self.inner.lock_state();
+        state.next_pid = next_pid_after_registered(state.next_pid, pid);
+        state.entries.insert(
             pid,
             ProcessRecord {
                 entry: entry.clone(),
@@ -1033,6 +1054,35 @@ fn signal_bit(signal: i32) -> ProcessResult<u64> {
     Ok(1u64 << (signal - 1))
 }
 
+fn normalize_next_pid(pid: u32) -> u32 {
+    if (INIT_PID..=MAX_ALLOCATED_PID).contains(&pid) {
+        pid
+    } else {
+        INIT_PID
+    }
+}
+
+fn next_allocated_pid_after(pid: u32) -> u32 {
+    if pid >= MAX_ALLOCATED_PID {
+        INIT_PID
+    } else {
+        pid + 1
+    }
+}
+
+fn next_pid_after_registered(current: u32, registered: u32) -> u32 {
+    let current = normalize_next_pid(current);
+    if !(INIT_PID..=MAX_ALLOCATED_PID).contains(&registered) {
+        return current;
+    }
+
+    if current <= registered {
+        next_allocated_pid_after(registered)
+    } else {
+        current
+    }
+}
+
 fn signal_can_be_blocked(signal: i32) -> bool {
     !matches!(signal, SIGKILL | SIGSTOP | SIGCONT)
 }
@@ -1369,6 +1419,81 @@ impl ZombieReaper {
 impl Drop for ProcessTableInner {
     fn drop(&mut self) {
         self.reaper.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct TestDriverProcess {
+        on_exit: Mutex<Option<ProcessExitCallback>>,
+    }
+
+    impl TestDriverProcess {
+        fn exit(&self, exit_code: i32) {
+            let callback = self
+                .on_exit
+                .lock()
+                .expect("test driver lock poisoned")
+                .clone();
+            if let Some(callback) = callback {
+                callback(exit_code);
+            }
+        }
+    }
+
+    impl DriverProcess for TestDriverProcess {
+        fn kill(&self, _signal: i32) {}
+
+        fn wait(&self, _timeout: Duration) -> Option<i32> {
+            None
+        }
+
+        fn set_on_exit(&self, callback: ProcessExitCallback) {
+            *self.on_exit.lock().expect("test driver lock poisoned") = Some(callback);
+        }
+    }
+
+    fn context(ppid: u32) -> ProcessContext {
+        ProcessContext {
+            ppid,
+            ..ProcessContext::default()
+        }
+    }
+
+    #[test]
+    fn allocate_pid_wraps_without_reusing_live_or_zombie_processes() {
+        let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
+        let live_high = Arc::new(TestDriverProcess::default());
+        let zombie_high = Arc::new(TestDriverProcess::default());
+        let live_one = Arc::new(TestDriverProcess::default());
+        let max_pid = MAX_ALLOCATED_PID;
+
+        table.register(
+            max_pid - 1,
+            "test",
+            "live-high",
+            Vec::new(),
+            context(0),
+            live_high,
+        );
+        table.register(
+            max_pid,
+            "test",
+            "zombie-high",
+            Vec::new(),
+            context(0),
+            zombie_high.clone(),
+        );
+        table.register(1, "test", "live-one", Vec::new(), context(0), live_one);
+        zombie_high.exit(0);
+
+        table.inner.lock_state().next_pid = max_pid - 1;
+
+        assert_eq!(table.allocate_pid().expect("allocate pid"), 2);
+        assert_eq!(table.allocate_pid().expect("allocate pid"), 3);
     }
 }
 

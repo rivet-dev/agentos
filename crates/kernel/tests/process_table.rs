@@ -120,6 +120,10 @@ fn create_context(ppid: u32) -> ProcessContext {
     }
 }
 
+fn allocate_pid(table: &ProcessTable) -> u32 {
+    table.allocate_pid().expect("allocate pid")
+}
+
 fn wait_for(predicate: impl Fn() -> bool, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -138,8 +142,8 @@ fn register_allocates_expected_process_metadata_and_parent_groups() {
     let parent = MockDriverProcess::new();
     let child = MockDriverProcess::new();
 
-    let parent_pid = table.allocate_pid();
-    let child_pid = table.allocate_pid();
+    let parent_pid = allocate_pid(&table);
+    let child_pid = allocate_pid(&table);
 
     let parent_entry = table.register(
         parent_pid,
@@ -171,7 +175,7 @@ fn register_allocates_expected_process_metadata_and_parent_groups() {
 fn waitpid_resolves_for_exiting_and_already_exited_processes() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
     let process = MockDriverProcess::new();
-    let pid = table.allocate_pid();
+    let pid = allocate_pid(&table);
     table.register(
         pid,
         "wasmvm",
@@ -192,7 +196,7 @@ fn waitpid_resolves_for_exiting_and_already_exited_processes() {
         "waitpid should reap exited processes"
     );
 
-    let exited_pid = table.allocate_pid();
+    let exited_pid = allocate_pid(&table);
     table.register(
         exited_pid,
         "wasmvm",
@@ -217,15 +221,73 @@ fn waitpid_resolves_for_exiting_and_already_exited_processes() {
 }
 
 #[test]
+fn long_lived_parent_retains_zombies_until_waited_under_pressure() {
+    let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
+    let parent = MockDriverProcess::new();
+    let parent_pid = allocate_pid(&table);
+    let mut child_pids = Vec::new();
+
+    table.register(
+        parent_pid,
+        "wasmvm",
+        "parent",
+        Vec::new(),
+        create_context(0),
+        parent,
+    );
+
+    for index in 0..100 {
+        let child = MockDriverProcess::new();
+        let child_pid = allocate_pid(&table);
+        table.register(
+            child_pid,
+            "wasmvm",
+            format!("child-{index}"),
+            Vec::new(),
+            create_context(parent_pid),
+            child.clone(),
+        );
+        child.exit(index);
+        child_pids.push((child_pid, index));
+    }
+
+    for (child_pid, _) in &child_pids {
+        assert_eq!(
+            table
+                .get(*child_pid)
+                .expect("child zombie should be retained")
+                .status,
+            ProcessStatus::Exited
+        );
+    }
+    assert_eq!(table.zombie_reaper_thread_spawn_count(), 1);
+    assert_eq!(table.zombie_timer_count(), child_pids.len());
+
+    for (child_pid, status) in child_pids {
+        assert_eq!(
+            table
+                .waitpid_for(parent_pid, -1, WaitPidFlags::empty())
+                .expect("parent wait should succeed"),
+            Some(agent_os_kernel::process_table::ProcessWaitResult {
+                pid: child_pid,
+                status,
+                event: ProcessWaitEvent::Exited,
+            })
+        );
+    }
+    assert_eq!(table.zombie_timer_count(), 0);
+}
+
+#[test]
 fn waitpid_for_supports_wnohang_and_waiting_for_any_child() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
     let parent = MockDriverProcess::new();
     let child_a = MockDriverProcess::new();
     let child_b = MockDriverProcess::new();
 
-    let parent_pid = table.allocate_pid();
-    let child_a_pid = table.allocate_pid();
-    let child_b_pid = table.allocate_pid();
+    let parent_pid = allocate_pid(&table);
+    let child_a_pid = allocate_pid(&table);
+    let child_b_pid = allocate_pid(&table);
 
     table.register(
         parent_pid,
@@ -284,7 +346,7 @@ fn waitpid_for_supports_wnohang_and_waiting_for_any_child() {
 fn on_process_exit_runs_before_waitpid_waiters_are_notified() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
     let process = MockDriverProcess::new();
-    let pid = table.allocate_pid();
+    let pid = allocate_pid(&table);
     table.register(
         pid,
         "wasmvm",
@@ -349,8 +411,8 @@ fn waitpid_for_reports_stopped_and_continued_children_once() {
     let parent = MockDriverProcess::new();
     let child = MockDriverProcess::new();
 
-    let parent_pid = table.allocate_pid();
-    let child_pid = table.allocate_pid();
+    let parent_pid = allocate_pid(&table);
+    let child_pid = allocate_pid(&table);
     table.register(
         parent_pid,
         "wasmvm",
@@ -426,7 +488,7 @@ fn waitpid_for_reports_stopped_and_continued_children_once() {
 fn kill_routes_signals_and_validates_process_existence() {
     let table = ProcessTable::new();
     let process = MockDriverProcess::new();
-    let pid = table.allocate_pid();
+    let pid = allocate_pid(&table);
     table.register(
         pid,
         "wasmvm",
@@ -457,8 +519,8 @@ fn kill_updates_job_control_state_for_stop_and_continue_signals() {
     let parent = MockDriverProcess::new();
     let child = MockDriverProcess::new();
 
-    let parent_pid = table.allocate_pid();
-    let child_pid = table.allocate_pid();
+    let parent_pid = allocate_pid(&table);
+    let child_pid = allocate_pid(&table);
     table.register(
         parent_pid,
         "wasmvm",
@@ -535,8 +597,8 @@ fn exiting_child_delivers_sigchld_to_living_parent() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
     let parent = MockDriverProcess::new();
     let child = MockDriverProcess::new();
-    let parent_pid = table.allocate_pid();
-    let child_pid = table.allocate_pid();
+    let parent_pid = allocate_pid(&table);
+    let child_pid = allocate_pid(&table);
 
     table.register(
         parent_pid,
@@ -572,8 +634,8 @@ fn blocked_sigchld_is_queued_until_the_parent_unblocks_it() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
     let parent = MockDriverProcess::new();
     let child = MockDriverProcess::new();
-    let parent_pid = table.allocate_pid();
-    let child_pid = table.allocate_pid();
+    let parent_pid = allocate_pid(&table);
+    let child_pid = allocate_pid(&table);
     let sigchld_mask = SignalSet::from_signal(SIGCHLD).expect("SIGCHLD should be valid");
 
     table.register(
@@ -635,8 +697,8 @@ fn killed_child_delivers_sigchld_to_living_parent() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
     let parent = MockDriverProcess::new();
     let child = MockDriverProcess::new();
-    let parent_pid = table.allocate_pid();
-    let child_pid = table.allocate_pid();
+    let parent_pid = allocate_pid(&table);
+    let child_pid = allocate_pid(&table);
 
     table.register(
         parent_pid,
@@ -673,7 +735,7 @@ fn killed_child_delivers_sigchld_to_living_parent() {
 fn blocked_sigterm_is_delivered_when_the_process_unblocks_it() {
     let table = ProcessTable::with_zombie_ttl(Duration::from_secs(3600));
     let process = MockDriverProcess::new();
-    let pid = table.allocate_pid();
+    let pid = allocate_pid(&table);
     let sigterm_mask = SignalSet::from_signal(SIGTERM).expect("SIGTERM should be valid");
 
     table.register(
@@ -716,10 +778,10 @@ fn blocked_sigterm_is_delivered_when_the_process_unblocks_it() {
 fn process_groups_and_sessions_follow_legacy_rules() {
     let table = ProcessTable::new();
 
-    let p1 = table.allocate_pid();
-    let p2 = table.allocate_pid();
-    let p3 = table.allocate_pid();
-    let p4 = table.allocate_pid();
+    let p1 = allocate_pid(&table);
+    let p2 = allocate_pid(&table);
+    let p3 = allocate_pid(&table);
+    let p4 = allocate_pid(&table);
 
     table.register(
         p1,
@@ -774,8 +836,8 @@ fn negative_pid_kill_targets_entire_process_groups() {
     let table = ProcessTable::new();
     let leader = MockDriverProcess::new();
     let peer = MockDriverProcess::new();
-    let pid1 = table.allocate_pid();
-    let pid2 = table.allocate_pid();
+    let pid1 = allocate_pid(&table);
+    let pid2 = allocate_pid(&table);
 
     table.register(
         pid1,
@@ -808,8 +870,8 @@ fn negative_pid_signal_zero_checks_process_group_liveness() {
     let table = ProcessTable::new();
     let leader = MockDriverProcess::new();
     let peer = MockDriverProcess::new();
-    let leader_pid = table.allocate_pid();
-    let peer_pid = table.allocate_pid();
+    let leader_pid = allocate_pid(&table);
+    let peer_pid = allocate_pid(&table);
 
     table.register(
         leader_pid,
@@ -848,11 +910,11 @@ fn negative_pid_kill_reaches_stopped_and_exited_group_members() {
     let leader = MockDriverProcess::stubborn();
     let stopped = MockDriverProcess::stubborn();
     let zombie = MockDriverProcess::stubborn();
-    let init_pid = table.allocate_pid();
-    let parent_pid = table.allocate_pid();
-    let leader_pid = table.allocate_pid();
-    let stopped_pid = table.allocate_pid();
-    let zombie_pid = table.allocate_pid();
+    let init_pid = allocate_pid(&table);
+    let parent_pid = allocate_pid(&table);
+    let leader_pid = allocate_pid(&table);
+    let stopped_pid = allocate_pid(&table);
+    let zombie_pid = allocate_pid(&table);
 
     table.register(
         init_pid,
@@ -921,9 +983,9 @@ fn exiting_parent_reparents_children_to_pid_one_when_available() {
     let init = MockDriverProcess::new();
     let parent = MockDriverProcess::new();
     let child = MockDriverProcess::new();
-    let init_pid = table.allocate_pid();
-    let parent_pid = table.allocate_pid();
-    let child_pid = table.allocate_pid();
+    let init_pid = allocate_pid(&table);
+    let parent_pid = allocate_pid(&table);
+    let child_pid = allocate_pid(&table);
 
     table.register(
         init_pid,
@@ -967,10 +1029,10 @@ fn orphaned_stopped_process_groups_receive_sighup_and_sigcont() {
     let parent = MockDriverProcess::new();
     let leader = MockDriverProcess::new();
     let stopped = MockDriverProcess::new();
-    let init_pid = table.allocate_pid();
-    let parent_pid = table.allocate_pid();
-    let leader_pid = table.allocate_pid();
-    let stopped_pid = table.allocate_pid();
+    let init_pid = allocate_pid(&table);
+    let parent_pid = allocate_pid(&table);
+    let leader_pid = allocate_pid(&table);
+    let stopped_pid = allocate_pid(&table);
 
     table.register(
         init_pid,
@@ -1024,8 +1086,8 @@ fn terminate_all_escalates_from_sigterm_to_sigkill_for_survivors() {
     let graceful = MockDriverProcess::new();
     let stubborn = MockDriverProcess::stubborn();
 
-    let pid1 = table.allocate_pid();
-    let pid2 = table.allocate_pid();
+    let pid1 = allocate_pid(&table);
+    let pid2 = allocate_pid(&table);
     table.register(
         pid1,
         "wasmvm",
@@ -1067,8 +1129,8 @@ fn terminate_all_escalates_from_sigterm_to_sigkill_for_survivors() {
 #[test]
 fn list_processes_returns_a_snapshot_of_registered_processes() {
     let table = ProcessTable::new();
-    let pid1 = table.allocate_pid();
-    let pid2 = table.allocate_pid();
+    let pid1 = allocate_pid(&table);
+    let pid2 = allocate_pid(&table);
 
     table.register(
         pid1,
@@ -1106,9 +1168,9 @@ fn waitpid_for_supports_pid_zero_and_negative_process_group_selectors() {
     let same_group_child = MockDriverProcess::new();
     let other_group_child = MockDriverProcess::new();
 
-    let parent_pid = table.allocate_pid();
-    let same_group_child_pid = table.allocate_pid();
-    let other_group_child_pid = table.allocate_pid();
+    let parent_pid = allocate_pid(&table);
+    let same_group_child_pid = allocate_pid(&table);
+    let other_group_child_pid = allocate_pid(&table);
 
     table.register(
         parent_pid,
@@ -1180,7 +1242,7 @@ fn zombie_reaper_uses_a_single_worker_for_many_exits() {
 
     for index in 0..100 {
         let process = MockDriverProcess::new();
-        let pid = table.allocate_pid();
+        let pid = allocate_pid(&table);
         table.register(
             pid,
             "wasmvm",
@@ -1209,8 +1271,8 @@ fn zombie_reaper_preserves_child_exit_code_while_parent_is_alive() {
     let parent = MockDriverProcess::new();
     let child = MockDriverProcess::new();
 
-    let parent_pid = table.allocate_pid();
-    let child_pid = table.allocate_pid();
+    let parent_pid = allocate_pid(&table);
+    let child_pid = allocate_pid(&table);
     table.register(
         parent_pid,
         "wasmvm",
@@ -1245,8 +1307,8 @@ fn zombie_reaper_reaps_exited_children_after_their_parent_exits() {
     let parent = MockDriverProcess::new();
     let child = MockDriverProcess::new();
 
-    let parent_pid = table.allocate_pid();
-    let child_pid = table.allocate_pid();
+    let parent_pid = allocate_pid(&table);
+    let child_pid = allocate_pid(&table);
     table.register(
         parent_pid,
         "wasmvm",
