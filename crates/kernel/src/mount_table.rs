@@ -644,7 +644,7 @@ impl MountTable {
     pub fn mount_boxed(
         &mut self,
         path: &str,
-        filesystem: Box<dyn MountedFileSystem>,
+        mut filesystem: Box<dyn MountedFileSystem>,
         options: MountOptions,
     ) -> VfsResult<()> {
         let normalized = normalize_path(path);
@@ -661,7 +661,19 @@ impl MountTable {
         let (parent_index, relative_path) = self.resolve_index(&normalized)?;
         let parent_mount = &mut self.mounts[parent_index];
         if !parent_mount.filesystem.exists(&relative_path) {
-            let _ = parent_mount.filesystem.mkdir(&relative_path, true);
+            if let Err(error) = parent_mount.filesystem.mkdir(&relative_path, true) {
+                if let Err(shutdown_error) = filesystem.shutdown() {
+                    return Err(VfsError::new(
+                        shutdown_error.code(),
+                        format!(
+                            "failed to shut down filesystem after mount failure ({error}): {}",
+                            shutdown_error.message()
+                        ),
+                    ));
+                }
+
+                return Err(error);
+            }
         }
 
         let filesystem = if options.read_only {
