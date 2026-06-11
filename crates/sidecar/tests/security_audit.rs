@@ -2,15 +2,19 @@ mod support;
 
 use agent_os_bridge::StructuredEventRecord;
 use agent_os_sidecar::protocol::{
-    BootstrapRootFilesystemRequest, ConfigureVmRequest, ExecuteRequest, FsPermissionRuleSet,
-    GuestFilesystemCallRequest, GuestFilesystemOperation, GuestRuntimeKind, KillProcessRequest,
-    MountDescriptor, MountPluginDescriptor, OwnershipScope, PermissionMode, PermissionsPolicy,
-    RequestPayload, ResponsePayload, RootFilesystemEntry, RootFilesystemEntryKind,
+    BootstrapRootFilesystemRequest, ConfigureVmRequest, EventPayload, ExecuteRequest,
+    FsPermissionRuleSet, GuestFilesystemCallRequest, GuestFilesystemOperation, GuestRuntimeKind,
+    KillProcessRequest, MountDescriptor, MountPluginDescriptor, OwnershipScope, PermissionMode,
+    PermissionsPolicy, RequestPayload, ResponsePayload, RootFilesystemEntry,
+    RootFilesystemEntryKind, StreamChannel,
 };
+use std::time::{Duration, Instant};
 use support::{
-    assert_node_available, authenticate, authenticate_with_token, collect_process_output,
-    create_vm, open_session, request, temp_dir, write_fixture, RecordingBridge,
+    RecordingBridge, assert_node_available, authenticate, authenticate_with_token, create_vm,
+    open_session, request, temp_dir, write_fixture,
 };
+
+const MAX_AUDIT_PROCESS_STREAM_BYTES: usize = 1024 * 1024;
 
 fn structured_events(
     sidecar: &agent_os_sidecar::NativeSidecar<RecordingBridge>,
@@ -31,6 +35,71 @@ fn assert_timestamp(event: &StructuredEventRecord) {
     event.fields["timestamp"]
         .parse::<u128>()
         .unwrap_or_else(|error| panic!("invalid audit timestamp: {error}"));
+}
+
+fn wait_for_process_exit_bounded(
+    sidecar: &mut agent_os_sidecar::NativeSidecar<RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+) -> i32 {
+    let ownership = OwnershipScope::session(connection_id, session_id);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut stdout_bytes = 0usize;
+    let mut stderr_bytes = 0usize;
+    let mut exit = None;
+
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for process exit; stdout bytes: {stdout_bytes}; stderr bytes: {stderr_bytes}"
+        );
+
+        let event = sidecar
+            .poll_event_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll sidecar event");
+        if let Some(event) = event {
+            assert_eq!(
+                event.ownership,
+                OwnershipScope::vm(connection_id, session_id, vm_id)
+            );
+
+            match event.payload {
+                EventPayload::ProcessOutput(output) if output.process_id == process_id => {
+                    match output.channel {
+                        StreamChannel::Stdout => {
+                            stdout_bytes = stdout_bytes.saturating_add(output.chunk.len());
+                            assert!(
+                                stdout_bytes <= MAX_AUDIT_PROCESS_STREAM_BYTES,
+                                "process stdout exceeded {MAX_AUDIT_PROCESS_STREAM_BYTES} bytes"
+                            );
+                        }
+                        StreamChannel::Stderr => {
+                            stderr_bytes = stderr_bytes.saturating_add(output.chunk.len());
+                            assert!(
+                                stderr_bytes <= MAX_AUDIT_PROCESS_STREAM_BYTES,
+                                "process stderr exceeded {MAX_AUDIT_PROCESS_STREAM_BYTES} bytes"
+                            );
+                        }
+                    }
+                }
+                EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
+                    exit = Some((exited.exit_code, Instant::now()));
+                }
+                EventPayload::ProcessOutput(_)
+                | EventPayload::ProcessExited(_)
+                | EventPayload::VmLifecycle(_)
+                | EventPayload::Structured(_) => {}
+            }
+        }
+
+        if let Some((exit_code, seen_at)) = exit {
+            if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
+                return exit_code;
+            }
+        }
+    }
 }
 
 #[test]
@@ -325,13 +394,14 @@ fn kill_requests_emit_security_audit_events() {
         other => panic!("unexpected kill response: {other:?}"),
     }
 
-    let (_stdout, _stderr, _exit_code) = collect_process_output(
+    let exit_code = wait_for_process_exit_bounded(
         &mut sidecar,
         &connection_id,
         &session_id,
         &vm_id,
         "proc-kill",
     );
+    assert_eq!(exit_code, 143);
 
     let events = structured_events(&sidecar);
     let event = find_event(&events, "security.process.kill");
