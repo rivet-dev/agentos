@@ -233,6 +233,43 @@ fn permission_flags_reject_empty_paths_and_patterns_on_configure() {
         empty_patterns.response.payload,
         "network.rules[0].patterns must not be empty",
     );
+
+    let empty_pattern_operations = sidecar
+        .dispatch_blocking(request(
+            6,
+            OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+            RequestPayload::ConfigureVm(ConfigureVmRequest {
+                mounts: Vec::new(),
+                software: Vec::new(),
+                permissions: Some(PermissionsPolicy {
+                    fs: None,
+                    network: Some(PatternPermissionScope::Rules(PatternPermissionRuleSet {
+                        default: Some(PermissionMode::Deny),
+                        rules: vec![PatternPermissionRule {
+                            mode: PermissionMode::Allow,
+                            operations: Vec::new(),
+                            patterns: vec![String::from("**")],
+                        }],
+                    })),
+                    child_process: None,
+                    process: None,
+                    env: None,
+                    tool: None,
+                }),
+                module_access_cwd: None,
+                instructions: Vec::new(),
+                projected_modules: Vec::new(),
+                command_permissions: Default::default(),
+                allowed_node_builtins: Vec::new(),
+                loopback_exempt_ports: Vec::new(),
+            }),
+        ))
+        .expect("dispatch configure vm with empty network operations");
+
+    expect_invalid_state(
+        empty_pattern_operations.response.payload,
+        "network.rules[0].operations must not be empty",
+    );
 }
 
 #[test]
