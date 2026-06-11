@@ -9,30 +9,127 @@ use agent_os_sidecar::protocol::{
     RootFilesystemEntryKind, RootFilesystemMode, StreamChannel, WriteStdinRequest,
 };
 use nix::libc;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::os::unix::fs::symlink;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
 use support::{
-    assert_node_available, authenticate, collect_process_output,
-    collect_process_output_with_timeout, create_vm, new_sidecar, open_session, temp_dir,
+    assert_node_available, authenticate, create_vm, new_sidecar, open_session, temp_dir,
     write_fixture,
 };
 
+const MAX_PROCESS_STREAM_BYTES: usize = 1024 * 1024;
+
 #[derive(Debug, Default)]
 struct ProcessResult {
-    stdout: String,
-    stderr: String,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
     exit_code: Option<i32>,
+}
+
+fn append_stream_chunk(stream: &mut Vec<u8>, chunk: &[u8], label: &str) {
+    assert!(
+        stream.len().saturating_add(chunk.len()) <= MAX_PROCESS_STREAM_BYTES,
+        "{label} exceeded {MAX_PROCESS_STREAM_BYTES} bytes"
+    );
+    stream.extend_from_slice(chunk);
+}
+
+fn chunk_contains(chunk: &[u8], needle: &str) -> bool {
+    let needle = needle.as_bytes();
+    if needle.is_empty() {
+        return true;
+    }
+    chunk.windows(needle.len()).any(|window| window == needle)
+}
+
+fn collect_process_output(
+    sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+) -> (String, String, i32) {
+    collect_process_output_with_timeout(
+        sidecar,
+        connection_id,
+        session_id,
+        vm_id,
+        process_id,
+        Duration::from_secs(10),
+    )
+}
+
+fn collect_process_output_with_timeout(
+    sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+    timeout: Duration,
+) -> (String, String, i32) {
+    let ownership = OwnershipScope::session(connection_id, session_id);
+    let deadline = Instant::now() + timeout;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut exit = None;
+
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for process events\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+        let event = sidecar
+            .poll_event_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll sidecar event");
+        if let Some(event) = event {
+            assert_eq!(
+                event.ownership,
+                OwnershipScope::vm(connection_id, session_id, vm_id)
+            );
+
+            match event.payload {
+                EventPayload::ProcessOutput(output) if output.process_id == process_id => {
+                    match output.channel {
+                        StreamChannel::Stdout => {
+                            append_stream_chunk(&mut stdout, &output.chunk, "stdout");
+                        }
+                        StreamChannel::Stderr => {
+                            append_stream_chunk(&mut stderr, &output.chunk, "stderr");
+                        }
+                    }
+                }
+                EventPayload::ProcessOutput(_) => {}
+                EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
+                    exit = Some((exited.exit_code, Instant::now()));
+                }
+                EventPayload::ProcessExited(_)
+                | EventPayload::VmLifecycle(_)
+                | EventPayload::Structured(_) => {}
+            }
+        }
+
+        if let Some((exit_code, seen_at)) = exit {
+            if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
+                return (
+                    String::from_utf8_lossy(&stdout).into_owned(),
+                    String::from_utf8_lossy(&stderr).into_owned(),
+                    exit_code,
+                );
+            }
+        }
+    }
 }
 
 fn pyodide_asset_dir() -> PathBuf {
@@ -42,6 +139,29 @@ fn pyodide_asset_dir() -> PathBuf {
         .join("execution")
         .join("assets")
         .join("pyodide")
+}
+
+fn static_file_path(root: &Path, request_target: &str) -> Option<PathBuf> {
+    let path = request_target.split('?').next().unwrap_or(request_target);
+    let mut resolved = root.to_path_buf();
+    for component in Path::new(path.trim_start_matches('/')).components() {
+        match component {
+            Component::Normal(segment) => resolved.push(segment),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(resolved)
+}
+
+fn static_file_server_rejects_traversal_paths() {
+    let root = Path::new("/tmp/pyodide-assets");
+    assert_eq!(
+        static_file_path(root, "/click-8.3.1-py3-none-any.whl?download=1"),
+        Some(root.join("click-8.3.1-py3-none-any.whl"))
+    );
+    assert_eq!(static_file_path(root, "/../secret.txt"), None);
+    assert_eq!(static_file_path(root, "/packages/../../secret.txt"), None);
 }
 
 fn spawn_static_file_server(root: PathBuf) -> (u16, thread::JoinHandle<()>) {
@@ -57,6 +177,12 @@ fn spawn_static_file_server(root: PathBuf) -> (u16, thread::JoinHandle<()>) {
         while Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .expect("set static file stream read timeout");
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(2)))
+                        .expect("set static file stream write timeout");
                     served_any = true;
                     idle_since = None;
                     let mut request = [0_u8; 4096];
@@ -67,11 +193,12 @@ fn spawn_static_file_server(root: PathBuf) -> (u16, thread::JoinHandle<()>) {
                         .next()
                         .and_then(|line| line.split_whitespace().nth(1))
                         .unwrap_or("/");
-                    let relative = path.trim_start_matches('/');
-                    let file_path = root.join(relative);
-                    let (status_line, body) = match fs::read(&file_path) {
-                        Ok(body) => ("HTTP/1.1 200 OK", body),
-                        Err(_) => ("HTTP/1.1 404 Not Found", b"missing".to_vec()),
+                    let (status_line, body) = match static_file_path(&root, path) {
+                        Some(file_path) => match fs::read(&file_path) {
+                            Ok(body) => ("HTTP/1.1 200 OK", body),
+                            Err(_) => ("HTTP/1.1 404 Not Found", b"missing".to_vec()),
+                        },
+                        None => ("HTTP/1.1 400 Bad Request", b"bad request".to_vec()),
                     };
                     let response = format!(
                         "{status_line}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -515,32 +642,33 @@ fn wait_for_stdout_chunk(
     let deadline = Instant::now() + Duration::from_secs(10);
 
     loop {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for python stdout containing {needle:?}"
+        );
         let event = sidecar
             .poll_event_blocking(&ownership, Duration::from_millis(100))
             .expect("poll python stdout");
-        let Some(event) = event else {
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for python stdout containing {needle:?}"
-            );
-            continue;
-        };
+        let Some(event) = event else { continue };
 
         match event.payload {
             EventPayload::ProcessOutput(output)
                 if output.process_id == process_id
                     && output.channel == StreamChannel::Stdout
-                    && String::from_utf8_lossy(&output.chunk).contains(needle) =>
+                    && chunk_contains(&output.chunk, needle) =>
             {
                 return;
             }
+            EventPayload::ProcessOutput(_) => {}
             EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
                 panic!(
                     "python process exited before emitting {needle:?}: {:?}",
                     exited.exit_code
                 );
             }
-            _ => {}
+            EventPayload::ProcessExited(_)
+            | EventPayload::VmLifecycle(_)
+            | EventPayload::Structured(_) => {}
         }
     }
 }
@@ -777,10 +905,12 @@ print(json.dumps(result))
             Value::String(String::from("RuntimeError"))
         );
         assert_eq!(parsed[key]["code"], Value::Null);
-        assert!(parsed[key]["message"]
-            .as_str()
-            .expect("js hardening message")
-            .contains("js is not available"));
+        assert!(
+            parsed[key]["message"]
+                .as_str()
+                .expect("js hardening message")
+                .contains("js is not available")
+        );
     }
     assert_eq!(parsed["pyodide_js_eval_code"]["ok"], Value::Bool(false));
     assert_eq!(
@@ -788,10 +918,12 @@ print(json.dumps(result))
         Value::String(String::from("RuntimeError"))
     );
     assert_eq!(parsed["pyodide_js_eval_code"]["code"], Value::Null);
-    assert!(parsed["pyodide_js_eval_code"]["message"]
-        .as_str()
-        .expect("pyodide_js hardening message")
-        .contains("pyodide_js is not available"));
+    assert!(
+        parsed["pyodide_js_eval_code"]["message"]
+            .as_str()
+            .expect("pyodide_js hardening message")
+            .contains("pyodide_js is not available")
+    );
 }
 
 fn concurrent_python_processes_stay_isolated_across_vms() {
@@ -845,16 +977,14 @@ fn concurrent_python_processes_stay_isolated_across_vms() {
     let ownership = OwnershipScope::session(&connection_id, &session_id);
 
     while results.values().any(|result| result.exit_code.is_none()) {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for concurrent python process events"
+        );
         let event = sidecar
             .poll_event_blocking(&ownership, Duration::from_millis(100))
             .expect("poll python process event");
-        let Some(event) = event else {
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for concurrent python process events"
-            );
-            continue;
-        };
+        let Some(event) = event else { continue };
 
         let OwnershipScope::Vm { vm_id, .. } = event.ownership else {
             panic!("expected vm-scoped python process event");
@@ -864,23 +994,22 @@ fn concurrent_python_processes_stay_isolated_across_vms() {
             .unwrap_or_else(|| panic!("unexpected vm event for {vm_id}"));
 
         match event.payload {
-            EventPayload::ProcessOutput(output) => match output.channel {
-                StreamChannel::Stdout => {
-                    result
-                        .stdout
-                        .push_str(&String::from_utf8_lossy(&output.chunk));
+            EventPayload::ProcessOutput(output) => {
+                assert_eq!(output.process_id, "proc");
+                match output.channel {
+                    StreamChannel::Stdout => {
+                        append_stream_chunk(&mut result.stdout, &output.chunk, "stdout");
+                    }
+                    StreamChannel::Stderr => {
+                        append_stream_chunk(&mut result.stderr, &output.chunk, "stderr");
+                    }
                 }
-                StreamChannel::Stderr => {
-                    result
-                        .stderr
-                        .push_str(&String::from_utf8_lossy(&output.chunk));
-                }
-            },
+            }
             EventPayload::ProcessExited(exited) => {
                 assert_eq!(exited.process_id, "proc");
                 result.exit_code = Some(exited.exit_code);
             }
-            _ => {}
+            EventPayload::VmLifecycle(_) | EventPayload::Structured(_) => {}
         }
     }
 
@@ -889,17 +1018,21 @@ fn concurrent_python_processes_stay_isolated_across_vms() {
 
     assert_eq!(slow.exit_code, Some(0));
     assert_eq!(fast.exit_code, Some(0));
-    assert_eq!(slow.stdout, "slow python\n");
-    assert_eq!(fast.stdout, "fast python\n");
+    let slow_stdout = String::from_utf8_lossy(&slow.stdout);
+    let fast_stdout = String::from_utf8_lossy(&fast.stdout);
+    let slow_stderr = String::from_utf8_lossy(&slow.stderr);
+    let fast_stderr = String::from_utf8_lossy(&fast.stderr);
+    assert_eq!(slow_stdout, "slow python\n");
+    assert_eq!(fast_stdout, "fast python\n");
     assert!(
-        slow.stderr.is_empty(),
+        slow_stderr.is_empty(),
         "unexpected slow python stderr: {}",
-        slow.stderr
+        slow_stderr
     );
     assert!(
-        fast.stderr.is_empty(),
+        fast_stderr.is_empty(),
         "unexpected fast python stderr: {}",
-        fast.stderr
+        fast_stderr
     );
 }
 
@@ -2526,6 +2659,7 @@ print(json.dumps(result))
 fn python_suite() {
     // Multiple libtest cases in this V8/Pyodide-backed integration binary
     // still trip teardown/init crashes, so keep the coverage in one suite.
+    static_file_server_rejects_traversal_paths();
     python_runtime_executes_code_end_to_end();
     python_runtime_executes_workspace_py_file_by_path();
     python_runtime_reports_syntax_errors_over_stderr();
