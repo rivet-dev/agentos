@@ -1,7 +1,7 @@
 //! V8 isolate runtime manager backed by the embedded V8 runtime.
 
 use crate::v8_ipc::{self, BinaryFrame};
-use agent_os_v8_runtime::embedded_runtime::{spawn_embedded_runtime_ipc, EmbeddedRuntimeHandle};
+use agent_os_v8_runtime::embedded_runtime::{EmbeddedRuntimeHandle, spawn_embedded_runtime_ipc};
 use serde_json::Value;
 use std::io::{self, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
