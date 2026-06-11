@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result};
+use scc::HashMap as SccHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 
@@ -27,6 +28,15 @@ use crate::stream::{ByteStream, Subscription};
 
 /// Broadcast channel capacity for a spawned process's stdout/stderr fan-out.
 const PROCESS_STREAM_CAPACITY: usize = 1024;
+
+/// Maximum SDK-spawned process entries retained per VM.
+const PROCESS_REGISTRY_LIMIT: usize = 1024;
+
+/// Maximum first-observed process timestamp entries retained per VM.
+const OBSERVED_PROCESS_TIME_LIMIT: usize = 4096;
+
+/// Maximum bytes captured by `exec` across stdout and stderr.
+const EXEC_OUTPUT_CAPTURE_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Base value for the synthetic display-pid sequence used by `spawn` (TS `SYNTHETIC_PID_BASE`). The
 /// first spawned process is assigned exactly this value.
@@ -231,8 +241,11 @@ impl AgentOs {
             });
         let mut killed_for_timeout = false;
 
+        let capture_stdio = options.capture_stdio.unwrap_or(true);
         let mut stdout = Vec::<u8>::new();
         let mut stderr = Vec::<u8>::new();
+        let mut captured_output_bytes = 0usize;
+        let mut capture_error: Option<ClientError> = None;
         let exit_code = loop {
             let recv = events.recv();
             let frame = match timeout_deadline {
@@ -265,13 +278,39 @@ impl AgentOs {
                             if let Some(cb) = on_stdout.as_mut() {
                                 cb(&output.chunk);
                             }
-                            stdout.extend_from_slice(&output.chunk);
+                            if capture_stdio && capture_error.is_none() {
+                                match append_exec_output(
+                                    &mut stdout,
+                                    &output.chunk,
+                                    &mut captured_output_bytes,
+                                    "stdout",
+                                ) {
+                                    Ok(()) => {}
+                                    Err(error) => {
+                                        self.kill_wire_process(&process_id, "SIGKILL");
+                                        capture_error = Some(error);
+                                    }
+                                }
+                            }
                         }
                         StreamChannel::Stderr => {
                             if let Some(cb) = on_stderr.as_mut() {
                                 cb(&output.chunk);
                             }
-                            stderr.extend_from_slice(&output.chunk);
+                            if capture_stdio && capture_error.is_none() {
+                                match append_exec_output(
+                                    &mut stderr,
+                                    &output.chunk,
+                                    &mut captured_output_bytes,
+                                    "stderr",
+                                ) {
+                                    Ok(()) => {}
+                                    Err(error) => {
+                                        self.kill_wire_process(&process_id, "SIGKILL");
+                                        capture_error = Some(error);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -284,6 +323,10 @@ impl AgentOs {
                 | EventPayload::Structured(_) => {}
             }
         };
+
+        if let Some(error) = capture_error {
+            return Err(error.into());
+        }
 
         Ok(ExecResult {
             exit_code,
@@ -301,6 +344,15 @@ impl AgentOs {
         args: Vec<String>,
         mut options: SpawnOptions,
     ) -> Result<SpawnHandle> {
+        let registry_guard = self.inner().process_registry_lock.lock();
+        self.prune_exited_processes_locked(1);
+        if self.process_registry_len_locked() >= PROCESS_REGISTRY_LIMIT {
+            return Err(ClientError::Sidecar(format!(
+                "process registry limit exceeded: at most {PROCESS_REGISTRY_LIMIT} processes can be tracked per VM"
+            ))
+            .into());
+        }
+
         // Draw the public pid from the dedicated synthetic-pid space (TS `nextSyntheticPid`), seeded
         // at `SYNTHETIC_PID_BASE`. `exec` uses a separate counter so it never perturbs this sequence.
         let pid = self
@@ -339,6 +391,7 @@ impl AgentOs {
         // `spawn` is documented as overwriting any prior entry for a freshly allocated pid; the pid
         // is monotonic so a collision is not expected.
         let _ = self.inner().processes.insert(pid, entry);
+        drop(registry_guard);
 
         // Subscribe to events before issuing the request so the pump sees everything.
         let events = self.transport().subscribe_events();
@@ -666,6 +719,7 @@ impl AgentOs {
     /// Return the first-observed start time for a process key, recording `now` the first time it is
     /// seen so later snapshots report a stable timestamp (TS `observedProcessStartTimes`).
     fn observed_start_time(&self, process_key: &str, now_ms: f64) -> f64 {
+        let _guard = self.inner().observed_process_time_lock.lock();
         if let Some(existing) = self
             .inner()
             .observed_process_start_times
@@ -677,6 +731,10 @@ impl AgentOs {
             .inner()
             .observed_process_start_times
             .insert(process_key.to_owned(), now_ms);
+        prune_string_f64_map(
+            &self.inner().observed_process_start_times,
+            OBSERVED_PROCESS_TIME_LIMIT,
+        );
         // Re-read to honor a racing insert that may have won; either value is a valid first-observed
         // timestamp.
         self.inner()
@@ -687,6 +745,7 @@ impl AgentOs {
 
     /// Return the first-observed exit time for an SDK process id, recording `now` on first sight.
     fn observed_exit_time(&self, process_id: &str, now_ms: f64) -> f64 {
+        let _guard = self.inner().observed_process_time_lock.lock();
         if let Some(existing) = self
             .inner()
             .observed_process_exit_times
@@ -698,6 +757,10 @@ impl AgentOs {
             .inner()
             .observed_process_exit_times
             .insert(process_id.to_owned(), now_ms);
+        prune_string_f64_map(
+            &self.inner().observed_process_exit_times,
+            OBSERVED_PROCESS_TIME_LIMIT,
+        );
         self.inner()
             .observed_process_exit_times
             .read(process_id, |_, value| *value)
@@ -843,10 +906,52 @@ impl AgentOs {
         Ok(())
     }
 
+    fn process_registry_len_locked(&self) -> usize {
+        let mut count = 0usize;
+        self.inner().processes.scan(|_, _| {
+            count += 1;
+        });
+        count
+    }
+
+    fn prune_exited_processes_locked(&self, reserve_slots: usize) {
+        let mut entries = Vec::new();
+        self.inner().processes.scan(|pid, entry| {
+            entries.push((*pid, entry.exit_tx.borrow().is_some()));
+        });
+        let target_len = PROCESS_REGISTRY_LIMIT.saturating_sub(reserve_slots);
+        if entries.len() <= target_len {
+            return;
+        }
+
+        for pid in exited_pids_to_prune(entries, target_len) {
+            self.remove_process_tracking_locked(pid);
+        }
+    }
+
+    fn remove_process_tracking_locked(&self, pid: u32) {
+        if let Some((_, entry)) = self.inner().processes.remove(&pid) {
+            let _time_guard = self.inner().observed_process_time_lock.lock();
+            let _ = self
+                .inner()
+                .observed_process_exit_times
+                .remove(&entry.process_id);
+            let fallback_start_key = format!("{}:{pid}", entry.process_id);
+            let _ = self
+                .inner()
+                .observed_process_start_times
+                .remove(&fallback_start_key);
+            if let Some(kernel_pid) = *entry.kernel_pid.borrow() {
+                let start_key = format!("{}:{kernel_pid}", entry.process_id);
+                let _ = self.inner().observed_process_start_times.remove(&start_key);
+            }
+        }
+    }
+
     /// Background pump for a spawned process: issue the `Execute` request, then fan kernel
     /// `ProcessOutput`/`ProcessExited` events for this process id into the per-process broadcast and
-    /// watch channels. Removes the SDK map entry once the process exits, matching the TS
-    /// `proc.wait().then` cleanup.
+    /// watch channels. Exited entries are retained for post-exit inspection, then pruned oldest-first
+    /// under registry pressure.
     #[allow(clippy::too_many_arguments)]
     async fn run_spawn(
         self,
@@ -886,6 +991,8 @@ impl AgentOs {
                 let _ = stderr_tx.send(message.into_bytes());
                 tracing::error!(?error, pid, %process_id, "spawn: Execute request failed");
                 let _ = exit_tx.send(Some(1));
+                let _guard = self.inner().process_registry_lock.lock();
+                self.prune_exited_processes_locked(0);
                 return;
             }
         }
@@ -924,6 +1031,8 @@ impl AgentOs {
                 | EventPayload::Structured(_) => {}
             }
         }
+        let _guard = self.inner().process_registry_lock.lock();
+        self.prune_exited_processes_locked(0);
     }
 }
 
@@ -989,6 +1098,64 @@ fn stdin_to_bytes(input: StdinInput) -> Vec<u8> {
     }
 }
 
+fn append_exec_output(
+    buffer: &mut Vec<u8>,
+    chunk: &[u8],
+    captured_output_bytes: &mut usize,
+    channel: &str,
+) -> std::result::Result<(), ClientError> {
+    let next_total = captured_output_bytes
+        .checked_add(chunk.len())
+        .ok_or_else(|| exec_output_limit_error(channel, usize::MAX))?;
+    if next_total > EXEC_OUTPUT_CAPTURE_LIMIT_BYTES {
+        return Err(exec_output_limit_error(channel, next_total));
+    }
+    buffer.extend_from_slice(chunk);
+    *captured_output_bytes = next_total;
+    Ok(())
+}
+
+fn exec_output_limit_error(channel: &str, size: usize) -> ClientError {
+    ClientError::Sidecar(format!(
+        "exec {channel} capture is {size} bytes, limit is {EXEC_OUTPUT_CAPTURE_LIMIT_BYTES}"
+    ))
+}
+
+fn exited_pids_to_prune(mut entries: Vec<(u32, bool)>, target_len: usize) -> Vec<u32> {
+    if entries.len() <= target_len {
+        return Vec::new();
+    }
+    let mut remove_count = entries.len() - target_len;
+    entries.sort_by_key(|(pid, _)| *pid);
+    let mut out = Vec::new();
+    for (pid, exited) in entries {
+        if remove_count == 0 {
+            break;
+        }
+        if !exited {
+            continue;
+        }
+        out.push(pid);
+        remove_count -= 1;
+    }
+    out
+}
+
+fn prune_string_f64_map(map: &SccHashMap<String, f64>, limit: usize) {
+    let mut keys = Vec::new();
+    map.scan(|key, _| {
+        keys.push(key.clone());
+    });
+    if keys.len() <= limit {
+        return;
+    }
+    let remove_count = keys.len() - limit;
+    keys.sort();
+    for key in keys.into_iter().take(remove_count) {
+        let _ = map.remove(&key);
+    }
+}
+
 /// Drive a caller-supplied output callback from a fresh subscription on the given broadcast channel.
 /// Each chunk delivered to the channel is forwarded to `callback` as raw bytes. The task ends when
 /// the channel closes (process exit), matching the TS handler-set lifetime.
@@ -1015,4 +1182,52 @@ fn epoch_ms_now() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64() * 1000.0)
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        EXEC_OUTPUT_CAPTURE_LIMIT_BYTES, append_exec_output, exited_pids_to_prune,
+        prune_string_f64_map,
+    };
+    use scc::HashMap as SccHashMap;
+
+    #[test]
+    fn append_exec_output_rejects_capture_over_limit() {
+        let mut buffer = vec![0u8; EXEC_OUTPUT_CAPTURE_LIMIT_BYTES - 1];
+        let mut captured = buffer.len();
+
+        append_exec_output(&mut buffer, &[1], &mut captured, "stdout")
+            .expect("chunk at limit should fit");
+        assert_eq!(captured, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES);
+
+        let error = append_exec_output(&mut buffer, &[2], &mut captured, "stdout")
+            .expect_err("chunk over limit should fail");
+        assert!(
+            error.to_string().contains("exec stdout capture is"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(captured, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES);
+        assert_eq!(buffer.len(), EXEC_OUTPUT_CAPTURE_LIMIT_BYTES);
+    }
+
+    #[test]
+    fn exited_pid_pruning_keeps_live_entries_and_removes_oldest_exited() {
+        let pids = exited_pids_to_prune(vec![(3, true), (1, false), (2, true), (4, true)], 2);
+        assert_eq!(pids, vec![2, 3]);
+    }
+
+    #[test]
+    fn observed_time_pruning_enforces_limit() {
+        let map = SccHashMap::new();
+        let _ = map.insert("b".to_string(), 2.0);
+        let _ = map.insert("a".to_string(), 1.0);
+        let _ = map.insert("c".to_string(), 3.0);
+
+        prune_string_f64_map(&map, 2);
+
+        assert!(map.read("a", |_, _| ()).is_none());
+        assert!(map.read("b", |_, _| ()).is_some());
+        assert!(map.read("c", |_, _| ()).is_some());
+    }
 }
