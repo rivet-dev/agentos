@@ -356,12 +356,14 @@ fn decode_body(buf: &[u8]) -> io::Result<BinaryFrame> {
     let msg_type = buf[0];
     let mut pos = 1;
 
-    // Read session_id (all types except Authenticate have it, but we read the field uniformly)
+    // Read the session_id field uniformly. Sessionless frame types validate
+    // that it is empty after the message type is known.
     let sid_len = read_u8(buf, &mut pos)? as usize;
     let session_id = read_utf8(buf, &mut pos, sid_len)?;
 
     match msg_type {
         MSG_AUTHENTICATE => {
+            ensure_no_session_id(&session_id, "Authenticate")?;
             // Token is rest of frame after sid (sid is empty for Authenticate)
             let remaining = buf.len() - pos;
             let token = read_utf8(buf, &mut pos, remaining)?;
@@ -370,13 +372,17 @@ fn decode_body(buf: &[u8]) -> io::Result<BinaryFrame> {
         MSG_CREATE_SESSION => {
             let heap_limit_mb = read_u32(buf, &mut pos)?;
             let cpu_time_limit_ms = read_u32(buf, &mut pos)?;
+            ensure_frame_consumed(buf, pos)?;
             Ok(BinaryFrame::CreateSession {
                 session_id,
                 heap_limit_mb,
                 cpu_time_limit_ms,
             })
         }
-        MSG_DESTROY_SESSION => Ok(BinaryFrame::DestroySession { session_id }),
+        MSG_DESTROY_SESSION => {
+            ensure_frame_consumed(buf, pos)?;
+            Ok(BinaryFrame::DestroySession { session_id })
+        }
         MSG_INJECT_GLOBALS => {
             let payload = buf[pos..].to_vec();
             Ok(BinaryFrame::InjectGlobals {
@@ -424,10 +430,15 @@ fn decode_body(buf: &[u8]) -> io::Result<BinaryFrame> {
                 payload,
             })
         }
-        MSG_TERMINATE_EXECUTION => Ok(BinaryFrame::TerminateExecution { session_id }),
+        MSG_TERMINATE_EXECUTION => {
+            ensure_frame_consumed(buf, pos)?;
+            Ok(BinaryFrame::TerminateExecution { session_id })
+        }
         MSG_WARM_SNAPSHOT => {
+            ensure_no_session_id(&session_id, "WarmSnapshot")?;
             let bc_len = read_u32(buf, &mut pos)? as usize;
             let bridge_code = read_utf8(buf, &mut pos, bc_len)?;
+            ensure_frame_consumed(buf, pos)?;
             Ok(BinaryFrame::WarmSnapshot { bridge_code })
         }
         MSG_BRIDGE_CALL => {
@@ -445,6 +456,12 @@ fn decode_body(buf: &[u8]) -> io::Result<BinaryFrame> {
         MSG_EXECUTION_RESULT => {
             let exit_code = read_i32(buf, &mut pos)?;
             let flags = read_u8(buf, &mut pos)?;
+            if flags & !(FLAG_HAS_EXPORTS | FLAG_HAS_ERROR) != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown ExecutionResult flags: 0x{flags:02x}"),
+                ));
+            }
             let exports = if flags & FLAG_HAS_EXPORTS != 0 {
                 let exp_len = read_u32(buf, &mut pos)? as usize;
                 let data = read_bytes(buf, &mut pos, exp_len)?;
@@ -466,6 +483,7 @@ fn decode_body(buf: &[u8]) -> io::Result<BinaryFrame> {
             } else {
                 None
             };
+            ensure_frame_consumed(buf, pos)?;
             Ok(BinaryFrame::ExecutionResult {
                 session_id,
                 exit_code,
@@ -526,6 +544,26 @@ fn write_len_prefixed_u16(buf: &mut Vec<u8>, s: &str) -> io::Result<()> {
     buf.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
     buf.extend_from_slice(bytes);
     Ok(())
+}
+
+fn ensure_no_session_id(session_id: &str, frame_name: &str) -> io::Result<()> {
+    if session_id.is_empty() {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("{frame_name} frame must not include a session_id"),
+    ))
+}
+
+fn ensure_frame_consumed(buf: &[u8], pos: usize) -> io::Result<()> {
+    if pos == buf.len() {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("frame has {} trailing byte(s)", buf.len() - pos),
+    ))
 }
 
 fn read_u8(buf: &[u8], pos: &mut usize) -> io::Result<u8> {
@@ -629,6 +667,13 @@ mod tests {
         let mut cursor = std::io::Cursor::new(&buf);
         let decoded = read_frame(&mut cursor).expect("read_frame");
         assert_eq!(&decoded, frame);
+    }
+
+    fn read_raw_body(body: Vec<u8>) -> io::Result<BinaryFrame> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        buf.extend_from_slice(&body);
+        read_frame(&mut std::io::Cursor::new(buf))
     }
 
     // -- Host → Rust message types --
@@ -979,16 +1024,74 @@ mod tests {
     fn reject_unknown_message_type() {
         // Craft a frame with unknown message type 0xFF
         let body = vec![0xFF, 0x00]; // msg_type=0xFF, sid_len=0
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&(body.len() as u32).to_be_bytes());
-        buf.extend_from_slice(&body);
-        let mut cursor = std::io::Cursor::new(&buf);
-        let result = read_frame(&mut cursor);
+        let result = read_raw_body(body);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("unknown message type"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unknown message type")
+        );
+    }
+
+    #[test]
+    fn reject_session_id_on_sessionless_frames() {
+        let authenticate = read_raw_body(vec![MSG_AUTHENTICATE, 1, b's', b't']);
+        assert!(authenticate.is_err());
+        assert!(
+            authenticate
+                .unwrap_err()
+                .to_string()
+                .contains("must not include a session_id")
+        );
+
+        let warm_snapshot = read_raw_body(vec![MSG_WARM_SNAPSHOT, 1, b's', 0, 0, 0, 0]);
+        assert!(warm_snapshot.is_err());
+        assert!(
+            warm_snapshot
+                .unwrap_err()
+                .to_string()
+                .contains("must not include a session_id")
+        );
+    }
+
+    #[test]
+    fn reject_trailing_bytes_on_fixed_shape_frames() {
+        let mut create_session = vec![MSG_CREATE_SESSION, 1, b's'];
+        create_session.extend_from_slice(&0u32.to_be_bytes());
+        create_session.extend_from_slice(&0u32.to_be_bytes());
+        create_session.push(0xAA);
+
+        let destroy_session = vec![MSG_DESTROY_SESSION, 1, b's', 0xAA];
+        let terminate_execution = vec![MSG_TERMINATE_EXECUTION, 1, b's', 0xAA];
+        let warm_snapshot = vec![MSG_WARM_SNAPSHOT, 0, 0, 0, 0, 0, 0xAA];
+
+        for body in [
+            create_session,
+            destroy_session,
+            terminate_execution,
+            warm_snapshot,
+        ] {
+            let result = read_raw_body(body);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("trailing byte"));
+        }
+    }
+
+    #[test]
+    fn reject_unknown_execution_result_flags() {
+        let mut body = vec![MSG_EXECUTION_RESULT, 1, b's'];
+        body.extend_from_slice(&0i32.to_be_bytes());
+        body.push(0x80);
+
+        let result = read_raw_body(body);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unknown ExecutionResult flags")
+        );
     }
 
     #[test]
