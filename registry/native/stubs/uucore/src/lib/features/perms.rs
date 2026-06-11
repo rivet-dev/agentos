@@ -5,7 +5,7 @@
 
 //! Common functions to manage permissions
 //!
-//! wasmVM: On WASI, chown/lchown are no-ops (return success). The public API
+//! wasmVM: On WASI, ownership changes report unsupported. The public API
 //! (types, ChownExecutor, chown_base) is preserved so uu_chmod/uu_cp compile.
 
 // spell-checker:ignore (jargon) TOCTOU fchownat fchown
@@ -35,11 +35,11 @@ use crate::features::safe_traversal::{DirFd, SymlinkBehavior};
 use std::ffi::CString;
 use std::fs::Metadata;
 use std::io::Error as IOError;
+#[cfg(target_os = "wasi")]
+use std::io::ErrorKind;
 use std::io::Result as IOResult;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
-#[cfg(target_os = "wasi")]
-use std::os::wasi::fs::MetadataExt;
 
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
@@ -88,10 +88,13 @@ fn chown<P: AsRef<Path>>(path: P, uid: uid_t, gid: gid_t, follow: bool) -> IORes
     }
 }
 
-/// wasmVM: On WASI, chown is a no-op (succeeds silently).
+/// wasmVM: WASI cannot change ownership, so fail instead of reporting false success.
 #[cfg(target_os = "wasi")]
 fn chown<P: AsRef<Path>>(_path: P, _uid: uid_t, _gid: gid_t, _follow: bool) -> IOResult<()> {
-    Ok(())
+    Err(IOError::new(
+        ErrorKind::Unsupported,
+        "changing file ownership is unsupported on WASI",
+    ))
 }
 
 // wasmVM: WASI MetadataExt doesn't have uid()/gid(). Provide extension trait.
