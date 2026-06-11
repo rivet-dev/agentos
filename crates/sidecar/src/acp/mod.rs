@@ -9,8 +9,8 @@ pub use client::{
     AcpClientProcessStateProvider, InboundRequestHandler, InboundRequestOutcome,
 };
 pub use json_rpc::{
-    deserialize_message, is_request, is_response, serialize_message, JsonRpcError, JsonRpcId,
-    JsonRpcMessage, JsonRpcNotification, JsonRpcParseError, JsonRpcParseErrorKind, JsonRpcRequest,
-    JsonRpcResponse, JsonRpcResponseShapeError,
+    JsonRpcError, JsonRpcId, JsonRpcMessage, JsonRpcNotification, JsonRpcParseError,
+    JsonRpcParseErrorKind, JsonRpcRequest, JsonRpcResponse, JsonRpcResponseShapeError,
+    deserialize_message, is_request, is_response, serialize_message,
 };
 pub(crate) use timeout::AcpTimeoutDiagnostics;
