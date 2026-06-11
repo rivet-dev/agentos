@@ -11,7 +11,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::path::Path;
 
 use crate::checksum::{
-    AlgoKind, ChecksumError, ReadingMode, SizedAlgoKind, digest_reader, escape_filename,
+    digest_reader, escape_filename, AlgoKind, ChecksumError, ReadingMode, SizedAlgoKind,
 };
 use crate::error::{FromIo, UResult, USimpleError};
 use crate::line_ending::LineEnding;
@@ -136,7 +136,7 @@ fn print_legacy_checksum(
     filename: &OsStr,
     sum: &DigestOutput,
     size: usize,
-) {
+) -> UResult<()> {
     debug_assert!(options.algo_kind.is_legacy());
     debug_assert!(matches!(sum, DigestOutput::U16(_) | DigestOutput::Crc(_)));
 
@@ -169,11 +169,16 @@ fn print_legacy_checksum(
     // Print the filename after a space if not stdin
     if escaped_filename != "-" {
         print!(" ");
-        let _dropped_result = io::stdout().write_all(escaped_filename.as_bytes());
+        io::stdout().write_all(escaped_filename.as_bytes())?;
     }
+    Ok(())
 }
 
-fn print_tagged_checksum(options: &ChecksumComputeOptions, filename: &OsStr, sum: &String) {
+fn print_tagged_checksum(
+    options: &ChecksumComputeOptions,
+    filename: &OsStr,
+    sum: &String,
+) -> UResult<()> {
     let (escaped_filename, prefix) = if options.line_ending == LineEnding::Nul {
         (filename.to_string_lossy().to_string(), "")
     } else {
@@ -184,10 +189,11 @@ fn print_tagged_checksum(options: &ChecksumComputeOptions, filename: &OsStr, sum
     print!("{prefix}{} (", options.algo_kind.to_tag());
 
     // Print filename
-    let _dropped_result = io::stdout().write_all(escaped_filename.as_bytes());
+    io::stdout().write_all(escaped_filename.as_bytes())?;
 
     // Print closing parenthesis and sum
     print!(") = {sum}");
+    Ok(())
 }
 
 fn print_untagged_checksum(
@@ -195,7 +201,7 @@ fn print_untagged_checksum(
     filename: &OsStr,
     sum: &String,
     reading_mode: ReadingMode,
-) {
+) -> UResult<()> {
     let (escaped_filename, prefix) = if options.line_ending == LineEnding::Nul {
         (filename.to_string_lossy().to_string(), "")
     } else {
@@ -206,7 +212,8 @@ fn print_untagged_checksum(
     print!("{prefix}{sum} {}", reading_mode.as_char());
 
     // Print filename
-    let _dropped_result = io::stdout().write_all(escaped_filename.as_bytes());
+    io::stdout().write_all(escaped_filename.as_bytes())?;
+    Ok(())
 }
 
 /// Calculate checksum
@@ -279,14 +286,14 @@ where
                 return Ok(());
             }
             OutputFormat::Legacy => {
-                print_legacy_checksum(&options, filename, &digest_output, sz);
+                print_legacy_checksum(&options, filename, &digest_output, sz)?;
             }
             OutputFormat::Tagged(digest_format) => {
                 print_tagged_checksum(
                     &options,
                     filename,
                     &encode_sum(digest_output, digest_format)?,
-                );
+                )?;
             }
             OutputFormat::Untagged(digest_format, reading_mode) => {
                 print_untagged_checksum(
@@ -294,7 +301,7 @@ where
                     filename,
                     &encode_sum(digest_output, digest_format)?,
                     reading_mode,
-                );
+                )?;
             }
         }
 
