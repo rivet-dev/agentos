@@ -44,6 +44,10 @@ pub struct RuntimeEventEnvelope {
 const LATE_TERMINATE_EXECUTION_ERROR_CODE: &str = "ERR_LATE_TERMINATE_EXECUTION";
 const LATE_STREAM_EVENT_ERROR_CODE: &str = "ERR_LATE_STREAM_EVENT";
 const LATE_BRIDGE_RESPONSE_ERROR_CODE: &str = "ERR_LATE_BRIDGE_RESPONSE";
+const DEFERRED_COMMAND_LIMIT_ERROR_CODE: &str = "ERR_SESSION_DEFERRED_COMMAND_LIMIT";
+const SESSION_COMMAND_CHANNEL_CAPACITY: usize = 256;
+const MAX_DEFERRED_SESSION_COMMANDS: usize = SESSION_COMMAND_CHANNEL_CAPACITY;
+const MAX_DEFERRED_SYNC_MESSAGES: usize = SESSION_COMMAND_CHANNEL_CAPACITY;
 
 /// Internal entry for a running session
 struct SessionEntry {
@@ -209,7 +213,7 @@ impl SessionManager {
             return Err(format!("session {} already exists", session_id));
         }
 
-        let (tx, rx) = crossbeam_channel::bounded(256);
+        let (tx, rx) = crossbeam_channel::bounded(SESSION_COMMAND_CHANNEL_CAPACITY);
         let slot_control = Arc::clone(&self.slot_control);
         let max = self.max_concurrency;
         let event_tx = self.event_tx.clone();
@@ -545,6 +549,30 @@ fn handle_late_session_message(
     }
 }
 
+fn defer_session_command_before_slot(
+    deferred_commands: &mut VecDeque<SessionCommand>,
+    event_tx: &RuntimeEventSender,
+    session_id: &str,
+    output_generation: Option<u64>,
+    command: SessionCommand,
+) -> bool {
+    if deferred_commands.len() < MAX_DEFERRED_SESSION_COMMANDS {
+        deferred_commands.push_back(command);
+        return true;
+    }
+
+    send_late_message_warning(
+        event_tx,
+        session_id,
+        output_generation,
+        DEFERRED_COMMAND_LIMIT_ERROR_CODE,
+        format!(
+            "dropping queued session before slot acquisition because deferred command queue exceeded limit of {MAX_DEFERRED_SESSION_COMMANDS}"
+        ),
+    );
+    false
+}
+
 /// Session thread: acquires a concurrency slot, defers V8 isolate creation
 /// to first Execute (when bridge code is known for snapshot lookup), and
 /// processes commands until shutdown.
@@ -586,7 +614,17 @@ fn session_thread(
                 | Err(crossbeam_channel::TryRecvError::Disconnected) => {
                     break false;
                 }
-                Ok(command) => deferred_commands.push_back(command),
+                Ok(command) => {
+                    if !defer_session_command_before_slot(
+                        &mut deferred_commands,
+                        &event_tx,
+                        &session_id,
+                        output_generation,
+                        command,
+                    ) {
+                        break false;
+                    }
+                }
                 Err(crossbeam_channel::TryRecvError::Empty) => {}
             }
         }
@@ -1620,16 +1658,30 @@ impl crate::host_call::BridgeResponseReceiver for ChannelResponseReceiver {
                         if call_id == expected_call_id {
                             return Ok(response.clone());
                         }
-                        self.deferred.lock().unwrap().push_back(frame);
+                        push_deferred_sync_message(&self.deferred, frame)?;
                         continue;
                     }
                     // Queue non-BridgeResponse for later event loop processing
-                    self.deferred.lock().unwrap().push_back(frame);
+                    push_deferred_sync_message(&self.deferred, frame)?;
                 }
                 SessionCommand::Shutdown => return Err("session shutdown".into()),
             }
         }
     }
+}
+
+fn push_deferred_sync_message(
+    deferred: &DeferredQueue,
+    frame: SessionMessage,
+) -> Result<(), String> {
+    let mut queue = deferred.lock().unwrap();
+    if queue.len() >= MAX_DEFERRED_SYNC_MESSAGES {
+        return Err(format!(
+            "sync bridge deferred message queue exceeded limit of {MAX_DEFERRED_SYNC_MESSAGES}"
+        ));
+    }
+    queue.push_back(frame);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1873,6 +1925,71 @@ mod tests {
             matches!(&dq[1], SessionMessage::TerminateExecution),
             "second deferred should be TerminateExecution"
         );
+    }
+
+    #[test]
+    fn channel_response_receiver_rejects_deferred_queue_overflow() {
+        use crate::host_call::BridgeResponseReceiver;
+
+        let (tx, rx) = crossbeam_channel::bounded(MAX_DEFERRED_SYNC_MESSAGES + 1);
+        let deferred = new_deferred_queue();
+        let receiver = ChannelResponseReceiver::new(rx, Arc::clone(&deferred));
+
+        for index in 0..=MAX_DEFERRED_SYNC_MESSAGES {
+            tx.send(SessionCommand::Message(SessionMessage::StreamEvent(
+                StreamEvent {
+                    event_type: format!("child_stdout_{index}"),
+                    payload: Vec::new(),
+                },
+            )))
+            .unwrap();
+        }
+
+        let error = receiver
+            .recv_response(1)
+            .expect_err("deferred queue overflow should reject sync bridge wait");
+        assert!(error.contains("deferred message queue exceeded limit"));
+        assert_eq!(deferred.lock().unwrap().len(), MAX_DEFERRED_SYNC_MESSAGES);
+    }
+
+    #[test]
+    fn pre_slot_deferred_command_overflow_is_bounded_and_logged() {
+        let (event_tx, event_rx) = crossbeam_channel::unbounded();
+        let mut deferred_commands = VecDeque::new();
+
+        for _ in 0..MAX_DEFERRED_SESSION_COMMANDS {
+            assert!(defer_session_command_before_slot(
+                &mut deferred_commands,
+                &event_tx,
+                "queued-session",
+                Some(3),
+                SessionCommand::Message(SessionMessage::TerminateExecution),
+            ));
+        }
+
+        assert!(!defer_session_command_before_slot(
+            &mut deferred_commands,
+            &event_tx,
+            "queued-session",
+            Some(3),
+            SessionCommand::Message(SessionMessage::TerminateExecution),
+        ));
+        assert_eq!(deferred_commands.len(), MAX_DEFERRED_SESSION_COMMANDS);
+
+        let warning = event_rx.recv().expect("overflow warning");
+        assert_eq!(warning.output_generation, Some(3));
+        match warning.event {
+            RuntimeEvent::Log {
+                session_id,
+                channel,
+                message,
+            } => {
+                assert_eq!(session_id, "queued-session");
+                assert_eq!(channel, 1);
+                assert!(message.contains(DEFERRED_COMMAND_LIMIT_ERROR_CODE));
+            }
+            other => panic!("expected overflow warning log, got {other:?}"),
+        }
     }
 
     #[test]
