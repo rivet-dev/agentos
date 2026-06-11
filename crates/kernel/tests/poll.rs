@@ -373,3 +373,50 @@ fn poll_targets_respect_finite_timeouts_across_fd_and_socket_sets() {
         "expected poll to wait, observed {elapsed:?}"
     );
 }
+
+#[test]
+fn poll_fds_rejects_requester_that_does_not_own_process() {
+    let mut kernel = kernel_vm("vm-poll-requester-owner");
+    let pid = spawn_shell(&mut kernel);
+    let (read_fd, _write_fd) = kernel.open_pipe("shell", pid).expect("open pipe");
+    kernel
+        .register_driver(CommandDriver::new("other-driver", ["other-sh"]))
+        .expect("register other driver");
+    kernel
+        .spawn_process(
+            "other-sh",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("other-driver")),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn other driver process");
+
+    let error = kernel
+        .poll_fds("other-driver", pid, vec![PollFd::new(read_fd, POLLIN)], 0)
+        .expect_err("foreign driver should not poll shell-owned process");
+
+    assert_eq!(error.code(), "EPERM");
+}
+
+#[test]
+fn poll_targets_rejects_socket_owned_by_another_process() {
+    let mut kernel = kernel_vm("vm-poll-socket-owner");
+    let socket_owner_pid = spawn_shell(&mut kernel);
+    let polling_pid = spawn_shell(&mut kernel);
+    let socket_id = kernel
+        .socket_create("shell", socket_owner_pid, SocketSpec::tcp())
+        .expect("create socket");
+
+    let error = kernel
+        .poll_targets(
+            "shell",
+            polling_pid,
+            vec![PollTargetEntry::socket(socket_id, POLLIN)],
+            0,
+        )
+        .expect_err("process should not poll a socket it does not own");
+
+    assert_eq!(error.code(), "EPERM");
+}
