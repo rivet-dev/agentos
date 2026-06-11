@@ -1,12 +1,12 @@
 mod support;
 
 use agent_os_sidecar::protocol::{
-    AuthenticateRequest, ConfigureVmRequest, CreateVmRequest, EventPayload, ExecuteRequest,
-    GuestFilesystemCallRequest, GuestFilesystemOperation, GuestRuntimeKind, MountDescriptor,
-    MountPluginDescriptor, NativeFrameCodec, OpenSessionRequest, OwnershipScope, PermissionsPolicy,
-    ProtocolFrame, RequestFrame, RequestId, RequestPayload, ResponseFrame, ResponsePayload,
-    SidecarPlacement, SidecarRequestFrame, SidecarResponseFrame, SidecarResponsePayload,
-    SnapshotRootFilesystemRequest, StreamChannel,
+    AuthenticateRequest, ConfigureVmRequest, CreateVmRequest, DEFAULT_MAX_FRAME_BYTES,
+    EventPayload, ExecuteRequest, GuestFilesystemCallRequest, GuestFilesystemOperation,
+    GuestRuntimeKind, MountDescriptor, MountPluginDescriptor, NativeFrameCodec, OpenSessionRequest,
+    OwnershipScope, PermissionsPolicy, ProtocolFrame, RequestFrame, RequestId, RequestPayload,
+    ResponseFrame, ResponsePayload, SidecarPlacement, SidecarRequestFrame, SidecarResponseFrame,
+    SidecarResponsePayload, SnapshotRootFilesystemRequest, StreamChannel,
 };
 use base64::Engine;
 use serde_json::json;
@@ -18,6 +18,8 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 use support::temp_dir;
 
+const MAX_STDIO_BINARY_PROCESS_STREAM_BYTES: usize = DEFAULT_MAX_FRAME_BYTES;
+
 fn send_request(stdin: &mut ChildStdin, codec: &NativeFrameCodec, request: RequestFrame) {
     let encoded = codec
         .encode(&ProtocolFrame::Request(request))
@@ -26,10 +28,20 @@ fn send_request(stdin: &mut ChildStdin, codec: &NativeFrameCodec, request: Reque
     stdin.flush().expect("flush request");
 }
 
+fn declared_frame_payload_len(prefix: &[u8; 4], codec: &NativeFrameCodec) -> usize {
+    let declared = u32::from_be_bytes(*prefix) as usize;
+    assert!(
+        declared <= codec.max_frame_bytes(),
+        "declared frame payload {declared} exceeds {} byte limit",
+        codec.max_frame_bytes()
+    );
+    declared
+}
+
 fn read_frame(stdout: &mut ChildStdout, codec: &NativeFrameCodec) -> ProtocolFrame {
     let mut prefix = [0u8; 4];
     stdout.read_exact(&mut prefix).expect("read length prefix");
-    let declared = u32::from_be_bytes(prefix) as usize;
+    let declared = declared_frame_payload_len(&prefix, codec);
     let mut bytes = Vec::with_capacity(4 + declared);
     bytes.extend_from_slice(&prefix);
     bytes.resize(4 + declared, 0);
@@ -163,14 +175,26 @@ fn js_bridge_root_response(
     }
 }
 
+fn append_process_stream_chunk(stream: &mut Vec<u8>, chunk: &[u8], stream_name: &str) {
+    assert!(
+        stream.len().saturating_add(chunk.len()) <= MAX_STDIO_BINARY_PROCESS_STREAM_BYTES,
+        "{stream_name} exceeded {MAX_STDIO_BINARY_PROCESS_STREAM_BYTES} bytes"
+    );
+    stream.extend_from_slice(chunk);
+}
+
+fn process_stream_to_string(stream: &[u8]) -> String {
+    String::from_utf8_lossy(stream).into_owned()
+}
+
 fn collect_process_events(
     stdout: &mut ChildStdout,
     codec: &NativeFrameCodec,
     process_id: &str,
 ) -> (String, String, i32) {
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut stdout_text = String::new();
-    let mut stderr_text = String::new();
+    let mut stdout_text = Vec::new();
+    let mut stderr_text = Vec::new();
 
     loop {
         assert!(
@@ -182,15 +206,19 @@ fn collect_process_events(
                 EventPayload::ProcessOutput(output) if output.process_id == process_id => {
                     match output.channel {
                         StreamChannel::Stdout => {
-                            stdout_text.push_str(&String::from_utf8_lossy(&output.chunk));
+                            append_process_stream_chunk(&mut stdout_text, &output.chunk, "stdout");
                         }
                         StreamChannel::Stderr => {
-                            stderr_text.push_str(&String::from_utf8_lossy(&output.chunk));
+                            append_process_stream_chunk(&mut stderr_text, &output.chunk, "stderr");
                         }
                     }
                 }
                 EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
-                    return (stdout_text, stderr_text, exited.exit_code);
+                    return (
+                        process_stream_to_string(&stdout_text),
+                        process_stream_to_string(&stderr_text),
+                        exited.exit_code,
+                    );
                 }
                 _ => {}
             },
@@ -240,6 +268,38 @@ fn spawn_sidecar_binary() -> (Child, ChildStdin, ChildStdout) {
 fn write_script(root: &Path) {
     fs::write(root.join("entry.mjs"), "console.log('stdio-binary-ok');\n")
         .expect("write test entrypoint");
+}
+
+#[test]
+fn stdio_binary_test_helpers_bound_frame_and_stream_buffers() {
+    let codec = NativeFrameCodec::default();
+    let max_prefix = (codec.max_frame_bytes() as u32).to_be_bytes();
+    assert_eq!(
+        declared_frame_payload_len(&max_prefix, &codec),
+        codec.max_frame_bytes()
+    );
+
+    let oversized_prefix = ((codec.max_frame_bytes() + 1) as u32).to_be_bytes();
+    let oversized_frame = std::panic::catch_unwind(|| {
+        declared_frame_payload_len(&oversized_prefix, &codec);
+    });
+    assert!(
+        oversized_frame.is_err(),
+        "oversized frame payload should fail before allocation"
+    );
+
+    let mut stream = Vec::new();
+    append_process_stream_chunk(&mut stream, &[b'a'; 16], "stdout");
+    assert_eq!(stream.len(), 16);
+
+    let oversized_stream = std::panic::catch_unwind(|| {
+        let mut stream = vec![b'a'; MAX_STDIO_BINARY_PROCESS_STREAM_BYTES];
+        append_process_stream_chunk(&mut stream, b"!", "stdout");
+    });
+    assert!(
+        oversized_stream.is_err(),
+        "oversized process stream should fail before appending"
+    );
 }
 
 #[test]
@@ -630,10 +690,12 @@ fn native_sidecar_binary_runs_the_framed_protocol_over_stdio() {
     let snapshot = recv_response(&mut stdout, &codec, 13, &mut buffered_events);
     match snapshot.payload {
         ResponsePayload::RootFilesystemSnapshot(response) => {
-            assert!(response
-                .entries
-                .iter()
-                .any(|entry| entry.path == "/workspace/note.txt"));
+            assert!(
+                response
+                    .entries
+                    .iter()
+                    .any(|entry| entry.path == "/workspace/note.txt")
+            );
         }
         other => panic!("unexpected snapshot response: {other:?}"),
     }
