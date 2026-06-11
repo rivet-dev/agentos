@@ -1,15 +1,16 @@
 use agent_os_sidecar::protocol::{
-    validate_frame, AuthenticateRequest, AuthenticatedResponse, CreateVmRequest, EventFrame,
+    AuthenticateRequest, AuthenticatedResponse, CreateVmRequest, EventFrame,
     GetZombieTimerCountRequest, GuestFilesystemCallRequest, GuestFilesystemOperation,
     GuestRuntimeKind, NativeFrameCodec, NativePayloadCodec, OpenSessionRequest, OwnershipScope,
     PatternPermissionScope, PermissionMode, PermissionsPolicy, ProcessStartedResponse,
     ProjectedModuleDescriptor, ProtocolCodecError, ProtocolFrame, RequestFrame, RequestPayload,
     ResponseFrame, ResponsePayload, ResponseTracker, ResponseTrackerError,
     RootFilesystemDescriptor, RootFilesystemEntry, RootFilesystemEntryKind,
-    RootFilesystemLowerDescriptor, SidecarPlacement, SidecarRequestFrame, SidecarRequestPayload,
-    SidecarResponseFrame, SidecarResponsePayload, SidecarResponseTracker,
-    SidecarResponseTrackerError, SoftwareDescriptor, StructuredEvent, ToolInvocationRequest,
-    ToolInvocationResultResponse, VmLifecycleEvent, VmLifecycleState, WriteStdinRequest,
+    RootFilesystemLowerDescriptor, SidecarPermissionResultResponse, SidecarPlacement,
+    SidecarRequestFrame, SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload,
+    SidecarResponseTracker, SidecarResponseTrackerError, SoftwareDescriptor, StructuredEvent,
+    ToolInvocationRequest, ToolInvocationResultResponse, VmLifecycleEvent, VmLifecycleState,
+    WriteStdinRequest, validate_frame,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -368,6 +369,17 @@ fn codec_rejects_frames_over_the_configured_limit() {
         codec.encode(&frame),
         Err(ProtocolCodecError::FrameTooLarge { .. })
     ));
+
+    let oversized_declared_len = 65_u32;
+    let mut encoded = oversized_declared_len.to_be_bytes().to_vec();
+    encoded.extend(std::iter::repeat_n(0_u8, oversized_declared_len as usize));
+    assert_eq!(
+        codec.decode(&encoded),
+        Err(ProtocolCodecError::FrameTooLarge {
+            size: oversized_declared_len as usize,
+            max: 64,
+        })
+    );
 }
 
 #[test]
@@ -443,6 +455,15 @@ fn response_tracker_rejects_kind_and_ownership_mismatches() {
             actual: Box::new(OwnershipScope::session("conn-1", "session-2")),
         }),
     );
+    tracker
+        .accept_response(&ResponseFrame::new(
+            90,
+            OwnershipScope::session("conn-1", "session-1"),
+            ResponsePayload::VmCreated(agent_os_sidecar::protocol::VmCreatedResponse {
+                vm_id: "vm-1".to_string(),
+            }),
+        ))
+        .expect("valid response should still be pending after ownership mismatch");
 
     let mut tracker = ResponseTracker::default();
     tracker
@@ -465,6 +486,15 @@ fn response_tracker_rejects_kind_and_ownership_mismatches() {
             actual: "authenticated".to_string(),
         }),
     );
+    tracker
+        .accept_response(&ResponseFrame::new(
+            90,
+            OwnershipScope::session("conn-1", "session-1"),
+            ResponsePayload::VmCreated(agent_os_sidecar::protocol::VmCreatedResponse {
+                vm_id: "vm-1".to_string(),
+            }),
+        ))
+        .expect("valid response should still be pending after kind mismatch");
 }
 
 #[test]
@@ -572,7 +602,139 @@ fn sidecar_response_tracker_enforces_request_response_correlation() {
 }
 
 #[test]
+fn sidecar_response_tracker_keeps_pending_entries_after_mismatches() {
+    let request = SidecarRequestFrame::new(
+        -10,
+        OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+        SidecarRequestPayload::ToolInvocation(ToolInvocationRequest {
+            invocation_id: "invoke-10".to_string(),
+            tool_key: "toolkit:tool".to_string(),
+            input: json!({ "value": 10 }),
+            timeout_ms: 1_000,
+        }),
+    );
+
+    let mut tracker = SidecarResponseTracker::default();
+    tracker
+        .register_request(&request)
+        .expect("register sidecar request");
+    assert_eq!(
+        tracker.accept_response(&SidecarResponseFrame::new(
+            -10,
+            OwnershipScope::vm("conn-1", "session-1", "vm-2"),
+            SidecarResponsePayload::ToolInvocationResult(ToolInvocationResultResponse {
+                invocation_id: "invoke-10".to_string(),
+                result: Some(json!({ "ok": true })),
+                error: None,
+            }),
+        )),
+        Err(SidecarResponseTrackerError::OwnershipMismatch {
+            request_id: -10,
+            expected: Box::new(OwnershipScope::vm("conn-1", "session-1", "vm-1")),
+            actual: Box::new(OwnershipScope::vm("conn-1", "session-1", "vm-2")),
+        }),
+    );
+    tracker
+        .accept_response(&SidecarResponseFrame::new(
+            -10,
+            OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+            SidecarResponsePayload::ToolInvocationResult(ToolInvocationResultResponse {
+                invocation_id: "invoke-10".to_string(),
+                result: Some(json!({ "ok": true })),
+                error: None,
+            }),
+        ))
+        .expect("valid sidecar response should still be pending after ownership mismatch");
+
+    let mut tracker = SidecarResponseTracker::default();
+    tracker
+        .register_request(&request)
+        .expect("register sidecar request again");
+    assert_eq!(
+        tracker.accept_response(&SidecarResponseFrame::new(
+            -10,
+            OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+            SidecarResponsePayload::PermissionRequestResult(SidecarPermissionResultResponse {
+                permission_id: "perm-10".to_string(),
+                reply: Some("allow".to_string()),
+                error: None,
+            }),
+        )),
+        Err(SidecarResponseTrackerError::ResponseKindMismatch {
+            request_id: -10,
+            expected: "tool_invocation_result".to_string(),
+            actual: "permission_request_result".to_string(),
+        }),
+    );
+    tracker
+        .accept_response(&SidecarResponseFrame::new(
+            -10,
+            OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+            SidecarResponsePayload::ToolInvocationResult(ToolInvocationResultResponse {
+                invocation_id: "invoke-10".to_string(),
+                result: Some(json!({ "ok": true })),
+                error: None,
+            }),
+        ))
+        .expect("valid sidecar response should still be pending after kind mismatch");
+}
+
+#[test]
+fn sidecar_response_tracker_caps_completed_entries() {
+    let mut tracker = SidecarResponseTracker::with_completed_cap(3);
+
+    for sequence in 1..=10 {
+        let request_id = -sequence;
+        let request = SidecarRequestFrame::new(
+            request_id,
+            OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+            SidecarRequestPayload::ToolInvocation(ToolInvocationRequest {
+                invocation_id: format!("invoke-{sequence}"),
+                tool_key: "toolkit:tool".to_string(),
+                input: json!({ "value": sequence }),
+                timeout_ms: 1_000,
+            }),
+        );
+        tracker
+            .register_request(&request)
+            .expect("register sidecar request");
+        tracker
+            .accept_response(&SidecarResponseFrame::new(
+                request_id,
+                OwnershipScope::vm("conn-1", "session-1", "vm-1"),
+                SidecarResponsePayload::ToolInvocationResult(ToolInvocationResultResponse {
+                    invocation_id: format!("invoke-{sequence}"),
+                    result: Some(json!({ "ok": true })),
+                    error: None,
+                }),
+            ))
+            .expect("accept sidecar response");
+
+        assert!(
+            tracker.completed_count() <= 3,
+            "sidecar completed set should stay bounded"
+        );
+    }
+
+    assert_eq!(tracker.completed_count(), 3);
+}
+
+#[test]
 fn codec_rejects_request_id_direction_mismatches() {
+    let zero_request = ProtocolFrame::Request(RequestFrame::new(
+        0,
+        OwnershipScope::connection("conn-1"),
+        RequestPayload::Authenticate(AuthenticateRequest {
+            client_name: "packages/core".to_string(),
+            auth_token: "signed-token".to_string(),
+            bridge_version: agent_os_bridge::bridge_contract().version,
+        }),
+    ));
+    assert_eq!(
+        validate_frame(&zero_request),
+        Err(ProtocolCodecError::InvalidRequestId)
+    );
+
     let host_response = ProtocolFrame::Response(ResponseFrame::new(
         -1,
         OwnershipScope::connection("conn-1"),

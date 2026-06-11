@@ -2484,7 +2484,7 @@ impl ResponseTracker {
             });
         }
 
-        let pending = self.pending.remove(&response.request_id).ok_or(
+        let pending = self.pending.get(&response.request_id).ok_or(
             ResponseTrackerError::UnmatchedResponse {
                 request_id: response.request_id,
             },
@@ -2493,7 +2493,7 @@ impl ResponseTracker {
         if pending.ownership != response.ownership {
             return Err(ResponseTrackerError::OwnershipMismatch {
                 request_id: response.request_id,
-                expected: Box::new(pending.ownership),
+                expected: Box::new(pending.ownership.clone()),
                 actual: Box::new(response.ownership.clone()),
             });
         }
@@ -2506,6 +2506,9 @@ impl ResponseTracker {
             });
         }
 
+        self.pending
+            .remove(&response.request_id)
+            .expect("pending response should still exist after validation");
         self.completed.insert(response.request_id);
         self.completed_order.push_back(response.request_id);
         while self.completed.len() > self.completed_cap {
@@ -2573,7 +2576,7 @@ impl SidecarResponseTracker {
             });
         }
 
-        let pending = self.pending.remove(&response.request_id).ok_or(
+        let pending = self.pending.get(&response.request_id).ok_or(
             SidecarResponseTrackerError::UnmatchedResponse {
                 request_id: response.request_id,
             },
@@ -2582,7 +2585,7 @@ impl SidecarResponseTracker {
         if pending.ownership != response.ownership {
             return Err(SidecarResponseTrackerError::OwnershipMismatch {
                 request_id: response.request_id,
-                expected: Box::new(pending.ownership),
+                expected: Box::new(pending.ownership.clone()),
                 actual: Box::new(response.ownership.clone()),
             });
         }
@@ -2595,6 +2598,9 @@ impl SidecarResponseTracker {
             });
         }
 
+        self.pending
+            .remove(&response.request_id)
+            .expect("pending sidecar response should still exist after validation");
         self.completed.insert(response.request_id);
         self.completed_order.push_back(response.request_id);
         while self.completed.len() > self.completed_cap {
