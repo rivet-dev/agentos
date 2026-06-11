@@ -2,12 +2,80 @@ use agent_os_v8_runtime::bridge::PendingPromises;
 use agent_os_v8_runtime::execution;
 use agent_os_v8_runtime::isolate;
 use agent_os_v8_runtime::runtime_protocol::{SessionMessage, StreamEvent};
-use agent_os_v8_runtime::session::{run_event_loop, EventLoopStatus, SessionCommand};
+use agent_os_v8_runtime::session::{EventLoopStatus, SessionCommand, run_event_loop};
+use crossbeam_channel::Receiver;
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-const WASM_FORTY_TWO_BYTES: &str =
-    "0,97,115,109,1,0,0,0,1,5,1,96,0,1,127,3,2,1,0,7,12,1,8,102,111,114,116,121,84,119,111,0,0,10,6,1,4,0,65,42,11";
+const WASM_FORTY_TWO_BYTES: &str = "0,97,115,109,1,0,0,0,1,5,1,96,0,1,127,3,2,1,0,7,12,1,8,102,111,114,116,121,84,119,111,0,0,10,6,1,4,0,65,42,11";
+const EVENT_LOOP_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(6);
+
+struct EventLoopWatchdog {
+    cancel_tx: Option<crossbeam_channel::Sender<()>>,
+    join_handle: Option<JoinHandle<()>>,
+}
+
+impl EventLoopWatchdog {
+    fn start() -> (Self, Receiver<()>) {
+        let (abort_tx, abort_rx) = crossbeam_channel::bounded::<()>(0);
+        let (cancel_tx, cancel_rx) = crossbeam_channel::bounded::<()>(0);
+        let join_handle = thread::Builder::new()
+            .name("event-loop-test-watchdog".into())
+            .spawn(move || {
+                crossbeam_channel::select! {
+                    recv(cancel_rx) -> _ => {}
+                    default(EVENT_LOOP_WATCHDOG_TIMEOUT) => {
+                        drop(abort_tx);
+                    }
+                }
+            })
+            .expect("watchdog thread should start");
+
+        (
+            Self {
+                cancel_tx: Some(cancel_tx),
+                join_handle: Some(join_handle),
+            },
+            abort_rx,
+        )
+    }
+
+    fn cancel(mut self) {
+        self.cancel_tx.take();
+        if let Some(join_handle) = self.join_handle.take() {
+            join_handle.join().expect("watchdog thread should join");
+        }
+    }
+}
+
+impl Drop for EventLoopWatchdog {
+    fn drop(&mut self) {
+        self.cancel_tx.take();
+        if let Some(join_handle) = self.join_handle.take() {
+            join_handle.join().expect("watchdog thread should join");
+        }
+    }
+}
+
+fn run_event_loop_with_watchdog(
+    scope: &mut v8::HandleScope,
+    rx: &Receiver<SessionCommand>,
+    pending: &PendingPromises,
+) -> EventLoopStatus {
+    let (watchdog, abort_rx) = EventLoopWatchdog::start();
+    let status = run_event_loop(scope, rx, pending, Some(&abort_rx), None);
+    watchdog.cancel();
+    status
+}
+
+fn assert_event_loop_watchdog_did_not_fire(status: &EventLoopStatus) {
+    assert!(
+        !matches!(status, EventLoopStatus::Terminated),
+        "event loop watchdog fired after {:?}",
+        EVENT_LOOP_WATCHDOG_TIMEOUT
+    );
+}
 
 fn event_loop_pumps_v8_platform_tasks_for_native_wasm_promises() {
     isolate::init_v8_platform();
@@ -42,7 +110,8 @@ fn event_loop_pumps_v8_platform_tasks_for_native_wasm_promises() {
         "expected pending script evaluation for native wasm promise"
     );
 
-    let status = run_event_loop(scope, &rx, &pending, None, None);
+    let status = run_event_loop_with_watchdog(scope, &rx, &pending);
+    assert_event_loop_watchdog_did_not_fire(&status);
     assert!(
         matches!(status, EventLoopStatus::Completed),
         "unexpected event loop status: {:?}",
@@ -104,7 +173,8 @@ fn event_loop_completes_native_async_wasm_instantiate_promises() {
         "expected pending script evaluation for native wasm instantiate promise"
     );
 
-    let status = run_event_loop(scope, &rx, &pending, None, None);
+    let status = run_event_loop_with_watchdog(scope, &rx, &pending);
+    assert_event_loop_watchdog_did_not_fire(&status);
     assert!(
         matches!(status, EventLoopStatus::Completed),
         "unexpected event loop status: {:?}",
@@ -171,7 +241,8 @@ fn event_loop_surfaces_native_async_wasm_compile_errors_without_hanging() {
         "expected pending script evaluation for native wasm instantiate rejection"
     );
 
-    let status = run_event_loop(scope, &rx, &pending, None, None);
+    let status = run_event_loop_with_watchdog(scope, &rx, &pending);
+    assert_event_loop_watchdog_did_not_fire(&status);
     assert!(
         matches!(status, EventLoopStatus::Completed),
         "unexpected event loop status: {:?}",
@@ -244,11 +315,12 @@ fn event_loop_waits_for_refed_guest_timers_between_interval_ticks() {
     });
 
     let started = Instant::now();
-    let status = run_event_loop(scope, &rx, &pending, None, None);
+    let status = run_event_loop_with_watchdog(scope, &rx, &pending);
     let elapsed = started.elapsed();
 
     timer_thread.join().unwrap();
 
+    assert_event_loop_watchdog_did_not_fire(&status);
     assert!(
         matches!(status, EventLoopStatus::Completed),
         "unexpected event loop status: {:?}",
