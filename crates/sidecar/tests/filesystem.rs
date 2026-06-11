@@ -12,7 +12,7 @@ mod host_dir {
         use agent_os_kernel::vfs::{
             MemoryFileSystem, VirtualFileSystem, VirtualTimeSpec, VirtualUtimeSpec,
         };
-        use nix::sys::stat::{utimensat, UtimensatFlags};
+        use nix::sys::stat::{UtimensatFlags, utimensat};
         use nix::sys::time::{TimeSpec, TimeValLike};
         use std::fs;
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -359,6 +359,7 @@ mod shadow_root {
     use nix::fcntl::{Flock, FlockArg};
 
     const TEST_AUTH_TOKEN: &str = "sidecar-test-token";
+    const PROCESS_OUTPUT_BYTE_LIMIT: usize = 1024 * 1024;
 
     fn request(
         request_id: i64,
@@ -658,10 +659,20 @@ mod shadow_root {
                 EventPayload::ProcessOutput(output) if output.process_id == process_id => {
                     match output.channel {
                         agent_os_sidecar::protocol::StreamChannel::Stdout => {
-                            stdout.push_str(&String::from_utf8_lossy(&output.chunk));
+                            append_process_output(
+                                &mut stdout,
+                                &output.chunk,
+                                &output.process_id,
+                                "stdout",
+                            );
                         }
                         agent_os_sidecar::protocol::StreamChannel::Stderr => {
-                            stderr.push_str(&String::from_utf8_lossy(&output.chunk));
+                            append_process_output(
+                                &mut stderr,
+                                &output.chunk,
+                                &output.process_id,
+                                "stderr",
+                            );
                         }
                     }
                 }
@@ -674,6 +685,15 @@ mod shadow_root {
         }
 
         (stdout, stderr, exit_code)
+    }
+
+    fn append_process_output(buffer: &mut String, chunk: &[u8], process_id: &str, channel: &str) {
+        let text = String::from_utf8_lossy(chunk);
+        assert!(
+            buffer.len().saturating_add(text.len()) <= PROCESS_OUTPUT_BYTE_LIMIT,
+            "filesystem process {process_id} exceeded {PROCESS_OUTPUT_BYTE_LIMIT} bytes on {channel}"
+        );
+        buffer.push_str(&text);
     }
 
     fn dispose_vm_and_close_session(
