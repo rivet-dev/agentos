@@ -153,3 +153,66 @@ fn tcp_listener_requires_bind_and_enforces_backlog_capacity() {
         .expect_err("second queued connection should exceed backlog");
     assert_eq!(backlog_error.code(), "EAGAIN");
 }
+
+#[test]
+fn tcp_listener_close_removes_pending_accepted_socket() {
+    let mut kernel = new_kernel("vm-tcp-listener-close-pending");
+    let server = spawn_shell(&mut kernel);
+    let client = spawn_shell(&mut kernel);
+    let listener = kernel
+        .socket_create("shell", server.pid(), SocketSpec::tcp())
+        .expect("create listener socket");
+    kernel
+        .socket_bind_inet(
+            "shell",
+            server.pid(),
+            listener,
+            InetSocketAddress::new("127.0.0.1", 43113),
+        )
+        .expect("bind listener");
+    kernel
+        .socket_listen("shell", server.pid(), listener, 1)
+        .expect("listen");
+
+    let client_socket = kernel
+        .socket_create("shell", client.pid(), SocketSpec::tcp())
+        .expect("create client socket");
+    kernel
+        .socket_connect_inet_loopback(
+            "shell",
+            client.pid(),
+            client_socket,
+            InetSocketAddress::new("127.0.0.1", 43113),
+        )
+        .expect("connect client to listener");
+
+    assert_eq!(
+        kernel
+            .socket_get(listener)
+            .expect("listener with pending accept")
+            .pending_accept_count(),
+        1
+    );
+    let snapshot = kernel.resource_snapshot();
+    assert_eq!(snapshot.sockets, 3);
+    assert_eq!(snapshot.socket_listeners, 1);
+    assert_eq!(snapshot.socket_connections, 2);
+
+    kernel
+        .socket_close("shell", server.pid(), listener)
+        .expect("close listener");
+
+    let snapshot = kernel.resource_snapshot();
+    assert_eq!(snapshot.sockets, 1);
+    assert_eq!(snapshot.socket_listeners, 0);
+    assert_eq!(snapshot.socket_connections, 1);
+    let client_record = kernel
+        .socket_get(client_socket)
+        .expect("client socket should remain");
+    assert_eq!(client_record.peer_socket_id(), None);
+    assert!(client_record.peer_write_shutdown());
+    let error = kernel
+        .socket_accept("shell", server.pid(), listener)
+        .expect_err("closed listener should not accept");
+    assert_eq!(error.code(), "ENOENT");
+}
