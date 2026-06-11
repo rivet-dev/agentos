@@ -4,6 +4,7 @@ use agent_os_kernel::mount_plugin::{
 use agent_os_kernel::mount_table::{
     MountedFileSystem, MountedVirtualFileSystem, ReadOnlyFileSystem,
 };
+use agent_os_kernel::resource_accounting::DEFAULT_MAX_PREAD_BYTES;
 use agent_os_kernel::vfs::{
     normalize_path, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
     VirtualTimeSpec, VirtualUtimeSpec,
@@ -21,6 +22,8 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::{FileExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+
+const MAX_HOST_DIR_READ_BYTES: usize = DEFAULT_MAX_PREAD_BYTES;
 
 #[derive(Debug)]
 struct AnchoredFd {
@@ -55,7 +58,20 @@ struct HostDirMountConfig {
 #[derive(Debug)]
 pub(crate) struct HostDirMountPlugin;
 
-impl<Context> FileSystemPluginFactory<Context> for HostDirMountPlugin {
+pub(crate) trait HostDirReadLimitContext {
+    fn host_dir_max_read_bytes(&self) -> Option<usize>;
+}
+
+impl HostDirReadLimitContext for () {
+    fn host_dir_max_read_bytes(&self) -> Option<usize> {
+        Some(MAX_HOST_DIR_READ_BYTES)
+    }
+}
+
+impl<Context> FileSystemPluginFactory<Context> for HostDirMountPlugin
+where
+    Context: HostDirReadLimitContext,
+{
     fn plugin_id(&self) -> &'static str {
         "host_dir"
     }
@@ -64,9 +80,20 @@ impl<Context> FileSystemPluginFactory<Context> for HostDirMountPlugin {
         &self,
         request: OpenFileSystemPluginRequest<'_, Context>,
     ) -> Result<Box<dyn MountedFileSystem>, PluginError> {
+        let max_read_bytes = request.context.host_dir_max_read_bytes();
+        self.open_with_read_limit(request, max_read_bytes)
+    }
+}
+
+impl HostDirMountPlugin {
+    fn open_with_read_limit<Context>(
+        &self,
+        request: OpenFileSystemPluginRequest<'_, Context>,
+        max_read_bytes: Option<usize>,
+    ) -> Result<Box<dyn MountedFileSystem>, PluginError> {
         let config: HostDirMountConfig = serde_json::from_value(request.config.clone())
             .map_err(|error| PluginError::invalid_input(error.to_string()))?;
-        let filesystem = HostDirFilesystem::new(&config.host_path)?;
+        let filesystem = HostDirFilesystem::new_with_read_limit(&config.host_path, max_read_bytes)?;
         let mounted = MountedVirtualFileSystem::new(filesystem);
 
         if config.read_only.unwrap_or(false) {
@@ -81,10 +108,19 @@ impl<Context> FileSystemPluginFactory<Context> for HostDirMountPlugin {
 pub(crate) struct HostDirFilesystem {
     host_root: PathBuf,
     host_root_dir: Arc<File>,
+    max_read_bytes: Option<usize>,
 }
 
 impl HostDirFilesystem {
+    #[allow(dead_code)]
     pub(crate) fn new(host_path: impl AsRef<Path>) -> VfsResult<Self> {
+        Self::new_with_read_limit(host_path, Some(MAX_HOST_DIR_READ_BYTES))
+    }
+
+    pub(crate) fn new_with_read_limit(
+        host_path: impl AsRef<Path>,
+        max_read_bytes: Option<usize>,
+    ) -> VfsResult<Self> {
         let canonical_root = fs::canonicalize(host_path.as_ref())
             .map_err(|error| io_error_to_vfs("open", "/", error))?;
         let metadata =
@@ -104,6 +140,7 @@ impl HostDirFilesystem {
             host_root_dir: Arc::new(
                 File::open(&canonical_root).map_err(|error| io_error_to_vfs("open", "/", error))?,
             ),
+            max_read_bytes,
         })
     }
 
@@ -470,6 +507,54 @@ impl HostDirFilesystem {
         Ok(())
     }
 
+    fn check_read_length(&self, path: &str, length: usize) -> VfsResult<()> {
+        if let Some(limit) = self.max_read_bytes {
+            if length <= limit {
+                return Ok(());
+            }
+
+            return Err(VfsError::new(
+                "EINVAL",
+                format!("read length {length} exceeds host_dir limit {limit}: {path}"),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn check_full_read_metadata(&self, path: &str, size: u64) -> VfsResult<()> {
+        if let Some(limit) = self.max_read_bytes {
+            if size <= limit as u64 {
+                return Ok(());
+            }
+
+            return Err(VfsError::new(
+                "EINVAL",
+                format!("file size {size} exceeds host_dir read limit {limit}: {path}"),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn read_to_end_bounded(&self, file: &mut File, path: &str) -> VfsResult<Vec<u8>> {
+        let mut buffer = Vec::new();
+        match self.max_read_bytes {
+            Some(limit) => {
+                Read::by_ref(file)
+                    .take((limit as u64).saturating_add(1))
+                    .read_to_end(&mut buffer)
+                    .map_err(|error| io_error_to_vfs("open", path, error))?;
+            }
+            None => {
+                file.read_to_end(&mut buffer)
+                    .map_err(|error| io_error_to_vfs("open", path, error))?;
+            }
+        }
+        self.check_read_length(path, buffer.len())?;
+        Ok(buffer)
+    }
+
     fn write_file_with_creation_mode(
         &mut self,
         path: &str,
@@ -525,10 +610,13 @@ impl VirtualFileSystem for HostDirFilesystem {
         let handle = self.open_beneath(&relative, OFlag::O_RDONLY, Mode::empty())?;
         let mut file =
             File::open(handle.proc_path()).map_err(|error| io_error_to_vfs("open", path, error))?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)
-            .map_err(|error| io_error_to_vfs("open", path, error))?;
-        Ok(buffer)
+        self.check_full_read_metadata(
+            path,
+            file.metadata()
+                .map_err(|error| io_error_to_vfs("open", path, error))?
+                .len(),
+        )?;
+        self.read_to_end_bounded(&mut file, path)
     }
 
     fn read_dir(&mut self, path: &str) -> VfsResult<Vec<String>> {
@@ -776,6 +864,7 @@ impl VirtualFileSystem for HostDirFilesystem {
     }
 
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
+        self.check_read_length(path, length)?;
         let (_, relative) = self.relative_virtual_path(path);
         let handle = self.open_beneath(&relative, OFlag::O_RDONLY, Mode::empty())?;
         let file =

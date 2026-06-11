@@ -314,6 +314,7 @@ where
         let mount_plugins = &self.mount_plugins;
         let bridge = self.bridge.clone();
         let vm = self.vms.get_mut(&vm_id).expect("owned VM should exist");
+        let max_pread_bytes = vm.kernel.resource_limits().max_pread_bytes;
         let original_permissions = vm.configuration.permissions.clone();
         let configured_permissions = payload
             .permissions
@@ -333,6 +334,7 @@ where
                 session_id: session_id.clone(),
                 vm_id: vm_id.clone(),
                 sidecar_requests: self.sidecar_requests.clone(),
+                max_pread_bytes,
             },
         )
         .and_then(|()| {
@@ -559,6 +561,7 @@ where
                     session_id: session_id.to_owned(),
                     vm_id: vm_id.to_owned(),
                     sidecar_requests: self.sidecar_requests.clone(),
+                    max_pread_bytes: vm.kernel.resource_limits().max_pread_bytes,
                 },
                 "dispose_vm",
                 true,

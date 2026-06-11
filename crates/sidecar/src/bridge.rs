@@ -1019,6 +1019,13 @@ pub(crate) struct MountPluginContext<B> {
     pub(crate) session_id: String,
     pub(crate) vm_id: String,
     pub(crate) sidecar_requests: SharedSidecarRequestClient,
+    pub(crate) max_pread_bytes: Option<usize>,
+}
+
+impl<B> crate::plugins::host_dir::HostDirReadLimitContext for MountPluginContext<B> {
+    fn host_dir_max_read_bytes(&self) -> Option<usize> {
+        self.max_pread_bytes
+    }
 }
 
 #[derive(Debug)]

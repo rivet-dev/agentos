@@ -1,4 +1,4 @@
-use crate::plugins::host_dir::HostDirFilesystem;
+use crate::plugins::host_dir::{HostDirFilesystem, HostDirReadLimitContext};
 
 use agent_os_kernel::mount_plugin::{
     FileSystemPluginFactory, OpenFileSystemPluginRequest, PluginError,
@@ -18,7 +18,10 @@ struct ModuleAccessMountConfig {
 #[derive(Debug)]
 pub(crate) struct ModuleAccessMountPlugin;
 
-impl<Context> FileSystemPluginFactory<Context> for ModuleAccessMountPlugin {
+impl<Context> FileSystemPluginFactory<Context> for ModuleAccessMountPlugin
+where
+    Context: HostDirReadLimitContext,
+{
     fn plugin_id(&self) -> &'static str {
         "module_access"
     }
@@ -30,8 +33,11 @@ impl<Context> FileSystemPluginFactory<Context> for ModuleAccessMountPlugin {
         let config: ModuleAccessMountConfig = serde_json::from_value(request.config.clone())
             .map_err(|error| PluginError::invalid_input(error.to_string()))?;
         validate_module_access_root(&config.host_path)?;
-        let filesystem = HostDirFilesystem::new(&config.host_path)
-            .map_err(|error| PluginError::invalid_input(error.to_string()))?;
+        let filesystem = HostDirFilesystem::new_with_read_limit(
+            &config.host_path,
+            request.context.host_dir_max_read_bytes(),
+        )
+        .map_err(|error| PluginError::invalid_input(error.to_string()))?;
         Ok(Box::new(ReadOnlyFileSystem::new(
             MountedVirtualFileSystem::new(filesystem),
         )))

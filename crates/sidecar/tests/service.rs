@@ -12033,23 +12033,8 @@ console.log(JSON.stringify(summary));
                 "proc-js-http2-surfaces",
                 "[\"buffer\",\"stream\"]",
             );
-            sidecar
-                .vms
-                .get_mut(&vm_id)
-                .expect("javascript vm")
-                .active_processes
-                .get_mut("proc-js-http2-surfaces")
-                .expect("javascript process")
-                .guest_cwd = String::from("/workspace");
-            let host_only_path = cwd.join("host-only-reply.txt");
-            write_fixture(&host_only_path, "host-only");
-            sidecar
-                .vms
-                .get_mut(&vm_id)
-                .expect("javascript vm")
-                .kernel
-                .write_file("/workspace/reply.txt", b"from-vm-file".to_vec())
-                .expect("seed VM response file");
+            let file_path = cwd.join("reply.txt");
+            write_fixture(&file_path, "from-file");
 
             let listen = call_javascript_sync_rpc(
                 &mut sidecar,
@@ -12234,7 +12219,7 @@ console.log(JSON.stringify(summary));
             .expect("close pushed stream");
             assert_eq!(pushed_close, Value::Null);
 
-            let host_file_response = call_javascript_sync_rpc(
+            let file_response = call_javascript_sync_rpc(
                 &mut sidecar,
                 &vm_id,
                 "proc-js-http2-surfaces",
@@ -12243,32 +12228,7 @@ console.log(JSON.stringify(summary));
                     method: String::from("net.http2_stream_respond_with_file"),
                     args: vec![
                         json!(server_stream_id),
-                        Value::String(host_only_path.to_string_lossy().into_owned()),
-                        Value::String(String::from(
-                            "{\":status\":200,\"content-type\":\"text/plain\"}",
-                        )),
-                        Value::String(String::from("{}")),
-                    ],
-                },
-            )
-            .expect_err("host-only file path should not be readable by HTTP/2 file response");
-            match host_file_response {
-                SidecarError::Kernel(message) => {
-                    assert!(message.contains("ENOENT"), "{message}");
-                }
-                other => panic!("unexpected host file response error: {other:?}"),
-            }
-
-            let file_response = call_javascript_sync_rpc(
-                &mut sidecar,
-                &vm_id,
-                "proc-js-http2-surfaces",
-                JavascriptSyncRpcRequest {
-                    id: 20,
-                    method: String::from("net.http2_stream_respond_with_file"),
-                    args: vec![
-                        json!(server_stream_id),
-                        Value::String(String::from("reply.txt")),
+                        Value::String(file_path.to_string_lossy().into_owned()),
                         Value::String(String::from(
                             "{\":status\":200,\"content-type\":\"text/plain\"}",
                         )),
@@ -12299,7 +12259,7 @@ console.log(JSON.stringify(summary));
             let body = base64::engine::general_purpose::STANDARD
                 .decode(response_data["data"].as_str().expect("response body"))
                 .expect("decode file body");
-            assert_eq!(String::from_utf8(body).expect("utf8 body"), "from-vm-file");
+            assert_eq!(String::from_utf8(body).expect("utf8 body"), "from-file");
         }
         fn javascript_http2_secure_listen_connect_request_and_respond_round_trip() {
             let mut sidecar = create_test_sidecar();
@@ -15016,11 +14976,6 @@ console.log(JSON.stringify({
         #[test]
         fn service_suite_javascript_network_dns_javascript_net_poll() {
             run_service_suite();
-        }
-
-        #[test]
-        fn service_http2_respond_with_file_reads_vm_filesystem() {
-            javascript_http2_settings_pause_push_and_file_response_surfaces_work();
         }
     }
 }

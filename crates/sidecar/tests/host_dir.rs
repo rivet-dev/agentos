@@ -2,7 +2,7 @@ mod host_dir {
     include!("../src/plugins/host_dir.rs");
 
     mod tests {
-        use super::{HostDirFilesystem, HostDirMountPlugin};
+        use super::{HostDirFilesystem, HostDirMountPlugin, MAX_HOST_DIR_READ_BYTES};
         use agent_os_kernel::mount_plugin::{FileSystemPluginFactory, OpenFileSystemPluginRequest};
         use agent_os_kernel::mount_table::MountedFileSystem;
         use agent_os_kernel::vfs::VirtualFileSystem;
@@ -110,6 +110,37 @@ mod host_dir {
 
             fs::remove_dir_all(host_dir).expect("remove temp dir");
             fs::remove_dir_all(outside_dir).expect("remove outside temp dir");
+        }
+
+        #[test]
+        fn filesystem_rejects_full_reads_above_host_dir_limit() {
+            let host_dir = temp_dir("agent-os-host-dir-plugin-full-read-limit");
+            let huge_file = fs::File::create(host_dir.join("huge.bin")).expect("create huge file");
+            huge_file
+                .set_len(MAX_HOST_DIR_READ_BYTES as u64 + 1)
+                .expect("make sparse huge file");
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            let error = filesystem
+                .read_file("/huge.bin")
+                .expect_err("full read should reject oversized host file");
+            assert_eq!(error.code(), "EINVAL");
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+        }
+
+        #[test]
+        fn filesystem_pread_rejects_lengths_above_host_dir_limit() {
+            let host_dir = temp_dir("agent-os-host-dir-plugin-pread-limit");
+            fs::write(host_dir.join("small.txt"), b"small").expect("seed host file");
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            let error = filesystem
+                .pread("/small.txt", 0, MAX_HOST_DIR_READ_BYTES + 1)
+                .expect_err("pread should reject oversized allocation");
+            assert_eq!(error.code(), "EINVAL");
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
         }
 
         #[test]
