@@ -229,24 +229,23 @@ impl MountInfo {
             // "man proc" for more details
             LINUX_MOUNTINFO => {
                 const FIELDS_OFFSET: usize = 6;
-                let after_fields = raw[FIELDS_OFFSET..]
+                let optional_fields = raw.get(FIELDS_OFFSET..)?;
+                let after_fields = optional_fields
                     .iter()
                     .position(|c| *c == b"-")
-                    .unwrap()
-                    + FIELDS_OFFSET
-                    + 1;
-                dev_name = String::from_utf8_lossy(raw[after_fields + 1]).to_string();
-                fs_type = String::from_utf8_lossy(raw[after_fields]).to_string();
-                mount_root = OsStr::from_bytes(raw[3]).to_owned();
-                mount_dir = OsString::from_vec(replace_special_chars(raw[4]));
-                mount_option = String::from_utf8_lossy(raw[5]).to_string();
+                    .and_then(|pos| pos.checked_add(FIELDS_OFFSET + 1))?;
+                dev_name = String::from_utf8_lossy(raw.get(after_fields + 1)?).to_string();
+                fs_type = String::from_utf8_lossy(raw.get(after_fields)?).to_string();
+                mount_root = OsStr::from_bytes(raw.get(3)?).to_owned();
+                mount_dir = OsString::from_vec(replace_special_chars(raw.get(4)?));
+                mount_option = String::from_utf8_lossy(raw.get(5)?).to_string();
             }
             LINUX_MTAB => {
-                dev_name = String::from_utf8_lossy(raw[0]).to_string();
-                fs_type = String::from_utf8_lossy(raw[2]).to_string();
+                dev_name = String::from_utf8_lossy(raw.first()?).to_string();
+                fs_type = String::from_utf8_lossy(raw.get(2)?).to_string();
                 mount_root = OsString::new();
-                mount_dir = OsString::from_vec(replace_special_chars(raw[1]));
-                mount_option = String::from_utf8_lossy(raw[3]).to_string();
+                mount_dir = OsString::from_vec(replace_special_chars(raw.get(1)?));
+                mount_option = String::from_utf8_lossy(raw.get(3)?).to_string();
             }
             _ => return None,
         }
@@ -1273,6 +1272,33 @@ mod tests {
             info.mount_dir,
             crate::os_str_from_bytes(b"/mnt/some- -dir-\xf3").unwrap()
         );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn test_mountinfo_malformed_rows_are_skipped() {
+        assert!(MountInfo::new(LINUX_MOUNTINFO, &[]).is_none());
+        assert!(MountInfo::new(
+            LINUX_MOUNTINFO,
+            &b"106 109 253:6 / /mnt rw,relatime"
+                .split(|c| *c == b' ')
+                .collect::<Vec<_>>(),
+        )
+        .is_none());
+        assert!(MountInfo::new(
+            LINUX_MOUNTINFO,
+            &b"106 109 253:6 / /mnt rw,relatime - ext4"
+                .split(|c| *c == b' ')
+                .collect::<Vec<_>>(),
+        )
+        .is_none());
+        assert!(MountInfo::new(
+            LINUX_MTAB,
+            &b"/dev/root / ext4"
+                .split(|c| *c == b' ')
+                .collect::<Vec<_>>(),
+        )
+        .is_none());
     }
 
     #[test]
