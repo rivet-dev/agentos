@@ -907,11 +907,34 @@ fn session_thread(
                         let mut timeout_guard = match cpu_time_limit_ms {
                             Some(ms) => {
                                 let handle = iso.thread_safe_handle();
-                                Some(crate::timeout::TimeoutGuard::with_execution_abort(
+                                match crate::timeout::TimeoutGuard::with_execution_abort(
                                     ms,
                                     handle,
                                     execution_abort.clone(),
-                                ))
+                                ) {
+                                    Ok(guard) => Some(guard),
+                                    Err(message) => {
+                                        let result_frame = RuntimeEvent::ExecutionResult {
+                                            session_id,
+                                            exit_code: 1,
+                                            exports: None,
+                                            error: Some(ExecutionErrorBin {
+                                                error_type: "Error".into(),
+                                                message,
+                                                stack: String::new(),
+                                                code:
+                                                    crate::timeout::TIMEOUT_GUARD_START_ERROR_CODE
+                                                        .into(),
+                                            }),
+                                        };
+                                        send_event_with_generation(
+                                            &event_tx,
+                                            output_generation,
+                                            result_frame,
+                                        );
+                                        continue;
+                                    }
+                                }
                             }
                             _ => None,
                         };

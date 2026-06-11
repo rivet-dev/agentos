@@ -1293,10 +1293,17 @@ fn vm_run_script_in_context<'s>(
     code: &str,
     options: &VmRunOptions,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let mut timeout_guard = options.timeout_ms.map(|timeout_ms| {
-        let (abort_tx, _abort_rx) = crossbeam_channel::bounded::<()>(0);
-        crate::timeout::TimeoutGuard::new(timeout_ms, isolate_handle.clone(), abort_tx)
-    });
+    let mut timeout_guard = match options.timeout_ms {
+        Some(timeout_ms) => {
+            let (abort_tx, _abort_rx) = crossbeam_channel::bounded::<()>(0);
+            Some(crate::timeout::TimeoutGuard::new(
+                timeout_ms,
+                isolate_handle.clone(),
+                abort_tx,
+            )?)
+        }
+        None => None,
+    };
 
     let mut result = None;
     let mut exception = None;

@@ -4175,7 +4175,8 @@ mod tests {
             let iso_handle = iso.thread_safe_handle();
 
             // Start a 50ms timeout
-            let mut guard = crate::timeout::TimeoutGuard::new(50, iso_handle, abort_tx);
+            let mut guard = crate::timeout::TimeoutGuard::new(50, iso_handle, abort_tx)
+                .expect("timeout guard should start");
 
             // Run an infinite loop — timeout should terminate it
             let (code, error) = {
@@ -4202,7 +4203,8 @@ mod tests {
             let iso_handle = iso.thread_safe_handle();
 
             // 5 second timeout — execution completes well before
-            let mut guard = crate::timeout::TimeoutGuard::new(5000, iso_handle, abort_tx);
+            let mut guard = crate::timeout::TimeoutGuard::new(5000, iso_handle, abort_tx)
+                .expect("timeout guard should start");
 
             let (code, error) = {
                 let scope = &mut v8::HandleScope::new(&mut iso);
@@ -4273,7 +4275,8 @@ mod tests {
             assert_eq!(pending.len(), 1, "should have 1 pending promise");
 
             // Start a 50ms timeout
-            let mut guard = crate::timeout::TimeoutGuard::new(50, iso_handle, abort_tx);
+            let mut guard = crate::timeout::TimeoutGuard::new(50, iso_handle, abort_tx)
+                .expect("timeout guard should start");
 
             // Run event loop — it should be terminated by the timeout
             // (no messages on cmd_rx, so it blocks until abort_rx fires)

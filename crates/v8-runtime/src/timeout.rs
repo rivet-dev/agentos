@@ -1,9 +1,11 @@
 // CPU timeout enforcement via dedicated timer thread
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+
+pub(crate) const TIMEOUT_GUARD_START_ERROR_CODE: &str = "ERR_TIMEOUT_GUARD_START";
 
 /// Guard for per-session CPU timeout enforcement.
 ///
@@ -29,7 +31,7 @@ impl TimeoutGuard {
         timeout_ms: u32,
         isolate_handle: v8::IsolateHandle,
         abort_tx: crossbeam_channel::Sender<()>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         Self::spawn(timeout_ms, isolate_handle, move || {
             drop(abort_tx);
         })
@@ -40,7 +42,7 @@ impl TimeoutGuard {
         timeout_ms: u32,
         isolate_handle: v8::IsolateHandle,
         execution_abort: crate::session::SharedExecutionAbort,
-    ) -> Self {
+    ) -> Result<Self, String> {
         Self::spawn(timeout_ms, isolate_handle, move || {
             crate::session::signal_execution_abort(
                 &execution_abort,
@@ -53,7 +55,7 @@ impl TimeoutGuard {
         timeout_ms: u32,
         isolate_handle: v8::IsolateHandle,
         on_timeout: impl FnOnce() + Send + 'static,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let (cancel_tx, cancel_rx) = crossbeam_channel::bounded::<()>(1);
         let fired = Arc::new(AtomicBool::new(false));
         let fired_clone = Arc::clone(&fired);
@@ -75,13 +77,15 @@ impl TimeoutGuard {
                     }
                 }
             })
-            .expect("failed to spawn timeout thread");
+            .map_err(|error| {
+                format!("{TIMEOUT_GUARD_START_ERROR_CODE}: failed to spawn timeout thread: {error}")
+            })?;
 
-        TimeoutGuard {
+        Ok(TimeoutGuard {
             cancel_tx: Some(cancel_tx),
             fired,
             join_handle: Some(handle),
-        }
+        })
     }
 
     /// Cancel the timeout (execution completed normally).
