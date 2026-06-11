@@ -118,29 +118,40 @@ impl TryFrom<BinaryFrame> for RuntimeCommand {
                 bridge_code,
                 post_restore_script,
                 user_code,
-            } => Ok(RuntimeCommand::SendToSession {
-                session_id,
-                message: SessionMessage::Execute {
-                    mode,
-                    file_path,
-                    bridge_code,
-                    post_restore_script,
-                    user_code,
-                },
-            }),
+            } => {
+                if mode > 1 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("unknown Execute mode: {mode}"),
+                    ));
+                }
+                Ok(RuntimeCommand::SendToSession {
+                    session_id,
+                    message: SessionMessage::Execute {
+                        mode,
+                        file_path,
+                        bridge_code,
+                        post_restore_script,
+                        user_code,
+                    },
+                })
+            }
             BinaryFrame::BridgeResponse {
                 session_id,
                 call_id,
                 status,
                 payload,
-            } => Ok(RuntimeCommand::SendToSession {
-                session_id,
-                message: SessionMessage::BridgeResponse(BridgeResponse {
-                    call_id,
-                    status,
-                    payload,
-                }),
-            }),
+            } => {
+                validate_bridge_response_status(status)?;
+                Ok(RuntimeCommand::SendToSession {
+                    session_id,
+                    message: SessionMessage::BridgeResponse(BridgeResponse {
+                        call_id,
+                        status,
+                        payload,
+                    }),
+                })
+            }
             BinaryFrame::StreamEvent {
                 session_id,
                 event_type,
@@ -219,9 +230,71 @@ impl From<RuntimeEvent> for BinaryFrame {
 }
 
 fn non_zero_option(value: u32) -> Option<u32> {
-    if value == 0 {
-        None
-    } else {
-        Some(value)
+    if value == 0 { None } else { Some(value) }
+}
+
+pub fn validate_bridge_response_status(status: u8) -> io::Result<()> {
+    if status <= 2 {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("unknown BridgeResponse status: {status}"),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_unknown_execute_mode() {
+        let err = RuntimeCommand::try_from(BinaryFrame::Execute {
+            session_id: "s".into(),
+            mode: 2,
+            file_path: "/app/main.mjs".into(),
+            bridge_code: String::new(),
+            post_restore_script: String::new(),
+            user_code: String::new(),
+        })
+        .expect_err("unknown execute mode should be rejected");
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("unknown Execute mode"));
+    }
+
+    #[test]
+    fn rejects_unknown_bridge_response_status() {
+        let err = RuntimeCommand::try_from(BinaryFrame::BridgeResponse {
+            session_id: "s".into(),
+            call_id: 1,
+            status: 3,
+            payload: Vec::new(),
+        })
+        .expect_err("unknown bridge response status should be rejected");
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("unknown BridgeResponse status"));
+    }
+
+    #[test]
+    fn accepts_known_bridge_response_statuses() {
+        for status in 0..=2 {
+            let command = RuntimeCommand::try_from(BinaryFrame::BridgeResponse {
+                session_id: "s".into(),
+                call_id: 1,
+                status,
+                payload: Vec::new(),
+            })
+            .expect("known bridge response status should be accepted");
+
+            assert!(matches!(
+                command,
+                RuntimeCommand::SendToSession {
+                    message: SessionMessage::BridgeResponse(BridgeResponse { status: s, .. }),
+                    ..
+                } if s == status
+            ));
+        }
     }
 }

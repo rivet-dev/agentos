@@ -11,6 +11,7 @@ use crate::host_call::CallIdRouter;
 use crate::ipc_binary::BinaryFrame;
 use crate::runtime_protocol::{
     BridgeResponse, RuntimeCommand, RuntimeEvent, SessionMessage, StreamEvent,
+    validate_bridge_response_status,
 };
 use crate::session::{RuntimeEventEnvelope, SessionManager};
 use crate::snapshot::SnapshotCache;
@@ -257,6 +258,7 @@ impl EmbeddedV8SessionHandle {
         status: u8,
         payload: Vec<u8>,
     ) -> io::Result<()> {
+        validate_bridge_response_status(status)?;
         self.runtime.dispatch(RuntimeCommand::SendToSession {
             session_id: self.session_id.clone(),
             message: SessionMessage::BridgeResponse(BridgeResponse {
@@ -741,6 +743,19 @@ mod tests {
             .expect("session manager")
             .destroy_session("stream-target")
             .expect("destroy target session");
+    }
+
+    #[test]
+    fn embedded_runtime_session_handle_rejects_unknown_bridge_response_status() {
+        let runtime = Arc::new(EmbeddedV8Runtime::new(Some(1)).expect("embedded runtime"));
+        let handle = runtime.session_handle("missing-session".into());
+
+        let err = handle
+            .send_bridge_response(1, 3, Vec::new())
+            .expect_err("unknown bridge response status should be rejected");
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("unknown BridgeResponse status"));
     }
 
     #[test]
