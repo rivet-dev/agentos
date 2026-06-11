@@ -1,6 +1,8 @@
 use agent_os_kernel::kernel::{
     KernelVm, KernelVmConfig, VirtualProcessOptions, WaitPidEvent, WaitPidFlags,
 };
+use agent_os_kernel::permissions::Permissions;
+use agent_os_kernel::socket_table::{InetSocketAddress, SocketSpec};
 use agent_os_kernel::vfs::MemoryFileSystem;
 use std::time::Duration;
 
@@ -12,12 +14,15 @@ fn assert_kernel_error_code<T: std::fmt::Debug>(
     assert_eq!(error.code(), expected);
 }
 
+fn new_kernel(vm_id: &str) -> KernelVm<MemoryFileSystem> {
+    let mut config = KernelVmConfig::new(vm_id);
+    config.permissions = Permissions::allow_all();
+    KernelVm::new(MemoryFileSystem::new(), config)
+}
+
 #[test]
 fn virtual_processes_appear_in_process_listings_and_wait_like_children() {
-    let mut kernel = KernelVm::new(
-        MemoryFileSystem::new(),
-        KernelVmConfig::new("vm-virtual-process-tree"),
-    );
+    let mut kernel = new_kernel("vm-virtual-process-tree");
 
     let parent = kernel
         .create_virtual_process(
@@ -82,10 +87,7 @@ fn virtual_processes_appear_in_process_listings_and_wait_like_children() {
 
 #[test]
 fn virtual_process_stdio_uses_standard_fd_helpers_and_owner_checks() {
-    let mut kernel = KernelVm::new(
-        MemoryFileSystem::new(),
-        KernelVmConfig::new("vm-virtual-process-stdio"),
-    );
+    let mut kernel = new_kernel("vm-virtual-process-stdio");
     let process = kernel
         .create_virtual_process(
             "tool-dispatch",
@@ -163,6 +165,76 @@ fn virtual_process_stdio_uses_standard_fd_helpers_and_owner_checks() {
         agent_os_kernel::kernel::WaitPidResult {
             pid: process.pid(),
             status: 9,
+        }
+    );
+}
+
+#[test]
+fn virtual_process_exit_reclaims_owned_sockets() {
+    let mut kernel = new_kernel("vm-virtual-process-socket-cleanup");
+    let process = kernel
+        .create_virtual_process(
+            "tool-dispatch",
+            "tool",
+            "agentos-toolkit",
+            Vec::new(),
+            VirtualProcessOptions::default(),
+        )
+        .expect("create virtual process");
+    let socket = kernel
+        .socket_create("tool-dispatch", process.pid(), SocketSpec::tcp())
+        .expect("create virtual-process socket");
+    kernel
+        .socket_bind_inet(
+            "tool-dispatch",
+            process.pid(),
+            socket,
+            InetSocketAddress::new("127.0.0.1", 43107),
+        )
+        .expect("bind virtual-process socket");
+    kernel
+        .socket_listen("tool-dispatch", process.pid(), socket, 1)
+        .expect("listen on virtual-process socket");
+
+    let snapshot = kernel.resource_snapshot();
+    assert_eq!(snapshot.sockets, 1);
+    assert_eq!(snapshot.socket_listeners, 1);
+
+    kernel
+        .exit_process("tool-dispatch", process.pid(), 0)
+        .expect("exit virtual process");
+
+    assert!(kernel.socket_get(socket).is_none());
+    let snapshot = kernel.resource_snapshot();
+    assert_eq!(snapshot.sockets, 0);
+    assert_eq!(snapshot.socket_listeners, 0);
+
+    let replacement = kernel
+        .create_virtual_process(
+            "tool-dispatch",
+            "tool",
+            "agentos-toolkit",
+            Vec::new(),
+            VirtualProcessOptions::default(),
+        )
+        .expect("create replacement virtual process");
+    let replacement_socket = kernel
+        .socket_create("tool-dispatch", replacement.pid(), SocketSpec::tcp())
+        .expect("create replacement socket");
+    kernel
+        .socket_bind_inet(
+            "tool-dispatch",
+            replacement.pid(),
+            replacement_socket,
+            InetSocketAddress::new("127.0.0.1", 43107),
+        )
+        .expect("rebind address after virtual process exit cleanup");
+
+    assert_eq!(
+        kernel.waitpid(process.pid()).expect("wait virtual process"),
+        agent_os_kernel::kernel::WaitPidResult {
+            pid: process.pid(),
+            status: 0,
         }
     );
 }
