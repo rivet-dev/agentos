@@ -7,7 +7,7 @@ use agent_os_kernel::permissions::{
     NetworkAccessRequest, NetworkOperation, PermissionDecision, Permissions,
 };
 use agent_os_kernel::vfs::MemoryFileSystem;
-use hickory_resolver::proto::rr::Record;
+use hickory_resolver::proto::rr::{Record, RecordType};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
@@ -29,6 +29,13 @@ impl MockDnsResolver {
 
     fn requests(&self) -> Vec<DnsLookupRequest> {
         self.requests.lock().expect("mock requests").clone()
+    }
+
+    fn record_requests(&self) -> Vec<DnsRecordLookupRequest> {
+        self.record_requests
+            .lock()
+            .expect("mock record requests")
+            .clone()
     }
 }
 
@@ -158,4 +165,43 @@ fn kernel_dns_resolution_checks_network_permissions_when_requested() {
     assert_eq!(requests[0].vm_id, "vm-dns-permissions");
     assert_eq!(requests[0].op, NetworkOperation::Dns);
     assert_eq!(requests[0].resource, "dns://example.test");
+}
+
+#[test]
+fn kernel_dns_resolution_denies_by_default_before_resolver_lookup() {
+    let resolver = MockDnsResolver::new(vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))]);
+    let mut config = KernelVmConfig::new("vm-dns-default-deny");
+    config.dns_resolver = Arc::new(resolver.clone());
+    let kernel = new_kernel(config);
+
+    let lookup_error = kernel
+        .resolve_dns("example.test", DnsLookupPolicy::CheckPermissions)
+        .expect_err("missing network hook should deny address lookup");
+    assert_eq!(lookup_error.code(), "EACCES");
+    assert!(
+        lookup_error.to_string().contains("dns://example.test"),
+        "unexpected error: {lookup_error}"
+    );
+
+    let record_error = kernel
+        .resolve_dns_records(
+            "example.test",
+            RecordType::A,
+            DnsLookupPolicy::CheckPermissions,
+        )
+        .expect_err("missing network hook should deny record lookup");
+    assert_eq!(record_error.code(), "EACCES");
+    assert!(
+        record_error.to_string().contains("dns://example.test"),
+        "unexpected error: {record_error}"
+    );
+
+    assert!(
+        resolver.requests().is_empty(),
+        "permission denial should happen before address resolver lookup"
+    );
+    assert!(
+        resolver.record_requests().is_empty(),
+        "permission denial should happen before record resolver lookup"
+    );
 }
