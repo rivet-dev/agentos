@@ -17,6 +17,10 @@ use crate::translate;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use libc::time_t;
+#[cfg(target_os = "macos")]
+use std::mem::{MaybeUninit, size_of};
+#[cfg(target_os = "macos")]
+use std::ptr;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -45,46 +49,38 @@ pub fn get_formatted_time() -> String {
         .to_string()
 }
 
-/// Safely get macOS boot time using sysctl command
+/// Safely get macOS boot time using sysctl.
 ///
-/// This function uses the sysctl command-line tool to retrieve the kernel
-/// boot time on macOS, avoiding any unsafe code. It parses the output
-/// of the sysctl command to extract the boot time.
+/// This function uses the `sysctl(3)` API to retrieve the kernel boot time on
+/// macOS.
 ///
 /// # Returns
 ///
 /// Returns Some(time_t) if successful, None if the call fails.
 #[cfg(target_os = "macos")]
 fn get_macos_boot_time_sysctl() -> Option<time_t> {
-    use std::process::Command;
+    let mut mib = [libc::CTL_KERN, libc::KERN_BOOTTIME];
+    let mut boot_time = MaybeUninit::<libc::timeval>::uninit();
+    let mut len = size_of::<libc::timeval>();
 
-    // Execute sysctl command to get boot time
-    let output = Command::new("sysctl")
-        .arg("-n")
-        .arg("kern.boottime")
-        .output();
-
-    if let Ok(output) = output {
-        if output.status.success() {
-            // Parse output format: { sec = 1729338352, usec = 0 } Wed Oct 19 08:25:52 2025
-            // We need to extract the seconds value from the structured output
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            // Extract the seconds from the output
-            // Look for "sec = " pattern
-            if let Some(sec_start) = stdout.find("sec = ") {
-                let sec_part = &stdout[sec_start + 6..];
-                if let Some(sec_end) = sec_part.find(',') {
-                    let sec_str = &sec_part[..sec_end];
-                    if let Ok(boot_time) = sec_str.trim().parse::<i64>() {
-                        return Some(boot_time as time_t);
-                    }
-                }
-            }
-        }
+    // SAFETY: `mib` points to a valid two-element MIB, `boot_time` points to a
+    // writable `timeval` buffer, and `len` contains the buffer size.
+    let ret = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            boot_time.as_mut_ptr().cast(),
+            &mut len,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if ret != 0 || len < size_of::<libc::timeval>() {
+        return None;
     }
 
-    None
+    // SAFETY: `sysctl` succeeded and wrote a complete `timeval`.
+    Some(unsafe { boot_time.assume_init() }.tv_sec as time_t)
 }
 
 /// Get the system uptime
