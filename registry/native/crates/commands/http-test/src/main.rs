@@ -1,12 +1,16 @@
-/// HTTP client test binary for validating wasi-http through host_net.
-///
-/// Usage:
-///   http-test get <url>
-///   http-test post <url> <json-body>
-///   http-test headers <url> <name:value> [<name:value> ...]
-///   http-test sse <url>
-///
-/// Prints status code and body to stdout. Errors go to stderr.
+//! HTTP client test binary for validating wasi-http through host_net.
+//!
+//! Usage:
+//!   http-test get <url>
+//!   http-test post <url> <json-body>
+//!   http-test headers <url> <name:value> [<name:value> ...]
+//!   http-test sse <url>
+//!
+//! Prints status code and body to stdout. Errors go to stderr.
+use cmd_http_test::parse_header;
+
+const MAX_SSE_EVENTS: usize = 100;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -63,11 +67,8 @@ fn do_get_with_headers(url: &str, headers: &[&str]) -> Result<(), wasi_http::Htt
     let client = wasi_http::HttpClient::new();
     let mut req = wasi_http::Request::new(wasi_http::Method::Get, url)?;
     for h in headers {
-        if let Some(colon) = h.find(':') {
-            let name = h[..colon].trim();
-            let value = h[colon + 1..].trim();
-            req.headers.push((name.to_string(), value.to_string()));
-        }
+        let (name, value) = parse_header(h).map_err(wasi_http::HttpError::Protocol)?;
+        req.headers.push((name, value));
     }
     let resp = client.send(&req)?;
     println!("status: {}", resp.status);
@@ -82,7 +83,19 @@ fn do_sse(url: &str) -> Result<(), wasi_http::HttpError> {
     let (resp, mut reader) = client.send_sse(&req)?;
     println!("status: {}", resp.status);
 
-    while let Some(event) = reader.next_event()? {
+    for _ in 0..MAX_SSE_EVENTS {
+        let event = match reader.next_event() {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                reader.close();
+                return Ok(());
+            }
+            Err(error) => {
+                reader.close();
+                return Err(error);
+            }
+        };
+
         if let Some(ref ev_type) = event.event {
             println!("event: {}", ev_type);
         }
