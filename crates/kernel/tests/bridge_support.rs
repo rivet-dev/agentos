@@ -11,7 +11,7 @@ use agent_os_kernel::bridge::{
     StructuredEventRecord, SymlinkRequest, TruncateRequest, WriteExecutionStdinRequest,
     WriteFileRequest,
 };
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +23,12 @@ impl StubError {
     fn missing(kind: &'static str, key: &str) -> Self {
         Self {
             message: format!("missing {kind}: {key}"),
+        }
+    }
+
+    fn invalid(kind: &'static str, key: &str) -> Self {
+        Self {
+            message: format!("invalid {kind}: {key}"),
         }
     }
 }
@@ -94,11 +100,17 @@ impl RecordingBridge {
     }
 
     fn metadata_for_path(&self, path: &str, follow_links: bool) -> Result<FileMetadata, StubError> {
+        let mut current_path = path.to_owned();
+        let mut seen_links = BTreeSet::new();
+
         if follow_links {
-            if let Some(target) = self.symlinks.get(path) {
-                return self.metadata_for_path(target, true);
+            while let Some(target) = self.symlinks.get(&current_path) {
+                if !seen_links.insert(current_path.clone()) {
+                    return Err(StubError::invalid("symlink cycle", &current_path));
+                }
+                current_path = target.clone();
             }
-        } else if self.symlinks.contains_key(path) {
+        } else if self.symlinks.contains_key(&current_path) {
             return Ok(FileMetadata {
                 mode: 0o777,
                 size: 0,
@@ -106,7 +118,7 @@ impl RecordingBridge {
             });
         }
 
-        if let Some(bytes) = self.files.get(path) {
+        if let Some(bytes) = self.files.get(&current_path) {
             return Ok(FileMetadata {
                 mode: 0o644,
                 size: bytes.len() as u64,
@@ -114,7 +126,7 @@ impl RecordingBridge {
             });
         }
 
-        if let Some(entries) = self.directories.get(path) {
+        if let Some(entries) = self.directories.get(&current_path) {
             return Ok(FileMetadata {
                 mode: 0o755,
                 size: entries.len() as u64,
@@ -122,7 +134,7 @@ impl RecordingBridge {
             });
         }
 
-        Err(StubError::missing("path", path))
+        Err(StubError::missing("path", &current_path))
     }
 }
 
@@ -390,4 +402,46 @@ impl ExecutionBridge for RecordingBridge {
     ) -> Result<Option<ExecutionEvent>, Self::Error> {
         Ok(self.execution_events.pop_front())
     }
+}
+
+#[test]
+fn recording_bridge_rejects_symlink_cycles_when_following_metadata() {
+    let mut bridge = RecordingBridge::default();
+    bridge
+        .symlink(SymlinkRequest {
+            vm_id: String::from("vm-1"),
+            target_path: String::from("/b"),
+            link_path: String::from("/a"),
+        })
+        .expect("create first symlink");
+    bridge
+        .symlink(SymlinkRequest {
+            vm_id: String::from("vm-1"),
+            target_path: String::from("/a"),
+            link_path: String::from("/b"),
+        })
+        .expect("create second symlink");
+
+    let error = bridge
+        .stat(PathRequest {
+            vm_id: String::from("vm-1"),
+            path: String::from("/a"),
+        })
+        .expect_err("cyclic symlink metadata should fail");
+    assert_eq!(
+        error,
+        StubError {
+            message: String::from("invalid symlink cycle: /a"),
+        }
+    );
+    assert_eq!(
+        bridge
+            .lstat(PathRequest {
+                vm_id: String::from("vm-1"),
+                path: String::from("/a"),
+            })
+            .expect("lstat should not follow cyclic symlink")
+            .kind,
+        FileKind::SymbolicLink
+    );
 }
