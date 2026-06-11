@@ -6,17 +6,16 @@
 // spell-checker:ignore (vars) intmax ptrdiff padlen
 
 use super::{
-    ExtendedBigDecimal, FormatChar, FormatError, OctalParsing,
     num_format::{
         self, Case, FloatVariant, ForceDecimal, Formatter, NumberAlignment, PositiveSign, Prefix,
         UnsignedIntVariant,
     },
-    parse_escape_only,
+    parse_escape_only, ExtendedBigDecimal, FormatChar, FormatError, OctalParsing,
 };
 use crate::{
     format::FormatArguments,
     os_str_as_bytes,
-    quoting_style::{QuotingStyle, locale_aware_escape_name},
+    quoting_style::{locale_aware_escape_name, QuotingStyle},
 };
 use std::{io::Write, num::NonZero, ops::ControlFlow};
 
@@ -517,7 +516,12 @@ fn resolve_asterisk_width(
         Some(CanAsterisk::Asterisk(loc)) => {
             let nb = args.next_i64(loc);
             if nb < 0 {
-                Some((usize::try_from(-(nb as isize)).ok().unwrap_or(0), true))
+                Some((
+                    nb.checked_abs()
+                        .and_then(|nb| usize::try_from(nb).ok())
+                        .unwrap_or(0),
+                    true,
+                ))
             } else {
                 Some((usize::try_from(nb).ok().unwrap_or(0), false))
             }
@@ -659,6 +663,13 @@ mod tests {
                 resolve_asterisk_width(
                     Some(CanAsterisk::Asterisk(ArgumentLocation::NextArgument)),
                     &mut FormatArguments::new(&[FormatArgument::Unparsed("-42".into())]),
+                )
+            );
+            assert_eq!(
+                Some((0, true)),
+                resolve_asterisk_width(
+                    Some(CanAsterisk::Asterisk(ArgumentLocation::NextArgument)),
+                    &mut FormatArguments::new(&[FormatArgument::SignedInt(i64::MIN)]),
                 )
             );
 
