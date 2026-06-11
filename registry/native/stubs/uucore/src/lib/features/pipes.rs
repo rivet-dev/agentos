@@ -14,6 +14,8 @@ use std::os::fd::AsFd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use nix::fcntl::SpliceFFlags;
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use nix::errno::Errno;
 pub use nix::{Error, Result};
 
 /// A wrapper around [`nix::unistd::pipe`] that ensures the pipe is cleaned up.
@@ -43,13 +45,15 @@ pub fn splice(source: &impl AsFd, target: &impl AsFd, len: usize) -> Result<usiz
 ///
 /// Exactly `len` bytes are moved from `source` into `target`.
 ///
-/// Panics if `source` runs out of data before `len` bytes have been moved.
+/// Returns an error if `source` runs out of data before `len` bytes have been moved.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn splice_exact(source: &impl AsFd, target: &impl AsFd, len: usize) -> Result<()> {
     let mut left = len;
     while left != 0 {
         let written = splice(source, target, left)?;
-        assert_ne!(written, 0, "unexpected end of data");
+        if written == 0 {
+            return Err(Errno::EPIPE);
+        }
         left -= written;
     }
     Ok(())

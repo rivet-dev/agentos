@@ -742,6 +742,7 @@ name = "cmd-cat"
 version = "0.1.0"
 dependencies = [
  "uu_cat",
+ "uucore 0.7.0",
 ]
 
 [[package]]

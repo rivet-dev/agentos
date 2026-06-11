@@ -11,3 +11,6 @@ path = "src/main.rs"
 
 [dependencies]
 uu_cat = "0.7.0"
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
+uucore = { version = "0.7.0", features = ["pipes"] }
