@@ -634,11 +634,12 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
 
     pub fn register_driver(&mut self, driver: CommandDriver) -> KernelResult<()> {
         self.assert_not_terminated()?;
-        lock_or_recover(&self.driver_pids)
-            .entry(driver.name().to_owned())
-            .or_default();
+        let driver_name = driver.name().to_owned();
         let populate_driver = driver.clone();
-        self.commands.register(driver);
+        self.commands.register(driver)?;
+        lock_or_recover(&self.driver_pids)
+            .entry(driver_name)
+            .or_default();
         self.commands
             .populate_driver_bin(&mut self.filesystem, &populate_driver)?;
         Ok(())

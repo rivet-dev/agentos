@@ -1,4 +1,4 @@
-use crate::vfs::{VfsResult, VirtualFileSystem};
+use crate::vfs::{VfsError, VfsResult, VirtualFileSystem};
 use std::collections::BTreeMap;
 
 const COMMAND_STUB: &[u8] = b"#!/bin/sh\n# kernel command stub\n";
@@ -29,6 +29,14 @@ impl CommandDriver {
     pub fn commands(&self) -> &[String] {
         &self.commands
     }
+
+    fn validate_commands(&self) -> VfsResult<()> {
+        for command in &self.commands {
+            validate_command_name(command)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -42,7 +50,9 @@ impl CommandRegistry {
         Self::default()
     }
 
-    pub fn register(&mut self, driver: CommandDriver) {
+    pub fn register(&mut self, driver: CommandDriver) -> VfsResult<()> {
+        driver.validate_commands()?;
+
         for command in &driver.commands {
             if let Some(existing) = self.commands.get(command) {
                 self.warnings.push(format!(
@@ -54,6 +64,8 @@ impl CommandRegistry {
 
             self.commands.insert(command.clone(), driver.clone());
         }
+
+        Ok(())
     }
 
     pub fn warnings(&self) -> &[String] {
@@ -91,12 +103,20 @@ impl CommandRegistry {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
+        let commands = commands
+            .into_iter()
+            .map(|command| {
+                validate_command_name(command.as_ref())?;
+                Ok(command.as_ref().to_owned())
+            })
+            .collect::<VfsResult<Vec<_>>>()?;
+
         if !vfs.exists("/bin") {
             vfs.mkdir("/bin", true)?;
         }
 
         for command in commands {
-            let path = format!("/bin/{}", command.as_ref());
+            let path = format!("/bin/{command}");
             if !vfs.exists(&path) {
                 vfs.write_file(&path, COMMAND_STUB.to_vec())?;
                 let _ = vfs.chmod(&path, 0o755);
@@ -105,4 +125,20 @@ impl CommandRegistry {
 
         Ok(())
     }
+}
+
+fn validate_command_name(command: &str) -> VfsResult<()> {
+    if command.is_empty()
+        || command == "."
+        || command == ".."
+        || command.contains('/')
+        || command.contains('\0')
+    {
+        return Err(VfsError::new(
+            "EINVAL",
+            format!("invalid command name {command:?}"),
+        ));
+    }
+
+    Ok(())
 }

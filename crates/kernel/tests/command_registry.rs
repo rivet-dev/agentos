@@ -8,7 +8,9 @@ fn registers_and_resolves_commands() {
     let mut registry = CommandRegistry::new();
     let driver = CommandDriver::new("wasmvm", ["grep", "sed", "cat"]);
 
-    registry.register(driver.clone());
+    registry
+        .register(driver.clone())
+        .expect("register commands");
 
     assert_eq!(registry.resolve("grep"), Some(&driver));
     assert_eq!(registry.resolve("sed"), Some(&driver));
@@ -25,8 +27,12 @@ fn returns_none_for_unknown_commands() {
 #[test]
 fn last_registered_driver_wins_on_conflict() {
     let mut registry = CommandRegistry::new();
-    registry.register(CommandDriver::new("wasmvm", ["node"]));
-    registry.register(CommandDriver::new("node", ["node"]));
+    registry
+        .register(CommandDriver::new("wasmvm", ["node"]))
+        .expect("register wasm driver");
+    registry
+        .register(CommandDriver::new("node", ["node"]))
+        .expect("register node driver");
 
     assert_eq!(
         registry
@@ -40,8 +46,12 @@ fn last_registered_driver_wins_on_conflict() {
 #[test]
 fn list_returns_command_to_driver_name_mapping() {
     let mut registry = CommandRegistry::new();
-    registry.register(CommandDriver::new("wasmvm", ["grep", "cat"]));
-    registry.register(CommandDriver::new("node", ["node", "npm"]));
+    registry
+        .register(CommandDriver::new("wasmvm", ["grep", "cat"]))
+        .expect("register wasm driver");
+    registry
+        .register(CommandDriver::new("node", ["node", "npm"]))
+        .expect("register node driver");
 
     let commands = registry.list();
     assert_eq!(commands.get("grep"), Some(&String::from("wasmvm")));
@@ -52,8 +62,12 @@ fn list_returns_command_to_driver_name_mapping() {
 #[test]
 fn records_warning_when_overriding_existing_command() {
     let mut registry = CommandRegistry::new();
-    registry.register(CommandDriver::new("wasmvm", ["sh", "grep"]));
-    registry.register(CommandDriver::new("node", ["sh"]));
+    registry
+        .register(CommandDriver::new("wasmvm", ["sh", "grep"]))
+        .expect("register wasm driver");
+    registry
+        .register(CommandDriver::new("node", ["sh"]))
+        .expect("register node driver");
 
     let warnings = registry.warnings();
     assert_eq!(warnings.len(), 1);
@@ -66,7 +80,9 @@ fn records_warning_when_overriding_existing_command() {
 fn populate_bin_creates_stub_entries() {
     let mut vfs = MemoryFileSystem::new();
     let mut registry = CommandRegistry::new();
-    registry.register(CommandDriver::new("wasmvm", ["grep", "cat"]));
+    registry
+        .register(CommandDriver::new("wasmvm", ["grep", "cat"]))
+        .expect("register commands");
 
     registry.populate_bin(&mut vfs).expect("populate /bin");
 
@@ -80,6 +96,64 @@ fn populate_bin_creates_stub_entries() {
         vfs.stat("/bin/grep").expect("stat stub").mode & 0o777,
         0o755
     );
+}
+
+#[test]
+fn rejects_command_names_that_escape_bin_stub_paths() {
+    for command in ["", ".", "..", "../escape", "nested/escape", "nul\0byte"] {
+        let mut registry = CommandRegistry::new();
+        let error = registry
+            .register(CommandDriver::new("wasmvm", [command]))
+            .expect_err("invalid command name should be rejected");
+
+        assert_eq!(error.code(), "EINVAL");
+        assert!(
+            error.message().contains("invalid command name"),
+            "unexpected error: {error}"
+        );
+        assert!(registry.list().is_empty());
+    }
+}
+
+#[test]
+fn populate_bin_rejects_invalid_names_before_writing_any_stubs() {
+    let mut vfs = MemoryFileSystem::new();
+    let driver = CommandDriver::new("wasmvm", ["good", "../escape"]);
+    let registry = CommandRegistry::new();
+
+    let error = registry
+        .populate_driver_bin(&mut vfs, &driver)
+        .expect_err("invalid command name should reject population");
+
+    assert_eq!(error.code(), "EINVAL");
+    assert!(
+        error.message().contains("invalid command name"),
+        "unexpected error: {error}"
+    );
+    assert!(!vfs.exists("/bin"));
+    assert!(!vfs.exists("/bin/good"));
+    assert!(!vfs.exists("/escape"));
+}
+
+#[test]
+fn kernel_driver_registration_rejects_command_path_names_without_writing_stubs() {
+    let mut config = KernelVmConfig::new("vm-invalid-command-path");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+
+    let error = kernel
+        .register_driver(CommandDriver::new("wasmvm", ["../escape"]))
+        .expect_err("invalid command should reject driver registration");
+
+    assert_eq!(error.code(), "EINVAL");
+    assert!(
+        error.to_string().contains("invalid command name"),
+        "unexpected error: {error}"
+    );
+    assert!(!kernel.exists("/escape").expect("check escaped path"));
+    assert!(!kernel
+        .exists("/bin/../escape")
+        .expect("check normalized escaped path"));
 }
 
 #[test]
