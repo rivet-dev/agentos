@@ -59,12 +59,13 @@ mod service {
             WriteStdinRequest,
         };
         use crate::state::{
-            ActiveExecution, ActiveExecutionEvent, ActiveProcess, ActiveTcpListener,
-            ActiveUdpSocket, ProcessEventEnvelope, SidecarKernel, ToolExecution, VmListenPolicy,
-            EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND, LOOPBACK_EXEMPT_PORTS_ENV,
-            PYTHON_COMMAND, VM_DNS_SERVERS_METADATA_KEY, VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY,
-            VM_LISTEN_PORT_MAX_METADATA_KEY, VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND,
-            WASM_STDIO_SYNC_RPC_ENV,
+            ActiveCipherSession, ActiveDiffieHellmanSession, ActiveEcdhSession, ActiveExecution,
+            ActiveExecutionEvent, ActiveProcess, ActiveSqliteDatabase, ActiveSqliteStatement,
+            ActiveTcpListener, ActiveUdpSocket, ProcessEventEnvelope, SidecarKernel,
+            ToolExecution, VmListenPolicy, EXECUTION_SANDBOX_ROOT_ENV, JAVASCRIPT_COMMAND,
+            LOOPBACK_EXEMPT_PORTS_ENV, PYTHON_COMMAND, VM_DNS_SERVERS_METADATA_KEY,
+            VM_LISTEN_ALLOW_PRIVILEGED_METADATA_KEY, VM_LISTEN_PORT_MAX_METADATA_KEY,
+            VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND, WASM_STDIO_SYNC_RPC_ENV,
         };
         use agent_os_bridge::{FileKind, SymlinkRequest};
         use agent_os_execution::{
@@ -612,6 +613,206 @@ setInterval(() => {}, 1000);
                 preserved_exit.event,
                 ActiveExecutionEvent::Exited(0)
             ));
+        }
+
+        fn assert_handle_limit_error(error: SidecarError) {
+            assert!(
+                error.to_string().contains("handle limit exceeded"),
+                "unexpected handle limit error: {error}"
+            );
+        }
+
+        fn cipher_session_handles_are_bounded() {
+            let mut process = create_crypto_test_process();
+            for index in 0..crate::execution::MAX_PER_PROCESS_STATE_HANDLES {
+                let context = openssl::symm::Crypter::new(
+                    openssl::symm::Cipher::aes_256_cbc(),
+                    openssl::symm::Mode::Encrypt,
+                    &[0_u8; 32],
+                    Some(&[0_u8; 16]),
+                )
+                .expect("create cipher context");
+                process.cipher_sessions.insert(
+                    index as u64,
+                    ActiveCipherSession {
+                        algorithm: String::from("aes-256-cbc"),
+                        auth_tag_len: 0,
+                        context,
+                    },
+                );
+            }
+
+            let error = crate::execution::service_javascript_crypto_sync_rpc(
+                &mut process,
+                &JavascriptSyncRpcRequest {
+                    id: 1,
+                    method: String::from("crypto.cipherivCreate"),
+                    args: vec![
+                        json!("cipher"),
+                        json!("aes-256-cbc"),
+                        json!(base64::engine::general_purpose::STANDARD.encode([9_u8; 32])),
+                        json!(base64::engine::general_purpose::STANDARD.encode([4_u8; 16])),
+                        json!(r#"{}"#),
+                    ],
+                },
+            )
+            .expect_err("cipher session creation should be bounded");
+            assert_handle_limit_error(error);
+        }
+
+        fn diffie_hellman_session_handles_are_bounded() {
+            let mut process = create_crypto_test_process();
+            for index in 0..crate::execution::MAX_PER_PROCESS_STATE_HANDLES {
+                process.diffie_hellman_sessions.insert(
+                    index as u64,
+                    ActiveDiffieHellmanSession::Ecdh(ActiveEcdhSession {
+                        curve: String::from("P-256"),
+                        key_pair: None,
+                    }),
+                );
+            }
+            process.next_diffie_hellman_session_id =
+                crate::execution::MAX_PER_PROCESS_STATE_HANDLES as u64;
+
+            let error = crate::execution::service_javascript_crypto_sync_rpc(
+                &mut process,
+                &JavascriptSyncRpcRequest {
+                    id: 2,
+                    method: String::from("crypto.diffieHellmanSessionCreate"),
+                    args: vec![json!(r#"{"type":"ecdh","name":"P-256"}"#)],
+                },
+            )
+            .expect_err("diffie-hellman session creation should be bounded");
+            assert_handle_limit_error(error);
+
+            crate::execution::service_javascript_crypto_sync_rpc(
+                &mut process,
+                &JavascriptSyncRpcRequest {
+                    id: 20,
+                    method: String::from("crypto.diffieHellmanSessionDestroy"),
+                    args: vec![json!(0)],
+                },
+            )
+            .expect("destroy diffie-hellman session");
+            let session_id = crate::execution::service_javascript_crypto_sync_rpc(
+                &mut process,
+                &JavascriptSyncRpcRequest {
+                    id: 21,
+                    method: String::from("crypto.diffieHellmanSessionCreate"),
+                    args: vec![json!(r#"{"type":"ecdh","name":"P-256"}"#)],
+                },
+            )
+            .expect("diffie-hellman session creation should recover after destroy")
+            .as_u64()
+            .expect("new session id");
+            assert!(session_id > crate::execution::MAX_PER_PROCESS_STATE_HANDLES as u64);
+        }
+
+        fn create_sqlite_handle_test_sidecar() -> (NativeSidecar<RecordingBridge>, String) {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate sidecar");
+            let vm_id = create_vm_with_metadata(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+                BTreeMap::new(),
+            )
+            .expect("create vm");
+            insert_tool_process(&mut sidecar, &vm_id, "proc-sqlite-handles");
+            (sidecar, vm_id)
+        }
+
+        fn sqlite_database_handles_are_bounded() {
+            let (mut sidecar, vm_id) = create_sqlite_handle_test_sidecar();
+            {
+                let process = sidecar
+                    .vms
+                    .get_mut(&vm_id)
+                    .expect("sqlite vm")
+                    .active_processes
+                    .get_mut("proc-sqlite-handles")
+                    .expect("sqlite process");
+                for index in 0..crate::execution::MAX_PER_PROCESS_STATE_HANDLES {
+                    process.sqlite_databases.insert(
+                        index as u64,
+                        ActiveSqliteDatabase {
+                            connection: rusqlite::Connection::open_in_memory()
+                                .expect("open in-memory sqlite"),
+                            host_path: None,
+                            vm_path: None,
+                            dirty: false,
+                            transaction_depth: 0,
+                            read_only: false,
+                        },
+                    );
+                }
+            }
+
+            let error = call_javascript_sync_rpc(
+                &mut sidecar,
+                &vm_id,
+                "proc-sqlite-handles",
+                JavascriptSyncRpcRequest {
+                    id: 3,
+                    method: String::from("sqlite.open"),
+                    args: vec![json!(":memory:"), json!({})],
+                },
+            )
+            .expect_err("sqlite database creation should be bounded");
+            assert_handle_limit_error(error);
+        }
+
+        fn sqlite_statement_handles_are_bounded() {
+            let (mut sidecar, vm_id) = create_sqlite_handle_test_sidecar();
+            {
+                let process = sidecar
+                    .vms
+                    .get_mut(&vm_id)
+                    .expect("sqlite vm")
+                    .active_processes
+                    .get_mut("proc-sqlite-handles")
+                    .expect("sqlite process");
+                process.sqlite_databases.insert(
+                    1,
+                    ActiveSqliteDatabase {
+                        connection: rusqlite::Connection::open_in_memory()
+                            .expect("open in-memory sqlite"),
+                        host_path: None,
+                        vm_path: None,
+                        dirty: false,
+                        transaction_depth: 0,
+                        read_only: false,
+                    },
+                );
+                for index in 0..crate::execution::MAX_PER_PROCESS_STATE_HANDLES {
+                    process.sqlite_statements.insert(
+                        index as u64,
+                        ActiveSqliteStatement {
+                            database_id: 1,
+                            sql: String::from("SELECT 1"),
+                            return_arrays: false,
+                            read_bigints: false,
+                            allow_bare_named_parameters: false,
+                            allow_unknown_named_parameters: false,
+                        },
+                    );
+                }
+            }
+
+            let error = call_javascript_sync_rpc(
+                &mut sidecar,
+                &vm_id,
+                "proc-sqlite-handles",
+                JavascriptSyncRpcRequest {
+                    id: 4,
+                    method: String::from("sqlite.prepare"),
+                    args: vec![json!(1), json!("SELECT 1")],
+                },
+            )
+            .expect_err("sqlite statement creation should be bounded");
+            assert_handle_limit_error(error);
         }
 
         fn session_timeout_response_includes_structured_diagnostics() {
@@ -15250,6 +15451,14 @@ console.log(JSON.stringify({
             tool_execution_event_overflow_is_reported();
             descendant_transfer_overflow_preserves_global_queue();
             exit_trailing_requeue_preserves_exit_when_queue_is_full();
+        }
+
+        #[test]
+        fn service_state_handle_tables_are_bounded() {
+            cipher_session_handles_are_bounded();
+            diffie_hellman_session_handles_are_bounded();
+            sqlite_database_handles_are_bounded();
+            sqlite_statement_handles_are_bounded();
         }
 
         #[test]

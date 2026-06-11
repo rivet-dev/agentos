@@ -3324,6 +3324,11 @@ var __bridge = (() => {
       rationale: "Host Diffie-Hellman/ECDH session method bridge reference."
     },
     {
+      name: "_cryptoDiffieHellmanSessionDestroy",
+      classification: "hardened",
+      rationale: "Host Diffie-Hellman/ECDH session release bridge reference."
+    },
+    {
       name: "_cryptoSubtle",
       classification: "hardened",
       rationale: "Host WebCrypto subtle bridge reference."
@@ -25593,6 +25598,12 @@ ${headerLines}\r
     }
     return args;
   }
+  const diffieHellmanSessionFinalizer = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((sessionId) => {
+    try {
+      callCryptoSync(_cryptoDiffieHellmanSessionDestroy, "createDiffieHellman", [sessionId]);
+    } catch {
+    }
+  }) : null;
   class BuiltinDiffieHellmanSession {
     _sessionId;
     constructor(request) {
@@ -25601,8 +25612,27 @@ ${headerLines}\r
         name: request.name,
         args: (request.args || []).map((entry) => serializeBridgeValue(entry))
       })]));
+      diffieHellmanSessionFinalizer?.register(this, this._sessionId, this);
+    }
+    _destroySession() {
+      if (this._sessionId == null) {
+        return;
+      }
+      const sessionId = this._sessionId;
+      this._sessionId = null;
+      diffieHellmanSessionFinalizer?.unregister(this);
+      callCryptoSync(_cryptoDiffieHellmanSessionDestroy, "createDiffieHellman", [sessionId]);
+    }
+    dispose() {
+      this._destroySession();
+    }
+    [Symbol.dispose || Symbol.for("Symbol.dispose")]() {
+      this._destroySession();
     }
     _call(method, args = []) {
+      if (this._sessionId == null) {
+        throw new Error("Diffie-Hellman session has been destroyed");
+      }
       const response = JSON.parse(String(callCryptoSync(_cryptoDiffieHellmanSessionCall, "createDiffieHellman", [
         this._sessionId,
         JSON.stringify({

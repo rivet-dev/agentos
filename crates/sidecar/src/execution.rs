@@ -151,6 +151,7 @@ const PYTHON_PYODIDE_CACHE_GUEST_ROOT: &str = "/__agent_os_pyodide_cache";
 const TCP_SOCKET_POLL_TIMEOUT: Duration = Duration::from_millis(100);
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const HTTP_LOOPBACK_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const MAX_PER_PROCESS_STATE_HANDLES: usize = 1024;
 const VM_FETCH_BUFFER_LIMIT_BYTES: usize = DEFAULT_MAX_FRAME_BYTES;
 const DEFAULT_SCRYPT_COST: u64 = 16_384;
 const DEFAULT_SCRYPT_BLOCK_SIZE: u32 = 8;
@@ -12575,6 +12576,7 @@ fn sqlite_open_database(
     process: &mut ActiveProcess,
     request: &JavascriptSyncRpcRequest,
 ) -> Result<Value, SidecarError> {
+    ensure_per_process_state_handle_capacity(process.sqlite_databases.len(), "sqlite database")?;
     let path = request.args.first().and_then(Value::as_str);
     let vm_path = path.filter(|value| !value.is_empty() && *value != ":memory:");
     let options = request.args.get(1);
@@ -12721,6 +12723,7 @@ fn sqlite_prepare_statement(
     process: &mut ActiveProcess,
     request: &JavascriptSyncRpcRequest,
 ) -> Result<Value, SidecarError> {
+    ensure_per_process_state_handle_capacity(process.sqlite_statements.len(), "sqlite statement")?;
     let database_id = javascript_sync_rpc_arg_u64(&request.args, 0, "sqlite.prepare database id")?;
     let sql = javascript_sync_rpc_arg_str(&request.args, 1, "sqlite.prepare sql")?;
     let _ = sqlite_database(process, database_id)?;
@@ -13086,6 +13089,18 @@ fn close_sqlite_database(
     let host_path = database.host_path.clone();
     drop(database);
     cleanup_sqlite_host_artifacts(host_path.as_deref())?;
+    Ok(())
+}
+
+fn ensure_per_process_state_handle_capacity(
+    len: usize,
+    label: &str,
+) -> Result<(), SidecarError> {
+    if len >= MAX_PER_PROCESS_STATE_HANDLES {
+        return Err(SidecarError::InvalidState(format!(
+            "{label} handle limit exceeded: limit is {MAX_PER_PROCESS_STATE_HANDLES}"
+        )));
+    }
     Ok(())
 }
 
@@ -13561,6 +13576,7 @@ where
         | "crypto.diffieHellmanGroup"
         | "crypto.diffieHellmanSessionCreate"
         | "crypto.diffieHellmanSessionCall"
+        | "crypto.diffieHellmanSessionDestroy"
         | "crypto.subtle" => service_javascript_crypto_sync_rpc(process, request),
         "dns.lookup" | "dns.resolve" | "dns.resolve4" | "dns.resolve6" => {
             service_javascript_dns_sync_rpc(bridge, kernel, vm_id, dns, request)
@@ -13959,6 +13975,9 @@ pub(crate) fn service_javascript_crypto_sync_rpc(
         "crypto.diffieHellmanSessionCall" => {
             service_javascript_crypto_diffie_hellman_session_call_sync_rpc(process, request)
         }
+        "crypto.diffieHellmanSessionDestroy" => {
+            service_javascript_crypto_diffie_hellman_session_destroy_sync_rpc(process, request)
+        }
         "crypto.subtle" => service_javascript_crypto_subtle_sync_rpc(request),
         _ => Err(SidecarError::InvalidState(format!(
             "unsupported JavaScript crypto sync RPC method {}",
@@ -14088,6 +14107,7 @@ fn service_javascript_crypto_cipheriv_create_sync_rpc(
     process: &mut ActiveProcess,
     request: &JavascriptSyncRpcRequest,
 ) -> Result<Value, SidecarError> {
+    ensure_per_process_state_handle_capacity(process.cipher_sessions.len(), "cipher session")?;
     let mode = javascript_sync_rpc_arg_str(&request.args, 0, "crypto.cipherivCreate mode")?;
     let decrypt = mode == "decipher";
     let algorithm =
@@ -14530,6 +14550,10 @@ fn service_javascript_crypto_diffie_hellman_session_create_sync_rpc(
     process: &mut ActiveProcess,
     request: &JavascriptSyncRpcRequest,
 ) -> Result<Value, SidecarError> {
+    ensure_per_process_state_handle_capacity(
+        process.diffie_hellman_sessions.len(),
+        "diffie-hellman session",
+    )?;
     let raw = javascript_sync_rpc_arg_str(
         &request.args,
         0,
@@ -14643,6 +14667,24 @@ fn service_javascript_crypto_diffie_hellman_session_call_sync_rpc(
             SidecarError::InvalidState(format!("serialize diffie session result: {error}"))
         })?,
     ))
+}
+
+fn service_javascript_crypto_diffie_hellman_session_destroy_sync_rpc(
+    process: &mut ActiveProcess,
+    request: &JavascriptSyncRpcRequest,
+) -> Result<Value, SidecarError> {
+    let session_id = javascript_sync_rpc_arg_u64(
+        &request.args,
+        0,
+        "crypto.diffieHellmanSessionDestroy session id",
+    )?;
+    process
+        .diffie_hellman_sessions
+        .remove(&session_id)
+        .ok_or_else(|| {
+            SidecarError::InvalidState(format!("Diffie-Hellman session {session_id} not found"))
+        })?;
+    Ok(Value::Null)
 }
 
 fn service_javascript_crypto_subtle_sync_rpc(

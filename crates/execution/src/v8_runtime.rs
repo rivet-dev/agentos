@@ -273,6 +273,7 @@ pub fn map_bridge_method(method: &str) -> (&str, bool) {
         "_cryptoDiffieHellmanGroup" => ("crypto.diffieHellmanGroup", false),
         "_cryptoDiffieHellmanSessionCreate" => ("crypto.diffieHellmanSessionCreate", false),
         "_cryptoDiffieHellmanSessionCall" => ("crypto.diffieHellmanSessionCall", false),
+        "_cryptoDiffieHellmanSessionDestroy" => ("crypto.diffieHellmanSessionDestroy", false),
         "_cryptoSubtle" => ("crypto.subtle", false),
 
         // Timer scheduling
