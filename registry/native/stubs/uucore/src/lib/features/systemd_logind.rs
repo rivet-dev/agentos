@@ -48,6 +48,31 @@ mod login {
     use std::ptr;
     use std::time::SystemTime;
 
+    pub(super) unsafe fn sessions_from_raw(
+        sessions_ptr: *mut *mut libc::c_char,
+        count: usize,
+    ) -> Vec<String> {
+        let mut sessions = Vec::with_capacity(count);
+        if sessions_ptr.is_null() {
+            return sessions;
+        }
+
+        for i in 0..count {
+            let session_ptr = unsafe { *sessions_ptr.add(i) };
+            if session_ptr.is_null() {
+                continue;
+            }
+
+            let session_cstr = unsafe { CStr::from_ptr(session_ptr) };
+            sessions.push(session_cstr.to_string_lossy().into_owned());
+
+            unsafe { libc::free(session_ptr.cast()) };
+        }
+
+        unsafe { libc::free(sessions_ptr.cast()) };
+        sessions
+    }
+
     /// Get all active sessions
     pub fn get_sessions() -> Result<Vec<String>, Box<dyn std::error::Error>> {
         let mut sessions_ptr: *mut *mut libc::c_char = ptr::null_mut();
@@ -58,26 +83,7 @@ mod login {
             return Err(format!("sd_get_sessions failed: {result}").into());
         }
 
-        let mut sessions = Vec::new();
-        if !sessions_ptr.is_null() {
-            let mut i = 0;
-            loop {
-                let session_ptr = unsafe { *sessions_ptr.add(i) };
-                if session_ptr.is_null() {
-                    break;
-                }
-
-                let session_cstr = unsafe { CStr::from_ptr(session_ptr) };
-                sessions.push(session_cstr.to_string_lossy().into_owned());
-
-                unsafe { libc::free(session_ptr.cast()) };
-                i += 1;
-            }
-
-            unsafe { libc::free(sessions_ptr.cast()) };
-        }
-
-        Ok(sessions)
+        Ok(unsafe { sessions_from_raw(sessions_ptr, result as usize) })
     }
 
     /// Get UID for a session
@@ -764,5 +770,25 @@ mod tests {
         assert_eq!(compat.user(), "testuser");
         assert_eq!(compat.tty_device().as_str(), "seat0");
         assert_eq!(compat.host(), "localhost");
+    }
+
+    #[test]
+    fn test_sessions_from_raw_uses_reported_count() {
+        use std::ffi::CString;
+        use std::mem::size_of;
+
+        let count = 2;
+        let sessions_ptr = unsafe {
+            libc::calloc(count, size_of::<*mut libc::c_char>()).cast::<*mut libc::c_char>()
+        };
+        assert!(!sessions_ptr.is_null());
+
+        unsafe {
+            *sessions_ptr.add(0) = CString::new("session-a").unwrap().into_raw();
+            *sessions_ptr.add(1) = CString::new("session-b").unwrap().into_raw();
+
+            let sessions = login::sessions_from_raw(sessions_ptr, count);
+            assert_eq!(sessions, ["session-a", "session-b"]);
+        }
     }
 }
