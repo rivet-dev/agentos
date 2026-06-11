@@ -53,7 +53,10 @@ fn get_encoding() -> &'static MbEncoding {
 
 /// Byte length of the first character in `bytes` under the current locale encoding.
 pub fn mb_char_len(bytes: &[u8]) -> usize {
-    debug_assert!(!bytes.is_empty());
+    if bytes.is_empty() {
+        return 0;
+    }
+
     let b0 = bytes[0];
     if b0 <= 0x7F {
         return 1;
@@ -64,6 +67,39 @@ pub fn mb_char_len(bytes: &[u8]) -> usize {
         MbEncoding::EucJp => eucjp_len(bytes, b0),
         MbEncoding::EucKr => euckr_len(bytes, b0),
         MbEncoding::Big5 => big5_len(bytes, b0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mb_char_len_empty() {
+        assert_eq!(0, mb_char_len(&[]));
+    }
+
+    #[test]
+    fn test_mb_char_len_ascii() {
+        assert_eq!(1, mb_char_len(b"a"));
+    }
+
+    #[test]
+    fn test_truncated_multibyte_sequences_fall_back_to_one_byte() {
+        assert_eq!(1, utf8_len(&[0xE2], 0xE2));
+        assert_eq!(1, gb18030_len(&[0x81, 0x30, 0x81], 0x81));
+        assert_eq!(1, eucjp_len(&[0x8F, 0xA1], 0x8F));
+        assert_eq!(1, euckr_len(&[0xA1], 0xA1));
+        assert_eq!(1, big5_len(&[0x81], 0x81));
+    }
+
+    #[test]
+    fn test_valid_multibyte_sequences_report_full_length() {
+        assert_eq!(3, utf8_len(&[0xE2, 0x82, 0xAC], 0xE2));
+        assert_eq!(4, gb18030_len(&[0x81, 0x30, 0x81, 0x30], 0x81));
+        assert_eq!(3, eucjp_len(&[0x8F, 0xA1, 0xA1], 0x8F));
+        assert_eq!(2, euckr_len(&[0xA1, 0xA1], 0xA1));
+        assert_eq!(2, big5_len(&[0x81, 0x40], 0x81));
     }
 }
 
