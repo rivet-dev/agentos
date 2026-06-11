@@ -4,10 +4,11 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use openssl::version as openssl_version;
+use serde::de;
 use v8::MapFnTo;
 use v8::ValueDeserializerHelper;
 use v8::ValueSerializerHelper;
@@ -20,6 +21,8 @@ use crate::host_call::BridgeCallContext;
 // produce real V8 serialization format (e.g. Bun).
 static USE_CBOR_CODEC: AtomicBool = AtomicBool::new(false);
 static EMBEDDED_CBOR_USERS: AtomicUsize = AtomicUsize::new(0);
+const MAX_CBOR_BRIDGE_DEPTH: usize = 64;
+const MAX_CBOR_BRIDGE_CONTAINER_ITEMS: usize = 100_000;
 
 /// Initialize the codec from the SECURE_EXEC_V8_CODEC environment variable.
 /// Call once at process startup before any sessions are created.
@@ -167,81 +170,383 @@ pub fn deserialize_v8_wire_value<'s>(
 // ── CBOR codec ──
 
 /// Convert a V8 value to a ciborium::Value for CBOR serialization.
-fn v8_to_cbor(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> ciborium::Value {
+fn v8_to_cbor(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+) -> Result<ciborium::Value, String> {
+    let mut object_stack = Vec::new();
+    v8_to_cbor_inner(scope, value, 0, &mut object_stack)
+}
+
+fn v8_to_cbor_inner(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+    depth: usize,
+    object_stack: &mut Vec<v8::Global<v8::Object>>,
+) -> Result<ciborium::Value, String> {
+    if depth > MAX_CBOR_BRIDGE_DEPTH {
+        return Err(format!(
+            "CBOR encode depth exceeds limit of {MAX_CBOR_BRIDGE_DEPTH}"
+        ));
+    }
+
     if value.is_null_or_undefined() {
-        return ciborium::Value::Null;
+        return Ok(ciborium::Value::Null);
     }
     if value.is_boolean() {
-        return ciborium::Value::Bool(value.boolean_value(scope));
+        return Ok(ciborium::Value::Bool(value.boolean_value(scope)));
     }
     if value.is_int32() {
-        return ciborium::Value::Integer(value.int32_value(scope).unwrap_or(0).into());
+        return Ok(ciborium::Value::Integer(
+            value.int32_value(scope).unwrap_or(0).into(),
+        ));
     }
     if value.is_number() {
-        return ciborium::Value::Float(value.number_value(scope).unwrap_or(0.0));
+        return Ok(ciborium::Value::Float(
+            value.number_value(scope).unwrap_or(0.0),
+        ));
     }
     if value.is_string() {
         let s = value.to_rust_string_lossy(scope);
-        return ciborium::Value::Text(s);
+        return Ok(ciborium::Value::Text(s));
     }
     if value.is_array_buffer_view() {
         let view = v8::Local::<v8::ArrayBufferView>::try_from(value).unwrap();
         let len = view.byte_length();
         let mut buf = vec![0u8; len];
         view.copy_contents(&mut buf);
-        return ciborium::Value::Bytes(buf);
+        return Ok(ciborium::Value::Bytes(buf));
     }
     if value.is_array() {
+        let obj = value
+            .to_object(scope)
+            .ok_or_else(|| "CBOR encode failed to convert array to object".to_string())?;
+        enter_cbor_object(scope, object_stack, obj)?;
         let arr = v8::Local::<v8::Array>::try_from(value).unwrap();
         let len = arr.length();
-        let mut items = Vec::with_capacity(len as usize);
-        for i in 0..len {
-            if let Some(elem) = arr.get_index(scope, i) {
-                items.push(v8_to_cbor(scope, elem));
-            } else {
-                items.push(ciborium::Value::Null);
+        let item_count = cbor_container_item_count("array", len as usize)?;
+        let mut items = Vec::with_capacity(item_count);
+        let result = (|| {
+            for i in 0..len {
+                if let Some(elem) = arr.get_index(scope, i) {
+                    items.push(v8_to_cbor_inner(scope, elem, depth + 1, object_stack)?);
+                } else {
+                    items.push(ciborium::Value::Null);
+                }
             }
-        }
-        return ciborium::Value::Array(items);
+            Ok(ciborium::Value::Array(items))
+        })();
+        object_stack.pop();
+        return result;
     }
     if value.is_object() {
         let obj = value.to_object(scope).unwrap();
+        enter_cbor_object(scope, object_stack, obj)?;
         let names = obj
             .get_own_property_names(scope, v8::GetPropertyNamesArgs::default())
             .unwrap_or_else(|| v8::Array::new(scope, 0));
         let len = names.length();
-        let mut entries = Vec::with_capacity(len as usize);
-        for i in 0..len {
-            let key = names.get_index(scope, i).unwrap();
-            let key_str = key.to_rust_string_lossy(scope);
-            let val = obj
-                .get(scope, key)
-                .unwrap_or_else(|| v8::undefined(scope).into());
-            entries.push((ciborium::Value::Text(key_str), v8_to_cbor(scope, val)));
-        }
-        return ciborium::Value::Map(entries);
+        let item_count = cbor_container_item_count("object", len as usize)?;
+        let mut entries = Vec::with_capacity(item_count);
+        let result = (|| {
+            for i in 0..len {
+                let key = names.get_index(scope, i).unwrap();
+                let key_str = key.to_rust_string_lossy(scope);
+                let val = obj
+                    .get(scope, key)
+                    .unwrap_or_else(|| v8::undefined(scope).into());
+                entries.push((
+                    ciborium::Value::Text(key_str),
+                    v8_to_cbor_inner(scope, val, depth + 1, object_stack)?,
+                ));
+            }
+            Ok(ciborium::Value::Map(entries))
+        })();
+        object_stack.pop();
+        return result;
     }
-    ciborium::Value::Null
+    Ok(ciborium::Value::Null)
+}
+
+fn enter_cbor_object(
+    scope: &mut v8::HandleScope,
+    object_stack: &mut Vec<v8::Global<v8::Object>>,
+    object: v8::Local<v8::Object>,
+) -> Result<(), String> {
+    for previous in object_stack.iter() {
+        let previous = v8::Local::new(scope, previous);
+        if previous.strict_equals(object.into()) {
+            return Err("CBOR encode rejected circular object graph".to_string());
+        }
+    }
+    object_stack.push(v8::Global::new(scope, object));
+    Ok(())
+}
+
+fn cbor_container_item_count(kind: &str, item_count: usize) -> Result<usize, String> {
+    if item_count > MAX_CBOR_BRIDGE_CONTAINER_ITEMS {
+        return Err(format!(
+            "CBOR {kind} item count {item_count} exceeds limit of {MAX_CBOR_BRIDGE_CONTAINER_ITEMS}"
+        ));
+    }
+    Ok(item_count)
+}
+
+struct LimitedCborValue(ciborium::Value);
+
+impl<'de> de::Deserialize<'de> for LimitedCborValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(LimitedCborVisitor).map(Self)
+    }
+}
+
+struct LimitedCborSeed;
+
+impl<'de> de::DeserializeSeed<'de> for LimitedCborSeed {
+    type Value = ciborium::Value;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(LimitedCborVisitor)
+    }
+}
+
+struct LimitedCborVisitor;
+
+impl<'de> de::Visitor<'de> for LimitedCborVisitor {
+    type Value = ciborium::Value;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a bounded CBOR bridge value")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+        Ok(ciborium::Value::Bool(value))
+    }
+
+    fn visit_f32<E>(self, value: f32) -> Result<Self::Value, E> {
+        Ok(ciborium::Value::Float(value.into()))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E> {
+        Ok(ciborium::Value::Float(value))
+    }
+
+    fn visit_i8<E>(self, value: i8) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_i16<E>(self, value: i16) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_i32<E>(self, value: i32) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_i128<E>(self, value: i128) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_u8<E>(self, value: u8) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_u16<E>(self, value: u16) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_u32<E>(self, value: u32) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_u128<E>(self, value: u128) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_char<E>(self, value: char) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(value.into())
+    }
+
+    fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(value.into())
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(value.into())
+    }
+
+    fn visit_borrowed_bytes<E>(self, value: &'de [u8]) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(value.into())
+    }
+
+    fn visit_byte_buf<E>(self, value: Vec<u8>) -> Result<Self::Value, E> {
+        Ok(value.into())
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(ciborium::Value::Null)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(ciborium::Value::Null)
+    }
+
+    fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+
+    fn visit_seq<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+    where
+        A: de::SeqAccess<'de>,
+    {
+        if let Some(item_count) = access.size_hint() {
+            limited_cbor_item_count("array", item_count)?;
+        }
+
+        let mut items = Vec::new();
+        while let Some(item) = access.next_element_seed(LimitedCborSeed)? {
+            limited_cbor_item_count("array", items.len() + 1)?;
+            items.push(item);
+        }
+        Ok(ciborium::Value::Array(items))
+    }
+
+    fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+    where
+        A: de::MapAccess<'de>,
+    {
+        if let Some(item_count) = access.size_hint() {
+            limited_cbor_item_count("map", item_count)?;
+        }
+
+        let mut entries = Vec::new();
+        while let Some(key) = access.next_key_seed(LimitedCborSeed)? {
+            limited_cbor_item_count("map", entries.len() + 1)?;
+            let value = access.next_value_seed(LimitedCborSeed)?;
+            entries.push((key, value));
+        }
+        Ok(ciborium::Value::Map(entries))
+    }
+
+    fn visit_enum<A>(self, access: A) -> Result<Self::Value, A::Error>
+    where
+        A: de::EnumAccess<'de>,
+    {
+        use serde::de::VariantAccess;
+
+        struct TaggedValueVisitor;
+
+        impl<'de> de::Visitor<'de> for TaggedValueVisitor {
+            type Value = ciborium::Value;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a tagged CBOR bridge value")
+            }
+
+            fn visit_seq<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                let tag = access
+                    .next_element()?
+                    .ok_or_else(|| de::Error::custom("expected tag"))?;
+                let value = access
+                    .next_element_seed(LimitedCborSeed)?
+                    .ok_or_else(|| de::Error::custom("expected tagged value"))?;
+                Ok(ciborium::Value::Tag(tag, Box::new(value)))
+            }
+        }
+
+        let (name, data): (String, _) = access.variant()?;
+        if name != "@@TAGGED@@" {
+            return Err(de::Error::custom("expected CBOR tag"));
+        }
+        data.tuple_variant(2, TaggedValueVisitor)
+    }
+}
+
+fn limited_cbor_item_count<E: de::Error>(kind: &str, item_count: usize) -> Result<usize, E> {
+    cbor_container_item_count(kind, item_count).map_err(de::Error::custom)
 }
 
 /// Convert a ciborium::Value to a V8 value.
 fn cbor_to_v8<'s>(
     scope: &mut v8::HandleScope<'s>,
     value: &ciborium::Value,
-) -> v8::Local<'s, v8::Value> {
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    cbor_to_v8_inner(scope, value, 0)
+}
+
+fn cbor_to_v8_inner<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    value: &ciborium::Value,
+    depth: usize,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    if depth > MAX_CBOR_BRIDGE_DEPTH {
+        return Err(format!(
+            "CBOR decode depth exceeds limit of {MAX_CBOR_BRIDGE_DEPTH}"
+        ));
+    }
+
     match value {
-        ciborium::Value::Null => v8::null(scope).into(),
-        ciborium::Value::Bool(b) => v8::Boolean::new(scope, *b).into(),
+        ciborium::Value::Null => Ok(v8::null(scope).into()),
+        ciborium::Value::Bool(b) => Ok(v8::Boolean::new(scope, *b).into()),
         ciborium::Value::Integer(n) => {
             let n: i128 = (*n).into();
             if n >= i32::MIN as i128 && n <= i32::MAX as i128 {
-                v8::Integer::new(scope, n as i32).into()
+                Ok(v8::Integer::new(scope, n as i32).into())
             } else {
-                v8::Number::new(scope, n as f64).into()
+                Ok(v8::Number::new(scope, n as f64).into())
             }
         }
-        ciborium::Value::Float(f) => v8::Number::new(scope, *f).into(),
-        ciborium::Value::Text(s) => v8::String::new(scope, s).unwrap().into(),
+        ciborium::Value::Float(f) => Ok(v8::Number::new(scope, *f).into()),
+        ciborium::Value::Text(s) => Ok(v8::String::new(scope, s)
+            .ok_or_else(|| "CBOR decode failed to allocate string".to_string())?
+            .into()),
         ciborium::Value::Bytes(b) => {
             let len = b.len();
             let ab = v8::ArrayBuffer::new(scope, len);
@@ -255,27 +560,31 @@ fn cbor_to_v8<'s>(
                     );
                 }
             }
-            v8::Uint8Array::new(scope, ab, 0, len).unwrap().into()
+            Ok(v8::Uint8Array::new(scope, ab, 0, len)
+                .ok_or_else(|| "CBOR decode failed to allocate byte array".to_string())?
+                .into())
         }
         ciborium::Value::Array(items) => {
+            cbor_container_item_count("array", items.len())?;
             let arr = v8::Array::new(scope, items.len() as i32);
             for (i, item) in items.iter().enumerate() {
-                let val = cbor_to_v8(scope, item);
+                let val = cbor_to_v8_inner(scope, item, depth + 1)?;
                 arr.set_index(scope, i as u32, val);
             }
-            arr.into()
+            Ok(arr.into())
         }
         ciborium::Value::Map(entries) => {
+            cbor_container_item_count("map", entries.len())?;
             let obj = v8::Object::new(scope);
             for (k, v) in entries {
-                let key = cbor_to_v8(scope, k);
-                let val = cbor_to_v8(scope, v);
+                let key = cbor_to_v8_inner(scope, k, depth + 1)?;
+                let val = cbor_to_v8_inner(scope, v, depth + 1)?;
                 obj.set(scope, key, val);
             }
-            obj.into()
+            Ok(obj.into())
         }
-        ciborium::Value::Tag(_, inner) => cbor_to_v8(scope, inner),
-        _ => v8::undefined(scope).into(),
+        ciborium::Value::Tag(_, inner) => cbor_to_v8_inner(scope, inner, depth + 1),
+        _ => Ok(v8::undefined(scope).into()),
     }
 }
 
@@ -284,7 +593,7 @@ pub fn serialize_cbor_value(
     scope: &mut v8::HandleScope,
     value: v8::Local<v8::Value>,
 ) -> Result<Vec<u8>, String> {
-    let cbor_val = v8_to_cbor(scope, value);
+    let cbor_val = v8_to_cbor(scope, value)?;
     let mut buf = Vec::new();
     ciborium::into_writer(&cbor_val, &mut buf).map_err(|e| format!("CBOR encode failed: {}", e))?;
     Ok(buf)
@@ -295,9 +604,10 @@ pub fn deserialize_cbor_value<'s>(
     scope: &mut v8::HandleScope<'s>,
     data: &[u8],
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let cbor_val: ciborium::Value =
-        ciborium::from_reader(data).map_err(|e| format!("CBOR decode failed: {}", e))?;
-    Ok(cbor_to_v8(scope, &cbor_val))
+    let LimitedCborValue(cbor_val) =
+        ciborium::de::from_reader_with_recursion_limit(data, MAX_CBOR_BRIDGE_DEPTH)
+            .map_err(|e| format!("CBOR decode failed: {}", e))?;
+    cbor_to_v8(scope, &cbor_val)
 }
 
 /// Pre-allocated serialization buffers reused across bridge calls within a session.
@@ -1585,7 +1895,11 @@ fn is_errno_segment(segment: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::bridge_error_code;
+    use super::{
+        MAX_CBOR_BRIDGE_CONTAINER_ITEMS, MAX_CBOR_BRIDGE_DEPTH, bridge_error_code,
+        deserialize_cbor_value, serialize_cbor_value,
+    };
+    use crate::isolate;
 
     #[test]
     fn bridge_error_code_rejects_guest_controlled_errno_segments() {
@@ -1608,5 +1922,75 @@ mod tests {
             Some("ENOENT")
         );
         assert_eq!(bridge_error_code("EEXIST: already exists"), Some("EEXIST"));
+    }
+
+    #[test]
+    fn cbor_codec_rejects_cycles_and_excessive_depth() {
+        isolate::init_v8_platform();
+
+        let mut isolate = isolate::create_isolate(None);
+        let context = isolate::create_context(&mut isolate);
+        let scope = &mut v8::HandleScope::new(&mut isolate);
+        let context = v8::Local::new(scope, &context);
+        let scope = &mut v8::ContextScope::new(scope, context);
+
+        let object = v8::Object::new(scope);
+        let self_key = v8::String::new(scope, "self").unwrap();
+        assert!(object.set(scope, self_key.into(), object.into()).is_some());
+
+        let error = serialize_cbor_value(scope, object.into()).expect_err("cycle rejected");
+        assert!(
+            error.contains("circular object graph"),
+            "unexpected error: {error}"
+        );
+
+        let source = v8::String::new(
+            scope,
+            &format!(
+                "const sparse = []; sparse.length = {}; sparse",
+                MAX_CBOR_BRIDGE_CONTAINER_ITEMS + 1
+            ),
+        )
+        .unwrap();
+        let script = v8::Script::compile(scope, source, None).unwrap();
+        let sparse = script.run(scope).unwrap();
+        let error = serialize_cbor_value(scope, sparse).expect_err("sparse array rejected");
+        assert!(
+            error.contains(&format!(
+                "item count {} exceeds limit",
+                MAX_CBOR_BRIDGE_CONTAINER_ITEMS + 1
+            )),
+            "unexpected error: {error}"
+        );
+
+        let mut value = ciborium::Value::Null;
+        for _ in 0..=MAX_CBOR_BRIDGE_DEPTH {
+            value = ciborium::Value::Array(vec![value]);
+        }
+        let mut encoded = Vec::new();
+        ciborium::into_writer(&value, &mut encoded).unwrap();
+        let error = deserialize_cbor_value(scope, &encoded).expect_err("depth rejected");
+        assert!(
+            error.contains("CBOR decode failed"),
+            "unexpected error: {error}"
+        );
+
+        let oversized_len = (MAX_CBOR_BRIDGE_CONTAINER_ITEMS + 1) as u32;
+        let oversized_array_header = [
+            0x9a,
+            (oversized_len >> 24) as u8,
+            (oversized_len >> 16) as u8,
+            (oversized_len >> 8) as u8,
+            oversized_len as u8,
+        ];
+        let error = deserialize_cbor_value(scope, &oversized_array_header)
+            .expect_err("oversized array rejected before element allocation");
+        assert!(
+            error.contains(&format!(
+                "item count {} exceeds limit",
+                MAX_CBOR_BRIDGE_CONTAINER_ITEMS + 1
+            )),
+            "unexpected error: {error}"
+        );
     }
 }

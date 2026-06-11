@@ -140,6 +140,7 @@ dependencies = [
  "crossbeam-channel",
  "libc",
  "openssl",
+ "serde",
  "signal-hook",
  "v8",
 ]

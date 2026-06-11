@@ -13,6 +13,7 @@ crossbeam-channel = "0.5"
 signal-hook = "0.3"
 libc = "0.2"
 ciborium = "0.2"
+serde = "1.0"
 openssl = "0.10"
 
 [[test]]
