@@ -438,6 +438,9 @@ impl ProcessFdTable {
         let fd = match target_fd {
             Some(fd) => {
                 self.validate_fd_bounds(fd)?;
+                if self.entries.contains_key(&fd) {
+                    self.close(fd);
+                }
                 fd
             }
             None => self.allocate_fd()?,

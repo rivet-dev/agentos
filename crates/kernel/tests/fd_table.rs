@@ -111,6 +111,37 @@ fn open_with_rejects_target_fds_past_the_process_limit() {
 }
 
 #[test]
+fn open_with_replaces_target_fd_and_releases_previous_entry() {
+    let mut manager = FdTableManager::new();
+    manager.create(1);
+
+    let table = manager.get_mut(1).expect("FD table should exist");
+    let target_fd = table
+        .open("/tmp/old.txt", O_RDONLY)
+        .expect("open target FD");
+    let previous = Arc::clone(&table.get(target_fd).expect("target entry").description);
+    let replacement = Arc::new(FileDescription::new(999, "/tmp/new.txt", O_RDONLY));
+
+    assert_eq!(previous.ref_count(), 1);
+
+    let opened = table
+        .open_with(
+            Arc::clone(&replacement),
+            FILETYPE_REGULAR_FILE,
+            Some(target_fd),
+        )
+        .expect("replace target FD");
+
+    assert_eq!(opened, target_fd);
+    assert_eq!(previous.ref_count(), 0);
+    assert_eq!(replacement.ref_count(), 2);
+    assert!(Arc::ptr_eq(
+        &table.get(target_fd).expect("replacement entry").description,
+        &replacement
+    ));
+}
+
+#[test]
 fn configurable_process_fd_limit_returns_emfile() {
     let mut manager = FdTableManager::with_max_fds(5);
     manager.create(1);
