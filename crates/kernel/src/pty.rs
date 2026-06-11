@@ -813,6 +813,18 @@ impl PtyManager {
             .sum()
     }
 
+    pub fn pending_read_waiter_count(&self) -> usize {
+        lock_or_recover(&self.inner.state).waiters.len()
+    }
+
+    pub fn queued_read_waiter_count(&self) -> usize {
+        lock_or_recover(&self.inner.state)
+            .ptys
+            .values()
+            .map(|pty| pty.waiting_input_reads.len() + pty.waiting_output_reads.len())
+            .sum()
+    }
+
     pub fn path_for(&self, description_id: u64) -> Option<String> {
         let state = lock_or_recover(&self.inner.state);
         let pty_ref = state.desc_to_pty.get(&description_id)?;
@@ -894,20 +906,20 @@ fn process_input(
 
             if byte == pty.termios.cc.verase || byte == 0x08 {
                 if !pty.line_buffer.is_empty() {
-                    pty.line_buffer.pop();
                     if pty.termios.echo {
                         deliver_output(pty, waiters, &[0x08, 0x20, 0x08], true)?;
                     }
+                    pty.line_buffer.pop();
                 }
                 continue;
             }
 
             if byte == b'\n' {
-                pty.line_buffer.push(b'\n');
+                let mut line = pty.line_buffer.clone();
+                line.push(b'\n');
                 if pty.termios.echo {
                     deliver_output(pty, waiters, b"\r\n", true)?;
                 }
-                let line = pty.line_buffer.clone();
                 deliver_input(pty, waiters, &line)?;
                 pty.line_buffer.clear();
                 continue;
@@ -916,10 +928,10 @@ fn process_input(
             if pty.line_buffer.len() >= MAX_CANON {
                 continue;
             }
-            pty.line_buffer.push(byte);
             if pty.termios.echo {
                 deliver_output(pty, waiters, &[byte], true)?;
             }
+            pty.line_buffer.push(byte);
         } else {
             if pty.termios.echo {
                 deliver_output(pty, waiters, &[byte], true)?;

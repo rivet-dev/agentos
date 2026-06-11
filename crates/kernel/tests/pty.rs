@@ -3,7 +3,19 @@ use agent_os_kernel::pty::{
     MAX_PTY_BUFFER_BYTES, SIGINT,
 };
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+fn wait_for(predicate: impl Fn() -> bool, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if predicate() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(predicate(), "condition should become true before timeout");
+}
 
 #[test]
 fn raw_mode_delivers_bytes_and_applies_icrnl_translation() {
@@ -165,6 +177,96 @@ fn oversized_raw_write_fails_atomically() {
         .expect("read after failed write")
         .expect("data should be buffered");
     assert_eq!(data, vec![b'a'; MAX_CANON.min(8)]);
+}
+
+#[test]
+fn canonical_echo_backpressure_does_not_mutate_pending_line() {
+    let manager = PtyManager::new();
+    let pty = manager.create_pty();
+
+    manager
+        .write(pty.slave.description.id(), vec![b'x'; MAX_PTY_BUFFER_BYTES])
+        .expect("fill master output buffer");
+
+    let error = manager
+        .write(pty.master.description.id(), b"a")
+        .expect_err("echo backpressure should reject the input byte");
+    assert_eq!(error.code(), "EAGAIN");
+
+    let drained = manager
+        .read(pty.master.description.id(), MAX_PTY_BUFFER_BYTES)
+        .expect("read full echo buffer")
+        .expect("echo buffer should have data");
+    assert_eq!(drained.len(), MAX_PTY_BUFFER_BYTES);
+
+    manager
+        .write(pty.master.description.id(), b"\n")
+        .expect("newline should succeed after draining echo buffer");
+    let line = manager
+        .read(pty.slave.description.id(), 16)
+        .expect("read canonical line")
+        .expect("line should be delivered");
+
+    assert_eq!(line, b"\n");
+}
+
+#[test]
+fn many_pending_reads_are_cleaned_up_when_peer_closes() {
+    let manager = PtyManager::new();
+    let pty = manager.create_pty();
+    let reader_count = 64;
+    let mut readers = Vec::new();
+
+    for _ in 0..reader_count {
+        let manager = manager.clone();
+        let slave_id = pty.slave.description.id();
+        readers.push(std::thread::spawn(move || {
+            manager
+                .read_with_timeout(slave_id, 1, Some(Duration::from_secs(5)))
+                .expect("read should finish on peer close")
+        }));
+    }
+
+    wait_for(
+        || manager.pending_read_waiter_count() == reader_count,
+        Duration::from_secs(1),
+    );
+
+    manager.close(pty.master.description.id());
+
+    for reader in readers {
+        assert_eq!(reader.join().expect("reader thread should finish"), None);
+    }
+    assert_eq!(manager.pending_read_waiter_count(), 0);
+    assert_eq!(manager.queued_read_waiter_count(), 0);
+}
+
+#[test]
+fn many_timed_out_reads_are_removed_from_waiter_queues() {
+    let manager = PtyManager::new();
+    let pty = manager.create_pty();
+    let reader_count = 64;
+    let mut readers = Vec::new();
+
+    for _ in 0..reader_count {
+        let manager = manager.clone();
+        let slave_id = pty.slave.description.id();
+        readers.push(std::thread::spawn(move || {
+            manager
+                .read_with_timeout(slave_id, 1, Some(Duration::from_millis(25)))
+                .expect_err("read should time out")
+                .code()
+        }));
+    }
+
+    for reader in readers {
+        assert_eq!(
+            reader.join().expect("reader thread should finish"),
+            "EAGAIN"
+        );
+    }
+    assert_eq!(manager.pending_read_waiter_count(), 0);
+    assert_eq!(manager.queued_read_waiter_count(), 0);
 }
 
 #[test]
