@@ -1,18 +1,20 @@
 mod support;
 
 use agent_os_sidecar::protocol::{
-    ConfigureVmRequest, GuestRuntimeKind, MountDescriptor, MountPluginDescriptor, OwnershipScope,
-    RequestPayload,
+    ConfigureVmRequest, EventPayload, GuestRuntimeKind, MountDescriptor, MountPluginDescriptor,
+    OwnershipScope, ProcessOutputEvent, RequestPayload, StreamChannel,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use support::{
-    assert_node_available, authenticate, collect_process_output_with_timeout,
-    create_vm_with_metadata, execute, new_sidecar, open_session, request, temp_dir, write_fixture,
+    assert_node_available, authenticate, create_vm_with_metadata, execute, new_sidecar,
+    open_session, request, temp_dir, write_fixture,
 };
+
+const MAX_PROBE_STREAM_BYTES: usize = 1024 * 1024;
 
 const ALLOWED_NODE_BUILTINS: &[&str] = &[
     "buffer",
@@ -126,6 +128,77 @@ fn run_host_probe(cwd: &Path, entrypoint: &Path) -> Value {
     serde_json::from_slice(&output.stdout).expect("parse host probe JSON")
 }
 
+fn append_probe_stream_chunk(stream: &mut Vec<u8>, chunk: &[u8], label: &str) {
+    assert!(
+        stream.len().saturating_add(chunk.len()) <= MAX_PROBE_STREAM_BYTES,
+        "{label} exceeded {MAX_PROBE_STREAM_BYTES} bytes"
+    );
+    stream.extend_from_slice(chunk);
+}
+
+fn collect_probe_process_output(
+    sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+    timeout: Duration,
+) -> (String, String, i32) {
+    let ownership = OwnershipScope::session(connection_id, session_id);
+    let deadline = Instant::now() + timeout;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut exit = None;
+
+    loop {
+        let event = sidecar
+            .poll_event_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll sidecar event");
+        if let Some(event) = event {
+            assert_eq!(
+                event.ownership,
+                OwnershipScope::vm(connection_id, session_id, vm_id)
+            );
+
+            match event.payload {
+                EventPayload::ProcessOutput(ProcessOutputEvent {
+                    process_id: event_process_id,
+                    channel,
+                    chunk,
+                }) if event_process_id == process_id => match channel {
+                    StreamChannel::Stdout => {
+                        append_probe_stream_chunk(&mut stdout, &chunk, "stdout");
+                    }
+                    StreamChannel::Stderr => {
+                        append_probe_stream_chunk(&mut stderr, &chunk, "stderr");
+                    }
+                },
+                EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
+                    exit = Some((exited.exit_code, Instant::now()));
+                }
+                _ => {}
+            }
+        }
+
+        if let Some((exit_code, seen_at)) = exit {
+            if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
+                return (
+                    String::from_utf8_lossy(&stdout).into_owned(),
+                    String::from_utf8_lossy(&stderr).into_owned(),
+                    exit_code,
+                );
+            }
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for process events\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+    }
+}
+
 fn run_guest_probe_process(
     case_name: &str,
     cwd: &Path,
@@ -177,7 +250,7 @@ fn run_guest_probe_process(
         Vec::new(),
     );
 
-    let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
+    let (stdout, stderr, exit_code) = collect_probe_process_output(
         &mut sidecar,
         &connection_id,
         &session_id,
@@ -216,50 +289,6 @@ fn run_guest_probe(
     );
 
     serde_json::from_str(stdout.trim()).expect("parse guest probe JSON")
-}
-
-fn run_guest_probe_eventually(
-    case_name: &str,
-    cwd: &Path,
-    entrypoint: &Path,
-    mount_registry_commands: bool,
-    extra_metadata: BTreeMap<String, String>,
-    extra_mounts: Vec<MountDescriptor>,
-) -> Value {
-    let mut last_failure = String::new();
-    for attempt in 1..=3 {
-        let (stdout, stderr, exit_code) = run_guest_probe_process(
-            case_name,
-            cwd,
-            entrypoint,
-            mount_registry_commands,
-            extra_metadata.clone(),
-            extra_mounts.clone(),
-        );
-        match serde_json::from_str::<Value>(stdout.trim()) {
-            Ok(guest)
-                if guest["status"] == json!(0)
-                    && guest["signal"] == Value::Null
-                    && strip_benign_child_pid_warnings(
-                        guest["stderr"].as_str().unwrap_or_default(),
-                    )
-                    .is_empty() =>
-            {
-                return guest;
-            }
-            Ok(guest) => {
-                last_failure = format!("attempt {attempt} returned unstable shell repro: {guest}");
-            }
-            Err(error) => {
-                last_failure = format!(
-                    "attempt {attempt} failed to parse guest probe JSON: {error}\nstdout:\n{stdout}\nstderr:\n{stderr}\nexit={exit_code}"
-                );
-            }
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-
-    panic!("{last_failure}");
 }
 
 fn write_probe(case_name: &str, script: &str) -> (PathBuf, PathBuf) {
@@ -358,7 +387,7 @@ console.log(JSON.stringify({
 }));
 "#,
     );
-    let guest = run_guest_probe_eventually(
+    let guest = run_guest_probe(
         "relative-shell",
         &cwd,
         &entrypoint,
@@ -481,7 +510,7 @@ console.log(JSON.stringify({
 }));
 "#,
     );
-    let guest = run_guest_probe_eventually(
+    let guest = run_guest_probe(
         "absolute-shell",
         &cwd,
         &entrypoint,
