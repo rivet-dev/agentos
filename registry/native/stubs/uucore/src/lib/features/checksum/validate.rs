@@ -10,15 +10,15 @@ use crate::util_name;
 use std::ffi::OsStr;
 use std::fmt::Display;
 use std::fs::File;
-use std::io::{self, BufReader, Read, Write, stderr, stdin};
+use std::io::{self, stderr, stdin, BufReader, Read, Write};
 
 use os_display::Quotable;
 
 use crate::checksum::{
-    AlgoKind, ChecksumError, ReadingMode, SizedAlgoKind, digest_reader, unescape_filename,
+    digest_reader, unescape_filename, AlgoKind, ChecksumError, ReadingMode, SizedAlgoKind,
 };
 use crate::error::{FromIo, UError, UIoError, UResult, USimpleError};
-use crate::quoting_style::{QuotingStyle, locale_aware_escape_name};
+use crate::quoting_style::{locale_aware_escape_name, QuotingStyle};
 use crate::sum::DigestOutput;
 use crate::{
     os_str_as_bytes, os_str_from_bytes, read_os_string_lines, show, show_warning_caps, translate,
@@ -244,12 +244,13 @@ fn write_file_report<W: Write>(
     result: FileChecksumResult,
     prefix: &str,
     verbose: ChecksumVerbose,
-) {
+) -> io::Result<()> {
     if result.can_display(verbose) {
-        let _ = write!(w, "{prefix}");
-        let _ = w.write_all(filename);
-        let _ = writeln!(w, ": {result}");
+        write!(w, "{prefix}")?;
+        w.write_all(filename)?;
+        writeln!(w, ": {result}")?;
     }
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -546,7 +547,8 @@ fn get_file_to_check(
                 FileChecksumResult::CantOpen,
                 "",
                 opts.verbose,
-            );
+            )
+            .map_err(|e| LineCheckError::UError(e.into()))
         };
         let print_error = |err: io::Error| {
             show!(err.map_err_context(|| {
@@ -567,7 +569,7 @@ fn get_file_to_check(
                         "Is a directory",
                     ));
                     // also regarded as a failed open
-                    failed_open();
+                    failed_open()?;
                     Err(LineCheckError::FileIsDirectory)
                 } else {
                     Ok(Box::new(f))
@@ -577,7 +579,7 @@ fn get_file_to_check(
                 if !opts.ignore_missing {
                     // yes, we have both stderr and stdout here
                     print_error(err);
-                    failed_open();
+                    failed_open()?;
                 }
                 // we could not open the file but we want to continue
                 Err(LineCheckError::FileNotFound)
@@ -699,7 +701,8 @@ fn compute_and_check_digest_from_file(
                     FileChecksumResult::CantOpen,
                     prefix,
                     opts.verbose,
-                );
+                )
+                .map_err(|e| LineCheckError::UError(e.into()))?;
                 return Err(LineCheckError::CantOpenFile);
             }
         };
@@ -716,7 +719,8 @@ fn compute_and_check_digest_from_file(
         FileChecksumResult::from_bool(checksum_correct),
         prefix,
         opts.verbose,
-    );
+    )
+    .map_err(|e| LineCheckError::UError(e.into()))?;
 
     if checksum_correct {
         Ok(())
@@ -1278,8 +1282,34 @@ mod tests {
 
         for (filename, result, prefix, expected) in cases {
             let mut buffer: Vec<u8> = vec![];
-            write_file_report(&mut buffer, filename, *result, prefix, opts.verbose);
+            write_file_report(&mut buffer, filename, *result, prefix, opts.verbose).unwrap();
             assert_eq!(&buffer, expected);
         }
+    }
+
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_write_file_report_returns_write_errors() {
+        let err = write_file_report(
+            FailingWriter,
+            b"filename",
+            FileChecksumResult::Ok,
+            "",
+            ChecksumVerbose::Normal,
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
     }
 }
