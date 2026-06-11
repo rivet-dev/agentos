@@ -19,9 +19,9 @@
 //! does not implement.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use uuid::Uuid;
 
 use agent_os_sidecar::protocol::{
@@ -29,13 +29,16 @@ use agent_os_sidecar::protocol::{
     RejectedResponse, RequestPayload, ResponsePayload, StreamChannel, WriteStdinRequest,
 };
 
-use crate::agent_os::{AgentOs, ShellEntry};
+use crate::agent_os::{AcpTerminalEntry, AgentOs, ShellEntry};
 use crate::error::ClientError;
-use crate::process::{install_output_callback, OutputCallback, StdinInput};
+use crate::process::{OutputCallback, ProcessStatus, StdinInput, install_output_callback};
 use crate::stream::ByteStream;
 
 /// Channel capacity for a shell's data / stderr broadcasts.
 const SHELL_DATA_CHANNEL_CAPACITY: usize = 1024;
+
+/// Maximum active or spawning terminals created by `connect_terminal` per VM.
+const ACP_TERMINAL_LIMIT: usize = 1024;
 
 /// Default shell command used when [`OpenShellOptions::command`] is omitted (matches the kernel's
 /// PTY-backed `sh`).
@@ -100,6 +103,51 @@ fn stdin_chunk(data: StdinInput) -> Vec<u8> {
     }
 }
 
+fn try_reserve_counter(counter: &AtomicUsize, limit: usize) -> bool {
+    counter
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+            (count < limit).then_some(count + 1)
+        })
+        .is_ok()
+}
+
+fn release_counter(counter: &AtomicUsize) {
+    let _ = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+        Some(count.saturating_sub(1))
+    });
+}
+
+struct AcpTerminalReservation<'a> {
+    agent: &'a AgentOs,
+    active: bool,
+}
+
+impl<'a> AcpTerminalReservation<'a> {
+    fn new(agent: &'a AgentOs) -> std::result::Result<Self, ClientError> {
+        if !try_reserve_counter(&agent.inner().acp_terminal_count, ACP_TERMINAL_LIMIT) {
+            return Err(ClientError::Sidecar(format!(
+                "acp terminal limit exceeded: at most {ACP_TERMINAL_LIMIT} terminals can be active per VM"
+            )));
+        }
+        Ok(Self {
+            agent,
+            active: true,
+        })
+    }
+
+    fn disarm(&mut self) {
+        self.active = false;
+    }
+}
+
+impl Drop for AcpTerminalReservation<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            release_counter(&self.agent.inner().acp_terminal_count);
+        }
+    }
+}
+
 impl AgentOs {
     /// The VM-scoped ownership scope used for every shell/fetch wire request.
     fn vm_ownership(&self) -> OwnershipScope {
@@ -108,6 +156,62 @@ impl AgentOs {
             self.wire_session_id().to_string(),
             self.vm_id().to_string(),
         )
+    }
+
+    pub(crate) fn finish_acp_terminal(&self, process_id: &str) {
+        if self.inner().acp_terminals.remove(process_id).is_some() {
+            release_counter(&self.inner().acp_terminal_count);
+        }
+    }
+
+    async fn start_acp_terminal(
+        &self,
+        execute: ExecuteRequest,
+        ownership: OwnershipScope,
+        pid_tx: tokio::sync::oneshot::Sender<std::result::Result<u32, ClientError>>,
+        process_id: &str,
+    ) -> Option<u32> {
+        {
+            let _terminal_lifecycle_guard = self.inner().acp_terminal_lifecycle_lock.lock().await;
+            if self.inner().disposed.load(Ordering::SeqCst) {
+                let error = ClientError::Sidecar(
+                    "cannot connect terminal after VM shutdown has started".to_string(),
+                );
+                let _ = pid_tx.send(Err(error));
+                self.finish_acp_terminal(process_id);
+                return None;
+            }
+        }
+
+        let result = match self
+            .transport()
+            .request(ownership, RequestPayload::Execute(execute))
+            .await
+        {
+            Ok(ResponsePayload::ProcessStarted(ProcessStartedResponse { pid, .. })) => pid
+                .ok_or_else(|| {
+                    ClientError::Sidecar(
+                        "connect_terminal: sidecar did not return a pid".to_string(),
+                    )
+                }),
+            Ok(ResponsePayload::Rejected(rejected)) => Err(rejected_to_error(rejected)),
+            Ok(other) => Err(ClientError::Sidecar(format!(
+                "unexpected response to connect_terminal: {other:?}"
+            ))),
+            Err(error) => Err(error),
+        };
+
+        match result {
+            Ok(pid) => {
+                let _ = pid_tx.send(Ok(pid));
+                Some(pid)
+            }
+            Err(error) => {
+                let _ = pid_tx.send(Err(error));
+                self.finish_acp_terminal(process_id);
+                None
+            }
+        }
     }
 }
 
@@ -259,7 +363,7 @@ impl AgentOs {
     }
 
     /// Connect a terminal bound to host stdio. Returns a PID. NOT tracked in the shells map; cannot
-    /// be addressed by other shell methods. Killed during dispose via the ACP-terminal pid set.
+    /// be addressed by other shell methods. Killed during dispose via the ACP-terminal registry.
     ///
     /// Mirrors the TS `connectTerminal`, which routes its `onData`/`onStderr` callbacks through
     /// `openShell`. The Rust port opens a shell, wires the caller's `on_data` to the shell's data
@@ -300,28 +404,33 @@ impl AgentOs {
         };
 
         // Subscribe before issuing the spawn so no output is missed.
-        let mut events = self.transport().subscribe_events();
-        let response = self
-            .transport()
-            .request(self.vm_ownership(), RequestPayload::Execute(execute))
-            .await
-            .context("connect_terminal spawn failed")?;
-
-        let pid = match response {
-            ResponsePayload::ProcessStarted(ProcessStartedResponse { pid, .. }) => {
-                pid.context("connect_terminal: sidecar did not return a pid")?
+        let events = self.transport().subscribe_events();
+        let ownership = self.vm_ownership();
+        let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
+        let agent = self.clone();
+        let route_process_id = process_id.clone();
+        let exit_task = tokio::spawn(async move {
+            if start_rx.await.is_err() {
+                return;
             }
-            ResponsePayload::Rejected(rejected) => return Err(rejected_to_error(rejected).into()),
-            _ => anyhow::bail!("unexpected response to connect_terminal"),
-        };
-
-        // Fan terminal output to the caller's onData/onStderr sinks until the process exits.
-        let route_process_id = process_id;
-        tokio::spawn(async move {
+            let terminal_pid = match agent
+                .start_acp_terminal(execute, ownership, pid_tx, &route_process_id)
+                .await
+            {
+                Some(pid) => pid,
+                None => return,
+            };
+            let mut events = events;
             loop {
                 let (_scope, payload) = match events.recv().await {
                     Ok(value) => value,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        if terminal_process_finished(&agent, terminal_pid).await {
+                            break;
+                        }
+                        continue;
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 };
                 match payload {
@@ -346,12 +455,51 @@ impl AgentOs {
                     EventPayload::VmLifecycle(_) | EventPayload::Structured(_) => {}
                 }
             }
+            agent.finish_acp_terminal(&route_process_id);
         });
 
-        // NOT tracked in `_shells`; recorded for dispose-time terminal teardown only.
-        let _ = self.inner().acp_terminal_pids.insert(pid);
+        {
+            let _terminal_lifecycle_guard = self.inner().acp_terminal_lifecycle_lock.lock().await;
+            if self.inner().disposed.load(Ordering::SeqCst) {
+                exit_task.abort();
+                return Err(ClientError::Sidecar(
+                    "cannot connect terminal after VM shutdown has started".to_string(),
+                )
+                .into());
+            }
+            let mut terminal_reservation = AcpTerminalReservation::new(self)?;
+            match self
+                .inner()
+                .acp_terminals
+                .insert(process_id.clone(), AcpTerminalEntry { exit_task })
+            {
+                Ok(()) => {}
+                Err((_, entry)) => {
+                    entry.exit_task.abort();
+                    return Err(ClientError::Sidecar(format!(
+                        "terminal process id collision while tracking ACP terminal: {process_id}"
+                    ))
+                    .into());
+                }
+            }
+            terminal_reservation.disarm();
+            if start_tx.send(()).is_err() {
+                self.finish_acp_terminal(&process_id);
+                return Err(ClientError::Sidecar(
+                    "terminal startup task ended before registration completed".to_string(),
+                )
+                .into());
+            }
+        }
 
-        Ok(pid)
+        pid_rx
+            .await
+            .map_err(|_| {
+                ClientError::Sidecar(
+                    "terminal startup task ended before returning a pid".to_string(),
+                )
+            })?
+            .map_err(Into::into)
     }
 
     /// Write to a shell. SYNC fire-and-forget. Errors with [`ClientError::ShellNotFound`].
@@ -475,5 +623,34 @@ async fn wait_for_spawn(mut spawned_rx: tokio::sync::watch::Receiver<bool>) {
         if *spawned_rx.borrow() {
             return;
         }
+    }
+}
+
+async fn terminal_process_finished(agent: &AgentOs, pid: u32) -> bool {
+    match agent.all_processes().await {
+        Ok(processes) => match processes.into_iter().find(|process| process.pid == pid) {
+            Some(process) => process.status != ProcessStatus::Running,
+            None => true,
+        },
+        Err(error) => {
+            tracing::warn!(?error, pid, "terminal process snapshot failed");
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reserve_counter_enforces_limit_and_release_reopens_slot() {
+        let counter = AtomicUsize::new(0);
+
+        assert!(try_reserve_counter(&counter, 2));
+        assert!(try_reserve_counter(&counter, 2));
+        assert!(!try_reserve_counter(&counter, 2));
+        release_counter(&counter);
+        assert!(try_reserve_counter(&counter, 2));
     }
 }
