@@ -1,5 +1,6 @@
 use agent_os_kernel::command_registry::CommandDriver;
-use agent_os_kernel::kernel::{KernelVm, KernelVmConfig, SpawnOptions};
+use agent_os_kernel::fd_table::O_RDWR;
+use agent_os_kernel::kernel::{KernelVm, KernelVmConfig, SpawnOptions, SEEK_SET};
 use agent_os_kernel::mount_table::{MountOptions, MountTable};
 use agent_os_kernel::permissions::Permissions;
 use agent_os_kernel::pty::LineDisciplineConfig;
@@ -1128,6 +1129,83 @@ fn resource_limits_reject_oversized_pread_and_write_operations() {
 
     process.finish(0);
     kernel.wait_and_reap(process.pid()).expect("reap shell");
+}
+
+#[test]
+fn fd_write_rejects_unaddressable_sparse_offsets_without_mutating_file() {
+    let mut config = KernelVmConfig::new("vm-fd-write-huge-offset");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: None,
+        max_fd_write_bytes: Some(8),
+        ..ResourceLimits::default()
+    };
+
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+    kernel
+        .write_file("/tmp/data.txt", b"safe".to_vec())
+        .expect("seed file");
+    let process = kernel
+        .spawn_process(
+            "sh",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("shell")),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn shell");
+    let fd = kernel
+        .fd_open("shell", process.pid(), "/tmp/data.txt", O_RDWR, None)
+        .expect("open file");
+    kernel
+        .fd_seek("shell", process.pid(), fd, i64::MAX, SEEK_SET)
+        .expect("seek to unaddressable offset");
+
+    let error = kernel
+        .fd_write("shell", process.pid(), fd, b"x")
+        .expect_err("huge sparse fd_write should be rejected");
+    assert_eq!(error.code(), "ENOMEM");
+    assert_eq!(
+        kernel
+            .read_file("/tmp/data.txt")
+            .expect("file should remain unchanged"),
+        b"safe".to_vec()
+    );
+}
+
+#[test]
+fn snapshot_root_filesystem_rejects_current_usage_over_configured_limit() {
+    let mut root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/workspace"),
+                FilesystemEntry::file("/workspace/data.txt", b"large".to_vec()),
+            ],
+        }],
+        bootstrap_entries: Vec::new(),
+    })
+    .expect("create root filesystem");
+    root.write_file("/workspace/extra.txt", b"extra".to_vec())
+        .expect("write extra data before applying kernel limit");
+
+    let mut config = KernelVmConfig::new("vm-snapshot-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_filesystem_bytes: Some(4),
+        ..ResourceLimits::default()
+    };
+    let mut kernel = KernelVm::new(MountTable::new(root), config);
+
+    let error = kernel
+        .snapshot_root_filesystem()
+        .expect_err("snapshot should be rejected before cloning root contents");
+    assert_eq!(error.code(), "ENOSPC");
 }
 
 #[test]

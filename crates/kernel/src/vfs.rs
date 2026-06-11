@@ -217,6 +217,10 @@ pub trait VirtualFileSystem {
         Ok(entries)
     }
     fn read_dir_with_types(&mut self, path: &str) -> VfsResult<Vec<VirtualDirEntry>>;
+    /// Writes caller-owned bytes into the filesystem.
+    ///
+    /// This raw VFS primitive does not enforce VM resource policy. Kernel entry
+    /// points must preflight file sizes and inode growth before calling it.
     fn write_file(&mut self, path: &str, content: impl Into<Vec<u8>>) -> VfsResult<()>;
     fn write_file_with_mode(
         &mut self,
@@ -243,9 +247,12 @@ pub trait VirtualFileSystem {
         let _ = mode;
         self.create_file_exclusive(path, content)
     }
+    /// Appends caller-owned bytes into the filesystem after checking that the
+    /// in-memory file can grow without overflowing addressable memory.
     fn append_file(&mut self, path: &str, content: impl Into<Vec<u8>>) -> VfsResult<u64> {
         let content = content.into();
         let mut existing = self.read_file(path)?;
+        reserve_file_growth(&mut existing, content.len())?;
         existing.extend_from_slice(&content);
         let new_len = existing.len() as u64;
         self.write_file(path, existing)?;
@@ -309,18 +316,29 @@ pub trait VirtualFileSystem {
         )?;
         self.utimes(path, atime_ms, mtime_ms)
     }
+    /// Resizes a file. VM resource policy must be enforced by the caller.
     fn truncate(&mut self, path: &str, length: u64) -> VfsResult<()>;
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>>;
+    /// Writes caller-owned bytes at an offset after checking that the in-memory
+    /// file can grow without overflowing addressable memory.
     fn pwrite(&mut self, path: &str, content: impl Into<Vec<u8>>, offset: u64) -> VfsResult<()> {
         let content = content.into();
         let mut existing = self.read_file(path)?;
-        let start = offset as usize;
+        let start = checked_file_len(offset, "pwrite offset")?;
         if start > existing.len() {
-            existing.resize(start, 0);
+            resize_file_data(&mut existing, start)?;
         }
-        let end = start.saturating_add(content.len());
+        let end = start.checked_add(content.len()).ok_or_else(|| {
+            VfsError::new(
+                "ENOMEM",
+                format!(
+                    "pwrite result length overflows addressable memory: offset {offset}, content length {}",
+                    content.len()
+                ),
+            )
+        })?;
         if end > existing.len() {
-            existing.resize(end, 0);
+            resize_file_data(&mut existing, end)?;
         }
         existing[start..end].copy_from_slice(&content);
         self.write_file(path, existing)
@@ -776,6 +794,10 @@ impl MemoryFileSystem {
         }
     }
 
+    /// Clones the full in-memory filesystem state.
+    ///
+    /// Callers that expose snapshots outside the kernel must enforce their own
+    /// byte and inode limits before reaching this raw clone operation.
     pub fn snapshot(&self) -> MemoryFileSystemSnapshot {
         MemoryFileSystemSnapshot {
             path_index: self.path_index.clone(),
@@ -979,6 +1001,7 @@ impl VirtualFileSystem for MemoryFileSystem {
         let now = now_ms();
         match &mut inode.kind {
             InodeKind::File { data: existing } => {
+                reserve_file_growth(existing, data.len())?;
                 existing.extend_from_slice(&data);
                 inode.metadata.mtime_ms = now;
                 inode.metadata.ctime_ms = now;
@@ -1313,7 +1336,7 @@ impl VirtualFileSystem for MemoryFileSystem {
         let now = now_ms();
         match &mut inode.kind {
             InodeKind::File { data } => {
-                data.resize(length as usize, 0);
+                resize_file_data(data, checked_file_len(length, "truncate length")?)?;
                 inode.metadata.mtime_ms = now;
                 inode.metadata.ctime_ms = now;
                 Ok(())
@@ -1427,6 +1450,35 @@ fn block_count_for_size(size: u64) -> u64 {
     } else {
         size.div_ceil(512)
     }
+}
+
+fn checked_file_len(value: u64, description: &'static str) -> VfsResult<usize> {
+    usize::try_from(value).map_err(|_| {
+        VfsError::new(
+            "EINVAL",
+            format!("{description} exceeds addressable memory: {value}"),
+        )
+    })
+}
+
+fn reserve_file_growth(data: &mut Vec<u8>, additional: usize) -> VfsResult<()> {
+    data.try_reserve(additional).map_err(|error| {
+        VfsError::new(
+            "ENOMEM",
+            format!(
+                "file growth exceeds addressable memory: current length {}, additional {additional}: {error}",
+                data.len()
+            ),
+        )
+    })
+}
+
+fn resize_file_data(data: &mut Vec<u8>, new_len: usize) -> VfsResult<()> {
+    if new_len > data.len() {
+        reserve_file_growth(data, new_len - data.len())?;
+    }
+    data.resize(new_len, 0);
+    Ok(())
 }
 
 fn dirname(path: &str) -> String {

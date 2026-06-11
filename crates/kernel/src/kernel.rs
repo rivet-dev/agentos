@@ -2072,7 +2072,7 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             return Ok(data.len());
         }
         let current_size = self.current_storage_file_size(&path)?;
-        let cursor = entry.description.cursor() as usize;
+        let cursor = entry.description.cursor();
         if entry.description.flags() & O_APPEND != 0 {
             let required_size = current_size.max(checked_write_end(current_size, data.len())?);
             self.check_path_resize_limits(&path, required_size)?;
@@ -2081,25 +2081,12 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             return Ok(data.len());
         }
 
-        let required_size = current_size.max(checked_write_end(cursor as u64, data.len())?);
+        let required_size = current_size.max(checked_write_end(cursor, data.len())?);
         self.check_path_resize_limits(&path, required_size)?;
-
-        let mut existing = if VirtualFileSystem::exists(&self.filesystem, &path) {
-            VirtualFileSystem::read_file(&mut self.filesystem, &path)?
-        } else {
-            Vec::new()
-        };
-        if cursor > existing.len() {
-            existing.resize(cursor, 0);
-        }
-
-        let new_len = cursor.saturating_add(data.len());
-        if new_len > existing.len() {
-            existing.resize(new_len, 0);
-        }
-        existing[cursor..new_len].copy_from_slice(data);
-        VirtualFileSystem::write_file(&mut self.filesystem, &path, existing)?;
-        entry.description.set_cursor(new_len as u64);
+        VirtualFileSystem::pwrite(&mut self.filesystem, &path, data, cursor)?;
+        entry
+            .description
+            .set_cursor(cursor.saturating_add(data.len() as u64));
         Ok(data.len())
     }
 
@@ -4082,6 +4069,9 @@ impl KernelVm<MountTable> {
     }
 
     pub fn snapshot_root_filesystem(&mut self) -> KernelResult<RootFilesystemSnapshot> {
+        let usage = self.filesystem_usage()?;
+        self.resources
+            .check_filesystem_usage(&usage, usage.total_bytes, usage.inode_count)?;
         let root = self
             .root_filesystem_mut()
             .ok_or_else(|| KernelError::new("EINVAL", "native root filesystem is not available"))?;

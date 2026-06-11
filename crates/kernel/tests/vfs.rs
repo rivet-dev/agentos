@@ -422,6 +422,33 @@ fn chmod_chown_utimes_truncate_and_pread_update_metadata_and_contents() {
 }
 
 #[test]
+fn oversized_raw_truncate_and_pwrite_fail_without_mutating_file_contents() {
+    let mut filesystem = MemoryFileSystem::new();
+    filesystem
+        .write_file("/huge.txt", b"safe".to_vec())
+        .expect("seed file");
+
+    assert_error_code(filesystem.truncate("/huge.txt", u64::MAX), "ENOMEM");
+    assert_eq!(
+        filesystem
+            .read_file("/huge.txt")
+            .expect("read after failed truncate"),
+        b"safe".to_vec()
+    );
+
+    assert_error_code(
+        filesystem.pwrite("/huge.txt", b"x".to_vec(), u64::MAX),
+        "ENOMEM",
+    );
+    assert_eq!(
+        filesystem
+            .read_file("/huge.txt")
+            .expect("read after failed pwrite"),
+        b"safe".to_vec()
+    );
+}
+
+#[test]
 fn directory_reads_and_metadata_updates_refresh_timestamps() {
     let mut filesystem = MemoryFileSystem::new();
     filesystem
