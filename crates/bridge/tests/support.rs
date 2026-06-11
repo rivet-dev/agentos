@@ -43,6 +43,7 @@ pub struct RecordingBridge {
     symlinks: BTreeMap<String, String>,
     snapshots: BTreeMap<String, FilesystemSnapshot>,
     execution_events: VecDeque<ExecutionEvent>,
+    permission_responses: VecDeque<Result<PermissionDecision, StubError>>,
     pub filesystem_permission_requests: Vec<FilesystemPermissionRequest>,
     pub permission_checks: Vec<String>,
     pub log_events: Vec<LogRecord>,
@@ -69,6 +70,7 @@ impl Default for RecordingBridge {
             symlinks: BTreeMap::new(),
             snapshots: BTreeMap::new(),
             execution_events: VecDeque::new(),
+            permission_responses: VecDeque::new(),
             filesystem_permission_requests: Vec::new(),
             permission_checks: Vec::new(),
             log_events: Vec::new(),
@@ -99,6 +101,22 @@ impl RecordingBridge {
 
     pub fn push_execution_event(&mut self, event: ExecutionEvent) {
         self.execution_events.push_back(event);
+    }
+
+    pub fn push_permission_decision(&mut self, decision: PermissionDecision) {
+        self.permission_responses.push_back(Ok(decision));
+    }
+
+    pub fn push_permission_error(&mut self, message: impl Into<String>) {
+        self.permission_responses.push_back(Err(StubError {
+            message: message.into(),
+        }));
+    }
+
+    fn next_permission_response(&mut self) -> Result<PermissionDecision, StubError> {
+        self.permission_responses
+            .pop_front()
+            .unwrap_or_else(|| Ok(PermissionDecision::allow()))
     }
 
     fn metadata_for_path(&self, path: &str, follow_links: bool) -> Result<FileMetadata, StubError> {
@@ -247,7 +265,7 @@ impl PermissionBridge for RecordingBridge {
         self.filesystem_permission_requests.push(request.clone());
         self.permission_checks
             .push(format!("fs:{}:{}", request.vm_id, request.path));
-        Ok(PermissionDecision::allow())
+        self.next_permission_response()
     }
 
     fn check_network_access(
@@ -256,7 +274,7 @@ impl PermissionBridge for RecordingBridge {
     ) -> Result<PermissionDecision, Self::Error> {
         self.permission_checks
             .push(format!("net:{}:{}", request.vm_id, request.resource));
-        Ok(PermissionDecision::allow())
+        self.next_permission_response()
     }
 
     fn check_command_execution(
@@ -265,7 +283,7 @@ impl PermissionBridge for RecordingBridge {
     ) -> Result<PermissionDecision, Self::Error> {
         self.permission_checks
             .push(format!("cmd:{}:{}", request.vm_id, request.command));
-        Ok(PermissionDecision::allow())
+        self.next_permission_response()
     }
 
     fn check_environment_access(
@@ -274,7 +292,7 @@ impl PermissionBridge for RecordingBridge {
     ) -> Result<PermissionDecision, Self::Error> {
         self.permission_checks
             .push(format!("env:{}:{}", request.vm_id, request.key));
-        Ok(PermissionDecision::allow())
+        self.next_permission_response()
     }
 }
 

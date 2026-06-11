@@ -89,7 +89,10 @@ mod service {
         use agent_os_kernel::command_registry::CommandDriver;
         use agent_os_kernel::kernel::{KernelVmConfig, SpawnOptions, VirtualProcessOptions};
         use agent_os_kernel::mount_table::{MountEntry, MountOptions, MountTable};
-        use agent_os_kernel::permissions::{FsAccessRequest, FsOperation, Permissions};
+        use agent_os_kernel::permissions::{
+            CommandAccessRequest, EnvAccessRequest, EnvironmentOperation, FsAccessRequest,
+            FsOperation, NetworkAccessRequest, NetworkOperation, Permissions,
+        };
         use agent_os_kernel::poll::{PollTargetEntry, POLLIN};
         use agent_os_kernel::process_table::{SIGKILL, SIGTERM};
         use agent_os_kernel::resource_accounting::ResourceLimits;
@@ -6499,6 +6502,27 @@ setInterval(() => {}, 1000);
                 "expected the native plugin to store a manifest object"
             );
         }
+        fn assert_kernel_permission_decision(
+            decision: agent_os_kernel::permissions::PermissionDecision,
+            expected_allow: bool,
+            expected_reason: Option<&str>,
+        ) {
+            assert_eq!(decision.allow, expected_allow);
+            if let Some(expected_reason) = expected_reason {
+                assert!(
+                    decision
+                        .reason
+                        .as_deref()
+                        .is_some_and(|reason| reason.contains(expected_reason)),
+                    "expected reason to contain {expected_reason:?}, got {:?}",
+                    decision.reason
+                );
+            } else {
+                assert_eq!(decision.reason, None);
+            }
+        }
+
+        #[test]
         fn bridge_permissions_map_symlink_operations_to_symlink_access() {
             let bridge = SharedBridge::new(RecordingBridge::default());
             let permissions = bridge_permissions(bridge.clone(), "vm-symlink");
@@ -6525,6 +6549,152 @@ setInterval(() => {}, 1000);
                     access: FilesystemAccess::Symlink,
                 }]
             );
+        }
+
+        #[test]
+        fn bridge_permissions_propagate_host_permission_outcomes() {
+            let cases = [
+                (agent_os_bridge::PermissionDecision::allow(), true, None),
+                (
+                    agent_os_bridge::PermissionDecision::deny("blocked by host"),
+                    false,
+                    Some("blocked by host"),
+                ),
+                (
+                    agent_os_bridge::PermissionDecision::prompt("prompt required"),
+                    false,
+                    Some("prompt required"),
+                ),
+                (
+                    agent_os_bridge::PermissionDecision {
+                        verdict: agent_os_bridge::PermissionVerdict::Deny,
+                        reason: None,
+                    },
+                    false,
+                    Some("denied by host"),
+                ),
+                (
+                    agent_os_bridge::PermissionDecision {
+                        verdict: agent_os_bridge::PermissionVerdict::Prompt,
+                        reason: None,
+                    },
+                    false,
+                    Some("permission prompt required"),
+                ),
+            ];
+
+            for (host_decision, expected_allow, expected_reason) in cases {
+                let bridge = SharedBridge::new(RecordingBridge::default());
+                bridge
+                    .inspect(|bridge| {
+                        for _ in 0..4 {
+                            bridge.push_permission_decision(host_decision.clone());
+                        }
+                    })
+                    .expect("seed permission decisions");
+
+                assert_kernel_permission_decision(
+                    bridge.filesystem_decision(
+                        "vm-permissions",
+                        "/workspace/file.txt",
+                        FilesystemAccess::Read,
+                    ),
+                    expected_allow,
+                    expected_reason,
+                );
+                assert_kernel_permission_decision(
+                    bridge.command_decision(
+                        "vm-permissions",
+                        &CommandAccessRequest {
+                            vm_id: String::from("ignored-by-bridge"),
+                            command: String::from("node"),
+                            args: vec![String::from("--version")],
+                            cwd: Some(String::from("/workspace")),
+                            env: BTreeMap::new(),
+                        },
+                    ),
+                    expected_allow,
+                    expected_reason,
+                );
+                assert_kernel_permission_decision(
+                    bridge.environment_decision(
+                        "vm-permissions",
+                        &EnvAccessRequest {
+                            vm_id: String::from("ignored-by-bridge"),
+                            op: EnvironmentOperation::Read,
+                            key: String::from("PATH"),
+                            value: None,
+                        },
+                    ),
+                    expected_allow,
+                    expected_reason,
+                );
+                assert_kernel_permission_decision(
+                    bridge.network_decision(
+                        "vm-permissions",
+                        &NetworkAccessRequest {
+                            vm_id: String::from("ignored-by-bridge"),
+                            op: NetworkOperation::Fetch,
+                            resource: String::from("https://example.test"),
+                        },
+                    ),
+                    expected_allow,
+                    expected_reason,
+                );
+            }
+        }
+
+        #[test]
+        fn bridge_permissions_fail_closed_when_host_permission_checks_error() {
+            let bridge = SharedBridge::new(RecordingBridge::default());
+            bridge
+                .inspect(|bridge| {
+                    for _ in 0..4 {
+                        bridge.push_permission_error("permission backend unavailable");
+                    }
+                })
+                .expect("seed permission errors");
+
+            for decision in [
+                bridge.filesystem_decision(
+                    "vm-permissions",
+                    "/workspace/file.txt",
+                    FilesystemAccess::Read,
+                ),
+                bridge.command_decision(
+                    "vm-permissions",
+                    &CommandAccessRequest {
+                        vm_id: String::from("ignored-by-bridge"),
+                        command: String::from("node"),
+                        args: vec![String::from("--version")],
+                        cwd: Some(String::from("/workspace")),
+                        env: BTreeMap::new(),
+                    },
+                ),
+                bridge.environment_decision(
+                    "vm-permissions",
+                    &EnvAccessRequest {
+                        vm_id: String::from("ignored-by-bridge"),
+                        op: EnvironmentOperation::Read,
+                        key: String::from("PATH"),
+                        value: None,
+                    },
+                ),
+                bridge.network_decision(
+                    "vm-permissions",
+                    &NetworkAccessRequest {
+                        vm_id: String::from("ignored-by-bridge"),
+                        op: NetworkOperation::Fetch,
+                        resource: String::from("https://example.test"),
+                    },
+                ),
+            ] {
+                assert_kernel_permission_decision(
+                    decision,
+                    false,
+                    Some("permission backend unavailable"),
+                );
+            }
         }
         #[test]
         fn parse_resource_limits_reads_filesystem_limits() {
