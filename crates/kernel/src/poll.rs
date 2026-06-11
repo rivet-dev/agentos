@@ -126,7 +126,7 @@ struct PollNotifierInner {
 impl PollNotifier {
     pub(crate) fn notify(&self) {
         let mut generation = lock_or_recover(&self.inner.generation);
-        *generation = generation.saturating_add(1);
+        *generation = generation.wrapping_add(1);
         self.inner.waiters.notify_all();
     }
 
@@ -194,5 +194,71 @@ fn wait_timeout_or_recover<'a, T>(
     match condvar.wait_timeout(guard, timeout) {
         Ok(result) => result,
         Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PollNotifier;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn infinite_wait_returns_after_notification_without_waiter_storage() {
+        let notifier = PollNotifier::default();
+        let observed = notifier.snapshot();
+        let waiter = notifier.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+
+        let handle = thread::spawn(move || {
+            started_tx.send(()).expect("signal waiter start");
+            let changed = waiter.wait_for_change(observed, None);
+            done_tx.send(changed).expect("signal waiter result");
+        });
+
+        started_rx.recv().expect("waiter should start");
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(25)).is_err(),
+            "waiter should stay blocked before notification"
+        );
+
+        notifier.notify();
+        assert!(done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("waiter should wake after notification"));
+        handle.join().expect("waiter thread should finish");
+    }
+
+    #[test]
+    fn saturated_generation_still_notifies_waiters() {
+        let notifier = PollNotifier::default();
+        {
+            let mut generation = super::lock_or_recover(&notifier.inner.generation);
+            *generation = u64::MAX;
+        }
+
+        let observed = notifier.snapshot();
+        let waiter = notifier.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+
+        let handle = thread::spawn(move || {
+            started_tx.send(()).expect("signal waiter start");
+            let changed = waiter.wait_for_change(observed, Some(Duration::from_secs(1)));
+            done_tx.send(changed).expect("signal waiter result");
+        });
+
+        started_rx.recv().expect("waiter should start");
+        notifier.notify();
+
+        assert!(
+            done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("waiter should return after saturated notify"),
+            "saturated notify should still wake the waiter"
+        );
+        handle.join().expect("waiter thread should finish");
     }
 }
