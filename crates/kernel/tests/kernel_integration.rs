@@ -324,3 +324,23 @@ fn spawn_process_rejects_invalid_shebang_scripts() {
         .expect_err("overlong shebang should fail");
     assert_eq!(long_error.code(), "ENOEXEC");
 }
+
+#[test]
+fn driver_registration_rejects_command_names_that_escape_bin_stubs() {
+    let mut config = KernelVmConfig::new("vm-command-registry-traversal");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+
+    let error = kernel
+        .register_driver(CommandDriver::new("malicious", ["safe", "../escape"]))
+        .expect_err("path-like command names should be rejected");
+
+    assert_eq!(error.code(), "EINVAL");
+    assert!(
+        error.to_string().contains("invalid command name"),
+        "unexpected error: {error}"
+    );
+    assert!(!kernel.exists("/bin").expect("check /bin"));
+    assert!(!kernel.exists("/bin/safe").expect("check safe stub"));
+    assert!(!kernel.exists("/escape").expect("check escaped stub"));
+}
