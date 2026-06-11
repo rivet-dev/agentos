@@ -19,9 +19,9 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use agent_os_sidecar::protocol::{
-    self, EventPayload, NativeFrameCodec, NativePayloadCodec, OwnershipScope, ProtocolFrame,
-    RequestFrame, RequestPayload, ResponsePayload, SidecarRequestFrame, SidecarRequestPayload,
-    SidecarResponseFrame, SidecarResponsePayload, DEFAULT_MAX_FRAME_BYTES,
+    self, DEFAULT_MAX_FRAME_BYTES, EventPayload, NativeFrameCodec, NativePayloadCodec,
+    OwnershipScope, ProtocolFrame, RequestFrame, RequestPayload, ResponsePayload,
+    SidecarRequestFrame, SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload,
 };
 
 use crate::error::ClientError;
@@ -125,9 +125,31 @@ impl SidecarTransport {
         ownership: OwnershipScope,
         payload: RequestPayload,
     ) -> Result<ResponsePayload, ClientError> {
+        self.request_with_frame_limit(ownership, payload, None)
+            .await
+    }
+
+    /// Issue a host request using a caller-specific frame limit no larger than the negotiated
+    /// transport limit. This is used by fully buffered APIs that need a stricter per-operation cap.
+    pub(crate) async fn request_bounded(
+        &self,
+        ownership: OwnershipScope,
+        payload: RequestPayload,
+        max_frame_bytes: usize,
+    ) -> Result<ResponsePayload, ClientError> {
+        self.request_with_frame_limit(ownership, payload, Some(max_frame_bytes))
+            .await
+    }
+
+    async fn request_with_frame_limit(
+        &self,
+        ownership: OwnershipScope,
+        payload: RequestPayload,
+        max_frame_bytes: Option<usize>,
+    ) -> Result<ResponsePayload, ClientError> {
         let request_id = self.next_request_id();
         let frame = ProtocolFrame::Request(RequestFrame::new(request_id, ownership, payload));
-        let bytes = self.encode_frame(&frame)?;
+        let bytes = self.encode_frame(&frame, max_frame_bytes)?;
 
         let (tx, rx) = oneshot::channel();
         let _ = self.pending.insert(request_id, tx);
@@ -151,11 +173,16 @@ impl SidecarTransport {
         let _ = self.callbacks.insert(key, callback);
     }
 
-    fn encode_frame(&self, frame: &ProtocolFrame) -> Result<Vec<u8>, ClientError> {
-        let codec = NativeFrameCodec::with_payload_codec(
-            self.max_frame_bytes.load(Ordering::Relaxed),
-            NativePayloadCodec::Bare,
-        );
+    fn encode_frame(
+        &self,
+        frame: &ProtocolFrame,
+        max_frame_bytes: Option<usize>,
+    ) -> Result<Vec<u8>, ClientError> {
+        let transport_limit = self.max_frame_bytes.load(Ordering::Relaxed);
+        let max_frame_bytes = max_frame_bytes
+            .map(|limit| limit.min(transport_limit))
+            .unwrap_or(transport_limit);
+        let codec = NativeFrameCodec::with_payload_codec(max_frame_bytes, NativePayloadCodec::Bare);
         Ok(codec.encode(frame)?)
     }
 
@@ -195,7 +222,7 @@ impl SidecarTransport {
                         frame.ownership,
                         payload,
                     ));
-                    if let Ok(bytes) = self.encode_frame(&response) {
+                    if let Ok(bytes) = self.encode_frame(&response, None) {
                         let _ = self.writer_tx.send(bytes);
                     }
                 }
@@ -246,19 +273,26 @@ async fn run_reader(transport: Weak<SidecarTransport>, mut stdout: ChildStdout) 
         }
         let length = u32::from_be_bytes(length_buf) as usize;
 
+        let Some(transport) = transport.upgrade() else {
+            break;
+        };
+        let max_frame_bytes = transport.max_frame_bytes.load(Ordering::Relaxed);
+        if frame_length_exceeds_limit(length, max_frame_bytes) {
+            tracing::warn!(
+                size = length,
+                max = max_frame_bytes,
+                "sidecar frame exceeds negotiated limit"
+            );
+            break;
+        }
+
         let mut frame_bytes = vec![0u8; 4 + length];
         frame_bytes[..4].copy_from_slice(&length_buf);
         if stdout.read_exact(&mut frame_bytes[4..]).await.is_err() {
             break;
         }
 
-        let Some(transport) = transport.upgrade() else {
-            break;
-        };
-        let codec = NativeFrameCodec::with_payload_codec(
-            transport.max_frame_bytes.load(Ordering::Relaxed),
-            NativePayloadCodec::Bare,
-        );
+        let codec = NativeFrameCodec::with_payload_codec(max_frame_bytes, NativePayloadCodec::Bare);
         match codec.decode(&frame_bytes) {
             Ok(frame) => transport.handle_frame(frame).await,
             Err(error) => tracing::warn!(?error, "failed to decode sidecar frame"),
@@ -267,5 +301,20 @@ async fn run_reader(transport: Weak<SidecarTransport>, mut stdout: ChildStdout) 
 
     if let Some(transport) = transport.upgrade() {
         transport.fail_all_pending();
+    }
+}
+
+fn frame_length_exceeds_limit(length: usize, max_frame_bytes: usize) -> bool {
+    length > max_frame_bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::frame_length_exceeds_limit;
+
+    #[test]
+    fn frame_length_limit_rejects_oversized_declared_length() {
+        assert!(!frame_length_exceeds_limit(1024, 1024));
+        assert!(frame_length_exceeds_limit(1025, 1024));
     }
 }

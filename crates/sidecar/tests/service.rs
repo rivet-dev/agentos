@@ -12025,6 +12025,85 @@ console.log(JSON.stringify(summary));
                 Some(Some(response_json)),
             );
         }
+
+        fn javascript_http_respond_rejects_oversized_pending_response() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+            let cwd = temp_dir("agent-os-sidecar-http-respond-oversized");
+            write_fixture(&cwd.join("entry.mjs"), "");
+            start_fake_javascript_process(
+                &mut sidecar,
+                &vm_id,
+                &cwd,
+                "proc-js-http-respond-oversized",
+                "[]",
+            );
+
+            let oversized_body = "a".repeat(crate::protocol::DEFAULT_MAX_FRAME_BYTES);
+            let response_json = format!(r#"{{"status":200,"body":"{oversized_body}"}}"#);
+            assert!(response_json.len() > crate::protocol::DEFAULT_MAX_FRAME_BYTES);
+            {
+                let vm = sidecar.vms.get_mut(&vm_id).expect("vm");
+                let process = vm
+                    .active_processes
+                    .get_mut("proc-js-http-respond-oversized")
+                    .expect("javascript process");
+                process.pending_http_requests.insert((7, 10), None);
+            }
+
+            let error = call_javascript_sync_rpc(
+                &mut sidecar,
+                &vm_id,
+                "proc-js-http-respond-oversized",
+                JavascriptSyncRpcRequest {
+                    id: 5,
+                    method: String::from("net.http_respond"),
+                    args: vec![json!(7), json!(10), Value::String(response_json)],
+                },
+            )
+            .expect_err("oversized http response should be rejected");
+            assert!(
+                error.to_string().contains("net.http_respond payload is"),
+                "unexpected error: {error}"
+            );
+            assert_eq!(
+                sidecar
+                    .vms
+                    .get(&vm_id)
+                    .and_then(|vm| vm.active_processes.get("proc-js-http-respond-oversized"))
+                    .and_then(|process| process.pending_http_requests.get(&(7, 10)))
+                    .cloned(),
+                Some(None),
+            );
+        }
+
+        fn vm_fetch_response_frame_limit_counts_protocol_overhead() {
+            let response = crate::protocol::ResponseFrame::new(
+                1,
+                OwnershipScope::vm("conn", "session", "vm"),
+                ResponsePayload::VmFetchResult(crate::protocol::VmFetchResponse {
+                    response_json: "a".repeat(crate::protocol::DEFAULT_MAX_FRAME_BYTES),
+                }),
+            );
+
+            let error = crate::execution::ensure_vm_fetch_response_frame_within_limit(
+                &response,
+                crate::protocol::DEFAULT_MAX_FRAME_BYTES,
+            )
+            .expect_err("frame overhead should exceed the fetch response cap");
+            assert!(
+                error.to_string().contains("protocol frame is"),
+                "unexpected error: {error}"
+            );
+        }
         fn javascript_http2_listen_connect_request_and_respond_round_trip() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
@@ -15257,6 +15336,8 @@ console.log(JSON.stringify({
             javascript_tls_rpc_connects_and_serves_over_guest_net();
             javascript_http_listen_and_close_registers_server();
             javascript_http_respond_records_pending_response();
+            javascript_http_respond_rejects_oversized_pending_response();
+            vm_fetch_response_frame_limit_counts_protocol_overhead();
             javascript_http2_listen_connect_request_and_respond_round_trip();
             javascript_http2_settings_pause_push_and_file_response_surfaces_work();
             javascript_http2_secure_listen_connect_request_and_respond_round_trip();

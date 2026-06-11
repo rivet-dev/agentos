@@ -5,16 +5,17 @@ use crate::filesystem::{
     service_javascript_fs_sync_rpc,
 };
 use crate::protocol::{
-    BoundUdpSnapshotResponse, CloseStdinRequest, EventFrame, EventPayload, ExecuteRequest,
-    FindBoundUdpRequest, FindListenerRequest, GetProcessSnapshotRequest, GetSignalStateRequest,
-    GetZombieTimerCountRequest, GuestRuntimeKind, JavascriptChildProcessSpawnOptions,
-    JavascriptChildProcessSpawnRequest, JavascriptDgramBindRequest,
-    JavascriptDgramCreateSocketRequest, JavascriptDgramSendRequest, JavascriptDnsLookupRequest,
-    JavascriptDnsResolveRequest, JavascriptNetConnectRequest, JavascriptNetListenRequest,
-    JavascriptNetReserveTcpPortRequest, KillProcessRequest, ListenerSnapshotResponse,
-    OwnershipScope, ProcessExitedEvent, ProcessKilledResponse, ProcessOutputEvent,
-    ProcessSnapshotEntry, ProcessSnapshotResponse, ProcessSnapshotStatus, ProcessStartedResponse,
-    RequestFrame, ResponsePayload, SidecarRequestPayload, SignalDispositionAction,
+    BoundUdpSnapshotResponse, CloseStdinRequest, DEFAULT_MAX_FRAME_BYTES, EventFrame, EventPayload,
+    ExecuteRequest, FindBoundUdpRequest, FindListenerRequest, GetProcessSnapshotRequest,
+    GetSignalStateRequest, GetZombieTimerCountRequest, GuestRuntimeKind,
+    JavascriptChildProcessSpawnOptions, JavascriptChildProcessSpawnRequest,
+    JavascriptDgramBindRequest, JavascriptDgramCreateSocketRequest, JavascriptDgramSendRequest,
+    JavascriptDnsLookupRequest, JavascriptDnsResolveRequest, JavascriptNetConnectRequest,
+    JavascriptNetListenRequest, JavascriptNetReserveTcpPortRequest, KillProcessRequest,
+    ListenerSnapshotResponse, NativeFrameCodec, NativePayloadCodec, OwnershipScope,
+    ProcessExitedEvent, ProcessKilledResponse, ProcessOutputEvent, ProcessSnapshotEntry,
+    ProcessSnapshotResponse, ProcessSnapshotStatus, ProcessStartedResponse, ProtocolFrame,
+    RequestFrame, ResponseFrame, ResponsePayload, SidecarRequestPayload, SignalDispositionAction,
     SignalHandlerRegistration, SignalStateResponse, SocketStateEntry, StdinClosedResponse,
     StdinWrittenResponse, StreamChannel, VmFetchRequest, VmFetchResponse, WasmPermissionTier,
     WriteStdinRequest, ZombieTimerCountResponse,
@@ -149,6 +150,7 @@ const PYTHON_PYODIDE_CACHE_GUEST_ROOT: &str = "/__agent_os_pyodide_cache";
 const TCP_SOCKET_POLL_TIMEOUT: Duration = Duration::from_millis(100);
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const HTTP_LOOPBACK_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const VM_FETCH_BUFFER_LIMIT_BYTES: usize = DEFAULT_MAX_FRAME_BYTES;
 const DEFAULT_SCRYPT_COST: u64 = 16_384;
 const DEFAULT_SCRYPT_BLOCK_SIZE: u32 = 8;
 const DEFAULT_SCRYPT_PARALLELIZATION: u32 = 1;
@@ -3425,11 +3427,14 @@ where
             request_key: (server_id, request_id),
         })?;
 
+        let response = self.respond(
+            request,
+            ResponsePayload::VmFetchResult(VmFetchResponse { response_json }),
+        );
+        ensure_vm_fetch_response_frame_within_limit(&response, self.config.max_frame_bytes)?;
+
         Ok(DispatchResult {
-            response: self.respond(
-                request,
-                ResponsePayload::VmFetchResult(VmFetchResponse { response_json }),
-            ),
+            response,
             events: Vec::new(),
         })
     }
@@ -16315,6 +16320,31 @@ where
     }
 }
 
+fn ensure_vm_fetch_response_within_limit(
+    response_json: &str,
+    operation: &str,
+) -> Result<(), SidecarError> {
+    let size = response_json.len();
+    if size > VM_FETCH_BUFFER_LIMIT_BYTES {
+        return Err(SidecarError::Execution(format!(
+            "{operation} payload is {size} bytes, limit is {VM_FETCH_BUFFER_LIMIT_BYTES}"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure_vm_fetch_response_frame_within_limit(
+    response: &ResponseFrame,
+    max_frame_bytes: usize,
+) -> Result<(), SidecarError> {
+    let max_frame_bytes = max_frame_bytes.min(VM_FETCH_BUFFER_LIMIT_BYTES);
+    let frame = ProtocolFrame::Response(response.clone());
+    NativeFrameCodec::with_payload_codec(max_frame_bytes, NativePayloadCodec::Bare)
+        .encode(&frame)
+        .map(|_| ())
+        .map_err(|error| SidecarError::FrameTooLarge(error.to_string()))
+}
+
 fn service_javascript_dns_sync_rpc<B>(
     bridge: &SharedBridge<B>,
     kernel: &SidecarKernel,
@@ -18513,6 +18543,7 @@ where
             )?;
             let response_json =
                 javascript_sync_rpc_arg_str(&request.args, 2, "net.http2_server_respond payload")?;
+            ensure_vm_fetch_response_within_limit(response_json, "net.http2_server_respond")?;
             serde_json::from_str::<Value>(response_json).map_err(|error| {
                 SidecarError::Execution(format!(
                     "net.http2_server_respond payload must be valid JSON: {error}"
@@ -19043,6 +19074,7 @@ where
                 javascript_sync_rpc_arg_u64(&request.args, 1, "net.http_respond request id")?;
             let response_json =
                 javascript_sync_rpc_arg_str(&request.args, 2, "net.http_respond payload")?;
+            ensure_vm_fetch_response_within_limit(response_json, "net.http_respond")?;
             serde_json::from_str::<Value>(response_json).map_err(|error| {
                 SidecarError::Execution(format!(
                     "net.http_respond payload must be valid JSON: {error}"
