@@ -565,7 +565,7 @@ pub fn run_snapshot_consolidated_checks() {
         // Create minimal BridgeCallContext (sync call will fail but we
         // test that the FunctionTemplate dispatches without crash)
         let (event_tx, _event_rx) =
-            crossbeam_channel::unbounded::<crate::runtime_protocol::RuntimeEvent>();
+            crossbeam_channel::unbounded::<crate::session::RuntimeEventEnvelope>();
         let (_cmd_tx, _cmd_rx) = crossbeam_channel::unbounded::<crate::session::SessionCommand>();
         let call_id_router: crate::host_call::CallIdRouter =
             Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -573,7 +573,7 @@ pub fn run_snapshot_consolidated_checks() {
         let receiver = crate::host_call::ReaderBridgeResponseReceiver::new(Box::new(
             std::io::Cursor::new(Vec::<u8>::new()),
         ));
-        let sender = crate::host_call::ChannelRuntimeEventSender::new(event_tx);
+        let sender = crate::host_call::ChannelRuntimeEventSender::new(event_tx, None);
         let bridge_ctx = BridgeCallContext::with_receiver(
             Box::new(sender),
             Box::new(receiver),
@@ -954,13 +954,13 @@ pub fn run_snapshot_consolidated_checks() {
 
         // Create BridgeCallContext (sync calls will fail but we verify dispatch)
         let (event_tx, _event_rx) =
-            crossbeam_channel::unbounded::<crate::runtime_protocol::RuntimeEvent>();
+            crossbeam_channel::unbounded::<crate::session::RuntimeEventEnvelope>();
         let call_id_router: crate::host_call::CallIdRouter =
             Arc::new(Mutex::new(std::collections::HashMap::new()));
         let receiver = crate::host_call::ReaderBridgeResponseReceiver::new(Box::new(
             std::io::Cursor::new(Vec::<u8>::new()),
         ));
-        let sender = crate::host_call::ChannelRuntimeEventSender::new(event_tx);
+        let sender = crate::host_call::ChannelRuntimeEventSender::new(event_tx, None);
         let bridge_ctx = BridgeCallContext::with_receiver(
             Box::new(sender),
             Box::new(receiver),

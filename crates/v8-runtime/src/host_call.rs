@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::ipc_binary::{self, BinaryFrame};
 use crate::runtime_protocol::{BridgeResponse, RuntimeEvent};
+use crate::session::RuntimeEventEnvelope;
 
 /// Trait for sending serialized frames to the host without holding a shared mutex.
 /// Production code uses ChannelRuntimeEventSender (lock-free MPSC); tests use WriterRuntimeEventSender.
@@ -19,7 +20,8 @@ pub trait RuntimeEventSender: Send {
 /// Maintains a reusable frame buffer that grows to high-water mark,
 /// avoiding per-call allocation for frame construction.
 pub struct ChannelRuntimeEventSender {
-    pub tx: crossbeam_channel::Sender<RuntimeEvent>,
+    pub tx: crossbeam_channel::Sender<RuntimeEventEnvelope>,
+    output_generation: Option<u64>,
     /// Pre-allocated frame buffer reused across send_frame calls.
     /// Grows to high-water mark; cleared (not deallocated) between calls.
     #[allow(dead_code)]
@@ -27,9 +29,13 @@ pub struct ChannelRuntimeEventSender {
 }
 
 impl ChannelRuntimeEventSender {
-    pub fn new(tx: crossbeam_channel::Sender<RuntimeEvent>) -> Self {
+    pub fn new(
+        tx: crossbeam_channel::Sender<RuntimeEventEnvelope>,
+        output_generation: Option<u64>,
+    ) -> Self {
         ChannelRuntimeEventSender {
             tx,
+            output_generation,
             frame_buf: RefCell::new(Vec::with_capacity(256)),
         }
     }
@@ -38,7 +44,10 @@ impl ChannelRuntimeEventSender {
 impl RuntimeEventSender for ChannelRuntimeEventSender {
     fn send_event(&self, event: RuntimeEvent) -> Result<(), String> {
         self.tx
-            .send(event)
+            .send(RuntimeEventEnvelope {
+                output_generation: self.output_generation,
+                event,
+            })
             .map_err(|e| format!("channel send failed: {}", e))
     }
 }
@@ -252,6 +261,7 @@ impl BridgeCallContext {
 
         if let Err(e) = self.sender.send_event(bridge_call) {
             self.pending_calls.lock().unwrap().remove(&call_id);
+            self.remove_call_route(call_id);
             return Err(format!("failed to write BridgeCall: {}", e));
         }
 
@@ -262,6 +272,7 @@ impl BridgeCallContext {
                 Ok(frame) => frame,
                 Err(e) => {
                     self.pending_calls.lock().unwrap().remove(&call_id);
+                    self.remove_call_route(call_id);
                     return Err(e);
                 }
             }
@@ -303,10 +314,17 @@ impl BridgeCallContext {
         };
 
         if let Err(e) = self.sender.send_event(bridge_call) {
+            self.remove_call_route(call_id);
             return Err(format!("failed to write BridgeCall: {}", e));
         }
 
         Ok(call_id)
+    }
+
+    fn remove_call_route(&self, call_id: u64) {
+        if let Some(ref router) = self.call_id_router {
+            router.lock().unwrap().remove(&call_id);
+        }
     }
 
     /// Check if a call_id is currently pending.
@@ -563,7 +581,7 @@ mod tests {
     #[test]
     fn channel_runtime_event_sender_delivers_frames() {
         let (tx, rx) = crossbeam_channel::unbounded();
-        let sender = super::ChannelRuntimeEventSender::new(tx);
+        let sender = super::ChannelRuntimeEventSender::new(tx, None);
 
         let event = RuntimeEvent::BridgeCall {
             session_id: "sess-1".into(),
@@ -575,7 +593,8 @@ mod tests {
 
         // Verify the received event matches without any BinaryFrame hop.
         let received = rx.recv().expect("recv");
-        assert_eq!(received, event);
+        assert_eq!(received.output_generation, None);
+        assert_eq!(received.event, event);
     }
 
     #[test]
@@ -584,7 +603,7 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let handles: Vec<_> = (0..4)
             .map(|i| {
-                let sender = super::ChannelRuntimeEventSender::new(tx.clone());
+                let sender = super::ChannelRuntimeEventSender::new(tx.clone(), None);
                 std::thread::spawn(move || {
                     for j in 0..10 {
                         let event = RuntimeEvent::BridgeCall {
@@ -622,7 +641,7 @@ mod tests {
         let router: super::CallIdRouter = Arc::new(Mutex::new(HashMap::new()));
 
         let ctx = BridgeCallContext::with_receiver(
-            Box::new(super::ChannelRuntimeEventSender::new(tx)),
+            Box::new(super::ChannelRuntimeEventSender::new(tx, None)),
             Box::new(super::ReaderBridgeResponseReceiver::new(Box::new(
                 Cursor::new(response_bytes),
             ))),
@@ -636,7 +655,7 @@ mod tests {
 
         // Verify the BridgeCall went through the channel
         let event = rx.recv().expect("recv bridge call");
-        match event {
+        match event.event {
             RuntimeEvent::BridgeCall { method, .. } => assert_eq!(method, "_fsReadFile"),
             _ => panic!("expected BridgeCall"),
         }
@@ -645,7 +664,7 @@ mod tests {
     #[test]
     fn writer_runtime_event_sender_serializes_events() {
         let (tx, rx) = crossbeam_channel::unbounded();
-        let sender = super::ChannelRuntimeEventSender::new(tx);
+        let sender = super::ChannelRuntimeEventSender::new(tx, None);
 
         // Send multiple frames — buffer grows to high-water mark
         for i in 0..5 {
@@ -661,7 +680,7 @@ mod tests {
         // Verify all events arrive with their payload intact.
         for i in 0..5u64 {
             let decoded = rx.recv().expect("recv");
-            match decoded {
+            match decoded.event {
                 RuntimeEvent::BridgeCall {
                     call_id, payload, ..
                 } => {
@@ -680,7 +699,7 @@ mod tests {
         };
         sender.send_event(small.clone()).expect("send_event");
         let decoded = rx.recv().expect("recv");
-        assert_eq!(decoded, small);
+        assert_eq!(decoded.event, small);
     }
 
     #[test]

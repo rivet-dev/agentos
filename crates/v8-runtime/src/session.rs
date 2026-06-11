@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 
 use crate::execution;
 #[cfg(not(test))]
@@ -33,7 +33,13 @@ type SharedIsolateHandle = Arc<Mutex<Option<v8::IsolateHandle>>>;
 type SharedIsolateHandle = Arc<Mutex<Option<()>>>;
 
 /// Sender for typed runtime events produced by session threads.
-pub type RuntimeEventSender = crossbeam_channel::Sender<RuntimeEvent>;
+pub type RuntimeEventSender = crossbeam_channel::Sender<RuntimeEventEnvelope>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeEventEnvelope {
+    pub output_generation: Option<u64>,
+    pub event: RuntimeEvent,
+}
 
 const LATE_TERMINATE_EXECUTION_ERROR_CODE: &str = "ERR_LATE_TERMINATE_EXECUTION";
 const LATE_STREAM_EVENT_ERROR_CODE: &str = "ERR_LATE_STREAM_EVENT";
@@ -41,6 +47,8 @@ const LATE_BRIDGE_RESPONSE_ERROR_CODE: &str = "ERR_LATE_BRIDGE_RESPONSE";
 
 /// Internal entry for a running session
 struct SessionEntry {
+    /// Output receiver generation current when this session was created.
+    output_generation: Option<u64>,
     /// Channel to send commands to the session thread
     tx: Sender<SessionCommand>,
     /// Thread join handle
@@ -182,6 +190,21 @@ impl SessionManager {
         heap_limit_mb: Option<u32>,
         cpu_time_limit_ms: Option<u32>,
     ) -> Result<(), String> {
+        self.create_session_with_output_generation(
+            session_id,
+            heap_limit_mb,
+            cpu_time_limit_ms,
+            None,
+        )
+    }
+
+    pub fn create_session_with_output_generation(
+        &mut self,
+        session_id: String,
+        heap_limit_mb: Option<u32>,
+        cpu_time_limit_ms: Option<u32>,
+        output_generation: Option<u64>,
+    ) -> Result<(), String> {
         if self.sessions.contains_key(&session_id) {
             return Err(format!("session {} already exists", session_id));
         }
@@ -220,6 +243,7 @@ impl SessionManager {
                     isolate_handle_for_thread,
                     execution_abort_for_thread,
                     session_id_for_thread,
+                    output_generation,
                 );
             })
             .map_err(|e| format!("failed to spawn session thread: {}", e))?;
@@ -227,6 +251,7 @@ impl SessionManager {
         self.sessions.insert(
             session_id,
             SessionEntry {
+                output_generation,
                 tx,
                 join_handle: Some(join_handle),
                 isolate_handle,
@@ -237,12 +262,75 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Destroy a session. Sends shutdown to the session thread and joins it.
-    pub fn destroy_session(&mut self, session_id: &str) -> Result<(), String> {
+    pub fn destroy_session_if_output_generation(
+        &mut self,
+        session_id: &str,
+        output_generation: u64,
+    ) -> Result<bool, String> {
+        if !self
+            .sessions
+            .get(session_id)
+            .is_some_and(|entry| entry.output_generation == Some(output_generation))
+        {
+            return Ok(false);
+        }
+
+        self.destroy_session(session_id)?;
+        Ok(true)
+    }
+
+    pub fn detach_session_if_output_generation(
+        &mut self,
+        session_id: &str,
+        output_generation: u64,
+    ) -> Result<bool, String> {
+        if !self
+            .sessions
+            .get(session_id)
+            .is_some_and(|entry| entry.output_generation == Some(output_generation))
+        {
+            return Ok(false);
+        }
+
+        self.detach_session(session_id)?;
+        Ok(true)
+    }
+
+    fn detach_session(&mut self, session_id: &str) -> Result<(), String> {
         let entry = self
             .sessions
             .get(session_id)
             .ok_or_else(|| format!("session {} does not exist", session_id))?;
+
+        #[cfg(not(test))]
+        if let Some(handle) = entry
+            .isolate_handle
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().cloned())
+        {
+            handle.terminate_execution();
+        }
+        signal_execution_abort(&entry.execution_abort, ExecutionAbortReason::Terminated);
+        self.clear_call_routes_for_session(session_id);
+        let mut entry = self.sessions.remove(session_id).unwrap();
+        let _ = entry.tx.try_send(SessionCommand::Shutdown);
+        drop(entry.tx);
+        let _ = entry.join_handle.take();
+        Ok(())
+    }
+
+    /// Destroy a session. Sends shutdown to the session thread and joins it.
+    pub fn destroy_session(&mut self, session_id: &str) -> Result<(), String> {
+        if !self.sessions.contains_key(session_id) {
+            return Err(format!("session {} does not exist", session_id));
+        }
+
+        self.clear_call_routes_for_session(session_id);
+        let entry = self
+            .sessions
+            .get_mut(session_id)
+            .expect("checked session exists");
 
         // Send shutdown, drop the sender so the session thread's rx.recv()
         // returns Err if Shutdown was consumed by an inner loop, then join.
@@ -256,14 +344,31 @@ impl SessionManager {
             handle.terminate_execution();
         }
         signal_execution_abort(&entry.execution_abort, ExecutionAbortReason::Terminated);
-        let _ = entry.tx.send(SessionCommand::Shutdown);
-        let mut entry = self.sessions.remove(session_id).unwrap();
-        drop(entry.tx);
+        let (replacement_tx, _replacement_rx) = bounded(0);
+        let old_tx = std::mem::replace(&mut entry.tx, replacement_tx);
+        let _ = old_tx.try_send(SessionCommand::Shutdown);
+        drop(old_tx);
         if let Some(handle) = entry.join_handle.take() {
             let _ = handle.join();
         }
+        self.clear_call_routes_for_session(session_id);
+        self.sessions.remove(session_id);
 
         Ok(())
+    }
+
+    pub(crate) fn clear_call_route(&self, call_id: u64) {
+        self.call_id_router
+            .lock()
+            .expect("call_id router lock poisoned")
+            .remove(&call_id);
+    }
+
+    fn clear_call_routes_for_session(&self, session_id: &str) {
+        self.call_id_router
+            .lock()
+            .expect("call_id router lock poisoned")
+            .retain(|_, routed_session_id| routed_session_id != session_id);
     }
 
     /// Send a message to a session.
@@ -331,8 +436,15 @@ impl SessionManager {
 
 /// Send a typed runtime event without re-serializing it on the session thread.
 #[cfg(not(test))]
-fn send_event(event_tx: &RuntimeEventSender, event: RuntimeEvent) {
-    if let Err(error) = event_tx.send(event) {
+fn send_event_with_generation(
+    event_tx: &RuntimeEventSender,
+    output_generation: Option<u64>,
+    event: RuntimeEvent,
+) {
+    if let Err(error) = event_tx.send(RuntimeEventEnvelope {
+        output_generation,
+        event,
+    }) {
         eprintln!("failed to send runtime event: {error}");
     }
 }
@@ -340,6 +452,7 @@ fn send_event(event_tx: &RuntimeEventSender, event: RuntimeEvent) {
 fn send_late_message_warning(
     event_tx: &RuntimeEventSender,
     session_id: &str,
+    output_generation: Option<u64>,
     error_code: &str,
     detail: String,
 ) {
@@ -348,7 +461,10 @@ fn send_late_message_warning(
         channel: 1,
         message: format!("[{error_code}] {detail}"),
     };
-    if let Err(error) = event_tx.send(warning) {
+    if let Err(error) = event_tx.send(RuntimeEventEnvelope {
+        output_generation,
+        event: warning,
+    }) {
         eprintln!("failed to send late-session warning: {error}");
     }
 }
@@ -356,6 +472,7 @@ fn send_late_message_warning(
 fn handle_late_session_message(
     event_tx: &RuntimeEventSender,
     session_id: &str,
+    output_generation: Option<u64>,
     message: SessionMessage,
 ) {
     match message {
@@ -366,6 +483,7 @@ fn handle_late_session_message(
         }) => send_late_message_warning(
             event_tx,
             session_id,
+            output_generation,
             LATE_BRIDGE_RESPONSE_ERROR_CODE,
             format!(
                 "dropping BridgeResponse after execution completed (call_id={call_id}, status={status}, payload_len={})",
@@ -379,6 +497,7 @@ fn handle_late_session_message(
             send_late_message_warning(
                 event_tx,
                 session_id,
+                output_generation,
                 LATE_STREAM_EVENT_ERROR_CODE,
                 format!(
                     "dropping StreamEvent after execution completed (event_type={event_type}, payload_len={})",
@@ -389,6 +508,7 @@ fn handle_late_session_message(
         SessionMessage::TerminateExecution => send_late_message_warning(
             event_tx,
             session_id,
+            output_generation,
             LATE_TERMINATE_EXECUTION_ERROR_CODE,
             String::from("dropping TerminateExecution after execution completed"),
         ),
@@ -413,6 +533,7 @@ fn session_thread(
     #[cfg_attr(test, allow(unused_variables))] isolate_handle: SharedIsolateHandle,
     #[cfg_attr(test, allow(unused_variables))] execution_abort: SharedExecutionAbort,
     #[cfg_attr(test, allow(unused_variables))] session_id: String,
+    #[cfg_attr(test, allow(unused_variables))] output_generation: Option<u64>,
 ) {
     // Acquire concurrency slot, but keep polling the session channel so a queued
     // session can still shut down cleanly before it ever gets a slot.
@@ -610,7 +731,10 @@ fn session_thread(
                             Arc::clone(&deferred_queue),
                         );
                         let bridge_ctx = BridgeCallContext::with_receiver(
-                            Box::new(ChannelRuntimeEventSender::new(event_tx.clone())),
+                            Box::new(ChannelRuntimeEventSender::new(
+                                event_tx.clone(),
+                                output_generation,
+                            )),
                             Box::new(channel_rx),
                             session_id.clone(),
                             Arc::clone(&call_id_router),
@@ -658,7 +782,11 @@ fn session_thread(
                                         code: e.code.unwrap_or_default(),
                                     }),
                                 };
-                                send_event(&event_tx, result_frame);
+                                send_event_with_generation(
+                                    &event_tx,
+                                    output_generation,
+                                    result_frame,
+                                );
                                 continue;
                             }
                         }
@@ -913,7 +1041,7 @@ fn session_thread(
                         execution::clear_pending_script_evaluation();
                         execution::clear_module_state();
 
-                        send_event(&event_tx, result_frame);
+                        send_event_with_generation(&event_tx, output_generation, result_frame);
                     }
                     #[cfg(test)]
                     {
@@ -923,7 +1051,7 @@ fn session_thread(
                 SessionMessage::BridgeResponse(_)
                 | SessionMessage::StreamEvent(_)
                 | SessionMessage::TerminateExecution => {
-                    handle_late_session_message(&event_tx, &session_id, msg);
+                    handle_late_session_message(&event_tx, &session_id, output_generation, msg);
                 }
             },
         }
@@ -1463,7 +1591,7 @@ mod tests {
         test_manager_with_events(max).0
     }
 
-    fn test_manager_with_events(max: usize) -> (SessionManager, Receiver<RuntimeEvent>) {
+    fn test_manager_with_events(max: usize) -> (SessionManager, Receiver<RuntimeEventEnvelope>) {
         let (tx, _rx) = crossbeam_channel::unbounded();
         let router: CallIdRouter = Arc::new(Mutex::new(HashMap::new()));
         let snap_cache = Arc::new(SnapshotCache::new(4));
@@ -1472,7 +1600,7 @@ mod tests {
     }
 
     fn expect_late_message_warning(
-        rx: &Receiver<RuntimeEvent>,
+        rx: &Receiver<RuntimeEventEnvelope>,
         session_id: &str,
         error_code: &str,
         detail_fragment: &str,
@@ -1480,7 +1608,7 @@ mod tests {
         let event = rx
             .recv_timeout(std::time::Duration::from_millis(200))
             .expect("late-message warning");
-        match event {
+        match event.event {
             RuntimeEvent::Log {
                 session_id: observed_session_id,
                 channel,
@@ -1619,6 +1747,31 @@ mod tests {
             assert_eq!(mgr.session_count(), 0);
             assert_eq!(mgr.active_slot_count(), 0);
         }
+    }
+
+    #[test]
+    fn detach_session_clears_call_id_routes_for_session() {
+        let mut mgr = test_manager(1);
+        mgr.create_session_with_output_generation("session-route".into(), None, None, Some(7))
+            .expect("create session");
+        mgr.call_id_router()
+            .lock()
+            .expect("call_id router")
+            .insert(42, "session-route".into());
+
+        assert!(
+            mgr.detach_session_if_output_generation("session-route", 7)
+                .expect("detach session"),
+            "matching output generation should detach session"
+        );
+        assert!(
+            mgr.call_id_router()
+                .lock()
+                .expect("call_id router")
+                .get(&42)
+                .is_none(),
+            "detach should clear stale bridge call routes for the session"
+        );
     }
 
     #[test]
