@@ -142,12 +142,29 @@ fn parse_header(raw: &str) -> Result<(String, String), String> {
         return Err(format!("invalid header `{raw}`"));
     };
 
-    let name = name.trim();
-    if name.is_empty() {
+    let value = trim_header_value_ows(value);
+    if !is_valid_header_name(name) || !is_valid_header_value(value) {
         return Err(format!("invalid header `{raw}`"));
     }
 
-    Ok((name.to_string(), value.trim().to_string()))
+    Ok((name.to_string(), value.to_string()))
+}
+
+fn is_valid_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| matches!(byte, b'!' | b'#'..=b'\'' | b'*' | b'+' | b'-' | b'.' | b'0'..=b'9' | b'A'..=b'Z' | b'^'..=b'z' | b'|' | b'~'))
+}
+
+fn is_valid_header_value(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| matches!(byte, b'\t' | b' '..=b'~') || byte >= 0x80)
+}
+
+fn trim_header_value_ows(value: &str) -> &str {
+    value.trim_matches(|ch| matches!(ch, ' ' | '\t'))
 }
 
 fn print_help() {
@@ -160,4 +177,34 @@ fn print_help() {
     println!("  -H, --header HEADER    Add a request header");
     println!("  -o, --output PATH      Write the response body to a file");
     println!("  -h, --help             Show this help text");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_header;
+
+    #[test]
+    fn parse_header_accepts_valid_header() {
+        assert_eq!(
+            parse_header("X-Test: hello world"),
+            Ok(("X-Test".to_string(), "hello world".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_header_rejects_empty_or_invalid_names() {
+        assert!(parse_header(": value").is_err());
+        assert!(parse_header(" X-Test: value").is_err());
+        assert!(parse_header("Bad Name: value").is_err());
+        assert!(parse_header("Bad@Name: value").is_err());
+        assert!(parse_header("X-Test\r\n: value").is_err());
+        assert!(parse_header("X-Test\t: value").is_err());
+    }
+
+    #[test]
+    fn parse_header_rejects_control_bytes_in_values() {
+        assert!(parse_header("X-Test: hello\r\nInjected: value").is_err());
+        assert!(parse_header("X-Test: hello\r\n").is_err());
+        assert!(parse_header("X-Test: hello\u{7f}").is_err());
+    }
 }
