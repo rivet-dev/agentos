@@ -91,6 +91,7 @@ pub(crate) struct SessionEntry {
     pub event_tx: broadcast::Sender<SequencedEvent>,
     pub permission_tx: broadcast::Sender<PermissionRequest>,
     pub pending_permission_replies: SccHashMap<String, oneshot::Sender<PermissionReply>>,
+    pub pending_session_request_lock: parking_lot::Mutex<()>,
     /// Pending prompt resolvers, for cancel prompt-fallback + abort-on-close.
     ///
     /// The resolver carries the intended [`JsonRpcResponse`], mirroring the TS resolver shape
