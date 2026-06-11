@@ -16,6 +16,8 @@ pub const DEFAULT_MAX_PIPES: usize = 128;
 pub const DEFAULT_MAX_PTYS: usize = 128;
 pub const DEFAULT_MAX_SOCKETS: usize = 256;
 pub const DEFAULT_MAX_CONNECTIONS: usize = 256;
+pub const DEFAULT_MAX_SOCKET_BUFFERED_BYTES: usize = 4 * 1024 * 1024;
+pub const DEFAULT_MAX_SOCKET_DATAGRAM_QUEUE_LEN: usize = 1_024;
 pub const DEFAULT_BLOCKING_READ_TIMEOUT_MS: u64 = 5_000;
 pub const DEFAULT_MAX_PREAD_BYTES: usize = 64 * 1024 * 1024;
 pub const DEFAULT_MAX_FD_WRITE_BYTES: usize = 64 * 1024 * 1024;
@@ -38,6 +40,8 @@ pub struct ResourceSnapshot {
     pub sockets: usize,
     pub socket_listeners: usize,
     pub socket_connections: usize,
+    pub socket_buffered_bytes: usize,
+    pub socket_datagram_queue_len: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +53,8 @@ pub struct ResourceLimits {
     pub max_ptys: Option<usize>,
     pub max_sockets: Option<usize>,
     pub max_connections: Option<usize>,
+    pub max_socket_buffered_bytes: Option<usize>,
+    pub max_socket_datagram_queue_len: Option<usize>,
     pub max_filesystem_bytes: Option<u64>,
     pub max_inode_count: Option<usize>,
     pub max_blocking_read_ms: Option<u64>,
@@ -72,6 +78,8 @@ impl Default for ResourceLimits {
             max_ptys: Some(DEFAULT_MAX_PTYS),
             max_sockets: Some(DEFAULT_MAX_SOCKETS),
             max_connections: Some(DEFAULT_MAX_CONNECTIONS),
+            max_socket_buffered_bytes: Some(DEFAULT_MAX_SOCKET_BUFFERED_BYTES),
+            max_socket_datagram_queue_len: Some(DEFAULT_MAX_SOCKET_DATAGRAM_QUEUE_LEN),
             max_filesystem_bytes: Some(DEFAULT_MAX_FILESYSTEM_BYTES),
             max_inode_count: Some(DEFAULT_MAX_INODE_COUNT),
             max_blocking_read_ms: Some(DEFAULT_BLOCKING_READ_TIMEOUT_MS),
@@ -194,6 +202,8 @@ impl ResourceAccountant {
             sockets: socket_snapshot.sockets,
             socket_listeners: socket_snapshot.listeners,
             socket_connections: socket_snapshot.connections,
+            socket_buffered_bytes: socket_snapshot.buffered_bytes,
+            socket_datagram_queue_len: socket_snapshot.datagram_queue_len,
         }
     }
 
@@ -289,6 +299,43 @@ impl ResourceAccountant {
                 if snapshot.socket_connections >= limit {
                     return Err(ResourceError::exhausted("maximum connection count reached"));
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn check_socket_buffer_growth(
+        &self,
+        snapshot: &ResourceSnapshot,
+        additional_bytes: usize,
+    ) -> Result<(), ResourceError> {
+        if let Some(limit) = self.limits.max_socket_buffered_bytes {
+            if snapshot
+                .socket_buffered_bytes
+                .saturating_add(additional_bytes)
+                > limit
+            {
+                return Err(ResourceError::exhausted(
+                    "maximum socket buffered byte limit reached",
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn check_socket_datagram_enqueue(
+        &self,
+        snapshot: &ResourceSnapshot,
+        additional_bytes: usize,
+    ) -> Result<(), ResourceError> {
+        self.check_socket_buffer_growth(snapshot, additional_bytes)?;
+        if let Some(limit) = self.limits.max_socket_datagram_queue_len {
+            if snapshot.socket_datagram_queue_len.saturating_add(1) > limit {
+                return Err(ResourceError::exhausted(
+                    "maximum socket datagram queue length reached",
+                ));
             }
         }
 

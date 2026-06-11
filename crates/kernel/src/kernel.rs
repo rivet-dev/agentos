@@ -36,6 +36,7 @@ use crate::root_fs::{RootFileSystem, RootFilesystemError, RootFilesystemSnapshot
 use crate::socket_table::{
     DatagramSocketOption, InetSocketAddress, ReceivedDatagram, SocketId, SocketMulticastMembership,
     SocketRecord, SocketShutdown, SocketSpec, SocketState, SocketTable, SocketTableError,
+    SocketType,
 };
 use crate::user::{ProcessIdentity, UserConfig, UserManager};
 use crate::vfs::{
@@ -1595,6 +1596,10 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             )));
         }
 
+        self.sockets
+            .check_send_to_bound_udp_socket(socket_id, target_address.clone())?;
+        self.resources
+            .check_socket_datagram_enqueue(&self.resource_snapshot(), data.len())?;
         let written = self
             .sockets
             .send_to_bound_udp_socket(socket_id, target_address, data)?;
@@ -1754,6 +1759,9 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
             )));
         }
 
+        self.sockets.check_write(socket_id)?;
+        self.resources
+            .check_socket_buffer_growth(&self.resource_snapshot(), data.len())?;
         let written = self.sockets.write(socket_id, data)?;
         if written > 0 {
             self.poll_notifier.notify();
@@ -2906,12 +2914,42 @@ impl<F: VirtualFileSystem + 'static> KernelVm<F> {
                             "process {pid} does not own socket {socket_id}"
                         )));
                     }
-                    Ok(self.sockets.poll(socket_id, requested)?)
+                    let mut events = self.sockets.poll(socket_id, requested)?;
+                    if events.intersects(POLLOUT)
+                        && !self.socket_pollout_has_resource_capacity(&socket)
+                    {
+                        events = PollEvents::from_bits(events.bits() & !POLLOUT.bits());
+                    }
+                    Ok(events)
                 } else {
                     Ok(POLLNVAL)
                 }
             }
         }
+    }
+
+    fn socket_pollout_has_resource_capacity(&self, socket: &SocketRecord) -> bool {
+        let snapshot = self.resource_snapshot();
+        if self
+            .resources
+            .limits()
+            .max_socket_buffered_bytes
+            .is_some_and(|limit| snapshot.socket_buffered_bytes >= limit)
+        {
+            return false;
+        }
+
+        if socket.spec().socket_type == SocketType::Datagram
+            && self
+                .resources
+                .limits()
+                .max_socket_datagram_queue_len
+                .is_some_and(|limit| snapshot.socket_datagram_queue_len >= limit)
+        {
+            return false;
+        }
+
+        true
     }
 
     fn poll_entry(

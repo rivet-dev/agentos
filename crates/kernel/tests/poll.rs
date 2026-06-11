@@ -2,6 +2,7 @@ use agent_os_kernel::command_registry::CommandDriver;
 use agent_os_kernel::kernel::{KernelVm, KernelVmConfig, SpawnOptions};
 use agent_os_kernel::permissions::Permissions;
 use agent_os_kernel::poll::{PollFd, PollTargetEntry, POLLERR, POLLHUP, POLLIN, POLLOUT};
+use agent_os_kernel::resource_accounting::ResourceLimits;
 use agent_os_kernel::socket_table::{InetSocketAddress, SocketShutdown, SocketSpec};
 use agent_os_kernel::vfs::MemoryFileSystem;
 use std::time::{Duration, Instant};
@@ -152,6 +153,140 @@ fn poll_targets_report_socket_stream_readiness_and_hangup() {
     assert!(hung_up.targets[0].revents.contains(POLLIN));
     assert!(hung_up.targets[0].revents.contains(POLLHUP));
     assert!(hung_up.targets[0].revents.contains(POLLOUT));
+}
+
+#[test]
+fn poll_targets_suppress_stream_pollout_when_socket_buffer_limit_is_full() {
+    let mut config = KernelVmConfig::new("vm-poll-socket-buffer-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_socket_buffered_bytes: Some(3),
+        ..ResourceLimits::default()
+    };
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell driver");
+    let client_pid = spawn_shell(&mut kernel);
+    let server_pid = spawn_shell(&mut kernel);
+
+    let client_socket = kernel
+        .socket_create("shell", client_pid, SocketSpec::tcp())
+        .expect("create client socket");
+    let server_socket = kernel
+        .socket_create("shell", server_pid, SocketSpec::tcp())
+        .expect("create server socket");
+    kernel
+        .socket_connect_pair("shell", client_pid, client_socket, server_socket)
+        .expect("connect socket pair");
+
+    let writable = kernel
+        .poll_targets(
+            "shell",
+            client_pid,
+            vec![PollTargetEntry::socket(client_socket, POLLOUT)],
+            0,
+        )
+        .expect("poll initially writable client socket");
+    assert_eq!(writable.ready_count, 1);
+    assert_eq!(writable.targets[0].revents, POLLOUT);
+
+    kernel
+        .socket_write("shell", client_pid, client_socket, b"abc")
+        .expect("fill stream receive buffer budget");
+    let blocked = kernel
+        .poll_targets(
+            "shell",
+            client_pid,
+            vec![PollTargetEntry::socket(client_socket, POLLOUT)],
+            0,
+        )
+        .expect("poll client socket at buffer limit");
+    assert_eq!(blocked.ready_count, 0);
+    assert_eq!(
+        blocked.targets[0].revents,
+        agent_os_kernel::poll::PollEvents::empty()
+    );
+
+    let _ = kernel
+        .socket_read("shell", server_pid, server_socket, 3)
+        .expect("drain stream receive buffer");
+    let writable_again = kernel
+        .poll_targets(
+            "shell",
+            client_pid,
+            vec![PollTargetEntry::socket(client_socket, POLLOUT)],
+            0,
+        )
+        .expect("poll client socket after draining buffer");
+    assert_eq!(writable_again.ready_count, 1);
+    assert_eq!(writable_again.targets[0].revents, POLLOUT);
+}
+
+#[test]
+fn poll_targets_suppress_udp_pollout_when_datagram_queue_limit_is_full() {
+    let mut config = KernelVmConfig::new("vm-poll-udp-queue-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_socket_datagram_queue_len: Some(1),
+        ..ResourceLimits::default()
+    };
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell driver");
+    let sender_pid = spawn_shell(&mut kernel);
+    let receiver_pid = spawn_shell(&mut kernel);
+    let sender_socket = bind_udp_socket(&mut kernel, sender_pid, 54161);
+    let receiver_socket = bind_udp_socket(&mut kernel, receiver_pid, 43162);
+
+    let writable = kernel
+        .poll_targets(
+            "shell",
+            sender_pid,
+            vec![PollTargetEntry::socket(sender_socket, POLLOUT)],
+            0,
+        )
+        .expect("poll initially writable UDP socket");
+    assert_eq!(writable.ready_count, 1);
+    assert_eq!(writable.targets[0].revents, POLLOUT);
+
+    kernel
+        .socket_send_to_inet_loopback(
+            "shell",
+            sender_pid,
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 43162),
+            b"queued",
+        )
+        .expect("fill UDP datagram queue budget");
+    let blocked = kernel
+        .poll_targets(
+            "shell",
+            sender_pid,
+            vec![PollTargetEntry::socket(sender_socket, POLLOUT)],
+            0,
+        )
+        .expect("poll UDP socket at queue limit");
+    assert_eq!(blocked.ready_count, 0);
+    assert_eq!(
+        blocked.targets[0].revents,
+        agent_os_kernel::poll::PollEvents::empty()
+    );
+
+    let _ = kernel
+        .socket_recv_datagram("shell", receiver_pid, receiver_socket, 16)
+        .expect("drain UDP datagram queue");
+    let writable_again = kernel
+        .poll_targets(
+            "shell",
+            sender_pid,
+            vec![PollTargetEntry::socket(sender_socket, POLLOUT)],
+            0,
+        )
+        .expect("poll UDP socket after draining queue");
+    assert_eq!(writable_again.ready_count, 1);
+    assert_eq!(writable_again.targets[0].revents, POLLOUT);
 }
 
 #[test]

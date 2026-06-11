@@ -6526,10 +6526,19 @@ setInterval(() => {}, 1000);
                 }]
             );
         }
+        #[test]
         fn parse_resource_limits_reads_filesystem_limits() {
             let metadata = BTreeMap::from([
                 (String::from("resource.max_sockets"), String::from("8")),
                 (String::from("resource.max_connections"), String::from("4")),
+                (
+                    String::from("resource.max_socket_buffered_bytes"),
+                    String::from("2048"),
+                ),
+                (
+                    String::from("resource.max_socket_datagram_queue_len"),
+                    String::from("16"),
+                ),
                 (
                     String::from("resource.max_filesystem_bytes"),
                     String::from("4096"),
@@ -6577,6 +6586,8 @@ setInterval(() => {}, 1000);
                 crate::vm::parse_resource_limits(&metadata).expect("parse resource limits");
             assert_eq!(limits.max_sockets, Some(8));
             assert_eq!(limits.max_connections, Some(4));
+            assert_eq!(limits.max_socket_buffered_bytes, Some(2048));
+            assert_eq!(limits.max_socket_datagram_queue_len, Some(16));
             assert_eq!(limits.max_filesystem_bytes, Some(4096));
             assert_eq!(limits.max_inode_count, Some(128));
             assert_eq!(limits.max_blocking_read_ms, Some(250));

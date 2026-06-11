@@ -208,6 +208,13 @@ impl SocketRecord {
             .unwrap_or(0)
     }
 
+    pub fn queued_datagram_bytes(&self) -> usize {
+        self.datagram_state
+            .as_ref()
+            .map(|state| datagram_queue_bytes(&state.recv_queue))
+            .unwrap_or(0)
+    }
+
     pub fn reuse_address(&self) -> bool {
         self.datagram_state
             .as_ref()
@@ -269,6 +276,8 @@ pub struct SocketTableSnapshot {
     pub sockets: usize,
     pub listeners: usize,
     pub connections: usize,
+    pub buffered_bytes: usize,
+    pub datagram_queue_len: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1163,6 +1172,38 @@ impl SocketTable {
         Ok(data.len())
     }
 
+    pub fn check_send_to_bound_udp_socket(
+        &self,
+        socket_id: SocketId,
+        target_address: InetSocketAddress,
+    ) -> SocketResult<()> {
+        let target_address = normalize_inet_address(target_address);
+        let table = lock_or_recover(&self.inner.state);
+        let sender = table
+            .sockets
+            .get(&socket_id)
+            .ok_or_else(|| SocketTableError::not_found(socket_id))?;
+        validate_bound_udp_sender(sender)?;
+
+        let receiver_socket_id = lookup_bound_inet_datagram_socket_in_table(
+            &table.bound_inet_datagrams,
+            &target_address,
+        )
+        .ok_or_else(|| {
+            SocketTableError::not_found_address(format!(
+                "no UDP socket bound at {}:{}",
+                target_address.host(),
+                target_address.port()
+            ))
+        })?;
+        let receiver = table
+            .sockets
+            .get(&receiver_socket_id)
+            .ok_or_else(|| SocketTableError::not_found(receiver_socket_id))?;
+        validate_bound_udp_receiver(receiver)?;
+        Ok(())
+    }
+
     pub fn recv_datagram(
         &self,
         socket_id: SocketId,
@@ -1297,6 +1338,44 @@ impl SocketTable {
         Ok(data.len())
     }
 
+    pub fn check_write(&self, socket_id: SocketId) -> SocketResult<()> {
+        let table = lock_or_recover(&self.inner.state);
+        let record = table
+            .sockets
+            .get(&socket_id)
+            .ok_or_else(|| SocketTableError::not_found(socket_id))?;
+        let connection = record.connection_state.as_ref().ok_or_else(|| {
+            SocketTableError::not_connected(format!("socket {socket_id} is not connected"))
+        })?;
+        if record.state != SocketState::Connected {
+            return Err(SocketTableError::not_connected(format!(
+                "socket {socket_id} is not connected"
+            )));
+        }
+        if connection.write_shutdown {
+            return Err(SocketTableError::broken_pipe(format!(
+                "socket {socket_id} write side is shut down"
+            )));
+        }
+
+        let peer_socket_id = connection.peer_socket_id.ok_or_else(|| {
+            SocketTableError::broken_pipe(format!("socket {socket_id} peer is closed"))
+        })?;
+        let peer = table.sockets.get(&peer_socket_id).ok_or_else(|| {
+            SocketTableError::broken_pipe(format!("socket {socket_id} peer is closed"))
+        })?;
+        let peer_connection = peer.connection_state.as_ref().ok_or_else(|| {
+            SocketTableError::broken_pipe(format!("socket {socket_id} peer is closed"))
+        })?;
+        if peer_connection.read_shutdown {
+            return Err(SocketTableError::broken_pipe(format!(
+                "socket {peer_socket_id} read side is shut down"
+            )));
+        }
+
+        Ok(())
+    }
+
     pub fn read(&self, socket_id: SocketId, max_bytes: usize) -> SocketResult<Option<Vec<u8>>> {
         if max_bytes == 0 {
             return Ok(Some(Vec::new()));
@@ -1419,9 +1498,29 @@ impl SocketTable {
             if record.state.counts_as_connection() {
                 snapshot.connections += 1;
             }
+            if let Some(connection) = &record.connection_state {
+                snapshot.buffered_bytes = snapshot
+                    .buffered_bytes
+                    .saturating_add(connection.recv_buffer.len());
+            }
+            if let Some(datagram_state) = &record.datagram_state {
+                snapshot.datagram_queue_len = snapshot
+                    .datagram_queue_len
+                    .saturating_add(datagram_state.recv_queue.len());
+                snapshot.buffered_bytes = snapshot
+                    .buffered_bytes
+                    .saturating_add(datagram_queue_bytes(&datagram_state.recv_queue));
+            }
         }
         snapshot
     }
+}
+
+fn datagram_queue_bytes(queue: &VecDeque<QueuedDatagram>) -> usize {
+    queue
+        .iter()
+        .map(|datagram| datagram.payload.len())
+        .sum::<usize>()
 }
 
 fn next_socket_id(table: &mut SocketTableState) -> SocketId {

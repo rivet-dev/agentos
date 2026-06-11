@@ -5,7 +5,9 @@ use agent_os_kernel::permissions::Permissions;
 use agent_os_kernel::pty::LineDisciplineConfig;
 use agent_os_kernel::resource_accounting::{
     ResourceLimits, DEFAULT_MAX_CONNECTIONS, DEFAULT_MAX_OPEN_FDS, DEFAULT_MAX_PIPES,
-    DEFAULT_MAX_PROCESSES, DEFAULT_MAX_PTYS, DEFAULT_MAX_SOCKETS, DEFAULT_VIRTUAL_CPU_COUNT,
+    DEFAULT_MAX_PROCESSES, DEFAULT_MAX_PTYS, DEFAULT_MAX_SOCKETS,
+    DEFAULT_MAX_SOCKET_BUFFERED_BYTES, DEFAULT_MAX_SOCKET_DATAGRAM_QUEUE_LEN,
+    DEFAULT_VIRTUAL_CPU_COUNT,
 };
 use agent_os_kernel::root_fs::{
     FilesystemEntry, RootFileSystem, RootFilesystemDescriptor, RootFilesystemMode,
@@ -87,6 +89,14 @@ fn resource_limits_default_to_bounded_values() {
     assert_eq!(limits.max_ptys, Some(DEFAULT_MAX_PTYS));
     assert_eq!(limits.max_sockets, Some(DEFAULT_MAX_SOCKETS));
     assert_eq!(limits.max_connections, Some(DEFAULT_MAX_CONNECTIONS));
+    assert_eq!(
+        limits.max_socket_buffered_bytes,
+        Some(DEFAULT_MAX_SOCKET_BUFFERED_BYTES)
+    );
+    assert_eq!(
+        limits.max_socket_datagram_queue_len,
+        Some(DEFAULT_MAX_SOCKET_DATAGRAM_QUEUE_LEN)
+    );
 }
 
 #[test]

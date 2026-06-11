@@ -1349,6 +1349,14 @@ pub(crate) fn parse_resource_limits(
     if metadata.contains_key("resource.max_connections") {
         limits.max_connections = parse_resource_limit(metadata, "resource.max_connections")?;
     }
+    if metadata.contains_key("resource.max_socket_buffered_bytes") {
+        limits.max_socket_buffered_bytes =
+            parse_resource_limit(metadata, "resource.max_socket_buffered_bytes")?;
+    }
+    if metadata.contains_key("resource.max_socket_datagram_queue_len") {
+        limits.max_socket_datagram_queue_len =
+            parse_resource_limit(metadata, "resource.max_socket_datagram_queue_len")?;
+    }
     if metadata.contains_key("resource.max_filesystem_bytes") {
         limits.max_filesystem_bytes =
             parse_resource_limit_u64(metadata, "resource.max_filesystem_bytes")?;
