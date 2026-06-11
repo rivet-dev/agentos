@@ -688,7 +688,9 @@ mod tests {
             env::set_var("LANG", "fr_FR.UTF-8");
         }
 
-        if setup_localization("test").is_ok() {
+        // The standalone uucore stub keeps common locale fixtures in its own
+        // locales directory, not under a utility-specific test directory.
+        if setup_localization("locales").is_ok() {
             assert_eq!(get_message("common-error"), "erreur");
             assert_eq!(get_message("common-usage"), "Utilisation");
             assert_eq!(get_message("common-tip"), "conseil");
