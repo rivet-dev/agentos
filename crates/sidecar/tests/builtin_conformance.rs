@@ -9,21 +9,20 @@ use hickory_resolver::proto::op::{Message, Query};
 use hickory_resolver::proto::rr::domain::Name;
 use hickory_resolver::proto::rr::rdata::{A, AAAA, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT};
 use hickory_resolver::proto::rr::{RData, Record, RecordType};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
 use support::{
-    assert_node_available, authenticate, collect_process_output,
-    collect_process_output_with_timeout, dispose_vm_and_close_session, execute, new_sidecar,
+    assert_node_available, authenticate, dispose_vm_and_close_session, execute, new_sidecar,
     open_session, temp_dir, write_fixture,
 };
 
@@ -37,6 +36,7 @@ const ALLOWED_NODE_BUILTINS: &[&str] = &[
     "events",
     "fs",
     "module",
+    "os",
     "path",
     "perf_hooks",
     "punycode",
@@ -65,6 +65,8 @@ const BUILTIN_CONFORMANCE_CASES: &[&str] = &[
     "extended_builtin_polyfills",
 ];
 
+const PROBE_OUTPUT_BYTE_LIMIT: usize = 1024 * 1024;
+
 fn run_host_probe(cwd: &Path, entrypoint: &Path) -> Value {
     run_host_probe_with_env(cwd, entrypoint, &[])
 }
@@ -76,17 +78,53 @@ fn run_host_probe_with_env(cwd: &Path, entrypoint: &Path, env: &[(&str, &str)]) 
         command.env(key, value);
     }
 
-    let output = command.output().expect("run host node probe");
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn host node probe");
+    let stdout = child.stdout.take().expect("host probe stdout pipe");
+    let stderr = child.stderr.take().expect("host probe stderr pipe");
+    let stdout_reader = thread::spawn(move || read_probe_pipe(stdout, "stdout"));
+    let stderr_reader = thread::spawn(move || read_probe_pipe(stderr, "stderr"));
+    let status = child.wait().expect("wait host node probe");
+    let stdout = stdout_reader
+        .join()
+        .expect("join host probe stdout reader")
+        .expect("read bounded host probe stdout");
+    let stderr = stderr_reader
+        .join()
+        .expect("join host probe stderr reader")
+        .expect("read bounded host probe stderr");
 
     assert!(
-        output.status.success(),
+        status.success(),
         "host probe failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        status.code(),
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
     );
 
-    serde_json::from_slice(&output.stdout).expect("parse host probe JSON")
+    serde_json::from_slice(&stdout).expect("parse host probe JSON")
+}
+
+fn read_probe_pipe(mut pipe: impl Read, channel: &str) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let read = pipe
+            .read(&mut chunk)
+            .map_err(|err| format!("read host probe {channel}: {err}"))?;
+        if read == 0 {
+            return Ok(output);
+        }
+        if output.len().saturating_add(read) > PROBE_OUTPUT_BYTE_LIMIT {
+            return Err(format!(
+                "host probe exceeded {PROBE_OUTPUT_BYTE_LIMIT} bytes on {channel}"
+            ));
+        }
+        output.extend_from_slice(&chunk[..read]);
+    }
 }
 
 fn run_guest_probe(case_name: &str, cwd: &Path, entrypoint: &Path) -> Value {
@@ -134,6 +172,89 @@ fn create_vm_with_metadata_and_permissions(
     }
 }
 
+fn collect_builtin_process_output(
+    sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+) -> (String, String, i32) {
+    collect_builtin_process_output_with_timeout(
+        sidecar,
+        connection_id,
+        session_id,
+        vm_id,
+        process_id,
+        Duration::from_secs(10),
+    )
+}
+
+fn collect_builtin_process_output_with_timeout(
+    sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+    timeout: Duration,
+) -> (String, String, i32) {
+    let ownership = OwnershipScope::session(connection_id, session_id);
+    let deadline = Instant::now() + timeout;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit = None;
+
+    loop {
+        let event = sidecar
+            .poll_event_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll builtin conformance event");
+        if let Some(event) = event {
+            assert_eq!(
+                event.ownership,
+                OwnershipScope::vm(connection_id, session_id, vm_id)
+            );
+
+            match event.payload {
+                EventPayload::ProcessOutput(ProcessOutputEvent {
+                    process_id: event_process_id,
+                    channel,
+                    chunk,
+                }) if event_process_id == process_id => match channel {
+                    StreamChannel::Stdout => {
+                        append_probe_output(&mut stdout, &chunk, &process_id, "stdout")
+                    }
+                    StreamChannel::Stderr => {
+                        append_probe_output(&mut stderr, &chunk, &process_id, "stderr")
+                    }
+                },
+                EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
+                    exit = Some((exited.exit_code, Instant::now()));
+                }
+                _ => {}
+            }
+        }
+
+        if let Some((exit_code, seen_at)) = exit {
+            if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
+                return (stdout, stderr, exit_code);
+            }
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for builtin conformance process {process_id}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+fn append_probe_output(buffer: &mut String, chunk: &[u8], process_id: &str, channel: &str) {
+    let text = String::from_utf8_lossy(chunk);
+    assert!(
+        buffer.len().saturating_add(text.len()) <= PROBE_OUTPUT_BYTE_LIMIT,
+        "builtin conformance process {process_id} exceeded {PROBE_OUTPUT_BYTE_LIMIT} bytes on {channel}"
+    );
+    buffer.push_str(&text);
+}
+
 fn run_guest_probe_with_config(
     case_name: &str,
     cwd: &Path,
@@ -174,7 +295,7 @@ fn run_guest_probe_with_config(
         Vec::new(),
     );
 
-    let (stdout, stderr, exit_code) = collect_process_output(
+    let (stdout, stderr, exit_code) = collect_builtin_process_output(
         &mut sidecar,
         &connection_id,
         &session_id,
@@ -238,7 +359,7 @@ fn run_guest_probe_in_existing_session(
     );
 
     let (stdout, stderr, exit_code) =
-        collect_process_output(sidecar, connection_id, session_id, &vm_id, &process_id);
+        collect_builtin_process_output(sidecar, connection_id, session_id, &vm_id, &process_id);
 
     sidecar
         .dispose_vm_internal_blocking(connection_id, session_id, &vm_id, DisposeReason::Requested)
@@ -704,7 +825,7 @@ agent.destroy();
         &entrypoint,
         Vec::new(),
     );
-    let (stdout, stderr, exit_code) = collect_process_output(
+    let (stdout, stderr, exit_code) = collect_builtin_process_output(
         &mut sidecar,
         &connection_id,
         &session_id,
@@ -1256,8 +1377,12 @@ console.log(JSON.stringify({ callbackAnswer, promiseAnswer }));
                     channel,
                     chunk,
                 }) if process_id == "proc-readline-question" => match channel {
-                    StreamChannel::Stdout => stdout.push_str(&String::from_utf8_lossy(&chunk)),
-                    StreamChannel::Stderr => stderr.push_str(&String::from_utf8_lossy(&chunk)),
+                    StreamChannel::Stdout => {
+                        append_probe_output(&mut stdout, &chunk, &process_id, "stdout")
+                    }
+                    StreamChannel::Stderr => {
+                        append_probe_output(&mut stderr, &chunk, &process_id, "stderr")
+                    }
                 },
                 EventPayload::ProcessExited(exited)
                     if exited.process_id == "proc-readline-question" =>
@@ -3508,10 +3633,12 @@ process.exit(0);
     assert_eq!(result["os"]["platform"], "linux");
     assert_eq!(result["os"]["arch"], "x64");
     assert_eq!(result["os"]["type"], "Linux");
-    assert!(result["os"]["homedir"]
-        .as_str()
-        .expect("os.homedir string")
-        .starts_with('/'));
+    assert!(
+        result["os"]["homedir"]
+            .as_str()
+            .expect("os.homedir string")
+            .starts_with('/')
+    );
     assert_eq!(result["os"]["tmpdir"], "/tmp");
     assert_eq!(result["os"]["userInfoHomedir"], result["os"]["homedir"]);
     assert_eq!(result["os"]["eol"], "\n");
@@ -3520,10 +3647,12 @@ process.exit(0);
     assert_eq!(result["os"]["totalmem"], 1_073_741_824u64);
     assert_eq!(result["os"]["freemem"], 536_870_912u64);
     assert_eq!(result["os"]["hasSignals"], true);
-    assert!(result["os"]["networkInterfaceKeys"]
-        .as_array()
-        .expect("network interfaces array")
-        .is_empty());
+    assert!(
+        result["os"]["networkInterfaceKeys"]
+            .as_array()
+            .expect("network interfaces array")
+            .is_empty()
+    );
     assert_eq!(result["perf"]["hasNow"], true);
     assert_eq!(result["perf"]["hasObserver"], true);
     assert_eq!(result["perf"]["measureDurationFinite"], true);
@@ -3695,7 +3824,7 @@ console.log(JSON.stringify({ hasRefAfterUnref: timer.hasRef() }));
         Vec::new(),
     );
 
-    let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
+    let (stdout, stderr, exit_code) = collect_builtin_process_output_with_timeout(
         &mut sidecar,
         &connection_id,
         &session_id,
