@@ -185,6 +185,10 @@ pub enum WasmExecutionError {
     RpcResponse(String),
     StdinClosed,
     Stdin(std::io::Error),
+    OutputBufferExceeded {
+        stream: &'static str,
+        limit: usize,
+    },
     EventChannelClosed,
 }
 
@@ -280,6 +284,12 @@ impl fmt::Display for WasmExecutionError {
             }
             Self::StdinClosed => f.write_str("guest WebAssembly stdin is already closed"),
             Self::Stdin(err) => write!(f, "failed to write guest stdin: {err}"),
+            Self::OutputBufferExceeded { stream, limit } => {
+                write!(
+                    f,
+                    "guest WebAssembly {stream} exceeded the captured output limit of {limit} bytes"
+                )
+            }
             Self::EventChannelClosed => {
                 f.write_str("guest WebAssembly event channel closed unexpectedly")
             }
@@ -826,6 +836,9 @@ fn map_javascript_error(error: JavascriptExecutionError) -> WasmExecutionError {
         JavascriptExecutionError::Terminate(error) => WasmExecutionError::Spawn(error),
         JavascriptExecutionError::StdinClosed => WasmExecutionError::StdinClosed,
         JavascriptExecutionError::Stdin(error) => WasmExecutionError::Stdin(error),
+        JavascriptExecutionError::OutputBufferExceeded { stream, limit } => {
+            WasmExecutionError::OutputBufferExceeded { stream, limit }
+        }
         JavascriptExecutionError::EventChannelClosed => WasmExecutionError::EventChannelClosed,
     }
 }

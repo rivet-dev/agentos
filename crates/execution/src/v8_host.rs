@@ -135,7 +135,7 @@ impl V8SessionHandle {
 
     /// Destroy this session in the embedded runtime and remove its receiver.
     pub fn destroy(&self) -> io::Result<()> {
-        self.inner.terminate()?;
+        let _ = self.inner.terminate();
         self.inner.destroy()
     }
 

@@ -232,6 +232,7 @@ pub enum PythonExecutionError {
     TimedOut(Duration),
     PendingVfsRpcRequest(u64),
     RpcResponse(String),
+    OutputBufferExceeded { stream: &'static str, limit: usize },
     EventChannelClosed,
 }
 
@@ -285,6 +286,12 @@ impl fmt::Display for PythonExecutionError {
                     "failed to reply to guest Python VFS RPC request: {message}"
                 )
             }
+            Self::OutputBufferExceeded { stream, limit } => {
+                write!(
+                    f,
+                    "guest Python {stream} exceeded the captured output limit of {limit} bytes"
+                )
+            }
             Self::EventChannelClosed => {
                 f.write_str("guest Python event channel closed unexpectedly")
             }
@@ -334,8 +341,9 @@ impl PythonExecution {
     }
 
     pub fn write_stdin(&mut self, chunk: &[u8]) -> Result<(), PythonExecutionError> {
-        self.inner.write_kernel_stdin_only(chunk);
-        Ok(())
+        self.inner
+            .write_kernel_stdin_only(chunk)
+            .map_err(map_javascript_error)
     }
 
     pub fn close_stdin(&mut self) -> Result<(), PythonExecutionError> {
@@ -828,6 +836,9 @@ fn map_javascript_error(error: JavascriptExecutionError) -> PythonExecutionError
         JavascriptExecutionError::Terminate(error) => PythonExecutionError::Kill(error),
         JavascriptExecutionError::StdinClosed => PythonExecutionError::StdinClosed,
         JavascriptExecutionError::Stdin(error) => PythonExecutionError::Stdin(error),
+        JavascriptExecutionError::OutputBufferExceeded { stream, limit } => {
+            PythonExecutionError::OutputBufferExceeded { stream, limit }
+        }
         JavascriptExecutionError::EventChannelClosed => PythonExecutionError::EventChannelClosed,
     }
 }

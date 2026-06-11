@@ -28,7 +28,9 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{
-    error::TryRecvError as TokioTryRecvError, unbounded_channel, UnboundedReceiver,
+    channel,
+    error::{TryRecvError as TokioTryRecvError, TrySendError as TokioTrySendError},
+    Receiver as TokioReceiver,
 };
 use tokio::time;
 
@@ -63,6 +65,10 @@ const V8_HEAP_LIMIT_MB_ENV: &str = "AGENT_OS_V8_HEAP_LIMIT_MB";
 const NODE_SYNC_RPC_DEFAULT_DATA_BYTES: usize = 4 * 1024 * 1024;
 const NODE_SYNC_RPC_DEFAULT_WAIT_TIMEOUT_MS: u64 = 30_000;
 const NODE_SYNC_RPC_RESPONSE_QUEUE_CAPACITY: usize = 1;
+const JAVASCRIPT_EVENT_CHANNEL_CAPACITY: usize = 64;
+const JAVASCRIPT_EVENT_PAYLOAD_LIMIT_BYTES: usize = 1024 * 1024;
+const JAVASCRIPT_CAPTURED_OUTPUT_LIMIT_BYTES: usize = 16 * 1024 * 1024;
+const KERNEL_STDIN_BUFFER_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 const NODE_WARMUP_MARKER_VERSION: &str = "1";
 const NODE_WARMUP_SPECIFIERS: &[&str] = &[
     "agent-os:builtin/path",
@@ -1023,6 +1029,7 @@ pub enum JavascriptExecutionError {
     Terminate(std::io::Error),
     StdinClosed,
     Stdin(std::io::Error),
+    OutputBufferExceeded { stream: &'static str, limit: usize },
     EventChannelClosed,
 }
 
@@ -1066,6 +1073,12 @@ impl fmt::Display for JavascriptExecutionError {
             }
             Self::StdinClosed => f.write_str("guest JavaScript stdin is already closed"),
             Self::Stdin(err) => write!(f, "failed to write guest stdin: {err}"),
+            Self::OutputBufferExceeded { stream, limit } => {
+                write!(
+                    f,
+                    "guest JavaScript {stream} exceeded the captured output limit of {limit} bytes"
+                )
+            }
             Self::EventChannelClosed => {
                 f.write_str("guest JavaScript event channel closed unexpectedly")
             }
@@ -1079,7 +1092,7 @@ impl std::error::Error for JavascriptExecutionError {}
 pub struct JavascriptExecution {
     execution_id: String,
     child_pid: u32,
-    events: tokio::sync::Mutex<UnboundedReceiver<JavascriptExecutionEvent>>,
+    events: tokio::sync::Mutex<TokioReceiver<JavascriptExecutionEvent>>,
     pending_sync_rpc: Arc<Mutex<Option<PendingSyncRpcState>>>,
     kernel_stdin: Arc<LocalKernelStdinBridge>,
     _import_cache_guard: Arc<NodeImportCacheCleanup>,
@@ -1104,7 +1117,7 @@ impl JavascriptExecution {
     }
 
     pub fn write_stdin(&mut self, chunk: &[u8]) -> Result<(), JavascriptExecutionError> {
-        self.kernel_stdin.write(chunk);
+        self.kernel_stdin.write(chunk)?;
         let payload = v8_runtime::json_to_cbor_payload(&json!({
             "dataBase64": v8_runtime::base64_encode_pub(chunk),
         }))
@@ -1120,8 +1133,11 @@ impl JavascriptExecution {
         Ok(())
     }
 
-    pub(crate) fn write_kernel_stdin_only(&mut self, chunk: &[u8]) {
-        self.kernel_stdin.write(chunk);
+    pub(crate) fn write_kernel_stdin_only(
+        &mut self,
+        chunk: &[u8],
+    ) -> Result<(), JavascriptExecutionError> {
+        self.kernel_stdin.write(chunk)
     }
 
     pub(crate) fn close_kernel_stdin_only(&mut self) {
@@ -1265,7 +1281,7 @@ impl JavascriptExecution {
         self.close_stdin()?;
         let mut events = std::mem::replace(
             self.events.get_mut(),
-            tokio::sync::mpsc::unbounded_channel().1,
+            channel(JAVASCRIPT_EVENT_CHANNEL_CAPACITY).1,
         );
         let execution_id = std::mem::take(&mut self.execution_id);
 
@@ -1274,8 +1290,12 @@ impl JavascriptExecution {
 
         loop {
             match events.blocking_recv() {
-                Some(JavascriptExecutionEvent::Stdout(chunk)) => stdout.extend(chunk),
-                Some(JavascriptExecutionEvent::Stderr(chunk)) => stderr.extend(chunk),
+                Some(JavascriptExecutionEvent::Stdout(chunk)) => {
+                    append_captured_output(&mut stdout, chunk, "stdout")?;
+                }
+                Some(JavascriptExecutionEvent::Stderr(chunk)) => {
+                    append_captured_output(&mut stderr, chunk, "stderr")?;
+                }
                 Some(JavascriptExecutionEvent::SyncRpcRequest(request)) => {
                     return Err(JavascriptExecutionError::PendingSyncRpcRequest(request.id));
                 }
@@ -1319,6 +1339,28 @@ impl Drop for JavascriptExecution {
     fn drop(&mut self) {
         let _ = self.v8_session.destroy();
     }
+}
+
+fn append_captured_output(
+    target: &mut Vec<u8>,
+    chunk: Vec<u8>,
+    stream: &'static str,
+) -> Result<(), JavascriptExecutionError> {
+    let next_len = target.len().checked_add(chunk.len()).ok_or(
+        JavascriptExecutionError::OutputBufferExceeded {
+            stream,
+            limit: JAVASCRIPT_CAPTURED_OUTPUT_LIMIT_BYTES,
+        },
+    )?;
+    if next_len > JAVASCRIPT_CAPTURED_OUTPUT_LIMIT_BYTES {
+        return Err(JavascriptExecutionError::OutputBufferExceeded {
+            stream,
+            limit: JAVASCRIPT_CAPTURED_OUTPUT_LIMIT_BYTES,
+        });
+    }
+
+    target.extend(chunk);
+    Ok(())
 }
 
 struct V8SessionRegistrationGuard<'a> {
@@ -2251,8 +2293,8 @@ fn spawn_v8_event_bridge(
     _sync_rpc_timeout: Duration,
     v8_session: V8SessionHandle,
     mut local_bridge: LocalBridgeState,
-) -> UnboundedReceiver<JavascriptExecutionEvent> {
-    let (sender, receiver) = unbounded_channel();
+) -> TokioReceiver<JavascriptExecutionEvent> {
+    let (sender, receiver) = channel(JAVASCRIPT_EVENT_CHANNEL_CAPACITY);
 
     thread::spawn(move || {
         let mut emitted_exit = false;
@@ -2289,9 +2331,21 @@ fn spawn_v8_event_bridge(
                             v8_runtime::json_to_cbor_payload(&Value::Null).unwrap_or_default(),
                         );
                         if method == "_log" {
-                            let _ = sender.send(JavascriptExecutionEvent::Stdout(output));
+                            if !send_javascript_event(
+                                &sender,
+                                &v8_session,
+                                JavascriptExecutionEvent::Stdout(output),
+                            ) {
+                                break;
+                            }
                         } else {
-                            let _ = sender.send(JavascriptExecutionEvent::Stderr(output));
+                            if !send_javascript_event(
+                                &sender,
+                                &v8_session,
+                                JavascriptExecutionEvent::Stderr(output),
+                            ) {
+                                break;
+                            }
                         }
                         continue;
                     }
@@ -2347,8 +2401,13 @@ fn spawn_v8_event_bridge(
                         } else {
                             format!("{}\n", err.stack)
                         };
-                        let _ =
-                            sender.send(JavascriptExecutionEvent::Stderr(error_msg.into_bytes()));
+                        if !send_javascript_event(
+                            &sender,
+                            &v8_session,
+                            JavascriptExecutionEvent::Stderr(error_msg.into_bytes()),
+                        ) {
+                            break;
+                        }
                     }
                     emitted_exit = true;
                     Some(JavascriptExecutionEvent::Exited(resolved_exit_code))
@@ -2358,18 +2417,50 @@ fn spawn_v8_event_bridge(
             };
 
             if let Some(event) = event {
-                if sender.send(event).is_err() {
+                if !send_javascript_event(&sender, &v8_session, event) {
                     break;
                 }
             }
         }
 
         if !emitted_exit {
-            let _ = sender.send(JavascriptExecutionEvent::Exited(1));
+            let _ =
+                send_javascript_event(&sender, &v8_session, JavascriptExecutionEvent::Exited(1));
         }
     });
 
     receiver
+}
+
+fn send_javascript_event(
+    sender: &tokio::sync::mpsc::Sender<JavascriptExecutionEvent>,
+    v8_session: &V8SessionHandle,
+    event: JavascriptExecutionEvent,
+) -> bool {
+    if javascript_event_payload_len(&event) > JAVASCRIPT_EVENT_PAYLOAD_LIMIT_BYTES {
+        let _ = v8_session.destroy();
+        return false;
+    }
+
+    match sender.try_send(event) {
+        Ok(()) => true,
+        Err(TokioTrySendError::Full(_)) => {
+            let _ = v8_session.destroy();
+            false
+        }
+        Err(TokioTrySendError::Closed(_)) => false,
+    }
+}
+
+fn javascript_event_payload_len(event: &JavascriptExecutionEvent) -> usize {
+    match event {
+        JavascriptExecutionEvent::Stdout(chunk) | JavascriptExecutionEvent::Stderr(chunk) => {
+            chunk.len()
+        }
+        JavascriptExecutionEvent::SyncRpcRequest(_)
+        | JavascriptExecutionEvent::SignalState { .. }
+        | JavascriptExecutionEvent::Exited(_) => 0,
+    }
 }
 
 /// Handle internal bridge calls that don't need to go to the sidecar.
@@ -3090,10 +3181,27 @@ fn percent_decode(raw: &str) -> String {
 }
 
 impl LocalKernelStdinBridge {
-    fn write(&self, chunk: &[u8]) {
+    fn write(&self, chunk: &[u8]) -> Result<(), JavascriptExecutionError> {
         let mut state = self.state.lock().expect("kernel stdin state poisoned");
+        if state.closed {
+            return Err(JavascriptExecutionError::StdinClosed);
+        }
+        let next_len = state.bytes.len().checked_add(chunk.len()).ok_or_else(|| {
+            JavascriptExecutionError::Stdin(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("guest stdin buffer exceeded {KERNEL_STDIN_BUFFER_LIMIT_BYTES} bytes"),
+            ))
+        })?;
+        if next_len > KERNEL_STDIN_BUFFER_LIMIT_BYTES {
+            return Err(JavascriptExecutionError::Stdin(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("guest stdin buffer exceeded {KERNEL_STDIN_BUFFER_LIMIT_BYTES} bytes"),
+            )));
+        }
+
         state.bytes.extend(chunk.iter().copied());
         self.ready.notify_all();
+        Ok(())
     }
 
     fn close(&self) {
@@ -5953,6 +6061,121 @@ mod tests {
         assert!(error
             .to_string()
             .contains("timed out after 30ms while queueing JavaScript sync RPC response"));
+    }
+
+    #[test]
+    fn javascript_wait_capture_rejects_output_over_limit() {
+        let mut stdout = vec![b'x'; JAVASCRIPT_CAPTURED_OUTPUT_LIMIT_BYTES - 1];
+        append_captured_output(&mut stdout, vec![b'y'], "stdout").expect("fill to limit");
+        assert_eq!(stdout.len(), JAVASCRIPT_CAPTURED_OUTPUT_LIMIT_BYTES);
+
+        let error = append_captured_output(&mut stdout, vec![b'z'], "stdout")
+            .expect_err("captured output over limit should fail");
+        assert!(matches!(
+            error,
+            JavascriptExecutionError::OutputBufferExceeded {
+                stream: "stdout",
+                limit: JAVASCRIPT_CAPTURED_OUTPUT_LIMIT_BYTES,
+            }
+        ));
+    }
+
+    #[test]
+    fn kernel_stdin_bridge_rejects_buffer_over_limit_and_closed_writes() {
+        let bridge = LocalKernelStdinBridge::default();
+        bridge
+            .write(&vec![b'x'; KERNEL_STDIN_BUFFER_LIMIT_BYTES])
+            .expect("fill stdin buffer to limit");
+
+        let error = bridge
+            .write(&[b'y'])
+            .expect_err("stdin buffer over limit should fail");
+        assert!(matches!(error, JavascriptExecutionError::Stdin(_)));
+
+        let bridge = LocalKernelStdinBridge::default();
+        bridge.close();
+        let error = bridge
+            .write(b"x")
+            .expect_err("write after stdin close should fail");
+        assert!(matches!(error, JavascriptExecutionError::StdinClosed));
+    }
+
+    #[test]
+    fn javascript_event_sender_reports_closed_receiver() {
+        let (sender, receiver) = channel(1);
+        drop(receiver);
+        let host = V8RuntimeHost::spawn().expect("spawn V8 runtime host");
+        let session = host.session_handle(String::from("closed-event-sender-test"));
+        assert!(!send_javascript_event(
+            &sender,
+            &session,
+            JavascriptExecutionEvent::Exited(1)
+        ));
+    }
+
+    #[test]
+    fn javascript_event_sender_destroys_session_when_channel_is_full() {
+        let host = V8RuntimeHost::spawn().expect("spawn V8 runtime host");
+        let session_id = format!(
+            "event-overflow-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        );
+        let receiver = host
+            .register_session(&session_id)
+            .expect("register event overflow session");
+        let session = host.session_handle(session_id.clone());
+        let (sender, _event_receiver) = channel(1);
+
+        assert!(send_javascript_event(
+            &sender,
+            &session,
+            JavascriptExecutionEvent::Stdout(Vec::new())
+        ));
+        assert!(!send_javascript_event(
+            &sender,
+            &session,
+            JavascriptExecutionEvent::Stdout(Vec::new())
+        ));
+
+        drop(receiver);
+        let recovered = host
+            .register_session(&session_id)
+            .expect("overflow should destroy and deregister the session");
+        drop(recovered);
+        host.unregister_session(&session_id);
+    }
+
+    #[test]
+    fn javascript_event_sender_destroys_session_when_event_is_oversized() {
+        let host = V8RuntimeHost::spawn().expect("spawn V8 runtime host");
+        let session_id = format!(
+            "event-oversized-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        );
+        let receiver = host
+            .register_session(&session_id)
+            .expect("register oversized event session");
+        let session = host.session_handle(session_id.clone());
+        let (sender, _event_receiver) = channel(JAVASCRIPT_EVENT_CHANNEL_CAPACITY);
+
+        assert!(!send_javascript_event(
+            &sender,
+            &session,
+            JavascriptExecutionEvent::Stdout(vec![0; JAVASCRIPT_EVENT_PAYLOAD_LIMIT_BYTES + 1])
+        ));
+
+        drop(receiver);
+        let recovered = host
+            .register_session(&session_id)
+            .expect("oversized event should destroy and deregister the session");
+        drop(recovered);
+        host.unregister_session(&session_id);
     }
 
     #[test]
