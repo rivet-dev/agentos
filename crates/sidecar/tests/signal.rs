@@ -346,6 +346,97 @@ fn embedded_runtime_signal_stop_continue_updates_kernel_state_and_guest_handler(
         .expect("terminate stopped/continued process");
 }
 
+fn embedded_runtime_kill_process_rejects_invalid_signal_without_killing_process() {
+    assert_node_available();
+
+    let mut sidecar = new_sidecar("embedded-runtime-invalid-signal");
+    let cwd = temp_dir("embedded-runtime-invalid-signal-cwd");
+    let entry = cwd.join("invalid-signal.mjs");
+
+    write_fixture(
+        &entry,
+        [
+            "console.log('invalid-signal-ready');",
+            "setInterval(() => {}, 25);",
+        ]
+        .join("\n"),
+    );
+
+    let connection_id = authenticate(&mut sidecar, "conn-embedded-runtime-invalid-signal");
+    let session_id = open_session(&mut sidecar, 2, &connection_id);
+    let (vm_id, _) = create_vm_with_metadata(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::JavaScript,
+        &cwd,
+        BTreeMap::new(),
+    );
+
+    execute(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "invalid-signal",
+        GuestRuntimeKind::JavaScript,
+        &entry,
+        Vec::new(),
+    );
+
+    wait_for_process_output(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "invalid-signal",
+        "invalid-signal-ready",
+    );
+
+    let ownership = OwnershipScope::vm(&connection_id, &session_id, &vm_id);
+    let invalid_signal = sidecar
+        .dispatch_blocking(request(
+            5,
+            ownership.clone(),
+            RequestPayload::KillProcess(KillProcessRequest {
+                process_id: String::from("invalid-signal"),
+                signal: String::from("SIGBOGUS"),
+            }),
+        ))
+        .expect("dispatch invalid signal");
+    let ResponsePayload::Rejected(response) = invalid_signal.response.payload else {
+        panic!("unexpected invalid signal response");
+    };
+    assert_eq!(response.code, "invalid_state");
+    assert!(
+        response.message.contains("unsupported kill_process signal"),
+        "unexpected invalid signal rejection: {}",
+        response.message
+    );
+
+    wait_for_process_status(
+        &mut sidecar,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "invalid-signal",
+        ProcessSnapshotStatus::Running,
+    );
+
+    sidecar
+        .dispatch_blocking(request(
+            6,
+            ownership,
+            RequestPayload::KillProcess(KillProcessRequest {
+                process_id: String::from("invalid-signal"),
+                signal: String::from("SIGTERM"),
+            }),
+        ))
+        .expect("terminate invalid-signal process");
+}
+
 fn embedded_runtime_process_kill_signal_zero_checks_child_liveness() {
     assert_node_available();
 
@@ -609,6 +700,7 @@ fn embedded_runtime_signal_delivers_sigchld_on_child_exit() {
 fn embedded_runtime_signal_suite() {
     embedded_runtime_signal_routes_sigterm_and_process_kill();
     embedded_runtime_signal_stop_continue_updates_kernel_state_and_guest_handler();
+    embedded_runtime_kill_process_rejects_invalid_signal_without_killing_process();
     embedded_runtime_process_kill_signal_zero_checks_child_liveness();
     embedded_runtime_signal_delivers_sigchld_on_child_exit();
 }
