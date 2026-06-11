@@ -3,15 +3,17 @@ mod support;
 use agent_os_bridge::{LoadFilesystemStateRequest, PersistenceBridge};
 use agent_os_sidecar::protocol::{
     CreateVmRequest, DisposeReason, DisposeVmRequest, EventPayload, GuestRuntimeKind,
-    KillProcessRequest, OpenSessionRequest, OwnershipScope, RequestPayload, ResponsePayload,
-    SidecarPlacement,
+    KillProcessRequest, OpenSessionRequest, OwnershipScope, ProcessOutputEvent, RequestPayload,
+    ResponsePayload, SidecarPlacement, StreamChannel,
 };
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 use support::{
-    assert_node_available, authenticate, collect_process_output, create_vm, execute, new_sidecar,
-    open_session, request, temp_dir, write_fixture, RecordingBridge,
+    RecordingBridge, assert_node_available, authenticate, create_vm, execute, new_sidecar,
+    open_session, request, temp_dir, write_fixture,
 };
+
+const PROCESS_OUTPUT_BYTE_LIMIT: usize = 1024 * 1024;
 
 fn wait_for_process_exit(
     sidecar: &mut agent_os_sidecar::NativeSidecar<RecordingBridge>,
@@ -115,15 +117,84 @@ fn kill_process_terminates_running_guest_execution() {
         &rerun,
         Vec::new(),
     );
-    let (_stdout, stderr, rerun_exit) = collect_process_output(
+    let (stdout, stderr, rerun_exit) = collect_kill_cleanup_process_output(
         &mut sidecar,
         &connection_id,
         &session_id,
         &vm_id,
         "proc-rerun",
     );
+    assert_eq!(stdout, "rerun-ok\n");
     assert!(stderr.is_empty());
     assert_eq!(rerun_exit, 0);
+}
+
+fn collect_kill_cleanup_process_output(
+    sidecar: &mut agent_os_sidecar::NativeSidecar<RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+) -> (String, String, i32) {
+    let ownership = OwnershipScope::session(connection_id, session_id);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit = None;
+
+    loop {
+        let event = sidecar
+            .poll_event_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll kill-cleanup process event");
+        if let Some(event) = event {
+            assert_eq!(
+                event.ownership,
+                OwnershipScope::vm(connection_id, session_id, vm_id)
+            );
+
+            match event.payload {
+                EventPayload::ProcessOutput(ProcessOutputEvent {
+                    process_id: event_process_id,
+                    channel,
+                    chunk,
+                }) if event_process_id == process_id => match channel {
+                    StreamChannel::Stdout => {
+                        append_process_output(&mut stdout, &chunk, &event_process_id, "stdout")
+                    }
+                    StreamChannel::Stderr => {
+                        append_process_output(&mut stderr, &chunk, &event_process_id, "stderr")
+                    }
+                },
+                EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
+                    exit = Some((exited.exit_code, Instant::now()));
+                }
+                EventPayload::ProcessOutput(_)
+                | EventPayload::ProcessExited(_)
+                | EventPayload::VmLifecycle(_)
+                | EventPayload::Structured(_) => {}
+            }
+        }
+
+        if let Some((exit_code, seen_at)) = exit {
+            if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
+                return (stdout, stderr, exit_code);
+            }
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for kill-cleanup process {process_id}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+fn append_process_output(buffer: &mut String, chunk: &[u8], process_id: &str, channel: &str) {
+    let text = String::from_utf8_lossy(chunk);
+    assert!(
+        buffer.len().saturating_add(text.len()) <= PROCESS_OUTPUT_BYTE_LIMIT,
+        "kill-cleanup process {process_id} exceeded {PROCESS_OUTPUT_BYTE_LIMIT} bytes on {channel}"
+    );
+    buffer.push_str(&text);
 }
 
 fn kill_process_terminates_running_wasm_execution() {
@@ -246,10 +317,12 @@ fn dispose_vm_succeeds_even_when_a_guest_process_is_running() {
         }
         other => panic!("unexpected dispose response: {other:?}"),
     }
-    assert!(dispose
-        .events
-        .iter()
-        .any(|event| matches!(event.payload, EventPayload::ProcessExited(_))));
+    assert!(
+        dispose
+            .events
+            .iter()
+            .any(|event| matches!(event.payload, EventPayload::ProcessExited(_)))
+    );
 
     let replacement_vm = sidecar
         .dispatch_blocking(request(
