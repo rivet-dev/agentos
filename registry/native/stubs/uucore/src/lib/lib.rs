@@ -169,8 +169,7 @@ pub fn disable_rust_signal_handlers() -> Result<(), Errno> {
 }
 
 pub fn get_canonical_util_name(util_name: &str) -> &str {
-    // remove the "uu_" prefix
-    let util_name = &util_name[3..];
+    let util_name = util_name.strip_prefix("uu_").unwrap_or(util_name);
     match util_name {
         // uu_test aliases - '[' is an alias for test
         "[" => "test",
@@ -744,5 +743,16 @@ mod tests {
             format_usage("expr EXPRESSION\nexpr OPTION"),
             "expr EXPRESSION\n       expr OPTION"
         );
+    }
+
+    #[test]
+    fn canonical_util_name_handles_aliases_and_unprefixed_input() {
+        assert_eq!(get_canonical_util_name("uu_["), "test");
+        assert_eq!(get_canonical_util_name("uu_dir"), "ls");
+        assert_eq!(get_canonical_util_name("uu_vdir"), "ls");
+        assert_eq!(get_canonical_util_name("uu_cat"), "cat");
+        assert_eq!(get_canonical_util_name("cat"), "cat");
+        assert_eq!(get_canonical_util_name(""), "");
+        assert_eq!(get_canonical_util_name("é"), "é");
     }
 }
