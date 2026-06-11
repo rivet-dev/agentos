@@ -68,6 +68,8 @@ use std::io::{Error, ErrorKind, Result as IOResult};
 #[cfg(any(unix, target_os = "wasi"))]
 use std::os::fd::AsFd;
 #[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, MAIN_SEPARATOR, Path, PathBuf};
 #[cfg(target_os = "windows")]
@@ -498,8 +500,10 @@ pub fn canonicalize<P: AsRef<Path>>(
                 if followed_symlinks < SYMLINKS_TO_LOOK_FOR_LOOPS {
                     followed_symlinks += 1;
                 } else {
-                    let file_info =
-                        FileInformation::from_path(result.parent().unwrap(), false).unwrap();
+                    let parent = result.parent().ok_or_else(|| {
+                        Error::new(ErrorKind::InvalidInput, "Too many levels of symbolic links")
+                    })?;
+                    let file_info = FileInformation::from_path(parent, false)?;
                     let mut path_to_follow = PathBuf::new();
                     for part in &parts {
                         path_to_follow.push(part.as_os_str());
@@ -1000,10 +1004,11 @@ pub fn get_filename(file: &Path) -> Option<&str> {
 /// ```
 #[cfg(unix)]
 pub fn make_fifo(path: &Path) -> std::io::Result<()> {
-    let name = CString::new(path.to_str().unwrap()).unwrap();
+    let name = CString::new(path.as_os_str().as_bytes())
+        .map_err(|err| Error::new(ErrorKind::InvalidInput, err))?;
     let err = unsafe { mkfifo(name.as_ptr(), 0o666) };
     if err == -1 {
-        Err(Error::from_raw_os_error(err))
+        Err(Error::last_os_error())
     } else {
         Ok(())
     }
@@ -1035,6 +1040,8 @@ mod tests {
     use std::io::Write;
     #[cfg(unix)]
     use std::os::unix;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
     #[cfg(unix)]
     use std::os::unix::fs::FileTypeExt;
     #[cfg(unix)]
@@ -1322,5 +1329,25 @@ mod tests {
         let path2 = path.clone();
         std::thread::spawn(move || assert!(fs::write(&path2, b"foo").is_ok()));
         assert_eq!(fs::read(&path).unwrap(), b"foo");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_make_fifo_non_utf8_path() {
+        let tempdir = tempdir().unwrap();
+        let path = tempdir.path().join(OsStr::from_bytes(b"fifo-\xff"));
+
+        make_fifo(&path).unwrap();
+
+        assert!(fs::metadata(&path).unwrap().file_type().is_fifo());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_make_fifo_interior_nul_path() {
+        let path = Path::new(OsStr::from_bytes(b"bad\0path"));
+        let err = make_fifo(path).unwrap_err();
+
+        assert_eq!(ErrorKind::InvalidInput, err.kind());
     }
 }
