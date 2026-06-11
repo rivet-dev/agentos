@@ -24,6 +24,7 @@ static EMBEDDED_CBOR_USERS: AtomicUsize = AtomicUsize::new(0);
 const MAX_CBOR_BRIDGE_DEPTH: usize = 64;
 const MAX_CBOR_BRIDGE_CONTAINER_ITEMS: usize = 100_000;
 const MAX_VM_CONTEXTS: usize = 1024;
+const MAX_PENDING_PROMISES: usize = 1024;
 
 /// Initialize the codec from the SECURE_EXEC_V8_CODEC environment variable.
 /// Call once at process startup before any sessions are created.
@@ -668,18 +669,51 @@ pub struct AsyncBridgeFnStore {
 /// Single-threaded: only accessed from the session thread.
 pub struct PendingPromises {
     map: RefCell<HashMap<u64, v8::Global<v8::PromiseResolver>>>,
+    reserved: Cell<usize>,
 }
 
 impl PendingPromises {
     pub fn new() -> Self {
         PendingPromises {
             map: RefCell::new(HashMap::new()),
+            reserved: Cell::new(0),
         }
     }
 
-    /// Store a resolver for a given call_id.
-    pub fn insert(&self, call_id: u64, resolver: v8::Global<v8::PromiseResolver>) {
+    fn capacity_error(&self) -> Option<String> {
+        let len = self.map.borrow().len().saturating_add(self.reserved.get());
+        if len >= MAX_PENDING_PROMISES {
+            return Some(format!(
+                "async bridge pending promise registry exceeded limit of {MAX_PENDING_PROMISES} promises"
+            ));
+        }
+        None
+    }
+
+    fn reserve(&self) -> Result<PendingPromiseReservation<'_>, String> {
+        if let Some(error) = self.capacity_error() {
+            return Err(error);
+        }
+        self.reserved.set(self.reserved.get().saturating_add(1));
+        Ok(PendingPromiseReservation {
+            pending: self,
+            active: true,
+        })
+    }
+
+    fn release_reservation(&self) {
+        self.reserved.set(self.reserved.get().saturating_sub(1));
+    }
+
+    fn insert_reserved(
+        &self,
+        call_id: u64,
+        resolver: v8::Global<v8::PromiseResolver>,
+        mut reservation: PendingPromiseReservation<'_>,
+    ) {
         self.map.borrow_mut().insert(call_id, resolver);
+        reservation.active = false;
+        self.release_reservation();
     }
 
     /// Remove and return the resolver for a given call_id.
@@ -701,6 +735,19 @@ impl PendingPromises {
 impl Default for PendingPromises {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+struct PendingPromiseReservation<'a> {
+    pending: &'a PendingPromises,
+    active: bool,
+}
+
+impl Drop for PendingPromiseReservation<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            self.pending.release_reservation();
+        }
     }
 }
 
@@ -1749,6 +1796,23 @@ fn build_bridge_apply_wrapper<'s>(
         .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
 }
 
+fn reject_promise_with_error(
+    scope: &mut v8::HandleScope,
+    resolver: v8::Local<v8::PromiseResolver>,
+    message: &str,
+    code: Option<&str>,
+) {
+    let msg = v8::String::new(scope, message).unwrap();
+    let exc = v8::Exception::error(scope, msg);
+    if let Some(code) = code {
+        let exc_object = exc.to_object(scope).unwrap();
+        let code_key = v8::String::new(scope, "code").unwrap();
+        let code_value = v8::String::new(scope, code).unwrap();
+        let _ = exc_object.set(scope, code_key.into(), code_value.into());
+    }
+    resolver.reject(scope, exc);
+}
+
 /// V8 FunctionTemplate callback for async promise-returning bridge calls.
 fn async_bridge_callback(
     scope: &mut v8::HandleScope,
@@ -1786,6 +1850,20 @@ fn async_bridge_callback(
     // Get the promise to return to V8
     let promise = resolver.get_promise(scope);
 
+    let reservation = match pending.reserve() {
+        Ok(reservation) => reservation,
+        Err(err_msg) => {
+            reject_promise_with_error(
+                scope,
+                resolver,
+                &err_msg,
+                Some("ERR_AGENT_OS_BRIDGE_PENDING_PROMISE_LIMIT"),
+            );
+            rv.set(promise.into());
+            return;
+        }
+    };
+
     // Serialize V8 arguments into reusable buffer (avoids per-call allocation)
     let encoded_args = {
         let mut bufs = buffers.borrow_mut();
@@ -1806,13 +1884,11 @@ fn async_bridge_callback(
         Ok(call_id) => {
             // Store resolver in pending promises map
             let global_resolver = v8::Global::new(scope, resolver);
-            pending.insert(call_id, global_resolver);
+            pending.insert_reserved(call_id, global_resolver, reservation);
         }
         Err(err_msg) => {
             // Reject the promise immediately if send fails
-            let msg = v8::String::new(scope, &err_msg).unwrap();
-            let exc = v8::Exception::error(scope, msg);
-            resolver.reject(scope, exc);
+            reject_promise_with_error(scope, resolver, &err_msg, None);
         }
     }
 
@@ -1986,15 +2062,41 @@ fn is_errno_segment(segment: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_CBOR_BRIDGE_CONTAINER_ITEMS, MAX_CBOR_BRIDGE_DEPTH, MAX_VM_CONTEXTS, SessionBuffers,
-        bridge_error_code, clear_vm_context_registry_for_test, deserialize_cbor_value,
+        MAX_CBOR_BRIDGE_CONTAINER_ITEMS, MAX_CBOR_BRIDGE_DEPTH, MAX_PENDING_PROMISES,
+        MAX_VM_CONTEXTS, PendingPromises, SessionBuffers, bridge_error_code,
+        clear_vm_context_registry_for_test, deserialize_cbor_value, register_async_bridge_fns,
         register_sync_bridge_fns, serialize_cbor_value, vm_context_capacity_error,
         vm_context_registry_len_for_test,
     };
     use crate::host_call::BridgeCallContext;
+    use crate::ipc_binary::{self, BinaryFrame};
     use crate::isolate;
     use std::cell::RefCell;
-    use std::io::Cursor;
+    use std::io::{Cursor, Write};
+    use std::sync::{Arc, Mutex};
+
+    struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().write(buf)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.0.lock().unwrap().flush()
+        }
+    }
+
+    fn bridge_call_count(bytes: &[u8]) -> usize {
+        let mut cursor = Cursor::new(bytes);
+        let mut count = 0;
+        while let Ok(frame) = ipc_binary::read_frame(&mut cursor) {
+            if matches!(frame, BinaryFrame::BridgeCall { .. }) {
+                count += 1;
+            }
+        }
+        count
+    }
 
     #[test]
     fn bridge_error_code_rejects_guest_controlled_errno_segments() {
@@ -2204,6 +2306,116 @@ mod tests {
         }
         assert_eq!(vm_context_registry_len_for_test(), 1);
         clear_vm_context_registry_for_test();
+
+        let async_writer = Arc::new(Mutex::new(Vec::new()));
+        let async_bridge_ctx = BridgeCallContext::new(
+            Box::new(SharedWriter(Arc::clone(&async_writer))),
+            Box::new(Cursor::new(Vec::new())),
+            String::from("test-session"),
+        );
+        let async_pending = PendingPromises::new();
+        let _async_bridge_fns = register_async_bridge_fns(
+            scope,
+            &async_bridge_ctx as *const BridgeCallContext,
+            &async_pending as *const PendingPromises,
+            &session_buffers as *const RefCell<SessionBuffers>,
+            &["_asyncFn"],
+        );
+        let source = format!(
+            r#"
+            for (let i = 0; i < {fill_count}; i++) {{
+                _asyncFn(i);
+            }}
+            globalThis.__overflowPromise = _asyncFn("overflow");
+            "#,
+            fill_count = MAX_PENDING_PROMISES,
+        );
+        {
+            let tc = &mut v8::TryCatch::new(scope);
+            let source = v8::String::new(tc, &source).unwrap();
+            let script = v8::Script::compile(tc, source, None).unwrap();
+            assert!(script.run(tc).is_some());
+            assert!(!tc.has_caught(), "async overflow should reject, not throw");
+        }
+        assert_eq!(async_pending.len(), MAX_PENDING_PROMISES);
+        assert_eq!(
+            bridge_call_count(&async_writer.lock().unwrap()),
+            MAX_PENDING_PROMISES
+        );
+        {
+            let key = v8::String::new(scope, "__overflowPromise").unwrap();
+            let value = context.global(scope).get(scope, key.into()).unwrap();
+            let promise = v8::Local::<v8::Promise>::try_from(value).unwrap();
+            assert_eq!(promise.state(), v8::PromiseState::Rejected);
+            let rejection = promise.result(scope);
+            let rejection = v8::Local::<v8::Object>::try_from(rejection).unwrap();
+            let code_key = v8::String::new(scope, "code").unwrap();
+            let code = rejection.get(scope, code_key.into()).unwrap();
+            assert_eq!(
+                code.to_rust_string_lossy(scope),
+                "ERR_AGENT_OS_BRIDGE_PENDING_PROMISE_LIMIT"
+            );
+        }
+
+        let reentrant_writer = Arc::new(Mutex::new(Vec::new()));
+        let reentrant_bridge_ctx = BridgeCallContext::new(
+            Box::new(SharedWriter(Arc::clone(&reentrant_writer))),
+            Box::new(Cursor::new(Vec::new())),
+            String::from("test-session"),
+        );
+        let reentrant_pending = PendingPromises::new();
+        let _reentrant_async_bridge_fns = register_async_bridge_fns(
+            scope,
+            &reentrant_bridge_ctx as *const BridgeCallContext,
+            &reentrant_pending as *const PendingPromises,
+            &session_buffers as *const RefCell<SessionBuffers>,
+            &["_asyncFn"],
+        );
+        let source = format!(
+            r#"
+            for (let i = 0; i < {fill_count}; i++) {{
+                _asyncFn(i);
+            }}
+            let innerPromise;
+            const reentrantArg = {{}};
+            Object.defineProperty(reentrantArg, "x", {{
+                get() {{
+                    innerPromise = _asyncFn("inner");
+                    return 1;
+                }},
+                enumerable: true,
+            }});
+            globalThis.__reentrantOuterPromise = _asyncFn(reentrantArg);
+            globalThis.__reentrantInnerPromise = innerPromise;
+            "#,
+            fill_count = MAX_PENDING_PROMISES - 1,
+        );
+        {
+            let tc = &mut v8::TryCatch::new(scope);
+            let source = v8::String::new(tc, &source).unwrap();
+            let script = v8::Script::compile(tc, source, None).unwrap();
+            assert!(script.run(tc).is_some());
+            assert!(!tc.has_caught(), "async reentry should reject, not throw");
+        }
+        assert_eq!(reentrant_pending.len(), MAX_PENDING_PROMISES);
+        assert_eq!(
+            bridge_call_count(&reentrant_writer.lock().unwrap()),
+            MAX_PENDING_PROMISES
+        );
+        {
+            let key = v8::String::new(scope, "__reentrantInnerPromise").unwrap();
+            let value = context.global(scope).get(scope, key.into()).unwrap();
+            let promise = v8::Local::<v8::Promise>::try_from(value).unwrap();
+            assert_eq!(promise.state(), v8::PromiseState::Rejected);
+            let rejection = promise.result(scope);
+            let rejection = v8::Local::<v8::Object>::try_from(rejection).unwrap();
+            let code_key = v8::String::new(scope, "code").unwrap();
+            let code = rejection.get(scope, code_key.into()).unwrap();
+            assert_eq!(
+                code.to_rust_string_lossy(scope),
+                "ERR_AGENT_OS_BRIDGE_PENDING_PROMISE_LIMIT"
+            );
+        }
     }
 
     #[test]
