@@ -14,6 +14,7 @@ use agent_os_kernel::root_fs::{
     FilesystemEntry, RootFileSystem, RootFilesystemDescriptor, RootFilesystemMode,
     RootFilesystemSnapshot,
 };
+use agent_os_kernel::socket_table::{InetSocketAddress, SocketSpec};
 use agent_os_kernel::vfs::{MemoryFileSystem, VirtualFileSystem};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -98,6 +99,179 @@ fn resource_limits_default_to_bounded_values() {
         limits.max_socket_datagram_queue_len,
         Some(DEFAULT_MAX_SOCKET_DATAGRAM_QUEUE_LEN)
     );
+}
+
+#[test]
+fn socket_stream_buffered_bytes_count_against_resource_limits() {
+    let mut config = KernelVmConfig::new("vm-socket-buffer-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_socket_buffered_bytes: Some(5),
+        ..ResourceLimits::default()
+    };
+
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+    let writer = kernel
+        .spawn_process(
+            "sh",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("shell")),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn writer");
+    let reader = kernel
+        .spawn_process(
+            "sh",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("shell")),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn reader");
+    let writer_socket = kernel
+        .socket_create("shell", writer.pid(), SocketSpec::tcp())
+        .expect("create writer socket");
+    let reader_socket = kernel
+        .socket_create("shell", reader.pid(), SocketSpec::tcp())
+        .expect("create reader socket");
+    kernel
+        .socket_connect_pair("shell", writer.pid(), writer_socket, reader_socket)
+        .expect("connect socket pair");
+
+    kernel
+        .socket_write("shell", writer.pid(), writer_socket, b"12345")
+        .expect("fill stream receive buffer budget");
+    assert_eq!(kernel.resource_snapshot().socket_buffered_bytes, 5);
+
+    let error = kernel
+        .socket_write("shell", writer.pid(), writer_socket, b"!")
+        .expect_err("extra byte should exceed buffered byte limit");
+    assert_eq!(error.code(), "EAGAIN");
+    assert_eq!(kernel.resource_snapshot().socket_buffered_bytes, 5);
+
+    let drained = kernel
+        .socket_read("shell", reader.pid(), reader_socket, 5)
+        .expect("drain stream receive buffer")
+        .expect("stream payload");
+    assert_eq!(drained, b"12345");
+    assert_eq!(kernel.resource_snapshot().socket_buffered_bytes, 0);
+
+    kernel
+        .socket_write("shell", writer.pid(), writer_socket, b"!")
+        .expect("write should succeed after draining stream buffer");
+    assert_eq!(kernel.resource_snapshot().socket_buffered_bytes, 1);
+}
+
+#[test]
+fn udp_datagram_queue_counts_against_resource_limits() {
+    let mut config = KernelVmConfig::new("vm-socket-datagram-limit");
+    config.permissions = Permissions::allow_all();
+    config.resources = ResourceLimits {
+        max_socket_datagram_queue_len: Some(1),
+        ..ResourceLimits::default()
+    };
+
+    let mut kernel = KernelVm::new(MemoryFileSystem::new(), config);
+    kernel
+        .register_driver(CommandDriver::new("shell", ["sh"]))
+        .expect("register shell");
+    let sender = kernel
+        .spawn_process(
+            "sh",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("shell")),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn sender");
+    let receiver = kernel
+        .spawn_process(
+            "sh",
+            Vec::new(),
+            SpawnOptions {
+                requester_driver: Some(String::from("shell")),
+                ..SpawnOptions::default()
+            },
+        )
+        .expect("spawn receiver");
+    let sender_socket = kernel
+        .socket_create("shell", sender.pid(), SocketSpec::udp())
+        .expect("create sender socket");
+    kernel
+        .socket_bind_inet(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 54196),
+        )
+        .expect("bind sender socket");
+    let receiver_socket = kernel
+        .socket_create("shell", receiver.pid(), SocketSpec::udp())
+        .expect("create receiver socket");
+    kernel
+        .socket_bind_inet(
+            "shell",
+            receiver.pid(),
+            receiver_socket,
+            InetSocketAddress::new("127.0.0.1", 43196),
+        )
+        .expect("bind receiver socket");
+
+    kernel
+        .socket_send_to_inet_loopback(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 43196),
+            b"one",
+        )
+        .expect("enqueue first datagram");
+    let snapshot = kernel.resource_snapshot();
+    assert_eq!(snapshot.socket_datagram_queue_len, 1);
+    assert_eq!(snapshot.socket_buffered_bytes, 3);
+
+    let error = kernel
+        .socket_send_to_inet_loopback(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 43196),
+            b"two",
+        )
+        .expect_err("second datagram should exceed queue length limit");
+    assert_eq!(error.code(), "EAGAIN");
+    let snapshot = kernel.resource_snapshot();
+    assert_eq!(snapshot.socket_datagram_queue_len, 1);
+    assert_eq!(snapshot.socket_buffered_bytes, 3);
+
+    let datagram = kernel
+        .socket_recv_datagram("shell", receiver.pid(), receiver_socket, 16)
+        .expect("receive datagram")
+        .expect("datagram payload");
+    assert_eq!(datagram.payload(), b"one");
+    let snapshot = kernel.resource_snapshot();
+    assert_eq!(snapshot.socket_datagram_queue_len, 0);
+    assert_eq!(snapshot.socket_buffered_bytes, 0);
+
+    kernel
+        .socket_send_to_inet_loopback(
+            "shell",
+            sender.pid(),
+            sender_socket,
+            InetSocketAddress::new("127.0.0.1", 43196),
+            b"two",
+        )
+        .expect("send should succeed after draining datagram queue");
+    let snapshot = kernel.resource_snapshot();
+    assert_eq!(snapshot.socket_datagram_queue_len, 1);
+    assert_eq!(snapshot.socket_buffered_bytes, 3);
 }
 
 #[test]
