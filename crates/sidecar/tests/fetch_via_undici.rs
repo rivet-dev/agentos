@@ -1,6 +1,8 @@
 mod support;
 
-use agent_os_sidecar::protocol::GuestRuntimeKind;
+use agent_os_sidecar::protocol::{
+    EventPayload, GuestRuntimeKind, OwnershipScope, ProcessOutputEvent, StreamChannel,
+};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -8,11 +10,12 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 use support::{
-    assert_node_available, authenticate, collect_process_output_with_timeout,
-    dispose_vm_and_close_session, execute, new_sidecar, open_session, temp_dir, write_fixture,
+    assert_node_available, authenticate, dispose_vm_and_close_session, execute, new_sidecar,
+    open_session, temp_dir, write_fixture,
 };
 
 const FETCH_VIA_UNDICI_CASES: &[&str] = &["fetch", "abort"];
+const PROCESS_OUTPUT_BYTE_LIMIT: usize = 1024 * 1024;
 
 fn javascript_fetch_uses_guest_undici_over_kernel_tcp_socket() {
     assert_node_available();
@@ -41,6 +44,9 @@ fn javascript_fetch_uses_guest_undici_over_kernel_tcp_socket() {
                 Err(error) => panic!("accept http request: {error}"),
             }
         };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("configure http request read timeout");
         let mut request = String::new();
         let mut buffer = [0_u8; 4096];
         let bytes_read = stream.read(&mut buffer).expect("read http request");
@@ -124,7 +130,7 @@ console.log(JSON.stringify({{
         Vec::new(),
     );
 
-    let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
+    let (stdout, stderr, exit_code) = collect_fetch_process_output(
         &mut sidecar,
         &connection_id,
         &session_id,
@@ -180,6 +186,9 @@ fn javascript_fetch_honors_abortsignal_timeout_and_manual_abort() {
                 }
             };
 
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("configure abort request read timeout");
             let mut buffer = [0_u8; 4096];
             let _ = stream.read(&mut buffer);
             thread::sleep(Duration::from_millis(250));
@@ -275,7 +284,7 @@ console.log(JSON.stringify({{
         Vec::new(),
     );
 
-    let (stdout, stderr, exit_code) = collect_process_output_with_timeout(
+    let (stdout, stderr, exit_code) = collect_fetch_process_output(
         &mut sidecar,
         &connection_id,
         &session_id,
@@ -313,6 +322,75 @@ console.log(JSON.stringify({{
 
     server_result
         .unwrap_or_else(|_| panic!("server thread failed\nstdout:\n{stdout}\nstderr:\n{stderr}"));
+}
+
+fn collect_fetch_process_output(
+    sidecar: &mut agent_os_sidecar::NativeSidecar<support::RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    process_id: &str,
+    timeout: Duration,
+) -> (String, String, i32) {
+    let ownership = OwnershipScope::session(connection_id, session_id);
+    let deadline = Instant::now() + timeout;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit = None;
+
+    loop {
+        let event = sidecar
+            .poll_event_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll fetch-via-undici event");
+        if let Some(event) = event {
+            assert_eq!(
+                event.ownership,
+                OwnershipScope::vm(connection_id, session_id, vm_id)
+            );
+
+            match event.payload {
+                EventPayload::ProcessOutput(ProcessOutputEvent {
+                    process_id: event_process_id,
+                    channel,
+                    chunk,
+                }) if event_process_id == process_id => match channel {
+                    StreamChannel::Stdout => {
+                        append_process_output(&mut stdout, &chunk, &event_process_id, "stdout")
+                    }
+                    StreamChannel::Stderr => {
+                        append_process_output(&mut stderr, &chunk, &event_process_id, "stderr")
+                    }
+                },
+                EventPayload::ProcessExited(exited) if exited.process_id == process_id => {
+                    exit = Some((exited.exit_code, Instant::now()));
+                }
+                EventPayload::ProcessOutput(_)
+                | EventPayload::ProcessExited(_)
+                | EventPayload::VmLifecycle(_)
+                | EventPayload::Structured(_) => {}
+            }
+        }
+
+        if let Some((exit_code, seen_at)) = exit {
+            if Instant::now().duration_since(seen_at) >= Duration::from_millis(200) {
+                return (stdout, stderr, exit_code);
+            }
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for fetch-via-undici process {process_id}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+fn append_process_output(buffer: &mut String, chunk: &[u8], process_id: &str, channel: &str) {
+    let text = String::from_utf8_lossy(chunk);
+    assert!(
+        buffer.len().saturating_add(text.len()) <= PROCESS_OUTPUT_BYTE_LIMIT,
+        "fetch-via-undici process {process_id} exceeded {PROCESS_OUTPUT_BYTE_LIMIT} bytes on {channel}"
+    );
+    buffer.push_str(&text);
 }
 
 fn run_named_case(case_name: &str) {
