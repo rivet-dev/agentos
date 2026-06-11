@@ -313,6 +313,7 @@ fn parse_message_object(object: &Map<String, Value>) -> Result<JsonRpcMessage, J
     validate_jsonrpc_version(object)?;
 
     if object.contains_key("method") {
+        validate_request_response_fields_do_not_mix(object)?;
         return parse_request_or_notification(object);
     }
 
@@ -324,6 +325,19 @@ fn parse_message_object(object: &Map<String, Value>) -> Result<JsonRpcMessage, J
         "Invalid Request: missing method/result/error",
         parsed_id(object.get("id")),
     ))
+}
+
+fn validate_request_response_fields_do_not_mix(
+    object: &Map<String, Value>,
+) -> Result<(), JsonRpcParseError> {
+    if object.contains_key("result") || object.contains_key("error") {
+        return Err(JsonRpcParseError::invalid_request(
+            "Invalid Request: method cannot be combined with result or error",
+            parsed_id(object.get("id")),
+        ));
+    }
+
+    Ok(())
 }
 
 fn validate_jsonrpc_version(object: &Map<String, Value>) -> Result<(), JsonRpcParseError> {

@@ -1,7 +1,6 @@
 use agent_os_sidecar::acp::{
-    deserialize_message, is_request, is_response, serialize_message, JsonRpcError, JsonRpcId,
-    JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
-    JsonRpcResponseShapeError,
+    JsonRpcError, JsonRpcId, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+    JsonRpcResponseShapeError, deserialize_message, is_request, is_response, serialize_message,
 };
 use serde_json::json;
 
@@ -66,6 +65,26 @@ fn json_rpc_deserializer_rejects_invalid_lines() {
             .expect_err("non-object params should fail");
     assert_eq!(invalid_params.code(), -32600);
     assert_eq!(invalid_params.id(), &JsonRpcId::Number(9));
+}
+
+#[test]
+fn json_rpc_deserializer_rejects_ambiguous_request_response_shapes() {
+    let mixed_result =
+        deserialize_message(r#"{"jsonrpc":"2.0","id":11,"method":"initialize","result":{}}"#)
+            .expect_err("request with result field should fail");
+    assert_eq!(mixed_result.code(), -32600);
+    assert_eq!(mixed_result.id(), &JsonRpcId::Number(11));
+    assert_eq!(
+        mixed_result.message(),
+        "Invalid Request: method cannot be combined with result or error"
+    );
+
+    let mixed_error = deserialize_message(
+        r#"{"jsonrpc":"2.0","id":"req-12","method":"initialize","error":{"code":-32000,"message":"boom"}}"#,
+    )
+    .expect_err("request with error field should fail");
+    assert_eq!(mixed_error.code(), -32600);
+    assert_eq!(mixed_error.id(), &JsonRpcId::String(String::from("req-12")));
 }
 
 #[test]
