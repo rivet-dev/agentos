@@ -236,13 +236,12 @@ impl Utmpx {
     /// A.K.A. ut.ut_tv
     pub fn login_time(&self) -> time::OffsetDateTime {
         #[allow(clippy::unnecessary_cast)]
-        let ts_nanos: i128 = (1_000_000_000_i64 * self.inner.ut_tv.tv_sec as i64
-            + 1_000_i64 * self.inner.ut_tv.tv_usec as i64)
-            .into();
+        let ts_nanos = 1_000_000_000_i128 * i128::from(self.inner.ut_tv.tv_sec)
+            + 1_000_i128 * i128::from(self.inner.ut_tv.tv_usec);
         let local_offset = time::OffsetDateTime::now_local()
             .map_or_else(|_| time::UtcOffset::UTC, time::OffsetDateTime::offset);
         time::OffsetDateTime::from_unix_timestamp_nanos(ts_nanos)
-            .unwrap()
+            .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
             .to_offset(local_offset)
     }
     /// A.K.A. ut.ut_exit
@@ -353,8 +352,10 @@ impl Utmpx {
             }
         }
 
+        let Ok(path) = CString::new(path.as_ref().as_os_str().as_bytes()) else {
+            return UtmpxIter::empty_traditional();
+        };
         let iter = UtmpxIter::new();
-        let path = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
         unsafe {
             // In glibc, utmpxname() only fails if there's not enough memory
             // to copy the string.
@@ -389,6 +390,7 @@ pub struct UtmpxIter {
     /// Ensure UtmpxIter is !Send. Technically redundant because MutexGuard
     /// is also !Send.
     phantom: PhantomData<std::rc::Rc<()>>,
+    empty: bool,
     #[cfg(feature = "feat_systemd_logind")]
     systemd_iter: Option<systemd_logind::SystemdUtmpxIter>,
 }
@@ -402,6 +404,20 @@ impl UtmpxIter {
         Self {
             guard,
             phantom: PhantomData,
+            empty: false,
+            #[cfg(feature = "feat_systemd_logind")]
+            systemd_iter: None,
+        }
+    }
+
+    fn empty_traditional() -> Self {
+        let guard = LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Self {
+            guard,
+            phantom: PhantomData,
+            empty: true,
             #[cfg(feature = "feat_systemd_logind")]
             systemd_iter: None,
         }
@@ -424,6 +440,7 @@ impl UtmpxIter {
         Self {
             guard,
             phantom: PhantomData,
+            empty: false,
             systemd_iter: Some(systemd_iter),
         }
     }
@@ -541,6 +558,10 @@ impl Iterator for UtmpxIter {
             }
         }
 
+        if self.empty {
+            return None;
+        }
+
         // Traditional utmp path
         unsafe {
             #[cfg_attr(target_env = "musl", allow(deprecated))]
@@ -566,5 +587,16 @@ impl Drop for UtmpxIter {
             #[cfg_attr(target_env = "musl", allow(deprecated))]
             endutxent();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_record_path_returns_empty_iterator() {
+        let mut iter = Utmpx::iter_all_records_from("bad\0path");
+        assert!(iter.next().is_none());
     }
 }
