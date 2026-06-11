@@ -131,6 +131,12 @@ pub fn decode_frame(buf: &[u8]) -> io::Result<BinaryFrame> {
     if buf.is_empty() {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "empty frame"));
     }
+    if buf.len() > MAX_FRAME_SIZE as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("frame size {} exceeds maximum {MAX_FRAME_SIZE}", buf.len()),
+        ));
+    }
 
     let msg_type = buf[0];
     let mut pos = 1;
@@ -571,5 +577,15 @@ mod tests {
         let bytes = encode_frame(&frame).unwrap();
         let decoded = decode_frame(&bytes[4..]).unwrap();
         assert_eq!(frame, decoded);
+    }
+
+    #[test]
+    fn decode_frame_rejects_oversized_body() {
+        let oversized = vec![0u8; MAX_FRAME_SIZE as usize + 1];
+        let result = decode_frame(&oversized);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("exceeds maximum"));
     }
 }
