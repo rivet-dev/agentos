@@ -25,15 +25,23 @@ fn format_zoned<W: Write>(out: &mut W, zoned: Zoned, fmt: &str) -> UResult<()> {
         .map_err(|x| USimpleError::new(1, x.to_string()))
 }
 
-/// Convert a SystemTime` to a number of seconds since UNIX_EPOCH
-pub fn system_time_to_sec(time: SystemTime) -> (i64, u32) {
+fn system_time_to_sec_i128(time: SystemTime) -> (i128, u32) {
     if time > UNIX_EPOCH {
         let d = time.duration_since(UNIX_EPOCH).unwrap();
-        (d.as_secs() as i64, d.subsec_nanos())
+        (i128::from(d.as_secs()), d.subsec_nanos())
     } else {
         let d = UNIX_EPOCH.duration_since(time).unwrap();
-        (-(d.as_secs() as i64), d.subsec_nanos())
+        (-i128::from(d.as_secs()), d.subsec_nanos())
     }
+}
+
+/// Convert a SystemTime` to a number of seconds since UNIX_EPOCH
+pub fn system_time_to_sec(time: SystemTime) -> (i64, u32) {
+    let (secs, nsecs) = system_time_to_sec_i128(time);
+    (
+        secs.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64,
+        nsecs,
+    )
 }
 
 pub mod format {
@@ -66,7 +74,7 @@ pub fn format_system_time<W: Write>(
         // but it still far enough in the future/past to be unlikely to matter:
         //  jiff: Year between -9999 to 9999 (UTC) [-377705023201..=253402207200]
         //  GNU: Year fits in signed 32 bits (timezone dependent)
-        let (mut secs, mut nsecs) = system_time_to_sec(time);
+        let (mut secs, mut nsecs) = system_time_to_sec_i128(time);
         match mode {
             FormatSystemTimeFallback::Integer => out.write_all(secs.to_string().as_bytes())?,
             FormatSystemTimeFallback::IntegerError => {
@@ -179,5 +187,25 @@ mod tests {
             String::from_utf8(out).unwrap(),
             "-67768040922076000.000000123"
         );
+    }
+
+    #[test]
+    fn test_timestamp_fallback_handles_i64_min_boundary() {
+        let duration = Duration::from_secs(i64::MAX as u64 + 1);
+        let Some(time) = UNIX_EPOCH.checked_sub(duration) else {
+            return;
+        };
+
+        assert_eq!(super::system_time_to_sec(time), (i64::MIN, 0));
+
+        let mut out = Vec::new();
+        format_system_time(
+            &mut out,
+            time,
+            "%Y-%m-%d %H:%M",
+            FormatSystemTimeFallback::Integer,
+        )
+        .expect("Formatting error.");
+        assert_eq!(String::from_utf8(out).unwrap(), i64::MIN.to_string());
     }
 }
