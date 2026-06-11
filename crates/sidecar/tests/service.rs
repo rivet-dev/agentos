@@ -8699,6 +8699,157 @@ setInterval(() => {}, 1000);
             let vm = sidecar.vms.get(&vm_id).expect("configured vm");
             assert_eq!(vm.toolkits.get("math"), Some(&original_toolkit));
         }
+        fn tools_register_toolkit_rejects_registry_overflow_without_mutating_vm() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+
+            for index in 0..crate::tools::MAX_REGISTERED_TOOLKITS {
+                sidecar
+                    .dispatch_blocking(request(
+                        20 + index as i64,
+                        OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                        RequestPayload::RegisterToolkit(test_toolkit_payload(
+                            &format!("toolkit-{index}"),
+                            "Bounded test toolkit",
+                            "run",
+                        )),
+                    ))
+                    .expect("register toolkit");
+            }
+
+            let (toolkits_before, command_paths_before) = {
+                let vm = sidecar.vms.get(&vm_id).expect("configured vm");
+                assert_eq!(vm.toolkits.len(), crate::tools::MAX_REGISTERED_TOOLKITS);
+                (vm.toolkits.clone(), vm.command_guest_paths.clone())
+            };
+
+            let overflow_response = sidecar
+                .dispatch_blocking(request(
+                    100,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::RegisterToolkit(test_toolkit_payload(
+                        "overflow",
+                        "Overflow toolkit",
+                        "run",
+                    )),
+                ))
+                .expect("dispatch overflow toolkit registration");
+
+            match overflow_response.response.payload {
+                ResponsePayload::Rejected(rejected) => {
+                    assert_eq!(rejected.code, "invalid_state");
+                    assert!(
+                        rejected.message.contains("registered toolkits"),
+                        "unexpected rejection: {rejected:?}"
+                    );
+                }
+                other => panic!("expected rejected response, got {other:?}"),
+            }
+
+            let vm = sidecar.vms.get(&vm_id).expect("configured vm");
+            assert_eq!(vm.toolkits, toolkits_before);
+            assert_eq!(vm.command_guest_paths, command_paths_before);
+            assert!(
+                !vm.command_guest_paths.contains_key("agentos-overflow"),
+                "overflow command path should not be registered"
+            );
+        }
+        fn tools_register_toolkit_rejects_total_tool_overflow_without_mutating_vm() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+
+            for toolkit_index in 0..4 {
+                let tools = (0..crate::tools::MAX_TOOLS_PER_TOOLKIT)
+                    .map(|tool_index| {
+                        (
+                            format!("tool-{tool_index}"),
+                            RegisteredToolDefinition {
+                                description: format!("tool {tool_index}"),
+                                input_schema: json!({
+                                    "type": "object",
+                                    "properties": {},
+                                    "additionalProperties": false,
+                                }),
+                                timeout_ms: None,
+                                examples: Vec::new(),
+                            },
+                        )
+                    })
+                    .collect();
+
+                sidecar
+                    .dispatch_blocking(request(
+                        120 + toolkit_index as i64,
+                        OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                        RequestPayload::RegisterToolkit(RegisterToolkitRequest {
+                            name: format!("toolkit-{toolkit_index}"),
+                            description: String::from("Bounded test toolkit"),
+                            tools,
+                        }),
+                    ))
+                    .expect("register toolkit");
+            }
+
+            let (toolkits_before, command_paths_before) = {
+                let vm = sidecar.vms.get(&vm_id).expect("configured vm");
+                assert_eq!(vm.toolkits.len(), 4);
+                assert_eq!(
+                    vm.toolkits
+                        .values()
+                        .map(|toolkit| toolkit.tools.len())
+                        .sum::<usize>(),
+                    crate::tools::MAX_REGISTERED_TOOLS_PER_VM
+                );
+                (vm.toolkits.clone(), vm.command_guest_paths.clone())
+            };
+
+            let overflow_response = sidecar
+                .dispatch_blocking(request(
+                    200,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::RegisterToolkit(test_toolkit_payload(
+                        "overflow",
+                        "Overflow toolkit",
+                        "run",
+                    )),
+                ))
+                .expect("dispatch total-tool overflow toolkit registration");
+
+            match overflow_response.response.payload {
+                ResponsePayload::Rejected(rejected) => {
+                    assert_eq!(rejected.code, "invalid_state");
+                    assert!(
+                        rejected.message.contains("registered tools"),
+                        "unexpected rejection: {rejected:?}"
+                    );
+                }
+                other => panic!("expected rejected response, got {other:?}"),
+            }
+
+            let vm = sidecar.vms.get(&vm_id).expect("configured vm");
+            assert_eq!(vm.toolkits, toolkits_before);
+            assert_eq!(vm.command_guest_paths, command_paths_before);
+            assert!(
+                !vm.command_guest_paths.contains_key("agentos-overflow"),
+                "overflow command path should not be registered"
+            );
+        }
         fn tools_javascript_child_process_denies_tool_invocation_without_permission() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
@@ -15389,6 +15540,8 @@ console.log(JSON.stringify({
             javascript_child_process_spawns_internal_tool_command_paths();
             javascript_child_process_resolves_internal_tool_command_paths_as_tools();
             tools_register_toolkit_rejects_duplicate_names_without_replacing_existing_toolkit();
+            tools_register_toolkit_rejects_registry_overflow_without_mutating_vm();
+            tools_register_toolkit_rejects_total_tool_overflow_without_mutating_vm();
             tools_javascript_child_process_denies_tool_invocation_without_permission();
             tools_javascript_child_process_invokes_tool_with_matching_permission();
             tools_javascript_child_process_rejects_invalid_json_file_input_before_dispatch();
@@ -15441,6 +15594,12 @@ console.log(JSON.stringify({
             javascript_child_process_internal_bootstrap_env_is_allowlisted();
             javascript_net_poll_clamps_guest_wait_to_sidecar_ceiling();
             javascript_net_poll_timeout_does_not_block_concurrent_vm_dispose();
+        }
+
+        #[test]
+        fn service_toolkit_registry_is_bounded() {
+            tools_register_toolkit_rejects_registry_overflow_without_mutating_vm();
+            tools_register_toolkit_rejects_total_tool_overflow_without_mutating_vm();
         }
 
         #[test]

@@ -2,18 +2,28 @@ use crate::protocol::{
     PermissionMode, PermissionsPolicy, RegisterToolkitRequest, RegisteredToolDefinition,
     RequestFrame, ResponsePayload, ToolInvocationRequest, ToolkitRegisteredResponse,
 };
-use crate::service::{evaluate_permissions_policy, kernel_error, normalize_path, DispatchResult};
-use crate::state::{BridgeError, VmState, TOOL_DRIVER_NAME, TOOL_MASTER_COMMAND};
+use crate::service::{DispatchResult, evaluate_permissions_policy, kernel_error, normalize_path};
+use crate::state::{BridgeError, TOOL_DRIVER_NAME, TOOL_MASTER_COMMAND, VmState};
 use crate::{NativeSidecar, NativeSidecarBridge, SidecarError};
 use agent_os_kernel::command_registry::CommandDriver;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const DEFAULT_TOOL_TIMEOUT_MS: u64 = 30_000;
+pub(crate) const MAX_TOOL_TIMEOUT_MS: u64 = 300_000;
+pub(crate) const MAX_REGISTERED_TOOLKITS: usize = 64;
+pub(crate) const MAX_REGISTERED_TOOLS_PER_VM: usize = 256;
+pub(crate) const MAX_TOOLS_PER_TOOLKIT: usize = 64;
+pub(crate) const MAX_TOOLKIT_NAME_LENGTH: usize = 64;
+pub(crate) const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub(crate) const MAX_TOOL_DESCRIPTION_LENGTH: usize = 200;
+pub(crate) const MAX_TOOL_SCHEMA_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_TOOL_SCHEMA_DEPTH: usize = 32;
+pub(crate) const MAX_TOOL_EXAMPLES_PER_TOOL: usize = 16;
+pub(crate) const MAX_TOOL_EXAMPLE_INPUT_BYTES: usize = 4 * 1024;
 const TOOL_INVOKE_CAPABILITY: &str = "tool.invoke";
 
 #[derive(Debug)]
@@ -66,6 +76,7 @@ where
     let registration_result = (|| -> Result<_, SidecarError> {
         let vm = sidecar.vms.get_mut(&vm_id).expect("owned VM should exist");
         ensure_toolkit_name_available(&vm.toolkits, &registered_name)?;
+        ensure_toolkit_registry_capacity(&vm.toolkits, &payload)?;
         vm.toolkits.insert(registered_name.clone(), payload);
         refresh_tool_registry(vm)?;
         Ok::<_, SidecarError>((
@@ -354,6 +365,35 @@ fn ensure_toolkit_name_available(
             "toolkit already registered: {toolkit_name}"
         )));
     }
+    Ok(())
+}
+
+fn ensure_toolkit_registry_capacity(
+    toolkits: &BTreeMap<String, RegisterToolkitRequest>,
+    payload: &RegisterToolkitRequest,
+) -> Result<(), SidecarError> {
+    if toolkits.len() >= MAX_REGISTERED_TOOLKITS {
+        return Err(SidecarError::InvalidState(format!(
+            "VM already has {} registered toolkits, max is {MAX_REGISTERED_TOOLKITS}",
+            toolkits.len()
+        )));
+    }
+
+    let registered_tools = toolkits
+        .values()
+        .map(|toolkit| toolkit.tools.len())
+        .sum::<usize>();
+    let total_tools = registered_tools
+        .checked_add(payload.tools.len())
+        .ok_or_else(|| {
+            SidecarError::InvalidState(String::from("registered tool count overflow"))
+        })?;
+    if total_tools > MAX_REGISTERED_TOOLS_PER_VM {
+        return Err(SidecarError::InvalidState(format!(
+            "VM would have {total_tools} registered tools, max is {MAX_REGISTERED_TOOLS_PER_VM}"
+        )));
+    }
+
     Ok(())
 }
 
@@ -1327,6 +1367,11 @@ fn camel_to_kebab(value: &str) -> String {
 }
 
 fn validate_toolkit_name(name: &str) -> Result<(), SidecarError> {
+    if name.len() > MAX_TOOLKIT_NAME_LENGTH {
+        return Err(SidecarError::InvalidState(format!(
+            "invalid toolkit name {name}; max length is {MAX_TOOLKIT_NAME_LENGTH}"
+        )));
+    }
     if name.is_empty()
         || !name
             .chars()
@@ -1340,6 +1385,11 @@ fn validate_toolkit_name(name: &str) -> Result<(), SidecarError> {
 }
 
 fn validate_tool_name(name: &str) -> Result<(), SidecarError> {
+    if name.len() > MAX_TOOL_NAME_LENGTH {
+        return Err(SidecarError::InvalidState(format!(
+            "invalid tool name {name}; max length is {MAX_TOOL_NAME_LENGTH}"
+        )));
+    }
     if name.is_empty()
         || !name
             .chars()
@@ -1370,6 +1420,13 @@ fn validate_toolkit_registration(payload: &RegisterToolkitRequest) -> Result<(),
             payload.name
         )));
     }
+    if payload.tools.len() > MAX_TOOLS_PER_TOOLKIT {
+        return Err(SidecarError::InvalidState(format!(
+            "toolkit {} defines {} tools, max is {MAX_TOOLS_PER_TOOLKIT}",
+            payload.name,
+            payload.tools.len()
+        )));
+    }
     for (tool_name, tool) in &payload.tools {
         validate_tool_name(tool_name)?;
         if tool.description.is_empty() {
@@ -1382,6 +1439,40 @@ fn validate_toolkit_registration(payload: &RegisterToolkitRequest) -> Result<(),
             &format!("Tool \"{}/{}\"", payload.name, tool_name),
             &tool.description,
         )?;
+        validate_tool_schema_shape(
+            &format!("Tool \"{}/{}\" input schema", payload.name, tool_name),
+            &tool.input_schema,
+        )?;
+        if let Some(timeout_ms) = tool.timeout_ms {
+            if timeout_ms > MAX_TOOL_TIMEOUT_MS {
+                return Err(SidecarError::InvalidState(format!(
+                    "Tool \"{}/{}\" timeout is {timeout_ms}ms, max is {MAX_TOOL_TIMEOUT_MS}ms",
+                    payload.name, tool_name
+                )));
+            }
+        }
+        if tool.examples.len() > MAX_TOOL_EXAMPLES_PER_TOOL {
+            return Err(SidecarError::InvalidState(format!(
+                "Tool \"{}/{}\" defines {} examples, max is {MAX_TOOL_EXAMPLES_PER_TOOL}",
+                payload.name,
+                tool_name,
+                tool.examples.len()
+            )));
+        }
+        for (index, example) in tool.examples.iter().enumerate() {
+            validate_description_length(
+                &format!("Tool \"{}/{}\" example {index}", payload.name, tool_name),
+                &example.description,
+            )?;
+            validate_json_byte_length(
+                &format!(
+                    "Tool \"{}/{}\" example {index} input",
+                    payload.name, tool_name
+                ),
+                &example.input,
+                MAX_TOOL_EXAMPLE_INPUT_BYTES,
+            )?;
+        }
     }
     Ok(())
 }
@@ -1394,6 +1485,47 @@ fn validate_description_length(label: &str, description: &str) -> Result<(), Sid
         )));
     }
     Ok(())
+}
+
+fn validate_tool_schema_shape(label: &str, schema: &Value) -> Result<(), SidecarError> {
+    validate_json_byte_length(label, schema, MAX_TOOL_SCHEMA_BYTES)?;
+    validate_json_depth(label, schema, 0)
+}
+
+fn validate_json_byte_length(label: &str, value: &Value, limit: usize) -> Result<(), SidecarError> {
+    let length = serde_json::to_vec(value)
+        .map_err(|error| SidecarError::InvalidState(format!("{label} is invalid JSON: {error}")))?
+        .len();
+    if length > limit {
+        return Err(SidecarError::InvalidState(format!(
+            "{label} is {length} bytes, max is {limit}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_json_depth(label: &str, value: &Value, depth: usize) -> Result<(), SidecarError> {
+    if depth > MAX_TOOL_SCHEMA_DEPTH {
+        return Err(SidecarError::InvalidState(format!(
+            "{label} exceeds max JSON depth {MAX_TOOL_SCHEMA_DEPTH}"
+        )));
+    }
+
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Ok(()),
+        Value::Array(values) => {
+            for value in values {
+                validate_json_depth(label, value, depth + 1)?;
+            }
+            Ok(())
+        }
+        Value::Object(object) => {
+            for value in object.values() {
+                validate_json_depth(label, value, depth + 1)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 enum ToolCommand {
@@ -1533,12 +1665,33 @@ mod tests {
         toolkit_description: String,
         tool_description: String,
     ) -> RegisterToolkitRequest {
+        toolkit_with_schema(
+            String::from("browser"),
+            toolkit_description,
+            String::from("screenshot"),
+            tool_description,
+            screenshot_schema(),
+        )
+    }
+
+    fn toolkit_with_schema(
+        toolkit_name: String,
+        toolkit_description: String,
+        tool_name: String,
+        tool_description: String,
+        input_schema: Value,
+    ) -> RegisterToolkitRequest {
         RegisterToolkitRequest {
-            name: String::from("browser"),
+            name: toolkit_name,
             description: toolkit_description,
             tools: BTreeMap::from([(
-                String::from("screenshot"),
-                registered_tool(tool_description),
+                tool_name,
+                RegisteredToolDefinition {
+                    description: tool_description,
+                    input_schema,
+                    timeout_ms: None,
+                    examples: Vec::new(),
+                },
             )]),
         }
     }
@@ -1549,6 +1702,121 @@ mod tests {
         let payload = toolkit_with_descriptions(description.clone(), description);
 
         validate_toolkit_registration(&payload).expect("description at limit should pass");
+    }
+
+    #[test]
+    fn rejects_toolkit_registration_over_shape_limits() {
+        let too_many_tools = RegisterToolkitRequest {
+            name: String::from("browser"),
+            description: String::from("Browser automation"),
+            tools: (0..=MAX_TOOLS_PER_TOOLKIT)
+                .map(|index| {
+                    (
+                        format!("tool-{index}"),
+                        registered_tool(String::from("Run a bounded test tool")),
+                    )
+                })
+                .collect(),
+        };
+        assert!(
+            validate_toolkit_registration(&too_many_tools)
+                .expect_err("toolkit should reject too many tools")
+                .to_string()
+                .contains("max is 64")
+        );
+
+        let mut long_timeout = toolkit_with_descriptions(
+            String::from("Browser automation"),
+            String::from("Take a screenshot"),
+        );
+        long_timeout
+            .tools
+            .get_mut("screenshot")
+            .expect("test tool")
+            .timeout_ms = Some(MAX_TOOL_TIMEOUT_MS + 1);
+        assert!(
+            validate_toolkit_registration(&long_timeout)
+                .expect_err("toolkit should reject long timeouts")
+                .to_string()
+                .contains("timeout is")
+        );
+
+        let mut too_many_examples = toolkit_with_descriptions(
+            String::from("Browser automation"),
+            String::from("Take a screenshot"),
+        );
+        too_many_examples
+            .tools
+            .get_mut("screenshot")
+            .expect("test tool")
+            .examples = (0..=MAX_TOOL_EXAMPLES_PER_TOOL)
+            .map(|index| crate::protocol::RegisteredToolExample {
+                description: format!("example {index}"),
+                input: json!({ "url": "https://example.com" }),
+            })
+            .collect();
+        assert!(
+            validate_toolkit_registration(&too_many_examples)
+                .expect_err("toolkit should reject too many examples")
+                .to_string()
+                .contains("examples")
+        );
+    }
+
+    #[test]
+    fn rejects_toolkit_registration_with_oversized_schema_or_example_input() {
+        let mut deep_schema = Value::Null;
+        for _ in 0..=MAX_TOOL_SCHEMA_DEPTH {
+            deep_schema = json!({ "items": deep_schema });
+        }
+        let deep_schema_payload = toolkit_with_schema(
+            String::from("browser"),
+            String::from("Browser automation"),
+            String::from("screenshot"),
+            String::from("Take a screenshot"),
+            deep_schema,
+        );
+        assert!(
+            validate_toolkit_registration(&deep_schema_payload)
+                .expect_err("toolkit should reject deep schemas")
+                .to_string()
+                .contains("max JSON depth")
+        );
+
+        let mut oversized_schema_payload = toolkit_with_schema(
+            String::from("browser"),
+            String::from("Browser automation"),
+            String::from("screenshot"),
+            String::from("Take a screenshot"),
+            json!({ "description": "a".repeat(MAX_TOOL_SCHEMA_BYTES) }),
+        );
+        assert!(
+            validate_toolkit_registration(&oversized_schema_payload)
+                .expect_err("toolkit should reject oversized schemas")
+                .to_string()
+                .contains("input schema is")
+        );
+
+        oversized_schema_payload
+            .tools
+            .get_mut("screenshot")
+            .expect("test tool")
+            .input_schema = screenshot_schema();
+        let oversized_example_input = crate::protocol::RegisteredToolExample {
+            description: String::from("large example"),
+            input: json!({ "payload": "a".repeat(MAX_TOOL_EXAMPLE_INPUT_BYTES) }),
+        };
+        oversized_schema_payload
+            .tools
+            .get_mut("screenshot")
+            .expect("test tool")
+            .examples = vec![oversized_example_input];
+        assert!(
+            validate_toolkit_registration(&oversized_schema_payload)
+                .expect_err("toolkit should reject oversized example inputs")
+                .to_string()
+                .contains("example 0 input is")
+        );
     }
 
     #[test]
