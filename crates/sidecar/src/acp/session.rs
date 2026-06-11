@@ -212,6 +212,7 @@ pub(crate) struct SequencedEvent {
 }
 
 pub(crate) const ACP_SESSION_EVENT_RETENTION_LIMIT: usize = 1024;
+pub(crate) const ACP_STDOUT_BUFFER_BYTE_LIMIT: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub(crate) struct AcpSessionState {
@@ -221,6 +222,7 @@ pub(crate) struct AcpSessionState {
     pub(crate) process_id: String,
     pub(crate) pid: Option<u32>,
     pub(crate) stdout_buffer: String,
+    pub(crate) stdout_buffer_truncated: bool,
     pub(crate) next_request_id: i64,
     pub(crate) next_sequence_number: u64,
     pub(crate) events: VecDeque<SequencedEvent>,
@@ -277,6 +279,7 @@ impl AcpSessionState {
             process_id,
             pid,
             stdout_buffer: String::new(),
+            stdout_buffer_truncated: false,
             // The sidecar already used request ids 1 and 2 on this ACP
             // connection for initialize and session/new before the session
             // state is created. Continue from 3 so later session RPCs never
@@ -606,6 +609,19 @@ impl AcpSessionState {
         }
         self.termination_requested.then_some(true)
     }
+}
+
+pub(crate) fn trim_acp_stdout_buffer(buffer: &mut String) -> bool {
+    if buffer.len() <= ACP_STDOUT_BUFFER_BYTE_LIMIT {
+        return false;
+    }
+
+    let mut remove_len = buffer.len() - ACP_STDOUT_BUFFER_BYTE_LIMIT;
+    while !buffer.is_char_boundary(remove_len) {
+        remove_len += 1;
+    }
+    buffer.drain(..remove_len);
+    true
 }
 
 fn serialize_sequenced_notification<T: Serialize>(

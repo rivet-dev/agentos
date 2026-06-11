@@ -1,33 +1,24 @@
 pub trait NativeSidecarBridge: agent_os_bridge::HostBridge {}
 impl<T> NativeSidecarBridge for T where T: agent_os_bridge::HostBridge {}
 
-#[allow(dead_code, unused_imports)]
 #[path = "../src/acp/mod.rs"]
 mod acp;
-#[allow(dead_code)]
 #[path = "../src/bootstrap.rs"]
 mod bootstrap;
 #[path = "../src/bridge.rs"]
 mod bridge;
-#[allow(dead_code)]
 #[path = "../src/execution.rs"]
 mod execution;
-#[allow(dead_code)]
 #[path = "../src/filesystem.rs"]
 mod filesystem;
-#[allow(dead_code)]
 #[path = "../src/plugins/mod.rs"]
 mod plugins;
-#[allow(dead_code, clippy::enum_variant_names)]
 #[path = "../src/protocol.rs"]
 mod protocol;
-#[allow(dead_code)]
 #[path = "../src/state.rs"]
 mod state;
-#[allow(dead_code)]
 #[path = "../src/tools.rs"]
 mod tools;
-#[allow(dead_code)]
 #[path = "../src/vm.rs"]
 mod vm;
 
@@ -46,10 +37,7 @@ mod service {
         use crate::bridge::{bridge_permissions, HostFilesystem, ScopedHostFilesystem};
         use crate::execution::{
             clamp_javascript_net_poll_wait, format_dns_resource, format_tcp_resource,
-            runtime_child_is_alive,
-            service_javascript_net_sync_rpc as service_javascript_net_sync_rpc_inner,
-            signal_runtime_process, JavascriptNetSyncRpcServiceRequest,
-            JavascriptSyncRpcServiceRequest,
+            service_javascript_net_sync_rpc, signal_runtime_process,
         };
         use crate::filesystem::service_javascript_fs_sync_rpc;
         use crate::plugins::s3::test_support::MockS3Server;
@@ -78,8 +66,7 @@ mod service {
             VM_LISTEN_PORT_MAX_METADATA_KEY, VM_LISTEN_PORT_MIN_METADATA_KEY, WASM_COMMAND,
             WASM_STDIO_SYNC_RPC_ENV,
         };
-        use crate::state::{NetworkResourceCounts, VmDnsConfig};
-        use agent_os_bridge::SymlinkRequest;
+        use agent_os_bridge::{FileKind, SymlinkRequest};
         use agent_os_execution::{
             CreateJavascriptContextRequest, CreatePythonContextRequest, CreateWasmContextRequest,
             JavascriptSyncRpcRequest, PythonVfsRpcMethod, PythonVfsRpcRequest,
@@ -89,25 +76,22 @@ mod service {
         use agent_os_kernel::command_registry::CommandDriver;
         use agent_os_kernel::kernel::{KernelVmConfig, SpawnOptions, VirtualProcessOptions};
         use agent_os_kernel::mount_table::{MountEntry, MountOptions, MountTable};
-        use agent_os_kernel::permissions::{
-            CommandAccessRequest, EnvAccessRequest, EnvironmentOperation, FsAccessRequest,
-            FsOperation, NetworkAccessRequest, NetworkOperation, Permissions,
-        };
+        use agent_os_kernel::permissions::{FsAccessRequest, FsOperation, Permissions};
         use agent_os_kernel::poll::{PollTargetEntry, POLLIN};
-        use agent_os_kernel::process_table::{SIGKILL, SIGTERM};
+        use agent_os_kernel::process_table::SIGTERM;
         use agent_os_kernel::resource_accounting::ResourceLimits;
         use agent_os_kernel::vfs::{
-            MemoryFileSystem, VirtualDirEntry, VirtualFileSystem, VirtualStat,
+            MemoryFileSystem, VfsError, VirtualDirEntry, VirtualFileSystem, VirtualStat,
         };
         use base64::Engine;
         use bridge_support::RecordingBridge;
-        use hickory_resolver::proto::op::{Message, Query};
+        use hickory_resolver::proto::op::{Message, OpCode, Query};
         use hickory_resolver::proto::rr::domain::Name;
         use hickory_resolver::proto::rr::rdata::{
             A, AAAA, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT,
         };
         use hickory_resolver::proto::rr::{RData, Record, RecordType};
-        use nix::fcntl::{Flock, FlockArg};
+        use nix::fcntl::{flock, FlockArg};
         use nix::libc;
         use rustls::client::danger::{
             HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
@@ -119,11 +103,13 @@ mod service {
             ServerConnection, SignatureScheme,
         };
         use serde_json::{json, Map, Value};
+        use socket2::SockRef;
         use std::collections::BTreeMap;
         use std::fs;
         use std::fs::OpenOptions;
         use std::io::{BufReader, Read, Write};
-        use std::net::{SocketAddr, TcpListener, UdpSocket};
+        use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
+        use std::os::fd::AsRawFd;
         use std::path::{Path, PathBuf};
         use std::process::Command;
         use std::sync::{
@@ -327,21 +313,21 @@ setInterval(() => {}, 1000);
         }
 
         fn acquire_sidecar_runtime_test_lock() {
-            static LOCK_FILE: OnceLock<Flock<std::fs::File>> = OnceLock::new();
+            static LOCK_FILE: OnceLock<std::fs::File> = OnceLock::new();
             let _ = LOCK_FILE.get_or_init(|| {
                 let path = std::env::temp_dir().join("agent-os-sidecar-runtime-tests.lock");
                 let file = OpenOptions::new()
                     .create(true)
-                    .truncate(false)
                     .read(true)
                     .write(true)
                     .open(&path)
                     .unwrap_or_else(|error| {
                         panic!("open sidecar test runtime lock {}: {error}", path.display())
                     });
-                Flock::lock(file, FlockArg::LockExclusive).unwrap_or_else(|(_, error)| {
+                flock(file.as_raw_fd(), FlockArg::LockExclusive).unwrap_or_else(|error| {
                     panic!("lock sidecar test runtime {}: {error}", path.display())
-                })
+                });
+                file
             });
         }
 
@@ -1273,25 +1259,6 @@ setInterval(() => {}, 1000);
             process_id: &str,
             allowed_node_builtins: &str,
         ) -> (String, String, Option<i32>) {
-            run_javascript_entry_with_env(
-                sidecar,
-                vm_id,
-                cwd,
-                process_id,
-                BTreeMap::from([(
-                    String::from("AGENT_OS_ALLOWED_NODE_BUILTINS"),
-                    allowed_node_builtins.to_owned(),
-                )]),
-            )
-        }
-
-        fn run_javascript_entry_with_env(
-            sidecar: &mut NativeSidecar<RecordingBridge>,
-            vm_id: &str,
-            cwd: &Path,
-            process_id: &str,
-            env: BTreeMap<String, String>,
-        ) -> (String, String, Option<i32>) {
             let context =
                 sidecar
                     .javascript_engine
@@ -1300,13 +1267,17 @@ setInterval(() => {}, 1000);
                         bootstrap_module: None,
                         compile_cache_root: None,
                     });
+            let env = BTreeMap::from([(
+                String::from("AGENT_OS_ALLOWED_NODE_BUILTINS"),
+                allowed_node_builtins.to_owned(),
+            )]);
             let execution = sidecar
                 .javascript_engine
                 .start_execution(StartJavascriptExecutionRequest {
                     vm_id: vm_id.to_owned(),
                     context_id: context.context_id,
                     argv: vec![String::from("./entry.mjs")],
-                    env: env.clone(),
+                    env,
                     cwd: cwd.to_path_buf(),
                     inline_code: None,
                 })
@@ -1337,7 +1308,6 @@ setInterval(() => {}, 1000);
                         GuestRuntimeKind::JavaScript,
                         ActiveExecution::Javascript(execution),
                     )
-                    .with_env(env)
                     .with_host_cwd(cwd.to_path_buf()),
                 );
             }
@@ -1532,16 +1502,19 @@ setInterval(() => {}, 1000);
             for _ in 0..64 {
                 let next_event = {
                     let vm = sidecar.vms.get_mut(vm_id).expect("active vm");
-                    vm.active_processes.get_mut(process_id).and_then(|process| {
-                        if let Some(event) = process.pending_execution_events.pop_front() {
-                            Some(event)
-                        } else {
-                            process
-                                .execution
-                                .poll_event_blocking(Duration::from_secs(5))
-                                .expect("poll process event")
-                        }
-                    })
+                    vm.active_processes
+                        .get_mut(process_id)
+                        .map(|process| {
+                            if let Some(event) = process.pending_execution_events.pop_front() {
+                                Some(event)
+                            } else {
+                                process
+                                    .execution
+                                    .poll_event_blocking(Duration::from_secs(5))
+                                    .expect("poll process event")
+                            }
+                        })
+                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -1808,48 +1781,18 @@ setInterval(() => {}, 1000);
                 .active_processes
                 .get_mut(process_id)
                 .expect("javascript process");
-            service_javascript_sync_rpc(JavascriptSyncRpcServiceRequest {
-                bridge: &bridge,
+            service_javascript_sync_rpc(
+                &bridge,
                 vm_id,
-                dns: &dns,
-                socket_paths: &socket_paths,
-                kernel: &mut vm.kernel,
+                &dns,
+                &socket_paths,
+                &mut vm.kernel,
                 process,
-                sync_request: &request,
-                resource_limits: &limits,
-                network_counts: counts,
-            })
+                &request,
+                &limits,
+                counts,
+            )
         }
-
-        #[allow(clippy::too_many_arguments)]
-        fn service_javascript_net_sync_rpc<B>(
-            bridge: &SharedBridge<B>,
-            vm_id: &str,
-            dns: &VmDnsConfig,
-            socket_paths: &JavascriptSocketPathContext,
-            kernel: &mut SidecarKernel,
-            process: &mut ActiveProcess,
-            request: &JavascriptSyncRpcRequest,
-            resource_limits: &ResourceLimits,
-            network_counts: NetworkResourceCounts,
-        ) -> Result<Value, SidecarError>
-        where
-            B: NativeSidecarBridge + Send + 'static,
-            BridgeError<B>: fmt::Debug + Send + Sync + 'static,
-        {
-            service_javascript_net_sync_rpc_inner(JavascriptNetSyncRpcServiceRequest {
-                bridge,
-                vm_id,
-                dns,
-                socket_paths,
-                kernel,
-                process,
-                sync_request: request,
-                resource_limits,
-                network_counts,
-            })
-        }
-
         fn kernel_socket_queries_ignore_stale_sidecar_guest_addresses() {
             assert_node_available();
 
@@ -2927,6 +2870,27 @@ setInterval(() => {}, 1000);
                     .any(|entry| entry == "sent signal SIGKILL"),
                 "graceful ACP termination should not need SIGKILL"
             );
+            assert!(
+                sidecar
+                    .vms
+                    .get_mut(&vm_id)
+                    .expect("VM after graceful termination")
+                    .kernel
+                    .read_file("/workspace/cancel.json")
+                    .is_ok(),
+                "expected the ACP agent to receive session/cancel before shutdown"
+            );
+            let sigterm_marker = sidecar
+                .vms
+                .get_mut(&vm_id)
+                .expect("VM after graceful termination")
+                .kernel
+                .read_file("/workspace/sigterm.json")
+                .expect("read graceful SIGTERM marker");
+            let sigterm_marker: Value =
+                serde_json::from_slice(&sigterm_marker).expect("parse graceful SIGTERM marker");
+            assert_eq!(sigterm_marker["phase"], json!("sigterm"));
+            assert_eq!(sigterm_marker["cancelSeen"], json!(true));
         }
 
         fn acp_termination_sigkills_after_grace_when_agent_ignores_sigterm() {
@@ -2995,6 +2959,16 @@ setInterval(() => {}, 1000);
                 .recent_activity
                 .iter()
                 .any(|entry| entry == "sent signal SIGKILL"));
+            assert!(
+                sidecar
+                    .vms
+                    .get_mut(&vm_id)
+                    .expect("VM after forced termination")
+                    .kernel
+                    .read_file("/workspace/sigterm-ignored.json")
+                    .is_ok(),
+                "expected the ACP agent to observe SIGTERM before SIGKILL fallback"
+            );
         }
 
         fn poll_http2_event(
@@ -3468,7 +3442,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("accept connected client");
-                    (value != "__secure_exec_net_timeout__").then_some(value)
+                    (value != Value::from("__secure_exec_net_timeout__")).then_some(value)
                 })
                 .expect("eventually accept connected client");
             let accepted: Value =
@@ -3609,7 +3583,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("accept connected client");
-                if value != "__secure_exec_net_timeout__" {
+                if value != Value::from("__secure_exec_net_timeout__") {
                     accepted = Some(value);
                     break;
                 }
@@ -3685,7 +3659,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("read bridged socket chunk");
-                if value != "__secure_exec_net_timeout__" {
+                if value != Value::from("__secure_exec_net_timeout__") {
                     payload = Some(value);
                     break;
                 }
@@ -3707,7 +3681,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("read bridged socket end");
-                if value != "__secure_exec_net_timeout__" {
+                if value != Value::from("__secure_exec_net_timeout__") {
                     end = Some(value);
                     break;
                 }
@@ -3823,7 +3797,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("accept connected client");
-                    (value != "__secure_exec_net_timeout__").then_some(value)
+                    (value != Value::from("__secure_exec_net_timeout__")).then_some(value)
                 })
                 .expect("eventually accept connected client");
             let accepted: Value =
@@ -3863,7 +3837,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("read upgrade socket payload");
-                if value != "__secure_exec_net_timeout__" {
+                if value != Value::from("__secure_exec_net_timeout__") {
                     payload = Some(value);
                     break;
                 }
@@ -3897,7 +3871,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("read upgrade socket EOF");
-                if value != "__secure_exec_net_timeout__" {
+                if value != Value::from("__secure_exec_net_timeout__") {
                     end = Some(value);
                     break;
                 }
@@ -4288,7 +4262,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("read TLS client payload");
-                    if value == "__secure_exec_net_timeout__" {
+                    if value == Value::from("__secure_exec_net_timeout__") {
                         thread::sleep(Duration::from_millis(10));
                         None
                     } else {
@@ -4388,7 +4362,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("accept TLS client");
-                    if value == "__secure_exec_net_timeout__" {
+                    if value == Value::from("__secure_exec_net_timeout__") {
                         thread::sleep(Duration::from_millis(10));
                         None
                     } else {
@@ -4441,7 +4415,7 @@ setInterval(() => {}, 1000);
                     let parsed: Value =
                         serde_json::from_str(value.as_str().expect("TLS client hello JSON"))
                             .expect("parse TLS client hello");
-                    if parsed["servername"] == "localhost" {
+                    if parsed["servername"] == Value::from("localhost") {
                         Some(parsed)
                     } else {
                         thread::sleep(Duration::from_millis(10));
@@ -4568,7 +4542,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("read TLS server payload");
-                    if value == "__secure_exec_net_timeout__" {
+                    if value == Value::from("__secure_exec_net_timeout__") {
                         thread::sleep(Duration::from_millis(10));
                         None
                     } else {
@@ -4639,7 +4613,7 @@ setInterval(() => {}, 1000);
                         },
                     )
                     .expect("read guest TLS client payload");
-                    if value == "__secure_exec_net_timeout__" {
+                    if value == Value::from("__secure_exec_net_timeout__") {
                         thread::sleep(Duration::from_millis(10));
                         None
                     } else {
@@ -4771,7 +4745,7 @@ setInterval(() => {}, 1000);
                     },
                 )
                 .expect("accept pending connection");
-                if value != "__secure_exec_net_timeout__" {
+                if value != Value::from("__secure_exec_net_timeout__") {
                     accepted = Some(value);
                     break;
                 }
@@ -5504,7 +5478,6 @@ setInterval(() => {}, 1000);
                             atime_ms: None,
                             mtime_ms: None,
                             len: None,
-                            offset: None,
                         }),
                     ))
                     .expect("dispatch stale guest filesystem request");
@@ -5617,7 +5590,6 @@ setInterval(() => {}, 1000);
                             atime_ms: None,
                             mtime_ms: None,
                             len: None,
-                            offset: None,
                         }),
                     ))
                     .expect("dispatch live guest filesystem write");
@@ -5647,7 +5619,6 @@ setInterval(() => {}, 1000);
                             atime_ms: None,
                             mtime_ms: None,
                             len: None,
-                            offset: None,
                         }),
                     ))
                     .expect("dispatch live guest filesystem read");
@@ -6502,27 +6473,6 @@ setInterval(() => {}, 1000);
                 "expected the native plugin to store a manifest object"
             );
         }
-        fn assert_kernel_permission_decision(
-            decision: agent_os_kernel::permissions::PermissionDecision,
-            expected_allow: bool,
-            expected_reason: Option<&str>,
-        ) {
-            assert_eq!(decision.allow, expected_allow);
-            if let Some(expected_reason) = expected_reason {
-                assert!(
-                    decision
-                        .reason
-                        .as_deref()
-                        .is_some_and(|reason| reason.contains(expected_reason)),
-                    "expected reason to contain {expected_reason:?}, got {:?}",
-                    decision.reason
-                );
-            } else {
-                assert_eq!(decision.reason, None);
-            }
-        }
-
-        #[test]
         fn bridge_permissions_map_symlink_operations_to_symlink_access() {
             let bridge = SharedBridge::new(RecordingBridge::default());
             let permissions = bridge_permissions(bridge.clone(), "vm-symlink");
@@ -6550,165 +6500,10 @@ setInterval(() => {}, 1000);
                 }]
             );
         }
-
-        #[test]
-        fn bridge_permissions_propagate_host_permission_outcomes() {
-            let cases = [
-                (agent_os_bridge::PermissionDecision::allow(), true, None),
-                (
-                    agent_os_bridge::PermissionDecision::deny("blocked by host"),
-                    false,
-                    Some("blocked by host"),
-                ),
-                (
-                    agent_os_bridge::PermissionDecision::prompt("prompt required"),
-                    false,
-                    Some("prompt required"),
-                ),
-                (
-                    agent_os_bridge::PermissionDecision {
-                        verdict: agent_os_bridge::PermissionVerdict::Deny,
-                        reason: None,
-                    },
-                    false,
-                    Some("denied by host"),
-                ),
-                (
-                    agent_os_bridge::PermissionDecision {
-                        verdict: agent_os_bridge::PermissionVerdict::Prompt,
-                        reason: None,
-                    },
-                    false,
-                    Some("permission prompt required"),
-                ),
-            ];
-
-            for (host_decision, expected_allow, expected_reason) in cases {
-                let bridge = SharedBridge::new(RecordingBridge::default());
-                bridge
-                    .inspect(|bridge| {
-                        for _ in 0..4 {
-                            bridge.push_permission_decision(host_decision.clone());
-                        }
-                    })
-                    .expect("seed permission decisions");
-
-                assert_kernel_permission_decision(
-                    bridge.filesystem_decision(
-                        "vm-permissions",
-                        "/workspace/file.txt",
-                        FilesystemAccess::Read,
-                    ),
-                    expected_allow,
-                    expected_reason,
-                );
-                assert_kernel_permission_decision(
-                    bridge.command_decision(
-                        "vm-permissions",
-                        &CommandAccessRequest {
-                            vm_id: String::from("ignored-by-bridge"),
-                            command: String::from("node"),
-                            args: vec![String::from("--version")],
-                            cwd: Some(String::from("/workspace")),
-                            env: BTreeMap::new(),
-                        },
-                    ),
-                    expected_allow,
-                    expected_reason,
-                );
-                assert_kernel_permission_decision(
-                    bridge.environment_decision(
-                        "vm-permissions",
-                        &EnvAccessRequest {
-                            vm_id: String::from("ignored-by-bridge"),
-                            op: EnvironmentOperation::Read,
-                            key: String::from("PATH"),
-                            value: None,
-                        },
-                    ),
-                    expected_allow,
-                    expected_reason,
-                );
-                assert_kernel_permission_decision(
-                    bridge.network_decision(
-                        "vm-permissions",
-                        &NetworkAccessRequest {
-                            vm_id: String::from("ignored-by-bridge"),
-                            op: NetworkOperation::Fetch,
-                            resource: String::from("https://example.test"),
-                        },
-                    ),
-                    expected_allow,
-                    expected_reason,
-                );
-            }
-        }
-
-        #[test]
-        fn bridge_permissions_fail_closed_when_host_permission_checks_error() {
-            let bridge = SharedBridge::new(RecordingBridge::default());
-            bridge
-                .inspect(|bridge| {
-                    for _ in 0..4 {
-                        bridge.push_permission_error("permission backend unavailable");
-                    }
-                })
-                .expect("seed permission errors");
-
-            for decision in [
-                bridge.filesystem_decision(
-                    "vm-permissions",
-                    "/workspace/file.txt",
-                    FilesystemAccess::Read,
-                ),
-                bridge.command_decision(
-                    "vm-permissions",
-                    &CommandAccessRequest {
-                        vm_id: String::from("ignored-by-bridge"),
-                        command: String::from("node"),
-                        args: vec![String::from("--version")],
-                        cwd: Some(String::from("/workspace")),
-                        env: BTreeMap::new(),
-                    },
-                ),
-                bridge.environment_decision(
-                    "vm-permissions",
-                    &EnvAccessRequest {
-                        vm_id: String::from("ignored-by-bridge"),
-                        op: EnvironmentOperation::Read,
-                        key: String::from("PATH"),
-                        value: None,
-                    },
-                ),
-                bridge.network_decision(
-                    "vm-permissions",
-                    &NetworkAccessRequest {
-                        vm_id: String::from("ignored-by-bridge"),
-                        op: NetworkOperation::Fetch,
-                        resource: String::from("https://example.test"),
-                    },
-                ),
-            ] {
-                assert_kernel_permission_decision(
-                    decision,
-                    false,
-                    Some("permission backend unavailable"),
-                );
-            }
-        }
-        #[test]
         fn parse_resource_limits_reads_filesystem_limits() {
             let metadata = BTreeMap::from([
                 (String::from("resource.max_sockets"), String::from("8")),
                 (String::from("resource.max_connections"), String::from("4")),
-                (
-                    String::from("resource.max_socket_buffered_bytes"),
-                    String::from("2048"),
-                ),
-                (
-                    String::from("resource.max_socket_datagram_queue_len"),
-                    String::from("16"),
-                ),
                 (
                     String::from("resource.max_filesystem_bytes"),
                     String::from("4096"),
@@ -6756,8 +6551,6 @@ setInterval(() => {}, 1000);
                 crate::vm::parse_resource_limits(&metadata).expect("parse resource limits");
             assert_eq!(limits.max_sockets, Some(8));
             assert_eq!(limits.max_connections, Some(4));
-            assert_eq!(limits.max_socket_buffered_bytes, Some(2048));
-            assert_eq!(limits.max_socket_datagram_queue_len, Some(16));
             assert_eq!(limits.max_filesystem_bytes, Some(4096));
             assert_eq!(limits.max_inode_count, Some(128));
             assert_eq!(limits.max_blocking_read_ms, Some(250));
@@ -7240,7 +7033,6 @@ setInterval(() => {}, 1000);
                         atime_ms: None,
                         mtime_ms: None,
                         len: None,
-                        offset: None,
                     },
                 ),
                 (
@@ -7259,7 +7051,6 @@ setInterval(() => {}, 1000);
                         atime_ms: None,
                         mtime_ms: None,
                         len: None,
-                        offset: None,
                     },
                 ),
                 (
@@ -7278,7 +7069,6 @@ setInterval(() => {}, 1000);
                         atime_ms: None,
                         mtime_ms: None,
                         len: None,
-                        offset: None,
                     },
                 ),
                 (
@@ -7297,7 +7087,6 @@ setInterval(() => {}, 1000);
                         atime_ms: None,
                         mtime_ms: None,
                         len: Some(5),
-                        offset: None,
                     },
                 ),
                 (
@@ -7316,7 +7105,6 @@ setInterval(() => {}, 1000);
                         atime_ms: Some(1_700_000_000_000),
                         mtime_ms: Some(1_710_000_000_000),
                         len: None,
-                        offset: None,
                     },
                 ),
             ] {
@@ -7899,7 +7687,7 @@ setInterval(() => {}, 1000);
                     let vm = sidecar.vms.get_mut(&vm_id).expect("active vm");
                     vm.active_processes
                         .get_mut("proc-wasm-pty")
-                        .and_then(|process| {
+                        .map(|process| {
                             if let Some(event) = process.pending_execution_events.pop_front() {
                                 Some(event)
                             } else {
@@ -7909,6 +7697,7 @@ setInterval(() => {}, 1000);
                                     .expect("poll wasm pty process event")
                             }
                         })
+                        .flatten()
                 };
                 let Some(event) = next_event else {
                     break;
@@ -8033,7 +7822,9 @@ setInterval(() => {}, 1000);
                 "PATH should prioritize mounted command root: {path}"
             );
             assert!(
-                path_entries.contains(&"/__agentos/commands/0"),
+                path_entries
+                    .iter()
+                    .any(|entry| *entry == "/__agentos/commands/0"),
                 "PATH should include mounted command root: {path}"
             );
 
@@ -9605,12 +9396,13 @@ console.log(
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-fd")
-                        .and_then(|process| {
+                        .map(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll javascript fd rpc event")
                         })
+                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -9688,102 +9480,6 @@ console.log(
                 assert_eq!(stream, "abcd");
             }
         }
-
-        fn javascript_mapped_tmp_open_wx_uses_exclusive_create_once() {
-            assert_node_available();
-
-            let mut sidecar = create_test_sidecar();
-            let (connection_id, session_id) =
-                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
-            let vm_id = create_vm(
-                &mut sidecar,
-                &connection_id,
-                &session_id,
-                PermissionsPolicy::allow_all(),
-            )
-            .expect("create vm");
-            let cwd = temp_dir("agent-os-sidecar-js-open-wx-cwd");
-            let mapped_tmp = temp_dir("agent-os-sidecar-js-open-wx-mapped-tmp");
-            write_fixture(
-                &cwd.join("entry.mjs"),
-                r#"
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
-const target = path.join(os.tmpdir(), "exclusive-mapped.lock");
-try {
-  fs.unlinkSync(target);
-} catch {}
-
-const fd = fs.openSync(target, "wx", 0o600);
-fs.writeSync(fd, "lock");
-fs.closeSync(fd);
-
-let secondOpenCode = "";
-try {
-  fs.openSync(target, "wx", 0o600);
-  secondOpenCode = "opened";
-} catch (error) {
-  secondOpenCode = error.code;
-}
-
-console.log(
-  JSON.stringify({
-    tmpdir: os.tmpdir(),
-    text: fs.readFileSync(target, "utf8"),
-    secondOpenCode,
-    exists: fs.existsSync(target),
-  }),
-);
-"#,
-            );
-
-            let mapped_tmp_json = serde_json::to_string(&vec![mapped_tmp.display().to_string()])
-                .expect("serialize mapped tmp access roots");
-            let (stdout, stderr, exit_code) = run_javascript_entry_with_env(
-                &mut sidecar,
-                &vm_id,
-                &cwd,
-                "proc-js-open-wx",
-                BTreeMap::from([
-                    (
-                        String::from("AGENT_OS_ALLOWED_NODE_BUILTINS"),
-                        String::from("[\"buffer\",\"console\",\"fs\",\"os\",\"path\"]"),
-                    ),
-                    (
-                        String::from("AGENT_OS_GUEST_PATH_MAPPINGS"),
-                        serde_json::to_string(&vec![json!({
-                            "guestPath": "/tmp",
-                            "hostPath": mapped_tmp.display().to_string(),
-                        })])
-                        .expect("serialize mapped tmp path"),
-                    ),
-                    (
-                        String::from("AGENT_OS_EXTRA_FS_READ_PATHS"),
-                        mapped_tmp_json.clone(),
-                    ),
-                    (
-                        String::from("AGENT_OS_EXTRA_FS_WRITE_PATHS"),
-                        mapped_tmp_json,
-                    ),
-                ]),
-            );
-
-            assert_eq!(exit_code, Some(0), "stdout: {stdout}\nstderr: {stderr}");
-            assert!(stdout.contains("\"text\":\"lock\""), "stdout: {stdout}");
-            assert!(
-                stdout.contains("\"secondOpenCode\":\"EEXIST\""),
-                "stdout: {stdout}"
-            );
-            assert!(stdout.contains("\"exists\":true"), "stdout: {stdout}");
-            assert_eq!(
-                fs::read_to_string(mapped_tmp.join("exclusive-mapped.lock"))
-                    .expect("read mapped host lock file"),
-                "lock"
-            );
-        }
-
         fn javascript_fs_promises_batch_requests_before_waiting_on_sidecar_responses() {
             assert_node_available();
 
@@ -10218,11 +9914,8 @@ await new Promise(() => {});
                 )
                 .expect("cipherivFinal"),
             );
-            assert!(!update.as_str().expect("update string").is_empty());
-            assert!(!final_payload["data"]
-                .as_str()
-                .expect("final data")
-                .is_empty());
+            assert!(update.as_str().expect("update string").len() > 0);
+            assert!(final_payload["data"].as_str().expect("final data").len() > 0);
 
             let rsa = openssl::rsa::Rsa::generate(2048).expect("generate rsa");
             let private_key = openssl::pkey::PKey::from_rsa(rsa).expect("private pkey from rsa");
@@ -10459,120 +10152,6 @@ await new Promise(() => {});
             assert_eq!(
                 decode_base64(subtle_digest["data"].as_str().expect("subtle digest")),
                 decode_base64("wkLEOhPrUj7AK7HeNtPUZ5R3kOPwBet6nO//NXylQQE=")
-            );
-
-            let subtle_generated_key = parse_json_string(
-                crate::execution::service_javascript_crypto_sync_rpc(
-                    &mut create_crypto_test_process(),
-                    &JavascriptSyncRpcRequest {
-                        id: 30,
-                        method: String::from("crypto.subtle"),
-                        args: vec![json!(serde_json::to_string(&json!({
-                            "op": "generateKey",
-                            "algorithm": { "name": "AES-GCM", "length": 256 },
-                            "extractable": true,
-                            "usages": ["encrypt", "decrypt"],
-                        }))
-                        .expect("serialize subtle generateKey request"))],
-                    },
-                )
-                .expect("crypto.subtle generateKey"),
-            )["key"]
-                .clone();
-            assert_eq!(subtle_generated_key["type"], json!("secret"));
-            assert_eq!(subtle_generated_key["algorithm"]["name"], json!("AES-GCM"));
-            assert_eq!(subtle_generated_key["algorithm"]["length"], json!(256));
-
-            let subtle_exported_key = parse_json_string(
-                crate::execution::service_javascript_crypto_sync_rpc(
-                    &mut create_crypto_test_process(),
-                    &JavascriptSyncRpcRequest {
-                        id: 31,
-                        method: String::from("crypto.subtle"),
-                        args: vec![json!(serde_json::to_string(&json!({
-                            "op": "exportKey",
-                            "format": "raw",
-                            "key": subtle_generated_key,
-                        }))
-                        .expect("serialize subtle exportKey request"))],
-                    },
-                )
-                .expect("crypto.subtle exportKey"),
-            );
-            let exported_key_bytes =
-                decode_base64(subtle_exported_key["data"].as_str().expect("exported key"));
-            assert_eq!(exported_key_bytes.len(), 32);
-
-            let subtle_imported_key = parse_json_string(
-                crate::execution::service_javascript_crypto_sync_rpc(
-                    &mut create_crypto_test_process(),
-                    &JavascriptSyncRpcRequest {
-                        id: 32,
-                        method: String::from("crypto.subtle"),
-                        args: vec![json!(serde_json::to_string(&json!({
-                            "op": "importKey",
-                            "format": "raw",
-                            "keyData": subtle_exported_key["data"],
-                            "algorithm": { "name": "AES-GCM" },
-                            "extractable": true,
-                            "usages": ["encrypt", "decrypt"],
-                        }))
-                        .expect("serialize subtle importKey request"))],
-                    },
-                )
-                .expect("crypto.subtle importKey"),
-            )["key"]
-                .clone();
-            assert_eq!(subtle_imported_key["algorithm"]["length"], json!(256));
-
-            let subtle_encrypted = parse_json_string(
-                crate::execution::service_javascript_crypto_sync_rpc(
-                    &mut create_crypto_test_process(),
-                    &JavascriptSyncRpcRequest {
-                        id: 33,
-                        method: String::from("crypto.subtle"),
-                        args: vec![json!(serde_json::to_string(&json!({
-                            "op": "encrypt",
-                            "algorithm": {
-                                "name": "AES-GCM",
-                                "iv": "AAAAAAAAAAAAAAAA",
-                            },
-                            "key": subtle_imported_key,
-                            "data": "aGVsbG8=",
-                        }))
-                        .expect("serialize subtle encrypt request"))],
-                    },
-                )
-                .expect("crypto.subtle encrypt"),
-            );
-            assert!(
-                decode_base64(subtle_encrypted["data"].as_str().expect("encrypted data")).len()
-                    > b"hello".len()
-            );
-
-            let subtle_decrypted = parse_json_string(
-                crate::execution::service_javascript_crypto_sync_rpc(
-                    &mut create_crypto_test_process(),
-                    &JavascriptSyncRpcRequest {
-                        id: 34,
-                        method: String::from("crypto.subtle"),
-                        args: vec![json!(serde_json::to_string(&json!({
-                            "op": "decrypt",
-                            "algorithm": {
-                                "name": "AES-GCM",
-                                "iv": "AAAAAAAAAAAAAAAA",
-                            },
-                            "key": subtle_imported_key,
-                            "data": subtle_encrypted["data"],
-                        }))
-                        .expect("serialize subtle decrypt request"))],
-                    },
-                )
-                .expect("crypto.subtle decrypt"),
-            );
-            assert_eq!(
-                decode_base64(subtle_decrypted["data"].as_str().expect("decrypted data")),
-                b"hello"
             );
         }
         fn javascript_sqlite_sync_rpcs_round_trip_and_persist_vm_files() {
@@ -11155,12 +10734,13 @@ console.log(JSON.stringify({ lookup, resolve4 }));
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-dns")
-                        .and_then(|process| {
+                        .map(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll javascript dns rpc event")
                         })
+                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -11229,7 +10809,7 @@ console.log(JSON.stringify({ lookup, resolve4 }));
             let cwd = temp_dir("agent-os-sidecar-js-ssrf-protection-cwd");
             write_fixture(
                 &cwd.join("entry.mjs"),
-                format!(
+                &format!(
                     r#"
 import dns from "node:dns";
 import net from "node:net";
@@ -11341,12 +10921,13 @@ process.exit(0);
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-ssrf-protection")
-                        .and_then(|process| {
+                        .map(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll javascript ssrf event")
                         })
+                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -11721,7 +11302,7 @@ console.log(JSON.stringify(data));
             let cwd = temp_dir("agent-os-sidecar-js-network-permission-callbacks");
             write_fixture(
                 &cwd.join("entry.mjs"),
-                format!(
+                &format!(
                     r#"
 import dns from "node:dns";
 import net from "node:net";
@@ -12037,12 +11618,13 @@ console.log(JSON.stringify(summary));
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-tls")
-                        .and_then(|process| {
+                        .map(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll javascript tls rpc event")
                         })
+                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -12204,85 +11786,6 @@ console.log(JSON.stringify(summary));
                     .and_then(|process| process.pending_http_requests.get(&(7, 9)))
                     .cloned(),
                 Some(Some(response_json)),
-            );
-        }
-
-        fn javascript_http_respond_rejects_oversized_pending_response() {
-            let mut sidecar = create_test_sidecar();
-            let (connection_id, session_id) =
-                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
-            let vm_id = create_vm(
-                &mut sidecar,
-                &connection_id,
-                &session_id,
-                PermissionsPolicy::allow_all(),
-            )
-            .expect("create vm");
-            let cwd = temp_dir("agent-os-sidecar-http-respond-oversized");
-            write_fixture(&cwd.join("entry.mjs"), "");
-            start_fake_javascript_process(
-                &mut sidecar,
-                &vm_id,
-                &cwd,
-                "proc-js-http-respond-oversized",
-                "[]",
-            );
-
-            let oversized_body = "a".repeat(crate::protocol::DEFAULT_MAX_FRAME_BYTES);
-            let response_json = format!(r#"{{"status":200,"body":"{oversized_body}"}}"#);
-            assert!(response_json.len() > crate::protocol::DEFAULT_MAX_FRAME_BYTES);
-            {
-                let vm = sidecar.vms.get_mut(&vm_id).expect("vm");
-                let process = vm
-                    .active_processes
-                    .get_mut("proc-js-http-respond-oversized")
-                    .expect("javascript process");
-                process.pending_http_requests.insert((7, 10), None);
-            }
-
-            let error = call_javascript_sync_rpc(
-                &mut sidecar,
-                &vm_id,
-                "proc-js-http-respond-oversized",
-                JavascriptSyncRpcRequest {
-                    id: 5,
-                    method: String::from("net.http_respond"),
-                    args: vec![json!(7), json!(10), Value::String(response_json)],
-                },
-            )
-            .expect_err("oversized http response should be rejected");
-            assert!(
-                error.to_string().contains("net.http_respond payload is"),
-                "unexpected error: {error}"
-            );
-            assert_eq!(
-                sidecar
-                    .vms
-                    .get(&vm_id)
-                    .and_then(|vm| vm.active_processes.get("proc-js-http-respond-oversized"))
-                    .and_then(|process| process.pending_http_requests.get(&(7, 10)))
-                    .cloned(),
-                Some(None),
-            );
-        }
-
-        fn vm_fetch_response_frame_limit_counts_protocol_overhead() {
-            let response = crate::protocol::ResponseFrame::new(
-                1,
-                OwnershipScope::vm("conn", "session", "vm"),
-                ResponsePayload::VmFetchResult(crate::protocol::VmFetchResponse {
-                    response_json: "a".repeat(crate::protocol::DEFAULT_MAX_FRAME_BYTES),
-                }),
-            );
-
-            let error = crate::execution::ensure_vm_fetch_response_frame_within_limit(
-                &response,
-                crate::protocol::DEFAULT_MAX_FRAME_BYTES,
-            )
-            .expect_err("frame overhead should exceed the fetch response cap");
-            assert!(
-                error.to_string().contains("protocol frame is"),
-                "unexpected error: {error}"
             );
         }
         fn javascript_http2_listen_connect_request_and_respond_round_trip() {
@@ -13133,85 +12636,6 @@ console.log(JSON.stringify(summary));
                 "stdout: {stdout}"
             );
         }
-        fn javascript_fetch_posts_to_guest_loopback_http_server() {
-            assert_node_available();
-
-            let mut sidecar = create_test_sidecar();
-            let (connection_id, session_id) =
-                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
-            let vm_id = create_vm(
-                &mut sidecar,
-                &connection_id,
-                &session_id,
-                PermissionsPolicy::allow_all(),
-            )
-            .expect("create vm");
-            let cwd = temp_dir("agent-os-sidecar-js-fetch-loopback-cwd");
-            write_fixture(
-                &cwd.join("entry.mjs"),
-                r#"
-import http from "node:http";
-
-const summary = await new Promise((resolve, reject) => {
-  const requests = [];
-  const server = http.createServer((req, res) => {
-    let body = "";
-    req.setEncoding("utf8");
-    req.on("data", (chunk) => {
-      body += chunk;
-    });
-    req.on("end", () => {
-      requests.push({ method: req.method, url: req.url, body });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, method: req.method, received: body }));
-    });
-  });
-
-  server.on("error", reject);
-  server.listen(0, "127.0.0.1", async () => {
-    try {
-      const port = server.address().port;
-      const response = await fetch(`http://127.0.0.1:${port}/data`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ key: "value" }),
-      });
-      const payload = await response.json();
-      server.close(() => resolve({ payload, requests }));
-    } catch (error) {
-      server.close(() => reject(error));
-    }
-  });
-});
-
-console.log(JSON.stringify(summary));
-"#,
-            );
-
-            let (stdout, stderr, exit_code) = run_javascript_entry(
-                &mut sidecar,
-                &vm_id,
-                &cwd,
-                "proc-js-fetch-loopback",
-                "[\"assert\",\"buffer\",\"console\",\"crypto\",\"events\",\"fs\",\"http\",\"path\",\"querystring\",\"stream\",\"string_decoder\",\"timers\",\"url\",\"util\",\"zlib\"]",
-            );
-
-            assert_eq!(exit_code, Some(0), "stderr: {stderr}");
-            let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse fetch JSON");
-            assert_eq!(parsed["payload"]["ok"], Value::Bool(true));
-            assert_eq!(
-                parsed["payload"]["received"],
-                Value::String(String::from("{\"key\":\"value\"}"))
-            );
-            assert_eq!(
-                parsed["requests"][0]["method"],
-                Value::String(String::from("POST"))
-            );
-            assert_eq!(
-                parsed["requests"][0]["url"],
-                Value::String(String::from("/data"))
-            );
-        }
         fn javascript_https_rpc_requests_and_serves_over_guest_tls() {
             assert_node_available();
 
@@ -13826,7 +13250,7 @@ console.log(JSON.stringify(summary));
                     tokio::task::yield_now().await;
                     let mut sidecar = dispose_sidecar.borrow_mut();
                     let response = sidecar
-                        .dispatch_blocking(request(
+                        .dispatch(request(
                             4,
                             OwnershipScope::vm(
                                 &dispose_connection_id,
@@ -13837,6 +13261,7 @@ console.log(JSON.stringify(summary));
                                 reason: DisposeReason::Requested,
                             }),
                         ))
+                        .await
                         .expect("dispose second vm while first net.poll waits");
                     match response.response.payload {
                         ResponsePayload::VmDisposed(_) => {}
@@ -15032,12 +14457,13 @@ console.log(JSON.stringify({
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-child")
-                        .and_then(|process| {
+                        .map(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll javascript child_process event")
                         })
+                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -15240,12 +14666,13 @@ console.log(JSON.stringify({
                     let vm = sidecar.vms.get_mut(&vm_id).expect("javascript vm");
                     vm.active_processes
                         .get_mut("proc-js-nested-sigchld")
-                        .and_then(|process| {
+                        .map(|process| {
                             process
                                 .execution
                                 .poll_event_blocking(Duration::from_secs(5))
                                 .expect("poll nested SIGCHLD event")
                         })
+                        .flatten()
                 };
                 let Some(event) = next_event else {
                     if exit_code.is_some() {
@@ -15331,22 +14758,32 @@ console.log(JSON.stringify({
                     event: ActiveExecutionEvent::Stdout(b"queued-but-undeliverable".to_vec()),
                 });
 
-            let error = sidecar
-                .poll_javascript_child_process(&vm_id, "proc-js-child-gone", "ghost-child", 0)
-                .expect_err("missing child should surface ECHILD");
-            match error {
-                SidecarError::Execution(message) => {
-                    assert!(
-                        message.starts_with("ECHILD:"),
-                        "expected ECHILD code, got {message}"
-                    );
-                    assert!(
-                        message.contains("proc-js-child-gone/ghost-child"),
-                        "expected child label in error, got {message}"
-                    );
+            let mut poll_loop_terminated = false;
+            for attempt in 0..3 {
+                let error = sidecar
+                    .poll_javascript_child_process(&vm_id, "proc-js-child-gone", "ghost-child", 0)
+                    .expect_err("missing child should surface ECHILD");
+                match error {
+                    SidecarError::Execution(message) => {
+                        assert!(
+                            message.starts_with("ECHILD:"),
+                            "expected ECHILD code, got {message}"
+                        );
+                        assert!(
+                            message.contains("proc-js-child-gone/ghost-child"),
+                            "expected child label in error, got {message}"
+                        );
+                        assert_eq!(
+                            attempt, 0,
+                            "poll loop should stop on first ECHILD instead of retrying"
+                        );
+                        poll_loop_terminated = true;
+                        break;
+                    }
+                    other => panic!("expected execution error, got {other}"),
                 }
-                other => panic!("expected execution error, got {other}"),
             }
+            assert!(poll_loop_terminated, "poll loop should terminate on ECHILD");
 
             let queued = sidecar
                 .pending_process_events
@@ -15500,7 +14937,6 @@ console.log(JSON.stringify({
             python_vfs_rpc_paths_are_scoped_to_workspace_root();
             javascript_fs_sync_rpc_resolves_proc_self_against_the_kernel_process();
             javascript_fd_and_stream_rpc_requests_proxy_into_the_vm_kernel_filesystem();
-            javascript_mapped_tmp_open_wx_uses_exclusive_create_once();
             javascript_fs_promises_batch_requests_before_waiting_on_sidecar_responses();
             javascript_crypto_basic_sync_rpcs_round_trip_through_sidecar();
             javascript_crypto_advanced_sync_rpcs_round_trip_through_sidecar();
@@ -15517,14 +14953,11 @@ console.log(JSON.stringify({
             javascript_tls_rpc_connects_and_serves_over_guest_net();
             javascript_http_listen_and_close_registers_server();
             javascript_http_respond_records_pending_response();
-            javascript_http_respond_rejects_oversized_pending_response();
-            vm_fetch_response_frame_limit_counts_protocol_overhead();
             javascript_http2_listen_connect_request_and_respond_round_trip();
             javascript_http2_settings_pause_push_and_file_response_surfaces_work();
             javascript_http2_secure_listen_connect_request_and_respond_round_trip();
             javascript_http2_server_respond_records_pending_response();
             javascript_http_rpc_requests_gets_and_serves_over_guest_net();
-            javascript_fetch_posts_to_guest_loopback_http_server();
             javascript_https_rpc_requests_and_serves_over_guest_tls();
             javascript_net_rpc_listens_accepts_connections_and_reports_listener_state();
             javascript_net_rpc_reports_connection_counts_and_enforces_backlog();

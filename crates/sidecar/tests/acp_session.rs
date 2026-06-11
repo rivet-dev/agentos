@@ -10,7 +10,10 @@ use acp::compat::{
     is_cancel_method_not_found, maybe_normalize_permission_response,
     normalize_inbound_permission_request,
 };
-use acp::session::{ACP_SESSION_EVENT_RETENTION_LIMIT, AcpSessionState};
+use acp::session::{
+    ACP_SESSION_EVENT_RETENTION_LIMIT, ACP_STDOUT_BUFFER_BYTE_LIMIT, AcpSessionState,
+    trim_acp_stdout_buffer,
+};
 use acp::{
     AcpClient, AcpClientError, AcpClientOptions, InboundRequestHandler, InboundRequestOutcome,
     JsonRpcError, JsonRpcId, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
@@ -582,6 +585,25 @@ fn session_state_event_buffer_is_bounded_and_drains_acknowledged_sequences() {
         acknowledged + 1
     );
     assert_eq!(session.events.len(), 9_999 - acknowledged as usize);
+}
+
+#[test]
+fn acp_stdout_buffer_trimming_keeps_newest_utf8_boundary() {
+    let mut buffer = format!("{}é", "a".repeat(ACP_STDOUT_BUFFER_BYTE_LIMIT));
+
+    assert!(trim_acp_stdout_buffer(&mut buffer));
+
+    assert_eq!(buffer.len(), ACP_STDOUT_BUFFER_BYTE_LIMIT);
+    assert!(buffer.is_char_boundary(0));
+    assert!(buffer.ends_with('é'));
+
+    let mut buffer = format!("é{}", "a".repeat(ACP_STDOUT_BUFFER_BYTE_LIMIT));
+
+    assert!(trim_acp_stdout_buffer(&mut buffer));
+
+    assert_eq!(buffer.len(), ACP_STDOUT_BUFFER_BYTE_LIMIT);
+    assert!(buffer.is_char_boundary(0));
+    assert!(buffer.starts_with('a'));
 }
 
 #[test]
