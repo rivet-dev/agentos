@@ -16,9 +16,10 @@ fn sessions_and_vms_reject_cross_connection_access() {
 
     let session_a = open_session(&mut sidecar, 2, &connection_a);
     let session_b = open_session(&mut sidecar, 3, &connection_b);
+    let session_a_other = open_session(&mut sidecar, 4, &connection_a);
     let (vm_a, _) = create_vm(
         &mut sidecar,
-        4,
+        5,
         &connection_a,
         &session_a,
         GuestRuntimeKind::JavaScript,
@@ -50,7 +51,7 @@ fn sessions_and_vms_reject_cross_connection_access() {
 
     let vm_reject = sidecar
         .dispatch_blocking(request(
-            6,
+            7,
             OwnershipScope::vm(&connection_b, &session_b, &vm_a),
             RequestPayload::GetSignalState(GetSignalStateRequest {
                 process_id: String::from("missing"),
@@ -65,9 +66,26 @@ fn sessions_and_vms_reject_cross_connection_access() {
         other => panic!("unexpected vm rejection response: {other:?}"),
     }
 
+    let same_connection_vm_reject = sidecar
+        .dispatch_blocking(request(
+            8,
+            OwnershipScope::vm(&connection_a, &session_a_other, &vm_a),
+            RequestPayload::GetSignalState(GetSignalStateRequest {
+                process_id: String::from("missing"),
+            }),
+        ))
+        .expect("dispatch same-connection mismatched-session signal-state");
+    match same_connection_vm_reject.response.payload {
+        ResponsePayload::Rejected(response) => {
+            assert_eq!(response.code, "invalid_state");
+            assert!(response.message.contains("not owned"));
+        }
+        other => panic!("unexpected same-connection vm rejection response: {other:?}"),
+    }
+
     let owner_signal_state = sidecar
         .dispatch_blocking(request(
-            7,
+            9,
             OwnershipScope::vm(&connection_a, &session_a, &vm_a),
             RequestPayload::GetSignalState(GetSignalStateRequest {
                 process_id: String::from("missing"),
