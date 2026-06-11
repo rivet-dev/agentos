@@ -43,6 +43,8 @@ sha1 = "0.10"
 sha2 = "0.10"
 socket2 = "0.6"
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 ureq = { version = "2.10", features = ["json"] }
 url = "2"
 
