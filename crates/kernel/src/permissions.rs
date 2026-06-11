@@ -281,7 +281,10 @@ pub fn check_command_execution(
     env: &BTreeMap<String, String>,
 ) -> Result<(), PermissionError> {
     let Some(check) = permissions.child_process.as_ref() else {
-        return Ok(());
+        return Err(PermissionError::access_denied(
+            format!("spawn '{command}'"),
+            None,
+        ));
     };
 
     let request = CommandAccessRequest {
@@ -309,7 +312,7 @@ pub fn check_network_access(
     resource: &str,
 ) -> Result<(), PermissionError> {
     let Some(check) = permissions.network.as_ref() else {
-        return Ok(());
+        return Err(PermissionError::access_denied(resource, None));
     };
 
     let request = NetworkAccessRequest {

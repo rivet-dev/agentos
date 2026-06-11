@@ -2,7 +2,8 @@ use agent_os_kernel::command_registry::CommandDriver;
 use agent_os_kernel::kernel::{KernelVm, KernelVmConfig, SpawnOptions};
 use agent_os_kernel::mount_table::{MountOptions, MountTable};
 use agent_os_kernel::permissions::{
-    filter_env, permission_glob_matches, EnvAccessRequest, FsAccessRequest, PermissionDecision,
+    check_command_execution, check_network_access, filter_env, permission_glob_matches,
+    EnvAccessRequest, FsAccessRequest, NetworkOperation, PermissionDecision,
     PermissionedFileSystem, Permissions,
 };
 use agent_os_kernel::vfs::{MemoryFileSystem, VfsResult, VirtualFileSystem};
@@ -315,6 +316,36 @@ fn filter_env_only_keeps_allowed_keys() {
     assert_eq!(filtered.get("HOME"), Some(&String::from("/home/user")));
     assert_eq!(filtered.get("PATH"), Some(&String::from("/usr/bin")));
     assert!(!filtered.contains_key("SECRET_KEY"));
+}
+
+#[test]
+fn command_permissions_deny_when_callback_is_absent() {
+    let error = check_command_execution(
+        "vm-permissions",
+        &Permissions::default(),
+        "sh",
+        &[],
+        Some("/workspace"),
+        &BTreeMap::new(),
+    )
+    .expect_err("missing command permission hook should fail closed");
+
+    assert_eq!(error.code(), "EACCES");
+    assert!(error.to_string().contains("spawn 'sh'"));
+}
+
+#[test]
+fn network_permissions_deny_when_callback_is_absent() {
+    let error = check_network_access(
+        "vm-permissions",
+        &Permissions::default(),
+        NetworkOperation::Dns,
+        "example.test",
+    )
+    .expect_err("missing network permission hook should fail closed");
+
+    assert_eq!(error.code(), "EACCES");
+    assert!(error.to_string().contains("example.test"));
 }
 
 #[test]
