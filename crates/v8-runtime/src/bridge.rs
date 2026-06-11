@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
-use std::mem::MaybeUninit;
+use std::mem::{self, MaybeUninit};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -1656,17 +1656,14 @@ fn sync_bridge_callback<'s>(
     }
 
     // Serialize V8 arguments into reusable buffer (avoids per-call allocation)
-    let encoded_args = {
-        let mut bufs = buffers.borrow_mut();
-        match serialize_v8_args_into(scope, &args, &mut bufs.ser_buf) {
-            Ok(()) => bufs.ser_buf.clone(),
-            Err(err) => {
-                let msg = v8::String::new(scope, &format!("bridge serialization error: {}", err))
-                    .unwrap();
-                let exc = v8::Exception::error(scope, msg);
-                scope.throw_exception(exc);
-                return;
-            }
+    let encoded_args = match serialize_v8_args_with_session_buffer(scope, &args, buffers) {
+        Ok(encoded_args) => encoded_args,
+        Err(err) => {
+            let msg =
+                v8::String::new(scope, &format!("bridge serialization error: {}", err)).unwrap();
+            let exc = v8::Exception::error(scope, msg);
+            scope.throw_exception(exc);
+            return;
         }
     };
 
@@ -1796,6 +1793,26 @@ fn build_bridge_apply_wrapper<'s>(
         .and_then(|value| v8::Local::<v8::Function>::try_from(value).ok())
 }
 
+fn serialize_v8_args_with_session_buffer(
+    scope: &mut v8::HandleScope,
+    args: &v8::FunctionCallbackArguments,
+    buffers: &RefCell<SessionBuffers>,
+) -> Result<Vec<u8>, String> {
+    let mut ser_buf = {
+        let mut bufs = buffers.borrow_mut();
+        mem::take(&mut bufs.ser_buf)
+    };
+
+    let result = serialize_v8_args_into(scope, args, &mut ser_buf).map(|()| ser_buf.clone());
+
+    {
+        let mut bufs = buffers.borrow_mut();
+        bufs.ser_buf = ser_buf;
+    }
+
+    result
+}
+
 fn reject_promise_with_error(
     scope: &mut v8::HandleScope,
     resolver: v8::Local<v8::PromiseResolver>,
@@ -1865,17 +1882,14 @@ fn async_bridge_callback(
     };
 
     // Serialize V8 arguments into reusable buffer (avoids per-call allocation)
-    let encoded_args = {
-        let mut bufs = buffers.borrow_mut();
-        match serialize_v8_args_into(scope, &args, &mut bufs.ser_buf) {
-            Ok(()) => bufs.ser_buf.clone(),
-            Err(err) => {
-                let msg = v8::String::new(scope, &format!("bridge serialization error: {}", err))
-                    .unwrap();
-                let exc = v8::Exception::error(scope, msg);
-                scope.throw_exception(exc);
-                return;
-            }
+    let encoded_args = match serialize_v8_args_with_session_buffer(scope, &args, buffers) {
+        Ok(encoded_args) => encoded_args,
+        Err(err) => {
+            let msg =
+                v8::String::new(scope, &format!("bridge serialization error: {}", err)).unwrap();
+            let exc = v8::Exception::error(scope, msg);
+            scope.throw_exception(exc);
+            return;
         }
     };
 
@@ -2416,6 +2430,46 @@ mod tests {
                 "ERR_AGENT_OS_BRIDGE_PENDING_PROMISE_LIMIT"
             );
         }
+
+        let buffer_reentry_writer = Arc::new(Mutex::new(Vec::new()));
+        let buffer_reentry_bridge_ctx = BridgeCallContext::new(
+            Box::new(SharedWriter(Arc::clone(&buffer_reentry_writer))),
+            Box::new(Cursor::new(Vec::new())),
+            String::from("test-session"),
+        );
+        let buffer_reentry_pending = PendingPromises::new();
+        let _buffer_reentry_async_bridge_fns = register_async_bridge_fns(
+            scope,
+            &buffer_reentry_bridge_ctx as *const BridgeCallContext,
+            &buffer_reentry_pending as *const PendingPromises,
+            &session_buffers as *const RefCell<SessionBuffers>,
+            &["_asyncFn"],
+        );
+        let source = r#"
+            let bufferInnerPromise;
+            const bufferReentrantArg = {};
+            Object.defineProperty(bufferReentrantArg, "x", {
+                get() {
+                    bufferInnerPromise = _asyncFn("inner");
+                    return 1;
+                },
+                enumerable: true,
+            });
+            globalThis.__bufferOuterPromise = _asyncFn(bufferReentrantArg);
+            globalThis.__bufferInnerPromise = bufferInnerPromise;
+        "#;
+        {
+            let tc = &mut v8::TryCatch::new(scope);
+            let source = v8::String::new(tc, source).unwrap();
+            let script = v8::Script::compile(tc, source, None).unwrap();
+            assert!(script.run(tc).is_some());
+            assert!(
+                !tc.has_caught(),
+                "async serialization reentry should not panic or throw"
+            );
+        }
+        assert_eq!(buffer_reentry_pending.len(), 2);
+        assert_eq!(bridge_call_count(&buffer_reentry_writer.lock().unwrap()), 2);
     }
 
     #[test]
