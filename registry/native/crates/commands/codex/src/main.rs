@@ -33,6 +33,8 @@ use codex_network_proxy::NetworkProxy;
 use codex_otel::SessionTelemetry;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const MAX_INPUT_CHARS: usize = 8192;
+const MAX_MESSAGES: usize = 200;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -74,11 +76,9 @@ fn main() {
 
 /// Main TUI event loop using ratatui + crossterm.
 fn run_tui(model: Option<&str>) -> io::Result<()> {
-    // Set up terminal
-    terminal::enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    let _terminal_guard = TerminalGuard::enter()?;
 
+    let stdout = io::stdout();
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -104,10 +104,6 @@ fn run_tui(model: Option<&str>) -> io::Result<()> {
         }
     }
 
-    // Restore terminal
-    terminal::disable_raw_mode()?;
-    execute!(io::stdout(), LeaveAlternateScreen)?;
-
     Ok(())
 }
 
@@ -131,9 +127,15 @@ fn handle_key_event(
         (KeyCode::Enter, _) => {
             if !input.is_empty() {
                 let prompt = input.clone();
-                messages.push(format!("> {}", prompt));
-                messages.push("codex: agent loop is under development".to_string());
-                messages.push(format!("codex: prompt received ({} chars)", prompt.len()));
+                push_message(messages, format!("> {}", prompt));
+                push_message(
+                    messages,
+                    "codex: agent loop is under development".to_string(),
+                );
+                push_message(
+                    messages,
+                    format!("codex: prompt received ({} chars)", prompt.len()),
+                );
                 input.clear();
             }
         }
@@ -147,9 +149,53 @@ fn handle_key_event(
         }
         // Regular character input
         (KeyCode::Char(c), _) => {
-            input.push(c);
+            if input.chars().count() < MAX_INPUT_CHARS {
+                input.push(c);
+            }
         }
         _ => {}
+    }
+}
+
+fn push_message(messages: &mut Vec<String>, message: String) {
+    messages.push(message);
+    if messages.len() > MAX_MESSAGES {
+        messages.drain(..messages.len() - MAX_MESSAGES);
+    }
+}
+
+struct TerminalGuard {
+    raw_mode_enabled: bool,
+    alternate_screen_enabled: bool,
+}
+
+impl TerminalGuard {
+    fn enter() -> io::Result<Self> {
+        terminal::enable_raw_mode()?;
+
+        if let Err(error) = execute!(io::stdout(), EnterAlternateScreen) {
+            let _ = terminal::disable_raw_mode();
+            return Err(error);
+        }
+
+        Ok(Self {
+            raw_mode_enabled: true,
+            alternate_screen_enabled: true,
+        })
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        if self.alternate_screen_enabled {
+            let _ = execute!(io::stdout(), LeaveAlternateScreen);
+            self.alternate_screen_enabled = false;
+        }
+
+        if self.raw_mode_enabled {
+            let _ = terminal::disable_raw_mode();
+            self.raw_mode_enabled = false;
+        }
     }
 }
 
