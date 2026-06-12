@@ -1527,8 +1527,6 @@ export const WASMVM_COMMANDS = Object.freeze([
 	"stty",
 	"codex",
 	"codex-exec",
-	"spawn-test-host",
-	"http-test",
 ]) as readonly string[];
 
 export type PermissionTier = "full" | "read-write" | "read-only" | "isolated";
@@ -1547,8 +1545,6 @@ export const DEFAULT_FIRST_PARTY_TIERS: Readonly<
 	make: "full",
 	codex: "full",
 	"codex-exec": "full",
-	"spawn-test-host": "full",
-	"http-test": "full",
 	git: "full",
 	"git-remote-http": "full",
 	"git-remote-https": "full",
