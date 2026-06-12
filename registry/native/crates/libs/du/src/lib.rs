@@ -4,10 +4,11 @@
 //! Supports -s (summary), -h (human-readable), -a (all files), -c (grand total),
 //! -d N (max depth).
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn main(args: Vec<OsString>) -> i32 {
     let str_args: Vec<String> = args
@@ -86,7 +87,16 @@ pub fn main(args: Vec<OsString>) -> i32 {
     let mut exit_code = 0;
 
     for path in &paths {
-        match walk_du(Path::new(path), 0, max_depth, all_files, human, &mut out) {
+        let mut visited_dirs = HashSet::new();
+        match walk_du(
+            Path::new(path),
+            0,
+            max_depth,
+            all_files,
+            human,
+            &mut out,
+            &mut visited_dirs,
+        ) {
             Ok(size) => {
                 total += size;
             }
@@ -98,7 +108,15 @@ pub fn main(args: Vec<OsString>) -> i32 {
     }
 
     if grand_total {
-        print_size(&mut out, total, human, "total");
+        if let Err(error) = print_size(&mut out, total, human, "total") {
+            eprintln!("du: failed to write output: {error}");
+            return 1;
+        }
+    }
+
+    if let Err(error) = out.flush() {
+        eprintln!("du: failed to write output: {error}");
+        return 1;
     }
 
     exit_code
@@ -111,6 +129,7 @@ fn walk_du<W: Write>(
     all_files: bool,
     human: bool,
     out: &mut W,
+    visited_dirs: &mut HashSet<PathBuf>,
 ) -> io::Result<u64> {
     let meta = fs::metadata(path)?;
 
@@ -119,84 +138,58 @@ fn walk_du<W: Write>(
         // Convert to 1K blocks (like du default)
         let blocks = (size + 1023) / 1024;
         if all_files || depth == 0 {
-            print_size(out, blocks, human, &path.to_string_lossy());
+            print_size(out, blocks, human, &path.to_string_lossy())?;
         }
         return Ok(blocks);
     }
 
     if meta.is_dir() {
-        let mut dir_total: u64 = 0;
-        match fs::read_dir(path) {
-            Ok(entries) => {
-                for entry in entries {
-                    match entry {
-                        Ok(e) => {
-                            let child_path = e.path();
-                            let child_meta = match fs::metadata(&child_path) {
-                                Ok(m) => m,
-                                Err(err) => {
-                                    eprintln!("du: {}: {}", child_path.display(), err);
-                                    continue;
-                                }
-                            };
+        let canonical_path = fs::canonicalize(path)?;
+        if !visited_dirs.insert(canonical_path) {
+            return Ok(0);
+        }
 
-                            if child_meta.is_dir() {
-                                match walk_du(
-                                    &child_path,
-                                    depth + 1,
-                                    max_depth,
-                                    all_files,
-                                    human,
-                                    out,
-                                ) {
-                                    Ok(sub) => dir_total += sub,
-                                    Err(err) => {
-                                        eprintln!("du: {}: {}", child_path.display(), err);
-                                    }
-                                }
-                            } else {
-                                let size = child_meta.len();
-                                let blocks = (size + 1023) / 1024;
-                                dir_total += blocks;
-                                if all_files {
-                                    if let Some(md) = max_depth {
-                                        if depth + 1 <= md {
-                                            print_size(
-                                                out,
-                                                blocks,
-                                                human,
-                                                &child_path.to_string_lossy(),
-                                            );
-                                        }
-                                    } else {
-                                        print_size(
-                                            out,
-                                            blocks,
-                                            human,
-                                            &child_path.to_string_lossy(),
-                                        );
-                                    }
-                                }
-                            }
+        let mut dir_total: u64 = 0;
+        let entries = fs::read_dir(path)?;
+        for entry in entries {
+            let entry = entry?;
+            let child_path = entry.path();
+            let child_meta = fs::metadata(&child_path)?;
+
+            if child_meta.is_dir() {
+                let sub = walk_du(
+                    &child_path,
+                    depth + 1,
+                    max_depth,
+                    all_files,
+                    human,
+                    out,
+                    visited_dirs,
+                )?;
+                dir_total += sub;
+            } else {
+                let size = child_meta.len();
+                let blocks = (size + 1023) / 1024;
+                dir_total += blocks;
+                if all_files {
+                    if let Some(md) = max_depth {
+                        if depth + 1 <= md {
+                            print_size(out, blocks, human, &child_path.to_string_lossy())?;
                         }
-                        Err(err) => {
-                            eprintln!("du: {}: {}", path.display(), err);
-                        }
+                    } else {
+                        print_size(out, blocks, human, &child_path.to_string_lossy())?;
                     }
                 }
-            }
-            Err(err) => {
-                eprintln!("du: {}: {}", path.display(), err);
             }
         }
 
         // Print this directory's total if within depth limit
         if let Some(md) = max_depth {
             if depth <= md {
-                print_size(out, dir_total, human, &path.to_string_lossy());
+                print_size(out, dir_total, human, &path.to_string_lossy())?;
             }
         } else {
-            print_size(out, dir_total, human, &path.to_string_lossy());
+            print_size(out, dir_total, human, &path.to_string_lossy())?;
         }
 
         return Ok(dir_total);
@@ -206,16 +199,16 @@ fn walk_du<W: Write>(
     let size = meta.len();
     let blocks = (size + 1023) / 1024;
     if all_files || depth == 0 {
-        print_size(out, blocks, human, &path.to_string_lossy());
+        print_size(out, blocks, human, &path.to_string_lossy())?;
     }
     Ok(blocks)
 }
 
-fn print_size<W: Write>(out: &mut W, blocks: u64, human: bool, name: &str) {
+fn print_size<W: Write>(out: &mut W, blocks: u64, human: bool, name: &str) -> io::Result<()> {
     if human {
-        let _ = writeln!(out, "{}\t{}", format_human(blocks), name);
+        writeln!(out, "{}\t{}", format_human(blocks), name)
     } else {
-        let _ = writeln!(out, "{}\t{}", blocks, name);
+        writeln!(out, "{}\t{}", blocks, name)
     }
 }
 
