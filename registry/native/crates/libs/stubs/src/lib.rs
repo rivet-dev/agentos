@@ -41,14 +41,8 @@ pub fn run(args: &[String]) -> i32 {
             eprintln!("{}: user database queries are not supported in WASM", cmd);
             1
         }
-        "hostname" => {
-            println!("wasm-host");
-            0
-        }
-        "hostid" => {
-            println!("00000000");
-            0
-        }
+        "hostname" => print_line("wasm-host"),
+        "hostid" => print_line("00000000"),
         "install" => {
             eprintln!("install: file permission management not fully supported in WASM");
             1
@@ -79,6 +73,20 @@ pub fn run(args: &[String]) -> i32 {
         }
         _ => {
             eprintln!("{}: command not supported in sandbox", cmd);
+            1
+        }
+    }
+}
+
+fn print_line(value: &str) -> i32 {
+    use std::io::Write;
+
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    match writeln!(out, "{}", value).and_then(|_| out.flush()) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("_stubs: {}", error);
             1
         }
     }
