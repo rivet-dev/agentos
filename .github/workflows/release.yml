@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (e.g. 0.1.0, 0.1.0-rc.1)"
+        description: "Version to publish (e.g. 0.2.0, 0.2.0-rc.2)"
         required: true
         type: string
       npm-tag:
@@ -19,70 +19,307 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+env:
+  R2_BUCKET: rivet-releases
+  R2_ENDPOINT: https://2a94c6a0ced8d35ea63cddc86c2681e7.r2.cloudflarestorage.com
+  # Platform list kept in sync with packages/sidecar-binary/npm/* and the build matrix.
+  SIDECAR_PLATFORMS: "linux-x64-gnu linux-arm64-gnu"
+
 jobs:
-  publish:
-    name: "Publish"
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+  build-sidecar:
+    name: "Build sidecar (${{ matrix.platform }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64-gnu
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: linux-arm64-gnu
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
     steps:
-      - name: Checkout tag
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: v${{ inputs.version }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: ${{ matrix.target }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/.rusty_v8
+          key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
+      # The V8 bridge build script (invoked by cargo build.rs) needs the pnpm
+      # workspace installed so esbuild and v8-bridge.source.js are available.
+      - run: pnpm install --frozen-lockfile
+      - name: Build sidecar binary
+        run: cargo build --release -p agent-os-sidecar --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-${{ matrix.platform }}
+          path: target/${{ matrix.target }}/release/agent-os-sidecar
+          if-no-files-found: error
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+  publish-npm:
+    name: "Publish npm"
+    needs: build-sidecar
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build
+      - run: pnpm install --frozen-lockfile
+      - name: Build TypeScript packages
         run: npx turbo build --filter='!./registry/software/*' --filter='!@rivet-dev/agent-os-playground' --filter='!./examples/*'
-
-      - name: Publish to npm
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sidecar-*
+          path: artifacts
+      - name: Place sidecar binaries into platform packages
+        id: place
         run: |
+          PRESENT=""
+          for p in $SIDECAR_PLATFORMS; do
+            bin="artifacts/sidecar-${p}/agent-os-sidecar"
+            dest="packages/sidecar-binary/npm/${p}"
+            if [ -f "$bin" ]; then
+              if [ ! -d "$dest" ]; then
+                echo "::error::missing platform package dir $dest"
+                exit 1
+              fi
+              cp "$bin" "${dest}/agent-os-sidecar"
+              chmod +x "${dest}/agent-os-sidecar"
+              echo "Placed binary for ${p}"
+              PRESENT="${PRESENT} ${p}"
+            else
+              echo "::warning::no binary artifact for ${p}; skipping"
+            fi
+          done
+          case " ${PRESENT} " in
+            *" linux-x64-gnu "*) ;;
+            *) echo "::error::linux-x64-gnu binary is required but missing"; exit 1 ;;
+          esac
+          echo "present=${PRESENT}" >> "$GITHUB_OUTPUT"
+      - name: Inject optionalDependencies into meta package
+        env:
+          VERSION: ${{ inputs.version }}
+          PRESENT: ${{ steps.place.outputs.present }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const version = process.env.VERSION;
+            const present = process.env.PRESENT.trim().split(/\s+/).filter(Boolean);
+            const path = "packages/sidecar-binary/package.json";
+            const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+            pkg.optionalDependencies = pkg.optionalDependencies || {};
+            for (const plat of present) {
+              pkg.optionalDependencies[`@rivet-dev/agent-os-sidecar-${plat}`] = version;
+            }
+            fs.writeFileSync(path, JSON.stringify(pkg, null, "\t") + "\n");
+            console.log("optionalDependencies:", pkg.optionalDependencies);
+          '
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          NPM_TAG: ${{ inputs.npm-tag }}
+          PRESENT: ${{ steps.place.outputs.present }}
+        run: |
+          set -u
           FAILURES=""
 
-          # Publish workspace packages (skip root, skip registry/software/)
+          publish_dir() {
+            local dir="$1"
+            local name version
+            name=$(jq -r .name "$dir/package.json")
+            version=$(jq -r .version "$dir/package.json")
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "⏭ ${name}@${version} already published, skipping."
+              return 0
+            fi
+            echo "Publishing ${name}@${version}..."
+            if ! (cd "$dir" && pnpm publish --access public --tag "${NPM_TAG}" --no-git-checks); then
+              FAILURES="${FAILURES} ${name}"
+            fi
+          }
+
+          # 1. Platform binary packages (not pnpm workspace members).
+          for p in ${PRESENT}; do
+            publish_dir "packages/sidecar-binary/npm/${p}"
+          done
+
+          # 2. Workspace packages (skip root, skip registry/software/). This
+          #    includes the @rivet-dev/agent-os-sidecar meta package and core.
           for dir in $(pnpm -r ls --json --depth -1 | jq -r '.[] | select(.private != true) | .path'); do
-            # Skip the root package
             if [ "$dir" = "$(pwd)" ]; then
               continue
             fi
-            # Skip registry/software/ packages (published separately via make publish)
             if [[ "$dir" == *"/registry/software/"* ]]; then
               echo "⏭ Skipping software package: $(jq -r .name "$dir/package.json")"
               continue
             fi
-            NAME=$(jq -r .name "$dir/package.json")
-            VERSION="${{ inputs.version }}"
-            if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
-              echo "⏭ ${NAME}@${VERSION} already published, skipping."
-              continue
-            fi
-            echo "Publishing ${NAME}@${VERSION}..."
-            if ! (cd "$dir" && pnpm publish --access public --tag ${{ inputs.npm-tag }} --no-git-checks); then
-              FAILURES="${FAILURES} ${NAME}"
-            fi
+            publish_dir "$dir"
           done
 
           if [ -n "$FAILURES" ]; then
             echo "::error::Failed to publish:${FAILURES}"
             exit 1
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+  upload-r2:
+    name: "Upload artifacts to R2"
+    needs: build-sidecar
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sidecar-*
+          path: artifacts
+      - name: Upload sidecar binaries + externalized pyodide assets to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_RELEASES_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASES_SECRET_ACCESS_KEY }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          declare -A PLATFORM_TARGET=(
+            [linux-x64-gnu]=x86_64-unknown-linux-gnu
+            [linux-arm64-gnu]=aarch64-unknown-linux-gnu
+          )
+          for p in $SIDECAR_PLATFORMS; do
+            bin="artifacts/sidecar-${p}/agent-os-sidecar"
+            if [ -f "$bin" ]; then
+              target="${PLATFORM_TARGET[$p]}"
+              key="agent-os/${VERSION}/sidecar/agent-os-sidecar-${target}"
+              echo "Uploading $bin -> s3://${R2_BUCKET}/${key}"
+              aws s3 cp "$bin" "s3://${R2_BUCKET}/${key}" \
+                --endpoint-url "$R2_ENDPOINT" --checksum-algorithm CRC32
+            else
+              echo "::warning::no binary for ${p}; skipping R2 upload"
+            fi
+          done
+
+          # Externalized pyodide assets (excluded from the published execution
+          # crate) must exist on the CDN before the crate is published, because
+          # the crate's build.rs downloads them at the matching version path.
+          for f in \
+            pyodide.asm.wasm \
+            pyodide.asm.js \
+            python_stdlib.zip \
+            numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl \
+            pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl; do
+            src="crates/execution/assets/pyodide/${f}"
+            key="agent-os/${VERSION}/pyodide/${f}"
+            echo "Uploading $src -> s3://${R2_BUCKET}/${key}"
+            aws s3 cp "$src" "s3://${R2_BUCKET}/${key}" \
+              --endpoint-url "$R2_ENDPOINT" --checksum-algorithm CRC32
+          done
+
+  publish-crates:
+    name: "Publish crates.io"
+    needs: upload-r2
+    if: ${{ !cancelled() && needs.upload-r2.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/.rusty_v8
+          key: ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-
+      - run: pnpm install --frozen-lockfile
+      - name: Stage vendored V8 bridge bundles for publishing
+        run: |
+          set -euo pipefail
+          for crate in execution v8-runtime; do
+            out="crates/${crate}/assets/generated"
+            mkdir -p "$out"
+            node packages/core/scripts/build-v8-bridge.mjs --out-dir "$out"
+          done
+          # Refresh the vendored base-filesystem fixtures used by published crates.
+          cp packages/core/fixtures/base-filesystem.json crates/kernel/assets/base-filesystem.json
+          cp packages/core/fixtures/base-filesystem.json crates/sidecar/assets/base-filesystem.json
+      - name: Publish crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -uo pipefail
+          publish_crate() {
+            local crate="$1"
+            if curl -sf "https://index.crates.io/$(echo "$crate" | cut -c1-2)/$(echo "$crate" | cut -c3-4)/$crate" \
+                 | grep -q "\"vers\":\"${VERSION}\""; then
+              echo "⏭ ${crate}@${VERSION} already published, skipping."
+              return 0
+            fi
+            echo "Publishing ${crate}@${VERSION}..."
+            # --allow-dirty: vendored bundles/fixtures are staged but uncommitted.
+            cargo publish -p "$crate" --allow-dirty
+          }
+
+          # Dependency order: bridge -> {kernel, v8-runtime} -> execution -> sidecar -> client.
+          for crate in \
+            agent-os-bridge \
+            agent-os-kernel \
+            agent-os-v8-runtime \
+            agent-os-execution \
+            agent-os-sidecar \
+            agent-os-client; do
+            publish_crate "$crate"
+          done
+
+  github-release:
+    name: "GitHub release"
+    needs: publish-npm
+    if: ${{ !cancelled() && needs.publish-npm.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
       - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "v${{ inputs.version }}" >/dev/null 2>&1; then
             echo "GitHub release v${{ inputs.version }} already exists, skipping."
@@ -96,5 +333,3 @@ jobs:
               --generate-notes \
               $PRERELEASE
           fi
-        env:
-          GH_TOKEN: ${{ github.token }}

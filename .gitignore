@@ -26,11 +26,11 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Core dumps
-core
-core.*
-**/core
-**/core.*
+# Core dumps. Patterns target dump files (`core`, `core.<pid>`) without
+# swallowing source directories named `core` such as `packages/core/`.
+/core
+core.[0-9]*
+**/core.[0-9]*
 
 # Secrets
 secrets/**/*
@@ -70,3 +70,7 @@ crates/execution/.agent-os-pyodide-cache/
 crates/execution/async-out.txt
 crates/sidecar/.tmp-sidecar-tests/
 packages/browser/.cache/
+
+# Vendored V8 bridge bundles staged at release time for crates.io publishing
+crates/execution/assets/generated/
+crates/v8-runtime/assets/generated/

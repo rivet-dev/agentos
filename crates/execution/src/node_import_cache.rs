@@ -22,14 +22,24 @@ const PYODIDE_DIST_DIR: &str = "pyodide-dist";
 const AGENT_OS_BUILTIN_SPECIFIER_PREFIX: &str = "agent-os:builtin/";
 const AGENT_OS_POLYFILL_SPECIFIER_PREFIX: &str = "agent-os:polyfill/";
 const BUNDLED_PYODIDE_MJS: &[u8] = include_bytes!("../assets/pyodide/pyodide.mjs");
-const BUNDLED_PYODIDE_ASM_JS: &[u8] = include_bytes!("../assets/pyodide/pyodide.asm.js");
-const BUNDLED_PYODIDE_ASM_WASM: &[u8] = include_bytes!("../assets/pyodide/pyodide.asm.wasm");
+// Large Pyodide assets are excluded from the published crate and staged into
+// OUT_DIR by build.rs (copied from `assets/pyodide/` in-tree, or downloaded
+// from the release CDN when building the published crate).
+const BUNDLED_PYODIDE_ASM_JS: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/pyodide/pyodide.asm.js"));
+const BUNDLED_PYODIDE_ASM_WASM: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/pyodide/pyodide.asm.wasm"));
 const BUNDLED_PYODIDE_LOCK: &[u8] = include_bytes!("../assets/pyodide/pyodide-lock.json");
-const BUNDLED_PYTHON_STDLIB_ZIP: &[u8] = include_bytes!("../assets/pyodide/python_stdlib.zip");
-const BUNDLED_NUMPY_WHL: &[u8] =
-    include_bytes!("../assets/pyodide/numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl");
-const BUNDLED_PANDAS_WHL: &[u8] =
-    include_bytes!("../assets/pyodide/pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl");
+const BUNDLED_PYTHON_STDLIB_ZIP: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/pyodide/python_stdlib.zip"));
+const BUNDLED_NUMPY_WHL: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/pyodide/numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl"
+));
+const BUNDLED_PANDAS_WHL: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/pyodide/pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl"
+));
 const BUNDLED_PYTHON_DATEUTIL_WHL: &[u8] =
     include_bytes!("../assets/pyodide/python_dateutil-2.9.0.post0-py2.py3-none-any.whl");
 const BUNDLED_PYTZ_WHL: &[u8] =
@@ -13079,7 +13089,7 @@ fn write_file_if_changed(path: &Path, contents: &str) -> Result<(), io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS, NodeImportCache};
+    use super::{NodeImportCache, NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS};
     use crate::host_node::node_binary;
     use serde_json::Value;
     use std::collections::BTreeSet;

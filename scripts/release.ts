@@ -57,9 +57,17 @@ function npmTag(version: string): "latest" | "rc" {
 	return version.includes("-") ? "rc" : "latest";
 }
 
-function parseArgs(): { version: string; tag: "latest" | "rc"; noGitChecks: boolean } {
+function parseArgs(): {
+	version: string;
+	tag: "latest" | "rc";
+	noGitChecks: boolean;
+	noVcs: boolean;
+} {
 	const args = process.argv.slice(2);
 	const noGitChecks = args.includes("--no-git-checks");
+	// --no-vcs only rewrites versions in the working tree. The caller owns the
+	// commit/tag/push/dispatch (e.g. when driving the jj workflow by hand).
+	const noVcs = args.includes("--no-vcs");
 
 	if (args.includes("--version")) {
 		const idx = args.indexOf("--version");
@@ -70,7 +78,7 @@ function parseArgs(): { version: string; tag: "latest" | "rc"; noGitChecks: bool
 		if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(ver)) {
 			fatal(`Invalid version format: "${ver}"`);
 		}
-		return { version: ver, tag: npmTag(ver), noGitChecks };
+		return { version: ver, tag: npmTag(ver), noGitChecks, noVcs };
 	}
 
 	const rootPkg = JSON.parse(readFileSync(join(ROOT, "packages/core/package.json"), "utf-8"));
@@ -78,11 +86,11 @@ function parseArgs(): { version: string; tag: "latest" | "rc"; noGitChecks: bool
 
 	for (const type of ["patch", "minor", "major"] as const) {
 		if (args.includes(`--${type}`)) {
-			return { version: bumpVersion(current, type), tag: "latest", noGitChecks };
+			return { version: bumpVersion(current, type), tag: "latest", noGitChecks, noVcs };
 		}
 	}
 
-	fatal("Usage: release --patch | --minor | --major | --version <version>");
+	fatal("Usage: release --patch | --minor | --major | --version <version> [--no-vcs]");
 }
 
 // ── Update version ──
@@ -95,6 +103,13 @@ function findPublishablePackages(): string[] {
 		.map((p) => join(p.path, "package.json"));
 }
 
+// Platform binary packages live under the meta package's npm/ subdir and are
+// NOT pnpm workspace members, so they are bumped explicitly.
+const SIDECAR_PLATFORM_PACKAGES = [
+	"packages/sidecar-binary/npm/linux-x64-gnu/package.json",
+	"packages/sidecar-binary/npm/linux-arm64-gnu/package.json",
+] as const;
+
 function setVersion(version: string) {
 	const files = findPublishablePackages();
 	for (const file of files) {
@@ -105,15 +120,46 @@ function setVersion(version: string) {
 		writeFileSync(file, JSON.stringify(pkg, null, indent) + "\n");
 		console.log(`  ${pkg.name} → ${version}`);
 	}
+
+	for (const rel of SIDECAR_PLATFORM_PACKAGES) {
+		const file = join(ROOT, rel);
+		const content = readFileSync(file, "utf-8");
+		const pkg = JSON.parse(content);
+		pkg.version = version;
+		const indent = content.match(/^(\s+)"/m)?.[1] ?? "\t";
+		writeFileSync(file, JSON.stringify(pkg, null, indent) + "\n");
+		console.log(`  ${pkg.name} → ${version}`);
+	}
+
+	setCargoVersion(version);
+}
+
+// Bump the Rust workspace version and the lock-step internal crate versions in
+// [workspace.dependencies] so the crates.io publish chain stays consistent.
+function setCargoVersion(version: string) {
+	const file = join(ROOT, "Cargo.toml");
+	let content = readFileSync(file, "utf-8");
+
+	content = content.replace(
+		/(\[workspace\.package\][\s\S]*?\nversion = ")[^"]+(")/,
+		`$1${version}$2`,
+	);
+	content = content.replace(
+		/(agent-os-[a-z0-9-]+ = \{ path = "[^"]+", version = ")[^"]+(" \})/g,
+		`$1${version}$2`,
+	);
+
+	writeFileSync(file, content);
+	console.log(`  Cargo workspace → ${version}`);
 }
 
 // ── Main ──
 
 async function main() {
-	const { version, tag, noGitChecks } = parseArgs();
+	const { version, tag, noGitChecks, noVcs } = parseArgs();
 	const branch = run("git branch --show-current");
 
-	if (!noGitChecks) {
+	if (!noGitChecks && !noVcs) {
 		if (branch !== "main") {
 			fatal(`Must be on main branch (currently on "${branch}")`);
 		}
@@ -146,7 +192,7 @@ async function main() {
 	}
 	console.log();
 
-	if (!(await confirm("Proceed?"))) {
+	if (!noVcs && !(await confirm("Proceed?"))) {
 		console.log("Aborted.");
 		process.exit(0);
 	}
@@ -154,6 +200,13 @@ async function main() {
 	// Bump version
 	console.log(`\n\x1b[1mBumping version to ${version}...\x1b[0m`);
 	setVersion(version);
+
+	if (noVcs) {
+		console.log(
+			`\n\x1b[32m✓ Versions bumped to ${version} (--no-vcs: skipping commit/tag/push/dispatch).\x1b[0m`,
+		);
+		return;
+	}
 
 	// Commit & push
 	console.log("\n\x1b[1mCommitting version bump...\x1b[0m");

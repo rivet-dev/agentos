@@ -11,6 +11,18 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0-rc.2"
 edition = "2021"
 license = "Apache-2.0"
+repository = "https://github.com/rivet-dev/agent-os"
+
+# Internal crates are published to crates.io as a lock-step chain. Each entry
+# carries both a path (for in-workspace builds) and a version (required so
+# `cargo publish` can emit a registry-resolvable dependency). The release
+# tooling rewrites these versions together with `workspace.package.version`.
+[workspace.dependencies]
+agent-os-bridge = { path = "crates/bridge", version = "0.2.0-rc.2" }
+agent-os-kernel = { path = "crates/kernel", version = "0.2.0-rc.2" }
+agent-os-execution = { path = "crates/execution", version = "0.2.0-rc.2" }
+agent-os-v8-runtime = { path = "crates/v8-runtime", version = "0.2.0-rc.2" }
+agent-os-sidecar = { path = "crates/sidecar", version = "0.2.0-rc.2" }

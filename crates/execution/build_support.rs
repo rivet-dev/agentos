@@ -1,3 +1,13 @@
+// V8 bridge build helper.
+//
+// Keep this file in sync with `crates/execution/build_support.rs`. Both V8
+// crates embed the generated `v8-bridge.js` / `v8-bridge-zlib.js` bundle. When
+// building inside the monorepo the bundle is generated from
+// `packages/core/scripts/build-v8-bridge.mjs` via Node. When building the
+// published crate (where the monorepo toolchain is absent) the bundle is
+// copied from the vendored `assets/generated/` directory that the release
+// tooling stages into the crate before `cargo publish`.
+
 use std::env;
 use std::fs;
 use std::io;
@@ -9,15 +19,87 @@ const ENV_BUILD_SCRIPT: &str = "AGENT_OS_V8_BRIDGE_BUILD_SCRIPT";
 const ENV_DEBUG: &str = "AGENT_OS_GENERATED_ASSET_DEBUG";
 
 pub fn build_v8_bridge(crate_manifest_dir: &Path, out_dir: &Path) {
-    let repo_root = crate_manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .unwrap_or_else(|| {
-            panic!(
-                "failed to resolve repo root from CARGO_MANIFEST_DIR={}",
-                crate_manifest_dir.display()
-            )
-        });
+    let bridge_output = out_dir.join("v8-bridge.js");
+    let zlib_output = out_dir.join("v8-bridge-zlib.js");
+
+    println!("cargo:rerun-if-env-changed={ENV_NODE}");
+    println!("cargo:rerun-if-env-changed={ENV_BUILD_SCRIPT}");
+    println!("cargo:rerun-if-env-changed={ENV_DEBUG}");
+
+    if let Some(repo_root) = monorepo_root(crate_manifest_dir) {
+        build_from_monorepo(&repo_root, out_dir);
+    } else {
+        copy_vendored_bundle(crate_manifest_dir, &bridge_output, &zlib_output);
+    }
+
+    if !bridge_output.exists() || !zlib_output.exists() {
+        panic!(
+            "V8 bridge build completed but expected outputs are missing: {}, {}",
+            bridge_output.display(),
+            zlib_output.display()
+        );
+    }
+}
+
+/// Resolve the monorepo root when the in-tree build toolchain is available.
+/// Returns `None` when building the published crate so the caller falls back
+/// to the vendored prebuilt bundle.
+fn monorepo_root(crate_manifest_dir: &Path) -> Option<PathBuf> {
+    if env::var_os(ENV_BUILD_SCRIPT).is_some() {
+        // An explicit override always implies an in-tree build.
+        return crate_manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf);
+    }
+
+    let repo_root = crate_manifest_dir.parent().and_then(Path::parent)?;
+    if repo_root
+        .join("packages/core/scripts/build-v8-bridge.mjs")
+        .exists()
+    {
+        Some(repo_root.to_path_buf())
+    } else {
+        None
+    }
+}
+
+fn copy_vendored_bundle(crate_manifest_dir: &Path, bridge_output: &Path, zlib_output: &Path) {
+    let vendored_dir = crate_manifest_dir.join("assets/generated");
+    let vendored_bridge = vendored_dir.join("v8-bridge.js");
+    let vendored_zlib = vendored_dir.join("v8-bridge-zlib.js");
+
+    println!("cargo:rerun-if-changed={}", vendored_bridge.display());
+    println!("cargo:rerun-if-changed={}", vendored_zlib.display());
+
+    if !vendored_bridge.exists() || !vendored_zlib.exists() {
+        panic!(
+            "the V8 bridge build toolchain (packages/core/scripts/build-v8-bridge.mjs) was not \
+             found and no vendored bundle exists at {}. Published crates must ship the prebuilt \
+             bundle; run the release tooling to stage it.",
+            vendored_dir.display()
+        );
+    }
+
+    fs::copy(&vendored_bridge, bridge_output).unwrap_or_else(|error| {
+        panic!(
+            "failed to copy vendored V8 bridge bundle from {} to {}: {}",
+            vendored_bridge.display(),
+            bridge_output.display(),
+            error
+        )
+    });
+    fs::copy(&vendored_zlib, zlib_output).unwrap_or_else(|error| {
+        panic!(
+            "failed to copy vendored V8 bridge zlib bundle from {} to {}: {}",
+            vendored_zlib.display(),
+            zlib_output.display(),
+            error
+        )
+    });
+}
+
+fn build_from_monorepo(repo_root: &Path, out_dir: &Path) {
     let script_path = resolve_build_script(repo_root);
     let package_root = script_path
         .parent()
@@ -34,9 +116,6 @@ pub fn build_v8_bridge(crate_manifest_dir: &Path, out_dir: &Path) {
     let debug = env::var_os(ENV_DEBUG).is_some();
 
     emit_rerun_inputs(repo_root, &script_path);
-    println!("cargo:rerun-if-env-changed={ENV_NODE}");
-    println!("cargo:rerun-if-env-changed={ENV_BUILD_SCRIPT}");
-    println!("cargo:rerun-if-env-changed={ENV_DEBUG}");
 
     if !node_modules.exists() {
         panic!(
@@ -96,16 +175,6 @@ pub fn build_v8_bridge(crate_manifest_dir: &Path, out_dir: &Path) {
             stderr.trim()
         );
     }
-
-    let bridge_output = out_dir.join("v8-bridge.js");
-    let zlib_output = out_dir.join("v8-bridge-zlib.js");
-    if !bridge_output.exists() || !zlib_output.exists() {
-        panic!(
-            "V8 bridge build completed but expected outputs are missing: {}, {}",
-            bridge_output.display(),
-            zlib_output.display()
-        );
-    }
 }
 
 fn resolve_build_script(repo_root: &Path) -> PathBuf {
@@ -156,6 +225,8 @@ fn require_pnpm(repo_root: &Path, debug: bool) {
 fn emit_rerun_inputs(repo_root: &Path, script_path: &Path) {
     let inputs = [
         repo_root.join("crates/build-support/v8_bridge_build.rs"),
+        repo_root.join("crates/execution/build_support.rs"),
+        repo_root.join("crates/v8-runtime/build_support.rs"),
         script_path.to_path_buf(),
         repo_root.join("crates/execution/assets/v8-bridge.source.js"),
         repo_root.join("packages/core/package.json"),

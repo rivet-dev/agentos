@@ -5,8 +5,12 @@ use crate::vfs::{
 use base64::Engine;
 use serde::Deserialize;
 
+// The base filesystem fixture is staged into OUT_DIR by build.rs: copied from
+// the canonical `packages/core/fixtures/base-filesystem.json` during in-tree
+// builds, or from the vendored `assets/base-filesystem.json` copy bundled in
+// the published crate.
 const BUNDLED_BASE_FILESYSTEM_JSON: &str =
-    include_str!("../../../packages/core/fixtures/base-filesystem.json");
+    include_str!(concat!(env!("OUT_DIR"), "/base-filesystem.json"));
 pub const ROOT_FILESYSTEM_SNAPSHOT_FORMAT: &str = "agent_os_filesystem_snapshot_v1";
 const DEFAULT_ROOT_DIRECTORIES: &[&str] = &[
     "/",

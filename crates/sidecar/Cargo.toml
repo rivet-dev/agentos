@@ -3,6 +3,7 @@ name = "agent-os-sidecar"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Native Agent OS sidecar scaffold"
 
 [[bin]]
@@ -10,9 +11,9 @@ name = "agent-os-sidecar"
 path = "src/main.rs"
 
 [dependencies]
-agent-os-bridge = { path = "../bridge" }
-agent-os-kernel = { path = "../kernel" }
-agent-os-execution = { path = "../execution" }
+agent-os-bridge = { workspace = true }
+agent-os-kernel = { workspace = true }
+agent-os-execution = { workspace = true }
 aws-config = "1"
 aws-credential-types = "1"
 aws-sdk-s3 = "1"

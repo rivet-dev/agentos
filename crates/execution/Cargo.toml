@@ -3,15 +3,27 @@ name = "agent-os-execution"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Native execution plane scaffold for Agent OS"
 build = "build.rs"
+# Large Pyodide runtime assets are staged at build time (copied from the
+# in-tree assets directory during workspace builds, or downloaded from the
+# release CDN when building the published crate) so the packaged crate stays
+# under the registry size limit. See build.rs.
+exclude = [
+    "assets/pyodide/pyodide.asm.wasm",
+    "assets/pyodide/pyodide.asm.js",
+    "assets/pyodide/python_stdlib.zip",
+    "assets/pyodide/numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl",
+    "assets/pyodide/pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl",
+]
 
 [lib]
 doctest = false
 
 [dependencies]
-agent-os-bridge = { path = "../bridge" }
-agent-os-v8-runtime = { path = "../v8-runtime" }
+agent-os-bridge = { workspace = true }
+agent-os-v8-runtime = { workspace = true }
 base64 = "0.22"
 ciborium = "0.2"
 getrandom = "0.2"

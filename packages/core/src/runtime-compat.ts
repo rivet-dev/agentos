@@ -14,6 +14,7 @@ import {
 	type RootFilesystemEntry,
 	serializeMountConfigForSidecar,
 } from "./sidecar/rpc-client.js";
+import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
 
 export const AF_INET = 2;
@@ -1817,6 +1818,14 @@ function sidecarBinaryNeedsBuild(): boolean {
 }
 
 function ensureNativeSidecarBinary(): string {
+	// A published install has no in-repo Cargo workspace to build from: resolve
+	// the prebuilt platform binary (or the AGENT_OS_SIDECAR_BINARY override).
+	if (
+		process.env.AGENT_OS_SIDECAR_BINARY ||
+		!fsSync.existsSync(path.join(REPO_ROOT, "Cargo.toml"))
+	) {
+		return resolvePublishedSidecarBinary();
+	}
 	if (
 		ensuredSidecarBinary &&
 		fsSync.existsSync(ensuredSidecarBinary) &&

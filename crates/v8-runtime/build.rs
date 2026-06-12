@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[path = "../build-support/v8_bridge_build.rs"]
+#[path = "build_support.rs"]
 mod v8_bridge_build;
 
 fn cargo_home() -> PathBuf {

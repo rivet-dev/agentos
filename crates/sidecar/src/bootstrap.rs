@@ -22,8 +22,10 @@ use base64::Engine;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
+// Staged into OUT_DIR by build.rs (canonical workspace fixture in-tree, or the
+// vendored `assets/base-filesystem.json` copy in the published crate).
 const BUNDLED_BASE_FILESYSTEM_JSON: &[u8] =
-    include_bytes!("../../../packages/core/fixtures/base-filesystem.json");
+    include_bytes!(concat!(env!("OUT_DIR"), "/base-filesystem.json"));
 
 pub(crate) fn build_root_filesystem(
     descriptor: &RootFilesystemDescriptor,
