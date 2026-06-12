@@ -7,6 +7,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read, Write};
 
+const DETECTION_BYTES: usize = 8192;
+
 pub fn main(args: Vec<OsString>) -> i32 {
     let str_args: Vec<String> = args
         .iter()
@@ -60,9 +62,8 @@ pub fn main(args: Vec<OsString>) -> i32 {
 
     for filename in &filenames {
         let data = if filename == "-" {
-            let mut buf = Vec::new();
-            match io::stdin().lock().read_to_end(&mut buf) {
-                Ok(_) => buf,
+            match read_head_from_reader(io::stdin().lock(), DETECTION_BYTES) {
+                Ok(data) => data,
                 Err(e) => {
                     eprintln!("file: stdin: {}", e);
                     exit_code = 1;
@@ -74,40 +75,46 @@ pub fn main(args: Vec<OsString>) -> i32 {
             match fs::metadata(filename) {
                 Ok(meta) => {
                     if meta.is_dir() {
-                        print_result(
+                        if let Err(error) = print_result(
                             &mut out,
                             filename,
                             brief,
                             "directory",
                             if mime { "inode/directory" } else { "" },
                             mime,
-                        );
+                        ) {
+                            return output_error(error);
+                        }
                         continue;
                     }
                     if meta.is_symlink() {
-                        print_result(
+                        if let Err(error) = print_result(
                             &mut out,
                             filename,
                             brief,
                             "symbolic link",
                             if mime { "inode/symlink" } else { "" },
                             mime,
-                        );
+                        ) {
+                            return output_error(error);
+                        }
                         continue;
                     }
                     if meta.len() == 0 {
-                        print_result(
+                        if let Err(error) = print_result(
                             &mut out,
                             filename,
                             brief,
                             "empty",
                             if mime { "inode/x-empty" } else { "" },
                             mime,
-                        );
+                        ) {
+                            return output_error(error);
+                        }
                         continue;
                     }
                     // Read file data (up to 8KB for detection)
-                    match read_head(filename, 8192) {
+                    match read_head(filename, DETECTION_BYTES) {
                         Ok(data) => data,
                         Err(e) => {
                             eprintln!("file: {}: {}", filename, e);
@@ -127,19 +134,36 @@ pub fn main(args: Vec<OsString>) -> i32 {
         let (desc, mime_type) = identify(&data);
 
         if mime {
-            print_result(&mut out, filename, brief, &desc, &mime_type, true);
+            if let Err(error) = print_result(&mut out, filename, brief, &desc, &mime_type, true) {
+                return output_error(error);
+            }
         } else {
-            print_result(&mut out, filename, brief, &desc, &mime_type, false);
+            if let Err(error) = print_result(&mut out, filename, brief, &desc, &mime_type, false) {
+                return output_error(error);
+            }
         }
+    }
+
+    if let Err(error) = out.flush() {
+        return output_error(error);
     }
 
     exit_code
 }
 
+fn output_error(error: io::Error) -> i32 {
+    eprintln!("file: failed to write output: {error}");
+    1
+}
+
 fn read_head(path: &str, max: usize) -> io::Result<Vec<u8>> {
     let mut f = fs::File::open(path)?;
+    read_head_from_reader(&mut f, max)
+}
+
+fn read_head_from_reader(mut reader: impl Read, max: usize) -> io::Result<Vec<u8>> {
     let mut buf = vec![0u8; max];
-    let n = f.read(&mut buf)?;
+    let n = reader.read(&mut buf)?;
     buf.truncate(n);
     Ok(buf)
 }
@@ -151,17 +175,17 @@ fn print_result<W: Write>(
     desc: &str,
     mime_type: &str,
     use_mime: bool,
-) {
+) -> io::Result<()> {
     if use_mime && !mime_type.is_empty() {
         if brief {
-            let _ = writeln!(out, "{}", mime_type);
+            writeln!(out, "{}", mime_type)
         } else {
-            let _ = writeln!(out, "{}: {}", filename, mime_type);
+            writeln!(out, "{}: {}", filename, mime_type)
         }
     } else if brief {
-        let _ = writeln!(out, "{}", desc);
+        writeln!(out, "{}", desc)
     } else {
-        let _ = writeln!(out, "{}: {}", filename, desc);
+        writeln!(out, "{}: {}", filename, desc)
     }
 }
 
