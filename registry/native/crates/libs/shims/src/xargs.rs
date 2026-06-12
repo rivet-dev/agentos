@@ -15,8 +15,12 @@
 
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{self, BufRead, Read};
+use std::io::{self, Read, Write};
 use std::process::Stdio;
+
+const MAX_INPUT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_INPUT_ITEMS: usize = 100_000;
+const MAX_INPUT_ITEM_BYTES: usize = 1024 * 1024;
 
 pub fn xargs(args: Vec<OsString>) -> i32 {
     let str_args: Vec<String> = args
@@ -206,7 +210,12 @@ fn run_command(program: &str, args: &[String], trace: bool) -> i32 {
     }
 
     if program == "echo" {
-        println!("{}", args.join(" "));
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        if let Err(e) = writeln!(out, "{}", args.join(" ")).and_then(|_| out.flush()) {
+            eprintln!("xargs: {}", e);
+            return 1;
+        }
         return 0;
     }
 
@@ -227,44 +236,75 @@ fn run_command(program: &str, args: &[String], trace: bool) -> i32 {
 
 /// Read NUL-delimited items from stdin.
 fn read_null_delimited(arg_file: Option<&str>) -> io::Result<Vec<String>> {
-    let mut input = Vec::new();
-    match arg_file {
-        Some(path) => {
-            File::open(path)?.read_to_end(&mut input)?;
-        }
-        None => {
-            io::stdin().lock().read_to_end(&mut input)?;
-        }
+    let input = match arg_file {
+        Some(path) => read_limited_bytes(File::open(path)?)?,
+        None => read_limited_bytes(io::stdin().lock())?,
+    };
+
+    let mut items = Vec::new();
+    for segment in input.split(|&b| b == 0).filter(|s| !s.is_empty()) {
+        push_item(&mut items, String::from_utf8_lossy(segment).to_string())?;
     }
-    Ok(input
-        .split(|&b| b == 0)
-        .map(|s| String::from_utf8_lossy(s).to_string())
-        .filter(|s| !s.is_empty())
-        .collect())
+    Ok(items)
 }
 
 /// Read whitespace-delimited items from stdin, respecting shell quoting.
 fn read_whitespace_delimited(arg_file: Option<&str>) -> io::Result<Vec<String>> {
+    let input = match arg_file {
+        Some(path) => read_limited_string(File::open(path)?)?,
+        None => read_limited_string(io::stdin().lock())?,
+    };
+
     let mut items = Vec::new();
-    match arg_file {
-        Some(path) => {
-            let reader = io::BufReader::new(File::open(path)?);
-            for line in reader.lines() {
-                let line = line?;
-                let mut parsed = parse_quoted_args(&line);
-                items.append(&mut parsed);
-            }
-        }
-        None => {
-            let stdin = io::stdin();
-            for line in stdin.lock().lines() {
-                let line = line?;
-                let mut parsed = parse_quoted_args(&line);
-                items.append(&mut parsed);
-            }
+    for line in input.lines() {
+        for item in parse_quoted_args(line) {
+            push_item(&mut items, item)?;
         }
     }
     Ok(items)
+}
+
+fn read_limited_bytes<R: Read>(reader: R) -> io::Result<Vec<u8>> {
+    let mut input = Vec::new();
+    let mut limited = reader.take((MAX_INPUT_BYTES + 1) as u64);
+    limited.read_to_end(&mut input)?;
+    if input.len() > MAX_INPUT_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "input exceeds size limit",
+        ));
+    }
+    Ok(input)
+}
+
+fn read_limited_string<R: Read>(mut reader: R) -> io::Result<String> {
+    let mut input = String::new();
+    let mut limited = reader.by_ref().take((MAX_INPUT_BYTES + 1) as u64);
+    limited.read_to_string(&mut input)?;
+    if input.len() > MAX_INPUT_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "input exceeds size limit",
+        ));
+    }
+    Ok(input)
+}
+
+fn push_item(items: &mut Vec<String>, item: String) -> io::Result<()> {
+    if item.len() > MAX_INPUT_ITEM_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "input item exceeds size limit",
+        ));
+    }
+    if items.len() >= MAX_INPUT_ITEMS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "too many input items",
+        ));
+    }
+    items.push(item);
+    Ok(())
 }
 
 /// Parse a line respecting single quotes, double quotes, and backslash escapes.
