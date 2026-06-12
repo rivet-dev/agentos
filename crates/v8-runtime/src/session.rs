@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, Sender};
 
 use crate::execution;
 #[cfg(not(test))]
@@ -66,6 +66,30 @@ struct SessionEntry {
     isolate_handle: SharedIsolateHandle,
     /// Current execution abort handle used to wake sync bridge waits.
     execution_abort: SharedExecutionAbort,
+}
+
+/// Deferred shutdown work for a session that has already been removed from
+/// the manager. `finish()` joins the session thread and clears any call
+/// routes the thread registered while shutting down. Callers must release
+/// the SessionManager lock before calling `finish()`. Joining under the lock
+/// deadlocks: the dispatch thread needs the lock to drain the event channel,
+/// and the joined thread can be parked on a full event channel send.
+pub struct SessionShutdown {
+    session_id: String,
+    join_handle: Option<thread::JoinHandle<()>>,
+    call_id_router: CallIdRouter,
+}
+
+impl SessionShutdown {
+    pub fn finish(mut self) {
+        if let Some(handle) = self.join_handle.take() {
+            let _ = handle.join();
+        }
+        self.call_id_router
+            .lock()
+            .expect("call_id router lock poisoned")
+            .retain(|_, routed_session_id| routed_session_id != &self.session_id);
+    }
 }
 
 /// Concurrency slot tracker shared across session threads
@@ -276,16 +300,29 @@ impl SessionManager {
         session_id: &str,
         output_generation: u64,
     ) -> Result<bool, String> {
+        match self.begin_destroy_session_if_output_generation(session_id, output_generation)? {
+            Some(shutdown) => {
+                shutdown.finish();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    pub fn begin_destroy_session_if_output_generation(
+        &mut self,
+        session_id: &str,
+        output_generation: u64,
+    ) -> Result<Option<SessionShutdown>, String> {
         if !self
             .sessions
             .get(session_id)
             .is_some_and(|entry| entry.output_generation == Some(output_generation))
         {
-            return Ok(false);
+            return Ok(None);
         }
 
-        self.destroy_session(session_id)?;
-        Ok(true)
+        self.begin_destroy_session(session_id).map(Some)
     }
 
     pub fn detach_session_if_output_generation(
@@ -329,20 +366,29 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Destroy a session. Sends shutdown to the session thread and joins it.
+    /// Destroy a session inline. Joins the session thread before returning, so
+    /// this must not be called while a shared lock on the manager is held. Lock
+    /// holders use `begin_destroy_session` and call `finish()` after unlocking.
     pub fn destroy_session(&mut self, session_id: &str) -> Result<(), String> {
+        self.begin_destroy_session(session_id)?.finish();
+        Ok(())
+    }
+
+    /// First phase of destroying a session: terminate execution, signal abort,
+    /// send shutdown, clear call routes, and remove the entry. The returned
+    /// shutdown joins the session thread and must be finished after the
+    /// SessionManager lock is released.
+    pub fn begin_destroy_session(&mut self, session_id: &str) -> Result<SessionShutdown, String> {
         if !self.sessions.contains_key(session_id) {
             return Err(format!("session {} does not exist", session_id));
         }
 
         self.clear_call_routes_for_session(session_id);
-        let entry = self
+        let mut entry = self
             .sessions
-            .get_mut(session_id)
+            .remove(session_id)
             .expect("checked session exists");
 
-        // Send shutdown, drop the sender so the session thread's rx.recv()
-        // returns Err if Shutdown was consumed by an inner loop, then join.
         #[cfg(not(test))]
         if let Some(handle) = entry
             .isolate_handle
@@ -353,17 +399,17 @@ impl SessionManager {
             handle.terminate_execution();
         }
         signal_execution_abort(&entry.execution_abort, ExecutionAbortReason::Terminated);
-        let (replacement_tx, _replacement_rx) = bounded(0);
-        let old_tx = std::mem::replace(&mut entry.tx, replacement_tx);
-        let _ = old_tx.try_send(SessionCommand::Shutdown);
-        drop(old_tx);
-        if let Some(handle) = entry.join_handle.take() {
-            let _ = handle.join();
-        }
-        self.clear_call_routes_for_session(session_id);
-        self.sessions.remove(session_id);
-
-        Ok(())
+        // Send shutdown, then drop the entry (and with it the sender) so the
+        // session thread's rx.recv() returns Err if Shutdown was consumed by
+        // an inner loop.
+        let _ = entry.tx.try_send(SessionCommand::Shutdown);
+        let join_handle = entry.join_handle.take();
+        drop(entry);
+        Ok(SessionShutdown {
+            session_id: session_id.to_owned(),
+            join_handle,
+            call_id_router: Arc::clone(&self.call_id_router),
+        })
     }
 
     pub(crate) fn take_session_shutdown_handles(&mut self) -> Vec<thread::JoinHandle<()>> {
@@ -406,15 +452,22 @@ impl SessionManager {
             .retain(|_, routed_session_id| routed_session_id != session_id);
     }
 
-    /// Send a message to a session.
-    pub fn send_to_session(&self, session_id: &str, msg: SessionMessage) -> Result<(), String> {
+    /// Resolve a session's command sender and apply message side effects that
+    /// must happen under the manager lock (isolate termination, abort signal).
+    /// The caller sends on the returned channel after releasing the lock so a
+    /// full command channel cannot block the manager mutex.
+    pub fn session_command_sender(
+        &self,
+        session_id: &str,
+        msg: &SessionMessage,
+    ) -> Result<Sender<SessionCommand>, String> {
         let entry = self
             .sessions
             .get(session_id)
             .ok_or_else(|| format!("session {} does not exist", session_id))?;
 
         #[cfg(not(test))]
-        if matches!(&msg, SessionMessage::TerminateExecution) {
+        if matches!(msg, SessionMessage::TerminateExecution) {
             if let Some(handle) = entry
                 .isolate_handle
                 .lock()
@@ -424,24 +477,44 @@ impl SessionManager {
                 handle.terminate_execution();
             }
         }
-        if matches!(&msg, SessionMessage::TerminateExecution) {
+        if matches!(msg, SessionMessage::TerminateExecution) {
             signal_execution_abort(&entry.execution_abort, ExecutionAbortReason::Terminated);
         }
 
-        entry
-            .tx
+        Ok(entry.tx.clone())
+    }
+
+    /// Send a message to a session. Blocks on the session command channel, so
+    /// this must not be called while a shared lock on the manager is held.
+    pub fn send_to_session(&self, session_id: &str, msg: SessionMessage) -> Result<(), String> {
+        let sender = self.session_command_sender(session_id, &msg)?;
+        sender
             .send(SessionCommand::Message(msg))
             .map_err(|e| format!("session thread disconnected: {}", e))
     }
 
-    /// Destroy a set of sessions, ignoring sessions that were already removed.
+    /// Destroy a set of sessions inline, ignoring sessions that were already
+    /// removed. Joins session threads, so this must not be called while a
+    /// shared lock on the manager is held.
     pub fn destroy_sessions<I>(&mut self, session_ids: I)
     where
         I: IntoIterator<Item = String>,
     {
-        for sid in session_ids {
-            let _ = self.destroy_session(&sid);
+        for shutdown in self.begin_destroy_sessions(session_ids) {
+            shutdown.finish();
         }
+    }
+
+    /// Begin destroying a set of sessions, ignoring sessions that were already
+    /// removed. Finish each returned shutdown after releasing the manager lock.
+    pub fn begin_destroy_sessions<I>(&mut self, session_ids: I) -> Vec<SessionShutdown>
+    where
+        I: IntoIterator<Item = String>,
+    {
+        session_ids
+            .into_iter()
+            .filter_map(|sid| self.begin_destroy_session(&sid).ok())
+            .collect()
     }
 
     /// Number of registered sessions (including those waiting for a slot).
@@ -1932,6 +2005,61 @@ mod tests {
                 .get(&42)
                 .is_none(),
             "detach should clear stale bridge call routes for the session"
+        );
+    }
+
+    #[test]
+    fn begin_destroy_session_removes_entry_before_finish() {
+        let mut mgr = test_manager(1);
+        mgr.create_session("two-phase".into(), None, None)
+            .expect("create session");
+
+        let first_shutdown = mgr
+            .begin_destroy_session("two-phase")
+            .expect("begin destroy session");
+        assert_eq!(
+            mgr.session_count(),
+            0,
+            "entry should be removed before the shutdown is finished"
+        );
+
+        // A same-id create during the unfinished shutdown window must succeed
+        // because the entry was removed up front.
+        mgr.create_session("two-phase".into(), None, None)
+            .expect("re-create session while first shutdown is unfinished");
+
+        let second_shutdown = mgr
+            .begin_destroy_session("two-phase")
+            .expect("begin destroy re-created session");
+        first_shutdown.finish();
+        second_shutdown.finish();
+        assert_eq!(mgr.session_count(), 0);
+    }
+
+    #[test]
+    fn session_shutdown_finish_clears_late_call_routes() {
+        let mut mgr = test_manager(1);
+        mgr.create_session("late-route".into(), None, None)
+            .expect("create session");
+
+        let shutdown = mgr
+            .begin_destroy_session("late-route")
+            .expect("begin destroy session");
+        // Simulate a route the session thread registered between the pre-join
+        // route clear and thread exit.
+        mgr.call_id_router()
+            .lock()
+            .expect("call_id router")
+            .insert(42, "late-route".into());
+
+        shutdown.finish();
+        assert!(
+            mgr.call_id_router()
+                .lock()
+                .expect("call_id router")
+                .get(&42)
+                .is_none(),
+            "finish should clear call routes registered during shutdown"
         );
     }
 

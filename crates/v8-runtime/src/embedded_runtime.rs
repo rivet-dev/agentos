@@ -13,7 +13,7 @@ use crate::runtime_protocol::{
     BridgeResponse, RuntimeCommand, RuntimeEvent, SessionMessage, StreamEvent,
     validate_bridge_response_status,
 };
-use crate::session::{RuntimeEventEnvelope, SessionManager};
+use crate::session::{RuntimeEventEnvelope, SessionCommand, SessionManager};
 use crate::snapshot::SnapshotCache;
 use crate::{bridge, isolate};
 
@@ -167,11 +167,24 @@ impl EmbeddedV8Runtime {
             return Ok(false);
         }
 
-        self.session_mgr
-            .lock()
-            .expect("session manager lock poisoned")
-            .destroy_session_if_output_generation(&registration.session_id, registration.generation)
-            .map_err(other_io_error)
+        let shutdown = {
+            let mut mgr = self
+                .session_mgr
+                .lock()
+                .expect("session manager lock poisoned");
+            mgr.begin_destroy_session_if_output_generation(
+                &registration.session_id,
+                registration.generation,
+            )
+            .map_err(other_io_error)?
+        };
+        match shutdown {
+            Some(shutdown) => {
+                shutdown.finish();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     pub fn session_handle(self: &Arc<Self>, session_id: String) -> EmbeddedV8SessionHandle {
@@ -498,8 +511,13 @@ fn handle_connection(
         }
     }
 
-    let mut mgr = session_mgr.lock().expect("session manager lock poisoned");
-    mgr.destroy_sessions(session_ids);
+    let shutdowns = {
+        let mut mgr = session_mgr.lock().expect("session manager lock poisoned");
+        mgr.begin_destroy_sessions(session_ids)
+    };
+    for shutdown in shutdowns {
+        shutdown.finish();
+    }
 }
 
 fn dispatch_runtime_command(
@@ -518,30 +536,41 @@ fn dispatch_runtime_command(
                 .map_err(other_io_error)
         }
         RuntimeCommand::DestroySession { session_id } => {
-            let mut mgr = session_mgr.lock().expect("session manager lock poisoned");
-            mgr.destroy_session(&session_id).map_err(other_io_error)
-        }
-        RuntimeCommand::SendToSession {
-            session_id,
-            message: SessionMessage::BridgeResponse(response),
-        } => {
-            let mgr = session_mgr.lock().expect("session manager lock poisoned");
-            let routed_session_id = mgr
-                .call_id_router()
-                .lock()
-                .expect("call_id router lock poisoned")
-                .remove(&response.call_id)
-                .unwrap_or(session_id);
-            mgr.send_to_session(&routed_session_id, SessionMessage::BridgeResponse(response))
-                .map_err(other_io_error)
+            let shutdown = {
+                let mut mgr = session_mgr.lock().expect("session manager lock poisoned");
+                mgr.begin_destroy_session(&session_id)
+                    .map_err(other_io_error)?
+            };
+            shutdown.finish();
+            Ok(())
         }
         RuntimeCommand::SendToSession {
             session_id,
             message,
         } => {
-            let mgr = session_mgr.lock().expect("session manager lock poisoned");
-            mgr.send_to_session(&session_id, message)
-                .map_err(other_io_error)
+            // Resolve the sender and apply terminate side effects under the
+            // lock, then send after releasing it so a full session command
+            // channel cannot block the manager mutex.
+            let sender = {
+                let mgr = session_mgr.lock().expect("session manager lock poisoned");
+                let routed_session_id = match &message {
+                    SessionMessage::BridgeResponse(response) => mgr
+                        .call_id_router()
+                        .lock()
+                        .expect("call_id router lock poisoned")
+                        .remove(&response.call_id)
+                        .unwrap_or(session_id),
+                    SessionMessage::InjectGlobals { .. }
+                    | SessionMessage::Execute { .. }
+                    | SessionMessage::StreamEvent(_)
+                    | SessionMessage::TerminateExecution => session_id,
+                };
+                mgr.session_command_sender(&routed_session_id, &message)
+                    .map_err(other_io_error)?
+            };
+            sender
+                .send(SessionCommand::Message(message))
+                .map_err(|e| other_io_error(format!("session thread disconnected: {}", e)))
         }
         RuntimeCommand::WarmSnapshot { bridge_code } => snapshot_cache
             .get_or_create(&bridge_code)
