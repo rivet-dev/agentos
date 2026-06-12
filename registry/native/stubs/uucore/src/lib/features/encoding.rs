@@ -75,46 +75,48 @@ impl SupportsFastDecodeAndEncode for Base64SimdWrapper {
             // by splitting at each '='-containing quantum, decoding those 4-byte
             // groups with the padded variant, then letting the remainder fall back
             // to whichever alphabet fits.
-            let mut start = 0usize;
-            while start < input.len() {
-                let remaining = &input[start..];
+            (|| {
+                let mut start = 0usize;
+                while start < input.len() {
+                    let remaining = &input[start..];
 
-                if remaining.is_empty() {
-                    break;
-                }
-
-                if let Some(eq_rel_idx) = remaining.iter().position(|&b| b == b'=') {
-                    let blocks = (eq_rel_idx / 4) + 1;
-                    let segment_len = blocks * 4;
-
-                    if segment_len > remaining.len() {
-                        return Err(USimpleError::new(1, "error: invalid input"));
+                    if remaining.is_empty() {
+                        break;
                     }
 
-                    if Self::decode_with_standard(&remaining[..segment_len], output).is_err() {
-                        return Err(USimpleError::new(1, "error: invalid input"));
-                    }
+                    if let Some(eq_rel_idx) = remaining.iter().position(|&b| b == b'=') {
+                        let blocks = (eq_rel_idx / 4) + 1;
+                        let segment_len = blocks * 4;
 
-                    start += segment_len;
-                } else {
-                    // If there are no more '=' bytes the tail might still be padded
-                    // (len % 4 == 0) or purposely unpadded (GNU --ignore-garbage or
-                    // concatenated streams), so select the matching alphabet.
-                    let decoder = if remaining.len().is_multiple_of(4) {
-                        Self::decode_with_standard
+                        if segment_len > remaining.len() {
+                            return Err(USimpleError::new(1, "error: invalid input"));
+                        }
+
+                        if Self::decode_with_standard(&remaining[..segment_len], output).is_err() {
+                            return Err(USimpleError::new(1, "error: invalid input"));
+                        }
+
+                        start += segment_len;
                     } else {
-                        Self::decode_with_no_pad
-                    };
+                        // If there are no more '=' bytes the tail might still be padded
+                        // (len % 4 == 0) or purposely unpadded (GNU --ignore-garbage or
+                        // concatenated streams), so select the matching alphabet.
+                        let decoder = if remaining.len().is_multiple_of(4) {
+                            Self::decode_with_standard
+                        } else {
+                            Self::decode_with_no_pad
+                        };
 
-                    if decoder(remaining, output).is_err() {
-                        return Err(USimpleError::new(1, "error: invalid input"));
+                        if decoder(remaining, output).is_err() {
+                            return Err(USimpleError::new(1, "error: invalid input"));
+                        }
+
+                        break;
                     }
-
-                    break;
                 }
-            }
 
-            Ok(())
+                Ok(())
+            })()
         } else {
             Self::decode_with_no_pad(input, output)
                 .map_err(|_| USimpleError::new(1, "error: invalid input"))
@@ -615,5 +617,21 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(output, b"x");
+    }
+
+    #[test]
+    fn padded_base64_decode_error_truncates_partial_output() {
+        let wrapper = Base64SimdWrapper::new(
+            true,
+            4,
+            4,
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+        );
+        let mut output = b"seed".to_vec();
+
+        let result = wrapper.decode_into_vec(b"eA==!!!!", &mut output);
+
+        assert!(result.is_err());
+        assert_eq!(output, b"seed");
     }
 }
