@@ -11,6 +11,13 @@
 //! - The PTY provides terminal emulation (line discipline, echo, signals)
 
 use std::io::{self, Read, Write};
+use std::mem::ManuallyDrop;
+
+const MAX_ARG_COUNT: usize = 4096;
+const MAX_ENV_COUNT: usize = 4096;
+const MAX_SERIALIZED_BYTES: usize = 1024 * 1024;
+const MAX_CWD_BYTES: usize = 4096;
+const MAX_CAPTURED_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Handle to a spawned process connected via a pseudo-terminal.
 ///
@@ -40,22 +47,28 @@ fn errno_to_io_error(errno: wasi_ext::Errno) -> io::Error {
     io::Error::new(io::ErrorKind::Other, format!("wasi errno {}", errno))
 }
 
+fn invalid_input(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, message.into())
+}
+
+fn invalid_data(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
 /// Read from a raw WASI file descriptor into a buffer.
 fn fd_read(fd: RawFd, buf: &mut [u8]) -> io::Result<usize> {
     use std::os::fd::FromRawFd;
-    let file = unsafe { std::fs::File::from_raw_fd(fd as i32) };
-    let result = (&file).read(buf);
-    std::mem::forget(file);
-    result
+    // The caller owns this fd. This temporary File only routes through WASI fd_read.
+    let file = unsafe { ManuallyDrop::new(std::fs::File::from_raw_fd(fd as i32)) };
+    (&*file).read(buf)
 }
 
 /// Write to a raw WASI file descriptor from a buffer.
 fn fd_write(fd: RawFd, buf: &[u8]) -> io::Result<usize> {
     use std::os::fd::FromRawFd;
-    let file = unsafe { std::fs::File::from_raw_fd(fd as i32) };
-    let result = (&file).write(buf);
-    std::mem::forget(file);
-    result
+    // The caller owns this fd. This temporary File only routes through WASI fd_write.
+    let file = unsafe { ManuallyDrop::new(std::fs::File::from_raw_fd(fd as i32)) };
+    (&*file).write(buf)
 }
 
 /// Close a raw WASI file descriptor.
@@ -65,29 +78,165 @@ fn fd_close(fd: RawFd) {
 }
 
 /// Serialize strings as null-separated byte buffer for proc_spawn.
-fn serialize_null_separated(items: &[&str]) -> Vec<u8> {
+fn serialize_null_separated(items: &[&str]) -> io::Result<Vec<u8>> {
+    if items.len() > MAX_ARG_COUNT {
+        return Err(invalid_input(format!(
+            "argument count exceeds limit of {MAX_ARG_COUNT}"
+        )));
+    }
+
     let mut buf = Vec::new();
     for (i, item) in items.iter().enumerate() {
+        validate_no_nul("argument", item)?;
         if i > 0 {
-            buf.push(0);
+            push_serialized_byte(&mut buf, 0)?;
         }
-        buf.extend_from_slice(item.as_bytes());
+        append_serialized(&mut buf, item.as_bytes())?;
     }
-    buf
+    Ok(buf)
 }
 
 /// Serialize environment as KEY=VALUE null-separated pairs for proc_spawn.
-fn serialize_env(env: &[(&str, &str)]) -> Vec<u8> {
+fn serialize_env(env: &[(&str, &str)]) -> io::Result<Vec<u8>> {
+    if env.len() > MAX_ENV_COUNT {
+        return Err(invalid_input(format!(
+            "environment count exceeds limit of {MAX_ENV_COUNT}"
+        )));
+    }
+
     let mut buf = Vec::new();
     for (i, (key, value)) in env.iter().enumerate() {
+        validate_env_key(key)?;
+        validate_no_nul("environment value", value)?;
         if i > 0 {
-            buf.push(0);
+            push_serialized_byte(&mut buf, 0)?;
         }
-        buf.extend_from_slice(key.as_bytes());
-        buf.push(b'=');
-        buf.extend_from_slice(value.as_bytes());
+        append_serialized(&mut buf, key.as_bytes())?;
+        push_serialized_byte(&mut buf, b'=')?;
+        append_serialized(&mut buf, value.as_bytes())?;
     }
-    buf
+    Ok(buf)
+}
+
+fn validate_env_key(key: &str) -> io::Result<()> {
+    if key.is_empty() {
+        return Err(invalid_input("environment key must not be empty"));
+    }
+    validate_no_nul("environment key", key)?;
+    if key.as_bytes().contains(&b'=') {
+        return Err(invalid_input("environment key must not contain '='"));
+    }
+    Ok(())
+}
+
+fn validate_no_nul(label: &str, value: &str) -> io::Result<()> {
+    if value.as_bytes().contains(&0) {
+        return Err(invalid_input(format!("{label} must not contain NUL")));
+    }
+    Ok(())
+}
+
+fn validate_cwd(cwd: &str) -> io::Result<()> {
+    validate_no_nul("cwd", cwd)?;
+    if cwd.len() > MAX_CWD_BYTES {
+        return Err(invalid_input(format!(
+            "cwd exceeds limit of {MAX_CWD_BYTES} bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn push_serialized_byte(buf: &mut Vec<u8>, byte: u8) -> io::Result<()> {
+    reserve_serialized(buf.len(), 1)?;
+    buf.push(byte);
+    Ok(())
+}
+
+fn append_serialized(buf: &mut Vec<u8>, bytes: &[u8]) -> io::Result<()> {
+    reserve_serialized(buf.len(), bytes.len())?;
+    buf.extend_from_slice(bytes);
+    Ok(())
+}
+
+fn reserve_serialized(current_len: usize, additional_len: usize) -> io::Result<()> {
+    let next_len = current_len
+        .checked_add(additional_len)
+        .ok_or_else(|| invalid_input("serialized spawn data length overflowed"))?;
+    if next_len > MAX_SERIALIZED_BYTES {
+        return Err(invalid_input(format!(
+            "serialized spawn data exceeds limit of {MAX_SERIALIZED_BYTES} bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn append_captured_output_with_limit(
+    stdout: &mut Vec<u8>,
+    chunk: &[u8],
+    limit: usize,
+) -> io::Result<()> {
+    let next_len = stdout
+        .len()
+        .checked_add(chunk.len())
+        .ok_or_else(|| invalid_data("captured PTY output length overflowed"))?;
+    if next_len > limit {
+        return Err(invalid_data(format!(
+            "captured PTY output exceeds limit of {limit} bytes"
+        )));
+    }
+    stdout.extend_from_slice(chunk);
+    Ok(())
+}
+
+fn read_captured_output<R, C>(read_output: R, cleanup: C) -> io::Result<Vec<u8>>
+where
+    R: FnMut(&mut [u8]) -> io::Result<usize>,
+    C: FnMut(),
+{
+    read_captured_output_with_limit(read_output, cleanup, MAX_CAPTURED_OUTPUT_BYTES)
+}
+
+fn read_captured_output_with_limit<R, C>(
+    mut read_output: R,
+    mut cleanup: C,
+    limit: usize,
+) -> io::Result<Vec<u8>>
+where
+    R: FnMut(&mut [u8]) -> io::Result<usize>,
+    C: FnMut(),
+{
+    let mut stdout = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        match read_output(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if let Err(e) = append_captured_output_with_limit(&mut stdout, &buf[..n], limit) {
+                    cleanup();
+                    return Err(e);
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => break,
+            Err(e) => {
+                cleanup();
+                return Err(e);
+            }
+        }
+    }
+    Ok(stdout)
+}
+
+fn wait_or_cleanup<C>(result: io::Result<i32>, cleanup: C) -> io::Result<i32>
+where
+    C: FnOnce(),
+{
+    match result {
+        Ok(exit_code) => Ok(exit_code),
+        Err(e) => {
+            cleanup();
+            Err(e)
+        }
+    }
 }
 
 /// Spawn a child process connected via a PTY.
@@ -105,11 +254,12 @@ pub fn spawn_session(argv: &[&str], env: &[(&str, &str)], cwd: &str) -> io::Resu
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty argv"));
     }
 
+    validate_cwd(cwd)?;
+    let argv_buf = serialize_null_separated(argv)?;
+    let envp_buf = serialize_env(env)?;
+
     // Allocate PTY master/slave pair via kernel
     let (master_fd, slave_fd) = wasi_ext::openpty().map_err(errno_to_io_error)?;
-
-    let argv_buf = serialize_null_separated(argv);
-    let envp_buf = serialize_env(env);
 
     // Spawn child with PTY slave as all stdio
     let result = wasi_ext::spawn(
@@ -221,25 +371,27 @@ impl WasiPtyChild {
         self.kill(15)
     }
 
+    fn kill_and_reap(&mut self) {
+        if self.exited {
+            return;
+        }
+
+        let _ = wasi_ext::kill(self.pid, 9);
+        if wasi_ext::waitpid(self.pid, 0).is_ok() {
+            self.exited = true;
+        }
+    }
+
     /// Read all output from the PTY, then wait for exit.
     ///
     /// Reads output until the PTY master gets EOF (child closed slave),
     /// then waits for the child to exit.
     pub fn consume_output(&mut self) -> io::Result<wasi_spawn::WasiOutput> {
-        let mut stdout = Vec::new();
+        let master_fd = self.master_fd;
+        let stdout = read_captured_output(|buf| fd_read(master_fd, buf), || self.kill_and_reap())?;
 
-        // Read all output from PTY master until EOF
-        let mut buf = [0u8; 4096];
-        loop {
-            match self.read_output(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => stdout.extend_from_slice(&buf[..n]),
-                Err(e) if e.kind() == io::ErrorKind::BrokenPipe => break,
-                Err(e) => return Err(e),
-            }
-        }
-
-        let exit_code = self.wait()?;
+        let wait_result = self.wait();
+        let exit_code = wait_or_cleanup(wait_result, || self.kill_and_reap())?;
 
         // PTY multiplexes stdout+stderr, so stderr is empty
         Ok(wasi_spawn::WasiOutput {
@@ -252,6 +404,100 @@ impl WasiPtyChild {
 
 impl Drop for WasiPtyChild {
     fn drop(&mut self) {
+        self.kill_and_reap();
         fd_close(self.master_fd);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_interior_nul_in_arguments() {
+        let err = serialize_null_separated(&["echo", "a\0b"]).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn rejects_invalid_environment_keys() {
+        let err = serialize_env(&[("A=B", "value")]).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn rejects_oversized_serialized_data() {
+        let oversized = "x".repeat(MAX_SERIALIZED_BYTES + 1);
+        let err = serialize_null_separated(&[&oversized]).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn appends_captured_output_until_limit() {
+        let mut output = vec![b'x'; MAX_CAPTURED_OUTPUT_BYTES - 1];
+
+        append_captured_output_with_limit(&mut output, b"y", MAX_CAPTURED_OUTPUT_BYTES).unwrap();
+
+        assert_eq!(output.len(), MAX_CAPTURED_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn rejects_oversized_captured_output() {
+        let mut output = vec![b'x'; MAX_CAPTURED_OUTPUT_BYTES];
+        let err = append_captured_output_with_limit(&mut output, b"y", MAX_CAPTURED_OUTPUT_BYTES)
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(output.len(), MAX_CAPTURED_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn consume_helper_cleans_up_on_output_limit() {
+        let mut reads = 0;
+        let mut cleanup_calls = 0;
+        let err = read_captured_output_with_limit(
+            |buf| {
+                reads += 1;
+                buf[..4].copy_from_slice(b"xxxx");
+                Ok(4)
+            },
+            || cleanup_calls += 1,
+            8,
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(reads, 3);
+        assert_eq!(cleanup_calls, 1);
+    }
+
+    #[test]
+    fn consume_helper_cleans_up_on_read_error() {
+        let mut cleanup_calls = 0;
+        let err = read_captured_output_with_limit(
+            |_buf| Err(io::Error::new(io::ErrorKind::PermissionDenied, "boom")),
+            || cleanup_calls += 1,
+            8,
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(cleanup_calls, 1);
+    }
+
+    #[test]
+    fn wait_error_runs_cleanup() {
+        let mut cleanup_calls = 0;
+        let err = wait_or_cleanup(
+            Err(io::Error::new(io::ErrorKind::NotFound, "missing")),
+            || cleanup_calls += 1,
+        )
+        .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert_eq!(cleanup_calls, 1);
     }
 }
