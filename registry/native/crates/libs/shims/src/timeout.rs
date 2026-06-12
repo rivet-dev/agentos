@@ -40,9 +40,9 @@ pub fn timeout(args: Vec<OsString>) -> i32 {
         return 125;
     }
 
-    let duration_secs: f64 = match str_args[0].parse() {
-        Ok(d) if d >= 0.0 => d,
-        _ => {
+    let timeout_duration = match parse_timeout_duration(&str_args[0]) {
+        Some(duration) => duration,
+        None => {
             eprintln!("timeout: invalid time interval '{}'", str_args[0]);
             return 125;
         }
@@ -60,7 +60,6 @@ pub fn timeout(args: Vec<OsString>) -> i32 {
     };
 
     let start = std::time::Instant::now();
-    let timeout_duration = Duration::from_secs_f64(duration_secs);
     let mut poll_sleep_ms = INITIAL_POLL_SLEEP_MS;
 
     loop {
@@ -72,24 +71,54 @@ pub fn timeout(args: Vec<OsString>) -> i32 {
             Ok(None) => {
                 // Still running — check timeout
                 if start.elapsed() >= timeout_duration {
-                    // Timeout exceeded — kill the child
-                    let _ = child.kill();
-                    let _ = child.wait(); // reap
-                    return 124;
+                    // Timeout exceeded. Kill the child and reap it.
+                    return match kill_and_reap_child(&mut child) {
+                        Ok(Some(status)) => status.code().unwrap_or(1),
+                        Ok(None) => 124,
+                        Err(error) => {
+                            eprintln!("timeout: {error}");
+                            125
+                        }
+                    };
                 }
                 let remaining = timeout_duration.saturating_sub(start.elapsed());
                 let sleep_ms = next_poll_sleep_ms(poll_sleep_ms, remaining);
                 if let Err(error) = sleep_for_poll(Duration::from_millis(u64::from(sleep_ms))) {
+                    let _ = kill_and_reap_child(&mut child);
                     eprintln!("timeout: failed to sleep while waiting for command: {error}");
                     return 125;
                 }
                 poll_sleep_ms = poll_sleep_ms.saturating_mul(2).min(MAX_POLL_SLEEP_MS);
             }
             Err(e) => {
+                let _ = kill_and_reap_child(&mut child);
                 eprintln!("timeout: error waiting for command: {}", e);
                 return 125;
             }
         }
+    }
+}
+
+fn parse_timeout_duration(raw: &str) -> Option<Duration> {
+    let seconds = raw.parse::<f64>().ok()?;
+    Duration::try_from_secs_f64(seconds).ok()
+}
+
+fn kill_and_reap_child(
+    child: &mut std::process::Child,
+) -> Result<Option<std::process::ExitStatus>, String> {
+    match child.kill() {
+        Ok(()) => child
+            .wait()
+            .map(|_| None)
+            .map_err(|error| format!("failed to wait for killed command: {error}")),
+        Err(kill_error) => match child.try_wait() {
+            Ok(Some(status)) => Ok(Some(status)),
+            Ok(None) => Err(format!("failed to kill command: {kill_error}")),
+            Err(wait_error) => Err(format!(
+                "failed to kill command: {kill_error}; failed to inspect command: {wait_error}"
+            )),
+        },
     }
 }
 
@@ -123,7 +152,9 @@ fn sleep_for_poll(duration: Duration) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ceil_duration_to_millis, next_poll_sleep_ms, MAX_POLL_SLEEP_MS};
+    use super::{
+        ceil_duration_to_millis, next_poll_sleep_ms, parse_timeout_duration, MAX_POLL_SLEEP_MS,
+    };
     use std::time::Duration;
 
     #[test]
@@ -143,5 +174,21 @@ mod tests {
     #[test]
     fn poll_sleep_preserves_requested_delay_when_deadline_allows_it() {
         assert_eq!(next_poll_sleep_ms(32, Duration::from_secs(2)), 32);
+    }
+
+    #[test]
+    fn timeout_duration_rejects_non_finite_or_negative_values() {
+        assert_eq!(parse_timeout_duration("-1"), None);
+        assert_eq!(parse_timeout_duration("NaN"), None);
+        assert_eq!(parse_timeout_duration("inf"), None);
+        assert_eq!(parse_timeout_duration("1e1000000000"), None);
+    }
+
+    #[test]
+    fn timeout_duration_accepts_fractional_values() {
+        assert_eq!(
+            parse_timeout_duration("0.5"),
+            Some(Duration::from_millis(500))
+        );
     }
 }
