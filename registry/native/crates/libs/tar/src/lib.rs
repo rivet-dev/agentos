@@ -5,13 +5,17 @@
 
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+
+const MAX_ARCHIVE_ENTRIES: usize = 100_000;
+const MAX_CREATE_DEPTH: usize = 256;
+const MAX_DIRECTORY_ENTRIES: usize = 100_000;
 
 #[derive(PartialEq)]
 enum Mode {
@@ -176,35 +180,41 @@ fn do_create(
         ));
     }
 
-    let bytes = if gzip {
-        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+    if gzip {
+        let writer = open_write(archive_file)?;
+        let encoder = GzEncoder::new(writer, Compression::default());
         let mut builder = tar::Builder::new(encoder);
+        let mut entry_count = 0;
         for path in paths {
             append_path(
                 &mut builder,
                 resolve_disk_path(directory, Path::new(path)),
                 Path::new(path),
                 verbose,
+                0,
+                &mut entry_count,
             )?;
         }
         let encoder = builder.into_inner()?;
-        encoder.finish()?
+        let mut writer = encoder.finish()?;
+        writer.flush()
     } else {
-        let cursor = io::Cursor::new(Vec::new());
-        let mut builder = tar::Builder::new(cursor);
+        let writer = open_write(archive_file)?;
+        let mut builder = tar::Builder::new(writer);
+        let mut entry_count = 0;
         for path in paths {
             append_path(
                 &mut builder,
                 resolve_disk_path(directory, Path::new(path)),
                 Path::new(path),
                 verbose,
+                0,
+                &mut entry_count,
             )?;
         }
-        let cursor = builder.into_inner()?;
-        cursor.into_inner()
-    };
-
-    write_archive_bytes(archive_file, &bytes)
+        let mut writer = builder.into_inner()?;
+        writer.flush()
+    }
 }
 
 fn append_path<W: Write>(
@@ -212,11 +222,31 @@ fn append_path<W: Write>(
     disk_path: PathBuf,
     archive_path: &Path,
     verbose: bool,
+    depth: usize,
+    entry_count: &mut usize,
 ) -> io::Result<()> {
+    if depth > MAX_CREATE_DEPTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "maximum directory depth exceeded at {}",
+                disk_path.display()
+            ),
+        ));
+    }
+    increment_entry_count(entry_count)?;
+
     let meta = fs::symlink_metadata(&disk_path)?;
 
     if meta.is_dir() {
-        append_dir(builder, &disk_path, archive_path, verbose)?;
+        append_dir(
+            builder,
+            &disk_path,
+            archive_path,
+            verbose,
+            depth,
+            entry_count,
+        )?;
     } else if meta.is_file() {
         if verbose {
             eprintln!("{}", archive_path.display());
@@ -249,6 +279,8 @@ fn append_dir<W: Write>(
     disk_dir: &Path,
     archive_dir: &Path,
     verbose: bool,
+    depth: usize,
+    entry_count: &mut usize,
 ) -> io::Result<()> {
     if verbose {
         eprintln!("{}/", archive_dir.display());
@@ -261,12 +293,25 @@ fn append_dir<W: Write>(
     header.set_cksum();
     builder.append_data(&mut header, archive_dir, io::empty())?;
 
-    let mut entries: Vec<_> = fs::read_dir(disk_dir)?.collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by_key(|e| e.file_name());
-
-    for entry in entries {
+    let mut dir_entries = 0;
+    for entry_result in fs::read_dir(disk_dir)? {
+        let entry = entry_result?;
+        dir_entries += 1;
+        if dir_entries > MAX_DIRECTORY_ENTRIES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("too many entries in {}", disk_dir.display()),
+            ));
+        }
         let archive_child = archive_dir.join(entry.file_name());
-        append_path(builder, entry.path(), &archive_child, verbose)?;
+        append_path(
+            builder,
+            entry.path(),
+            &archive_child,
+            verbose,
+            depth + 1,
+            entry_count,
+        )?;
     }
 
     Ok(())
@@ -283,17 +328,23 @@ fn do_extract(
     let mut archive = tar::Archive::new(reader);
     let mut known_dirs = HashSet::new();
     if let Some(base) = directory {
+        validate_extract_base(Path::new(base))?;
         known_dirs.insert(PathBuf::from(base));
     }
 
+    let mut entry_count = 0;
     for entry_result in archive.entries()? {
+        increment_entry_count(&mut entry_count)?;
         let mut entry = entry_result?;
         let orig_path = entry.path()?.into_owned();
+        validate_archive_input_path(&orig_path)?;
 
         let relative_dest = match strip_path_components(&orig_path, strip_components) {
             Some(p) if !p.as_os_str().is_empty() => p,
             _ => continue,
         };
+        validate_relative_output_path(&relative_dest)?;
+        validate_extract_depth(&relative_dest)?;
         let dest = resolve_output_path(directory, &relative_dest);
 
         if verbose {
@@ -312,16 +363,25 @@ fn do_extract(
                         ensure_relative_dir_exists(directory, relative_parent, &mut known_dirs)?;
                     }
                 }
-                let mut contents = Vec::new();
-                entry.read_to_end(&mut contents).map_err(|e| {
-                    io::Error::new(e.kind(), format!("read {}: {}", orig_path.display(), e))
+                reject_existing_symlink(&dest)?;
+                let mut output = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&dest)
+                    .map_err(|e| {
+                        io::Error::new(e.kind(), format!("open {}: {}", dest.display(), e))
+                    })?;
+                io::copy(&mut entry, &mut output).map_err(|e| {
+                    io::Error::new(e.kind(), format!("write {}: {}", dest.display(), e))
                 })?;
-                fs::write(&dest, contents).map_err(|e| {
+                output.flush().map_err(|e| {
                     io::Error::new(e.kind(), format!("write {}: {}", dest.display(), e))
                 })?;
             }
             tar::EntryType::Symlink => {
                 if let Some(target) = entry.link_name()? {
+                    validate_symlink_target(target.as_ref())?;
                     if let Some(parent) = dest.parent() {
                         if !parent.as_os_str().is_empty() {
                             let relative_parent =
@@ -333,8 +393,11 @@ fn do_extract(
                             )?;
                         }
                     }
+                    reject_existing_symlink(&dest)?;
                     #[allow(deprecated)]
-                    let _ = std::fs::soft_link(target.as_ref(), &dest);
+                    std::fs::soft_link(target.as_ref(), &dest).map_err(|e| {
+                        io::Error::new(e.kind(), format!("symlink {}: {}", dest.display(), e))
+                    })?;
                 }
             }
             _ => {
@@ -383,6 +446,18 @@ fn ensure_relative_dir_exists(
                         known_dirs.insert(current.clone());
                     }
                     Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                        let metadata = fs::symlink_metadata(&current).map_err(|metadata_err| {
+                            io::Error::new(
+                                metadata_err.kind(),
+                                format!("metadata {}: {}", current.display(), metadata_err),
+                            )
+                        })?;
+                        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("refusing to extract through {}", current.display()),
+                            ));
+                        }
                         known_dirs.insert(current.clone());
                     }
                     Err(err) => {
@@ -408,8 +483,12 @@ fn ensure_relative_dir_exists(
 fn do_list(archive_file: Option<&str>, gzip: bool, verbose: bool) -> io::Result<()> {
     let reader = open_read(archive_file, gzip)?;
     let mut archive = tar::Archive::new(reader);
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
 
+    let mut entry_count = 0;
     for entry_result in archive.entries()? {
+        increment_entry_count(&mut entry_count)?;
         let entry = entry_result?;
         let path = entry.path()?;
 
@@ -422,19 +501,20 @@ fn do_list(archive_file: Option<&str>, gzip: bool, verbose: bool) -> io::Result<
                 tar::EntryType::Symlink => 'l',
                 _ => '-',
             };
-            println!(
+            writeln!(
+                out,
                 "{}{} {:>8} {}",
                 type_ch,
                 format_mode(mode),
                 size,
                 path.display()
-            );
+            )?;
         } else {
-            println!("{}", path.display());
+            writeln!(out, "{}", path.display())?;
         }
     }
 
-    Ok(())
+    out.flush()
 }
 
 fn open_read(archive_file: Option<&str>, gzip: bool) -> io::Result<Box<dyn Read>> {
@@ -450,14 +530,10 @@ fn open_read(archive_file: Option<&str>, gzip: bool) -> io::Result<Box<dyn Read>
     }
 }
 
-fn write_archive_bytes(archive_file: Option<&str>, bytes: &[u8]) -> io::Result<()> {
+fn open_write(archive_file: Option<&str>) -> io::Result<Box<dyn Write>> {
     match archive_file {
-        Some("-") | None => {
-            let mut stdout = io::stdout();
-            stdout.write_all(bytes)?;
-            stdout.flush()
-        }
-        Some(path) => fs::write(path, bytes),
+        Some("-") | None => Ok(Box::new(io::stdout())),
+        Some(path) => Ok(Box::new(File::create(path)?)),
     }
 }
 
@@ -487,6 +563,107 @@ fn strip_path_components(path: &Path, n: usize) -> Option<PathBuf> {
         None
     } else {
         Some(stripped)
+    }
+}
+
+fn increment_entry_count(count: &mut usize) -> io::Result<()> {
+    *count += 1;
+    if *count > MAX_ARCHIVE_ENTRIES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "too many archive entries",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_relative_output_path(path: &Path) -> io::Result<()> {
+    for component in path.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("refusing to extract unsafe path {}", path.display()),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_archive_input_path(path: &Path) -> io::Result<()> {
+    for component in path.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("refusing to extract unsafe path {}", path.display()),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_extract_depth(path: &Path) -> io::Result<()> {
+    let depth = path
+        .components()
+        .filter(|component| matches!(component, Component::Normal(_)))
+        .count();
+    if depth > MAX_CREATE_DEPTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("maximum extraction depth exceeded at {}", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_extract_base(path: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(path).map_err(|err| {
+        io::Error::new(err.kind(), format!("metadata {}: {}", path.display(), err))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to extract through {}", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_symlink_target(target: &Path) -> io::Result<()> {
+    for component in target.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "refusing to extract unsafe symlink target {}",
+                        target.display()
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reject_existing_symlink(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to overwrite symlink {}", path.display()),
+        )),
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(io::Error::new(
+            err.kind(),
+            format!("metadata {}: {}", path.display(), err),
+        )),
     }
 }
 
