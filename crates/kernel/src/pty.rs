@@ -535,6 +535,14 @@ impl PtyManager {
 
                         if !pty.output_buffer.is_empty() {
                             let result = drain_buffer(&mut pty.output_buffer, length);
+                            // This reader consumed buffered data directly, so its queued waiter
+                            // entry must be removed or a later delivery will assign data to an
+                            // orphan.
+                            if let Some(id) = waiter_id.take() {
+                                pty.waiting_input_reads.retain(|queued| *queued != id);
+                                pty.waiting_output_reads.retain(|queued| *queued != id);
+                                state.waiters.remove(&id);
+                            }
                             self.notify_waiters_and_pollers();
                             return Ok(Some(result));
                         }
@@ -556,6 +564,14 @@ impl PtyManager {
 
                         if !pty.input_buffer.is_empty() {
                             let result = drain_buffer(&mut pty.input_buffer, length);
+                            // This reader consumed buffered data directly, so its queued waiter
+                            // entry must be removed or a later delivery will assign data to an
+                            // orphan.
+                            if let Some(id) = waiter_id.take() {
+                                pty.waiting_input_reads.retain(|queued| *queued != id);
+                                pty.waiting_output_reads.retain(|queued| *queued != id);
+                                state.waiters.remove(&id);
+                            }
                             self.notify_waiters_and_pollers();
                             return Ok(Some(result));
                         }

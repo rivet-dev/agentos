@@ -84,6 +84,150 @@ fn raw_mode_pending_short_read_buffers_remaining_bytes() {
 }
 
 #[test]
+fn split_delivery_with_second_queued_reader_leaves_no_stale_waiters() {
+    let manager = PtyManager::new();
+    let pty = manager.create_pty();
+    manager
+        .set_discipline(
+            pty.master.description.id(),
+            LineDisciplineConfig {
+                canonical: Some(false),
+                echo: Some(false),
+                isig: Some(false),
+            },
+        )
+        .expect("set raw mode");
+
+    let slave_id = pty.slave.description.id();
+
+    // Reader A asks for one byte and must be first in the waiter queue.
+    let reader_a = {
+        let manager = manager.clone();
+        std::thread::spawn(move || {
+            manager
+                .read_with_timeout(slave_id, 1, Some(Duration::from_secs(5)))
+                .expect("first read should succeed")
+                .expect("first read should deliver data")
+        })
+    };
+    wait_for(
+        || manager.pending_read_waiter_count() == 1,
+        Duration::from_secs(1),
+    );
+
+    // Reader B queues behind A and will pick up the buffered tail.
+    let reader_b = {
+        let manager = manager.clone();
+        std::thread::spawn(move || {
+            manager
+                .read_with_timeout(slave_id, 64, Some(Duration::from_secs(5)))
+                .expect("second read should succeed")
+                .expect("second read should deliver data")
+        })
+    };
+    wait_for(
+        || manager.pending_read_waiter_count() == 2,
+        Duration::from_secs(1),
+    );
+
+    // The split delivery hands "h" to reader A and buffers "ello", which
+    // reader B drains directly from the input buffer.
+    manager
+        .write(pty.master.description.id(), b"hello")
+        .expect("write raw input");
+
+    assert_eq!(reader_a.join().expect("reader A should finish"), b"h");
+    assert_eq!(reader_b.join().expect("reader B should finish"), b"ello");
+
+    // Reader B returned via the direct buffer-drain path, so its waiter
+    // entry and queue id must be gone.
+    assert_eq!(manager.pending_read_waiter_count(), 0);
+    assert_eq!(manager.queued_read_waiter_count(), 0);
+
+    // A stale waiter would swallow this write and the read would time out.
+    manager
+        .write(pty.master.description.id(), b"world")
+        .expect("write after split delivery");
+    let follow_up = manager
+        .read_with_timeout(slave_id, 64, Some(Duration::from_secs(1)))
+        .expect("follow-up read should succeed")
+        .expect("follow-up read should deliver data");
+    assert_eq!(follow_up, b"world");
+}
+
+#[test]
+fn split_output_delivery_with_second_queued_reader_leaves_no_stale_waiters() {
+    let manager = PtyManager::new();
+    let pty = manager.create_pty();
+    manager
+        .set_discipline(
+            pty.master.description.id(),
+            LineDisciplineConfig {
+                canonical: Some(false),
+                echo: Some(false),
+                isig: Some(false),
+            },
+        )
+        .expect("set raw mode");
+
+    let master_id = pty.master.description.id();
+
+    // Reader A asks for one byte and must be first in the waiter queue.
+    let reader_a = {
+        let manager = manager.clone();
+        std::thread::spawn(move || {
+            manager
+                .read_with_timeout(master_id, 1, Some(Duration::from_secs(5)))
+                .expect("first read should succeed")
+                .expect("first read should deliver data")
+        })
+    };
+    wait_for(
+        || manager.pending_read_waiter_count() == 1,
+        Duration::from_secs(1),
+    );
+
+    // Reader B queues behind A and will pick up the buffered tail.
+    let reader_b = {
+        let manager = manager.clone();
+        std::thread::spawn(move || {
+            manager
+                .read_with_timeout(master_id, 64, Some(Duration::from_secs(5)))
+                .expect("second read should succeed")
+                .expect("second read should deliver data")
+        })
+    };
+    wait_for(
+        || manager.pending_read_waiter_count() == 2,
+        Duration::from_secs(1),
+    );
+
+    // The split delivery hands "h" to reader A and buffers "ello", which
+    // reader B drains directly from the output buffer.
+    manager
+        .write(pty.slave.description.id(), b"hello")
+        .expect("write slave output");
+
+    assert_eq!(reader_a.join().expect("reader A should finish"), b"h");
+    assert_eq!(reader_b.join().expect("reader B should finish"), b"ello");
+
+    // Reader B returned via the direct buffer-drain path, so its waiter
+    // entry and queue id must be gone.
+    assert_eq!(manager.pending_read_waiter_count(), 0);
+    assert_eq!(manager.queued_read_waiter_count(), 0);
+
+    // A stale waiter would swallow this write and the read would time out.
+    manager
+        .write(pty.slave.description.id(), b"world")
+        .expect("write after split delivery");
+    let follow_up = manager
+        .read_with_timeout(master_id, 64, Some(Duration::from_secs(1)))
+        .expect("follow-up read should succeed")
+        .expect("follow-up read should deliver data");
+    assert_eq!(follow_up, b"world");
+}
+
+#[test]
 fn canonical_mode_buffers_until_newline_and_honors_backspace() {
     let manager = PtyManager::new();
     let pty = manager.create_pty();
