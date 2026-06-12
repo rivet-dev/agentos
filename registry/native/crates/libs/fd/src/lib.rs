@@ -4,8 +4,10 @@
 //! and regex for pattern matching. Covers common fd patterns:
 //! fd PATTERN, fd -e EXT, fd -t f/d, fd -H (hidden), fd -I (no-ignore).
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use regex::Regex;
@@ -19,13 +21,7 @@ pub fn main(args: Vec<OsString>) -> i32 {
         .collect();
 
     match run(&str_args) {
-        Ok(found) => {
-            if found {
-                0
-            } else {
-                1
-            }
-        }
+        Ok(code) => code,
         Err(msg) => {
             eprintln!("[fd error]: {}", msg);
             1
@@ -40,6 +36,12 @@ enum TypeFilter {
     Symlink,
 }
 
+enum ParsedArgs {
+    Search(Options),
+    Help,
+    Version,
+}
+
 struct Options {
     pattern: Option<Regex>,
     extensions: Vec<String>,
@@ -52,24 +54,53 @@ struct Options {
     absolute_path: bool,
 }
 
-fn run(args: &[String]) -> Result<bool, String> {
-    let opts = parse_args(args)?;
+fn run(args: &[String]) -> Result<i32, String> {
+    let parsed = parse_args(args)?;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    let ParsedArgs::Search(opts) = parsed else {
+        match parsed {
+            ParsedArgs::Help => print_help(&mut out),
+            ParsedArgs::Version => writeln!(out, "fd 0.1.0 (Agent OS)"),
+            ParsedArgs::Search(_) => unreachable!(),
+        }
+        .map_err(|e| format!("failed to write output: {e}"))?;
+        out.flush()
+            .map_err(|e| format!("failed to write output: {e}"))?;
+        return Ok(0);
+    };
+
     let mut found = false;
 
     for search_path in &opts.search_paths {
         let base = PathBuf::from(search_path);
-        walk(&base, search_path, 0, &opts, &mut found)?;
+        let mut visited_dirs = HashSet::new();
+        walk(
+            &base,
+            search_path,
+            0,
+            &opts,
+            &mut found,
+            &mut out,
+            &mut visited_dirs,
+        )?;
     }
 
-    Ok(found)
+    out.flush()
+        .map_err(|e| format!("failed to write output: {e}"))?;
+
+    Ok(if found { 0 } else { 1 })
 }
 
-fn walk(
+fn walk<W: Write>(
     full_path: &Path,
     base_path: &str,
     depth: usize,
     opts: &Options,
     found: &mut bool,
+    out: &mut W,
+    visited_dirs: &mut HashSet<PathBuf>,
 ) -> Result<(), String> {
     if let Some(max) = opts.max_depth {
         if depth > max {
@@ -89,12 +120,18 @@ fn walk(
             } else {
                 full_path.to_string_lossy().to_string()
             };
-            println!("{}", display);
+            writeln!(out, "{}", display).map_err(|e| format!("failed to write output: {e}"))?;
         }
     }
 
     // Recurse into directories
     if full_path.is_dir() {
+        let canonical_path =
+            fs::canonicalize(full_path).map_err(|e| format!("{}: {}", full_path.display(), e))?;
+        if !visited_dirs.insert(canonical_path) {
+            return Ok(());
+        }
+
         if let Some(max) = opts.max_depth {
             if depth >= max {
                 return Ok(());
@@ -104,7 +141,9 @@ fn walk(
         let entries =
             fs::read_dir(full_path).map_err(|e| format!("{}: {}", full_path.display(), e))?;
 
-        let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        let mut sorted: Vec<_> = entries
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("{}: {}", full_path.display(), e))?;
         sorted.sort_by_key(|e| e.file_name());
 
         for entry in sorted {
@@ -116,7 +155,7 @@ fn walk(
             }
 
             let child = entry.path();
-            walk(&child, base_path, depth + 1, opts, found)?;
+            walk(&child, base_path, depth + 1, opts, found, out, visited_dirs)?;
         }
     }
 
@@ -172,7 +211,7 @@ fn matches_entry(path: &Path, _base_path: &str, opts: &Options) -> bool {
     true
 }
 
-fn parse_args(args: &[String]) -> Result<Options, String> {
+fn parse_args(args: &[String]) -> Result<ParsedArgs, String> {
     let mut pattern: Option<String> = None;
     let mut extensions: Vec<String> = Vec::new();
     let mut type_filter: Option<TypeFilter> = None;
@@ -188,12 +227,10 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         let arg = &args[i];
         match arg.as_str() {
             "-h" | "--help" => {
-                print_help();
-                std::process::exit(0);
+                return Ok(ParsedArgs::Help);
             }
             "-V" | "--version" => {
-                println!("fd 0.1.0 (Agent OS)");
-                std::process::exit(0);
+                return Ok(ParsedArgs::Version);
             }
             "-H" | "--hidden" => {
                 show_hidden = true;
@@ -275,7 +312,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         None => None,
     };
 
-    Ok(Options {
+    Ok(ParsedArgs::Search(Options {
         pattern: compiled_pattern,
         extensions,
         type_filter,
@@ -285,11 +322,12 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         _case_insensitive: case_insensitive,
         full_path,
         absolute_path,
-    })
+    }))
 }
 
-fn print_help() {
-    println!(
+fn print_help<W: Write>(out: &mut W) -> io::Result<()> {
+    writeln!(
+        out,
         "fd - a simple, fast file finder
 
 USAGE:
@@ -311,5 +349,5 @@ OPTIONS:
     -d, --max-depth N     Maximum search depth
     -h, --help            Print help
     -V, --version         Print version"
-    );
+    )
 }
