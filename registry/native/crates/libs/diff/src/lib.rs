@@ -1,5 +1,6 @@
 //! diff -- compare files line by line using the `similar` crate
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
@@ -83,7 +84,8 @@ pub fn main(args: Vec<OsString>) -> i32 {
     let path_a = Path::new(&files[0]);
     let path_b = Path::new(&files[1]);
 
-    match diff_paths(path_a, path_b, &opts) {
+    let mut visited_dirs = HashSet::new();
+    match diff_paths(path_a, path_b, &opts, &mut visited_dirs) {
         Ok(has_diff) => {
             if has_diff {
                 1
@@ -98,13 +100,18 @@ pub fn main(args: Vec<OsString>) -> i32 {
     }
 }
 
-fn diff_paths(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, String> {
+fn diff_paths(
+    path_a: &Path,
+    path_b: &Path,
+    opts: &Options,
+    visited_dirs: &mut HashSet<(std::path::PathBuf, std::path::PathBuf)>,
+) -> Result<bool, String> {
     let a_is_dir = path_a.is_dir();
     let b_is_dir = path_b.is_dir();
 
     if a_is_dir && b_is_dir {
         if opts.recursive {
-            diff_dirs(path_a, path_b, opts)
+            diff_dirs(path_a, path_b, opts, visited_dirs)
         } else {
             Err(format!("{} is a directory", path_a.display()))
         }
@@ -121,7 +128,20 @@ fn diff_paths(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, Stri
     }
 }
 
-fn diff_dirs(dir_a: &Path, dir_b: &Path, opts: &Options) -> Result<bool, String> {
+fn diff_dirs(
+    dir_a: &Path,
+    dir_b: &Path,
+    opts: &Options,
+    visited_dirs: &mut HashSet<(std::path::PathBuf, std::path::PathBuf)>,
+) -> Result<bool, String> {
+    let key = (
+        fs::canonicalize(dir_a).map_err(|e| format!("{}: {}", dir_a.display(), e))?,
+        fs::canonicalize(dir_b).map_err(|e| format!("{}: {}", dir_b.display(), e))?,
+    );
+    if !visited_dirs.insert(key) {
+        return Ok(false);
+    }
+
     let mut entries_a = list_dir(dir_a)?;
     let mut entries_b = list_dir(dir_b)?;
     entries_a.sort();
@@ -147,21 +167,20 @@ fn diff_dirs(dir_a: &Path, dir_b: &Path, opts: &Options) -> Result<bool, String>
         let b_exists = entries_b.contains(name);
 
         if a_exists && !b_exists {
-            println!("Only in {}: {}", dir_a.display(), name);
+            print_stdout_line(format_args!("Only in {}: {}", dir_a.display(), name))?;
             has_diff = true;
         } else if !a_exists && b_exists {
-            println!("Only in {}: {}", dir_b.display(), name);
+            print_stdout_line(format_args!("Only in {}: {}", dir_b.display(), name))?;
             has_diff = true;
         } else {
-            match diff_paths(&pa, &pb, opts) {
+            match diff_paths(&pa, &pb, opts, visited_dirs) {
                 Ok(d) => {
                     if d {
                         has_diff = true;
                     }
                 }
                 Err(e) => {
-                    eprintln!("diff: {}", e);
-                    has_diff = true;
+                    return Err(e);
                 }
             }
         }
@@ -245,7 +264,11 @@ fn diff_files(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, Stri
     }
 
     if opts.brief {
-        println!("Files {} and {} differ", path_a.display(), path_b.display());
+        print_stdout_line(format_args!(
+            "Files {} and {} differ",
+            path_a.display(),
+            path_b.display()
+        ))?;
         return Ok(true);
     }
 
@@ -257,18 +280,18 @@ fn diff_files(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, Stri
     let mut out = stdout.lock();
 
     if opts.unified {
-        let _ = writeln!(out, "--- {}", label_a);
-        let _ = writeln!(out, "+++ {}", label_b);
+        writeln!(out, "--- {}", label_a).map_err(|e| format!("failed to write output: {e}"))?;
+        writeln!(out, "+++ {}", label_b).map_err(|e| format!("failed to write output: {e}"))?;
         for hunk in diff
             .unified_diff()
             .context_radius(opts.context_lines)
             .iter_hunks()
         {
-            let _ = write!(out, "{}", hunk);
+            write!(out, "{}", hunk).map_err(|e| format!("failed to write output: {e}"))?;
         }
     } else if opts.context_fmt {
-        let _ = writeln!(out, "*** {}", label_a);
-        let _ = writeln!(out, "--- {}", label_b);
+        writeln!(out, "*** {}", label_a).map_err(|e| format!("failed to write output: {e}"))?;
+        writeln!(out, "--- {}", label_b).map_err(|e| format!("failed to write output: {e}"))?;
         for hunk in diff
             .unified_diff()
             .context_radius(opts.context_lines)
@@ -300,29 +323,33 @@ fn diff_files(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, Stri
             }
             let old_end = old_start + old_lines.len().saturating_sub(1);
             let new_end = new_start + new_lines.len().saturating_sub(1);
-            let _ = writeln!(out, "***************");
-            let _ = writeln!(out, "*** {},{} ****", old_start, old_end);
+            writeln!(out, "***************").map_err(|e| format!("failed to write output: {e}"))?;
+            writeln!(out, "*** {},{} ****", old_start, old_end)
+                .map_err(|e| format!("failed to write output: {e}"))?;
             for (tag, line) in &old_lines {
                 let prefix = match tag {
                     ChangeTag::Delete => "- ",
                     ChangeTag::Equal => "  ",
                     _ => continue,
                 };
-                let _ = write!(out, "{}{}", prefix, line);
+                write!(out, "{}{}", prefix, line)
+                    .map_err(|e| format!("failed to write output: {e}"))?;
                 if !line.ends_with('\n') {
-                    let _ = writeln!(out);
+                    writeln!(out).map_err(|e| format!("failed to write output: {e}"))?;
                 }
             }
-            let _ = writeln!(out, "--- {},{} ----", new_start, new_end);
+            writeln!(out, "--- {},{} ----", new_start, new_end)
+                .map_err(|e| format!("failed to write output: {e}"))?;
             for (tag, line) in &new_lines {
                 let prefix = match tag {
                     ChangeTag::Insert => "+ ",
                     ChangeTag::Equal => "  ",
                     _ => continue,
                 };
-                let _ = write!(out, "{}{}", prefix, line);
+                write!(out, "{}{}", prefix, line)
+                    .map_err(|e| format!("failed to write output: {e}"))?;
                 if !line.ends_with('\n') {
-                    let _ = writeln!(out);
+                    writeln!(out).map_err(|e| format!("failed to write output: {e}"))?;
                 }
             }
         }
@@ -341,15 +368,17 @@ fn diff_files(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, Stri
                     old_len,
                     new_index,
                 } => {
-                    let _ = writeln!(
+                    writeln!(
                         out,
                         "{}d{}",
                         format_range(*old_index + 1, *old_len),
                         new_index
-                    );
+                    )
+                    .map_err(|e| format!("failed to write output: {e}"))?;
                     for i in *old_index..*old_index + old_len {
                         if i < old_lines.len() {
-                            let _ = writeln!(out, "< {}", old_lines[i]);
+                            writeln!(out, "< {}", old_lines[i])
+                                .map_err(|e| format!("failed to write output: {e}"))?;
                         }
                     }
                 }
@@ -358,15 +387,17 @@ fn diff_files(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, Stri
                     new_index,
                     new_len,
                 } => {
-                    let _ = writeln!(
+                    writeln!(
                         out,
                         "{}a{}",
                         old_index,
                         format_range(*new_index + 1, *new_len)
-                    );
+                    )
+                    .map_err(|e| format!("failed to write output: {e}"))?;
                     for i in *new_index..*new_index + new_len {
                         if i < new_lines.len() {
-                            let _ = writeln!(out, "> {}", new_lines[i]);
+                            writeln!(out, "> {}", new_lines[i])
+                                .map_err(|e| format!("failed to write output: {e}"))?;
                         }
                     }
                 }
@@ -376,21 +407,24 @@ fn diff_files(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, Stri
                     new_index,
                     new_len,
                 } => {
-                    let _ = writeln!(
+                    writeln!(
                         out,
                         "{}c{}",
                         format_range(*old_index + 1, *old_len),
                         format_range(*new_index + 1, *new_len)
-                    );
+                    )
+                    .map_err(|e| format!("failed to write output: {e}"))?;
                     for i in *old_index..*old_index + old_len {
                         if i < old_lines.len() {
-                            let _ = writeln!(out, "< {}", old_lines[i]);
+                            writeln!(out, "< {}", old_lines[i])
+                                .map_err(|e| format!("failed to write output: {e}"))?;
                         }
                     }
-                    let _ = writeln!(out, "---");
+                    writeln!(out, "---").map_err(|e| format!("failed to write output: {e}"))?;
                     for i in *new_index..*new_index + new_len {
                         if i < new_lines.len() {
-                            let _ = writeln!(out, "> {}", new_lines[i]);
+                            writeln!(out, "> {}", new_lines[i])
+                                .map_err(|e| format!("failed to write output: {e}"))?;
                         }
                     }
                 }
@@ -398,7 +432,18 @@ fn diff_files(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, Stri
         }
     }
 
+    out.flush()
+        .map_err(|e| format!("failed to write output: {e}"))?;
+
     Ok(true)
+}
+
+fn print_stdout_line(args: std::fmt::Arguments<'_>) -> Result<(), String> {
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    writeln!(out, "{args}").map_err(|e| format!("failed to write output: {e}"))?;
+    out.flush()
+        .map_err(|e| format!("failed to write output: {e}"))
 }
 
 fn read_file(path: &Path) -> Result<String, String> {
