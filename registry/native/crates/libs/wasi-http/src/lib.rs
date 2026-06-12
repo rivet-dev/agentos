@@ -18,6 +18,12 @@ use std::io;
 // AF_INET, SOCK_STREAM for TCP
 const AF_INET: u32 = 2;
 const SOCK_STREAM: u32 = 1;
+const MAX_URL_BYTES: usize = 8 * 1024;
+const MAX_HEADER_BYTES: usize = 64 * 1024;
+const MAX_HEADER_COUNT: usize = 1_024;
+const MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
+const MAX_RESPONSE_BODY_BYTES: usize = 16 * 1024 * 1024;
+const MAX_SSE_BUFFER_BYTES: usize = 1024 * 1024;
 
 /// HTTP method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +63,12 @@ impl Url {
     ///
     /// Supports http:// and https:// schemes.
     pub fn parse(url: &str) -> Result<Self, HttpError> {
+        if url.len() > MAX_URL_BYTES || contains_http_ctl(url) {
+            return Err(HttpError::InvalidUrl(
+                "invalid URL characters or length".into(),
+            ));
+        }
+
         let (scheme, rest) = if let Some(rest) = url.strip_prefix("https://") {
             ("https".to_string(), rest)
         } else if let Some(rest) = url.strip_prefix("http://") {
@@ -70,15 +82,32 @@ impl Url {
 
         let default_port: u16 = if scheme == "https" { 443 } else { 80 };
 
-        // Split host+port from path
-        let (authority, path) = match rest.find('/') {
-            Some(i) => (&rest[..i], &rest[i..]),
-            None => (rest, "/"),
+        // Split host+port from request target. Query-only URLs use "/" as
+        // the path prefix so the request target remains origin-form.
+        let split_at = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        let authority = &rest[..split_at];
+        let suffix = &rest[split_at..];
+        let path = if suffix.is_empty() {
+            "/".to_string()
+        } else if suffix.starts_with('/') {
+            suffix.to_string()
+        } else {
+            format!("/{suffix}")
         };
+        if authority.is_empty()
+            || authority.contains('@')
+            || contains_authority_separator(authority)
+            || !is_valid_request_target(&path)
+        {
+            return Err(HttpError::InvalidUrl("invalid authority or path".into()));
+        }
 
         // Parse host:port
         let (host, port) = if let Some(bracket_end) = authority.find(']') {
             // IPv6: [::1]:port
+            if !authority.starts_with('[') {
+                return Err(HttpError::InvalidUrl("bad IPv6 host".into()));
+            }
             let host = &authority[..=bracket_end];
             let port = if authority.len() > bracket_end + 1
                 && authority.as_bytes()[bracket_end + 1] == b':'
@@ -86,6 +115,8 @@ impl Url {
                 authority[bracket_end + 2..]
                     .parse::<u16>()
                     .map_err(|_| HttpError::InvalidUrl("bad port".into()))?
+            } else if authority.len() > bracket_end + 1 {
+                return Err(HttpError::InvalidUrl("bad IPv6 authority".into()));
             } else {
                 default_port
             };
@@ -99,12 +130,19 @@ impl Url {
         } else {
             (authority.to_string(), default_port)
         };
+        if host.is_empty()
+            || contains_http_ctl(&host)
+            || contains_authority_separator(&host)
+            || contains_http_ctl(&path)
+        {
+            return Err(HttpError::InvalidUrl("invalid host or path".into()));
+        }
 
         Ok(Url {
             scheme,
             host,
             port,
-            path: path.to_string(),
+            path,
         })
     }
 
@@ -163,7 +201,14 @@ impl Request {
     }
 
     /// Format the HTTP/1.1 request bytes.
-    fn to_bytes(&self) -> Vec<u8> {
+    fn to_bytes(&self) -> Result<Vec<u8>, HttpError> {
+        validate_request_headers(&self.headers)?;
+        if let Some(ref body) = self.body {
+            if body.len() > MAX_REQUEST_BODY_BYTES {
+                return Err(HttpError::Protocol("request body too large".into()));
+            }
+        }
+
         let mut buf = Vec::with_capacity(512);
         // Request line
         buf.extend_from_slice(format!("{} {} HTTP/1.1\r\n", self.method, self.url.path).as_bytes());
@@ -204,7 +249,7 @@ impl Request {
             buf.extend_from_slice(body);
         }
 
-        buf
+        Ok(buf)
     }
 }
 
@@ -321,6 +366,10 @@ impl SseReader {
                 }
                 Ok(n) => {
                     self.buf.extend_from_slice(&recv_buf[..n as usize]);
+                    if self.buf.len().saturating_sub(self.offset) > MAX_SSE_BUFFER_BYTES {
+                        self.done = true;
+                        return Err(HttpError::Protocol("SSE event too large".into()));
+                    }
                 }
                 Err(errno) => {
                     self.done = true;
@@ -381,11 +430,14 @@ impl HttpClient {
 
     /// Send a request and return the full response.
     pub fn send(&self, req: &Request) -> Result<Response, HttpError> {
+        let request_bytes = req.to_bytes()?;
         let fd = self.connect(&req.url)?;
 
         // Send request
-        let request_bytes = req.to_bytes();
-        send_all(fd, &request_bytes)?;
+        if let Err(error) = send_all(fd, &request_bytes) {
+            let _ = wasi_ext::net_close_socket(fd);
+            return Err(error);
+        }
 
         // Read response
         let result = read_response(fd);
@@ -400,14 +452,23 @@ impl HttpClient {
     ///
     /// The caller must call `close()` on the returned reader when done.
     pub fn send_sse(&self, req: &Request) -> Result<(Response, SseReader), HttpError> {
+        let request_bytes = req.to_bytes()?;
         let fd = self.connect(&req.url)?;
 
         // Send request
-        let request_bytes = req.to_bytes();
-        send_all(fd, &request_bytes)?;
+        if let Err(error) = send_all(fd, &request_bytes) {
+            let _ = wasi_ext::net_close_socket(fd);
+            return Err(error);
+        }
 
         // Read headers only
-        let (status, status_text, headers, remaining) = read_headers(fd)?;
+        let (status, status_text, headers, remaining) = match read_headers(fd) {
+            Ok(headers) => headers,
+            Err(error) => {
+                let _ = wasi_ext::net_close_socket(fd);
+                return Err(error);
+            }
+        };
 
         // Create SSE reader with any remaining body data
         let mut reader = SseReader::new(fd);
@@ -472,6 +533,9 @@ fn send_all(fd: u32, data: &[u8]) -> Result<(), HttpError> {
     while offset < data.len() {
         let n = wasi_ext::send(fd, &data[offset..], 0)
             .map_err(|e| HttpError::Socket(format!("send failed: errno {}", e)))?;
+        if n == 0 {
+            return Err(HttpError::Socket("send returned zero bytes".into()));
+        }
         offset += n as usize;
     }
     Ok(())
@@ -505,7 +569,7 @@ fn read_headers(fd: u32) -> Result<(u16, String, Vec<(String, String)>, Vec<u8>)
         }
 
         // Safety limit on header size
-        if buf.len() > 64 * 1024 {
+        if buf.len() > MAX_HEADER_BYTES {
             return Err(HttpError::Protocol("headers too large (>64KB)".into()));
         }
     }
@@ -534,6 +598,12 @@ fn read_response(fd: u32) -> Result<Response, HttpError> {
 
 /// Read body with known Content-Length.
 fn read_fixed_body(fd: u32, initial: Vec<u8>, length: usize) -> Result<Vec<u8>, HttpError> {
+    if length > MAX_RESPONSE_BODY_BYTES {
+        return Err(HttpError::Protocol("response body too large".into()));
+    }
+    if initial.len() > MAX_RESPONSE_BODY_BYTES {
+        return Err(HttpError::Protocol("response body too large".into()));
+    }
     let mut body = initial;
     let mut recv_buf = [0u8; 8192];
 
@@ -542,6 +612,9 @@ fn read_fixed_body(fd: u32, initial: Vec<u8>, length: usize) -> Result<Vec<u8>, 
             .map_err(|e| HttpError::Socket(format!("recv failed: errno {}", e)))?;
         if n == 0 {
             break;
+        }
+        if body.len() + n as usize > MAX_RESPONSE_BODY_BYTES {
+            return Err(HttpError::Protocol("response body too large".into()));
         }
         body.extend_from_slice(&recv_buf[..n as usize]);
     }
@@ -555,6 +628,7 @@ fn read_chunked_body(fd: u32, initial: Vec<u8>) -> Result<Vec<u8>, HttpError> {
     let mut buf = initial;
     let mut body = Vec::new();
     let mut recv_buf = [0u8; 8192];
+    enforce_body_limit(buf.len())?;
 
     loop {
         // Find chunk size line
@@ -570,6 +644,11 @@ fn read_chunked_body(fd: u32, initial: Vec<u8>) -> Result<Vec<u8>, HttpError> {
                 if chunk_size == 0 {
                     return Ok(body);
                 }
+                if chunk_size > MAX_RESPONSE_BODY_BYTES
+                    || body.len() + chunk_size > MAX_RESPONSE_BODY_BYTES
+                {
+                    return Err(HttpError::Protocol("response body too large".into()));
+                }
 
                 // Read chunk_size bytes + trailing \r\n
                 while buf.len() < chunk_size + 2 {
@@ -579,6 +658,10 @@ fn read_chunked_body(fd: u32, initial: Vec<u8>) -> Result<Vec<u8>, HttpError> {
                         return Err(HttpError::Protocol("connection closed in chunk".into()));
                     }
                     buf.extend_from_slice(&recv_buf[..n as usize]);
+                    enforce_body_limit(buf.len() + body.len())?;
+                }
+                if &buf[chunk_size..chunk_size + 2] != b"\r\n" {
+                    return Err(HttpError::Protocol("missing chunk terminator".into()));
                 }
 
                 body.extend_from_slice(&buf[..chunk_size]);
@@ -595,6 +678,7 @@ fn read_chunked_body(fd: u32, initial: Vec<u8>) -> Result<Vec<u8>, HttpError> {
                 ));
             }
             buf.extend_from_slice(&recv_buf[..n as usize]);
+            enforce_body_limit(buf.len() + body.len())?;
         }
     }
 }
@@ -603,6 +687,7 @@ fn read_chunked_body(fd: u32, initial: Vec<u8>) -> Result<Vec<u8>, HttpError> {
 fn read_until_close(fd: u32, initial: Vec<u8>) -> Result<Vec<u8>, HttpError> {
     let mut body = initial;
     let mut recv_buf = [0u8; 8192];
+    enforce_body_limit(body.len())?;
 
     loop {
         let n = wasi_ext::recv(fd, &mut recv_buf, 0)
@@ -610,6 +695,7 @@ fn read_until_close(fd: u32, initial: Vec<u8>) -> Result<Vec<u8>, HttpError> {
         if n == 0 {
             break;
         }
+        enforce_body_limit(body.len() + n as usize)?;
         body.extend_from_slice(&recv_buf[..n as usize]);
     }
 
@@ -645,8 +731,16 @@ fn parse_response_headers(
             break;
         }
         if let Some(colon) = line.find(':') {
+            if headers.len() >= MAX_HEADER_COUNT {
+                return Err(HttpError::Protocol("too many headers".into()));
+            }
             let name = line[..colon].trim().to_string();
             let value = line[colon + 1..].trim().to_string();
+            validate_header_name(&name)
+                .map_err(|msg| HttpError::Protocol(format!("invalid header name: {}", msg)))?;
+            if contains_http_ctl(&value) {
+                return Err(HttpError::Protocol("invalid header value".into()));
+            }
             headers.push((name, value));
         }
     }
@@ -692,6 +786,69 @@ fn parse_sse_event(block: &str) -> SseEvent {
     }
 }
 
+fn validate_request_headers(headers: &[(String, String)]) -> Result<(), HttpError> {
+    if headers.len() > MAX_HEADER_COUNT {
+        return Err(HttpError::Protocol("too many request headers".into()));
+    }
+    for (name, value) in headers {
+        validate_header_name(name)
+            .map_err(|msg| HttpError::Protocol(format!("invalid header name: {}", msg)))?;
+        if contains_http_ctl(value) {
+            return Err(HttpError::Protocol("invalid header value".into()));
+        }
+    }
+    Ok(())
+}
+
+fn validate_header_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty()
+        || !name.bytes().all(|b| {
+            b.is_ascii_alphanumeric()
+                || matches!(
+                    b,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        })
+    {
+        return Err("bad token");
+    }
+    Ok(())
+}
+
+fn contains_http_ctl(value: &str) -> bool {
+    value.bytes().any(|b| b < 0x20 || b == 0x7f)
+}
+
+fn contains_authority_separator(value: &str) -> bool {
+    value
+        .bytes()
+        .any(|b| matches!(b, b' ' | b'\t' | b'/' | b'?' | b'#'))
+}
+
+fn is_valid_request_target(value: &str) -> bool {
+    value.bytes().all(|b| !matches!(b, 0x00..=0x20 | 0x7f))
+}
+
+fn enforce_body_limit(len: usize) -> Result<(), HttpError> {
+    if len > MAX_RESPONSE_BODY_BYTES {
+        return Err(HttpError::Protocol("response body too large".into()));
+    }
+    Ok(())
+}
+
 /// Convenience function: GET request.
 pub fn get(url: &str) -> Result<Response, HttpError> {
     let client = HttpClient::new();
@@ -704,4 +861,30 @@ pub fn post_json(url: &str, json: &str) -> Result<Response, HttpError> {
     let client = HttpClient::new();
     let req = Request::new(Method::Post, url)?.json_body(json);
     client.send(&req)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Method, Request, Url};
+
+    #[test]
+    fn url_parse_preserves_query_and_fragment_in_request_target() {
+        let url = Url::parse("http://example.com?x=1#frag").expect("parse url");
+        assert_eq!(url.host, "example.com");
+        assert_eq!(url.path, "/?x=1#frag");
+    }
+
+    #[test]
+    fn url_parse_rejects_spaces_in_authority_or_request_target() {
+        assert!(Url::parse("http://exa mple.com/").is_err());
+        assert!(Url::parse("http://example.com/a b").is_err());
+    }
+
+    #[test]
+    fn request_rejects_header_injection_before_serializing() {
+        let request = Request::new(Method::Get, "http://example.com/")
+            .expect("request")
+            .header("X-Test", "ok\r\nInjected: value");
+        assert!(request.to_bytes().is_err());
+    }
 }
