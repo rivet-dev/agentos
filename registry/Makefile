@@ -60,6 +60,7 @@ $(COPY_MARKER): $(RUST_MARKER) $(C_MARKER)
 
 	@# --- coreutils ---
 	@mkdir -p software/coreutils/wasm
+	@rm -f software/coreutils/wasm/*
 	@for cmd in \
 		sh arch b2sum base32 base64 basename basenc cat chmod cksum column comm \
 		cp cut date dd dircolors dirname du echo env expand expr factor false \
@@ -68,7 +69,6 @@ $(COPY_MARKER): $(RUST_MARKER) $(C_MARKER)
 		realpath rev rm rmdir seq sha1sum sha224sum sha256sum sha384sum sha512sum \
 		shred shuf sleep sort split stat stdbuf strings _stubs sum tac tail tee \
 		test timeout touch tr true truncate tsort uname unexpand uniq unlink wc \
-		xu \
 		which \
 		whoami yes; do \
 		if [ -f "$(COMMANDS_DIR)/$$cmd" ]; then \
