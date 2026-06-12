@@ -7,11 +7,13 @@ mod rg_cmd;
 
 use std::ffi::OsString;
 use std::io::{self, BufRead, Read, Write};
-use std::mem::ManuallyDrop;
-use std::os::fd::FromRawFd;
 use std::path::Path;
 
 use regex::Regex;
+
+const MAX_INPUT_LINE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PATTERN_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PATTERNS: usize = 100_000;
 
 /// Unified grep entry point. Dispatches on argv[0]:
 /// - "egrep" -> Extended mode
@@ -46,20 +48,6 @@ pub fn rg(args: Vec<OsString>) -> i32 {
     rg_cmd::rg(args)
 }
 
-struct RawStdout;
-
-impl Write for RawStdout {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(1) });
-        file.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        let mut file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(1) });
-        file.flush()
-    }
-}
-
 /// grep mode determines how patterns are interpreted.
 #[derive(Clone, Copy, PartialEq)]
 enum GrepMode {
@@ -84,6 +72,7 @@ struct GrepOptions {
     max_count: Option<usize>,
     quiet: bool,
     patterns: Vec<String>,
+    pattern_bytes: usize,
     files: Vec<String>,
 }
 
@@ -102,6 +91,7 @@ impl GrepOptions {
             max_count: None,
             quiet: false,
             patterns: Vec::new(),
+            pattern_bytes: 0,
             files: Vec::new(),
         }
     }
@@ -137,13 +127,18 @@ fn run_grep(args: Vec<OsString>, default_mode: GrepMode) -> i32 {
 
     let multiple_files = opts.files.len() > 1;
     let mut any_match = false;
+    let mut had_error = false;
 
     if opts.files.is_empty() {
         // Read from stdin
         let stdin = io::stdin();
         let reader = stdin.lock();
-        if search_reader(reader, None, &regex, &opts, multiple_files) {
-            any_match = true;
+        match search_reader(reader, None, &regex, &opts, multiple_files) {
+            Ok(found) => any_match |= found,
+            Err(e) => {
+                eprintln!("grep: {}", e);
+                had_error = true;
+            }
         }
     } else {
         for file in &opts.files {
@@ -155,8 +150,12 @@ fn run_grep(args: Vec<OsString>, default_mode: GrepMode) -> i32 {
                 } else {
                     None
                 };
-                if search_reader(reader, label, &regex, &opts, multiple_files) {
-                    any_match = true;
+                match search_reader(reader, label, &regex, &opts, multiple_files) {
+                    Ok(found) => any_match |= found,
+                    Err(e) => {
+                        eprintln!("grep: {}: {}", file, e);
+                        had_error = true;
+                    }
                 }
             } else {
                 match std::fs::File::open(file) {
@@ -167,19 +166,26 @@ fn run_grep(args: Vec<OsString>, default_mode: GrepMode) -> i32 {
                         } else {
                             None
                         };
-                        if search_reader(reader, label, &regex, &opts, multiple_files) {
-                            any_match = true;
+                        match search_reader(reader, label, &regex, &opts, multiple_files) {
+                            Ok(found) => any_match |= found,
+                            Err(e) => {
+                                eprintln!("grep: {}: {}", file, e);
+                                had_error = true;
+                            }
                         }
                     }
                     Err(e) => {
                         eprintln!("grep: {}: {}", file, e);
+                        had_error = true;
                     }
                 }
             }
         }
     }
 
-    if any_match {
+    if had_error {
+        2
+    } else if any_match {
         0
     } else {
         1
@@ -223,7 +229,7 @@ fn parse_args(args: &[String], default_mode: GrepMode) -> Result<GrepOptions, St
                         // -e PATTERN (rest of this flag group or next arg)
                         let rest: String = chars[j + 1..].iter().collect();
                         if !rest.is_empty() {
-                            opts.patterns.push(rest);
+                            push_pattern(&mut opts, rest)?;
                             pattern_from_args = true;
                             j = chars.len(); // consumed rest
                             continue;
@@ -232,7 +238,7 @@ fn parse_args(args: &[String], default_mode: GrepMode) -> Result<GrepOptions, St
                             if i >= args.len() {
                                 return Err("option requires an argument -- 'e'".to_string());
                             }
-                            opts.patterns.push(args[i].clone());
+                            push_pattern(&mut opts, args[i].clone())?;
                             pattern_from_args = true;
                             j = chars.len();
                             continue;
@@ -243,17 +249,8 @@ fn parse_args(args: &[String], default_mode: GrepMode) -> Result<GrepOptions, St
                         if i >= args.len() {
                             return Err("option requires an argument -- 'f'".to_string());
                         }
-                        match std::fs::read_to_string(&args[i]) {
-                            Ok(content) => {
-                                for line in content.lines() {
-                                    if !line.is_empty() {
-                                        opts.patterns.push(line.to_string());
-                                    }
-                                }
-                                pattern_from_args = true;
-                            }
-                            Err(e) => return Err(format!("{}: {}", args[i], e)),
-                        }
+                        read_patterns_from_file(&mut opts, &args[i])?;
+                        pattern_from_args = true;
                         j = chars.len();
                         continue;
                     }
@@ -291,7 +288,7 @@ fn parse_args(args: &[String], default_mode: GrepMode) -> Result<GrepOptions, St
                 "--line-regexp" => opts.line_regexp = true,
                 "--quiet" | "--silent" => opts.quiet = true,
                 _ if arg.starts_with("--regexp=") => {
-                    opts.patterns.push(arg[9..].to_string());
+                    push_pattern(&mut opts, arg[9..].to_string())?;
                     pattern_from_args = true;
                 }
                 _ if arg.starts_with("--max-count=") => {
@@ -308,7 +305,7 @@ fn parse_args(args: &[String], default_mode: GrepMode) -> Result<GrepOptions, St
         } else {
             // Positional argument: first is pattern (if no -e), rest are files
             if !pattern_from_args && opts.patterns.is_empty() {
-                opts.patterns.push(arg.clone());
+                push_pattern(&mut opts, arg.clone())?;
                 pattern_from_args = true;
             } else {
                 opts.files.push(arg.clone());
@@ -320,7 +317,7 @@ fn parse_args(args: &[String], default_mode: GrepMode) -> Result<GrepOptions, St
     // Remaining args after --
     while i < args.len() {
         if !pattern_from_args && opts.patterns.is_empty() {
-            opts.patterns.push(args[i].clone());
+            push_pattern(&mut opts, args[i].clone())?;
             pattern_from_args = true;
         } else {
             opts.files.push(args[i].clone());
@@ -329,6 +326,46 @@ fn parse_args(args: &[String], default_mode: GrepMode) -> Result<GrepOptions, St
     }
 
     Ok(opts)
+}
+
+fn push_pattern(opts: &mut GrepOptions, pattern: String) -> Result<(), String> {
+    if opts.patterns.len() >= MAX_PATTERNS {
+        return Err("too many patterns".to_string());
+    }
+    let next_bytes = opts
+        .pattern_bytes
+        .checked_add(pattern.len())
+        .ok_or_else(|| "pattern data too large".to_string())?;
+    if next_bytes > MAX_PATTERN_BYTES {
+        return Err("pattern data exceeds size limit".to_string());
+    }
+    opts.pattern_bytes = next_bytes;
+    opts.patterns.push(pattern);
+    Ok(())
+}
+
+fn read_patterns_from_file(opts: &mut GrepOptions, path: &str) -> Result<(), String> {
+    let metadata = std::fs::metadata(path).map_err(|e| format!("{}: {}", path, e))?;
+    if metadata.len() > MAX_PATTERN_BYTES as u64 {
+        return Err(format!("{}: pattern file exceeds size limit", path));
+    }
+    let file = std::fs::File::open(path).map_err(|e| format!("{}: {}", path, e))?;
+    let limit = MAX_PATTERN_BYTES
+        .checked_add(1)
+        .ok_or_else(|| "pattern file size limit is too large".to_string())?;
+    let mut content = String::new();
+    file.take(limit as u64)
+        .read_to_string(&mut content)
+        .map_err(|e| format!("{}: {}", path, e))?;
+    if content.len() > MAX_PATTERN_BYTES {
+        return Err(format!("{}: pattern file exceeds size limit", path));
+    }
+    for line in content.lines() {
+        if !line.is_empty() {
+            push_pattern(opts, line.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 /// Build a compiled regex from the grep options.
@@ -460,17 +497,15 @@ fn search_reader<R: Read>(
     regex: &Regex,
     opts: &GrepOptions,
     show_filename: bool,
-) -> bool {
-    let buf_reader = io::BufReader::new(reader);
+) -> io::Result<bool> {
+    let mut buf_reader = io::BufReader::new(reader);
     let mut match_count: usize = 0;
     let mut line_num: usize = 0;
-    let mut out = RawStdout;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let mut line_buf = Vec::new();
 
-    for line_result in buf_reader.lines() {
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => break,
-        };
+    while let Some(line) = read_line_bounded(&mut buf_reader, &mut line_buf)? {
         line_num += 1;
 
         let is_match = regex.is_match(&line);
@@ -484,16 +519,17 @@ fn search_reader<R: Read>(
             match_count += 1;
 
             if opts.quiet {
-                return true;
+                return Ok(true);
             }
 
             if opts.files_with_matches {
                 if let Some(name) = filename {
-                    let _ = writeln!(out, "{}", name);
+                    writeln!(out, "{}", name)?;
                 } else {
-                    let _ = writeln!(out, "(standard input)");
+                    writeln!(out, "(standard input)")?;
                 }
-                return true;
+                out.flush()?;
+                return Ok(true);
             }
 
             if !opts.count_only && !opts.files_without_matches {
@@ -503,7 +539,7 @@ fn search_reader<R: Read>(
                     (_, _, true) => format!("{}:", line_num),
                     _ => String::new(),
                 };
-                let _ = writeln!(out, "{}{}", prefix, line);
+                writeln!(out, "{}{}", prefix, line)?;
             }
 
             if let Some(max) = opts.max_count {
@@ -517,24 +553,71 @@ fn search_reader<R: Read>(
     if opts.count_only && !opts.quiet {
         if show_filename {
             if let Some(name) = filename {
-                let _ = writeln!(out, "{}:{}", name, match_count);
+                writeln!(out, "{}:{}", name, match_count)?;
             } else {
-                let _ = writeln!(out, "{}", match_count);
+                writeln!(out, "{}", match_count)?;
             }
         } else {
-            let _ = writeln!(out, "{}", match_count);
+            writeln!(out, "{}", match_count)?;
         }
     }
 
     if opts.files_without_matches && match_count == 0 {
         if let Some(name) = filename {
-            let _ = writeln!(out, "{}", name);
+            writeln!(out, "{}", name)?;
         } else {
-            let _ = writeln!(out, "(standard input)");
+            writeln!(out, "(standard input)")?;
         }
     }
 
-    let _ = out.flush();
+    out.flush()?;
 
-    match_count > 0
+    Ok(match_count > 0)
+}
+
+fn read_line_bounded<R: BufRead>(
+    reader: &mut R,
+    line_buf: &mut Vec<u8>,
+) -> io::Result<Option<String>> {
+    line_buf.clear();
+
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if line_buf.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+
+        let newline = available.iter().position(|&b| b == b'\n');
+        let take = newline.map_or(available.len(), |pos| pos + 1);
+        let next_len = line_buf
+            .len()
+            .checked_add(take)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "input line too long"))?;
+        if next_len > MAX_INPUT_LINE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "input line exceeds size limit",
+            ));
+        }
+
+        line_buf.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if newline.is_some() {
+            break;
+        }
+    }
+
+    if line_buf.ends_with(b"\n") {
+        line_buf.pop();
+        if line_buf.ends_with(b"\r") {
+            line_buf.pop();
+        }
+    }
+
+    String::from_utf8(line_buf.clone())
+        .map(Some)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
