@@ -8,6 +8,10 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
+const DEFAULT_MAX_DEPTH: usize = 256;
+const MAX_TOTAL_ENTRIES: usize = 100_000;
+const MAX_DIRECTORY_ENTRIES: usize = 100_000;
+
 pub fn main(args: Vec<OsString>) -> i32 {
     let str_args: Vec<String> = args
         .iter()
@@ -67,44 +71,66 @@ pub fn main(args: Vec<OsString>) -> i32 {
     let mut file_count: usize = 0;
 
     for (idx, path) in paths.iter().enumerate() {
-        let _ = writeln!(out, "{}", path);
-        walk_tree(
-            Path::new(path),
-            "",
-            1,
-            max_depth,
-            show_hidden,
-            dirs_only,
-            exclude_pattern.as_deref(),
-            &mut dir_count,
-            &mut file_count,
-            &mut out,
-        );
+        if let Err(e) = writeln!(out, "{}", path).and_then(|_| {
+            walk_tree(
+                Path::new(path),
+                "",
+                1,
+                max_depth,
+                show_hidden,
+                dirs_only,
+                exclude_pattern.as_deref(),
+                &mut dir_count,
+                &mut file_count,
+                &mut out,
+            )
+        }) {
+            eprintln!("tree: {}", e);
+            return 1;
+        }
         if idx + 1 < paths.len() {
-            let _ = writeln!(out);
+            if let Err(e) = writeln!(out) {
+                eprintln!("tree: {}", e);
+                return 1;
+            }
         }
     }
 
-    let _ = writeln!(out);
+    if let Err(e) = writeln!(out) {
+        eprintln!("tree: {}", e);
+        return 1;
+    }
     if dirs_only {
-        let _ = writeln!(
+        if let Err(e) = writeln!(
             out,
             "{} director{}",
             dir_count,
             if dir_count == 1 { "y" } else { "ies" }
-        );
+        ) {
+            eprintln!("tree: {}", e);
+            return 1;
+        }
     } else {
-        let _ = writeln!(
+        if let Err(e) = writeln!(
             out,
             "{} director{}, {} file{}",
             dir_count,
             if dir_count == 1 { "y" } else { "ies" },
             file_count,
             if file_count == 1 { "" } else { "s" }
-        );
+        ) {
+            eprintln!("tree: {}", e);
+            return 1;
+        }
     }
 
-    0
+    match out.flush() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("tree: {}", e);
+            1
+        }
+    }
 }
 
 fn matches_exclude(name: &str, pattern: &str) -> bool {
@@ -133,18 +159,33 @@ fn walk_tree<W: Write>(
     dir_count: &mut usize,
     file_count: &mut usize,
     out: &mut W,
-) {
+) -> io::Result<()> {
     if let Some(max) = max_depth {
         if depth > max {
-            return;
+            return Ok(());
         }
+    } else if depth > DEFAULT_MAX_DEPTH {
+        return Ok(());
     }
 
     let mut entries: Vec<fs::DirEntry> = match fs::read_dir(dir) {
-        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Ok(rd) => {
+            let mut entries = Vec::new();
+            for entry_result in rd {
+                let entry = entry_result?;
+                if entries.len() >= MAX_DIRECTORY_ENTRIES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("too many entries in {}", dir.display()),
+                    ));
+                }
+                entries.push(entry);
+            }
+            entries
+        }
         Err(e) => {
-            let _ = writeln!(out, "{}[error opening dir: {}]", prefix, e);
-            return;
+            writeln!(out, "{}[error opening dir: {}]", prefix, e)?;
+            return Ok(());
         }
     };
 
@@ -152,35 +193,39 @@ fn walk_tree<W: Write>(
     entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
     // Filter entries
-    let entries: Vec<&fs::DirEntry> = entries
-        .iter()
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            // Skip hidden unless -a
-            if !show_hidden && name.starts_with('.') {
+    entries.retain(|e| {
+        let name = e.file_name().to_string_lossy().to_string();
+        // Skip hidden unless -a
+        if !show_hidden && name.starts_with('.') {
+            return false;
+        }
+        // Skip excluded patterns
+        if let Some(pat) = exclude {
+            if matches_exclude(&name, pat) {
                 return false;
             }
-            // Skip excluded patterns
-            if let Some(pat) = exclude {
-                if matches_exclude(&name, pat) {
+        }
+        // Skip files if -d
+        if dirs_only {
+            if let Ok(ft) = e.file_type() {
+                if !ft.is_dir() {
                     return false;
                 }
             }
-            // Skip files if -d
-            if dirs_only {
-                if let Ok(ft) = e.file_type() {
-                    if !ft.is_dir() {
-                        return false;
-                    }
-                }
-            }
-            true
-        })
-        .collect();
+        }
+        true
+    });
 
     let count = entries.len();
 
     for (idx, entry) in entries.iter().enumerate() {
+        if *dir_count + *file_count >= MAX_TOTAL_ENTRIES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "too many tree entries",
+            ));
+        }
+
         let is_last = idx + 1 == count;
         let connector = if is_last {
             "\u{2514}\u{2500}\u{2500} " // └──
@@ -189,10 +234,11 @@ fn walk_tree<W: Write>(
         };
 
         let name = entry.file_name().to_string_lossy().to_string();
-        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        let file_type = entry.file_type()?;
+        let is_dir = file_type.is_dir() && !file_type.is_symlink();
 
-        let _ = write!(out, "{}{}", prefix, connector);
-        let _ = writeln!(out, "{}", name);
+        write!(out, "{}{}", prefix, connector)?;
+        writeln!(out, "{}", name)?;
 
         if is_dir {
             *dir_count += 1;
@@ -212,9 +258,11 @@ fn walk_tree<W: Write>(
                 dir_count,
                 file_count,
                 out,
-            );
+            )?;
         } else {
             *file_count += 1;
         }
     }
+
+    Ok(())
 }
