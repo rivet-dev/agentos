@@ -10,6 +10,55 @@ import { createInMemoryFileSystem, createWasmVmRuntime } from '@rivet-dev/agent-
 import { C_BUILD_DIR, COMMANDS_DIR, createKernel } from '../helpers.js';
 import type { Kernel } from '../helpers.js';
 
+interface HostileEntry {
+  name: string;
+  method: number;            // 0 = store, 8 = deflate
+  compressedSize: number;
+  uncompressedSize: number;
+  localOffset: number;
+}
+
+/** Builds a ZIP whose EOCD cd-size field is corrupt so minizip rejects it and
+ *  unzip's raw central-directory fallback parser is exercised. The nonzero
+ *  version fields on each central directory record also make minizip reject
+ *  the archive under the VM's stream semantics, where its reopen-based seek
+ *  callback reads EOCD fields from offset 0 instead of the EOCD record.
+ *  `prefix` bytes (e.g. a real local file header) are placed at offset 0. */
+function buildFallbackArchive(prefix: Uint8Array, entries: HostileEntry[]): Uint8Array {
+  const enc = new TextEncoder();
+  const cdParts: Uint8Array[] = [];
+  for (const e of entries) {
+    const nameBytes = enc.encode(e.name);
+    const cd = new Uint8Array(46 + nameBytes.length);
+    const dv = new DataView(cd.buffer);
+    dv.setUint32(0, 0x02014b50, true);   // central directory signature
+    dv.setUint16(4, 20, true);           // version made by
+    dv.setUint16(6, 20, true);           // version needed to extract
+    dv.setUint16(10, e.method, true);
+    dv.setUint32(20, e.compressedSize, true);
+    dv.setUint32(24, e.uncompressedSize, true);
+    dv.setUint16(28, nameBytes.length, true);
+    dv.setUint32(42, e.localOffset, true);
+    cd.set(nameBytes, 46);
+    cdParts.push(cd);
+  }
+  const cdOffset = prefix.length;
+  const cdLen = cdParts.reduce((n, p) => n + p.length, 0);
+  const eocd = new Uint8Array(22);
+  const dv = new DataView(eocd.buffer);
+  dv.setUint32(0, 0x06054b50, true);     // EOCD signature
+  dv.setUint16(8, entries.length, true); // entries on this disk
+  dv.setUint16(10, entries.length, true);// total entries
+  dv.setUint32(12, 0xffffffff, true);    // corrupt cd size: forces the fallback parser
+  dv.setUint32(16, cdOffset, true);
+  const out = new Uint8Array(prefix.length + cdLen + 22);
+  out.set(prefix, 0);
+  let off = cdOffset;
+  for (const p of cdParts) { out.set(p, off); off += p.length; }
+  out.set(eocd, off);
+  return out;
+}
+
 describe('zip/unzip commands', () => {
   let kernel: Kernel;
 
@@ -134,5 +183,67 @@ describe('zip/unzip commands', () => {
     expect(await vfs.exists('/custom-dir/src.txt')).toBe(true);
     const extracted = await vfs.readTextFile('/custom-dir/src.txt');
     expect(extracted).toBe('target content\n');
+  });
+
+  it('fallback parser rejects an entry with a wrapping local offset', async () => {
+    const vfs = createInMemoryFileSystem();
+    const bytes = buildFallbackArchive(new Uint8Array(0), [
+      { name: 'evil.txt', method: 0, compressedSize: 4, uncompressedSize: 4, localOffset: 0xfffffff0 },
+    ]);
+    await vfs.writeFile('/evil.zip', bytes);
+
+    kernel = createKernel({ filesystem: vfs });
+    await kernel.mount(
+      createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }),
+    );
+
+    const result = await kernel.exec('unzip -d /out /evil.zip');
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.stderr).toMatch(/error/);
+    expect(await vfs.exists('/out/evil.txt')).toBe(false);
+  });
+
+  it('fallback parser skips an entry whose normalized name is empty', async () => {
+    const vfs = createInMemoryFileSystem();
+    const bytes = buildFallbackArchive(new Uint8Array(0), [
+      { name: '/', method: 0, compressedSize: 0, uncompressedSize: 0, localOffset: 0 },
+    ]);
+    await vfs.writeFile('/empty-name.zip', bytes);
+
+    kernel = createKernel({ filesystem: vfs });
+    await kernel.mount(
+      createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }),
+    );
+
+    const result = await kernel.exec('unzip /empty-name.zip');
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).not.toMatch(/error/);
+    expect(result.stderr).not.toMatch(/error/);
+  });
+
+  it('fallback parser caps hostile uncompressed sizes before allocating', async () => {
+    const vfs = createInMemoryFileSystem();
+    // A real 31-byte local header for a 1-byte stored payload.
+    const prefix = new Uint8Array(31);
+    const pdv = new DataView(prefix.buffer);
+    pdv.setUint32(0, 0x04034b50, true); // local file header signature
+    pdv.setUint16(4, 20, true);         // version needed to extract
+    pdv.setUint16(26, 0, true);         // name length
+    pdv.setUint16(28, 0, true);         // extra length
+    prefix[30] = 0x41;                  // one payload byte
+    const bytes = buildFallbackArchive(prefix, [
+      { name: 'big.bin', method: 0, compressedSize: 1, uncompressedSize: 0xffffffff, localOffset: 0 },
+    ]);
+    await vfs.writeFile('/big.zip', bytes);
+
+    kernel = createKernel({ filesystem: vfs });
+    await kernel.mount(
+      createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }),
+    );
+
+    const result = await kernel.exec('unzip -d /cap-out /big.zip');
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.stderr).toMatch(/too large/);
+    expect(await vfs.exists('/cap-out/big.bin')).toBe(false);
   });
 });

@@ -19,6 +19,10 @@
 #define MAX_PATH_LEN 4096
 #define WRITE_BUF_SIZE 8192
 
+/* Cap per-entry allocation in the fallback parser. Hostile central directory
+ * records can claim sizes up to 4 GiB; refuse anything above this bound. */
+#define MAX_UNCOMPRESSED_SIZE (256u * 1024u * 1024u)
+
 typedef struct {
     FILE *file;
     char *filename;
@@ -230,8 +234,9 @@ static int find_eocd(const unsigned char *data, size_t len, size_t *eocd_offset)
     return -1;
 }
 
-static const char *entry_output_name(const char *name) {
-    while (*name == '/')
+static const char *entry_output_name(const char *name, size_t name_len) {
+    const char *end = name + name_len;
+    while (name < end && *name == '/')
         name++;
     return name;
 }
@@ -252,7 +257,7 @@ static int inflate_raw_entry(const unsigned char *src, size_t src_len, unsigned 
 
 static int simple_archive_entries(const unsigned char *data, size_t len, size_t *cd_offset, uint16_t *entry_count) {
     size_t eocd;
-    if (find_eocd(data, len, &eocd) != 0 || eocd + 22 > len)
+    if (len < 22 || find_eocd(data, len, &eocd) != 0 || eocd > len - 22)
         return -1;
     *entry_count = read_le16(data + eocd + 10);
     *cd_offset = read_le32(data + eocd + 16);
@@ -278,7 +283,7 @@ static int simple_list_archive(const char *archive) {
         uint16_t extra_len;
         uint16_t comment_len;
         uint32_t uncompressed_size;
-        if (pos + 46 > len || read_le32(data + pos) != 0x02014b50) {
+        if (len < 46 || pos > len - 46 || read_le32(data + pos) != 0x02014b50) {
             free(data);
             return 1;
         }
@@ -286,13 +291,14 @@ static int simple_list_archive(const char *archive) {
         name_len = read_le16(data + pos + 28);
         extra_len = read_le16(data + pos + 30);
         comment_len = read_le16(data + pos + 32);
-        if (pos + 46 + name_len + extra_len + comment_len > len) {
+        size_t header_len = 46 + (size_t)name_len + (size_t)extra_len + (size_t)comment_len;
+        if (header_len > len - pos) {
             free(data);
             return 1;
         }
         printf("%9lu  %.*s\n", (unsigned long)uncompressed_size, name_len, data + pos + 46);
         total_size += uncompressed_size;
-        pos += 46 + name_len + extra_len + comment_len;
+        pos += header_len;
     }
     printf("---------  ----\n");
     printf("%9lu  %u file(s)\n", total_size, entries);
@@ -334,7 +340,7 @@ static int simple_extract_archive(const char *archive, const char *outdir) {
         char outpath[MAX_PATH_LEN];
         unsigned char *out = NULL;
 
-        if (pos + 46 > len || read_le32(data + pos) != 0x02014b50) {
+        if (len < 46 || pos > len - 46 || read_le32(data + pos) != 0x02014b50) {
             errors++;
             break;
         }
@@ -345,18 +351,23 @@ static int simple_extract_archive(const char *archive, const char *outdir) {
         extra_len = read_le16(data + pos + 30);
         comment_len = read_le16(data + pos + 32);
         local_offset = read_le32(data + pos + 42);
-        if (pos + 46 + name_len + extra_len + comment_len > len || local_offset + 30 > len) {
+        size_t header_len = 46 + (size_t)name_len + (size_t)extra_len + (size_t)comment_len;
+        if (header_len > len - pos || (size_t)local_offset > len - 30) {
             errors++;
             break;
         }
 
         name = (const char *)(data + pos + 46);
-        safe_name = entry_output_name(name);
+        safe_name = entry_output_name(name, name_len);
+        size_t safe_len = (size_t)name_len - (size_t)(safe_name - name);
+        pos += header_len;
+        if (safe_len == 0)
+            continue;
         snprintf(outpath, sizeof(outpath), "%s%s%.*s",
-                 outdir ? outdir : "", outdir ? "/" : "", (int)(name_len - (safe_name - name)), safe_name);
-        pos += 46 + name_len + extra_len + comment_len;
+                 outdir ? outdir : "", outdir ? "/" : "", (int)safe_len, safe_name);
 
-        if (outpath[strlen(outpath) - 1] == '/') {
+        size_t out_len = strlen(outpath);
+        if (out_len > 0 && outpath[out_len - 1] == '/') {
             if (mkdir(outpath, 0755) != 0 && errno != EEXIST)
                 errors++;
             continue;
@@ -372,13 +383,24 @@ static int simple_extract_archive(const char *archive, const char *outdir) {
         }
         local_name_len = read_le16(data + local_offset + 26);
         local_extra_len = read_le16(data + local_offset + 28);
-        file_data_offset = local_offset + 30 + local_name_len + local_extra_len;
-        if (file_data_offset + compressed_size > len) {
+        size_t local_header_len = 30 + (size_t)local_name_len + (size_t)local_extra_len;
+        if (local_header_len > len - (size_t)local_offset) {
+            errors++;
+            continue;
+        }
+        file_data_offset = (size_t)local_offset + local_header_len;
+        if ((size_t)compressed_size > len - file_data_offset) {
             errors++;
             continue;
         }
 
-        out = (unsigned char *)malloc(uncompressed_size);
+        if (uncompressed_size > MAX_UNCOMPRESSED_SIZE) {
+            fprintf(stderr, "unzip: entry '%.*s' too large (%lu bytes)\n",
+                    (int)safe_len, safe_name, (unsigned long)uncompressed_size);
+            errors++;
+            continue;
+        }
+        out = (unsigned char *)malloc(uncompressed_size > 0 ? uncompressed_size : 1);
         if (!out) {
             errors++;
             continue;
