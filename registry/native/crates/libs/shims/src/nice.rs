@@ -6,6 +6,7 @@
 //! Usage: nice [-n ADJUSTMENT] COMMAND [ARG]...
 
 use std::ffi::OsString;
+use std::io::Write;
 use std::process::Stdio;
 
 pub fn nice(args: Vec<OsString>) -> i32 {
@@ -28,8 +29,13 @@ pub fn nice(args: Vec<OsString>) -> i32 {
     }
 
     if cmd_start >= str_args.len() {
-        // No command — just print 0 (the nice value)
-        println!("0");
+        // No command. Just print 0 (the nice value).
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        if let Err(e) = writeln!(out, "0").and_then(|_| out.flush()) {
+            eprintln!("nice: {}", e);
+            return 1;
+        }
         return 0;
     }
 
