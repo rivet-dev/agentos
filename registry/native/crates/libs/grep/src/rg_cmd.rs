@@ -3,12 +3,19 @@
 //! Provides ripgrep-compatible search. Uses the same regex engine as ripgrep.
 //! POSIX grep/egrep/fgrep remain in lib.rs for BRE/ERE/fixed string compatibility.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::ffi::OsString;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 
 use regex::{Regex, RegexBuilder};
+
+const MAX_CONTEXT_LINES: usize = 100_000;
+const MAX_CONTEXT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_FILE_RESULTS: usize = 1_000_000;
+const MAX_INPUT_LINE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PATTERN_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PATTERNS: usize = 100_000;
 
 /// Entry point for rg command.
 pub fn rg(args: Vec<OsString>) -> i32 {
@@ -51,6 +58,7 @@ struct Options {
     max_depth: Option<usize>,
     sort_modified: bool,
     glob_patterns: Vec<String>,
+    pattern_bytes: usize,
     type_include: Vec<String>,
     type_exclude: Vec<String>,
 }
@@ -81,6 +89,7 @@ impl Options {
             max_depth: None,
             sort_modified: false,
             glob_patterns: Vec::new(),
+            pattern_bytes: 0,
             type_include: Vec::new(),
             type_exclude: Vec::new(),
         }
@@ -101,7 +110,10 @@ impl Options {
 
 fn run(args: &[String]) -> Result<i32, String> {
     if args.len() == 1 && (args[0] == "--version" || args[0] == "-V") {
-        println!("ripgrep 14.1.0 (Agent OS)");
+        let stdout = io::stdout();
+        let mut out = stdout.lock();
+        writeln!(out, "ripgrep 14.1.0 (Agent OS)").map_err(|e| e.to_string())?;
+        out.flush().map_err(|e| e.to_string())?;
         return Ok(0);
     }
 
@@ -114,12 +126,13 @@ fn run(args: &[String]) -> Result<i32, String> {
             opts.paths.clone()
         };
 
-        let files = collect_files_from_paths(&paths, &opts);
+        let files = collect_files_from_paths(&paths, &opts).map_err(|e| e.to_string())?;
         let stdout = io::stdout();
         let mut out = stdout.lock();
         for path in files {
-            let _ = writeln!(out, "{}", path.to_string_lossy());
+            writeln!(out, "{}", path.to_string_lossy()).map_err(|e| e.to_string())?;
         }
+        out.flush().map_err(|e| e.to_string())?;
         return Ok(0);
     }
 
@@ -132,24 +145,45 @@ fn run(args: &[String]) -> Result<i32, String> {
     if opts.paths.is_empty() {
         // No paths: read from stdin
         let stdin = io::stdin();
-        let result = search_stream(stdin.lock(), &regex, &opts);
+        let stdout = io::stdout();
+        let mut out = stdout.lock();
+        let result = search_stream(stdin.lock(), &regex, &opts, None, false, &mut out)
+            .map_err(|e| e.to_string())?;
         if opts.quiet {
             return Ok(if result.matches > 0 { 0 } else { 1 });
         }
-        print_file_result(None, &result, &opts);
+        print_file_result(None, &result, &opts, &mut out).map_err(|e| e.to_string())?;
+        out.flush().map_err(|e| e.to_string())?;
         return Ok(if result.matches > 0 { 0 } else { 1 });
     }
 
-    let files = collect_files_from_paths(&opts.paths, &opts);
+    let files = collect_files_from_paths(&opts.paths, &opts).map_err(|e| e.to_string())?;
     let multi = files.len() > 1;
     let show_fn = opts.resolve_show_filename(multi);
     let mut any_match = false;
+    let mut had_error = false;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
 
     for path in &files {
         match std::fs::File::open(path) {
             Ok(f) => {
                 let reader = io::BufReader::new(f);
-                let result = search_stream(reader, &regex, &opts);
+                let fname = if show_fn {
+                    Some(path.to_string_lossy().to_string())
+                } else {
+                    None
+                };
+                let result =
+                    match search_stream(reader, &regex, &opts, fname.as_deref(), show_fn, &mut out)
+                    {
+                        Ok(result) => result,
+                        Err(e) => {
+                            eprintln!("rg: {}: {}", path.display(), e);
+                            had_error = true;
+                            continue;
+                        }
+                    };
                 if result.matches > 0 {
                     any_match = true;
                 }
@@ -157,21 +191,25 @@ fn run(args: &[String]) -> Result<i32, String> {
                     return Ok(0);
                 }
                 if !opts.quiet {
-                    let fname = if show_fn {
-                        Some(path.to_string_lossy().to_string())
-                    } else {
-                        None
-                    };
-                    print_file_result(fname.as_deref(), &result, &opts);
+                    print_file_result(fname.as_deref(), &result, &opts, &mut out)
+                        .map_err(|e| e.to_string())?;
                 }
             }
             Err(e) => {
                 eprintln!("rg: {}: {}", path.display(), e);
+                had_error = true;
             }
         }
     }
+    out.flush().map_err(|e| e.to_string())?;
 
-    Ok(if any_match { 0 } else { 1 })
+    if had_error {
+        Ok(2)
+    } else if any_match {
+        Ok(0)
+    } else {
+        Ok(1)
+    }
 }
 
 // --- Argument parsing ---
@@ -231,7 +269,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                 },
                 _ if arg.starts_with("--threads=") => {}
                 _ if arg.starts_with("--regexp=") => {
-                    opts.patterns.push(arg[9..].to_string());
+                    push_pattern(&mut opts, arg[9..].to_string())?;
                     explicit_pattern = true;
                 }
                 _ if arg.starts_with("--max-count=") => {
@@ -242,19 +280,13 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                     );
                 }
                 _ if arg.starts_with("--after-context=") => {
-                    opts.after_context = arg[16..]
-                        .parse()
-                        .map_err(|_| format!("invalid number: '{}'", &arg[16..]))?;
+                    opts.after_context = parse_context_count(&arg[16..])?;
                 }
                 _ if arg.starts_with("--before-context=") => {
-                    opts.before_context = arg[17..]
-                        .parse()
-                        .map_err(|_| format!("invalid number: '{}'", &arg[17..]))?;
+                    opts.before_context = parse_context_count(&arg[17..])?;
                 }
                 _ if arg.starts_with("--context=") => {
-                    let n: usize = arg[10..]
-                        .parse()
-                        .map_err(|_| format!("invalid number: '{}'", &arg[10..]))?;
+                    let n = parse_context_count(&arg[10..])?;
                     opts.before_context = n;
                     opts.after_context = n;
                 }
@@ -276,7 +308,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                     }
                     match arg.as_str() {
                         "--regexp" => {
-                            opts.patterns.push(args[i].clone());
+                            push_pattern(&mut opts, args[i].clone())?;
                             explicit_pattern = true;
                         }
                         "--max-count" => {
@@ -287,19 +319,13 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                             );
                         }
                         "--after-context" => {
-                            opts.after_context = args[i]
-                                .parse()
-                                .map_err(|_| format!("invalid number: '{}'", args[i]))?;
+                            opts.after_context = parse_context_count(&args[i])?;
                         }
                         "--before-context" => {
-                            opts.before_context = args[i]
-                                .parse()
-                                .map_err(|_| format!("invalid number: '{}'", args[i]))?;
+                            opts.before_context = parse_context_count(&args[i])?;
                         }
                         "--context" => {
-                            let n: usize = args[i]
-                                .parse()
-                                .map_err(|_| format!("invalid number: '{}'", args[i]))?;
+                            let n = parse_context_count(&args[i])?;
                             opts.before_context = n;
                             opts.after_context = n;
                         }
@@ -307,13 +333,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                         "--type" => opts.type_include.push(args[i].clone()),
                         "--type-not" => opts.type_exclude.push(args[i].clone()),
                         "--file" => {
-                            let content = std::fs::read_to_string(&args[i])
-                                .map_err(|e| format!("{}: {}", args[i], e))?;
-                            for line in content.lines() {
-                                if !line.is_empty() {
-                                    opts.patterns.push(line.to_string());
-                                }
-                            }
+                            read_patterns_from_file(&mut opts, &args[i])?;
                             explicit_pattern = true;
                         }
                         "--color" => {} // no-op
@@ -361,13 +381,13 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                     'e' => {
                         let rest: String = chars[j + 1..].iter().collect();
                         if !rest.is_empty() {
-                            opts.patterns.push(rest);
+                            push_pattern(&mut opts, rest)?;
                         } else {
                             i += 1;
                             if i >= args.len() {
                                 return Err("option requires an argument -- 'e'".to_string());
                             }
-                            opts.patterns.push(args[i].clone());
+                            push_pattern(&mut opts, args[i].clone())?;
                         }
                         explicit_pattern = true;
                         j = chars.len();
@@ -378,13 +398,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                         if i >= args.len() {
                             return Err("option requires an argument -- 'f'".to_string());
                         }
-                        let content = std::fs::read_to_string(&args[i])
-                            .map_err(|e| format!("{}: {}", args[i], e))?;
-                        for line in content.lines() {
-                            if !line.is_empty() {
-                                opts.patterns.push(line.to_string());
-                            }
-                        }
+                        read_patterns_from_file(&mut opts, &args[i])?;
                         explicit_pattern = true;
                         j = chars.len();
                         continue;
@@ -415,9 +429,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                         if i >= args.len() {
                             return Err("option requires an argument -- 'A'".to_string());
                         }
-                        opts.after_context = args[i]
-                            .parse()
-                            .map_err(|_| format!("invalid number: '{}'", args[i]))?;
+                        opts.after_context = parse_context_count(&args[i])?;
                         j = chars.len();
                         continue;
                     }
@@ -426,9 +438,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                         if i >= args.len() {
                             return Err("option requires an argument -- 'B'".to_string());
                         }
-                        opts.before_context = args[i]
-                            .parse()
-                            .map_err(|_| format!("invalid number: '{}'", args[i]))?;
+                        opts.before_context = parse_context_count(&args[i])?;
                         j = chars.len();
                         continue;
                     }
@@ -437,9 +447,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
                         if i >= args.len() {
                             return Err("option requires an argument -- 'C'".to_string());
                         }
-                        let n: usize = args[i]
-                            .parse()
-                            .map_err(|_| format!("invalid number: '{}'", args[i]))?;
+                        let n = parse_context_count(&args[i])?;
                         opts.before_context = n;
                         opts.after_context = n;
                         j = chars.len();
@@ -484,7 +492,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         if opts.files_mode {
             opts.paths.push(arg.clone());
         } else if !explicit_pattern && opts.patterns.is_empty() {
-            opts.patterns.push(arg.clone());
+            push_pattern(&mut opts, arg.clone())?;
             explicit_pattern = true;
         } else {
             opts.paths.push(arg.clone());
@@ -497,7 +505,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         if opts.files_mode {
             opts.paths.push(args[i].clone());
         } else if !explicit_pattern && opts.patterns.is_empty() {
-            opts.patterns.push(args[i].clone());
+            push_pattern(&mut opts, args[i].clone())?;
             explicit_pattern = true;
         } else {
             opts.paths.push(args[i].clone());
@@ -506,6 +514,56 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
     }
 
     Ok(opts)
+}
+
+fn parse_context_count(value: &str) -> Result<usize, String> {
+    let count: usize = value
+        .parse()
+        .map_err(|_| format!("invalid number: '{}'", value))?;
+    if count > MAX_CONTEXT_LINES {
+        return Err(format!("context count '{}' exceeds size limit", value));
+    }
+    Ok(count)
+}
+
+fn push_pattern(opts: &mut Options, pattern: String) -> Result<(), String> {
+    if opts.patterns.len() >= MAX_PATTERNS {
+        return Err("too many patterns".to_string());
+    }
+    let next_bytes = opts
+        .pattern_bytes
+        .checked_add(pattern.len())
+        .ok_or_else(|| "pattern data too large".to_string())?;
+    if next_bytes > MAX_PATTERN_BYTES {
+        return Err("pattern data exceeds size limit".to_string());
+    }
+    opts.pattern_bytes = next_bytes;
+    opts.patterns.push(pattern);
+    Ok(())
+}
+
+fn read_patterns_from_file(opts: &mut Options, path: &str) -> Result<(), String> {
+    let metadata = std::fs::metadata(path).map_err(|e| format!("{}: {}", path, e))?;
+    if metadata.len() > MAX_PATTERN_BYTES as u64 {
+        return Err(format!("{}: pattern file exceeds size limit", path));
+    }
+    let file = std::fs::File::open(path).map_err(|e| format!("{}: {}", path, e))?;
+    let limit = MAX_PATTERN_BYTES
+        .checked_add(1)
+        .ok_or_else(|| "pattern file size limit is too large".to_string())?;
+    let mut content = String::new();
+    file.take(limit as u64)
+        .read_to_string(&mut content)
+        .map_err(|e| format!("{}: {}", path, e))?;
+    if content.len() > MAX_PATTERN_BYTES {
+        return Err(format!("{}: pattern file exceeds size limit", path));
+    }
+    for line in content.lines() {
+        if !line.is_empty() {
+            push_pattern(opts, line.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 // --- Pattern building ---
@@ -555,14 +613,21 @@ fn prepare_pattern(pattern: &str, opts: &Options) -> String {
 
 // --- File collection ---
 
-fn collect_files_from_paths(paths: &[String], opts: &Options) -> Vec<PathBuf> {
+fn collect_files_from_paths(paths: &[String], opts: &Options) -> io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for path_str in paths {
         let path = Path::new(path_str);
-        if path.is_dir() {
-            walk_dir(path, path, opts, &mut files, 0);
-        } else if path.is_file() && should_include(path, path, false, opts) {
-            files.push(path.to_path_buf());
+        let metadata = std::fs::symlink_metadata(path)?;
+        let file_type = metadata.file_type();
+        if file_type.is_dir() {
+            let mut active_dirs = HashSet::new();
+            walk_dir(path, path, opts, &mut files, 0, &mut active_dirs)?;
+        } else if file_type.is_file() {
+            if should_include(path, path, false, opts) {
+                push_collected_file(&mut files, path.to_path_buf())?;
+            }
+        } else {
+            continue;
         }
     }
     if opts.sort_modified {
@@ -574,44 +639,67 @@ fn collect_files_from_paths(paths: &[String], opts: &Options) -> Vec<PathBuf> {
     } else {
         files.sort();
     }
-    files
+    Ok(files)
 }
 
-fn walk_dir(root: &Path, dir: &Path, opts: &Options, out: &mut Vec<PathBuf>, depth: usize) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("rg: {}: {}", dir.display(), e);
-            return;
-        }
-    };
-
-    let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-    entries.sort_by_key(|e| e.file_name());
-
-    for entry in entries {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        let is_dir = path.is_dir();
-
-        // Skip hidden files/dirs unless --hidden
-        if !opts.hidden && name_str.starts_with('.') {
-            continue;
-        }
-
-        if !should_include(root, &path, is_dir, opts) {
-            continue;
-        }
-
-        if is_dir {
-            if opts.max_depth.map(|max| depth < max).unwrap_or(true) {
-                walk_dir(root, &path, opts, out, depth + 1);
-            }
-        } else if path.is_file() {
-            out.push(path);
-        }
+fn push_collected_file(out: &mut Vec<PathBuf>, path: PathBuf) -> io::Result<()> {
+    if out.len() >= MAX_FILE_RESULTS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "file result count exceeds size limit",
+        ));
     }
+    out.push(path);
+    Ok(())
+}
+
+fn walk_dir(
+    root: &Path,
+    dir: &Path,
+    opts: &Options,
+    out: &mut Vec<PathBuf>,
+    depth: usize,
+    active_dirs: &mut HashSet<PathBuf>,
+) -> io::Result<()> {
+    let canonical = std::fs::canonicalize(dir)?;
+    if !active_dirs.insert(canonical.clone()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("recursive directory cycle at {}", dir.display()),
+        ));
+    }
+
+    let result = (|| {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            let file_type = entry.file_type()?;
+            let is_dir = file_type.is_dir();
+
+            // Skip hidden files/dirs unless --hidden
+            if !opts.hidden && name_str.starts_with('.') {
+                continue;
+            }
+
+            if !should_include(root, &path, is_dir, opts) {
+                continue;
+            }
+
+            if is_dir {
+                if opts.max_depth.map(|max| depth < max).unwrap_or(true) {
+                    walk_dir(root, &path, opts, out, depth + 1, active_dirs)?;
+                }
+            } else if file_type.is_file() {
+                push_collected_file(out, path)?;
+            }
+        }
+        Ok(())
+    })();
+
+    active_dirs.remove(&canonical);
+    result
 }
 
 fn should_include(root: &Path, path: &Path, is_dir: bool, opts: &Options) -> bool {
@@ -776,7 +864,6 @@ fn glob_matches(pattern: &str, relative_path: &str, file_name: &str, is_dir: boo
 
 struct FileResult {
     matches: usize,
-    lines: Vec<ResultLine>,
     is_binary: bool,
 }
 
@@ -786,10 +873,16 @@ enum ResultLine {
     Separator,
 }
 
-fn search_stream<R: BufRead>(reader: R, regex: &Regex, opts: &Options) -> FileResult {
+fn search_stream<R: BufRead, W: Write>(
+    mut reader: R,
+    regex: &Regex,
+    opts: &Options,
+    filename: Option<&str>,
+    show_filename: bool,
+    out: &mut W,
+) -> io::Result<FileResult> {
     let mut result = FileResult {
         matches: 0,
-        lines: Vec::new(),
         is_binary: false,
     };
 
@@ -797,15 +890,16 @@ fn search_stream<R: BufRead>(reader: R, regex: &Regex, opts: &Options) -> FileRe
         !opts.quiet && !opts.files_with_matches && !opts.files_without_matches && !opts.count_only;
 
     let mut before_buf: VecDeque<(usize, String)> = VecDeque::new();
+    let mut before_buf_bytes: usize = 0;
     let mut after_remaining: usize = 0;
     let mut last_printed: usize = 0;
+    let mut line_buf = Vec::new();
+    let mut lineno: usize = 0;
 
-    for (idx, line_result) in reader.lines().enumerate() {
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => break,
-        };
-        let lineno = idx + 1;
+    while let Some(line) = read_line_bounded(&mut reader, &mut line_buf)? {
+        lineno = lineno
+            .checked_add(1)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "line number overflow"))?;
 
         // Binary detection: null bytes in line data
         if line.as_bytes().contains(&0) {
@@ -827,27 +921,50 @@ fn search_stream<R: BufRead>(reader: R, regex: &Regex, opts: &Options) -> FileRe
                 if opts.has_context() && last_printed > 0 {
                     let first_before = before_buf.front().map(|(n, _)| *n).unwrap_or(lineno);
                     if first_before > last_printed + 1 {
-                        result.lines.push(ResultLine::Separator);
+                        print_result_line(
+                            out,
+                            filename,
+                            opts,
+                            show_filename,
+                            &ResultLine::Separator,
+                        )?;
                     }
                 }
 
                 // Flush before-context buffer
                 for (bno, btext) in before_buf.drain(..) {
                     if bno > last_printed {
-                        result.lines.push(ResultLine::Context(bno, btext));
+                        print_result_line(
+                            out,
+                            filename,
+                            opts,
+                            show_filename,
+                            &ResultLine::Context(bno, btext),
+                        )?;
                         last_printed = bno;
                     }
                 }
+                before_buf_bytes = 0;
 
                 // Emit match
                 if opts.only_matching && !opts.invert_match {
                     for mat in regex.find_iter(&line) {
-                        result
-                            .lines
-                            .push(ResultLine::Match(lineno, mat.as_str().to_string()));
+                        print_result_line(
+                            out,
+                            filename,
+                            opts,
+                            show_filename,
+                            &ResultLine::Match(lineno, mat.as_str().to_string()),
+                        )?;
                     }
                 } else {
-                    result.lines.push(ResultLine::Match(lineno, line));
+                    print_result_line(
+                        out,
+                        filename,
+                        opts,
+                        show_filename,
+                        &ResultLine::Match(lineno, line),
+                    )?;
                 }
                 last_printed = lineno;
                 after_remaining = opts.after_context;
@@ -860,90 +977,166 @@ fn search_stream<R: BufRead>(reader: R, regex: &Regex, opts: &Options) -> FileRe
             }
         } else if collect_lines {
             if after_remaining > 0 {
-                result.lines.push(ResultLine::Context(lineno, line));
+                print_result_line(
+                    out,
+                    filename,
+                    opts,
+                    show_filename,
+                    &ResultLine::Context(lineno, line),
+                )?;
                 last_printed = lineno;
                 after_remaining -= 1;
             } else if opts.before_context > 0 {
+                before_buf_bytes = before_buf_bytes.checked_add(line.len()).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "context buffer too large")
+                })?;
+                if before_buf_bytes > MAX_CONTEXT_BYTES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "context buffer exceeds size limit",
+                    ));
+                }
                 before_buf.push_back((lineno, line));
                 if before_buf.len() > opts.before_context {
-                    before_buf.pop_front();
+                    if let Some((_, removed)) = before_buf.pop_front() {
+                        before_buf_bytes = before_buf_bytes.saturating_sub(removed.len());
+                    }
                 }
             }
         }
     }
 
-    result
+    Ok(result)
 }
 
 // --- Output ---
 
-fn print_file_result(filename: Option<&str>, result: &FileResult, opts: &Options) {
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
-
+fn print_file_result<W: Write>(
+    filename: Option<&str>,
+    result: &FileResult,
+    opts: &Options,
+    out: &mut W,
+) -> io::Result<()> {
     if result.is_binary {
         if result.matches > 0 {
             if let Some(name) = filename {
-                let _ = writeln!(out, "Binary file {} matches.", name);
+                writeln!(out, "Binary file {} matches.", name)?;
             }
         }
-        return;
+        return Ok(());
     }
 
     if opts.files_with_matches {
         if result.matches > 0 {
             let name = filename.unwrap_or("(standard input)");
-            let _ = writeln!(out, "{}", name);
+            writeln!(out, "{}", name)?;
         }
-        return;
+        return Ok(());
     }
 
     if opts.files_without_matches {
         if result.matches == 0 {
             let name = filename.unwrap_or("(standard input)");
-            let _ = writeln!(out, "{}", name);
+            writeln!(out, "{}", name)?;
         }
-        return;
+        return Ok(());
     }
 
     if opts.count_only {
         if let Some(name) = filename {
-            let _ = writeln!(out, "{}:{}", name, result.matches);
+            writeln!(out, "{}:{}", name, result.matches)?;
         } else {
-            let _ = writeln!(out, "{}", result.matches);
+            writeln!(out, "{}", result.matches)?;
         }
-        return;
+        return Ok(());
     }
 
-    for line in &result.lines {
-        match line {
-            ResultLine::Match(lineno, text) => {
-                let mut prefix = String::new();
+    Ok(())
+}
+
+fn print_result_line<W: Write>(
+    out: &mut W,
+    filename: Option<&str>,
+    opts: &Options,
+    show_filename: bool,
+    line: &ResultLine,
+) -> io::Result<()> {
+    match line {
+        ResultLine::Match(lineno, text) => {
+            let mut prefix = String::new();
+            if show_filename {
                 if let Some(name) = filename {
                     prefix.push_str(name);
                     prefix.push(':');
                 }
-                if opts.show_line_numbers() {
-                    prefix.push_str(&lineno.to_string());
-                    prefix.push(':');
-                }
-                let _ = writeln!(out, "{}{}", prefix, text);
             }
-            ResultLine::Context(lineno, text) => {
-                let mut prefix = String::new();
+            if opts.show_line_numbers() {
+                prefix.push_str(&lineno.to_string());
+                prefix.push(':');
+            }
+            writeln!(out, "{}{}", prefix, text)
+        }
+        ResultLine::Context(lineno, text) => {
+            let mut prefix = String::new();
+            if show_filename {
                 if let Some(name) = filename {
                     prefix.push_str(name);
                     prefix.push('-');
                 }
-                if opts.show_line_numbers() {
-                    prefix.push_str(&lineno.to_string());
-                    prefix.push('-');
-                }
-                let _ = writeln!(out, "{}{}", prefix, text);
             }
-            ResultLine::Separator => {
-                let _ = writeln!(out, "--");
+            if opts.show_line_numbers() {
+                prefix.push_str(&lineno.to_string());
+                prefix.push('-');
             }
+            writeln!(out, "{}{}", prefix, text)
+        }
+        ResultLine::Separator => writeln!(out, "--"),
+    }
+}
+
+fn read_line_bounded<R: BufRead>(
+    reader: &mut R,
+    line_buf: &mut Vec<u8>,
+) -> io::Result<Option<String>> {
+    line_buf.clear();
+
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if line_buf.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+
+        let newline = available.iter().position(|&b| b == b'\n');
+        let take = newline.map_or(available.len(), |pos| pos + 1);
+        let next_len = line_buf
+            .len()
+            .checked_add(take)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "input line too long"))?;
+        if next_len > MAX_INPUT_LINE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "input line exceeds size limit",
+            ));
+        }
+
+        line_buf.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if newline.is_some() {
+            break;
         }
     }
+
+    if line_buf.ends_with(b"\n") {
+        line_buf.pop();
+        if line_buf.ends_with(b"\r") {
+            line_buf.pop();
+        }
+    }
+
+    String::from_utf8(line_buf.clone())
+        .map(Some)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
