@@ -1,7 +1,8 @@
 //! WASM-compatible stub for codex-network-proxy.
 //!
 //! On WASI the host manages networking, so the network proxy is unnecessary.
-//! All types are zero-size structs with no-op methods.
+//! All types are zero-size structs with no-op methods. This stub is not a
+//! policy enforcement layer; guest egress must remain mediated by the VM kernel.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -276,10 +277,7 @@ impl NetworkProxyBuilder {
     }
 
     /// Set blocked request observer from Arc (stub — no-op).
-    pub fn blocked_request_observer_arc(
-        self,
-        _observer: Arc<dyn BlockedRequestObserver>,
-    ) -> Self {
+    pub fn blocked_request_observer_arc(self, _observer: Arc<dyn BlockedRequestObserver>) -> Self {
         self
     }
 
@@ -381,4 +379,50 @@ pub fn validate_policy_against_constraints(
     _config: &ConfigState,
 ) -> Result<(), NetworkProxyConstraintError> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proxy_env_helpers_do_not_expose_host_proxy_settings() {
+        let mut env = HashMap::from([
+            (
+                "HTTP_PROXY".to_string(),
+                "http://example.invalid:8080".to_string(),
+            ),
+            ("NO_PROXY".to_string(), "localhost".to_string()),
+        ]);
+
+        assert!(!has_proxy_url_env_vars(&env));
+        assert_eq!(proxy_url_env_value(&env), None);
+
+        NetworkProxy.apply_to_env(&mut env);
+
+        assert_eq!(
+            env.get("HTTP_PROXY").map(String::as_str),
+            Some("http://example.invalid:8080")
+        );
+        assert_eq!(env.get("NO_PROXY").map(String::as_str), Some("localhost"));
+    }
+
+    #[test]
+    fn proxy_stub_does_not_open_listening_ports() {
+        let proxy = NetworkProxy;
+
+        assert_eq!(proxy.http_addr(), SocketAddr::from(([127, 0, 0, 1], 0)));
+        assert_eq!(proxy.socks_addr(), SocketAddr::from(([127, 0, 0, 1], 0)));
+        assert!(!proxy.allow_local_binding());
+        assert!(proxy.allow_unix_sockets().is_empty());
+        assert!(!proxy.dangerously_allow_all_unix_sockets());
+    }
+
+    #[test]
+    fn policy_helpers_remain_non_enforcing_stubs() {
+        assert_eq!(normalize_host("Example.COM"), "Example.COM");
+        assert!(
+            validate_policy_against_constraints(&NetworkProxyConstraints, &ConfigState).is_ok()
+        );
+    }
 }
