@@ -5,6 +5,9 @@
 //! Uses the `regex` crate for the `:` operator (anchored match).
 
 use std::ffi::OsString;
+use std::io::{self, Write};
+
+const MAX_EXPR_DEPTH: usize = 1024;
 
 pub fn main(args: Vec<OsString>) -> i32 {
     let str_args: Vec<String> = args
@@ -21,6 +24,7 @@ pub fn main(args: Vec<OsString>) -> i32 {
     let mut parser = Parser {
         tokens: str_args,
         pos: 0,
+        depth: 0,
     };
 
     match parser.parse_or() {
@@ -32,7 +36,10 @@ pub fn main(args: Vec<OsString>) -> i32 {
                 );
                 return 2;
             }
-            println!("{}", val);
+            if let Err(msg) = write_value(&val) {
+                eprintln!("expr: {}", msg);
+                return 2;
+            }
             if val.is_null() {
                 1
             } else {
@@ -88,6 +95,7 @@ impl std::fmt::Display for Value {
 struct Parser {
     tokens: Vec<String>,
     pos: usize,
+    depth: usize,
 }
 
 impl Parser {
@@ -167,7 +175,12 @@ impl Parser {
                     let right = self.parse_mul()?;
                     let a = left.as_int().ok_or("non-integer argument")?;
                     let b = right.as_int().ok_or("non-integer argument")?;
-                    left = Value::Int(if op == "+" { a + b } else { a - b });
+                    let value = if op == "+" {
+                        a.checked_add(b)
+                    } else {
+                        a.checked_sub(b)
+                    };
+                    left = Value::Int(value.ok_or("integer overflow")?);
                 }
                 _ => break,
             }
@@ -188,12 +201,13 @@ impl Parser {
                     if (op == "/" || op == "%") && b == 0 {
                         return Err("division by zero".to_string());
                     }
-                    left = Value::Int(match &op[..] {
-                        "*" => a * b,
-                        "/" => a / b,
-                        "%" => a % b,
+                    let value = match &op[..] {
+                        "*" => a.checked_mul(b),
+                        "/" => a.checked_div(b),
+                        "%" => a.checked_rem(b),
                         _ => unreachable!(),
-                    });
+                    };
+                    left = Value::Int(value.ok_or("integer overflow")?);
                 }
                 _ => break,
             }
@@ -217,8 +231,14 @@ impl Parser {
     /// primary : '(' expr ')' | TOKEN
     fn parse_primary(&mut self) -> Result<Value, String> {
         if self.peek() == Some("(") {
+            if self.depth >= MAX_EXPR_DEPTH {
+                return Err("expression nesting too deep".to_string());
+            }
             self.next();
-            let val = self.parse_or()?;
+            self.depth += 1;
+            let val = self.parse_or();
+            self.depth -= 1;
+            let val = val?;
             self.expect(")")?;
             return Ok(val);
         }
@@ -235,6 +255,14 @@ impl Parser {
             None => Err("syntax error: missing argument".to_string()),
         }
     }
+}
+
+fn write_value(value: &Value) -> Result<(), String> {
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    writeln!(out, "{value}").map_err(|e| format!("failed to write output: {e}"))?;
+    out.flush()
+        .map_err(|e| format!("failed to write output: {e}"))
 }
 
 fn compare_values(left: &Value, right: &Value, op: &str) -> bool {
