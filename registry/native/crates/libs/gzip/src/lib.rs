@@ -129,7 +129,8 @@ fn compress_stream<R: Read, W: Write>(input: R, output: W, level: Compression) -
     let mut reader = BufReader::new(input);
     let mut encoder = GzEncoder::new(BufWriter::new(output), level);
     io::copy(&mut reader, &mut encoder)?;
-    encoder.finish()?;
+    let mut writer = encoder.finish()?;
+    writer.flush()?;
     Ok(())
 }
 
