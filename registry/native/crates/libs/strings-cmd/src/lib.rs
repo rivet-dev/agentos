@@ -4,6 +4,9 @@ use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, Read, Write};
 
+const READ_BUFFER_BYTES: usize = 8 * 1024;
+const MAX_MIN_LENGTH: usize = 1024 * 1024;
+
 pub fn main(args: Vec<OsString>) -> i32 {
     let str_args: Vec<String> = args
         .iter()
@@ -25,7 +28,7 @@ pub fn main(args: Vec<OsString>) -> i32 {
                     return 1;
                 }
                 match str_args[i].parse::<usize>() {
-                    Ok(n) if n > 0 => min_len = n,
+                    Ok(n) if (1..=MAX_MIN_LENGTH).contains(&n) => min_len = n,
                     _ => {
                         eprintln!("strings: invalid minimum string length '{}'", str_args[i]);
                         return 1;
@@ -35,7 +38,7 @@ pub fn main(args: Vec<OsString>) -> i32 {
             s if s.starts_with("-n") => {
                 let val = &s[2..];
                 match val.parse::<usize>() {
-                    Ok(n) if n > 0 => min_len = n,
+                    Ok(n) if (1..=MAX_MIN_LENGTH).contains(&n) => min_len = n,
                     _ => {
                         eprintln!("strings: invalid minimum string length '{}'", val);
                         return 1;
@@ -59,8 +62,11 @@ pub fn main(args: Vec<OsString>) -> i32 {
             s if s.starts_with('-') && s.len() > 1 => {
                 // Try parsing as -N (numeric min length, GNU extension)
                 if let Ok(n) = s[1..].parse::<usize>() {
-                    if n > 0 {
+                    if (1..=MAX_MIN_LENGTH).contains(&n) {
                         min_len = n;
+                    } else {
+                        eprintln!("strings: invalid minimum string length '{}'", &s[1..]);
+                        return 1;
                     }
                 } else {
                     eprintln!("strings: unknown option '{}'", s);
@@ -76,75 +82,101 @@ pub fn main(args: Vec<OsString>) -> i32 {
     let mut out = stdout.lock();
 
     if filenames.is_empty() {
-        let mut data = Vec::new();
-        if let Err(e) = io::stdin().lock().read_to_end(&mut data) {
+        if let Err(e) = extract_strings(io::stdin().lock(), min_len, offset_format, &mut out) {
             eprintln!("strings: stdin: {}", e);
             return 1;
         }
-        extract_strings(&data, min_len, offset_format, &mut out);
     } else {
         for filename in &filenames {
-            match File::open(filename) {
-                Ok(mut f) => {
-                    let mut data = Vec::new();
-                    if let Err(e) = f.read_to_end(&mut data) {
-                        eprintln!("strings: {}: {}", filename, e);
-                        return 1;
-                    }
-                    extract_strings(&data, min_len, offset_format, &mut out);
-                }
+            match File::open(filename)
+                .and_then(|f| extract_strings(f, min_len, offset_format, &mut out))
+            {
+                Ok(()) => {}
                 Err(e) => {
                     eprintln!("strings: {}: {}", filename, e);
                     return 1;
                 }
-            }
+            };
         }
     }
 
-    0
+    match out.flush() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("strings: stdout: {}", e);
+            1
+        }
+    }
 }
 
-fn extract_strings<W: Write>(data: &[u8], min_len: usize, offset_fmt: Option<char>, out: &mut W) {
+fn extract_strings<R: Read, W: Write>(
+    mut reader: R,
+    min_len: usize,
+    offset_fmt: Option<char>,
+    out: &mut W,
+) -> io::Result<()> {
     let mut run_start: Option<usize> = None;
     let mut run = Vec::new();
+    let mut emitted = false;
+    let mut offset = 0;
+    let mut buffer = [0; READ_BUFFER_BYTES];
 
-    for (i, &b) in data.iter().enumerate() {
-        if is_printable_ascii(b) {
-            if run.is_empty() {
-                run_start = Some(i);
+    loop {
+        let bytes_read = reader.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        for &b in &buffer[..bytes_read] {
+            if is_printable_ascii(b) {
+                if run_start.is_none() {
+                    run_start = Some(offset);
+                }
+                if emitted {
+                    out.write_all(&[b])?;
+                } else {
+                    run.push(b);
+                    if run.len() == min_len {
+                        emit_prefix(out, run_start.unwrap_or(0), offset_fmt)?;
+                        out.write_all(&run)?;
+                        run.clear();
+                        emitted = true;
+                    }
+                }
+            } else {
+                if emitted {
+                    writeln!(out)?;
+                }
+                run.clear();
+                run_start = None;
+                emitted = false;
             }
-            run.push(b);
-        } else {
-            if run.len() >= min_len {
-                emit_string(out, &run, run_start.unwrap_or(0), offset_fmt);
-            }
-            run.clear();
-            run_start = None;
+            offset += 1;
         }
     }
-    // Flush trailing run
-    if run.len() >= min_len {
-        emit_string(out, &run, run_start.unwrap_or(0), offset_fmt);
+
+    if emitted {
+        writeln!(out)?;
     }
+    Ok(())
 }
 
-fn emit_string<W: Write>(out: &mut W, run: &[u8], offset: usize, offset_fmt: Option<char>) {
+fn emit_prefix<W: Write>(out: &mut W, offset: usize, offset_fmt: Option<char>) -> io::Result<()> {
     if let Some(fmt) = offset_fmt {
         match fmt {
             'd' => {
-                let _ = write!(out, "{:7} ", offset);
+                write!(out, "{:7} ", offset)?;
             }
             'o' => {
-                let _ = write!(out, "{:7o} ", offset);
+                write!(out, "{:7o} ", offset)?;
             }
             'x' => {
-                let _ = write!(out, "{:7x} ", offset);
+                write!(out, "{:7x} ", offset)?;
             }
             _ => {}
         }
     }
-    let _ = out.write_all(run);
-    let _ = writeln!(out);
+    Ok(())
 }
 
 fn is_printable_ascii(b: u8) -> bool {
