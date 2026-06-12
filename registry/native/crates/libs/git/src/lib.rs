@@ -9,10 +9,11 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::fs;
 use std::io::{self, Cursor, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use wasi_http::{HttpClient, Method, Request};
 
 // ─── Hex utilities ──────────────────────────────────────────────────────────
@@ -40,7 +41,27 @@ fn err(msg: &str) -> io::Error {
     io::Error::new(io::ErrorKind::Other, msg.to_string())
 }
 
+fn print_stdout_line(args: fmt::Arguments<'_>) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
+    stdout.write_fmt(args)?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()
+}
+
 const SUPPORT_DOC_PATH: &str = "registry/native/crates/libs/git/README.md";
+const MAX_GIT_OBJECT_BYTES: usize = 128 * 1024 * 1024;
+const MAX_GIT_OBJECT_HEADER_BYTES: usize = 128;
+const MAX_INDEX_ENTRIES: usize = 1_000_000;
+const MAX_INDEX_BYTES: usize = 256 * 1024 * 1024;
+const MAX_ADVERTISED_REFS: usize = 100_000;
+const MAX_HTTP_ERROR_BODY_BYTES: usize = 8192;
+const MAX_PKT_LINES: usize = 100_000;
+const MAX_PKT_LINE_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
+const MAX_REF_ADVERTISEMENT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PACK_INFLATED_BYTES: usize = 256 * 1024 * 1024;
+const MAX_PACK_BYTES: usize = 256 * 1024 * 1024;
+const MAX_PACK_OBJECTS: usize = 1_000_000;
+const MAX_PACK_RESOLVED_BYTES: usize = 256 * 1024 * 1024;
 
 fn unsupported(subcommand: &str, detail: &str) -> io::Error {
     err(&format!(
@@ -84,6 +105,186 @@ fn dir_is_empty(path: &Path) -> io::Result<bool> {
         return Ok(false);
     }
     Ok(fs::read_dir(path)?.next().is_none())
+}
+
+fn read_to_end_limited<R: Read>(reader: R, limit: usize, context: &str) -> io::Result<Vec<u8>> {
+    let limit_plus_one = limit
+        .checked_add(1)
+        .ok_or_else(|| err(&format!("{} size limit is too large", context)))?;
+    let mut out = Vec::new();
+    reader.take(limit_plus_one as u64).read_to_end(&mut out)?;
+    if out.len() > limit {
+        return Err(err(&format!("{} exceeds size limit", context)));
+    }
+    Ok(out)
+}
+
+fn read_file_limited(path: &Path, limit: usize, context: &str) -> io::Result<Vec<u8>> {
+    let metadata = fs::metadata(path).map_err(|e| {
+        err(&format!(
+            "cannot stat {} '{}': {}",
+            context,
+            path.display(),
+            e
+        ))
+    })?;
+    if metadata.len() > limit as u64 {
+        return Err(err(&format!(
+            "{} '{}' exceeds size limit",
+            context,
+            path.display()
+        )));
+    }
+    fs::read(path).map_err(|e| {
+        err(&format!(
+            "cannot read {} '{}': {}",
+            context,
+            path.display(),
+            e
+        ))
+    })
+}
+
+fn try_reserve_exact<T>(vec: &mut Vec<T>, additional: usize, context: &str) -> io::Result<()> {
+    vec.try_reserve_exact(additional)
+        .map_err(|_| err(&format!("{} allocation failed", context)))
+}
+
+fn append_pack_bytes(pack: &mut Vec<u8>, bytes: &[u8]) -> io::Result<()> {
+    let new_len = pack
+        .len()
+        .checked_add(bytes.len())
+        .ok_or_else(|| err("packfile size overflow"))?;
+    if new_len > MAX_PACK_BYTES {
+        return Err(err("packfile exceeds size limit"));
+    }
+    try_reserve_exact(pack, bytes.len(), "packfile")?;
+    pack.extend_from_slice(bytes);
+    Ok(())
+}
+
+fn add_pack_inflated_bytes(total: &mut usize, bytes: usize) -> io::Result<()> {
+    *total = total
+        .checked_add(bytes)
+        .ok_or_else(|| err("inflated pack size overflow"))?;
+    if *total > MAX_PACK_INFLATED_BYTES {
+        return Err(err("inflated pack data exceeds size limit"));
+    }
+    Ok(())
+}
+
+fn add_pack_resolved_bytes(total: &mut usize, bytes: usize) -> io::Result<()> {
+    *total = total
+        .checked_add(bytes)
+        .ok_or_else(|| err("resolved pack size overflow"))?;
+    if *total > MAX_PACK_RESOLVED_BYTES {
+        return Err(err("resolved pack data exceeds size limit"));
+    }
+    Ok(())
+}
+
+fn add_pkt_payload_bytes(total: &mut usize, bytes: usize) -> io::Result<()> {
+    *total = total
+        .checked_add(bytes)
+        .ok_or_else(|| err("pkt-line payload size overflow"))?;
+    if *total > MAX_PKT_LINE_PAYLOAD_BYTES {
+        return Err(err("pkt-line payload exceeds size limit"));
+    }
+    Ok(())
+}
+
+fn add_advertised_ref_count(total: usize) -> io::Result<()> {
+    if total > MAX_ADVERTISED_REFS {
+        return Err(err("remote advertised too many refs"));
+    }
+    Ok(())
+}
+
+fn response_body_preview(body: &[u8]) -> String {
+    let limit = body.len().min(MAX_HTTP_ERROR_BODY_BYTES);
+    let mut preview = String::from_utf8_lossy(&body[..limit]).trim().to_string();
+    if body.len() > limit {
+        preview.push_str("...");
+    }
+    preview
+}
+
+fn normalize_repo_path(path: &str) -> io::Result<String> {
+    if path.is_empty() || path.as_bytes().contains(&0) {
+        return Err(err("invalid empty or nul-containing repository path"));
+    }
+
+    let mut parts = Vec::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::Normal(part) if part == OsStr::new(".git") => {
+                return Err(err("repository path must not enter .git"));
+            }
+            Component::Normal(part) => {
+                let part = part
+                    .to_str()
+                    .ok_or_else(|| err("repository path must be utf-8"))?;
+                if part.is_empty() {
+                    return Err(err("repository path contains an empty component"));
+                }
+                parts.push(part);
+            }
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
+                return Err(err("repository path must be relative and normalized"));
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        return Err(err("repository path must name a file"));
+    }
+
+    Ok(parts.join("/"))
+}
+
+fn worktree_path(workdir: &Path, repo_path: &str) -> io::Result<PathBuf> {
+    Ok(workdir.join(normalize_repo_path(repo_path)?))
+}
+
+fn validate_ref_tail(name: &str) -> io::Result<&str> {
+    if name.is_empty()
+        || name.as_bytes().contains(&0)
+        || name.starts_with('/')
+        || name.ends_with('/')
+        || name.contains('\\')
+    {
+        return Err(err("invalid git ref name"));
+    }
+
+    for part in name.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            return Err(err("invalid git ref name"));
+        }
+    }
+
+    Ok(name)
+}
+
+fn validate_branch_name(name: &str) -> io::Result<&str> {
+    validate_ref_tail(name)
+}
+
+fn validate_refname(refname: &str) -> io::Result<&str> {
+    if refname == "HEAD" {
+        return Ok(refname);
+    }
+
+    for prefix in ["refs/heads/", "refs/remotes/", "refs/tags/"] {
+        if let Some(tail) = refname.strip_prefix(prefix) {
+            validate_ref_tail(tail)?;
+            return Ok(refname);
+        }
+    }
+
+    Err(err("unsupported git ref name"))
 }
 
 fn hash_bytes(obj_type: &str, data: &[u8]) -> [u8; 20] {
@@ -165,6 +366,7 @@ fn prepare_clone_destination(
     source_label: &str,
     default_branch: &str,
 ) -> io::Result<PathBuf> {
+    validate_branch_name(default_branch)?;
     mkdirs(dest)?;
 
     let dst_git = dest.join(".git");
@@ -198,8 +400,12 @@ enum PktLine {
 fn parse_pkt_lines(data: &[u8]) -> io::Result<Vec<PktLine>> {
     let mut pos = 0usize;
     let mut lines = Vec::new();
+    let mut payload_bytes = 0usize;
 
     while pos + 4 <= data.len() {
+        if lines.len() >= MAX_PKT_LINES {
+            return Err(err("too many pkt-lines"));
+        }
         let len_str =
             std::str::from_utf8(&data[pos..pos + 4]).map_err(|_| err("invalid pkt-line"))?;
         let len = usize::from_str_radix(len_str, 16).map_err(|_| err("invalid pkt-line length"))?;
@@ -213,7 +419,9 @@ fn parse_pkt_lines(data: &[u8]) -> io::Result<Vec<PktLine>> {
             return Err(err("truncated pkt-line"));
         }
 
-        lines.push(PktLine::Data(data[pos..pos + len - 4].to_vec()));
+        let payload_len = len - 4;
+        add_pkt_payload_bytes(&mut payload_bytes, payload_len)?;
+        lines.push(PktLine::Data(data[pos..pos + payload_len].to_vec()));
         pos += len - 4;
     }
 
@@ -254,15 +462,20 @@ fn parse_advertised_ref(line: &[u8], adv: &mut RemoteAdvertisement) -> io::Resul
     if refname == "HEAD" {
         adv.head_hash = Some(hash);
     } else if refname.starts_with("refs/heads/") {
+        validate_refname(refname)?;
         adv.branches.insert(refname.to_string(), hash);
+        add_advertised_ref_count(adv.branches.len() + adv.tags.len())?;
     } else if refname.starts_with("refs/tags/") {
+        validate_refname(refname)?;
         adv.tags.insert(refname.to_string(), hash);
+        add_advertised_ref_count(adv.branches.len() + adv.tags.len())?;
     }
 
     if let Some(capabilities) = capability_part {
         let caps = std::str::from_utf8(capabilities).map_err(|_| err("invalid capability list"))?;
         for cap in caps.split_whitespace() {
             if let Some(target) = cap.strip_prefix("symref=HEAD:") {
+                validate_refname(target)?;
                 adv.head_target = Some(target.to_string());
             }
         }
@@ -285,12 +498,14 @@ fn fetch_remote_advertisement(url: &str) -> io::Result<RemoteAdvertisement> {
         .send(&req)
         .map_err(|e| err(&format!("fetch info/refs failed: {}", e)))?;
     if resp.status != 200 {
-        let body = String::from_utf8_lossy(&resp.body);
+        let body = response_body_preview(&resp.body);
         return Err(err(&format!(
             "remote advertised refs request failed (HTTP {}): {}",
-            resp.status,
-            body.trim()
+            resp.status, body
         )));
+    }
+    if resp.body.len() > MAX_REF_ADVERTISEMENT_BYTES {
+        return Err(err("remote advertised refs response exceeds size limit"));
     }
 
     let lines = parse_pkt_lines(&resp.body)?;
@@ -333,6 +548,8 @@ fn fetch_remote_advertisement(url: &str) -> io::Result<RemoteAdvertisement> {
 fn branch_name_from_ref(refname: &str) -> io::Result<String> {
     refname
         .strip_prefix("refs/heads/")
+        .map(validate_branch_name)
+        .transpose()?
         .map(|name| name.to_string())
         .ok_or_else(|| err("expected refs/heads/* ref"))
 }
@@ -394,14 +611,16 @@ fn fetch_remote_pack(url: &str, wants: &[String]) -> io::Result<Vec<u8>> {
         .send(&req)
         .map_err(|e| err(&format!("git-upload-pack failed: {}", e)))?;
     if resp.status != 200 {
-        let body = String::from_utf8_lossy(&resp.body);
+        let body = response_body_preview(&resp.body);
         return Err(err(&format!(
             "git-upload-pack returned HTTP {}: {}",
-            resp.status,
-            body.trim()
+            resp.status, body
         )));
     }
 
+    if resp.body.len() > MAX_PACK_BYTES {
+        return Err(err("packfile exceeds size limit"));
+    }
     if resp.body.starts_with(b"PACK") {
         return Ok(resp.body);
     }
@@ -419,14 +638,14 @@ fn fetch_remote_pack(url: &str, wants: &[String]) -> io::Result<Vec<u8>> {
                     return Err(err(&format!("remote upload-pack error: {}", msg.trim())));
                 }
                 if payload.starts_with(b"PACK") {
-                    pack.extend_from_slice(&payload);
+                    append_pack_bytes(&mut pack, &payload)?;
                     continue;
                 }
                 if payload.is_empty() {
                     continue;
                 }
                 match payload[0] {
-                    1 => pack.extend_from_slice(&payload[1..]),
+                    1 => append_pack_bytes(&mut pack, &payload[1..])?,
                     2 => {}
                     3 => {
                         let msg = String::from_utf8_lossy(&payload[1..]);
@@ -482,7 +701,12 @@ fn parse_pack_object_header(pack: &[u8], offset: &mut usize) -> io::Result<(u8, 
         }
         byte = pack[*offset];
         *offset += 1;
-        size |= ((byte & 0x7f) as usize) << shift;
+        if shift >= usize::BITS as usize {
+            return Err(err("pack object size is too large"));
+        }
+        size |= ((byte & 0x7f) as usize)
+            .checked_shl(shift as u32)
+            .ok_or_else(|| err("pack object size is too large"))?;
         shift += 7;
     }
 
@@ -508,7 +732,11 @@ fn parse_ofs_delta_base(
         }
         byte = pack[*offset];
         *offset += 1;
-        distance = ((distance + 1) << 7) | ((byte & 0x7f) as usize);
+        distance = distance
+            .checked_add(1)
+            .and_then(|value| value.checked_shl(7))
+            .map(|value| value | ((byte & 0x7f) as usize))
+            .ok_or_else(|| err("ofs-delta base distance is too large"))?;
     }
 
     object_offset
@@ -516,11 +744,16 @@ fn parse_ofs_delta_base(
         .ok_or_else(|| err("invalid ofs-delta base distance"))
 }
 
-fn inflate_pack_stream(data: &[u8]) -> io::Result<(Vec<u8>, usize)> {
+fn inflate_pack_stream(data: &[u8], expected_size: usize) -> io::Result<(Vec<u8>, usize)> {
+    if expected_size > MAX_GIT_OBJECT_BYTES {
+        return Err(err("pack object exceeds size limit"));
+    }
     let cursor = Cursor::new(data);
     let mut decoder = BufZlibDecoder::new(cursor);
-    let mut out = Vec::new();
-    decoder.read_to_end(&mut out)?;
+    let out = read_to_end_limited(&mut decoder, expected_size, "pack object")?;
+    if out.len() != expected_size {
+        return Err(err("pack object size mismatch"));
+    }
     let consumed = decoder.get_ref().position() as usize;
     Ok((out, consumed))
 }
@@ -540,7 +773,13 @@ fn parse_packfile(pack: &[u8]) -> io::Result<Vec<PackedObject>> {
     let object_count = u32::from_be_bytes(pack[8..12].try_into().unwrap()) as usize;
     let pack_end = pack.len() - 20;
     let mut offset = 12usize;
-    let mut objects = Vec::with_capacity(object_count);
+    let max_count_by_bytes = pack_end.saturating_sub(offset);
+    if object_count > MAX_PACK_OBJECTS || object_count > max_count_by_bytes {
+        return Err(err("packfile object count is too large"));
+    }
+    let mut objects = Vec::new();
+    try_reserve_exact(&mut objects, object_count, "pack object table")?;
+    let mut inflated_bytes = 0usize;
 
     for _ in 0..object_count {
         if offset >= pack_end {
@@ -548,7 +787,7 @@ fn parse_packfile(pack: &[u8]) -> io::Result<Vec<PackedObject>> {
         }
 
         let object_offset = offset;
-        let (obj_type, _) = parse_pack_object_header(pack, &mut offset)?;
+        let (obj_type, object_size) = parse_pack_object_header(pack, &mut offset)?;
 
         let kind = match obj_type {
             1 | 2 | 3 | 4 => {
@@ -559,8 +798,9 @@ fn parse_packfile(pack: &[u8]) -> io::Result<Vec<PackedObject>> {
                     4 => "tag",
                     _ => unreachable!(),
                 };
-                let (data, consumed) = inflate_pack_stream(&pack[offset..pack_end])?;
+                let (data, consumed) = inflate_pack_stream(&pack[offset..pack_end], object_size)?;
                 offset += consumed;
+                add_pack_inflated_bytes(&mut inflated_bytes, data.len())?;
                 PackedObjectKind::Full {
                     obj_type: obj_type.to_string(),
                     data,
@@ -568,8 +808,9 @@ fn parse_packfile(pack: &[u8]) -> io::Result<Vec<PackedObject>> {
             }
             6 => {
                 let base_offset = parse_ofs_delta_base(pack, &mut offset, object_offset)?;
-                let (delta, consumed) = inflate_pack_stream(&pack[offset..pack_end])?;
+                let (delta, consumed) = inflate_pack_stream(&pack[offset..pack_end], object_size)?;
                 offset += consumed;
+                add_pack_inflated_bytes(&mut inflated_bytes, delta.len())?;
                 PackedObjectKind::OfsDelta { base_offset, delta }
             }
             7 => {
@@ -579,8 +820,9 @@ fn parse_packfile(pack: &[u8]) -> io::Result<Vec<PackedObject>> {
                 let mut base_hash = [0u8; 20];
                 base_hash.copy_from_slice(&pack[offset..offset + 20]);
                 offset += 20;
-                let (delta, consumed) = inflate_pack_stream(&pack[offset..pack_end])?;
+                let (delta, consumed) = inflate_pack_stream(&pack[offset..pack_end], object_size)?;
                 offset += consumed;
+                add_pack_inflated_bytes(&mut inflated_bytes, delta.len())?;
                 PackedObjectKind::RefDelta { base_hash, delta }
             }
             _ => return Err(err(&format!("unsupported pack object type {}", obj_type))),
@@ -606,12 +848,31 @@ fn read_delta_varint(data: &[u8], pos: &mut usize) -> io::Result<usize> {
         let byte = data[*pos];
         *pos += 1;
 
-        value |= ((byte & 0x7f) as usize) << shift;
+        if shift >= usize::BITS as usize {
+            return Err(err("delta varint is too large"));
+        }
+        value |= ((byte & 0x7f) as usize)
+            .checked_shl(shift as u32)
+            .ok_or_else(|| err("delta varint is too large"))?;
         if byte & 0x80 == 0 {
             return Ok(value);
         }
         shift += 7;
     }
+}
+
+fn ensure_delta_output_room(
+    current_len: usize,
+    additional_len: usize,
+    result_size: usize,
+) -> io::Result<()> {
+    let next_len = current_len
+        .checked_add(additional_len)
+        .ok_or_else(|| err("delta result size overflow"))?;
+    if next_len > result_size {
+        return Err(err("delta result exceeds declared size"));
+    }
+    Ok(())
 }
 
 fn apply_delta(base: &[u8], delta: &[u8]) -> io::Result<Vec<u8>> {
@@ -621,7 +882,11 @@ fn apply_delta(base: &[u8], delta: &[u8]) -> io::Result<Vec<u8>> {
         return Err(err("delta base size mismatch"));
     }
     let result_size = read_delta_varint(delta, &mut pos)?;
-    let mut out = Vec::with_capacity(result_size);
+    if result_size > MAX_GIT_OBJECT_BYTES {
+        return Err(err("delta result exceeds size limit"));
+    }
+    let mut out = Vec::new();
+    try_reserve_exact(&mut out, result_size, "delta result")?;
 
     while pos < delta.len() {
         let opcode = delta[pos];
@@ -703,6 +968,7 @@ fn apply_delta(base: &[u8], delta: &[u8]) -> io::Result<Vec<u8>> {
             if end > base.len() {
                 return Err(err("delta copy exceeds base object"));
             }
+            ensure_delta_output_room(out.len(), copy_size, result_size)?;
             out.extend_from_slice(&base[copy_offset..end]);
         } else if opcode != 0 {
             let insert_len = opcode as usize;
@@ -712,6 +978,7 @@ fn apply_delta(base: &[u8], delta: &[u8]) -> io::Result<Vec<u8>> {
             if end > delta.len() {
                 return Err(err("truncated delta insert"));
             }
+            ensure_delta_output_room(out.len(), insert_len, result_size)?;
             out.extend_from_slice(&delta[pos..end]);
             pos = end;
         } else {
@@ -747,13 +1014,21 @@ fn find_entry_by_hash(
     offset_to_index: &HashMap<usize, usize>,
     memo: &mut [Option<ResolvedObject>],
     visiting: &mut [bool],
+    resolved_bytes: &mut usize,
 ) -> io::Result<Option<usize>> {
     for idx in 0..objects.len() {
         if visiting[idx] {
             continue;
         }
-        let resolved =
-            resolve_packed_object(idx, git_dir, objects, offset_to_index, memo, visiting)?;
+        let resolved = resolve_packed_object(
+            idx,
+            git_dir,
+            objects,
+            offset_to_index,
+            memo,
+            visiting,
+            resolved_bytes,
+        )?;
         if resolved.hash == *target {
             return Ok(Some(idx));
         }
@@ -769,6 +1044,7 @@ fn resolve_packed_object(
     offset_to_index: &HashMap<usize, usize>,
     memo: &mut [Option<ResolvedObject>],
     visiting: &mut [bool],
+    resolved_bytes: &mut usize,
 ) -> io::Result<ResolvedObject> {
     if let Some(resolved) = memo[idx].as_ref() {
         return Ok(resolved.clone());
@@ -788,8 +1064,15 @@ fn resolve_packed_object(
             let base_idx = *offset_to_index
                 .get(base_offset)
                 .ok_or_else(|| err("missing ofs-delta base object"))?;
-            let base =
-                resolve_packed_object(base_idx, git_dir, objects, offset_to_index, memo, visiting)?;
+            let base = resolve_packed_object(
+                base_idx,
+                git_dir,
+                objects,
+                offset_to_index,
+                memo,
+                visiting,
+                resolved_bytes,
+            )?;
             let data = apply_delta(&base.data, delta)?;
             let hash = hash_bytes(&base.obj_type, &data);
             ResolvedObject {
@@ -801,10 +1084,24 @@ fn resolve_packed_object(
         PackedObjectKind::RefDelta { base_hash, delta } => {
             let base = if let Some(local) = maybe_read_local_object(git_dir, base_hash)? {
                 local
-            } else if let Some(base_idx) =
-                find_entry_by_hash(base_hash, git_dir, objects, offset_to_index, memo, visiting)?
-            {
-                resolve_packed_object(base_idx, git_dir, objects, offset_to_index, memo, visiting)?
+            } else if let Some(base_idx) = find_entry_by_hash(
+                base_hash,
+                git_dir,
+                objects,
+                offset_to_index,
+                memo,
+                visiting,
+                resolved_bytes,
+            )? {
+                resolve_packed_object(
+                    base_idx,
+                    git_dir,
+                    objects,
+                    offset_to_index,
+                    memo,
+                    visiting,
+                    resolved_bytes,
+                )?
             } else {
                 return Err(err("missing ref-delta base object"));
             };
@@ -820,6 +1117,7 @@ fn resolve_packed_object(
     };
 
     visiting[idx] = false;
+    add_pack_resolved_bytes(resolved_bytes, resolved.data.len())?;
     memo[idx] = Some(resolved.clone());
     Ok(resolved)
 }
@@ -837,6 +1135,7 @@ fn store_pack_objects(git_dir: &Path, pack: &[u8]) -> io::Result<()> {
         .collect();
     let mut memo: Vec<Option<ResolvedObject>> = vec![None; objects.len()];
     let mut visiting = vec![false; objects.len()];
+    let mut resolved_bytes = 0usize;
 
     for idx in 0..objects.len() {
         let resolved = resolve_packed_object(
@@ -846,6 +1145,7 @@ fn store_pack_objects(git_dir: &Path, pack: &[u8]) -> io::Result<()> {
             &offset_to_index,
             &mut memo,
             &mut visiting,
+            &mut resolved_bytes,
         )?;
         let stored = hash_object(git_dir, &resolved.obj_type, &resolved.data)?;
         if stored != resolved.hash {
@@ -935,6 +1235,9 @@ fn cmd_clone_remote(source: &str, dest: &Path) -> io::Result<()> {
 // ─── Object store ───────────────────────────────────────────────────────────
 
 fn hash_object(git_dir: &Path, obj_type: &str, data: &[u8]) -> io::Result<[u8; 20]> {
+    if data.len() > MAX_GIT_OBJECT_BYTES {
+        return Err(err("git object exceeds size limit"));
+    }
     let header = format!("{} {}\0", obj_type, data.len());
     let mut hasher = Sha1::new();
     hasher.update(header.as_bytes());
@@ -957,10 +1260,12 @@ fn hash_object(git_dir: &Path, obj_type: &str, data: &[u8]) -> io::Result<[u8; 2
 fn read_object(git_dir: &Path, hash: &[u8; 20]) -> io::Result<(String, Vec<u8>)> {
     let h = hex(hash);
     let path = git_dir.join("objects").join(&h[..2]).join(&h[2..]);
-    let compressed = fs::read(&path)?;
+    let read_limit = MAX_GIT_OBJECT_BYTES
+        .checked_add(MAX_GIT_OBJECT_HEADER_BYTES)
+        .ok_or_else(|| err("git object size limit is too large"))?;
+    let compressed = read_file_limited(&path, read_limit, "git object")?;
     let mut dec = ZlibDecoder::new(&compressed[..]);
-    let mut buf = Vec::new();
-    dec.read_to_end(&mut buf)?;
+    let buf = read_to_end_limited(&mut dec, read_limit, "git object")?;
 
     let nul = buf
         .iter()
@@ -968,9 +1273,16 @@ fn read_object(git_dir: &Path, hash: &[u8; 20]) -> io::Result<(String, Vec<u8>)>
         .ok_or_else(|| err("no nul in object"))?;
     let header =
         std::str::from_utf8(&buf[..nul]).map_err(|_| err("invalid object header encoding"))?;
-    let (typ, _) = header
+    let (typ, size) = header
         .split_once(' ')
         .ok_or_else(|| err("malformed object header"))?;
+    let size: usize = size.parse().map_err(|_| err("invalid object size"))?;
+    if size > MAX_GIT_OBJECT_BYTES {
+        return Err(err("git object exceeds size limit"));
+    }
+    if buf.len() - nul - 1 != size {
+        return Err(err("git object size mismatch"));
+    }
     Ok((typ.to_string(), buf[nul + 1..].to_vec()))
 }
 
@@ -988,7 +1300,7 @@ fn read_index(git_dir: &Path) -> io::Result<Vec<IndexEntry>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let data = fs::read(&path)?;
+    let data = read_file_limited(&path, MAX_INDEX_BYTES, "git index")?;
     if data.len() < 12 || &data[0..4] != b"DIRC" {
         return Err(err("invalid index file"));
     }
@@ -997,8 +1309,13 @@ fn read_index(git_dir: &Path) -> io::Result<Vec<IndexEntry>> {
         return Err(err(&format!("unsupported index version {}", version)));
     }
     let count = u32::from_be_bytes(data[8..12].try_into().unwrap()) as usize;
+    let max_count_by_bytes = data.len().saturating_sub(12) / 62;
+    if count > MAX_INDEX_ENTRIES || count > max_count_by_bytes {
+        return Err(err("index entry count is too large"));
+    }
 
-    let mut entries = Vec::with_capacity(count);
+    let mut entries = Vec::new();
+    try_reserve_exact(&mut entries, count, "index entry table")?;
     let mut pos = 12;
 
     for _ in 0..count {
@@ -1019,6 +1336,7 @@ fn read_index(git_dir: &Path) -> io::Result<Vec<IndexEntry>> {
             .ok_or_else(|| err("unterminated index entry name"))?;
         let name = String::from_utf8(data[name_start..name_start + nul_offset].to_vec())
             .map_err(|_| err("invalid entry name"))?;
+        let name = normalize_repo_path(&name)?;
 
         entries.push(IndexEntry { mode, sha1, name });
 
@@ -1031,12 +1349,17 @@ fn read_index(git_dir: &Path) -> io::Result<Vec<IndexEntry>> {
 }
 
 fn write_index(git_dir: &Path, entries: &[IndexEntry]) -> io::Result<()> {
+    let entry_count = u32::try_from(entries.len()).map_err(|_| err("too many index entries"))?;
     let mut buf = Vec::new();
     buf.extend_from_slice(b"DIRC");
     buf.extend_from_slice(&2u32.to_be_bytes());
-    buf.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+    buf.extend_from_slice(&entry_count.to_be_bytes());
 
     for entry in entries {
+        let name = normalize_repo_path(&entry.name)?;
+        if name.len() > 0xFFF {
+            return Err(err("index entry name is too long"));
+        }
         let entry_start = buf.len();
         // ctime(8) + mtime(8) + dev(4) + ino(4) = 24 bytes of zeros
         buf.extend_from_slice(&[0u8; 24]);
@@ -1045,9 +1368,8 @@ fn write_index(git_dir: &Path, entries: &[IndexEntry]) -> io::Result<()> {
         buf.extend_from_slice(&[0u8; 12]);
         buf.extend_from_slice(&entry.sha1);
         // Flags: name length in lower 12 bits
-        let name_len = entry.name.len().min(0xFFF);
-        buf.extend_from_slice(&(name_len as u16).to_be_bytes());
-        buf.extend_from_slice(entry.name.as_bytes());
+        buf.extend_from_slice(&(name.len() as u16).to_be_bytes());
+        buf.extend_from_slice(name.as_bytes());
         // Pad to 8-byte boundary (1-8 NUL bytes)
         let entry_len = buf.len() - entry_start;
         let padded = (entry_len + 8) & !7;
@@ -1064,6 +1386,7 @@ fn write_index(git_dir: &Path, entries: &[IndexEntry]) -> io::Result<()> {
 // ─── Refs ───────────────────────────────────────────────────────────────────
 
 fn resolve_ref(git_dir: &Path, refname: &str) -> io::Result<Option<[u8; 20]>> {
+    let refname = validate_refname(refname)?;
     let ref_path = git_dir.join(refname);
     if !ref_path.exists() {
         return Ok(None);
@@ -1088,6 +1411,7 @@ fn head_branch(git_dir: &Path) -> io::Result<Option<String>> {
 }
 
 fn update_ref(git_dir: &Path, refname: &str, hash: &[u8; 20]) -> io::Result<()> {
+    let refname = validate_refname(refname)?;
     let ref_path = git_dir.join(refname);
     if let Some(parent) = ref_path.parent() {
         mkdirs(parent)?;
@@ -1201,6 +1525,12 @@ fn read_tree_entries(git_dir: &Path, hash: &[u8; 20], prefix: &str) -> io::Resul
             .position(|&b| b == 0)
             .ok_or_else(|| err("bad tree entry name"))?;
         let name = std::str::from_utf8(&data[pos..pos + nul]).map_err(|_| err("bad name"))?;
+        if name.contains('/') {
+            return Err(err("tree entry name must not contain '/'"));
+        }
+        if normalize_repo_path(name)? != name {
+            return Err(err("tree entry name must be normalized"));
+        }
         pos += nul + 1;
 
         if pos + 20 > data.len() {
@@ -1220,6 +1550,7 @@ fn read_tree_entries(git_dir: &Path, hash: &[u8; 20], prefix: &str) -> io::Resul
             let sub = read_tree_entries(git_dir, &hash_buf, &format!("{}/", full_name))?;
             entries.extend(sub);
         } else {
+            let full_name = normalize_repo_path(&full_name)?;
             entries.push(IndexEntry {
                 mode,
                 sha1: hash_buf,
@@ -1271,10 +1602,10 @@ fn cmd_init(path: &Path) -> io::Result<()> {
         "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n",
     )
     .map_err(|e| err(&format!("write config: {}", e)))?;
-    println!(
+    print_stdout_line(format_args!(
         "Initialized empty Git repository in {}/.git/",
         path.display()
-    );
+    ))?;
     Ok(())
 }
 
@@ -1289,7 +1620,8 @@ fn cmd_add(workdir: &Path, paths: &[String]) -> io::Result<()> {
     })?;
 
     for rel_path in paths {
-        let file_path = workdir.join(rel_path);
+        let repo_path = normalize_repo_path(rel_path)?;
+        let file_path = workdir.join(&repo_path);
         if !file_path.exists() {
             return Err(err(&format!(
                 "pathspec '{}' did not match any files (looked at {})",
@@ -1297,15 +1629,14 @@ fn cmd_add(workdir: &Path, paths: &[String]) -> io::Result<()> {
                 file_path.display()
             )));
         }
-        let content = fs::read(&file_path)
-            .map_err(|e| err(&format!("cannot read '{}': {}", file_path.display(), e)))?;
+        let content = read_file_limited(&file_path, MAX_GIT_OBJECT_BYTES, "file")?;
         let hash = hash_object(&git_dir, "blob", &content)?;
 
-        entries.retain(|e| e.name != *rel_path);
+        entries.retain(|e| e.name != repo_path);
         entries.push(IndexEntry {
             mode: 0o100644,
             sha1: hash,
-            name: rel_path.clone(),
+            name: repo_path,
         });
     }
 
@@ -1385,9 +1716,9 @@ fn cmd_branch(workdir: &Path) -> io::Result<()> {
 
     for branch in &branches {
         if Some(branch.as_str()) == current.as_deref() {
-            println!("* {}", branch);
+            print_stdout_line(format_args!("* {}", branch))?;
         } else {
-            println!("  {}", branch);
+            print_stdout_line(format_args!("  {}", branch))?;
         }
     }
 
@@ -1398,6 +1729,7 @@ fn cmd_checkout(workdir: &Path, target: &str, create_branch: bool) -> io::Result
     let git_dir = workdir.join(".git");
 
     if create_branch {
+        validate_branch_name(target)?;
         let head = resolve_head(&git_dir)?.ok_or_else(|| err("HEAD not found for new branch"))?;
         update_ref(&git_dir, &format!("refs/heads/{}", target), &head)?;
         fs::write(
@@ -1408,6 +1740,7 @@ fn cmd_checkout(workdir: &Path, target: &str, create_branch: bool) -> io::Result
     }
 
     // Resolve target: local branch first, then DWIM remote tracking
+    validate_branch_name(target)?;
     let branch_ref = format!("refs/heads/{}", target);
     let commit_hash = if let Some(h) = resolve_ref(&git_dir, &branch_ref)? {
         fs::write(git_dir.join("HEAD"), format!("ref: {}\n", branch_ref))?;
@@ -1435,16 +1768,16 @@ fn cmd_checkout(workdir: &Path, target: &str, create_branch: bool) -> io::Result
     let new_names: HashSet<&str> = new_entries.iter().map(|e| e.name.as_str()).collect();
     for old in &old_entries {
         if !new_names.contains(old.name.as_str()) {
-            let p = workdir.join(&old.name);
+            let p = worktree_path(workdir, &old.name)?;
             if p.exists() {
-                let _ = fs::remove_file(&p);
+                fs::remove_file(&p).map_err(|e| err(&format!("remove {}: {}", p.display(), e)))?;
             }
         }
     }
 
     // Write files from target tree
     for entry in &new_entries {
-        let p = workdir.join(&entry.name);
+        let p = worktree_path(workdir, &entry.name)?;
         if let Some(parent) = p.parent() {
             mkdirs(parent)?;
         }
@@ -1500,6 +1833,7 @@ fn cmd_clone_local(source: &Path, dest: &Path) -> io::Result<()> {
         .strip_prefix("ref: refs/heads/")
         .unwrap_or("main")
         .to_string();
+    validate_branch_name(&default_branch)?;
 
     // Create local branch for default
     let remote_ref = format!("refs/remotes/origin/{}", default_branch);
@@ -1546,7 +1880,12 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
         if entry.file_type()?.is_dir() {
             copy_dir_recursive(&entry.path(), &dst_path)?;
         } else {
-            fs::write(&dst_path, fs::read(entry.path())?)?;
+            let content = read_file_limited(
+                &entry.path(),
+                MAX_GIT_OBJECT_BYTES + MAX_GIT_OBJECT_HEADER_BYTES,
+                "git repository file",
+            )?;
+            fs::write(&dst_path, content)?;
         }
     }
     Ok(())
@@ -1652,10 +1991,7 @@ fn run(args: &[String]) -> io::Result<()> {
             if is_ssh_clone_source(src_arg) {
                 return Err(unsupported(
                     "clone",
-                    &format!(
-                        "does not support SSH or git:// remotes (`{}`).",
-                        src_arg
-                    ),
+                    &format!("does not support SSH or git:// remotes (`{}`).", src_arg),
                 ));
             }
             if has_http_auth(src_arg) {
@@ -1678,7 +2014,7 @@ fn run(args: &[String]) -> io::Result<()> {
             } else {
                 workdir.join(dst)
             };
-            println!("Cloning into '{}'...", dst.display());
+            print_stdout_line(format_args!("Cloning into '{}'...", dst.display()))?;
             if is_remote_source(src_arg) {
                 cmd_clone_remote(src_arg, &dst)
             } else {
