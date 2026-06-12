@@ -4,6 +4,31 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
 
+struct ChildGuard(Child);
+
+impl ChildGuard {
+    fn new(child: Child) -> Self {
+        Self(child)
+    }
+
+    fn child_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+
+    fn wait(mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.0.wait()
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
 fn spawn_stdout_reader(stdout: ChildStdout) -> Receiver<Option<Vec<u8>>> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -46,8 +71,12 @@ while [ "$i" -lt 128 ]; do
 done
 "#;
 
-    let mut child = spawn_nohup(script);
-    let stdout = child.stdout.take().expect("missing nohup stdout");
+    let mut child = ChildGuard::new(spawn_nohup(script));
+    let stdout = child
+        .child_mut()
+        .stdout
+        .take()
+        .expect("missing nohup stdout");
     let rx = spawn_stdout_reader(stdout);
 
     let first_chunk = rx
@@ -56,7 +85,10 @@ done
         .expect("nohup stdout closed before first chunk");
     assert!(!first_chunk.is_empty());
     assert_eq!(
-        child.try_wait().expect("failed to poll nohup child"),
+        child
+            .child_mut()
+            .try_wait()
+            .expect("failed to poll nohup child"),
         None,
         "nohup child exited before the first chunk was observed"
     );
