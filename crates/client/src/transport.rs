@@ -204,7 +204,7 @@ impl SidecarTransport {
 
     /// Route a decoded inbound frame. Host transports only legitimately receive `Response`, `Event`,
     /// and `SidecarRequest` frames.
-    async fn handle_frame(&self, frame: ProtocolFrame) {
+    async fn handle_frame(self: &Arc<Self>, frame: ProtocolFrame) {
         match frame {
             ProtocolFrame::Response(response) => match self.pending.remove(&response.request_id) {
                 Some((_, tx)) => {
@@ -227,23 +227,37 @@ impl SidecarTransport {
         }
     }
 
-    async fn dispatch_sidecar_request(&self, frame: SidecarRequestFrame) {
+    /// Dispatch a sidecar-initiated request to its registered callback. The callback runs in a
+    /// spawned task so long-running host callbacks (tool execution, permission prompts) cannot stall
+    /// the reader loop, which must keep draining responses for any requests the callback itself
+    /// issues through this transport.
+    async fn dispatch_sidecar_request(self: &Arc<Self>, frame: SidecarRequestFrame) {
         let key = sidecar_request_key(&frame.payload);
         let callback = self.callbacks.read(&key, |_, value| value.clone());
         match callback {
-            Some(callback) => match callback(frame.payload, frame.ownership.clone()).await {
-                Ok(payload) => {
-                    let response = ProtocolFrame::SidecarResponse(SidecarResponseFrame::new(
-                        frame.request_id,
-                        frame.ownership,
-                        payload,
-                    ));
-                    if let Ok(bytes) = self.encode_frame(&response, None) {
-                        let _ = self.control_writer_tx.send(bytes).await;
+            Some(callback) => {
+                let transport = Arc::downgrade(self);
+                tokio::spawn(async move {
+                    match callback(frame.payload, frame.ownership.clone()).await {
+                        Ok(payload) => {
+                            let response =
+                                ProtocolFrame::SidecarResponse(SidecarResponseFrame::new(
+                                    frame.request_id,
+                                    frame.ownership,
+                                    payload,
+                                ));
+                            // If the transport is gone, the child is being killed; drop the reply.
+                            let Some(transport) = transport.upgrade() else {
+                                return;
+                            };
+                            if let Ok(bytes) = transport.encode_frame(&response, None) {
+                                let _ = transport.control_writer_tx.send(bytes).await;
+                            }
+                        }
+                        Err(error) => tracing::warn!(?error, key, "sidecar callback failed"),
                     }
-                }
-                Err(error) => tracing::warn!(?error, key, "sidecar callback failed"),
-            },
+                });
+            }
             None => tracing::warn!(key, "no callback registered for sidecar request"),
         }
     }
