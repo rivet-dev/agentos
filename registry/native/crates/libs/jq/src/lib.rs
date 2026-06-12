@@ -3,14 +3,14 @@
 //! Wraps jaq-core/jaq-std/jaq-json to provide a standard jq CLI interface.
 
 use std::ffi::OsString;
-use std::fs::File as StdFile;
 use std::io::{self, Read, Write};
-use std::mem::ManuallyDrop;
-use std::os::fd::FromRawFd;
 
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, RcIter};
 use jaq_json::Val;
+
+const MAX_INPUT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_INPUT_VALUES: usize = 100_000;
 
 /// Entry point for jq command.
 pub fn main(args: Vec<OsString>) -> i32 {
@@ -26,20 +26,6 @@ pub fn main(args: Vec<OsString>) -> i32 {
             eprintln!("jq: {}", msg);
             2
         }
-    }
-}
-
-struct RawStdout;
-
-impl Write for RawStdout {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut file = ManuallyDrop::new(unsafe { StdFile::from_raw_fd(1) });
-        file.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        let mut file = ManuallyDrop::new(unsafe { StdFile::from_raw_fd(1) });
-        file.flush()
     }
 }
 
@@ -146,27 +132,34 @@ fn parse_args(args: &[String]) -> Result<JqOptions, String> {
 }
 
 fn read_inputs(opts: &JqOptions) -> Result<Vec<Val>, String> {
-    let mut stdin_data = String::new();
-    io::stdin()
-        .read_to_string(&mut stdin_data)
-        .map_err(|e| format!("failed to read stdin: {}", e))?;
-
     if opts.null_input {
         return Ok(vec![Val::from(serde_json::Value::Null)]);
     }
 
+    let mut stdin_data = String::new();
+    io::stdin()
+        .take((MAX_INPUT_BYTES + 1) as u64)
+        .read_to_string(&mut stdin_data)
+        .map_err(|e| format!("failed to read stdin: {}", e))?;
+    if stdin_data.len() > MAX_INPUT_BYTES {
+        return Err("stdin exceeds size limit".to_string());
+    }
+
     if opts.raw_input {
         if opts.slurp {
-            let arr: Vec<serde_json::Value> = stdin_data
-                .lines()
-                .map(|l| serde_json::Value::String(l.to_string()))
-                .collect();
+            let mut arr = Vec::new();
+            for line in stdin_data.lines() {
+                push_input_value(&mut arr, serde_json::Value::String(line.to_string()))?;
+            }
             Ok(vec![Val::from(serde_json::Value::Array(arr))])
         } else {
-            let lines: Vec<Val> = stdin_data
-                .lines()
-                .map(|line| Val::from(serde_json::Value::String(line.to_string())))
-                .collect();
+            let mut lines = Vec::new();
+            for line in stdin_data.lines() {
+                push_input_value(
+                    &mut lines,
+                    Val::from(serde_json::Value::String(line.to_string())),
+                )?;
+            }
             Ok(lines)
         }
     } else {
@@ -179,46 +172,46 @@ fn read_inputs(opts: &JqOptions) -> Result<Vec<Val>, String> {
         let decoder = serde_json::Deserializer::from_str(trimmed).into_iter::<serde_json::Value>();
         for result in decoder {
             let value = result.map_err(|e| format!("invalid JSON input: {}", e))?;
-            values.push(Val::from(value));
+            push_input_value(&mut values, value)?;
         }
 
         if opts.slurp {
-            let arr = serde_json::Value::Array(
-                values
-                    .into_iter()
-                    .map(|v| {
-                        serde_json::from_str(&format!("{}", v)).unwrap_or(serde_json::Value::Null)
-                    })
-                    .collect(),
-            );
-            Ok(vec![Val::from(arr)])
+            Ok(vec![Val::from(serde_json::Value::Array(values))])
         } else {
-            Ok(values)
+            Ok(values.into_iter().map(Val::from).collect())
         }
     }
 }
 
+fn push_input_value<T>(values: &mut Vec<T>, value: T) -> Result<(), String> {
+    if values.len() >= MAX_INPUT_VALUES {
+        return Err("too many input values".to_string());
+    }
+    values.push(value);
+    Ok(())
+}
+
 /// Format a jaq Val as a string for output.
-fn format_output(val: &Val, opts: &JqOptions) -> String {
+fn format_output(val: &Val, opts: &JqOptions) -> Result<String, String> {
     let compact_str = format!("{}", val);
 
     // For raw output, unquote strings
     if opts.raw_output {
         if compact_str.starts_with('"') && compact_str.ends_with('"') && compact_str.len() >= 2 {
             if let Ok(unescaped) = serde_json::from_str::<String>(&compact_str) {
-                return unescaped;
+                return Ok(unescaped);
             }
         }
     }
 
     if opts.compact {
-        compact_str
+        Ok(compact_str)
     } else {
         // Pretty print via serde_json
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&compact_str) {
-            serde_json::to_string_pretty(&v).unwrap_or(compact_str)
+            serde_json::to_string_pretty(&v).map_err(|e| format!("output format error: {}", e))
         } else {
-            compact_str
+            Ok(compact_str)
         }
     }
 }
@@ -254,7 +247,8 @@ fn run_jq(args: &[String]) -> Result<i32, String> {
         .map_err(|errs| format!("compile error: {:?}", errs))?;
 
     let empty_inputs = RcIter::new(core::iter::empty());
-    let mut out = RawStdout;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
     let mut had_false_or_null = false;
 
     for input in inputs {
@@ -264,7 +258,7 @@ fn run_jq(args: &[String]) -> Result<i32, String> {
         for result in results {
             match result {
                 Ok(val) => {
-                    let s = format_output(&val, &opts);
+                    let s = format_output(&val, &opts)?;
 
                     // Track for --exit-status
                     let compact = format!("{}", val);
@@ -273,9 +267,11 @@ fn run_jq(args: &[String]) -> Result<i32, String> {
                     }
 
                     if opts.join_output {
-                        write!(out, "{}", s).ok();
+                        write!(out, "{}", s)
+                            .map_err(|e| format!("failed to write stdout: {}", e))?;
                     } else {
-                        writeln!(out, "{}", s).ok();
+                        writeln!(out, "{}", s)
+                            .map_err(|e| format!("failed to write stdout: {}", e))?;
                     }
                 }
                 Err(e) => {
@@ -290,7 +286,8 @@ fn run_jq(args: &[String]) -> Result<i32, String> {
         return Ok(1);
     }
 
-    out.flush().ok();
+    out.flush()
+        .map_err(|e| format!("failed to flush stdout: {}", e))?;
 
     Ok(0)
 }
