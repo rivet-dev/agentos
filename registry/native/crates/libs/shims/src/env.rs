@@ -11,7 +11,7 @@
 //!   -u, --unset VAR           Remove VAR from the environment
 
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{self, Write};
 
 pub fn env(args: Vec<OsString>) -> i32 {
     let str_args: Vec<String> = args
@@ -51,25 +51,9 @@ pub fn env(args: Vec<OsString>) -> i32 {
     }
 
     if cmd_start.is_none() {
-        // No command — print environment
-        let stdout = std::io::stdout();
-        let mut out = stdout.lock();
-
-        if ignore_env {
-            // Only print explicitly set vars
-            for (key, value) in &set_vars {
-                let _ = writeln!(out, "{}={}", key, value);
-            }
-        } else {
-            // Print inherited env (minus unset vars) plus set vars
-            for (key, value) in std::env::vars() {
-                if !unset_vars.contains(&key) {
-                    let _ = writeln!(out, "{}={}", key, value);
-                }
-            }
-            for (key, value) in &set_vars {
-                let _ = writeln!(out, "{}={}", key, value);
-            }
+        if let Err(e) = print_env(ignore_env, &unset_vars, &set_vars) {
+            eprintln!("env: {}", e);
+            return 1;
         }
         return 0;
     }
@@ -92,15 +76,39 @@ pub fn env(args: Vec<OsString>) -> i32 {
         cmd.env(key, value);
     }
 
-    match cmd.output() {
-        Ok(output) => {
-            let _ = std::io::stdout().write_all(&output.stdout);
-            let _ = std::io::stderr().write_all(&output.stderr);
-            output.status.code().unwrap_or(1)
-        }
+    match cmd.status() {
+        Ok(status) => status.code().unwrap_or(1),
         Err(e) => {
             eprintln!("env: '{}': {}", program, e);
             127
         }
     }
+}
+
+fn print_env(
+    ignore_env: bool,
+    unset_vars: &[String],
+    set_vars: &[(String, String)],
+) -> io::Result<()> {
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
+    if ignore_env {
+        // Only print explicitly set vars.
+        for (key, value) in set_vars {
+            writeln!(out, "{}={}", key, value)?;
+        }
+    } else {
+        // Print inherited env (minus unset vars) plus set vars.
+        for (key, value) in std::env::vars() {
+            if !unset_vars.contains(&key) {
+                writeln!(out, "{}={}", key, value)?;
+            }
+        }
+        for (key, value) in set_vars {
+            writeln!(out, "{}={}", key, value)?;
+        }
+    }
+
+    out.flush()
 }
