@@ -76,17 +76,23 @@ pub fn main(args: Vec<OsString>) -> i32 {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    if table_mode {
-        format_table(&lines, &separator, &mut out);
+    let result = if table_mode {
+        format_table(&lines, &separator, &mut out)
     } else {
-        format_columns(&lines, &mut out);
+        format_columns(&lines, &mut out)
+    }
+    .and_then(|()| out.flush());
+
+    if let Err(error) = result {
+        eprintln!("column: failed to write output: {error}");
+        return 1;
     }
 
     0
 }
 
 /// Table mode (-t): split each line into fields and pad to column widths.
-fn format_table<W: Write>(lines: &[String], separator: &str, out: &mut W) {
+fn format_table<W: Write>(lines: &[String], separator: &str, out: &mut W) -> io::Result<()> {
     // Split lines into rows of fields
     let rows: Vec<Vec<&str>> = lines
         .iter()
@@ -100,7 +106,7 @@ fn format_table<W: Write>(lines: &[String], separator: &str, out: &mut W) {
         .collect();
 
     if rows.is_empty() {
-        return;
+        return Ok(());
     }
 
     // Find max width for each column
@@ -119,25 +125,27 @@ fn format_table<W: Write>(lines: &[String], separator: &str, out: &mut W) {
     for row in &rows {
         for (j, field) in row.iter().enumerate() {
             if j > 0 {
-                let _ = write!(out, "  ");
+                write!(out, "  ")?;
             }
             if j + 1 < row.len() {
                 // Pad all columns except the last
                 let width = field.chars().count();
-                let _ = write!(out, "{}", field);
+                write!(out, "{}", field)?;
                 for _ in width..col_widths[j] {
-                    let _ = write!(out, " ");
+                    write!(out, " ")?;
                 }
             } else {
-                let _ = write!(out, "{}", field);
+                write!(out, "{}", field)?;
             }
         }
-        let _ = writeln!(out);
+        writeln!(out)?;
     }
+
+    Ok(())
 }
 
 /// Default mode: fill columns across the terminal width (simplified: 80 chars).
-fn format_columns<W: Write>(lines: &[String], out: &mut W) {
+fn format_columns<W: Write>(lines: &[String], out: &mut W) -> io::Result<()> {
     // Filter out empty lines
     let entries: Vec<&str> = lines
         .iter()
@@ -145,7 +153,7 @@ fn format_columns<W: Write>(lines: &[String], out: &mut W) {
         .filter(|s| !s.is_empty())
         .collect();
     if entries.is_empty() {
-        return;
+        return Ok(());
     }
 
     let term_width: usize = 80;
@@ -155,9 +163,9 @@ fn format_columns<W: Write>(lines: &[String], out: &mut W) {
     if col_width == 0 || col_width > term_width {
         // One per line
         for entry in &entries {
-            let _ = writeln!(out, "{}", entry);
+            writeln!(out, "{}", entry)?;
         }
-        return;
+        return Ok(());
     }
 
     let num_cols = term_width / col_width;
@@ -166,13 +174,15 @@ fn format_columns<W: Write>(lines: &[String], out: &mut W) {
     for (i, entry) in entries.iter().enumerate() {
         let is_last_in_row = (i + 1) % num_cols == 0 || i + 1 == entries.len();
         if is_last_in_row {
-            let _ = writeln!(out, "{}", entry);
+            writeln!(out, "{}", entry)?;
         } else {
             let width = entry.chars().count();
-            let _ = write!(out, "{}", entry);
+            write!(out, "{}", entry)?;
             for _ in width..col_width {
-                let _ = write!(out, " ");
+                write!(out, " ")?;
             }
         }
     }
+
+    Ok(())
 }
