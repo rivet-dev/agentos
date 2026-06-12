@@ -4,11 +4,20 @@
 //! Reuses jaq-core/jaq-std/jaq-json (same engine as jq command).
 
 use std::ffi::OsString;
+use std::fmt;
 use std::io::{self, Read, Write};
 
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, RcIter};
 use jaq_json::Val;
+
+const MAX_INPUT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_FORMATTED_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_OUTPUT_VALUES: usize = 100_000;
+const MAX_XML_DEPTH: usize = 256;
+const MAX_XML_NODES: usize = 100_000;
+const MAX_XML_ATTRIBUTES_PER_ELEMENT: usize = 4096;
+const MAX_XML_TEXT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Format {
@@ -262,13 +271,24 @@ fn xml_to_json(input: &str) -> Result<serde_json::Value, String> {
     let mut reader = Reader::from_str(input);
     let mut stack: Vec<StackEntry> = Vec::new();
     let mut root = serde_json::Map::new();
+    let mut nodes = 0usize;
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
+                count_xml_node(&mut nodes)?;
+                if stack.len() >= MAX_XML_DEPTH {
+                    return Err("XML exceeds maximum nesting depth".to_string());
+                }
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 let mut children = serde_json::Map::new();
-                for attr in e.attributes().flatten() {
+                let mut attr_count = 0usize;
+                for attr in e.attributes() {
+                    let attr = attr.map_err(|e| format!("invalid XML attribute: {}", e))?;
+                    attr_count += 1;
+                    if attr_count > MAX_XML_ATTRIBUTES_PER_ELEMENT {
+                        return Err("XML element has too many attributes".to_string());
+                    }
                     let key = format!("@{}", String::from_utf8_lossy(attr.key.as_ref()));
                     let val = String::from_utf8_lossy(&attr.value).to_string();
                     children.insert(key, serde_json::Value::String(val));
@@ -304,9 +324,19 @@ fn xml_to_json(input: &str) -> Result<serde_json::Value, String> {
                 insert_or_array(target, entry.name, value);
             }
             Ok(Event::Empty(ref e)) => {
+                count_xml_node(&mut nodes)?;
+                if stack.len() >= MAX_XML_DEPTH {
+                    return Err("XML exceeds maximum nesting depth".to_string());
+                }
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 let mut attrs = serde_json::Map::new();
-                for attr in e.attributes().flatten() {
+                let mut attr_count = 0usize;
+                for attr in e.attributes() {
+                    let attr = attr.map_err(|e| format!("invalid XML attribute: {}", e))?;
+                    attr_count += 1;
+                    if attr_count > MAX_XML_ATTRIBUTES_PER_ELEMENT {
+                        return Err("XML element has too many attributes".to_string());
+                    }
                     let key = format!("@{}", String::from_utf8_lossy(attr.key.as_ref()));
                     let val = String::from_utf8_lossy(&attr.value).to_string();
                     attrs.insert(key, serde_json::Value::String(val));
@@ -328,9 +358,18 @@ fn xml_to_json(input: &str) -> Result<serde_json::Value, String> {
             }
             Ok(Event::Text(ref e)) => {
                 if let Some(entry) = stack.last_mut() {
-                    if let Ok(text) = e.unescape() {
-                        entry.text.push_str(&text);
+                    let text = e
+                        .unescape()
+                        .map_err(|e| format!("invalid XML text: {}", e))?;
+                    let next_len = entry
+                        .text
+                        .len()
+                        .checked_add(text.len())
+                        .ok_or("XML text length overflowed")?;
+                    if next_len > MAX_XML_TEXT_BYTES {
+                        return Err("XML text exceeds size limit".to_string());
                     }
+                    entry.text.push_str(&text);
                 }
             }
             Ok(Event::Eof) => break,
@@ -339,7 +378,41 @@ fn xml_to_json(input: &str) -> Result<serde_json::Value, String> {
         }
     }
 
+    if !stack.is_empty() {
+        return Err("unexpected end of XML input".to_string());
+    }
+
     Ok(serde_json::Value::Object(root))
+}
+
+fn count_xml_node(nodes: &mut usize) -> Result<(), String> {
+    *nodes = nodes.checked_add(1).ok_or("XML node count overflowed")?;
+    if *nodes > MAX_XML_NODES {
+        return Err("XML contains too many nodes".to_string());
+    }
+    Ok(())
+}
+
+fn record_output_value(output_count: &mut usize) -> Result<(), String> {
+    *output_count = output_count
+        .checked_add(1)
+        .ok_or("output count overflowed")?;
+    if *output_count > MAX_OUTPUT_VALUES {
+        return Err("too many output values".to_string());
+    }
+    Ok(())
+}
+
+fn read_limited_string<R: Read>(reader: R) -> Result<String, String> {
+    let mut input = String::new();
+    reader
+        .take((MAX_INPUT_BYTES + 1) as u64)
+        .read_to_string(&mut input)
+        .map_err(|e| format!("failed to read stdin: {}", e))?;
+    if input.len() > MAX_INPUT_BYTES {
+        return Err("stdin exceeds size limit".to_string());
+    }
+    Ok(input)
 }
 
 fn insert_or_array(
@@ -365,7 +438,7 @@ fn insert_or_array(
 fn json_to_xml(val: &serde_json::Value) -> Result<String, String> {
     use quick_xml::Writer;
 
-    let mut writer = Writer::new(Vec::new());
+    let mut writer = Writer::new(LimitedBytes::new(MAX_FORMATTED_OUTPUT_BYTES));
 
     match val {
         serde_json::Value::Object(map) => {
@@ -380,8 +453,10 @@ fn json_to_xml(val: &serde_json::Value) -> Result<String, String> {
         }
     }
 
-    let bytes = writer.into_inner();
-    String::from_utf8(bytes).map_err(|e| format!("XML encoding error: {}", e))
+    writer
+        .into_inner()
+        .into_string()
+        .map_err(|e| format!("XML encoding error: {}", e))
 }
 
 fn write_xml_element<W: io::Write>(
@@ -455,12 +530,16 @@ fn write_xml_element<W: io::Write>(
 // --- Output formatting ---
 
 fn format_val_output(val: &Val, opts: &YqOptions, out_format: Format) -> Result<String, String> {
-    let compact_str = format!("{}", val);
+    let mut compact = LimitedString::new(MAX_FORMATTED_OUTPUT_BYTES);
+    fmt::write(&mut compact, format_args!("{}", val))
+        .map_err(|_| "formatted output exceeds size limit".to_string())?;
+    let compact_str = compact.into_string();
 
     // Raw output: unquote strings
     if opts.raw_output {
         if compact_str.starts_with('"') && compact_str.ends_with('"') && compact_str.len() >= 2 {
             if let Ok(unescaped) = serde_json::from_str::<String>(&compact_str) {
+                ensure_formatted_output_limit(unescaped.len())?;
                 return Ok(unescaped);
             }
         }
@@ -469,7 +548,95 @@ fn format_val_output(val: &Val, opts: &YqOptions, out_format: Format) -> Result<
     let json_val: serde_json::Value =
         serde_json::from_str(&compact_str).unwrap_or(serde_json::Value::String(compact_str));
 
-    format_json_as(out_format, &json_val, opts.compact)
+    let output = format_json_as(out_format, &json_val, opts.compact)?;
+    ensure_formatted_output_limit(output.len())?;
+    Ok(output)
+}
+
+fn ensure_formatted_output_limit(len: usize) -> Result<(), String> {
+    if len > MAX_FORMATTED_OUTPUT_BYTES {
+        return Err("formatted output exceeds size limit".to_string());
+    }
+    Ok(())
+}
+
+struct LimitedString {
+    inner: String,
+    limit: usize,
+}
+
+impl LimitedString {
+    fn new(limit: usize) -> Self {
+        Self {
+            inner: String::new(),
+            limit,
+        }
+    }
+
+    fn into_string(self) -> String {
+        self.inner
+    }
+
+    fn write_str(&mut self, s: &str) -> Result<(), String> {
+        let next_len = self
+            .inner
+            .len()
+            .checked_add(s.len())
+            .ok_or("formatted output length overflowed")?;
+        if next_len > self.limit {
+            return Err("formatted output exceeds size limit".to_string());
+        }
+        self.inner.push_str(s);
+        Ok(())
+    }
+
+    fn write_char(&mut self, ch: char) -> Result<(), String> {
+        let mut buf = [0u8; 4];
+        self.write_str(ch.encode_utf8(&mut buf))
+    }
+}
+
+impl fmt::Write for LimitedString {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        LimitedString::write_str(self, s).map_err(|_| fmt::Error)
+    }
+}
+
+struct LimitedBytes {
+    inner: Vec<u8>,
+    limit: usize,
+}
+
+impl LimitedBytes {
+    fn new(limit: usize) -> Self {
+        Self {
+            inner: Vec::new(),
+            limit,
+        }
+    }
+
+    fn into_string(self) -> Result<String, std::string::FromUtf8Error> {
+        String::from_utf8(self.inner)
+    }
+}
+
+impl io::Write for LimitedBytes {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let next_len = self
+            .inner
+            .len()
+            .checked_add(buf.len())
+            .ok_or_else(|| io::Error::other("formatted output length overflowed"))?;
+        if next_len > self.limit {
+            return Err(io::Error::other("formatted output exceeds size limit"));
+        }
+        self.inner.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn format_json_as(
@@ -479,28 +646,163 @@ fn format_json_as(
 ) -> Result<String, String> {
     match format {
         Format::Json => {
+            let mut out = LimitedBytes::new(MAX_FORMATTED_OUTPUT_BYTES);
             if compact {
-                serde_json::to_string(val).map_err(|e| format!("JSON output error: {}", e))
+                serde_json::to_writer(&mut out, val)
+                    .map_err(|e| format!("JSON output error: {}", e))?;
             } else {
-                serde_json::to_string_pretty(val).map_err(|e| format!("JSON output error: {}", e))
+                serde_json::to_writer_pretty(&mut out, val)
+                    .map_err(|e| format!("JSON output error: {}", e))?;
             }
+            out.into_string()
+                .map_err(|e| format!("JSON encoding error: {}", e))
         }
         Format::Yaml => {
-            let s = serde_yaml::to_string(val).map_err(|e| format!("YAML output error: {}", e))?;
+            let mut out = LimitedBytes::new(MAX_FORMATTED_OUTPUT_BYTES);
+            serde_yaml::to_writer(&mut out, val)
+                .map_err(|e| format!("YAML output error: {}", e))?;
+            let s = out
+                .into_string()
+                .map_err(|e| format!("YAML encoding error: {}", e))?;
             // Strip leading "---\n" and trailing newline for cleaner output
             let s = s.strip_prefix("---\n").unwrap_or(&s);
             let s = s.strip_suffix('\n').unwrap_or(s);
             Ok(s.to_string())
         }
-        Format::Toml => {
-            let toml_val = json_to_toml(val)?;
-            let s = toml::to_string_pretty(&toml_val)
-                .map_err(|e| format!("TOML output error: {}", e))?;
-            let s = s.strip_suffix('\n').unwrap_or(&s);
-            Ok(s.to_string())
-        }
+        Format::Toml => json_to_toml_bounded(val),
         Format::Xml => json_to_xml(val),
     }
+}
+
+fn json_to_toml_bounded(val: &serde_json::Value) -> Result<String, String> {
+    let toml_val = json_to_toml(val)?;
+    let mut out = LimitedString::new(MAX_FORMATTED_OUTPUT_BYTES);
+    write_toml_document(&mut out, &toml_val)?;
+    let s = out.into_string();
+    Ok(s.strip_suffix('\n').unwrap_or(&s).to_string())
+}
+
+fn write_toml_document(out: &mut LimitedString, val: &toml::Value) -> Result<(), String> {
+    match val {
+        toml::Value::Table(table) => write_toml_table(out, &mut Vec::new(), table),
+        other => write_toml_inline(out, other),
+    }
+}
+
+fn write_toml_table(
+    out: &mut LimitedString,
+    path: &mut Vec<String>,
+    table: &toml::map::Map<String, toml::Value>,
+) -> Result<(), String> {
+    for (key, value) in table {
+        if matches!(value, toml::Value::Table(_)) {
+            continue;
+        }
+        write_toml_key(out, key)?;
+        out.write_str(" = ")?;
+        write_toml_inline(out, value)?;
+        out.write_char('\n')?;
+    }
+
+    for (key, value) in table {
+        let toml::Value::Table(child) = value else {
+            continue;
+        };
+        if !path.is_empty() || table_has_scalar_entries(child) {
+            out.write_char('\n')?;
+            path.push(key.clone());
+            out.write_char('[')?;
+            write_toml_path(out, path)?;
+            out.write_str("]\n")?;
+            write_toml_table(out, path, child)?;
+            path.pop();
+        } else {
+            path.push(key.clone());
+            write_toml_table(out, path, child)?;
+            path.pop();
+        }
+    }
+
+    Ok(())
+}
+
+fn table_has_scalar_entries(table: &toml::map::Map<String, toml::Value>) -> bool {
+    table
+        .values()
+        .any(|value| !matches!(value, toml::Value::Table(_)))
+}
+
+fn write_toml_path(out: &mut LimitedString, path: &[String]) -> Result<(), String> {
+    for (i, key) in path.iter().enumerate() {
+        if i > 0 {
+            out.write_char('.')?;
+        }
+        write_toml_key(out, key)?;
+    }
+    Ok(())
+}
+
+fn write_toml_key(out: &mut LimitedString, key: &str) -> Result<(), String> {
+    if !key.is_empty()
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        out.write_str(key)?;
+    } else {
+        write_toml_string(out, key)?;
+    }
+    Ok(())
+}
+
+fn write_toml_inline(out: &mut LimitedString, val: &toml::Value) -> Result<(), String> {
+    match val {
+        toml::Value::String(s) => write_toml_string(out, s),
+        toml::Value::Integer(i) => out.write_str(&i.to_string()),
+        toml::Value::Float(f) => out.write_str(&f.to_string()),
+        toml::Value::Boolean(b) => out.write_str(if *b { "true" } else { "false" }),
+        toml::Value::Datetime(dt) => out.write_str(&dt.to_string()),
+        toml::Value::Array(arr) => {
+            out.write_char('[')?;
+            for (i, item) in arr.iter().enumerate() {
+                if i > 0 {
+                    out.write_str(", ")?;
+                }
+                write_toml_inline(out, item)?;
+            }
+            out.write_char(']')
+        }
+        toml::Value::Table(table) => {
+            out.write_str("{ ")?;
+            for (i, (key, value)) in table.iter().enumerate() {
+                if i > 0 {
+                    out.write_str(", ")?;
+                }
+                write_toml_key(out, key)?;
+                out.write_str(" = ")?;
+                write_toml_inline(out, value)?;
+            }
+            out.write_str(" }")
+        }
+    }
+}
+
+fn write_toml_string(out: &mut LimitedString, s: &str) -> Result<(), String> {
+    out.write_char('"')?;
+    for ch in s.chars() {
+        match ch {
+            '"' => out.write_str("\\\"")?,
+            '\\' => out.write_str("\\\\")?,
+            '\n' => out.write_str("\\n")?,
+            '\r' => out.write_str("\\r")?,
+            '\t' => out.write_str("\\t")?,
+            '\u{08}' => out.write_str("\\b")?,
+            '\u{0c}' => out.write_str("\\f")?,
+            ch if ch.is_control() => out.write_str(&format!("\\u{:04X}", ch as u32))?,
+            ch => out.write_char(ch)?,
+        }
+    }
+    out.write_char('"')
 }
 
 // --- Main logic ---
@@ -509,12 +811,11 @@ fn run_yq(args: &[String]) -> Result<i32, String> {
     let opts = parse_args(args)?;
 
     // Read input
-    let mut stdin_data = String::new();
-    if !opts.null_input {
-        io::stdin()
-            .read_to_string(&mut stdin_data)
-            .map_err(|e| format!("failed to read stdin: {}", e))?;
-    }
+    let stdin_data = if opts.null_input {
+        String::new()
+    } else {
+        read_limited_string(io::stdin())?
+    };
 
     // Determine input format
     let in_format = opts.input_format.unwrap_or_else(|| {
@@ -563,6 +864,7 @@ fn run_yq(args: &[String]) -> Result<i32, String> {
     let empty_inputs = RcIter::new(core::iter::empty());
     let stdout = io::stdout();
     let mut out = stdout.lock();
+    let mut output_count = 0usize;
 
     for input in inputs {
         let ctx = Ctx::new(core::iter::empty(), &empty_inputs);
@@ -571,8 +873,9 @@ fn run_yq(args: &[String]) -> Result<i32, String> {
         for result in results {
             match result {
                 Ok(val) => {
+                    record_output_value(&mut output_count)?;
                     let s = format_val_output(&val, &opts, out_format)?;
-                    writeln!(out, "{}", s).ok();
+                    writeln!(out, "{}", s).map_err(|e| format!("failed to write stdout: {}", e))?;
                 }
                 Err(e) => {
                     eprintln!("yq: error: {}", e);
@@ -582,5 +885,120 @@ fn run_yq(args: &[String]) -> Result<i32, String> {
         }
     }
 
+    out.flush()
+        .map_err(|e| format!("failed to flush stdout: {}", e))?;
+
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xml_depth_limit_rejects_deep_input() {
+        let mut input = String::new();
+        for i in 0..=MAX_XML_DEPTH {
+            input.push_str(&format!("<n{i}>"));
+        }
+        for i in (0..=MAX_XML_DEPTH).rev() {
+            input.push_str(&format!("</n{i}>"));
+        }
+
+        let err = xml_to_json(&input).unwrap_err();
+
+        assert!(err.contains("nesting depth"));
+    }
+
+    #[test]
+    fn xml_depth_limit_rejects_deep_empty_input() {
+        let mut input = String::new();
+        for i in 0..MAX_XML_DEPTH {
+            input.push_str(&format!("<n{i}>"));
+        }
+        input.push_str("<leaf />");
+        for i in (0..MAX_XML_DEPTH).rev() {
+            input.push_str(&format!("</n{i}>"));
+        }
+
+        let err = xml_to_json(&input).unwrap_err();
+
+        assert!(err.contains("nesting depth"));
+    }
+
+    #[test]
+    fn xml_node_limit_rejects_many_elements() {
+        let mut nodes = MAX_XML_NODES;
+
+        let err = count_xml_node(&mut nodes).unwrap_err();
+
+        assert!(err.contains("too many nodes"));
+    }
+
+    #[test]
+    fn xml_text_limit_rejects_large_text() {
+        let input = format!("<root>{}</root>", "x".repeat(MAX_XML_TEXT_BYTES + 1));
+
+        let err = xml_to_json(&input).unwrap_err();
+
+        assert!(err.contains("text exceeds"));
+    }
+
+    #[test]
+    fn output_limit_rejects_too_many_values() {
+        let mut count = MAX_OUTPUT_VALUES;
+
+        let err = record_output_value(&mut count).unwrap_err();
+
+        assert!(err.contains("too many output values"));
+    }
+
+    #[test]
+    fn formatted_output_limit_rejects_large_output() {
+        let err = ensure_formatted_output_limit(MAX_FORMATTED_OUTPUT_BYTES + 1).unwrap_err();
+
+        assert!(err.contains("formatted output"));
+    }
+
+    #[test]
+    fn limited_bytes_rejects_large_serializer_write() {
+        let mut output = LimitedBytes::new(4);
+
+        let err = output.write_all(b"hello").unwrap_err();
+
+        assert!(err.to_string().contains("formatted output"));
+    }
+
+    #[test]
+    fn limited_toml_writer_rejects_large_value() {
+        let mut output = LimitedString::new(4);
+        let value = toml::Value::String("hello".to_string());
+
+        let err = write_toml_inline(&mut output, &value).unwrap_err();
+
+        assert!(err.contains("formatted output"));
+    }
+
+    #[test]
+    fn input_limit_rejects_oversized_reader() {
+        let input = vec![b'x'; MAX_INPUT_BYTES + 1];
+
+        let err = read_limited_string(&input[..]).unwrap_err();
+
+        assert!(err.contains("stdin exceeds"));
+    }
+
+    #[test]
+    fn xml_rejects_unclosed_elements() {
+        let err = xml_to_json("<root>").unwrap_err();
+
+        assert!(err.contains("unexpected end"));
+    }
+
+    #[test]
+    fn xml_rejects_invalid_text_escape() {
+        let err = xml_to_json("<root>&bogus;</root>").unwrap_err();
+
+        assert!(err.contains("invalid XML text"));
+    }
 }
