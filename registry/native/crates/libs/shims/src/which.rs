@@ -7,7 +7,7 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
@@ -21,8 +21,8 @@ mod host_fs {
     }
 }
 
-fn print_usage() {
-    println!("Usage: which [-a] name [...]");
+fn print_usage<W: Write>(out: &mut W) -> io::Result<()> {
+    writeln!(out, "Usage: which [-a] name [...]")
 }
 
 fn is_executable_path(path: &Path) -> bool {
@@ -42,7 +42,10 @@ fn executable_mode_bits(_path: &Path, metadata: &fs::Metadata) -> bool {
 fn executable_mode_bits(path: &Path, _metadata: &fs::Metadata) -> bool {
     let path_string = path.to_string_lossy();
     let bytes = path_string.as_bytes();
-    let mode = unsafe { host_fs::path_mode(bytes.as_ptr(), bytes.len() as u32, 1) };
+    let Ok(path_len) = u32::try_from(bytes.len()) else {
+        return false;
+    };
+    let mode = unsafe { host_fs::path_mode(bytes.as_ptr(), path_len, 1) };
     (mode & 0o111) != 0
 }
 
@@ -51,29 +54,33 @@ fn executable_mode_bits(_path: &Path, metadata: &fs::Metadata) -> bool {
     !metadata.permissions().readonly()
 }
 
-fn search_path(command: &str, all: bool) -> Vec<PathBuf> {
+fn search_path<F>(command: &str, all: bool, mut on_match: F) -> io::Result<bool>
+where
+    F: FnMut(&Path) -> io::Result<()>,
+{
     if command.contains('/') {
         let path = PathBuf::from(command);
-        return if is_executable_path(&path) {
-            vec![path]
-        } else {
-            Vec::new()
-        };
+        if is_executable_path(&path) {
+            on_match(&path)?;
+            return Ok(true);
+        }
+        return Ok(false);
     }
 
-    let mut matches = Vec::new();
+    let mut found = false;
     let path_var = std::env::var("PATH").unwrap_or_default();
     for dir in path_var.split(':').filter(|segment| !segment.is_empty()) {
         let candidate = Path::new(dir).join(command);
         if is_executable_path(&candidate) {
-            matches.push(candidate);
+            on_match(&candidate)?;
+            found = true;
             if !all {
                 break;
             }
         }
     }
 
-    matches
+    Ok(found)
 }
 
 pub fn which(args: Vec<OsString>) -> i32 {
@@ -85,17 +92,29 @@ pub fn which(args: Vec<OsString>) -> i32 {
 
     let mut all = false;
     let mut commands = Vec::new();
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
 
     for arg in str_args {
         match arg.as_str() {
             "-a" => all = true,
             "--help" => {
-                print_usage();
-                return 0;
+                return match print_usage(&mut out).and_then(|_| out.flush()) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("which: {}", e);
+                        2
+                    }
+                };
             }
             "--version" => {
-                println!("which 0.1.0");
-                return 0;
+                return match writeln!(out, "which 0.1.0").and_then(|_| out.flush()) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("which: {}", e);
+                        2
+                    }
+                };
             }
             _ if arg.starts_with('-') => {
                 eprintln!("which: unsupported option '{}'", arg);
@@ -106,24 +125,31 @@ pub fn which(args: Vec<OsString>) -> i32 {
     }
 
     if commands.is_empty() {
-        print_usage();
-        return 2;
+        return match print_usage(&mut out).and_then(|_| out.flush()) {
+            Ok(()) => 2,
+            Err(e) => {
+                eprintln!("which: {}", e);
+                2
+            }
+        };
     }
 
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
     let mut found_all = true;
 
     for command in commands {
-        let matches = search_path(&command, all);
-        if matches.is_empty() {
-            found_all = false;
-            continue;
+        match search_path(&command, all, |path| writeln!(out, "{}", path.display())) {
+            Ok(true) => {}
+            Ok(false) => found_all = false,
+            Err(e) => {
+                eprintln!("which: {}", e);
+                return 2;
+            }
         }
+    }
 
-        for path in matches {
-            let _ = writeln!(out, "{}", path.display());
-        }
+    if let Err(e) = out.flush() {
+        eprintln!("which: {}", e);
+        return 2;
     }
 
     if found_all {
