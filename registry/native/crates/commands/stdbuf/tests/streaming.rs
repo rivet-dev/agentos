@@ -4,6 +4,31 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
 
+struct ChildGuard(Child);
+
+impl ChildGuard {
+    fn new(child: Child) -> Self {
+        Self(child)
+    }
+
+    fn child_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+
+    fn wait(mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.0.wait()
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
 fn spawn_line_reader(stdout: ChildStdout) -> Receiver<Option<String>> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -43,8 +68,12 @@ sleep 1
 printf 'line-2\n'
 "#;
 
-    let mut child = spawn_stdbuf(script);
-    let stdout = child.stdout.take().expect("missing stdbuf stdout");
+    let mut child = ChildGuard::new(spawn_stdbuf(script));
+    let stdout = child
+        .child_mut()
+        .stdout
+        .take()
+        .expect("missing stdbuf stdout");
     let rx = spawn_line_reader(stdout);
 
     let first_line = rx
@@ -53,7 +82,10 @@ printf 'line-2\n'
         .expect("stdbuf stdout closed before the first line");
     assert_eq!(first_line, "line-1\n");
     assert_eq!(
-        child.try_wait().expect("failed to poll stdbuf child"),
+        child
+            .child_mut()
+            .try_wait()
+            .expect("failed to poll stdbuf child"),
         None,
         "stdbuf child exited before the first line was observed"
     );
