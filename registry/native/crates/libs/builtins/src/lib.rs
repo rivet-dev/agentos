@@ -4,13 +4,9 @@
 //! - sleep: uses host_process.sleep_ms (Atomics.wait on host side)
 //! - test/[: conditional expressions (uu_test has 17 unix errors)
 //! - whoami: reads USER/LOGNAME env vars (uu_whoami needs unix)
-//! - spawn-test: internal subprocess lifecycle test
-#![cfg_attr(target_os = "wasi", feature(wasi_ext))]
-
 use std::ffi::OsString;
 use std::fs::Metadata;
-use std::io::{self, Write};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -37,58 +33,58 @@ pub fn sleep(args: Vec<OsString>) -> i32 {
         return 1;
     }
 
-    let secs: f64 = match str_args[0].parse() {
-        Ok(s) if s >= 0.0 => s,
-        _ => {
+    let duration = match parse_sleep_duration(&str_args[0]) {
+        Ok(duration) => duration,
+        Err(()) => {
             eprintln!("sleep: invalid time interval '{}'", str_args[0]);
             return 1;
         }
     };
 
-    let millis = (secs * 1000.0) as u32;
-    if let Err(_) = wasi_ext::host_sleep_ms(millis) {
-        // Fallback to busy-wait if host doesn't support sleep_ms
-        let start = std::time::Instant::now();
-        let duration = std::time::Duration::from_secs_f64(secs);
-        while start.elapsed() < duration {
-            std::thread::yield_now();
-        }
+    if let Err(error) = sleep_for_duration(duration) {
+        eprintln!("sleep: failed to sleep: {error}");
+        return 1;
     }
 
     0
 }
 
-/// spawn-test: spawns a child process via std::process::Command and
-/// prints its stdout. Used to verify subprocess lifecycle integration.
-///
-/// Usage: spawn-test <command> [args...]
-/// Default: spawn-test echo hello
-pub fn spawn_test(args: Vec<OsString>) -> i32 {
-    let str_args: Vec<String> = args
-        .iter()
-        .skip(1)
-        .map(|a| a.to_string_lossy().to_string())
-        .collect();
+fn parse_sleep_duration(raw: &str) -> Result<Duration, ()> {
+    let secs: f64 = raw.parse().map_err(|_| ())?;
+    if !secs.is_finite() || secs < 0.0 {
+        return Err(());
+    }
 
-    let program = str_args.first().map(|s| s.as_str()).unwrap_or("echo");
-    let child_args: Vec<&str> = str_args.iter().skip(1).map(|s| s.as_str()).collect();
+    Duration::try_from_secs_f64(secs).map_err(|_| ())
+}
 
-    let output = match std::process::Command::new(program)
-        .args(&child_args)
-        .output()
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn ceil_duration_to_millis(duration: Duration) -> u32 {
+    let millis = duration.as_millis();
+    if millis == 0 && !duration.is_zero() {
+        return 1;
+    }
+
+    millis.try_into().unwrap_or(u32::MAX)
+}
+
+fn sleep_for_duration(duration: Duration) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
     {
-        Ok(output) => output,
-        Err(e) => {
-            eprintln!("spawn-test: failed to spawn '{}': {}", program, e);
-            return 1;
+        let mut remaining = duration;
+        while !remaining.is_zero() {
+            let millis = ceil_duration_to_millis(remaining);
+            wasi_ext::host_sleep_ms(millis).map_err(|errno| format!("wasi errno {errno}"))?;
+            remaining = remaining.saturating_sub(Duration::from_millis(u64::from(millis)));
         }
-    };
+        Ok(())
+    }
 
-    // Print child's stdout/stderr to our stdout/stderr
-    let _ = io::stdout().write_all(&output.stdout);
-    let _ = io::stderr().write_all(&output.stderr);
-
-    output.status.code().unwrap_or(1)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::thread::sleep(duration);
+        Ok(())
+    }
 }
 
 /// Minimal test / [ command: evaluate conditional expressions.
@@ -287,7 +283,10 @@ fn file_mtime(path: &str) -> Option<SystemTime> {
 }
 
 fn is_unary_operator(token: &str) -> bool {
-    matches!(token, "-n" | "-z" | "-f" | "-d" | "-e" | "-s" | "-r" | "-w" | "-x")
+    matches!(
+        token,
+        "-n" | "-z" | "-f" | "-d" | "-e" | "-s" | "-r" | "-w" | "-x"
+    )
 }
 
 fn is_binary_operator(token: &str) -> bool {
@@ -382,7 +381,11 @@ fn permission_allows(_path: &str, metadata: &Metadata, requested_bit: u32) -> bo
 fn wasi_path_mode(path: &str) -> Option<u32> {
     let bytes = path.as_bytes();
     let mode = unsafe { host_fs::path_mode(bytes.as_ptr(), bytes.len() as u32, 1) };
-    if mode == 0 { None } else { Some(mode) }
+    if mode == 0 {
+        None
+    } else {
+        Some(mode)
+    }
 }
 
 struct ProcessIdentity {
@@ -441,7 +444,7 @@ pub fn whoami(_args: Vec<OsString>) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::test_cmd;
+    use super::{ceil_duration_to_millis, parse_sleep_duration, test_cmd};
     use std::ffi::OsString;
     use std::fs;
     use std::path::PathBuf;
@@ -449,6 +452,20 @@ mod tests {
 
     #[cfg(any(unix, target_os = "wasi"))]
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn sleep_duration_rejects_invalid_intervals() {
+        assert!(parse_sleep_duration("-1").is_err());
+        assert!(parse_sleep_duration("inf").is_err());
+        assert!(parse_sleep_duration("NaN").is_err());
+        assert!(parse_sleep_duration("not-a-number").is_err());
+    }
+
+    #[test]
+    fn sleep_duration_rounds_submillisecond_intervals_up() {
+        let duration = parse_sleep_duration("0.0001").expect("parse tiny sleep");
+        assert_eq!(ceil_duration_to_millis(duration), 1);
+    }
 
     #[test]
     fn test_access_checks_follow_mode_bits() {
@@ -490,74 +507,45 @@ mod tests {
             (vec!["1", "-eq", "2"], false),
             (vec!["1", "-eq", "1", "-a", "2", "-eq", "2"], true),
             (vec!["1", "-eq", "1", "-o", "2", "-eq", "3"], true),
-            (vec!["1", "-eq", "1", "-o", "2", "-eq", "3", "-a", "4", "-eq", "5"], true),
-            (vec!["1", "-eq", "2", "-o", "2", "-eq", "2", "-a", "3", "-eq", "3"], true),
             (
                 vec![
-                    "(",
-                    "1",
-                    "-eq",
-                    "2",
-                    "-o",
-                    "2",
-                    "-eq",
-                    "2",
-                    ")",
-                    "-a",
-                    "3",
-                    "-eq",
-                    "3",
+                    "1", "-eq", "1", "-o", "2", "-eq", "3", "-a", "4", "-eq", "5",
                 ],
                 true,
             ),
             (
                 vec![
-                    "(",
-                    "1",
-                    "-eq",
-                    "2",
-                    "-o",
-                    "2",
-                    "-eq",
-                    "3",
-                    ")",
-                    "-a",
-                    "3",
-                    "-eq",
-                    "3",
+                    "1", "-eq", "2", "-o", "2", "-eq", "2", "-a", "3", "-eq", "3",
+                ],
+                true,
+            ),
+            (
+                vec![
+                    "(", "1", "-eq", "2", "-o", "2", "-eq", "2", ")", "-a", "3", "-eq", "3",
+                ],
+                true,
+            ),
+            (
+                vec![
+                    "(", "1", "-eq", "2", "-o", "2", "-eq", "3", ")", "-a", "3", "-eq", "3",
                 ],
                 false,
             ),
             (
-                vec!["!", "(", "1", "-eq", "2", "-o", "2", "-eq", "3", ")", "-a", "4", "-eq", "4"],
+                vec![
+                    "!", "(", "1", "-eq", "2", "-o", "2", "-eq", "3", ")", "-a", "4", "-eq", "4",
+                ],
                 true,
             ),
             (
                 vec!["!", "(", "1", "-eq", "1", "-a", "2", "-eq", "2", ")"],
                 false,
             ),
-            (
-                vec!["!", "1", "-eq", "2", "-o", "3", "-eq", "4"],
-                true,
-            ),
+            (vec!["!", "1", "-eq", "2", "-o", "3", "-eq", "4"], true),
             (
                 vec![
-                    "(",
-                    "1",
-                    "-eq",
-                    "1",
-                    "-o",
-                    "2",
-                    "-eq",
-                    "3",
-                    ")",
-                    "-a",
-                    "!",
-                    "(",
-                    "4",
-                    "-eq",
-                    "5",
-                    ")",
+                    "(", "1", "-eq", "1", "-o", "2", "-eq", "3", ")", "-a", "!", "(", "4", "-eq",
+                    "5", ")",
                 ],
                 true,
             ),
@@ -673,8 +661,7 @@ mod tests {
         let duration = time
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("mtime after unix epoch");
-        let path = CString::new(std::path::Path::new(path).as_os_str().as_bytes())
-            .expect("c path");
+        let path = CString::new(std::path::Path::new(path).as_os_str().as_bytes()).expect("c path");
         let times = [
             libc::timespec {
                 tv_sec: duration.as_secs() as libc::time_t,
@@ -686,9 +673,7 @@ mod tests {
             },
         ];
 
-        let result = unsafe {
-            libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0)
-        };
+        let result = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) };
         assert_eq!(result, 0, "set mtime for {path:?}");
     }
 
