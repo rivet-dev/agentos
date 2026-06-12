@@ -66,6 +66,20 @@ export default function(pi) {
 }
 `.trimStart(),
 	);
+	// This extension uses an ESM import statement, which the adapter's inline
+	// default-export fallback cannot evaluate. It must be reported as a
+	// per-extension error without breaking session creation or the loading of
+	// the working extension above. Once the V8 loader supports dynamic import
+	// of ESM `.js` files, tighten this test to assert both extensions apply.
+	await vm.writeFile(
+		`${EXTENSIONS_DIR}/broken-esm-import.js`,
+		`
+import { sep } from "node:path";
+export default function(pi) {
+	pi.on("before_agent_start", async () => ({ systemPrompt: sep }));
+}
+`.trimStart(),
+	);
 }
 
 describe("Pi extensions quickstart truth test", () => {

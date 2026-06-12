@@ -572,6 +572,11 @@ function readCommonJsExtensionFactory(
 	return undefined;
 }
 
+// Temporary workaround: the V8 module loader currently fails dynamic
+// import() of ESM `.js` extension files, so this evaluates a transformed
+// copy of bare `export default` extensions. It cannot handle `import`
+// statements or named exports. Delete this once the loader supports ESM
+// `.js` dynamic import.
 function readInlineDefaultExportFactory(
 	extensionPath: string,
 ): ExtensionFactoryLike | undefined {
@@ -613,7 +618,17 @@ async function loadExtensionFactoryFromPath(
 	try {
 		return readCommonJsExtensionFactory(extensionPath);
 	} catch (error) {
-		const inlineFactory = readInlineDefaultExportFactory(extensionPath);
+		let inlineFactory: ExtensionFactoryLike | undefined;
+		try {
+			inlineFactory = readInlineDefaultExportFactory(extensionPath);
+		} catch (inlineError) {
+			const inlineMessage =
+				inlineError instanceof Error ? inlineError.message : String(inlineError);
+			if (error instanceof Error) {
+				error.message = `${error.message} (inline default-export fallback also failed: ${inlineMessage})`;
+			}
+			throw error;
+		}
 		if (inlineFactory) {
 			return inlineFactory;
 		}
