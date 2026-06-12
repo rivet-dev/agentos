@@ -5,8 +5,10 @@
 //! cannot be used directly as it's a binary crate with platform-specific
 //! dependencies incompatible with wasm32-wasip1.
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use regex::Regex;
@@ -80,21 +82,37 @@ struct FindOptions {
 fn run_find(args: &[String]) -> Result<bool, String> {
     let opts = parse_args(args)?;
     let mut found_any = false;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
 
     for path in &opts.paths {
-        walk(&PathBuf::from(path), path, 0, &opts, &mut found_any)?;
+        let mut visited_dirs = HashSet::new();
+        walk(
+            &PathBuf::from(path),
+            path,
+            0,
+            &opts,
+            &mut found_any,
+            &mut out,
+            &mut visited_dirs,
+        )?;
     }
+
+    out.flush()
+        .map_err(|e| format!("failed to write output: {e}"))?;
 
     Ok(found_any)
 }
 
 /// Recursive directory walk.
-fn walk(
+fn walk<W: Write>(
     full_path: &Path,
     display_path: &str,
     depth: usize,
     opts: &FindOptions,
     found_any: &mut bool,
+    out: &mut W,
+    visited_dirs: &mut HashSet<PathBuf>,
 ) -> Result<(), String> {
     // Check max depth before processing
     if let Some(max) = opts.max_depth {
@@ -113,7 +131,8 @@ fn walk(
         if matches {
             *found_any = true;
             // Default action is print
-            println!("{}", display_path);
+            writeln!(out, "{}", display_path)
+                .map_err(|e| format!("failed to write output: {e}"))?;
         }
     }
 
@@ -126,9 +145,17 @@ fn walk(
             }
         }
 
+        let canonical_path =
+            fs::canonicalize(full_path).map_err(|e| format!("{}: {}", display_path, e))?;
+        if !visited_dirs.insert(canonical_path.clone()) {
+            return Ok(());
+        }
+
         let entries = fs::read_dir(full_path).map_err(|e| format!("{}: {}", display_path, e))?;
 
-        let mut sorted_entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        let mut sorted_entries: Vec<_> = entries
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("{}: {}", display_path, e))?;
         sorted_entries.sort_by_key(|e| e.file_name());
 
         for entry in sorted_entries {
@@ -140,8 +167,17 @@ fn walk(
             };
             let child_full = entry.path();
 
-            walk(&child_full, &child_display, depth + 1, opts, found_any)?;
+            walk(
+                &child_full,
+                &child_display,
+                depth + 1,
+                opts,
+                found_any,
+                out,
+                visited_dirs,
+            )?;
         }
+        visited_dirs.remove(&canonical_path);
     }
 
     Ok(())
