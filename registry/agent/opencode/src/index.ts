@@ -20,38 +20,6 @@ const opencode = defineSoftware({
 			OPENCODE_DISABLE_CONFIG_DEP_INSTALL: "1",
 			OPENCODE_DISABLE_EMBEDDED_WEB_UI: "1",
 		},
-		prepareInstructions: async (kernel, _cwd, additionalInstructions, opts) => {
-			const contextPaths = opts?.skipBase
-				? []
-				: [
-						".github/copilot-instructions.md",
-						".cursorrules",
-						".cursor/rules/",
-						"CLAUDE.md",
-						"CLAUDE.local.md",
-						"opencode.md",
-						"opencode.local.md",
-						"OpenCode.md",
-						"OpenCode.local.md",
-						"OPENCODE.md",
-						"OPENCODE.local.md",
-						"/etc/agentos/instructions.md",
-					];
-			if (additionalInstructions) {
-				const additionalPath = "/tmp/agentos-additional-instructions.md";
-				await kernel.writeFile(additionalPath, additionalInstructions);
-				contextPaths.push(additionalPath);
-			}
-			if (opts?.toolReference) {
-				const toolRefPath = "/tmp/agentos-tool-reference.md";
-				await kernel.writeFile(toolRefPath, opts.toolReference);
-				contextPaths.push(toolRefPath);
-			}
-			if (contextPaths.length === 0) return {};
-			return {
-				env: { OPENCODE_CONTEXTPATHS: JSON.stringify(contextPaths) },
-			};
-		},
 	},
 });
 

@@ -14,19 +14,6 @@ const pi = defineSoftware({
 		id: "pi",
 		acpAdapter: "@rivet-dev/agent-os-pi",
 		agentPackage: "@mariozechner/pi-coding-agent",
-		prepareInstructions: async (kernel, _cwd, additionalInstructions, opts) => {
-			const parts: string[] = [];
-			if (!opts?.skipBase) {
-				const data = await kernel.readFile("/etc/agentos/instructions.md");
-				parts.push(new TextDecoder().decode(data));
-			}
-			if (additionalInstructions) parts.push(additionalInstructions);
-			if (opts?.toolReference) parts.push(opts.toolReference);
-			parts.push("---");
-			const instructions = parts.join("\n\n");
-			if (!instructions) return {};
-			return { args: ["--append-system-prompt", instructions] };
-		},
 	},
 });
 
