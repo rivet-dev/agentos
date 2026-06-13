@@ -340,6 +340,158 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
     expect(result.file).toBe('originalchanged');
   });
 
+  it('execSync append redirection appends and creates missing files', async () => {
+    ctx = await createBridgeIntegrationKernel();
+
+    const chunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+    const proc = ctx.kernel.spawn('node', ['-e', `
+      const { execSync } = require('child_process');
+      execSync("printf a > append-base.txt");
+      execSync("printf b >> append-base.txt");
+      execSync("printf c >> append-fresh.txt");
+      console.log('append-done');
+    `], {
+      cwd: '/tmp',
+      onStdout: (data) => chunks.push(data),
+      onStderr: (data) => stderrChunks.push(data),
+    });
+
+    const code = await proc.wait();
+    const output = chunks.map(c => new TextDecoder().decode(c)).join('');
+    const stderr = stderrChunks.map(c => new TextDecoder().decode(c)).join('');
+    expect(code, `stdout:\n${output}\nstderr:\n${stderr}`).toBe(0);
+    expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/append-base.txt'))).toBe('ab');
+    expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/append-fresh.txt'))).toBe('c');
+  });
+
+  it('execSync redirection handles quoted target paths with spaces', async () => {
+    ctx = await createBridgeIntegrationKernel();
+
+    const chunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+    const proc = ctx.kernel.spawn('node', ['-e', `
+      const { execSync } = require('child_process');
+      execSync("printf hi > 'out file.txt'");
+      execSync('printf hi > "out file2.txt"');
+      console.log('quoted-done');
+    `], {
+      cwd: '/tmp',
+      onStdout: (data) => chunks.push(data),
+      onStderr: (data) => stderrChunks.push(data),
+    });
+
+    const code = await proc.wait();
+    const output = chunks.map(c => new TextDecoder().decode(c)).join('');
+    const stderr = stderrChunks.map(c => new TextDecoder().decode(c)).join('');
+    expect(code, `stdout:\n${output}\nstderr:\n${stderr}`).toBe(0);
+    expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/out file.txt'))).toBe('hi');
+    expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/out file2.txt'))).toBe('hi');
+  });
+
+  it('execSync surfaces shell failure exit codes and truncates redirect targets', async () => {
+    ctx = await createBridgeIntegrationKernel();
+
+    const chunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+    const proc = ctx.kernel.spawn('node', ['-e', `
+      const fs = require('fs');
+      const { execSync } = require('child_process');
+      let redirectFailure = null;
+      try {
+        execSync('cat /missing-input-file > fail-out.txt', { encoding: 'utf-8' });
+      } catch (error) {
+        redirectFailure = {
+          status: error.status ?? null,
+          stderr: String(error.stderr ?? ''),
+        };
+      }
+      let exitFailure = null;
+      try {
+        execSync('exit 7', { encoding: 'utf-8' });
+      } catch (error) {
+        exitFailure = { status: error.status ?? null };
+      }
+      console.log(JSON.stringify({
+        redirectFailure,
+        exitFailure,
+        redirectTarget: fs.readFileSync('/tmp/fail-out.txt', 'utf8'),
+      }));
+    `], {
+      cwd: '/tmp',
+      onStdout: (data) => chunks.push(data),
+      onStderr: (data) => stderrChunks.push(data),
+    });
+
+    const code = await proc.wait();
+    const output = chunks.map(c => new TextDecoder().decode(c)).join('');
+    const stderr = stderrChunks.map(c => new TextDecoder().decode(c)).join('');
+    expect(code, `stdout:\n${output}\nstderr:\n${stderr}`).toBe(0);
+    const result = JSON.parse(output.trim());
+    expect(result.redirectFailure).not.toBeNull();
+    expect(result.redirectFailure.status).not.toBe(0);
+    expect(result.redirectFailure.stderr).toContain('missing-input-file');
+    // A real shell truncates and creates the redirect target before exec runs.
+    expect(result.redirectTarget).toBe('');
+    expect(result.exitFailure).toEqual({ status: 7 });
+  });
+
+  it('async exec() redirection writes command stdout into the kernel VFS', async () => {
+    ctx = await createBridgeIntegrationKernel();
+
+    const chunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+    const proc = ctx.kernel.spawn('node', ['-e', `
+      const { exec } = require('child_process');
+      exec('printf hi > async-out.txt', (error, stdout, stderr) => {
+        console.log(JSON.stringify({
+          error: error ? String(error.message) : null,
+          stdout,
+        }));
+        process.exit(error ? 1 : 0);
+      });
+    `], {
+      cwd: '/tmp',
+      onStdout: (data) => chunks.push(data),
+      onStderr: (data) => stderrChunks.push(data),
+    });
+
+    const code = await proc.wait();
+    const output = chunks.map(c => new TextDecoder().decode(c)).join('');
+    const stderr = stderrChunks.map(c => new TextDecoder().decode(c)).join('');
+    expect(code, `stdout:\n${output}\nstderr:\n${stderr}`).toBe(0);
+    const result = JSON.parse(output.trim());
+    expect(result.error).toBeNull();
+    expect(result.stdout).toBe('');
+    expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/async-out.txt'))).toBe('hi');
+  });
+
+  it('spawn with shell:true performs redirection through the guest shell', async () => {
+    ctx = await createBridgeIntegrationKernel();
+
+    const chunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+    const proc = ctx.kernel.spawn('node', ['-e', `
+      const { spawn } = require('child_process');
+      const child = spawn('printf hi > spawn-out.txt', { shell: true });
+      child.on('close', (code) => {
+        console.log('close:' + code);
+        process.exit(code ?? 1);
+      });
+    `], {
+      cwd: '/tmp',
+      onStdout: (data) => chunks.push(data),
+      onStderr: (data) => stderrChunks.push(data),
+    });
+
+    const code = await proc.wait();
+    const output = chunks.map(c => new TextDecoder().decode(c)).join('');
+    const stderr = stderrChunks.map(c => new TextDecoder().decode(c)).join('');
+    expect(code, `stdout:\n${output}\nstderr:\n${stderr}`).toBe(0);
+    expect(output).toContain('close:0');
+    expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/spawn-out.txt'))).toBe('hi');
+  });
+
   it('execFileSync on node_modules/.bin shell shims unwraps to the node entrypoint', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'agent-os-node-bin-shim-'));
     cleanupPaths.push(projectRoot);

@@ -99,6 +99,22 @@ EOF`);
 			expect(r.exitCode).toBe(0);
 			expect(r.stdout.trim()).toBe("outer");
 		});
+
+		test("redirect output is readable through vm.readFile", async () => {
+			const r = await vm.exec("printf hi > /tmp/shellexec-roundtrip.txt");
+			expect(r.exitCode).toBe(0);
+			expect(r.stdout).toBe("");
+			const content = new TextDecoder().decode(
+				await vm.readFile("/tmp/shellexec-roundtrip.txt"),
+			);
+			expect(content).toBe("hi");
+		});
+
+		test("failing external command propagates a non-zero exit code", async () => {
+			const r = await vm.exec("cat /missing-shellexec-file");
+			expect(r.exitCode).not.toBe(0);
+			expect(r.stderr).toContain("missing-shellexec-file");
+		});
 	});
 
 	// ── coreutils: file operations ────────────────────────────────────
