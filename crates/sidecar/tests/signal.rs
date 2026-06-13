@@ -535,6 +535,177 @@ fn embedded_runtime_process_kill_signal_zero_checks_child_liveness() {
     assert_eq!(exit_code, Some(0));
 }
 
+fn embedded_runtime_process_group_kill_terminates_detached_tree() {
+    assert_node_available();
+
+    let mut sidecar = new_sidecar("embedded-runtime-process-group-kill");
+    let cwd = temp_dir("embedded-runtime-process-group-kill-cwd");
+    let parent_entry = cwd.join("group-parent.mjs");
+    let child_entry = cwd.join("group-child.mjs");
+
+    write_fixture(
+        &child_entry,
+        [
+            "import { spawn } from 'node:child_process';",
+            "const makeChild = () => spawn(",
+            "  process.execPath,",
+            "  ['-e', 'setTimeout(() => {}, 100000)'],",
+            "  { stdio: ['ignore', 'ignore', 'ignore'] },",
+            ");",
+            "const first = makeChild();",
+            "const second = makeChild();",
+            "console.log(`group-ready:${first.pid}:${second.pid}`);",
+            "setInterval(() => {}, 1000);",
+        ]
+        .join("\n"),
+    );
+    write_fixture(
+        &parent_entry,
+        [
+            "import { spawn } from 'node:child_process';",
+            "const child = spawn(process.execPath, ['./group-child.mjs'], {",
+            "  detached: true,",
+            "  stdio: ['ignore', 'pipe', 'pipe'],",
+            "});",
+            "let buffered = '';",
+            "const grandchildPids = await new Promise((resolve, reject) => {",
+            "  child.on('error', reject);",
+            "  child.stdout.on('data', (chunk) => {",
+            "    buffered += chunk.toString();",
+            "    const match = buffered.match(/group-ready:(\\d+):(\\d+)/);",
+            "    if (match) {",
+            "      resolve([Number(match[1]), Number(match[2])]);",
+            "    }",
+            "  });",
+            "});",
+            "const closePromise = new Promise((resolve) => {",
+            "  child.on('close', (code, signal) => resolve({ code, signal }));",
+            "});",
+            "const killResult = process.kill(-child.pid, 'SIGKILL');",
+            "console.log('kill-returned:' + killResult);",
+            "const closed = await closePromise;",
+            "console.log('group-close:' + closed.code + ':' + closed.signal);",
+            "const errorCode = (error) => {",
+            "  if (error && typeof error.code === 'string') return error.code;",
+            "  const text = String((error && error.message) || error);",
+            "  return text.includes('ESRCH') ? 'ESRCH' : 'other';",
+            "};",
+            "const probe = (pid) => {",
+            "  try {",
+            "    process.kill(pid, 0);",
+            "    return 'alive';",
+            "  } catch (error) {",
+            "    return errorCode(error);",
+            "  }",
+            "};",
+            "console.log('probe-child:' + probe(child.pid));",
+            "console.log('probe-grandchild-a:' + probe(grandchildPids[0]));",
+            "console.log('probe-grandchild-b:' + probe(grandchildPids[1]));",
+            "let missingGroup;",
+            "try {",
+            "  process.kill(-999999, 'SIGKILL');",
+            "  missingGroup = 'no-error';",
+            "} catch (error) {",
+            "  missingGroup = errorCode(error);",
+            "}",
+            "console.log('probe-missing-group:' + missingGroup);",
+        ]
+        .join("\n"),
+    );
+
+    let connection_id = authenticate(&mut sidecar, "conn-embedded-runtime-process-group-kill");
+    let session_id = open_session(&mut sidecar, 2, &connection_id);
+    let (vm_id, _) = create_vm_with_metadata(
+        &mut sidecar,
+        3,
+        &connection_id,
+        &session_id,
+        GuestRuntimeKind::JavaScript,
+        &cwd,
+        BTreeMap::new(),
+    );
+
+    execute(
+        &mut sidecar,
+        4,
+        &connection_id,
+        &session_id,
+        &vm_id,
+        "group-kill-parent",
+        GuestRuntimeKind::JavaScript,
+        &parent_entry,
+        Vec::new(),
+    );
+
+    let ownership = OwnershipScope::vm(&connection_id, &session_id, &vm_id);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit_code = None;
+
+    while exit_code.is_none() {
+        let event = sidecar
+            .poll_event_blocking(&ownership, Duration::from_millis(100))
+            .expect("poll process group kill events");
+        let Some(event) = event else {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for group kill completion\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            );
+            continue;
+        };
+
+        match event.payload {
+            EventPayload::ProcessOutput(output) if output.process_id == "group-kill-parent" => {
+                let chunk = String::from_utf8_lossy(&output.chunk);
+                match output.channel {
+                    agent_os_sidecar::protocol::StreamChannel::Stdout => stdout.push_str(&chunk),
+                    agent_os_sidecar::protocol::StreamChannel::Stderr => stderr.push_str(&chunk),
+                }
+            }
+            EventPayload::ProcessExited(exited) if exited.process_id == "group-kill-parent" => {
+                exit_code = Some(exited.exit_code);
+            }
+            _ => {}
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for group kill completion\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+
+    assert_eq!(
+        exit_code,
+        Some(0),
+        "group kill parent should exit cleanly\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("kill-returned:true"),
+        "group kill should report success\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("group-close:"),
+        "detached child should emit close after group kill\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("probe-child:ESRCH"),
+        "killed group leader should probe as ESRCH\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("probe-grandchild-a:ESRCH"),
+        "first grandchild should be killed with the group\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("probe-grandchild-b:ESRCH"),
+        "second grandchild should be killed with the group\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("probe-missing-group:ESRCH"),
+        "missing process group should raise ESRCH\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
 fn embedded_runtime_signal_delivers_sigchld_on_child_exit() {
     assert_node_available();
 
@@ -702,5 +873,6 @@ fn embedded_runtime_signal_suite() {
     embedded_runtime_signal_stop_continue_updates_kernel_state_and_guest_handler();
     embedded_runtime_kill_process_rejects_invalid_signal_without_killing_process();
     embedded_runtime_process_kill_signal_zero_checks_child_liveness();
+    embedded_runtime_process_group_kill_terminates_detached_tree();
     embedded_runtime_signal_delivers_sigchld_on_child_exit();
 }

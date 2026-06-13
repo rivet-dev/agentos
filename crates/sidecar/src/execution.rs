@@ -6604,27 +6604,7 @@ where
         let Some(child) = parent.child_processes.get_mut(child_process_id) else {
             return Ok(());
         };
-        let should_terminate_shared_runtime = child.execution.uses_shared_v8_runtime()
-            && signal != 0
-            && !matches!(
-                signal,
-                libc::SIGHUP
-                    | libc::SIGINT
-                    | libc::SIGTERM
-                    | libc::SIGCHLD
-                    | libc::SIGWINCH
-                    | libc::SIGSTOP
-                    | libc::SIGCONT
-            );
-        if should_terminate_shared_runtime {
-            child.execution.terminate()?;
-            child.pending_self_signal_exit = Some(signal);
-            child.queue_pending_execution_event(ActiveExecutionEvent::Exited(128 + signal))?;
-        } else {
-            vm.kernel
-                .kill_process(EXECUTION_DRIVER_NAME, child.kernel_pid, signal)
-                .map_err(kernel_error)?;
-        }
+        terminate_tracked_child_process_for_signal(&mut vm.kernel, child, signal)?;
         let child_process_label = if current_process_path.is_empty() {
             child_process_id.to_owned()
         } else {
@@ -6660,6 +6640,54 @@ where
 
         let mut source_path = current_process_path.to_vec();
         source_path.push(child_process_id);
+
+        if signal != 0 && target_pid < 0 {
+            let pgid = target_pid.unsigned_abs();
+            let caller_kernel_pid = {
+                let Some(vm) = self.vms.get(vm_id) else {
+                    return Err(SidecarError::InvalidState(String::from(
+                        "ESRCH: unknown VM during process.kill",
+                    )));
+                };
+                let Some(root) = vm.active_processes.get(process_id) else {
+                    return Err(SidecarError::InvalidState(format!(
+                        "ESRCH: unknown process {process_id} during process.kill",
+                    )));
+                };
+                let Some(source) = Self::active_process_by_path(root, &source_path) else {
+                    return Err(SidecarError::InvalidState(format!(
+                        "ESRCH: unknown child process {child_process_id} during process.kill",
+                    )));
+                };
+                source.kernel_pid
+            };
+            let caller_is_member =
+                self.signal_vm_process_group(vm_id, caller_kernel_pid, pgid, signal_name)?;
+            if !caller_is_member {
+                return Ok(Value::Null);
+            }
+            let Some(vm) = self.vms.get_mut(vm_id) else {
+                return Ok(Value::Null);
+            };
+            let Some(root) = vm.active_processes.get_mut(process_id) else {
+                return Ok(Value::Null);
+            };
+            let Some(source) = Self::active_process_by_path_mut(root, &source_path) else {
+                return Ok(Value::Null);
+            };
+            source.pending_self_signal_exit = None;
+            if !matches!(
+                canonical_signal_name(signal),
+                Some("SIGWINCH" | "SIGCHLD" | "SIGCONT" | "SIGURG")
+            ) {
+                source.pending_self_signal_exit = Some(signal);
+            }
+            return Ok(json!({
+                "self": true,
+                "action": "default",
+            }));
+        }
+
         let Some(vm) = self.vms.get_mut(vm_id) else {
             return Err(SidecarError::InvalidState(String::from(
                 "ESRCH: unknown VM during process.kill",
@@ -6676,7 +6704,7 @@ where
         let target_kernel_pid = u32::try_from(target_pid).map_err(|_| {
             SidecarError::InvalidState(format!("EINVAL: invalid process pid {target_pid}"))
         })?;
-        let (source_pid, target_path) = {
+        let (source_pid, located_target_path) = {
             let Some(root) = vm.active_processes.get(process_id) else {
                 return Err(SidecarError::InvalidState(format!(
                     "ESRCH: unknown process {process_id} during process.kill",
@@ -6690,14 +6718,22 @@ where
             vm.kernel
                 .signal_process(EXECUTION_DRIVER_NAME, target_pid, 0)
                 .map_err(kernel_error)?;
-            let Some(target_path) =
-                Self::active_process_path_by_kernel_pid(root, target_kernel_pid)
-            else {
-                return Err(SidecarError::InvalidState(format!(
-                    "ESRCH: unknown process pid {target_pid}"
-                )));
-            };
-            (source.kernel_pid, target_path)
+            (
+                source.kernel_pid,
+                Self::active_process_path_by_kernel_pid(root, target_kernel_pid),
+            )
+        };
+        let Some(target_path) = located_target_path else {
+            // The target is alive but not part of this root's process tree.
+            // Resolve it VM-wide so cross-tree pids and untracked kernel
+            // processes still receive the signal.
+            self.signal_vm_kernel_pid(vm_id, target_kernel_pid, signal_name)?;
+            return Ok(Value::Null);
+        };
+        let Some(vm) = self.vms.get_mut(vm_id) else {
+            return Err(SidecarError::InvalidState(String::from(
+                "ESRCH: unknown VM during process.kill",
+            )));
         };
 
         if source_pid == target_kernel_pid {
@@ -6910,27 +6946,7 @@ where
                     "unknown child process {child_process_id} during kill"
                 ))
             })?;
-        let should_terminate_shared_runtime = child.execution.uses_shared_v8_runtime()
-            && signal != 0
-            && !matches!(
-                signal,
-                libc::SIGHUP
-                    | libc::SIGINT
-                    | libc::SIGTERM
-                    | libc::SIGCHLD
-                    | libc::SIGWINCH
-                    | libc::SIGSTOP
-                    | libc::SIGCONT
-            );
-        if should_terminate_shared_runtime {
-            child.execution.terminate()?;
-            child.pending_self_signal_exit = Some(signal);
-            child.queue_pending_execution_event(ActiveExecutionEvent::Exited(128 + signal))?;
-        } else {
-            vm.kernel
-                .kill_process(EXECUTION_DRIVER_NAME, child.kernel_pid, signal)
-                .map_err(kernel_error)?;
-        }
+        terminate_tracked_child_process_for_signal(&mut vm.kernel, child, signal)?;
         emit_security_audit_event(
             &self.bridge,
             vm_id,
@@ -6949,6 +6965,182 @@ where
         );
         Ok(())
     }
+
+    /// Delivers a signal to one kernel pid inside a VM, resolving the target
+    /// through the active-process tree first so tracked sidecar executions get
+    /// the same termination handling as a direct `child_process.kill`.
+    /// Untracked kernel processes (for example WASM subprocess trees) receive
+    /// the signal through the kernel process table directly.
+    pub(crate) fn signal_vm_kernel_pid(
+        &mut self,
+        vm_id: &str,
+        target_kernel_pid: u32,
+        signal_name: &str,
+    ) -> Result<(), SidecarError> {
+        let signal = parse_signal(signal_name)?;
+        let located = {
+            let Some(vm) = self.vms.get(vm_id) else {
+                return Err(SidecarError::InvalidState(String::from(
+                    "ESRCH: unknown VM during process.kill",
+                )));
+            };
+            let alive = vm
+                .kernel
+                .list_processes()
+                .get(&target_kernel_pid)
+                .is_some_and(|info| info.status != ProcessStatus::Exited);
+            if !alive {
+                return Err(SidecarError::InvalidState(format!(
+                    "ESRCH: no such process {target_kernel_pid}"
+                )));
+            }
+            vm.active_processes.iter().find_map(|(process_id, root)| {
+                Self::active_process_path_by_kernel_pid(root, target_kernel_pid)
+                    .map(|path| (process_id.clone(), path))
+            })
+        };
+
+        match located {
+            Some((process_id, path)) if path.is_empty() => {
+                self.kill_process_internal(vm_id, &process_id, signal_name)
+            }
+            Some((process_id, path)) => {
+                let Some(vm) = self.vms.get_mut(vm_id) else {
+                    return Ok(());
+                };
+                let Some(root) = vm.active_processes.get_mut(&process_id) else {
+                    return Ok(());
+                };
+                let Some(target) = Self::active_process_by_owned_path_mut(root, &path) else {
+                    return Err(SidecarError::InvalidState(format!(
+                        "ESRCH: no such process {target_kernel_pid}"
+                    )));
+                };
+                terminate_tracked_child_process_for_signal(&mut vm.kernel, target, signal)?;
+                emit_security_audit_event(
+                    &self.bridge,
+                    vm_id,
+                    "security.process.kill",
+                    audit_fields([
+                        (String::from("source"), String::from("guest_process")),
+                        (String::from("target_pid"), target_kernel_pid.to_string()),
+                        (String::from("process_id"), process_id),
+                        (String::from("signal"), signal_name.to_owned()),
+                    ]),
+                );
+                Ok(())
+            }
+            None => {
+                let Some(vm) = self.vms.get_mut(vm_id) else {
+                    return Ok(());
+                };
+                let target_pid = i32::try_from(target_kernel_pid).map_err(|_| {
+                    SidecarError::InvalidState(format!(
+                        "EINVAL: invalid process pid {target_kernel_pid}"
+                    ))
+                })?;
+                vm.kernel
+                    .signal_process(EXECUTION_DRIVER_NAME, target_pid, signal)
+                    .map_err(kernel_error)?;
+                emit_security_audit_event(
+                    &self.bridge,
+                    vm_id,
+                    "security.process.kill",
+                    audit_fields([
+                        (String::from("source"), String::from("guest_process")),
+                        (String::from("target_pid"), target_kernel_pid.to_string()),
+                        (String::from("signal"), signal_name.to_owned()),
+                    ]),
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// Delivers a signal to every live member of a VM process group, matching
+    /// Linux `kill(-pgid, sig)` semantics. Returns whether the caller itself
+    /// is a member of the group so entry points can apply self-signal
+    /// delivery; the caller is intentionally skipped here.
+    pub(crate) fn signal_vm_process_group(
+        &mut self,
+        vm_id: &str,
+        caller_kernel_pid: u32,
+        pgid: u32,
+        signal_name: &str,
+    ) -> Result<bool, SidecarError> {
+        parse_signal(signal_name)?;
+        let members = {
+            let Some(vm) = self.vms.get(vm_id) else {
+                return Err(SidecarError::InvalidState(String::from(
+                    "ESRCH: unknown VM during process.kill",
+                )));
+            };
+            vm.kernel
+                .list_processes()
+                .into_iter()
+                .filter(|(_, info)| info.pgid == pgid && info.status != ProcessStatus::Exited)
+                .map(|(pid, _)| pid)
+                .collect::<Vec<_>>()
+        };
+        if members.is_empty() {
+            return Err(SidecarError::InvalidState(format!(
+                "ESRCH: no such process group {pgid}"
+            )));
+        }
+
+        let mut caller_is_member = false;
+        for member_pid in members {
+            if member_pid == caller_kernel_pid {
+                caller_is_member = true;
+                continue;
+            }
+            match self.signal_vm_kernel_pid(vm_id, member_pid, signal_name) {
+                Ok(()) => {}
+                // Group members can exit while the group is being signaled. A
+                // vanished member is not an error for the group kill overall.
+                Err(error) if sidecar_error_is_esrch(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(caller_is_member)
+    }
+}
+
+/// Applies a kill signal to a tracked child execution. Shared-runtime
+/// executions for lethal signals are terminated directly with a synthetic
+/// signal exit so child polls observe a prompt close; everything else routes
+/// through the kernel process table.
+fn terminate_tracked_child_process_for_signal(
+    kernel: &mut SidecarKernel,
+    child: &mut ActiveProcess,
+    signal: i32,
+) -> Result<(), SidecarError> {
+    let should_terminate_shared_runtime = child.execution.uses_shared_v8_runtime()
+        && signal != 0
+        && !matches!(
+            signal,
+            libc::SIGHUP
+                | libc::SIGINT
+                | libc::SIGTERM
+                | libc::SIGCHLD
+                | libc::SIGWINCH
+                | libc::SIGSTOP
+                | libc::SIGCONT
+        );
+    if should_terminate_shared_runtime {
+        child.execution.terminate()?;
+        child.pending_self_signal_exit = Some(signal);
+        child.queue_pending_execution_event(ActiveExecutionEvent::Exited(128 + signal))?;
+    } else {
+        kernel
+            .kill_process(EXECUTION_DRIVER_NAME, child.kernel_pid, signal)
+            .map_err(kernel_error)?;
+    }
+    Ok(())
+}
+
+fn sidecar_error_is_esrch(error: &SidecarError) -> bool {
+    error.to_string().contains("ESRCH")
 }
 
 fn apply_active_process_default_signal(
