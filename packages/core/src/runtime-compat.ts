@@ -2767,10 +2767,10 @@ class NativeKernel implements Kernel {
 
 		const client = NativeSidecarProcessClient.spawn({
 			cwd: REPO_ROOT,
-		command: ensureNativeSidecarBinary(),
-		args: [],
-		frameTimeoutMs: NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
-	});
+			command: ensureNativeSidecarBinary(),
+			args: [],
+			frameTimeoutMs: NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
+		});
 		const session = await client.authenticateAndOpenSession();
 		const vm = await client.createVm(session, {
 			runtime: "java_script",

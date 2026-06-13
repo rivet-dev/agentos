@@ -261,15 +261,15 @@ describe("Browserbase e2e", () => {
 
 			expect(checks.blockedFetchMessage).toMatch(
 				/(EACCES|ERR_ACCESS_DENIED|blocked outbound network access|fetch failed)/,
-				);
-				expect(checks.envAliased).toBe(true);
-				expect(checks.cliProjected).toBe(true);
-				expect(checks.browseProjected).toBe(true);
+			);
+			expect(checks.envAliased).toBe(true);
+			expect(checks.cliProjected).toBe(true);
+			expect(checks.browseProjected).toBe(true);
 
-				try {
-					const opened = await runVmNodeJsonCommand<{
-						url?: string;
-					}>(
+			try {
+				const opened = await runVmNodeJsonCommand<{
+					url?: string;
+				}>(
 					vm,
 					BROWSE_COMMAND_SCRIPT_PATH,
 					["open", "https://example.com"],
@@ -291,26 +291,26 @@ describe("Browserbase e2e", () => {
 				expect(screenshot.saved).toBe(SCREENSHOT_PATH);
 				const screenshotBytes = await vm.readFile(SCREENSHOT_PATH);
 				expect(screenshotBytes.byteLength).toBeGreaterThanOrEqual(1024);
-					expect(Array.from(screenshotBytes.slice(0, 8))).toEqual([
-						0x89,
-						0x50,
+				expect(Array.from(screenshotBytes.slice(0, 8))).toEqual([
+					0x89,
+					0x50,
 					0x4e,
 					0x47,
 					0x0d,
 					0x0a,
 					0x1a,
 					0x0a,
-					]);
-				} finally {
-					await runVmNodeCommand(
-						vm,
-						BROWSE_COMMAND_SCRIPT_PATH,
-						["stop"],
-						"browse stop launcher",
-						browseEnv,
-					).catch(() => {});
-				}
-			},
+				]);
+			} finally {
+				await runVmNodeCommand(
+					vm,
+					BROWSE_COMMAND_SCRIPT_PATH,
+					["stop"],
+					"browse stop launcher",
+					browseEnv,
+				).catch(() => {});
+			}
+		},
 		90_000,
 	);
 });
