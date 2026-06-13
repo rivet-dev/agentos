@@ -21628,6 +21628,28 @@ ${headerLines}\r
   function _isTrackedProcessSignalEventName(eventName) {
     return typeof eventName === "string" && _trackedProcessSignalEvents.has(eventName);
   }
+  var _processKillErrnoByCode = { ESRCH: 3, EPERM: 1, EINVAL: 22 };
+  function _createProcessKillError(error) {
+    const message = String((error && error.message) || error || "");
+    let code = null;
+    if (error && typeof error.code === "string" && Object.prototype.hasOwnProperty.call(_processKillErrnoByCode, error.code)) {
+      code = error.code;
+    } else if (/\bESRCH\b/.test(message)) {
+      code = "ESRCH";
+    } else if (/\bEINVAL\b/.test(message)) {
+      code = "EINVAL";
+    } else if (/\bEPERM\b/.test(message) || /permission denied/i.test(message)) {
+      code = "EPERM";
+    }
+    if (code === null) {
+      return error instanceof Error ? error : new Error(message);
+    }
+    const err = new Error(`kill ${code}`);
+    err.code = code;
+    err.errno = -_processKillErrnoByCode[code];
+    err.syscall = "kill";
+    return err;
+  }
   var _processListeners = {};
   var _processOnceListeners = {};
   var _processMaxListeners = 10;
@@ -23075,10 +23097,22 @@ ${headerLines}\r
       const sigNum = _resolveSignal(signal);
       const sigName = _signalNamesByNumber[sigNum] ?? `SIG${sigNum}`;
       if (typeof _processKill !== "undefined") {
-        const rawResult = _processKill.applySyncPromise(void 0, [pid, sigName]);
-        if (pid === process2.pid) {
-          const result = typeof rawResult === "string" ? JSON.parse(rawResult) : rawResult;
-          const action = result && typeof result === "object" && typeof result.action === "string" ? result.action : "default";
+        let rawResult;
+        try {
+          rawResult = _processKill.applySyncPromise(void 0, [pid, sigName]);
+        } catch (error) {
+          throw _createProcessKillError(error);
+        }
+        let result = rawResult;
+        if (typeof result === "string") {
+          try {
+            result = JSON.parse(result);
+          } catch {
+            result = null;
+          }
+        }
+        if (result && typeof result === "object" && result.self === true) {
+          const action = typeof result.action === "string" ? result.action : "default";
           return _deliverProcessSignal(sigNum, action);
         }
         return true;
