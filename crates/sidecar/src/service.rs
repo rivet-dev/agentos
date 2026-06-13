@@ -44,7 +44,7 @@ use crate::state::{
     JavascriptSocketFamily, JavascriptSocketPathContext, ProcessEventEnvelope, SessionState,
     SharedBridge, SharedSidecarRequestClient, SidecarRequestTransport, VmState,
 };
-use crate::tools::register_toolkit;
+use crate::tools::{assemble_system_prompt, generate_tool_reference, register_toolkit};
 use agent_os_bridge::{
     CommandPermissionRequest, EnvironmentAccess, EnvironmentPermissionRequest, FilesystemAccess,
     FilesystemPermissionRequest, LifecycleEventRecord, LifecycleState, LogLevel, LogRecord,
@@ -87,6 +87,27 @@ pub(crate) const MAX_PROCESS_EVENT_QUEUE: usize = 10_000;
 pub(crate) const MAX_PENDING_SIDECAR_RESPONSES: usize = 10_000;
 pub(crate) const MAX_OUTBOUND_SIDECAR_REQUESTS: usize = 10_000;
 pub(crate) const MAX_COMPLETED_SIDECAR_RESPONSES: usize = 10_000;
+
+/// Guest path where the assembled system prompt is materialized for opencode, which consumes its
+/// instructions from files listed in `OPENCODE_CONTEXTPATHS` rather than a launch arg.
+const OPENCODE_SYSTEM_PROMPT_PATH: &str = "/tmp/agentos-system-prompt.md";
+
+/// Default opencode context-path markers. These mirror opencode's built-in repo-relative
+/// instruction files. The assembled agentOS prompt is appended to this list at session start. This
+/// is config policy, not a resource limit, so it carries no limits-inventory entry.
+const OPENCODE_DEFAULT_CONTEXT_PATHS: [&str; 11] = [
+    ".github/copilot-instructions.md",
+    ".cursorrules",
+    ".cursor/rules/",
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "opencode.md",
+    "opencode.local.md",
+    "OpenCode.md",
+    "OpenCode.local.md",
+    "OPENCODE.md",
+    "OPENCODE.local.md",
+];
 
 pub(crate) fn process_event_queue_overflow_error() -> SidecarError {
     SidecarError::InvalidState(format!(
@@ -1528,8 +1549,55 @@ where
 
         self.next_agent_process_id += 1;
         let process_id = format!("acp-agent-{}", self.next_agent_process_id);
+
+        let tool_docs = {
+            let vm = self.vms.get(&vm_id).expect("owned VM should exist");
+            generate_tool_reference(vm.toolkits.values())
+        };
+        let prompt = assemble_system_prompt(
+            payload.skip_os_instructions,
+            payload.additional_instructions.as_deref(),
+            &tool_docs,
+        );
+
+        let mut args = payload.args.clone();
         let mut env = payload.env.clone();
         env.insert(String::from("AGENT_OS_KEEP_STDIN_OPEN"), String::from("1"));
+
+        match payload.agent_type.as_str() {
+            "pi" | "pi-cli" | "claude" => {
+                if !prompt.is_empty() {
+                    args.push(String::from("--append-system-prompt"));
+                    args.push(prompt);
+                }
+            }
+            "codex" => {
+                if !prompt.is_empty() {
+                    args.push(String::from("--append-developer-instructions"));
+                    args.push(prompt);
+                }
+            }
+            "opencode" => {
+                if !env.contains_key("OPENCODE_CONTEXTPATHS") {
+                    let mut context_paths: Vec<String> = OPENCODE_DEFAULT_CONTEXT_PATHS
+                        .iter()
+                        .map(|path| path.to_string())
+                        .collect();
+                    if !prompt.is_empty() {
+                        let vm = self.vms.get_mut(&vm_id).expect("owned VM should exist");
+                        vm.kernel
+                            .write_file(OPENCODE_SYSTEM_PROMPT_PATH, prompt.into_bytes())
+                            .map_err(kernel_error)?;
+                        context_paths.push(OPENCODE_SYSTEM_PROMPT_PATH.to_string());
+                    }
+                    let serialized = serde_json::to_string(&context_paths)
+                        .expect("serialize opencode context paths");
+                    env.insert(String::from("OPENCODE_CONTEXTPATHS"), serialized);
+                }
+            }
+            _ => {}
+        }
+
         let execute_result = self
             .execute(
                 request,
@@ -1538,7 +1606,7 @@ where
                     command: None,
                     runtime: Some(payload.runtime.clone()),
                     entrypoint: Some(payload.adapter_entrypoint.clone()),
-                    args: payload.args.clone(),
+                    args,
                     env,
                     cwd: Some(payload.cwd.clone()),
                     wasm_permission_tier: None,

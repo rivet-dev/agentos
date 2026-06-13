@@ -1545,6 +1545,8 @@ setInterval(() => {}, 1000);
                                 mcp_servers: Vec::new(),
                                 protocol_version: 1,
                                 client_capabilities: json!({}),
+                                additional_instructions: None,
+                                skip_os_instructions: false,
                             }),
                         ))
                         .await

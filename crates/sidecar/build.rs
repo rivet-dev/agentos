@@ -29,4 +29,25 @@ fn main() {
             error
         )
     });
+
+    let workspace_prompt =
+        manifest_dir.join("../../packages/core/fixtures/AGENTOS_SYSTEM_PROMPT.md");
+    let vendored_prompt = manifest_dir.join("assets/AGENTOS_SYSTEM_PROMPT.md");
+    let prompt_src = if workspace_prompt.exists() {
+        workspace_prompt
+    } else {
+        vendored_prompt
+    };
+
+    println!("cargo:rerun-if-changed={}", prompt_src.display());
+
+    let prompt_dest = out_dir.join("AGENTOS_SYSTEM_PROMPT.md");
+    fs::copy(&prompt_src, &prompt_dest).unwrap_or_else(|error| {
+        panic!(
+            "failed to stage AGENTOS_SYSTEM_PROMPT.md from {} to {}: {}",
+            prompt_src.display(),
+            prompt_dest.display(),
+            error
+        )
+    });
 }

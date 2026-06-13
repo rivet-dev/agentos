@@ -1199,6 +1199,39 @@ fn describe_flags(schema: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// Base agentOS system prompt embedded at build time. The canonical source is
+/// `packages/core/fixtures/AGENTOS_SYSTEM_PROMPT.md`, staged into `OUT_DIR` by `build.rs`.
+pub(crate) const AGENTOS_SYSTEM_PROMPT: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/AGENTOS_SYSTEM_PROMPT.md"));
+
+/// Assemble the injected system prompt: the base prompt (unless skipped), then any
+/// caller-supplied additional instructions, then the dynamic tool reference. The parts are
+/// joined with blank lines and terminated with a `---` rule. Returns an empty string when there
+/// is nothing to inject (base skipped, no additional instructions, no registered toolkits).
+pub(crate) fn assemble_system_prompt(
+    skip_base: bool,
+    additional: Option<&str>,
+    tool_docs: &str,
+) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if !skip_base {
+        parts.push(AGENTOS_SYSTEM_PROMPT.trim_end());
+    }
+    if let Some(additional) = additional {
+        if !additional.is_empty() {
+            parts.push(additional);
+        }
+    }
+    let tool_docs = tool_docs.trim();
+    if !tool_docs.is_empty() {
+        parts.push(tool_docs);
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    format!("{}\n\n---", parts.join("\n\n"))
+}
+
 pub(crate) fn generate_tool_reference<'a>(
     toolkits: impl IntoIterator<Item = &'a RegisterToolkitRequest>,
 ) -> String {
@@ -1550,6 +1583,29 @@ mod tests {
             },
             "required": ["url"]
         })
+    }
+
+    #[test]
+    fn assemble_system_prompt_includes_base_additional_and_tool_docs() {
+        let prompt = assemble_system_prompt(false, Some("extra guidance"), "## Available Host Tools");
+        assert!(prompt.starts_with(AGENTOS_SYSTEM_PROMPT.trim_end()));
+        assert!(prompt.contains("extra guidance"));
+        assert!(prompt.contains("## Available Host Tools"));
+        assert!(prompt.ends_with("\n\n---"));
+    }
+
+    #[test]
+    fn assemble_system_prompt_skip_base_still_injects_tool_docs() {
+        let prompt = assemble_system_prompt(true, None, "## Available Host Tools");
+        assert!(!prompt.contains("# agentOS"));
+        assert!(prompt.contains("## Available Host Tools"));
+        assert_eq!(prompt, "## Available Host Tools\n\n---");
+    }
+
+    #[test]
+    fn assemble_system_prompt_empty_when_nothing_to_inject() {
+        assert_eq!(assemble_system_prompt(true, None, ""), "");
+        assert_eq!(assemble_system_prompt(true, Some(""), "   "), "");
     }
 
     #[test]
