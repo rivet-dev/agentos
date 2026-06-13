@@ -365,6 +365,30 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
     expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/append-fresh.txt'))).toBe('c');
   });
 
+  it('execSync stdin redirection feeds the kernel VFS file to the command', async () => {
+    ctx = await createBridgeIntegrationKernel();
+
+    const chunks: Uint8Array[] = [];
+    const stderrChunks: Uint8Array[] = [];
+    const proc = ctx.kernel.spawn('node', ['-e', `
+      const fs = require('fs');
+      const { execSync } = require('child_process');
+      fs.writeFileSync('/tmp/stdin-input.txt', 'stdin-redirect-content');
+      const result = execSync('cat < stdin-input.txt', { encoding: 'utf-8' });
+      console.log('read:' + result);
+    `], {
+      cwd: '/tmp',
+      onStdout: (data) => chunks.push(data),
+      onStderr: (data) => stderrChunks.push(data),
+    });
+
+    const code = await proc.wait();
+    const output = chunks.map(c => new TextDecoder().decode(c)).join('');
+    const stderr = stderrChunks.map(c => new TextDecoder().decode(c)).join('');
+    expect(code, `stdout:\n${output}\nstderr:\n${stderr}`).toBe(0);
+    expect(output).toContain('read:stdin-redirect-content');
+  });
+
   it('execSync redirection handles quoted target paths with spaces', async () => {
     ctx = await createBridgeIntegrationKernel();
 

@@ -15,7 +15,7 @@ const NODE_IMPORT_CACHE_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_PATH";
 const NODE_IMPORT_CACHE_LOADER_PATH_ENV: &str = "AGENT_OS_NODE_IMPORT_CACHE_LOADER_PATH";
 const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
 const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
-const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "55";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "56";
 const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agent-os-node-import-cache";
 const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
 const PYODIDE_DIST_DIR: &str = "pyodide-dist";
@@ -9861,6 +9861,61 @@ function resolveSpawnFd(fd) {
   return handle.displayFd >>> 0;
 }
 
+function spawnStdinFdIsSyntheticPipe(fd) {
+  const handle =
+    lookupFdHandle(fd) ?? lookupSyntheticHandleByDisplayFd(fd, 'pipe-read');
+  return handle?.kind === 'pipe-read';
+}
+
+// Shell input redirects (`cmd < file`) reach proc_spawn as a plain file fd in
+// stdin_fd. The child cannot share that descriptor across the spawn boundary,
+// so the remaining file contents are materialized and written to the child's
+// stdin pipe, exactly like POSIX children reading an inherited file fd to EOF.
+// Returns null when the fd is not a readable file-backed handle so callers can
+// fail loudly instead of leaving the child hanging on an open stdin pipe.
+function readSpawnStdinRedirectBytes(fd) {
+  const numericFd = Number(fd) >>> 0;
+  const handle = lookupFdHandle(numericFd);
+  if (!handle) {
+    return null;
+  }
+
+  if (handle.kind === 'guest-file') {
+    const chunks = [];
+    let position = handle.position ?? 0;
+    for (;;) {
+      const buffer = Buffer.alloc(65536);
+      const bytesRead = fsModule.readSync(
+        handle.targetFd,
+        buffer,
+        0,
+        buffer.length,
+        position,
+      );
+      if (bytesRead <= 0) {
+        break;
+      }
+      chunks.push(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    handle.position = position;
+    return Buffer.concat(chunks);
+  }
+
+  if (handle.kind === 'passthrough' && typeof handle.guestPath === 'string') {
+    if (handle.guestPath === '/dev/null') {
+      return Buffer.alloc(0);
+    }
+    const stats = fsModule.statSync(handle.guestPath);
+    if (!stats.isFile()) {
+      return null;
+    }
+    return Buffer.from(fsModule.readFileSync(handle.guestPath));
+  }
+
+  return null;
+}
+
 function retainSpawnOutputHandle(fd) {
   const numericFd = Number(fd) >>> 0;
   if (numericFd <= 2) {
@@ -11681,6 +11736,21 @@ const hostProcessImport = {
               stdoutTarget,
               stderrTarget,
             });
+            let stdinRedirectBytes = null;
+            if (
+              stdinTarget > 2 &&
+              stdinTarget !== 0xffffffff &&
+              !spawnStdinFdIsSyntheticPipe(stdinTarget)
+            ) {
+              stdinRedirectBytes = readSpawnStdinRedirectBytes(stdinTarget);
+              if (stdinRedirectBytes == null) {
+                traceHostProcess('proc-spawn-stdin-redirect-unreadable', {
+                  command,
+                  stdinFd: stdinTarget,
+                });
+                return WASI_ERRNO_FAULT;
+              }
+            }
             const result = callSyncRpc('child_process.spawn', [
               {
                 command,
@@ -11752,6 +11822,15 @@ const hostProcessImport = {
               childId: result.childId,
               pid,
             });
+            if (stdinRedirectBytes != null) {
+              if (stdinRedirectBytes.length > 0) {
+                callSyncRpc('child_process.write_stdin', [
+                  result.childId,
+                  stdinRedirectBytes,
+                ]);
+              }
+              callSyncRpc('child_process.close_stdin', [result.childId]);
+            }
             consumeSpawnOutputFd(stdoutFd);
             consumeSpawnOutputFd(stderrFd);
             return writeGuestUint32(retPidPtr, pid);
