@@ -39,6 +39,7 @@ Agent OS is a **fully virtualized operating system**. The kernel, written as a R
 - **Base filesystem rebuild flow:** `pnpm --dir packages/core snapshot:alpine-defaults` writes `alpine-defaults.json`, then `pnpm --dir packages/core build:base-filesystem` rewrites AgentOs-specific values and emits `base-filesystem.json`.
 - **The default VM filesystem model should be Docker-like.** Layered overlay view with one writable upper layer on top of one or more immutable lower snapshot layers.
 - **Everything runs inside the VM.** Agent processes, servers, network requests -- all spawned inside the Agent OS kernel, never on the host. This is a hard rule with no exceptions.
+- **Present normal Linux semantics to tools.** Never bend agent SDKs, shell tools, or adapters around Agent OS quirks when the correct fix is implementing standard Linux/Node/POSIX behavior in the runtime. Agent-specific patches are acceptable only for explicit product policy, configuration, or upstream SDK bugs.
 
 ## Native Binary Distribution
 
