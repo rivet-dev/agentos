@@ -3,12 +3,7 @@ import * as os from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-import { AGENT_CONFIGS } from "../src/agents.js";
 import { createHostDirBackend } from "../src/host-dir-mount.js";
-import { getAgentOsKernel } from "../src/test/runtime.js";
-import {
-	REGISTRY_SOFTWARE,
-} from "./helpers/registry-commands.js";
 
 /**
  * Workspace root has shamefully-hoisted node_modules with pi-acp available.
@@ -19,254 +14,18 @@ const OS_INSTRUCTIONS_FIXTURE = resolve(
 	"../fixtures/AGENTOS_SYSTEM_PROMPT.md",
 );
 
-function readOsInstructions(additional?: string): string {
-	const base = fs.readFileSync(OS_INSTRUCTIONS_FIXTURE, "utf-8");
-	if (!additional) {
-		return base;
-	}
-	return `${base}\n${additional}`;
-}
+// ── base prompt fixture sanity ─────────────────────────────────────────
+//
+// The base prompt is no longer baked into a guest file. The sidecar embeds this fixture and
+// injects it at session start. This block only verifies the fixture itself is non-empty so the
+// injection has real content to assemble.
 
-// ── getOsInstructions unit tests ───────────────────────────────────────
-
-describe("getOsInstructions", () => {
-	test("returns non-empty string from fixture", () => {
-		const result = readOsInstructions();
-		expect(result).toBeTruthy();
-		expect(typeof result).toBe("string");
-		expect(result.length).toBeGreaterThan(0);
-	});
-
-	test("appends additional text", () => {
-		const base = readOsInstructions();
-		const additional = "Custom agent-specific instructions here.";
-		const result = readOsInstructions(additional);
-		expect(result).toContain(base);
-		expect(result).toContain(additional);
-		// Additional text comes after base, separated by newline
-		expect(result).toBe(`${base}\n${additional}`);
-	});
-});
-
-// ── /etc/agentos/ boot-time tests ─────────────────────────────────────
-
-describe("/etc/agentos/ setup at boot", () => {
-	let vm: AgentOs;
-
-	beforeEach(async () => {
-		vm = await AgentOs.create();
-	});
-
-	afterEach(async () => {
-		await vm.dispose();
-	});
-
-	test("/etc/agentos/instructions.md exists after AgentOs.create()", async () => {
-		const fileExists = await vm.exists("/etc/agentos/instructions.md");
-		expect(fileExists).toBe(true);
-	});
-
-	test("content matches getOsInstructions() output", async () => {
-		const data = await vm.readFile("/etc/agentos/instructions.md");
-		const content = new TextDecoder().decode(data);
-		const expected = readOsInstructions();
-		expect(content).toBe(expected);
-	});
-
-	test("additionalInstructions option appends to file content", async () => {
-		await vm.dispose();
-		const additional = "CUSTOM_MARKER: project-specific rules";
-		vm = await AgentOs.create({ additionalInstructions: additional });
-
-		const data = await vm.readFile("/etc/agentos/instructions.md");
-		const content = new TextDecoder().decode(data);
-		const expected = readOsInstructions(additional);
-		expect(content).toBe(expected);
-		expect(content).toContain(additional);
-	});
-});
-
-// ── /etc/agentos/ read-only mount tests ──────────────────────────────
-
-describe("/etc/agentos/ read-only mount", () => {
-	let vm: AgentOs;
-
-	beforeEach(async () => {
-		vm = await AgentOs.create();
-	});
-
-	afterEach(async () => {
-		await vm.dispose();
-	});
-
-	test("read from /etc/agentos/instructions.md succeeds", async () => {
-		const data = await vm.readFile("/etc/agentos/instructions.md");
-		const content = new TextDecoder().decode(data);
-		expect(content).toBeTruthy();
-		expect(content.length).toBeGreaterThan(0);
-	});
-
-	test("write to /etc/agentos/ throws EROFS", async () => {
-		await expect(
-			vm.writeFile("/etc/agentos/tampered.md", "malicious content"),
-		).rejects.toThrow("EROFS");
-	});
-
-	test("delete /etc/agentos/instructions.md throws EROFS", async () => {
-		await expect(vm.delete("/etc/agentos/instructions.md")).rejects.toThrow(
-			"EROFS",
-		);
-	});
-});
-
-describe("/etc/agentos/ exec from inside VM", () => {
-	let vm: AgentOs;
-
-	beforeEach(async () => {
-		vm = await AgentOs.create({ software: REGISTRY_SOFTWARE });
-	});
-
-	afterEach(async () => {
-		await vm.dispose();
-	});
-
-	test("exec('cat /etc/agentos/instructions.md') returns the instructions content", async () => {
-		const result = await vm.exec("cat /etc/agentos/instructions.md");
-		expect(result.exitCode).toBe(0);
-		const expected = readOsInstructions();
-		// WasmVM stdout can duplicate lines; use toContain
-		expect(result.stdout).toContain(expected);
-	});
-});
-
-// ── prepareInstructions unit tests (agent configs) ─────────────────────
-
-describe("PI prepareInstructions", () => {
-	let vm: AgentOs;
-
-	beforeEach(async () => {
-		vm = await AgentOs.create();
-	});
-
-	afterEach(async () => {
-		await vm.dispose();
-	});
-
-	test("reads /etc/agentos/instructions.md and returns --append-system-prompt in args", async () => {
-		const config = AGENT_CONFIGS.pi;
-		const prepare = config.prepareInstructions as NonNullable<
-			typeof config.prepareInstructions
-		>;
-		const result = await prepare(getAgentOsKernel(vm), "/home/user");
-
-		expect(result.args).toBeDefined();
-		expect(result.args).toContain("--append-system-prompt");
-		// The instruction text is the file content from /etc/agentos/instructions.md
-		const argIdx = (result.args as string[]).indexOf("--append-system-prompt");
-		const instructionsArg = (result.args as string[])[argIdx + 1];
-		expect(instructionsArg).toBeTruthy();
-		expect(instructionsArg.length).toBeGreaterThan(0);
-		// PI does not set env vars
-		expect(result.env).toBeUndefined();
-	});
-
-	test("appends additionalInstructions to file content", async () => {
-		const config = AGENT_CONFIGS.pi;
-		const prepare = config.prepareInstructions as NonNullable<
-			typeof config.prepareInstructions
-		>;
-		const additional = "CUSTOM_MARKER: extra instructions";
-		const result = await prepare(
-			getAgentOsKernel(vm),
-			"/home/user",
-			additional,
-		);
-
-		const argIdx = (result.args as string[]).indexOf("--append-system-prompt");
-		const instructionsArg = (result.args as string[])[argIdx + 1];
-		expect(instructionsArg).toContain(additional);
-	});
-});
-
-describe("OpenCode prepareInstructions", () => {
-	let vm: AgentOs;
-
-	beforeEach(async () => {
-		vm = await AgentOs.create();
-	});
-
-	afterEach(async () => {
-		await vm.dispose();
-	});
-
-	test("sets OPENCODE_CONTEXTPATHS with absolute /etc/agentos/instructions.md path", async () => {
-		const config = AGENT_CONFIGS.opencode;
-		const cwd = "/home/user";
-
-		const prepare = config.prepareInstructions as NonNullable<
-			typeof config.prepareInstructions
-		>;
-		const result = await prepare(getAgentOsKernel(vm), cwd);
-
-		// Verify env var is set
-		expect(result.env).toBeDefined();
-		expect(result.env?.OPENCODE_CONTEXTPATHS).toBeDefined();
-
-		// Verify OPENCODE_CONTEXTPATHS includes default paths + absolute instructions path
-		const contextPaths = JSON.parse(
-			result.env?.OPENCODE_CONTEXTPATHS as string,
-		);
-		expect(contextPaths).toContain("/etc/agentos/instructions.md");
-		expect(contextPaths).toContain("CLAUDE.md");
-		expect(contextPaths).toContain("opencode.md");
-		// No longer uses relative .agent-os/ path
-		expect(contextPaths).not.toContain(".agent-os/instructions.md");
-
-		// OpenCode does not set extra args
-		expect(result.args).toBeUndefined();
-	});
-
-	test("does not write .agent-os/instructions.md to cwd", async () => {
-		const config = AGENT_CONFIGS.opencode;
-		const cwd = "/home/user";
-
-		const prepare = config.prepareInstructions as NonNullable<
-			typeof config.prepareInstructions
-		>;
-		await prepare(getAgentOsKernel(vm), cwd);
-
-		// Verify no .agent-os/ directory was created in cwd
-		const cwdExists = await vm.exists(`${cwd}/.agent-os`);
-		expect(cwdExists).toBe(false);
-	});
-
-	test("writes additionalInstructions to /tmp/ and adds path to OPENCODE_CONTEXTPATHS", async () => {
-		const config = AGENT_CONFIGS.opencode;
-		const cwd = "/home/user";
-		const additional = "CUSTOM_MARKER: extra instructions";
-
-		const prepare = config.prepareInstructions as NonNullable<
-			typeof config.prepareInstructions
-		>;
-		const result = await prepare(getAgentOsKernel(vm), cwd, additional);
-
-		// Verify additional instructions written to /tmp/
-		const data = await vm.readFile("/tmp/agentos-additional-instructions.md");
-		const content = new TextDecoder().decode(data);
-		expect(content).toBe(additional);
-
-		// Verify OPENCODE_CONTEXTPATHS includes the additional file
-		const contextPaths = JSON.parse(
-			result.env?.OPENCODE_CONTEXTPATHS as string,
-		);
-		expect(contextPaths).toContain("/tmp/agentos-additional-instructions.md");
-		// Base instructions path is still included
-		expect(contextPaths).toContain("/etc/agentos/instructions.md");
-
-		// /etc/agentos/instructions.md is NOT modified (it's read-only)
-		const baseData = await vm.readFile("/etc/agentos/instructions.md");
-		const baseContent = new TextDecoder().decode(baseData);
-		expect(baseContent).not.toContain(additional);
+describe("base system prompt fixture", () => {
+	test("ships a non-empty base prompt", () => {
+		const base = fs.readFileSync(OS_INSTRUCTIONS_FIXTURE, "utf-8");
+		expect(base).toBeTruthy();
+		expect(base.length).toBeGreaterThan(0);
+		expect(base).toContain("# agentOS");
 	});
 });
 
@@ -392,6 +151,8 @@ describe("createSession OS instructions integration", () => {
 			const instructionsArg = argv[argIdx + 1];
 			expect(instructionsArg).toBeTruthy();
 			expect(instructionsArg.length).toBeGreaterThan(0);
+			// The sidecar injects the embedded base prompt, not a guest-read file.
+			expect(instructionsArg).toContain("# agentOS");
 
 			vm.closeSession(sessionId);
 		} finally {
@@ -399,7 +160,7 @@ describe("createSession OS instructions integration", () => {
 		}
 	});
 
-	test("createSession with OpenCode passes OPENCODE_CONTEXTPATHS directly to the VM adapter", async () => {
+	test("createSession with OpenCode passes the sidecar-materialized prompt path in OPENCODE_CONTEXTPATHS", async () => {
 		const scriptPath = "/tmp/mock-opencode-adapter.mjs";
 		await vm.writeFile(scriptPath, MOCK_ACP_ADAPTER);
 		const restore = useMockAdapterBin(scriptPath);
@@ -413,15 +174,17 @@ describe("createSession OS instructions integration", () => {
 			};
 			const contextPaths = JSON.parse(agentInfo.contextPaths as string);
 			expect(agentInfo.argv ?? []).not.toContain("acp");
-			expect(contextPaths).toContain("/etc/agentos/instructions.md");
-			expect(
-				contextPaths.some(
-					(entry: string) =>
-						entry.startsWith("/") &&
-						entry !== "/etc/agentos/instructions.md" &&
-						entry.endsWith("/instructions.md"),
-				),
-			).toBe(false);
+			// The base prompt is injected through a sidecar-materialized file, not the old baked path.
+			expect(contextPaths).toContain("/tmp/agentos-system-prompt.md");
+			expect(contextPaths).not.toContain("/etc/agentos/instructions.md");
+			// Default opencode repo-relative markers are still present.
+			expect(contextPaths).toContain("CLAUDE.md");
+			expect(contextPaths).toContain("opencode.md");
+
+			// The materialized prompt file holds the base prompt text.
+			const promptData = await vm.readFile("/tmp/agentos-system-prompt.md");
+			const promptText = new TextDecoder().decode(promptData);
+			expect(promptText).toContain("# agentOS");
 
 			// No .agent-os/ directory created in cwd
 			const agentOsDirExists = await vm.exists("/home/user/.agent-os");

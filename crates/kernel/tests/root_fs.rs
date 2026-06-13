@@ -253,24 +253,6 @@ fn root_filesystem_uses_bundled_base_and_round_trips_snapshots() {
 }
 
 #[test]
-fn root_filesystem_bundles_agentos_instructions() {
-    let mut root = RootFileSystem::from_descriptor(RootFilesystemDescriptor::default())
-        .expect("create default root");
-
-    assert!(
-        root.exists("/etc/agentos/instructions.md"),
-        "bundled base layer must include /etc/agentos/instructions.md"
-    );
-    let content = root
-        .read_file("/etc/agentos/instructions.md")
-        .expect("read instructions");
-    assert!(
-        String::from_utf8_lossy(&content).contains("agentOS"),
-        "instructions content should be the baked system prompt"
-    );
-}
-
-#[test]
 fn higher_lowers_do_not_shadow_base_parent_directories_with_default_ownership() {
     let mut root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
         mode: RootFilesystemMode::Ephemeral,

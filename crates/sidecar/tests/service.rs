@@ -323,6 +323,52 @@ process.on("SIGTERM", () => {
 
 setInterval(() => {}, 1000);
 "#;
+        // Mock ACP adapter that echoes its own launch argv (minus node + script path) in the
+        // initialize agentInfo result so prompt-injection assertions can read it from the
+        // SessionCreated response without depending on guest-to-kernel file sync timing.
+        const ACP_ARGV_PROBE_AGENT: &str = r#"
+let buffer = "";
+process.stdin.resume();
+process.stdin.on("data", (chunk) => {
+  buffer += chunk instanceof Uint8Array ? new TextDecoder().decode(chunk) : String(chunk);
+  while (true) {
+    const idx = buffer.indexOf("\n");
+    if (idx === -1) break;
+    const line = buffer.slice(0, idx);
+    buffer = buffer.slice(idx + 1);
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.id === undefined) continue;
+    switch (message.method) {
+      case "initialize":
+        process.stdout.write(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            protocolVersion: 1,
+            agentInfo: { name: "mock-acp", version: "1.0.0", argv: process.argv.slice(2) },
+          },
+        }) + "\n");
+        break;
+      case "session/new":
+        process.stdout.write(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { sessionId: "mock-session-1" },
+        }) + "\n");
+        break;
+      default:
+        process.stdout.write(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32601, message: "Method not found" },
+        }) + "\n");
+    }
+  }
+});
+
+setInterval(() => {}, 1000);
+"#;
 
         fn request(
             request_id: agent_os_sidecar::protocol::RequestId,
@@ -1559,6 +1605,200 @@ setInterval(() => {}, 1000);
                 }
                 other => panic!("unexpected create session response: {other:?}"),
             }
+        }
+
+        /// Create an ACP session against the argv-probe mock adapter using a real `agent_type`
+        /// (`pi`, `opencode`, etc.) so the sidecar's per-agent prompt injection runs, then return the
+        /// launch argv the adapter echoed in its initialize `agentInfo.argv`.
+        #[allow(clippy::too_many_arguments)]
+        fn create_session_and_read_launch_argv(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            connection_id: &str,
+            session_id: &str,
+            vm_id: &str,
+            agent_type: &str,
+            additional_instructions: Option<String>,
+            skip_os_instructions: bool,
+        ) -> Vec<String> {
+            {
+                let vm = sidecar.vms.get_mut(vm_id).expect("argv probe vm");
+                vm.kernel
+                    .write_file(
+                        "/workspace/argv-probe.mjs",
+                        ACP_ARGV_PROBE_AGENT.as_bytes().to_vec(),
+                    )
+                    .expect("write argv probe adapter entrypoint");
+            }
+
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build local runtime for argv probe session");
+            let local = tokio::task::LocalSet::new();
+            let response = runtime
+                .block_on(local.run_until(async {
+                    sidecar
+                        .dispatch(request(
+                            4,
+                            OwnershipScope::vm(connection_id, session_id, vm_id),
+                            RequestPayload::CreateSession(CreateSessionRequest {
+                                agent_type: String::from(agent_type),
+                                runtime: GuestRuntimeKind::JavaScript,
+                                adapter_entrypoint: String::from("/workspace/argv-probe.mjs"),
+                                args: Vec::new(),
+                                env: BTreeMap::new(),
+                                cwd: String::from("/workspace"),
+                                mcp_servers: Vec::new(),
+                                protocol_version: 1,
+                                client_capabilities: json!({}),
+                                additional_instructions,
+                                skip_os_instructions,
+                            }),
+                        ))
+                        .await
+                }))
+                .expect("create argv probe session");
+            let agent_info = match response.response.payload {
+                ResponsePayload::SessionCreated(created) => {
+                    created.agent_info.expect("argv probe agent info")
+                }
+                other => panic!("unexpected create session response: {other:?}"),
+            };
+            serde_json::from_value::<Vec<String>>(agent_info["argv"].clone())
+                .expect("argv probe agentInfo.argv is a JSON string array")
+        }
+
+        fn injected_prompt_arg(argv: &[String]) -> String {
+            let idx = argv
+                .iter()
+                .position(|arg| arg == "--append-system-prompt")
+                .unwrap_or_else(|| {
+                    panic!("argv should contain --append-system-prompt: {argv:?}")
+                });
+            argv.get(idx + 1)
+                .unwrap_or_else(|| {
+                    panic!("--append-system-prompt should be followed by a value: {argv:?}")
+                })
+                .clone()
+        }
+
+        fn create_session_injects_prompt_reflecting_registered_toolkits() {
+            assert_node_available();
+
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+
+            sidecar
+                .dispatch_blocking(request(
+                    3,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::RegisterToolkit(test_toolkit_payload(
+                        "math",
+                        "Math utilities",
+                        "add",
+                    )),
+                ))
+                .expect("register math toolkit");
+
+            // A pi session with a registered toolkit injects base + tool docs.
+            let argv = create_session_and_read_launch_argv(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                "pi",
+                None,
+                false,
+            );
+            let prompt = injected_prompt_arg(&argv);
+            assert!(
+                prompt.contains("# agentOS"),
+                "base prompt is injected: {prompt:?}"
+            );
+            assert!(
+                prompt.contains("## Available Host Tools"),
+                "tool docs are injected: {prompt:?}"
+            );
+            assert!(
+                prompt.contains("### math"),
+                "injected prompt reflects the registered toolkit: {prompt:?}"
+            );
+
+            // skip_os_instructions drops the base text but STILL injects the tool docs.
+            let skipped = create_session_and_read_launch_argv(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                "pi",
+                None,
+                true,
+            );
+            let skipped_prompt = injected_prompt_arg(&skipped);
+            assert!(
+                !skipped_prompt.contains("# agentOS"),
+                "skip_os_instructions drops the base prompt: {skipped_prompt:?}"
+            );
+            assert!(
+                skipped_prompt.contains("### math"),
+                "skip_os_instructions still injects tool docs: {skipped_prompt:?}"
+            );
+        }
+
+        fn create_session_opencode_materializes_prompt_file_and_context_paths() {
+            assert_node_available();
+
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+
+            // opencode uses OPENCODE_CONTEXTPATHS, not a launch arg. The probe records its argv but we
+            // assert on the materialized prompt file + context paths env via the launched env. Reusing
+            // the argv helper still runs the session; opencode appends no --append-system-prompt arg.
+            let argv = create_session_and_read_launch_argv(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                &vm_id,
+                "opencode",
+                Some(String::from("opencode-extra-marker")),
+                false,
+            );
+            assert!(
+                !argv.iter().any(|arg| arg == "--append-system-prompt"),
+                "opencode injects via OPENCODE_CONTEXTPATHS, not launch args: {argv:?}"
+            );
+
+            let prompt = {
+                let vm = sidecar.vms.get_mut(&vm_id).expect("opencode vm after session");
+                vm.kernel
+                    .read_file("/tmp/agentos-system-prompt.md")
+                    .expect("opencode prompt file should be materialized")
+            };
+            let prompt_text = String::from_utf8(prompt).expect("opencode prompt is utf8");
+            assert!(
+                prompt_text.contains("# agentOS"),
+                "opencode prompt file holds the base prompt: {prompt_text:?}"
+            );
+            assert!(
+                prompt_text.contains("opencode-extra-marker"),
+                "opencode prompt file holds additional instructions: {prompt_text:?}"
+            );
         }
 
         fn empty_permissions_policy() -> PermissionsPolicy {
@@ -16832,6 +17072,12 @@ console.log(JSON.stringify({
         #[test]
         fn service_http2_respond_with_file_reads_vm_filesystem() {
             javascript_http2_settings_pause_push_and_file_response_surfaces_work();
+        }
+
+        #[test]
+        fn service_create_session_injects_dynamic_system_prompt() {
+            create_session_injects_prompt_reflecting_registered_toolkits();
+            create_session_opencode_materializes_prompt_file_and_context_paths();
         }
     }
 }

@@ -158,7 +158,11 @@ describe("agent launch args and env", () => {
 		) as string[];
 
 		expect(agentInfo.argv ?? []).not.toContain("--append-system-prompt");
-		expect(contextPaths).toContain("/etc/agentos/instructions.md");
+		// The base prompt is injected through a sidecar-materialized file plus the default opencode
+		// repo-relative markers, not the old baked /etc/agentos path.
+		expect(contextPaths).toContain("/tmp/agentos-system-prompt.md");
+		expect(contextPaths).not.toContain("/etc/agentos/instructions.md");
+		expect(contextPaths).toContain("CLAUDE.md");
 	});
 
 });
