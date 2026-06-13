@@ -662,18 +662,25 @@ impl MountTable {
         let (parent_index, relative_path) = self.resolve_index(&normalized)?;
         let parent_mount = &mut self.mounts[parent_index];
         if !parent_mount.filesystem.exists(&relative_path) {
+            // Materializing the mountpoint directory on the parent is
+            // cosmetic: child mounts resolve by path prefix before the parent
+            // is consulted. A read-only parent (for example a read-only
+            // module-access mount hosting nested package mounts) cannot
+            // materialize the entry, but the mount must still succeed.
             if let Err(error) = parent_mount.filesystem.mkdir(&relative_path, true) {
-                if let Err(shutdown_error) = filesystem.shutdown() {
-                    return Err(VfsError::new(
-                        shutdown_error.code(),
-                        format!(
-                            "failed to shut down filesystem after mount failure ({error}): {}",
-                            shutdown_error.message()
-                        ),
-                    ));
-                }
+                if error.code() != "EROFS" {
+                    if let Err(shutdown_error) = filesystem.shutdown() {
+                        return Err(VfsError::new(
+                            shutdown_error.code(),
+                            format!(
+                                "failed to shut down filesystem after mount failure ({error}): {}",
+                                shutdown_error.message()
+                            ),
+                        ));
+                    }
 
-                return Err(error);
+                    return Err(error);
+                }
             }
         }
 

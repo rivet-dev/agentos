@@ -230,6 +230,38 @@ fn mount_table_rejects_hardlinks_that_cross_mount_boundaries() {
 }
 
 #[test]
+fn mount_table_mounts_nested_filesystems_under_read_only_parents() {
+    let mut table = MountTable::new(MemoryFileSystem::new());
+    table
+        .mount(
+            "/root/node_modules",
+            MemoryFileSystem::new(),
+            MountOptions::new("memory").read_only(true),
+        )
+        .expect("mount read-only parent filesystem");
+
+    let mut nested = MemoryFileSystem::new();
+    nested
+        .write_file("/package.json", b"{}".to_vec())
+        .expect("seed nested package file");
+
+    table
+        .mount(
+            "/root/node_modules/@scope/pkg",
+            nested,
+            MountOptions::new("memory").read_only(true),
+        )
+        .expect("read-only parents must still accept nested mounts");
+
+    assert_eq!(
+        table
+            .read_file("/root/node_modules/@scope/pkg/package.json")
+            .expect("read file through nested mount"),
+        b"{}".to_vec()
+    );
+}
+
+#[test]
 fn mount_table_rejects_mount_when_mount_point_creation_fails() {
     let mut root = MemoryFileSystem::new();
     root.write_file("/blocked", b"not a directory".to_vec())
