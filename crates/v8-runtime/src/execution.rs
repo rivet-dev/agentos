@@ -404,11 +404,13 @@ pub fn execute_script_with_options(
             return (c, Some(err));
         }
 
-        if let Some(err) = take_unhandled_promise_rejection(tc) {
-            if bridge_ctx.is_some() {
-                clear_module_state();
+        if let Some(state) = tc.get_slot_mut::<crate::isolate::PromiseRejectState>() {
+            if let Some((_, err)) = state.unhandled.drain().next() {
+                if bridge_ctx.is_some() {
+                    clear_module_state();
+                }
+                return (1, Some(err));
             }
-            return (1, Some(err));
         }
 
         // Surface rejected async completions for exec()-style scripts that
@@ -771,7 +773,7 @@ pub(crate) fn take_unhandled_promise_rejection(
 ) -> Option<ExecutionError> {
     scope
         .get_slot_mut::<crate::isolate::PromiseRejectState>()
-        .and_then(|state| state.take_next_unhandled())
+        .and_then(|state| state.unhandled.drain().next().map(|(_, err)| err))
 }
 
 pub fn finalize_pending_script_evaluation(
@@ -1923,58 +1925,6 @@ mod tests {
             let context = isolate::create_context(&mut isolate);
             eval(&mut isolate, &context, "var x = 42;");
             assert_eq!(eval(&mut isolate, &context, "x"), "42");
-        }
-        // Unhandled rejection tracking is bounded within a microtask checkpoint.
-        {
-            let mut isolate = isolate::create_isolate(None);
-            let context = isolate::create_context(&mut isolate);
-            let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
-                let ctx = v8::Local::new(scope, &context);
-                let scope = &mut v8::ContextScope::new(scope, ctx);
-                execute_script(
-                    scope,
-                    "",
-                    "for (let i = 0; i < 1100; i++) Promise.reject(new Error('boom ' + i));",
-                    &mut None,
-                )
-            };
-            assert_eq!(code, 1);
-            let error = error.expect("unhandled rejection limit error");
-            assert_eq!(
-                error.code.as_deref(),
-                Some("ERR_AGENT_OS_UNHANDLED_REJECTION_LIMIT")
-            );
-            assert!(
-                error
-                    .message
-                    .contains("unhandled promise rejection registry exceeded limit")
-            );
-        }
-        // Over-cap rejections that are handled before the drain should not fail.
-        {
-            let mut isolate = isolate::create_isolate(None);
-            let context = isolate::create_context(&mut isolate);
-            let (code, error) = {
-                let scope = &mut v8::HandleScope::new(&mut isolate);
-                let ctx = v8::Local::new(scope, &context);
-                let scope = &mut v8::ContextScope::new(scope, ctx);
-                execute_script(
-                    scope,
-                    "",
-                    r#"
-                    const promises = [];
-                    for (let i = 0; i < 1100; i++) promises.push(Promise.reject(new Error('boom ' + i)));
-                    for (const promise of promises) promise.catch(() => {});
-                    "#,
-                    &mut None,
-                )
-            };
-            assert_eq!(code, 0);
-            assert!(
-                error.is_none(),
-                "handled over-cap rejections should not surface a limit error"
-            );
         }
 
         // --- Part 1: InjectGlobals sets _processConfig and _osConfig ---
@@ -4175,8 +4125,7 @@ mod tests {
             let iso_handle = iso.thread_safe_handle();
 
             // Start a 50ms timeout
-            let mut guard = crate::timeout::TimeoutGuard::new(50, iso_handle, abort_tx)
-                .expect("timeout guard should start");
+            let mut guard = crate::timeout::TimeoutGuard::new(50, iso_handle, abort_tx);
 
             // Run an infinite loop — timeout should terminate it
             let (code, error) = {
@@ -4203,8 +4152,7 @@ mod tests {
             let iso_handle = iso.thread_safe_handle();
 
             // 5 second timeout — execution completes well before
-            let mut guard = crate::timeout::TimeoutGuard::new(5000, iso_handle, abort_tx)
-                .expect("timeout guard should start");
+            let mut guard = crate::timeout::TimeoutGuard::new(5000, iso_handle, abort_tx);
 
             let (code, error) = {
                 let scope = &mut v8::HandleScope::new(&mut iso);
@@ -4275,8 +4223,7 @@ mod tests {
             assert_eq!(pending.len(), 1, "should have 1 pending promise");
 
             // Start a 50ms timeout
-            let mut guard = crate::timeout::TimeoutGuard::new(50, iso_handle, abort_tx)
-                .expect("timeout guard should start");
+            let mut guard = crate::timeout::TimeoutGuard::new(50, iso_handle, abort_tx);
 
             // Run event loop — it should be terminated by the timeout
             // (no messages on cmd_rx, so it blocks until abort_rx fires)
