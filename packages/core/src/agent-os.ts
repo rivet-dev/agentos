@@ -196,6 +196,7 @@ import {
 	type SoftwareRoot,
 } from "./packages.js";
 import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
+import { serializeLimitsForSidecar } from "./sidecar/limits.js";
 import { serializePermissionsForSidecar } from "./sidecar/permissions.js";
 import {
 	type AgentOsSidecarClient,
@@ -390,6 +391,85 @@ export type MountConfig =
 	| NativeMountConfig
 	| OverlayMountConfig;
 
+/**
+ * Operator-tunable runtime limits for a VM. Every field is optional; unset fields fall back to
+ * built-in defaults that match the runtime's historical hardcoded constants, so behavior is
+ * unchanged unless a value is overridden. All values are JSON-serializable integers and are
+ * forwarded to the native sidecar as `CreateVmRequest.metadata` entries. Unknown, negative, or
+ * non-integer values throw at `AgentOs.create()` time.
+ */
+export interface AgentOsLimits {
+	/** Kernel resource limits (processes, FDs, sockets, filesystem bytes, WASM caps, etc.). */
+	resources?: {
+		cpuCount?: number;
+		maxProcesses?: number;
+		maxOpenFds?: number;
+		maxPipes?: number;
+		maxPtys?: number;
+		maxSockets?: number;
+		maxConnections?: number;
+		maxSocketBufferedBytes?: number;
+		maxSocketDatagramQueueLen?: number;
+		maxFilesystemBytes?: number;
+		maxInodeCount?: number;
+		maxBlockingReadMs?: number;
+		maxPreadBytes?: number;
+		maxFdWriteBytes?: number;
+		maxProcessArgvBytes?: number;
+		maxProcessEnvBytes?: number;
+		maxReaddirEntries?: number;
+		maxWasmFuel?: number;
+		maxWasmMemoryBytes?: number;
+		maxWasmStackBytes?: number;
+	};
+	/** HTTP body buffering limits. */
+	http?: {
+		/** Cap on `vm.fetch()` buffered response bodies. Must be <= the sidecar wire frame cap. */
+		maxFetchResponseBytes?: number;
+	};
+	/** Host-tool registration and invocation limits. */
+	tools?: {
+		defaultToolTimeoutMs?: number;
+		maxToolTimeoutMs?: number;
+		maxRegisteredToolkits?: number;
+		maxRegisteredToolsPerVm?: number;
+		maxToolsPerToolkit?: number;
+		maxToolSchemaBytes?: number;
+		maxToolExamplesPerTool?: number;
+		maxToolExampleInputBytes?: number;
+	};
+	/** Mount plugin manifest size limits. */
+	plugins?: {
+		maxPersistedManifestBytes?: number;
+		maxPersistedManifestFileBytes?: number;
+	};
+	/** ACP adapter buffering limits. */
+	acp?: {
+		maxReadLineBytes?: number;
+		stdoutBufferByteLimit?: number;
+	};
+	/** Guest JavaScript runtime buffering limits. */
+	jsRuntime?: {
+		v8HeapLimitMb?: number;
+		capturedOutputLimitBytes?: number;
+		stdinBufferLimitBytes?: number;
+		eventPayloadLimitBytes?: number;
+		v8IpcMaxFrameBytes?: number;
+	};
+	/** Guest Python runtime limits. */
+	python?: {
+		outputBufferMaxBytes?: number;
+		executionTimeoutMs?: number;
+		vfsRpcTimeoutMs?: number;
+	};
+	/** Guest WASM runtime limits. */
+	wasm?: {
+		maxModuleFileBytes?: number;
+		capturedOutputLimitBytes?: number;
+		syncReadLimitBytes?: number;
+	};
+}
+
 export interface AgentOsOptions {
 	/**
 	 * Software to install in the VM. Each entry provides agents, tools,
@@ -432,6 +512,11 @@ export interface AgentOsOptions {
 	 * Pass an explicit sidecar handle to pin the VM to a caller-managed sidecar.
 	 */
 	sidecar?: AgentOsSidecarConfig;
+	/**
+	 * Operator-tunable runtime limits. Unset fields use built-in defaults that match the
+	 * runtime's historical constants, so omitting this leaves behavior unchanged.
+	 */
+	limits?: AgentOsLimits;
 }
 
 /** Configuration for a local MCP server (spawned as a child process). */
@@ -1879,6 +1964,7 @@ export class AgentOs {
 						...Object.fromEntries(
 							Object.entries(env).map(([key, value]) => [`env.${key}`, value]),
 						),
+						...serializeLimitsForSidecar(options?.limits),
 					},
 					rootFilesystem: serializeRootFilesystemForSidecar(
 						options?.rootFilesystem,

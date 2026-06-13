@@ -2,6 +2,7 @@ export type {
 	AgentCapabilities,
 	AgentInfo,
 	AgentOsCreateSidecarOptions,
+	AgentOsLimits,
 	AgentOsOptions,
 	AgentOsSharedSidecarOptions,
 	AgentOsSidecarConfig,

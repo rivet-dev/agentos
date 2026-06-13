@@ -4,6 +4,7 @@ import {
 	PastScheduleError,
 	isAcpTimeoutErrorData,
 	type AcpTimeoutErrorData,
+	type AgentOsLimits,
 	type ExecOptions,
 	type HostDirMountPluginConfig,
 	type JsonRpcErrorData,
@@ -21,6 +22,7 @@ import {
 describe("root public API exports", () => {
 	test("re-exports current public SDK types from the root entrypoint", () => {
 		void (null as AcpTimeoutErrorData | null);
+		void (null as AgentOsLimits | null);
 		void (null as ExecOptions | null);
 		void (null as HostDirMountPluginConfig | null);
 		void (null as JsonRpcErrorData | null);
