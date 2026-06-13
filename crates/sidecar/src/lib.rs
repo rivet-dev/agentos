@@ -7,6 +7,7 @@ pub(crate) mod bootstrap;
 pub(crate) mod bridge;
 pub(crate) mod execution;
 pub(crate) mod filesystem;
+pub mod limits;
 pub(crate) mod plugins;
 pub mod protocol;
 pub mod service;

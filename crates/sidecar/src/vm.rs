@@ -130,6 +130,11 @@ where
         fs::create_dir_all(&host_cwd)
             .map_err(|error| SidecarError::Io(format!("failed to create VM cwd: {error}")))?;
         let resource_limits = parse_resource_limits(&payload.metadata)?;
+        let limits = crate::limits::parse_vm_limits(
+            &payload.metadata,
+            resource_limits.clone(),
+            self.config.max_frame_bytes,
+        )?;
         let dns = parse_vm_dns_config(&payload.metadata)?;
         self.bridge
             .set_vm_permissions(&vm_id, &permissions_policy)?;
@@ -210,6 +215,7 @@ where
                 connection_id: connection_id.clone(),
                 session_id: session_id.clone(),
                 metadata: payload.metadata,
+                limits,
                 dns,
                 guest_env,
                 requested_runtime: payload.runtime,

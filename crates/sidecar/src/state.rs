@@ -286,6 +286,9 @@ pub(crate) struct VmState {
     pub(crate) connection_id: String,
     pub(crate) session_id: String,
     pub(crate) metadata: BTreeMap<String, String>,
+    /// Operator-tunable VM-scoped runtime limits. Immutable for the VM's lifetime;
+    /// `ConfigureVm` does not mutate limits.
+    pub(crate) limits: crate::limits::VmLimits,
     pub(crate) dns: VmDnsConfig,
     pub(crate) guest_env: BTreeMap<String, String>,
     pub(crate) requested_runtime: GuestRuntimeKind,
