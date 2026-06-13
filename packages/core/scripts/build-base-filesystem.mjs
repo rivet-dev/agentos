@@ -10,9 +10,6 @@ const DEFAULT_INPUT = fileURLToPath(
 const DEFAULT_OUTPUT = fileURLToPath(
 	new URL("../fixtures/base-filesystem.json", import.meta.url),
 );
-const OS_INSTRUCTIONS_FIXTURE = fileURLToPath(
-	new URL("../fixtures/AGENTOS_SYSTEM_PROMPT.md", import.meta.url),
-);
 
 const BASE_HOSTNAME = "agent-os";
 const BASE_USER = "user";
@@ -56,32 +53,9 @@ function buildBaseFilesystem(snapshot, inputPath) {
 			prompt: snapshot.environment.prompt,
 		},
 		filesystem: {
-			entries: [
-				...snapshot.filesystem.entries.map(normalizeEntry),
-				...osInstructionsEntries(),
-			],
+			entries: snapshot.filesystem.entries.map(normalizeEntry),
 		},
 	};
-}
-
-// Bake the base agentOS system prompt into the snapshot so every VM has
-// `/etc/agentos/instructions.md` by default. This is the single source for the
-// prompt: the TS core, Rust client, and sidecar all consume the file from the
-// VM rather than embedding their own copy. Session-level additional
-// instructions are appended at session creation, not here.
-function osInstructionsEntries() {
-	const content = readFileSync(OS_INSTRUCTIONS_FIXTURE, "utf-8");
-	return [
-		{ path: "/etc/agentos", type: "directory", mode: "755", uid: 0, gid: 0 },
-		{
-			path: "/etc/agentos/instructions.md",
-			type: "file",
-			mode: "644",
-			uid: 0,
-			gid: 0,
-			content,
-		},
-	];
 }
 
 function main() {

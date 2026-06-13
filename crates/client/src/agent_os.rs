@@ -23,7 +23,6 @@ use agent_os_sidecar::protocol::{
     PatternPermissionRuleSet as WirePatternPermissionRuleSet, PatternPermissionScope,
     PermissionMode as WirePermissionMode, PermissionsPolicy, RegisterToolkitRequest,
     RegisteredToolDefinition, RequestPayload, ResponsePayload, RootFilesystemDescriptor,
-    RootFilesystemEntry, RootFilesystemEntryEncoding, RootFilesystemEntryKind,
     SidecarPermissionResultResponse, SidecarPlacement, SidecarRequestPayload,
     SidecarResponsePayload, SoftwareDescriptor, ToolInvocationRequest,
     ToolInvocationResultResponse, VmLifecycleState,
@@ -42,9 +41,6 @@ use crate::sidecar::{AgentOsSidecar, AgentOsSidecarPlacement, AgentOsSidecarVmLe
 use crate::transport::{SidecarCallback, SidecarTransport};
 
 use once_cell::sync::OnceCell;
-
-const OS_INSTRUCTIONS: &str =
-    include_str!("../../../packages/core/fixtures/AGENTOS_SYSTEM_PROMPT.md");
 
 // ---------------------------------------------------------------------------
 // Registry entries
@@ -236,7 +232,7 @@ impl AgentOs {
                 RequestPayload::CreateVm(CreateVmRequest {
                     runtime: GuestRuntimeKind::JavaScript,
                     metadata: BTreeMap::new(),
-                    root_filesystem: root_filesystem_descriptor(&config),
+                    root_filesystem: RootFilesystemDescriptor::default(),
                     permissions: Some(permissions.clone()),
                 }),
             )
@@ -929,32 +925,6 @@ fn operation_wildcard_if_omitted(values: &Option<Vec<String>>) -> Vec<String> {
 
 fn resource_wildcard_if_omitted(values: &Option<Vec<String>>) -> Vec<String> {
     values.clone().unwrap_or_else(|| vec!["**".to_string()])
-}
-
-fn root_filesystem_descriptor(config: &AgentOsConfig) -> RootFilesystemDescriptor {
-    RootFilesystemDescriptor {
-        bootstrap_entries: vec![RootFilesystemEntry {
-            path: "/etc/agentos/instructions.md".to_string(),
-            kind: RootFilesystemEntryKind::File,
-            mode: Some(0o644),
-            uid: Some(0),
-            gid: Some(0),
-            content: Some(build_os_instructions(
-                config.additional_instructions.as_deref(),
-            )),
-            encoding: Some(RootFilesystemEntryEncoding::Utf8),
-            target: None,
-            executable: false,
-        }],
-        ..RootFilesystemDescriptor::default()
-    }
-}
-
-fn build_os_instructions(additional: Option<&str>) -> String {
-    match additional {
-        Some(additional) if !additional.is_empty() => format!("{OS_INSTRUCTIONS}\n{additional}"),
-        Some(_) | None => OS_INSTRUCTIONS.to_string(),
-    }
 }
 
 /// Extract the `vm_id` from an ownership scope, if it is VM-scoped.

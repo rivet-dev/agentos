@@ -522,21 +522,6 @@
         "mode": "1777",
         "uid": 0,
         "gid": 0
-      },
-      {
-        "path": "/etc/agentos",
-        "type": "directory",
-        "mode": "755",
-        "uid": 0,
-        "gid": 0
-      },
-      {
-        "path": "/etc/agentos/instructions.md",
-        "type": "file",
-        "mode": "644",
-        "uid": 0,
-        "gid": 0,
-        "content": "# agentOS\n\nYou are running inside agentOS, a Linux-like operating system for coding agents. \n\nKnown limitations:\n\n- Binaries inside agentOS are special. You cannot download and install arbitrary binaries (e.g. via curl or apt).\n- No file watching (inotify, fs.watch).\n\n## Bug Reports\n\nIf you find a bug in something that does not behave like you would expect in agentOS, generate a bug report and indicate the user should file it under: https://github.com/rivet-dev/rivet/issues (This repository holds agentOS inside of it.)\n\n## Tools CLI\n\nTools are available as CLI commands:\n\n- `agentos list-tools` — list all available toolkits and tools\n- `agentos-{toolkit} {tool} --help` — show usage for a specific tool\n- `agentos-{toolkit} {tool} --flag value` — invoke a tool\n\n"
       }
     ]
   }

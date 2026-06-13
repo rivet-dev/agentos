@@ -220,18 +220,6 @@ import {
 	serializeRootFilesystemForSidecar,
 } from "./sidecar/rpc-client.js";
 
-const OS_INSTRUCTIONS_FIXTURE = fileURLToPath(
-	new URL("../fixtures/AGENTOS_SYSTEM_PROMPT.md", import.meta.url),
-);
-
-function buildOsInstructions(additional?: string): string {
-	const base = readFileSync(OS_INSTRUCTIONS_FIXTURE, "utf-8");
-	if (!additional) {
-		return base;
-	}
-	return `${base}\n${additional}`;
-}
-
 export interface AgentOsSharedSidecarOptions {
 	pool?: string;
 }
@@ -496,7 +484,7 @@ export interface AgentOsOptions {
 	rootFilesystem?: RootFilesystemConfig;
 	/** Filesystems to mount at boot time. */
 	mounts?: MountConfig[];
-	/** Additional instructions appended to the base OS instructions written to /etc/agentos/instructions.md. */
+	/** Additional instructions appended to the base OS system prompt injected at session start. */
 	additionalInstructions?: string;
 	/** Custom schedule driver for cron jobs. Defaults to TimerScheduleDriver. */
 	scheduleDriver?: ScheduleDriver;
@@ -1331,22 +1319,6 @@ async function bootstrapLiveBootstrapDirectories(
 	await client.bootstrapRootFilesystem(session, vm, entries);
 }
 
-function buildOsInstructionsBootstrapEntries(
-	additionalInstructions?: string,
-): FilesystemEntry[] {
-	return [
-		{
-			path: "/etc/agentos/instructions.md",
-			type: "file",
-			mode: "0644",
-			uid: 0,
-			gid: 0,
-			content: buildOsInstructions(additionalInstructions),
-			encoding: "utf8",
-		},
-	];
-}
-
 function toSnapshotModeString(
 	mode: number | undefined,
 	kind: RootFilesystemEntry["kind"],
@@ -1911,7 +1883,6 @@ export class AgentOs {
 					...NODE_RUNTIME_BOOTSTRAP_COMMANDS,
 					...toolBootstrapCommands,
 				],
-				buildOsInstructionsBootstrapEntries(options?.additionalInstructions),
 			);
 			let toolReference = "";
 			let rootBridge: NativeSidecarKernelProxy | null = null;
