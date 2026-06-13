@@ -1,30 +1,30 @@
+use crate::NativeSidecarBridge;
 use crate::acp::compat::{
-    is_cancel_method_not_found, maybe_normalize_permission_response,
-    normalize_inbound_permission_request, summarize_inbound_notification,
-    summarize_inbound_request, summarize_inbound_response, to_record, ACP_CANCEL_METHOD,
-    LEGACY_PERMISSION_METHOD,
+    ACP_CANCEL_METHOD, LEGACY_PERMISSION_METHOD, is_cancel_method_not_found,
+    maybe_normalize_permission_response, normalize_inbound_permission_request,
+    summarize_inbound_notification, summarize_inbound_request, summarize_inbound_response,
+    to_record,
 };
 use crate::acp::session::{
-    build_initialize_request, validate_initialize_result, AcpInitializeError, AcpSessionState,
-    AcpTerminalState,
+    AcpInitializeError, AcpSessionState, AcpTerminalState, build_initialize_request,
+    trim_acp_stdout_buffer, validate_initialize_result,
 };
 use crate::acp::{
-    deserialize_message, serialize_message, AcpTimeoutDiagnostics, JsonRpcError, JsonRpcId,
-    JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+    AcpTimeoutDiagnostics, JsonRpcError, JsonRpcId, JsonRpcMessage, JsonRpcNotification,
+    JsonRpcRequest, JsonRpcResponse, deserialize_message, serialize_message,
 };
-use crate::bridge::{build_mount_plugin_registry, MountPluginContext};
+use crate::bridge::{MountPluginContext, build_mount_plugin_registry};
 pub(crate) use crate::execution::{
-    build_javascript_socket_path_context, canonical_signal_name, error_code,
-    ignore_stale_javascript_sync_rpc_response, javascript_sync_rpc_arg_str,
-    javascript_sync_rpc_arg_u32, javascript_sync_rpc_arg_u32_optional, javascript_sync_rpc_arg_u64,
-    javascript_sync_rpc_arg_u64_optional, javascript_sync_rpc_bytes_arg,
-    javascript_sync_rpc_bytes_value, javascript_sync_rpc_encoding, javascript_sync_rpc_error_code,
-    javascript_sync_rpc_option_bool, javascript_sync_rpc_option_u32, parse_signal,
+    JavascriptSyncRpcServiceRequest, build_javascript_socket_path_context, canonical_signal_name,
+    error_code, ignore_stale_javascript_sync_rpc_response, javascript_sync_rpc_arg_i32,
+    javascript_sync_rpc_arg_str, javascript_sync_rpc_arg_u32, javascript_sync_rpc_arg_u32_optional,
+    javascript_sync_rpc_arg_u64, javascript_sync_rpc_arg_u64_optional,
+    javascript_sync_rpc_bytes_arg, javascript_sync_rpc_bytes_value, javascript_sync_rpc_encoding,
+    javascript_sync_rpc_error_code, javascript_sync_rpc_option_bool,
+    javascript_sync_rpc_option_u32, parse_signal,
     sanitize_javascript_child_process_internal_bootstrap_env, service_javascript_sync_rpc,
     vm_network_resource_counts, write_kernel_process_stdin,
 };
-#[cfg(test)]
-pub(crate) use crate::execution::{runtime_child_is_alive, signal_runtime_process};
 use crate::filesystem::guest_filesystem_call as filesystem_guest_filesystem_call;
 use crate::protocol::{
     AgentSessionClosedResponse, AuthenticatedResponse, CloseAgentSessionRequest,
@@ -39,15 +39,12 @@ use crate::protocol::{
     SidecarResponseTracker, SidecarResponseTrackerError, SignalDispositionAction,
     SignalHandlerRegistration, StructuredEvent, VmLifecycleEvent, VmLifecycleState,
 };
-#[cfg(test)]
-use crate::state::ActiveExecution;
 use crate::state::{
-    ActiveExecutionEvent, BridgeError, ConnectionState, JavascriptSocketFamily,
-    JavascriptSocketPathContext, ProcessEventEnvelope, SessionState, SharedBridge,
-    SharedSidecarRequestClient, SidecarRequestTransport, VmState, EXECUTION_DRIVER_NAME,
+    ActiveExecutionEvent, BridgeError, ConnectionState, EXECUTION_DRIVER_NAME,
+    JavascriptSocketFamily, JavascriptSocketPathContext, ProcessEventEnvelope, SessionState,
+    SharedBridge, SharedSidecarRequestClient, SidecarRequestTransport, VmState,
 };
 use crate::tools::register_toolkit;
-use crate::NativeSidecarBridge;
 use agent_os_bridge::{
     CommandPermissionRequest, EnvironmentAccess, EnvironmentPermissionRequest, FilesystemAccess,
     FilesystemPermissionRequest, LifecycleEventRecord, LifecycleState, LogLevel, LogRecord,
@@ -60,15 +57,14 @@ use agent_os_execution::{
 use agent_os_kernel::kernel::KernelError;
 use agent_os_kernel::mount_plugin::{FileSystemPluginRegistry, PluginError};
 use agent_os_kernel::permissions::{
-    permission_glob_matches, CommandAccessRequest, EnvAccessRequest, EnvironmentOperation,
-    NetworkAccessRequest, NetworkOperation, PermissionDecision,
+    CommandAccessRequest, EnvAccessRequest, EnvironmentOperation, NetworkAccessRequest,
+    NetworkOperation, PermissionDecision, permission_glob_matches,
 };
-#[cfg(test)]
-use agent_os_kernel::process_table::SIGKILL;
 // root_fs types moved to crate::vm
 use agent_os_kernel::vfs::VfsError;
+use nix::libc;
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::fs;
@@ -77,7 +73,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::time;
 
 // Constants and type aliases moved to crate::state
@@ -87,6 +83,28 @@ const INTERNAL_JAVASCRIPT_ENTRYPOINT_ENV_KEYS: &[&str] =
 const INTERNAL_WASM_ENTRYPOINT_ENV_KEYS: &[&str] =
     &["AGENT_OS_WASM_MODULE_PATH", "AGENT_OS_WASM_MODULE_BASE64"];
 const INTERNAL_PYTHON_ENTRYPOINT_ENV_PREFIXES: &[&str] = &["AGENT_OS_PYTHON_"];
+pub(crate) const MAX_PROCESS_EVENT_QUEUE: usize = 10_000;
+pub(crate) const MAX_PENDING_SIDECAR_RESPONSES: usize = 10_000;
+pub(crate) const MAX_OUTBOUND_SIDECAR_REQUESTS: usize = 10_000;
+pub(crate) const MAX_COMPLETED_SIDECAR_RESPONSES: usize = 10_000;
+
+pub(crate) fn process_event_queue_overflow_error() -> SidecarError {
+    SidecarError::InvalidState(format!(
+        "process event queue exceeded {MAX_PROCESS_EVENT_QUEUE} pending events"
+    ))
+}
+
+fn sidecar_response_pending_overflow_error() -> SidecarError {
+    SidecarError::InvalidState(format!(
+        "sidecar response tracker exceeded {MAX_PENDING_SIDECAR_RESPONSES} pending responses"
+    ))
+}
+
+fn outbound_sidecar_request_queue_overflow_error() -> SidecarError {
+    SidecarError::InvalidState(format!(
+        "outbound sidecar request queue exceeded {MAX_OUTBOUND_SIDECAR_REQUESTS} pending requests"
+    ))
+}
 
 // NativeSidecarConfig, DispatchResult, SidecarError moved to crate::state
 pub use crate::state::{DispatchResult, NativeSidecarConfig, SidecarError};
@@ -109,6 +127,10 @@ struct LegacyJavascriptChildProcessSpawnOptions {
     stdio: Vec<String>,
     #[serde(default, rename = "maxBuffer")]
     max_buffer: Option<usize>,
+    #[serde(default)]
+    timeout: Option<u64>,
+    #[serde(default, rename = "killSignal")]
+    kill_signal: Option<String>,
 }
 
 #[derive(Debug)]
@@ -181,6 +203,8 @@ pub(crate) fn parse_javascript_child_process_spawn_request(
                 shell: parsed_options.shell,
                 detached: parsed_options.detached,
                 stdio: parsed_options.stdio,
+                timeout: parsed_options.timeout,
+                kill_signal: parsed_options.kill_signal,
             },
         },
         parsed_options.max_buffer,
@@ -221,6 +245,7 @@ where
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn queue_set_vm_permissions_result(
         &self,
         result: Result<(), SidecarError>,
@@ -415,10 +440,8 @@ where
                     "native sidecar test set_vm_permissions outcome lock poisoned",
                 ))
             })?;
-            if let Some(outcome) = outcomes.pop_front() {
-                if let Some(error) = outcome {
-                    return Err(error);
-                }
+            if let Some(Some(error)) = outcomes.pop_front() {
+                return Err(error);
             }
         }
 
@@ -866,15 +889,18 @@ pub struct NativeSidecar<B> {
     pub(crate) vms: BTreeMap<String, VmState>,
     pub(crate) acp_sessions: BTreeMap<String, AcpSessionState>,
     pub(crate) acp_process_stdout_buffers: BTreeMap<String, String>,
+    pub(crate) acp_process_stdout_truncated: BTreeSet<String>,
     /// Bounded tail of each ACP adapter process's stderr, keyed by process id. Retained even before
     /// an ACP `sessionId` exists so an adapter that dies during `initialize` can report why.
     pub(crate) acp_process_stderr_buffers: BTreeMap<String, String>,
-    pub(crate) process_event_sender: UnboundedSender<ProcessEventEnvelope>,
-    pub(crate) process_event_receiver: Option<UnboundedReceiver<ProcessEventEnvelope>>,
+    #[allow(dead_code)]
+    pub(crate) process_event_sender: Sender<ProcessEventEnvelope>,
+    pub(crate) process_event_receiver: Option<Receiver<ProcessEventEnvelope>>,
     pub(crate) pending_process_events: VecDeque<ProcessEventEnvelope>,
     pub(crate) pending_sidecar_responses: SidecarResponseTracker,
     pub(crate) outbound_sidecar_requests: VecDeque<SidecarRequestFrame>,
     pub(crate) completed_sidecar_responses: BTreeMap<RequestId, SidecarResponseFrame>,
+    pub(crate) completed_sidecar_response_order: VecDeque<RequestId>,
     pub(crate) sidecar_requests: SharedSidecarRequestClient,
 }
 
@@ -909,8 +935,6 @@ where
     BridgeError<B>: fmt::Debug + Send + Sync + 'static,
 {
     const ACP_REQUEST_TIMEOUT_MS: u64 = 120_000;
-    const ACP_CANCEL_FLUSH_GRACE: Duration = Duration::from_millis(50);
-    const ACP_KILL_WAIT_GRACE: Duration = Duration::from_secs(5);
     /// Maximum bytes of an ACP adapter's stderr retained for diagnostics. The tail is kept because
     /// stack traces and the actual error message land at the end of the stream.
     const ACP_STDERR_BUFFER_CAP: usize = 8 * 1024;
@@ -942,7 +966,7 @@ where
 
         let bridge = SharedBridge::new(bridge);
         let mount_plugins = build_mount_plugin_registry::<B>()?;
-        let (process_event_sender, process_event_receiver) = unbounded_channel();
+        let (process_event_sender, process_event_receiver) = channel(MAX_PROCESS_EVENT_QUEUE);
 
         Ok(Self {
             config,
@@ -962,6 +986,7 @@ where
             vms: BTreeMap::new(),
             acp_sessions: BTreeMap::new(),
             acp_process_stdout_buffers: BTreeMap::new(),
+            acp_process_stdout_truncated: BTreeSet::new(),
             acp_process_stderr_buffers: BTreeMap::new(),
             process_event_sender,
             process_event_receiver: Some(process_event_receiver),
@@ -969,6 +994,7 @@ where
             pending_sidecar_responses: SidecarResponseTracker::default(),
             outbound_sidecar_requests: VecDeque::new(),
             completed_sidecar_responses: BTreeMap::new(),
+            completed_sidecar_response_order: VecDeque::new(),
             sidecar_requests: SharedSidecarRequestClient::default(),
         })
     }
@@ -1021,11 +1047,38 @@ where
         self.set_sidecar_request_transport(Arc::new(HandlerTransport(handler)));
     }
 
+    pub(crate) fn queue_pending_process_event(
+        &mut self,
+        envelope: ProcessEventEnvelope,
+    ) -> Result<(), SidecarError> {
+        if self.pending_process_events.len() >= MAX_PROCESS_EVENT_QUEUE {
+            return Err(process_event_queue_overflow_error());
+        }
+        self.pending_process_events.push_back(envelope);
+        Ok(())
+    }
+
+    pub(crate) fn queue_front_pending_process_event(
+        &mut self,
+        envelope: ProcessEventEnvelope,
+    ) -> Result<(), SidecarError> {
+        if self.pending_process_events.len() >= MAX_PROCESS_EVENT_QUEUE {
+            return Err(process_event_queue_overflow_error());
+        }
+        self.pending_process_events.push_front(envelope);
+        Ok(())
+    }
+
+    pub(crate) fn pending_process_event_capacity(&self) -> usize {
+        MAX_PROCESS_EVENT_QUEUE.saturating_sub(self.pending_process_events.len())
+    }
+
     pub fn dispatch_blocking(
         &mut self,
         request: RequestFrame,
     ) -> Result<DispatchResult, SidecarError> {
-        if matches!(request.payload, RequestPayload::DisposeVm(_)) {
+        let inside_runtime = tokio::runtime::Handle::try_current().is_ok();
+        if matches!(request.payload, RequestPayload::DisposeVm(_)) && !inside_runtime {
             return tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -1036,6 +1089,9 @@ where
         let mut future = std::pin::pin!(self.dispatch(request));
         match poll_future_once(future.as_mut()) {
             Some(result) => result,
+            None if inside_runtime => Err(SidecarError::InvalidState(String::from(
+                "dispatch_blocking cannot wait for an async sidecar request inside a Tokio runtime; use dispatch().await",
+            ))),
             None => tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -1207,12 +1263,23 @@ where
             }
 
             let queued_envelopes = {
+                let pending_capacity = self.pending_process_event_capacity();
                 let receiver = self.process_event_receiver.as_mut().ok_or_else(|| {
                     SidecarError::InvalidState(String::from("process event receiver unavailable"))
                 })?;
                 let mut queued = Vec::new();
-                while let Ok(envelope) = receiver.try_recv() {
-                    queued.push(envelope);
+                loop {
+                    if queued.len() >= pending_capacity {
+                        if receiver.is_empty() {
+                            break;
+                        }
+                        return Err(process_event_queue_overflow_error());
+                    }
+                    match receiver.try_recv() {
+                        Ok(envelope) => queued.push(envelope),
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                    }
                 }
                 queued
             };
@@ -1224,7 +1291,7 @@ where
                 {
                     matching_envelope = Some(envelope);
                 } else {
-                    self.pending_process_events.push_back(envelope);
+                    self.queue_pending_process_event(envelope)?;
                 }
             }
 
@@ -1277,30 +1344,42 @@ where
                 }
             }
             self.pending_process_events = deferred;
+            let drain_limit = self
+                .pending_process_event_capacity()
+                .saturating_sub(trailing.len().saturating_add(1));
             trailing.extend(
-                self.drain_process_events_blocking(&vm_id, &process_id)?
+                self.drain_process_events_blocking_with_limit(&vm_id, &process_id, drain_limit)?
                     .into_iter()
                     .filter(|event| !matches!(event, ActiveExecutionEvent::Exited(_))),
             );
 
             if !trailing.is_empty() {
-                self.pending_process_events
-                    .push_front(ProcessEventEnvelope {
+                if self.pending_process_event_capacity() < trailing.len() {
+                    return Err(process_event_queue_overflow_error());
+                }
+                let emit_now = if self.pending_process_event_capacity() == trailing.len() {
+                    Some(trailing.remove(0))
+                } else {
+                    None
+                };
+                self.queue_front_pending_process_event(ProcessEventEnvelope {
+                    connection_id: connection_id.clone(),
+                    session_id: session_id.clone(),
+                    vm_id: vm_id.clone(),
+                    process_id: process_id.clone(),
+                    event,
+                })?;
+                for event in trailing.into_iter().rev() {
+                    self.queue_front_pending_process_event(ProcessEventEnvelope {
                         connection_id: connection_id.clone(),
                         session_id: session_id.clone(),
                         vm_id: vm_id.clone(),
                         process_id: process_id.clone(),
                         event,
-                    });
-                for event in trailing.into_iter().rev() {
-                    self.pending_process_events
-                        .push_front(ProcessEventEnvelope {
-                            connection_id: connection_id.clone(),
-                            session_id: session_id.clone(),
-                            vm_id: vm_id.clone(),
-                            process_id: process_id.clone(),
-                            event,
-                        });
+                    })?;
+                }
+                if let Some(event) = emit_now {
+                    return self.handle_execution_event(&vm_id, &process_id, event);
                 }
                 return Ok(None);
             }
@@ -1575,8 +1654,19 @@ where
             &init_result,
             &session_result,
         );
+        let stdout_was_truncated = self
+            .acp_process_stdout_truncated
+            .remove(&session.process_id);
         if let Some(buffer) = self.acp_process_stdout_buffers.remove(&session.process_id) {
+            let mut buffer = buffer;
+            let stdout_is_truncated = trim_acp_stdout_buffer(&mut buffer);
+            if stdout_was_truncated || stdout_is_truncated {
+                session.record_activity(String::from("stdout buffer truncated"));
+            }
+            session.stdout_buffer_truncated = stdout_was_truncated || stdout_is_truncated;
             session.stdout_buffer = buffer;
+        } else if stdout_was_truncated {
+            session.record_activity(String::from("stdout buffer truncated"));
         }
         let created = session.created_response();
         self.acp_sessions.insert(acp_session_id, session);
@@ -1969,15 +2059,10 @@ where
             }
             "process.kill" => {
                 let target_pid =
-                    javascript_sync_rpc_arg_u32(&request.args, 0, "process.kill target pid")?;
+                    javascript_sync_rpc_arg_i32(&request.args, 0, "process.kill target pid")?;
                 let signal = javascript_sync_rpc_arg_str(&request.args, 1, "process.kill signal")?;
                 let parsed_signal = parse_signal(signal)?;
-                enum ProcessKillTarget {
-                    SelfProcess(SignalDispositionAction),
-                    Child(String),
-                    TopLevel(String),
-                }
-                let target = {
+                if parsed_signal == 0 {
                     let Some(vm) = self.vms.get(vm_id) else {
                         log_stale_process_event(
                             &self.bridge,
@@ -1987,7 +2072,7 @@ where
                         );
                         return Ok(());
                     };
-                    let Some(caller) = vm.active_processes.get(process_id) else {
+                    if !vm.active_processes.contains_key(process_id) {
                         log_stale_process_event(
                             &self.bridge,
                             vm_id,
@@ -1995,70 +2080,118 @@ where
                             "javascript sync RPC process.kill",
                         );
                         return Ok(());
+                    }
+                    vm.kernel
+                        .signal_process(EXECUTION_DRIVER_NAME, target_pid, parsed_signal)
+                        .map(|()| Value::Null)
+                        .map_err(kernel_error)
+                } else if target_pid < 0 {
+                    let caller_kernel_pid = {
+                        let Some(vm) = self.vms.get(vm_id) else {
+                            log_stale_process_event(
+                                &self.bridge,
+                                vm_id,
+                                process_id,
+                                "javascript sync RPC process.kill",
+                            );
+                            return Ok(());
+                        };
+                        let Some(caller) = vm.active_processes.get(process_id) else {
+                            log_stale_process_event(
+                                &self.bridge,
+                                vm_id,
+                                process_id,
+                                "javascript sync RPC process.kill",
+                            );
+                            return Ok(());
+                        };
+                        caller.kernel_pid
                     };
-                    if caller.kernel_pid == target_pid {
-                        let action = vm
-                            .signal_states
-                            .get(process_id)
-                            .and_then(|handlers| handlers.get(&(parsed_signal as u32)))
-                            .map(|registration| registration.action)
-                            .unwrap_or(SignalDispositionAction::Default);
-                        Some(ProcessKillTarget::SelfProcess(action))
-                    } else if let Some((child_process_id, _)) = caller
-                        .child_processes
-                        .iter()
-                        .find(|(_, child)| child.kernel_pid == target_pid)
-                    {
-                        Some(ProcessKillTarget::Child(child_process_id.clone()))
-                    } else {
-                        vm.active_processes
-                            .iter()
-                            .find(|(_, process)| process.kernel_pid == target_pid)
-                            .map(|(target_process_id, _)| {
-                                ProcessKillTarget::TopLevel(target_process_id.clone())
-                            })
-                    }
-                };
-                match target {
-                    Some(ProcessKillTarget::SelfProcess(action)) => {
-                        if action == SignalDispositionAction::Default
-                            && parsed_signal != 0
-                            && !matches!(
-                                canonical_signal_name(parsed_signal),
-                                Some("SIGWINCH" | "SIGCHLD" | "SIGCONT" | "SIGURG")
-                            )
-                        {
-                            if let Some(vm) = self.vms.get_mut(vm_id) {
-                                if let Some(process) = vm.active_processes.get_mut(process_id) {
-                                    process.pending_self_signal_exit = Some(parsed_signal);
-                                }
-                            }
+                    let pgid = target_pid.unsigned_abs();
+                    match self.signal_vm_process_group(vm_id, caller_kernel_pid, pgid, signal) {
+                        Ok(true) => {
+                            Ok(self.apply_self_process_kill(vm_id, process_id, parsed_signal))
                         }
-                        Ok(json!({
-                            "self": true,
-                            "action": match action {
-                                SignalDispositionAction::Default => "default",
-                                SignalDispositionAction::Ignore => "ignore",
-                                SignalDispositionAction::User => "user",
-                            },
-                        }))
+                        Ok(false) => Ok(Value::Null),
+                        Err(error) => Err(error),
                     }
-                    Some(ProcessKillTarget::Child(child_process_id)) => {
-                        self.kill_javascript_child_process(
-                            vm_id,
-                            process_id,
-                            &child_process_id,
-                            signal,
-                        )?;
-                        Ok(Value::Null)
+                } else {
+                    enum ProcessKillTarget {
+                        SelfProcess,
+                        Child(String),
+                        TopLevel(String),
+                        KernelPid(u32),
                     }
-                    Some(ProcessKillTarget::TopLevel(target_process_id)) => {
-                        self.kill_process_internal(vm_id, &target_process_id, signal)?;
-                        Ok(Value::Null)
+                    let target = {
+                        let Some(vm) = self.vms.get(vm_id) else {
+                            log_stale_process_event(
+                                &self.bridge,
+                                vm_id,
+                                process_id,
+                                "javascript sync RPC process.kill",
+                            );
+                            return Ok(());
+                        };
+                        let Some(caller) = vm.active_processes.get(process_id) else {
+                            log_stale_process_event(
+                                &self.bridge,
+                                vm_id,
+                                process_id,
+                                "javascript sync RPC process.kill",
+                            );
+                            return Ok(());
+                        };
+                        let caller_pid = i32::try_from(caller.kernel_pid).map_err(|_| {
+                            SidecarError::InvalidState("caller pid exceeds i32".into())
+                        })?;
+                        if caller_pid == target_pid {
+                            ProcessKillTarget::SelfProcess
+                        } else if let Some((child_process_id, _)) = caller
+                            .child_processes
+                            .iter()
+                            .find(|(_, child)| i32::try_from(child.kernel_pid) == Ok(target_pid))
+                        {
+                            ProcessKillTarget::Child(child_process_id.clone())
+                        } else if let Some((target_process_id, _)) =
+                            vm.active_processes.iter().find(|(_, process)| {
+                                i32::try_from(process.kernel_pid) == Ok(target_pid)
+                            })
+                        {
+                            ProcessKillTarget::TopLevel(target_process_id.clone())
+                        } else {
+                            let target_kernel_pid = u32::try_from(target_pid).map_err(|_| {
+                                SidecarError::InvalidState(format!(
+                                    "EINVAL: invalid process pid {target_pid}"
+                                ))
+                            })?;
+                            ProcessKillTarget::KernelPid(target_kernel_pid)
+                        }
+                    };
+                    match target {
+                        ProcessKillTarget::SelfProcess => {
+                            Ok(self.apply_self_process_kill(vm_id, process_id, parsed_signal))
+                        }
+                        ProcessKillTarget::Child(child_process_id) => {
+                            self.kill_javascript_child_process(
+                                vm_id,
+                                process_id,
+                                &child_process_id,
+                                signal,
+                            )?;
+                            Ok(Value::Null)
+                        }
+                        ProcessKillTarget::TopLevel(target_process_id) => {
+                            self.kill_process_internal(vm_id, &target_process_id, signal)?;
+                            Ok(Value::Null)
+                        }
+                        ProcessKillTarget::KernelPid(target_kernel_pid) => {
+                            // Grandchildren and untracked kernel processes are
+                            // resolved VM-wide instead of failing with an
+                            // unknown-pid error.
+                            self.signal_vm_kernel_pid(vm_id, target_kernel_pid, signal)
+                                .map(|()| Value::Null)
+                        }
                     }
-                    None => Err(SidecarError::InvalidState(format!(
-                        "unknown process pid {target_pid}"
-                    ))),
                 }
             }
             "process.signal_state" => {
@@ -2143,17 +2276,17 @@ where
                     );
                     return Ok(());
                 };
-                service_javascript_sync_rpc(
-                    &self.bridge,
+                service_javascript_sync_rpc(JavascriptSyncRpcServiceRequest {
+                    bridge: &self.bridge,
                     vm_id,
-                    &vm.dns,
-                    &socket_paths,
-                    &mut vm.kernel,
+                    dns: &vm.dns,
+                    socket_paths: &socket_paths,
+                    kernel: &mut vm.kernel,
                     process,
-                    &request,
-                    &resource_limits,
+                    sync_request: &request,
+                    resource_limits: &resource_limits,
                     network_counts,
-                )
+                })
             }
         };
 
@@ -2215,6 +2348,44 @@ where
                 )
                 .or_else(ignore_stale_javascript_sync_rpc_response),
         }
+    }
+
+    /// Applies a `process.kill` aimed at the calling process itself and
+    /// returns the self-delivery action payload for the bridge.
+    fn apply_self_process_kill(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        parsed_signal: i32,
+    ) -> Value {
+        let action = self
+            .vms
+            .get(vm_id)
+            .and_then(|vm| vm.signal_states.get(process_id))
+            .and_then(|handlers| handlers.get(&(parsed_signal as u32)))
+            .map(|registration| registration.action)
+            .unwrap_or(SignalDispositionAction::Default);
+        if action == SignalDispositionAction::Default
+            && parsed_signal != 0
+            && !matches!(
+                canonical_signal_name(parsed_signal),
+                Some("SIGWINCH" | "SIGCHLD" | "SIGCONT" | "SIGURG")
+            )
+        {
+            if let Some(vm) = self.vms.get_mut(vm_id) {
+                if let Some(process) = vm.active_processes.get_mut(process_id) {
+                    process.pending_self_signal_exit = Some(parsed_signal);
+                }
+            }
+        }
+        json!({
+            "self": true,
+            "action": match action {
+                SignalDispositionAction::Default => "default",
+                SignalDispositionAction::Ignore => "ignore",
+                SignalDispositionAction::User => "user",
+            },
+        })
     }
 
     pub(crate) fn vm_ids_for_scope(
@@ -2499,11 +2670,22 @@ where
 
         let mut queued = Vec::new();
         {
+            let pending_capacity = self.pending_process_event_capacity();
             let receiver = self.process_event_receiver.as_mut().ok_or_else(|| {
                 SidecarError::InvalidState(String::from("process event receiver unavailable"))
             })?;
-            while let Ok(envelope) = receiver.try_recv() {
-                queued.push(envelope);
+            loop {
+                if queued.len() >= pending_capacity {
+                    if receiver.is_empty() {
+                        break;
+                    }
+                    return Err(process_event_queue_overflow_error());
+                }
+                match receiver.try_recv() {
+                    Ok(envelope) => queued.push(envelope),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                }
             }
         }
         for envelope in queued {
@@ -2515,7 +2697,7 @@ where
                     envelope.event,
                 )?;
             } else {
-                self.pending_process_events.push_back(envelope);
+                self.queue_pending_process_event(envelope)?;
             }
         }
 
@@ -3047,6 +3229,7 @@ where
             .filter(|(_, session)| session.vm_id == vm_id && session.process_id == process_id)
             .map(|(session_id, _)| session_id.clone())
             .collect::<Vec<_>>();
+        let ownership = self.vm_ownership(vm_id)?;
         for session_id in &session_ids {
             if let Some(session) = self.acp_sessions.get_mut(session_id) {
                 session.mark_termination_requested();
@@ -3058,15 +3241,13 @@ where
             .get(vm_id)
             .is_some_and(|vm| vm.active_processes.contains_key(process_id))
         {
-            self.acp_process_stdout_buffers.remove(process_id);
-            self.acp_process_stderr_buffers.remove(process_id);
+            self.clear_acp_process_stdout_buffer(process_id);
             if let Some(vm) = self.vms.get_mut(vm_id) {
                 vm.signal_states.remove(process_id);
             }
             return Ok(None);
         }
 
-        let ownership = self.vm_ownership(vm_id)?;
         for session_id in &session_ids {
             let acp_session_id = self
                 .acp_sessions
@@ -3096,12 +3277,30 @@ where
 
     fn kill_acp_process(&mut self, vm_id: &str, process_id: &str) {
         let _ = self.kill_process_internal(vm_id, process_id, "SIGKILL");
+        self.clear_acp_process_stdout_buffer(process_id);
+        let _ = self.finish_active_process_exit(vm_id, process_id, 128 + libc::SIGKILL);
+    }
+
+    fn clear_acp_process_stdout_buffer(&mut self, process_id: &str) {
         self.acp_process_stdout_buffers.remove(process_id);
+        self.acp_process_stdout_truncated.remove(process_id);
         self.acp_process_stderr_buffers.remove(process_id);
-        if let Some(vm) = self.vms.get_mut(vm_id) {
-            vm.active_processes.remove(process_id);
-            vm.signal_states.remove(process_id);
+    }
+
+    fn signal_acp_process(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+        signal: &str,
+        session_ids: &[String],
+    ) -> Result<(), SidecarError> {
+        self.kill_process_internal(vm_id, process_id, signal)?;
+        for session_id in session_ids {
+            if let Some(session) = self.acp_sessions.get_mut(session_id) {
+                session.record_activity(format!("sent signal {signal}"));
+            }
         }
+        Ok(())
     }
 
     async fn terminate_acp_process(
@@ -3115,76 +3314,78 @@ where
             return Ok(());
         };
 
-        let cancel_flush_grace =
-            Self::ACP_CANCEL_FLUSH_GRACE.min(self.config.acp_termination_grace);
-        let cancel_deadline = Instant::now() + cancel_flush_grace;
-        while self
-            .vms
-            .get(vm_id)
-            .is_some_and(|vm| vm.active_processes.contains_key(process_id))
-            && Instant::now() < cancel_deadline
-        {
-            let remaining = cancel_deadline
-                .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(10));
-            let _ = self.poll_event(&ownership, remaining).await?;
-        }
-
         if self
             .vms
             .get(vm_id)
             .is_some_and(|vm| vm.active_processes.contains_key(process_id))
         {
-            let _ = self.kill_process_internal(vm_id, process_id, "SIGTERM");
-            for session_id in &session_ids {
-                if let Some(session) = self.acp_sessions.get_mut(session_id) {
-                    session.record_activity(String::from("sent signal SIGTERM"));
-                }
-            }
-        }
-
-        let deadline = Instant::now() + self.config.acp_termination_grace;
-
-        while self
-            .vms
-            .get(vm_id)
-            .is_some_and(|vm| vm.active_processes.contains_key(process_id))
-            && Instant::now() < deadline
-        {
-            let remaining = deadline
-                .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(10));
-            let _ = self.poll_event(&ownership, remaining).await?;
-        }
-
-        if self
-            .vms
-            .get(vm_id)
-            .is_some_and(|vm| vm.active_processes.contains_key(process_id))
-        {
-            let _ = self.kill_process_internal(vm_id, process_id, "SIGKILL");
-            for session_id in &session_ids {
-                if let Some(session) = self.acp_sessions.get_mut(session_id) {
-                    session.record_activity(String::from("sent signal SIGKILL"));
-                }
-            }
-
-            let kill_deadline = Instant::now() + Self::ACP_KILL_WAIT_GRACE;
-            while self
-                .vms
-                .get(vm_id)
-                .is_some_and(|vm| vm.active_processes.contains_key(process_id))
-                && Instant::now() < kill_deadline
-            {
-                let remaining = kill_deadline
+            self.signal_acp_process(vm_id, process_id, "SIGTERM", &session_ids)?;
+            let deadline = Instant::now() + self.config.acp_termination_grace;
+            let mut exited = false;
+            while !exited && Instant::now() < deadline {
+                let wait = deadline
                     .saturating_duration_since(Instant::now())
                     .min(Duration::from_millis(10));
-                let _ = self.poll_event(&ownership, remaining).await?;
+                let event = {
+                    let vm = self.vms.get_mut(vm_id).ok_or_else(|| {
+                        SidecarError::InvalidState(format!("unknown sidecar VM {vm_id}"))
+                    })?;
+                    let process = vm.active_processes.get_mut(process_id).ok_or_else(|| {
+                        SidecarError::InvalidState(format!(
+                            "VM {vm_id} has no active process {process_id}"
+                        ))
+                    })?;
+                    if let Some(event) = process.pending_execution_events.pop_front() {
+                        Some(event)
+                    } else {
+                        process.execution.poll_event(wait).await?
+                    }
+                };
+                let Some(event) = event else {
+                    continue;
+                };
+                let event_exited = matches!(event, ActiveExecutionEvent::Exited(_));
+                let mut events = Vec::new();
+                let _ = self.handle_acp_process_event(
+                    vm_id,
+                    process_id,
+                    session_ids.first().map(String::as_str),
+                    &ownership,
+                    event,
+                    &mut events,
+                )?;
+                exited |= event_exited;
+                while let Some(envelope) =
+                    self.take_matching_process_event_envelope(vm_id, process_id)?
+                {
+                    let event_exited = matches!(envelope.event, ActiveExecutionEvent::Exited(_));
+                    let _ = self.handle_acp_process_event(
+                        vm_id,
+                        process_id,
+                        session_ids.first().map(String::as_str),
+                        &ownership,
+                        envelope.event,
+                        &mut events,
+                    )?;
+                    exited |= event_exited;
+                }
+            }
+            if !exited
+                && self
+                    .vms
+                    .get(vm_id)
+                    .is_some_and(|vm| vm.active_processes.contains_key(process_id))
+            {
+                self.kill_acp_process(vm_id, process_id);
+                for session_id in &session_ids {
+                    if let Some(session) = self.acp_sessions.get_mut(session_id) {
+                        session.record_activity(String::from("sent signal SIGKILL"));
+                    }
+                }
             }
         }
 
-        self.acp_process_stdout_buffers.remove(process_id);
-        self.acp_process_stderr_buffers.remove(process_id);
+        self.clear_acp_process_stdout_buffer(process_id);
         if let Some(vm) = self.vms.get_mut(vm_id) {
             vm.active_processes.remove(process_id);
             vm.signal_states.remove(process_id);
@@ -3290,8 +3491,7 @@ where
                     .map_err(AcpRequestError::Sidecar)?;
                 process
                     .execution
-                    .poll_event(Duration::from_millis(10))
-                    .await
+                    .poll_event_blocking(Duration::ZERO)
                     .map_err(AcpRequestError::Sidecar)?
             };
 
@@ -3327,6 +3527,8 @@ where
                     ));
                 }
             }
+
+            tokio::task::yield_now().await;
 
             if Instant::now() >= deadline {
                 let session = session_id
@@ -3365,19 +3567,37 @@ where
             return Ok(self.pending_process_events.remove(index));
         }
 
-        let receiver = self.process_event_receiver.as_mut().ok_or_else(|| {
-            SidecarError::InvalidState(String::from("process event receiver unavailable"))
-        })?;
         let mut matching_envelope = None;
-        while let Ok(envelope) = receiver.try_recv() {
-            if matching_envelope.is_none()
-                && envelope.vm_id == vm_id
-                && envelope.process_id == process_id
-            {
-                matching_envelope = Some(envelope);
-                break;
+        let mut deferred = Vec::new();
+        {
+            let pending_capacity = self.pending_process_event_capacity();
+            let receiver = self.process_event_receiver.as_mut().ok_or_else(|| {
+                SidecarError::InvalidState(String::from("process event receiver unavailable"))
+            })?;
+            loop {
+                if deferred.len() >= pending_capacity {
+                    if receiver.is_empty() {
+                        break;
+                    }
+                    return Err(process_event_queue_overflow_error());
+                }
+                let envelope = match receiver.try_recv() {
+                    Ok(envelope) => envelope,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                };
+                if matching_envelope.is_none()
+                    && envelope.vm_id == vm_id
+                    && envelope.process_id == process_id
+                {
+                    matching_envelope = Some(envelope);
+                    break;
+                }
+                deferred.push(envelope);
             }
-            self.pending_process_events.push_back(envelope);
+        }
+        for envelope in deferred {
+            self.queue_pending_process_event(envelope)?;
         }
 
         Ok(matching_envelope)
@@ -3413,7 +3633,9 @@ where
                     std::mem::take(buffer)
                 };
                 let mut pending = buffer;
+                let mut completed_stdout_line = false;
                 while let Some(index) = pending.find('\n') {
+                    completed_stdout_line = true;
                     let line = pending[..index].trim().to_owned();
                     pending = pending[index + 1..].to_owned();
                     if line.is_empty() {
@@ -3581,11 +3803,25 @@ where
                         }
                     }
                 }
+                let stdout_buffer_truncated = trim_acp_stdout_buffer(&mut pending);
                 if let Some(session_id) = session_id {
                     if let Some(session) = self.acp_sessions.get_mut(session_id) {
+                        let previous_stdout_buffer_truncated =
+                            session.stdout_buffer_truncated && !completed_stdout_line;
+                        if stdout_buffer_truncated && !previous_stdout_buffer_truncated {
+                            session.record_activity(String::from("stdout buffer truncated"));
+                        }
+                        session.stdout_buffer_truncated = !pending.is_empty()
+                            && (stdout_buffer_truncated || previous_stdout_buffer_truncated);
                         session.stdout_buffer = pending;
                     }
+                } else if pending.is_empty() {
+                    self.acp_process_stdout_buffers.remove(process_id);
                 } else {
+                    if stdout_buffer_truncated {
+                        self.acp_process_stdout_truncated
+                            .insert(String::from(process_id));
+                    }
                     self.acp_process_stdout_buffers
                         .insert(String::from(process_id), pending);
                 }
@@ -3614,7 +3850,7 @@ where
                 Ok(None)
             }
             ActiveExecutionEvent::PythonVfsRpcRequest(request) => {
-                self.handle_python_vfs_rpc_request(vm_id, process_id, request)?;
+                self.handle_python_vfs_rpc_request(vm_id, process_id, *request)?;
                 Ok(None)
             }
             ActiveExecutionEvent::SignalState {
@@ -3636,6 +3872,12 @@ where
                         session.closed = true;
                         session.exit_code = Some(exit_code);
                     }
+                }
+                if self
+                    .finish_active_process_exit(vm_id, process_id, exit_code)?
+                    .unwrap_or(false)
+                {
+                    self.bridge.emit_lifecycle(vm_id, LifecycleState::Ready)?;
                 }
                 Ok(None)
             }
@@ -3762,6 +4004,12 @@ where
         ownership: OwnershipScope,
         payload: SidecarRequestPayload,
     ) -> Result<RequestId, SidecarError> {
+        if self.outbound_sidecar_requests.len() >= MAX_OUTBOUND_SIDECAR_REQUESTS {
+            return Err(outbound_sidecar_request_queue_overflow_error());
+        }
+        if self.pending_sidecar_responses.pending_count() >= MAX_PENDING_SIDECAR_RESPONSES {
+            return Err(sidecar_response_pending_overflow_error());
+        }
         let request_id = self.allocate_sidecar_request_id();
         let request = SidecarRequestFrame::new(request_id, ownership, payload);
         self.pending_sidecar_responses
@@ -3782,13 +4030,25 @@ where
         self.pending_sidecar_responses
             .accept_response(&response)
             .map_err(sidecar_response_tracker_error)?;
+        self.completed_sidecar_response_order
+            .push_back(response.request_id);
         self.completed_sidecar_responses
             .insert(response.request_id, response);
+        while self.completed_sidecar_responses.len() > MAX_COMPLETED_SIDECAR_RESPONSES {
+            if let Some(evicted) = self.completed_sidecar_response_order.pop_front() {
+                self.completed_sidecar_responses.remove(&evicted);
+            }
+        }
         Ok(())
     }
 
     pub fn take_sidecar_response(&mut self, request_id: RequestId) -> Option<SidecarResponseFrame> {
-        self.completed_sidecar_responses.remove(&request_id)
+        let response = self.completed_sidecar_responses.remove(&request_id);
+        if response.is_some() {
+            self.completed_sidecar_response_order
+                .retain(|completed_id| completed_id != &request_id);
+        }
+        response
     }
 
     pub(crate) fn vm_lifecycle_event(

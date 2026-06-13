@@ -25,6 +25,12 @@
     "wired": "VmLimits.acp.stdout_buffer_byte_limit"
   },
   {
+    "name": "ACP_STDERR_BUFFER_CAP",
+    "path": "crates/sidecar/src/service.rs",
+    "class": "policy-deferred",
+    "rationale": "Fixed ACP stderr buffer cap from origin/main; should mirror VmLimits.acp.stdout_buffer_byte_limit in a follow-up wiring."
+  },
+  {
     "name": "ACP_TERMINAL_LIMIT",
     "path": "crates/client/src/shell.rs",
     "class": "invariant",

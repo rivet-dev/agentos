@@ -445,6 +445,7 @@ mod tests {
                 pool: Some(pool.to_string()),
             },
             Some(pool.to_string()),
+            None,
         ));
         sidecar.state.store(state.as_u8(), Ordering::SeqCst);
         sidecar
@@ -510,7 +511,7 @@ mod tests {
     #[tokio::test]
     async fn get_shared_sidecar_inserts_vacant_pool_without_reentrant_scan() {
         let pool = format!("unit-{}", Uuid::new_v4());
-        let sidecar = AgentOs::get_shared_sidecar(Some(pool.clone()))
+        let sidecar = AgentOs::get_shared_sidecar(Some(pool.clone()), None)
             .await
             .expect("shared sidecar");
 
