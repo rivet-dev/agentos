@@ -1,5 +1,7 @@
+import common from "@rivet-dev/agent-os-common";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
+import { hasRegistryCommands } from "./helpers/registry-commands.js";
 
 describe("child_process detached", () => {
 	let vm: AgentOs;
@@ -321,3 +323,130 @@ test(
 		30_000,
 	);
 });
+
+// Conformance for the unmodified Pi SDK bash backend shape: resolve the shell
+// like Pi's getShellConfig (existsSync /bin/bash, then `which bash`), prepend a
+// nonexistent PATH entry like Pi's getShellEnv, spawn the shell binary
+// directly with detached: true and piped output, and kill the whole process
+// group on timeout via process.kill(-pid, "SIGKILL").
+function registerPiShapedShellBackendTests(): void {
+	if (!hasRegistryCommands) {
+		test("pi-shaped shell backend coverage requires registry command artifacts", () => {
+			expect(hasRegistryCommands).toBe(false);
+		});
+		return;
+	}
+
+	describe("pi-shaped detached shell backend", () => {
+		let vm: AgentOs;
+
+		beforeEach(async () => {
+			vm = await AgentOs.create({ software: [common] });
+		}, 60_000);
+
+		afterEach(async () => {
+			if (vm) {
+				await vm.dispose();
+			}
+		}, 30_000);
+
+		test(
+			"detached shell spawn, cwd, dead PATH entry, and group kill match Pi's backend",
+			async () => {
+				await vm.writeFile(
+					"/tmp/pi-backend-probe.mjs",
+					[
+						"import { spawn, spawnSync } from 'node:child_process';",
+						"import { existsSync } from 'node:fs';",
+						"let shell = 'sh';",
+						"if (existsSync('/bin/bash')) {",
+						"  shell = '/bin/bash';",
+						"} else {",
+						"  const which = spawnSync('which', ['bash'], { timeout: 5000 });",
+						"  const resolved = which.status === 0 ? String(which.stdout).trim() : '';",
+						"  if (resolved) {",
+						"    shell = resolved;",
+						"  }",
+						"}",
+						"console.log('shell-resolved:' + shell);",
+						"const env = {",
+						"  ...process.env,",
+						"  PATH: '/home/user/.pi/agent/bin:' + (process.env.PATH || ''),",
+						"};",
+						"const pwdResult = spawnSync(shell, ['-c', 'pwd'], { cwd: '/tmp', env, encoding: 'utf8' });",
+						"console.log('pwd-status:' + pwdResult.status);",
+						"console.log('pwd-output:' + String(pwdResult.stdout || '').trim());",
+						"const child = spawn(shell, ['-c', 'echo started; sleep 60'], {",
+						"  cwd: '/tmp',",
+						"  env,",
+						"  detached: true,",
+						"  stdio: ['ignore', 'pipe', 'pipe'],",
+						"});",
+						"let captured = '';",
+						"const started = new Promise((resolve, reject) => {",
+						"  child.on('error', reject);",
+						"  child.stdout.on('data', (chunk) => {",
+						"    captured += chunk.toString();",
+						"    if (captured.includes('started')) {",
+						"      resolve();",
+						"    }",
+						"  });",
+						"});",
+						"child.stderr.on('data', (chunk) => {",
+						"  captured += chunk.toString();",
+						"});",
+						"await started;",
+						"const closed = new Promise((resolve) => {",
+						"  child.on('close', (code, signal) => resolve({ code, signal }));",
+						"});",
+						"const killProcessTree = (pid) => {",
+						"  try {",
+						"    process.kill(-pid, 'SIGKILL');",
+						"  } catch {",
+						"    try {",
+						"      process.kill(pid, 'SIGKILL');",
+						"    } catch {}",
+						"  }",
+						"};",
+						"killProcessTree(child.pid);",
+						"const closeResult = await closed;",
+						"console.log('close-fired:' + JSON.stringify(closeResult));",
+						"let liveness = 'alive';",
+						"try {",
+						"  process.kill(child.pid, 0);",
+						"} catch (error) {",
+						"  liveness = (error && error.code) || 'error';",
+						"}",
+						"console.log('shell-liveness:' + liveness);",
+						"console.log('captured:' + captured.trim());",
+					].join("\n"),
+				);
+
+				let stdout = "";
+				let stderr = "";
+				const { pid } = vm.spawn("node", ["/tmp/pi-backend-probe.mjs"], {
+					onStdout: (data) => {
+						stdout += new TextDecoder().decode(data);
+					},
+					onStderr: (data) => {
+						stderr += new TextDecoder().decode(data);
+					},
+				});
+
+				const exitCode = await vm.waitProcess(pid);
+				await new Promise((resolveTask) => setTimeout(resolveTask, 0));
+				const context = `stdout:\n${stdout}\nstderr:\n${stderr}`;
+				expect(exitCode, context).toBe(0);
+				expect(stdout, context).toMatch(/shell-resolved:.*bash/);
+				expect(stdout, context).toContain("pwd-status:0");
+				expect(stdout, context).toContain("pwd-output:/tmp");
+				expect(stdout, context).toContain("close-fired:");
+				expect(stdout, context).toContain("shell-liveness:ESRCH");
+				expect(stdout, context).toContain("captured:started");
+			},
+			90_000,
+		);
+	});
+}
+
+registerPiShapedShellBackendTests();
