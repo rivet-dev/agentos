@@ -8429,6 +8429,46 @@ setInterval(() => {}, 1000);
                 "missing command error should mention the command: {error}"
             );
         }
+        fn javascript_child_process_shell_mode_without_guest_sh_fails_loudly() {
+            let mut sidecar = create_test_sidecar();
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+
+            let vm = sidecar.vms.get(&vm_id).expect("created vm");
+            assert!(
+                !vm.command_guest_paths.contains_key("sh"),
+                "test VM must not provide a guest sh command"
+            );
+
+            let request = crate::protocol::JavascriptChildProcessSpawnRequest {
+                command: String::from("printf hi > out.txt"),
+                args: Vec::new(),
+                options: crate::protocol::JavascriptChildProcessSpawnOptions {
+                    shell: true,
+                    ..Default::default()
+                },
+            };
+            let error = sidecar
+                .resolve_javascript_child_process_execution(
+                    vm,
+                    &vm.guest_env,
+                    &vm.guest_cwd,
+                    &vm.host_cwd,
+                    &request,
+                )
+                .expect_err("shell-mode command without guest sh must fail instead of tokenizing");
+            assert!(
+                error.to_string().contains("/bin/sh"),
+                "missing-sh error should mention /bin/sh: {error}"
+            );
+        }
         fn javascript_child_process_spawns_path_resolved_tool_commands() {
             let mut sidecar = create_test_sidecar();
             let (connection_id, session_id) =
@@ -15604,6 +15644,7 @@ console.log(JSON.stringify({
             wasm_fd_write_sync_rpc_keeps_stdout_isolated_per_vm();
             wasm_fd_write_sync_rpc_routes_stdout_into_kernel_pty();
             javascript_child_process_searches_path_for_mounted_wasm_commands();
+            javascript_child_process_shell_mode_without_guest_sh_fails_loudly();
             javascript_child_process_spawns_path_resolved_tool_commands();
             javascript_child_process_resolves_path_resolved_tool_commands_as_tools();
             javascript_child_process_spawns_internal_tool_command_paths();

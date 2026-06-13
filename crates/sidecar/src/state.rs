@@ -388,7 +388,6 @@ pub(crate) struct ActiveProcess {
     pub(crate) runtime: GuestRuntimeKind,
     pub(crate) detached: bool,
     pub(crate) execution: ActiveExecution,
-    pub(crate) child_process_redirect: Option<ActiveChildProcessRedirect>,
     pub(crate) guest_cwd: String,
     pub(crate) env: BTreeMap<String, String>,
     pub(crate) host_cwd: PathBuf,
@@ -421,12 +420,6 @@ pub(crate) struct ActiveProcess {
     pub(crate) next_sqlite_database_id: u64,
     pub(crate) sqlite_statements: BTreeMap<u64, ActiveSqliteStatement>,
     pub(crate) next_sqlite_statement_id: u64,
-}
-
-pub(crate) struct ActiveChildProcessRedirect {
-    pub(crate) stdout_path: String,
-    pub(crate) append_stdout: bool,
-    pub(crate) stdout: Vec<u8>,
 }
 
 pub(crate) struct ActiveMappedHostFd {

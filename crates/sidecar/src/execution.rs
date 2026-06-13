@@ -27,9 +27,9 @@ use crate::service::{
     process_event_queue_overflow_error, python_error, wasm_error, MAX_PROCESS_EVENT_QUEUE,
 };
 use crate::state::{
-    ActiveChildProcessRedirect, ActiveCipherSession, ActiveDhSession, ActiveDiffieHellmanSession,
-    ActiveEcdhSession, ActiveExecution, ActiveExecutionEvent, ActiveHttp2Server,
-    ActiveHttp2Session, ActiveHttp2Stream, ActiveHttpServer, ActiveMappedHostFd, ActiveProcess,
+    ActiveCipherSession, ActiveDhSession, ActiveDiffieHellmanSession, ActiveEcdhSession,
+    ActiveExecution, ActiveExecutionEvent, ActiveHttp2Server, ActiveHttp2Session,
+    ActiveHttp2Stream, ActiveHttpServer, ActiveMappedHostFd, ActiveProcess,
     ActiveSqliteDatabase, ActiveSqliteStatement, ActiveTcpListener, ActiveTcpSocket,
     ActiveTlsState, ActiveTlsStream, ActiveUdpSocket, ActiveUnixListener, ActiveUnixSocket,
     BridgeError, ExitedProcessSnapshot, Http2BridgeEvent, Http2RuntimeSnapshot,
@@ -325,7 +325,6 @@ impl ActiveProcess {
             runtime,
             detached: false,
             execution,
-            child_process_redirect: None,
             guest_cwd: String::from("/"),
             env: BTreeMap::new(),
             host_cwd: PathBuf::from("/"),
@@ -394,14 +393,6 @@ impl ActiveProcess {
 
     pub(crate) fn with_detached(mut self, detached: bool) -> Self {
         self.detached = detached;
-        self
-    }
-
-    pub(crate) fn with_child_process_redirect(
-        mut self,
-        redirect: Option<ActiveChildProcessRedirect>,
-    ) -> Self {
-        self.child_process_redirect = redirect;
         self
     }
 
@@ -4889,10 +4880,18 @@ where
         let (command, process_args) = if request.options.shell {
             let tokens = tokenize_shell_free_command(&request.command);
             let requires_shell = command_requires_shell(&request.command)
-                || tokens
-                    .first()
-                    .is_some_and(|command| is_posix_shell_builtin(command));
-            if requires_shell && vm.command_guest_paths.contains_key("sh") {
+                || tokens.first().is_some_and(|command| {
+                    is_posix_shell_builtin(command) || shell_first_token_requires_shell(command)
+                });
+            if requires_shell {
+                if !vm.command_guest_paths.contains_key("sh") {
+                    return Err(SidecarError::InvalidState(format!(
+                        "shell-mode child_process command requires /bin/sh, which is not \
+                         installed in this VM (install a software package that provides sh, \
+                         for example @rivet-dev/agent-os-coreutils): {}",
+                        request.command
+                    )));
+                }
                 (
                     String::from("sh"),
                     vec![String::from("-c"), request.command.clone()],
@@ -5190,13 +5189,6 @@ where
         process_id: &str,
         request: JavascriptChildProcessSpawnRequest,
     ) -> Result<Value, SidecarError> {
-        let redirect = self.direct_shell_redirect_for_javascript_child_process(
-            vm_id,
-            process_id,
-            &[],
-            &request,
-        )?;
-        let request = javascript_child_process_request_for_redirect(request, redirect.as_ref());
         let resolved = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let parent = vm
@@ -5416,8 +5408,7 @@ where
                 .with_detached(request.options.detached)
                 .with_guest_cwd(resolved.guest_cwd.clone())
                 .with_env(resolved.env.clone())
-                .with_host_cwd(resolved.host_cwd.clone())
-                .with_child_process_redirect(active_child_process_redirect(redirect.as_ref())),
+                .with_host_cwd(resolved.host_cwd.clone()),
         );
         if let Some(kernel_stdin_writer_fd) = kernel_stdin_writer_fd {
             process
@@ -5445,14 +5436,7 @@ where
         request: JavascriptChildProcessSpawnRequest,
         max_buffer: Option<usize>,
     ) -> Result<Value, SidecarError> {
-        let redirect = self.direct_shell_redirect_for_javascript_child_process(
-            vm_id,
-            process_id,
-            &[],
-            &request,
-        )?;
         let sync_input = javascript_child_process_sync_input_bytes(request.options.input.as_ref())?;
-        let request = javascript_child_process_request_for_redirect(request, redirect.as_ref());
         let timeout_deadline = request
             .options
             .timeout
@@ -5473,21 +5457,7 @@ where
             })?
             .to_owned();
 
-        let (parent_kernel_pid, child_guest_cwd) =
-            self.javascript_child_process_sync_context(vm_id, process_id, &[], &child_process_id)?;
-        let redirect_input = if let Some(redirect) = redirect.as_ref() {
-            self.javascript_child_process_redirect_stdin(
-                vm_id,
-                parent_kernel_pid,
-                &child_guest_cwd,
-                redirect,
-            )?
-        } else {
-            None
-        };
-        let sync_input = redirect_input.as_ref().or(sync_input.as_ref());
-
-        if let Some(input) = sync_input.map(Vec::as_slice) {
+        if let Some(input) = sync_input.as_deref() {
             self.write_javascript_child_process_stdin(vm_id, process_id, &child_process_id, input)?;
         }
         self.close_javascript_child_process_stdin(vm_id, process_id, &child_process_id)?;
@@ -5575,14 +5545,6 @@ where
             }
         };
 
-        self.apply_javascript_child_process_redirect_stdout(
-            vm_id,
-            parent_kernel_pid,
-            &child_guest_cwd,
-            redirect.as_ref(),
-            &mut stdout,
-        )?;
-
         Ok(json!({
             "stdout": String::from_utf8_lossy(&stdout),
             "stderr": String::from_utf8_lossy(&stderr),
@@ -5591,122 +5553,6 @@ where
             "timedOut": timed_out,
             "maxBufferExceeded": max_buffer_exceeded,
         }))
-    }
-
-    fn direct_shell_redirect_for_javascript_child_process(
-        &self,
-        _vm_id: &str,
-        _process_id: &str,
-        _current_process_path: &[&str],
-        request: &JavascriptChildProcessSpawnRequest,
-    ) -> Result<Option<SimpleShellRedirectCommand>, SidecarError> {
-        let shell_script = if request.options.shell {
-            request.command.as_str()
-        } else if is_shell_command(&request.command)
-            && request.args.len() == 2
-            && request.args.first().is_some_and(|arg| arg == "-c")
-        {
-            request.args[1].as_str()
-        } else {
-            return Ok(None);
-        };
-
-        let Some(parsed) = parse_simple_shell_redirect_command(shell_script) else {
-            return Ok(None);
-        };
-        if !parsed.has_redirects() || is_posix_shell_builtin(&parsed.command) {
-            return Ok(None);
-        }
-        Ok(Some(parsed))
-    }
-
-    fn javascript_child_process_sync_context(
-        &self,
-        vm_id: &str,
-        process_id: &str,
-        current_process_path: &[&str],
-        child_process_id: &str,
-    ) -> Result<(u32, String), SidecarError> {
-        let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
-        let root = vm
-            .active_processes
-            .get(process_id)
-            .ok_or_else(|| missing_process_error(vm_id, process_id))?;
-        let parent = Self::active_process_by_path(root, current_process_path).ok_or_else(|| {
-            SidecarError::InvalidState(format!(
-                "unknown child process path {} during spawn_sync context lookup",
-                Self::child_process_path_label(process_id, current_process_path)
-            ))
-        })?;
-        let child = parent
-            .child_processes
-            .get(child_process_id)
-            .ok_or_else(|| javascript_child_process_gone_error(process_id, &[child_process_id]))?;
-        Ok((parent.kernel_pid, child.guest_cwd.clone()))
-    }
-
-    fn javascript_child_process_redirect_stdin(
-        &mut self,
-        vm_id: &str,
-        parent_kernel_pid: u32,
-        child_guest_cwd: &str,
-        redirect: &SimpleShellRedirectCommand,
-    ) -> Result<Option<Vec<u8>>, SidecarError> {
-        let Some(stdin_path) = redirect.stdin_path.as_deref() else {
-            return Ok(None);
-        };
-        let guest_path = resolve_shell_redirect_guest_path(child_guest_cwd, stdin_path);
-        let vm = self
-            .vms
-            .get_mut(vm_id)
-            .ok_or_else(|| missing_vm_error(vm_id))?;
-        vm.kernel
-            .read_file_for_process(EXECUTION_DRIVER_NAME, parent_kernel_pid, &guest_path)
-            .map(Some)
-            .map_err(kernel_error)
-    }
-
-    fn apply_javascript_child_process_redirect_stdout(
-        &mut self,
-        vm_id: &str,
-        parent_kernel_pid: u32,
-        child_guest_cwd: &str,
-        redirect: Option<&SimpleShellRedirectCommand>,
-        stdout: &mut Vec<u8>,
-    ) -> Result<(), SidecarError> {
-        let Some(redirect) = redirect else {
-            return Ok(());
-        };
-        let Some(stdout_path) = redirect.stdout_path.as_deref() else {
-            return Ok(());
-        };
-        let guest_path = resolve_shell_redirect_guest_path(child_guest_cwd, stdout_path);
-        let vm = self
-            .vms
-            .get_mut(vm_id)
-            .ok_or_else(|| missing_vm_error(vm_id))?;
-        let contents = if redirect.append_stdout {
-            let mut existing = read_existing_redirect_stdout_for_append(
-                &mut vm.kernel,
-                parent_kernel_pid,
-                &guest_path,
-            )?;
-            existing.extend_from_slice(stdout);
-            existing
-        } else {
-            stdout.clone()
-        };
-        vm.kernel
-            .write_file_for_process(
-                EXECUTION_DRIVER_NAME,
-                parent_kernel_pid,
-                &guest_path,
-                contents,
-                None,
-            )
-            .map_err(kernel_error)?;
-        stdout.clear();
-        Ok(())
     }
 
     fn spawn_descendant_javascript_child_process(
@@ -5718,13 +5564,6 @@ where
     ) -> Result<Value, SidecarError> {
         let current_process_label =
             Self::child_process_path_label(process_id, current_process_path);
-        let redirect = self.direct_shell_redirect_for_javascript_child_process(
-            vm_id,
-            process_id,
-            current_process_path,
-            &request,
-        )?;
-        let request = javascript_child_process_request_for_redirect(request, redirect.as_ref());
         let (resolved, parent_kernel_pid) = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let root = vm
@@ -5963,8 +5802,7 @@ where
                 .with_detached(request.options.detached)
                 .with_guest_cwd(resolved.guest_cwd.clone())
                 .with_env(resolved.env.clone())
-                .with_host_cwd(resolved.host_cwd.clone())
-                .with_child_process_redirect(active_child_process_redirect(redirect.as_ref())),
+                .with_host_cwd(resolved.host_cwd.clone()),
         );
         if let Some(kernel_stdin_writer_fd) = kernel_stdin_writer_fd {
             parent
@@ -5993,14 +5831,7 @@ where
         request: JavascriptChildProcessSpawnRequest,
         max_buffer: Option<usize>,
     ) -> Result<Value, SidecarError> {
-        let redirect = self.direct_shell_redirect_for_javascript_child_process(
-            vm_id,
-            process_id,
-            current_process_path,
-            &request,
-        )?;
         let sync_input = javascript_child_process_sync_input_bytes(request.options.input.as_ref())?;
-        let request = javascript_child_process_request_for_redirect(request, redirect.as_ref());
         let timeout_deadline = request
             .options
             .timeout
@@ -6026,25 +5857,7 @@ where
             })?
             .to_owned();
 
-        let (parent_kernel_pid, child_guest_cwd) = self.javascript_child_process_sync_context(
-            vm_id,
-            process_id,
-            current_process_path,
-            &child_process_id,
-        )?;
-        let redirect_input = if let Some(redirect) = redirect.as_ref() {
-            self.javascript_child_process_redirect_stdin(
-                vm_id,
-                parent_kernel_pid,
-                &child_guest_cwd,
-                redirect,
-            )?
-        } else {
-            None
-        };
-        let sync_input = redirect_input.as_ref().or(sync_input.as_ref());
-
-        if let Some(input) = sync_input.map(Vec::as_slice) {
+        if let Some(input) = sync_input.as_deref() {
             self.write_descendant_javascript_child_process_stdin(
                 vm_id,
                 process_id,
@@ -6150,14 +5963,6 @@ where
                 _ => {}
             }
         };
-
-        self.apply_javascript_child_process_redirect_stdout(
-            vm_id,
-            parent_kernel_pid,
-            &child_guest_cwd,
-            redirect.as_ref(),
-            &mut stdout,
-        )?;
 
         Ok(json!({
             "stdout": String::from_utf8_lossy(&stdout),
@@ -6359,30 +6164,6 @@ where
 
             match event {
                 ActiveExecutionEvent::Stdout(chunk) => {
-                    let redirected = {
-                        let Some(vm) = self.vms.get_mut(vm_id) else {
-                            return Ok(Value::Null);
-                        };
-                        let Some(parent) = Self::descendant_parent_process_mut(
-                            vm,
-                            process_id,
-                            current_process_path,
-                        ) else {
-                            return Err(child_gone_error());
-                        };
-                        let Some(child) = parent.child_processes.get_mut(child_process_id) else {
-                            return Err(child_gone_error());
-                        };
-                        if let Some(redirect) = child.child_process_redirect.as_mut() {
-                            redirect.stdout.extend_from_slice(&chunk);
-                            true
-                        } else {
-                            false
-                        }
-                    };
-                    if redirected {
-                        continue;
-                    }
                     return Ok(json!({
                         "type": "stdout",
                         "data": javascript_sync_rpc_bytes_value(&chunk),
@@ -6461,19 +6242,13 @@ where
                             }
                         })
                     };
-                    let (
-                        parent_kernel_pid,
-                        parent_runtime_pid,
-                        parent_v8_signal_session,
-                        should_signal_parent,
-                    ) = {
+                    let (parent_runtime_pid, parent_v8_signal_session, should_signal_parent) = {
                         let Some(parent) =
                             Self::descendant_parent_process(vm, process_id, current_process_path)
                         else {
                             return Ok(Value::Null);
                         };
                         (
-                            parent.kernel_pid,
                             parent.execution.child_pid(),
                             parent.execution.javascript_v8_session_handle().filter(|_| {
                                 matches!(
@@ -6502,11 +6277,6 @@ where
                         Self::child_process_path_label(process_id, &child_path);
                     let detached_children =
                         Self::adopt_detached_child_processes(&child_process_label, &mut child);
-                    apply_active_child_process_redirect_stdout(
-                        &mut vm.kernel,
-                        parent_kernel_pid,
-                        &mut child,
-                    )?;
                     sync_process_host_writes_to_kernel(vm, &child)?;
                     terminate_child_process_tree(&mut vm.kernel, &mut child);
                     child.kernel_handle.finish(exit_code);
@@ -8127,7 +7897,7 @@ fn sync_host_directory_tree_to_kernel_inner(
                     )
                 });
             let desired_mode = host_shadow_mode(&metadata);
-            let bytes = fs::read(&host_path).map_err(|error| {
+            let bytes = read_host_shadow_file(&host_path, desired_mode).map_err(|error| {
                 SidecarError::Io(format!(
                     "failed to read host shadow file {}: {error}",
                     host_path.display()
@@ -8207,6 +7977,24 @@ fn replace_kernel_symlink(
 
 fn host_shadow_mode(metadata: &fs::Metadata) -> u32 {
     metadata.permissions().mode() & 0o7777
+}
+
+/// Reads a shadow-root file back into the kernel even when guest-visible mode
+/// bits make it unreadable for the host user. The sidecar is the kernel for
+/// this tree, so guest permission bits (for example a 0o200 write-only file
+/// produced by `chmod` plus a shell append redirect) must not break the
+/// exit-time shadow sync. The original mode is restored after the read.
+fn read_host_shadow_file(host_path: &Path, mode: u32) -> std::io::Result<Vec<u8>> {
+    match fs::read(host_path) {
+        Ok(bytes) => Ok(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            fs::set_permissions(host_path, fs::Permissions::from_mode(mode | 0o400))?;
+            let result = fs::read(host_path);
+            fs::set_permissions(host_path, fs::Permissions::from_mode(mode))?;
+            result
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn metadata_time_ms(seconds: i64, nanos: i64) -> u64 {
@@ -10759,258 +10547,6 @@ fn resolve_wasm_permission_tier(
         .unwrap_or(WasmPermissionTier::Full)
 }
 
-#[derive(Debug)]
-struct SimpleShellRedirectCommand {
-    command: String,
-    args: Vec<String>,
-    stdin_path: Option<String>,
-    stdout_path: Option<String>,
-    append_stdout: bool,
-}
-
-impl SimpleShellRedirectCommand {
-    fn has_redirects(&self) -> bool {
-        self.stdin_path.is_some() || self.stdout_path.is_some()
-    }
-}
-
-fn javascript_child_process_request_for_redirect(
-    request: JavascriptChildProcessSpawnRequest,
-    redirect: Option<&SimpleShellRedirectCommand>,
-) -> JavascriptChildProcessSpawnRequest {
-    let Some(redirect) = redirect else {
-        return request;
-    };
-    let mut options = request.options;
-    options.shell = false;
-    JavascriptChildProcessSpawnRequest {
-        command: redirect.command.clone(),
-        args: redirect.args.clone(),
-        options,
-    }
-}
-
-fn active_child_process_redirect(
-    redirect: Option<&SimpleShellRedirectCommand>,
-) -> Option<ActiveChildProcessRedirect> {
-    let redirect = redirect?;
-    Some(ActiveChildProcessRedirect {
-        stdout_path: redirect.stdout_path.clone()?,
-        append_stdout: redirect.append_stdout,
-        stdout: Vec::new(),
-    })
-}
-
-fn apply_active_child_process_redirect_stdout(
-    kernel: &mut SidecarKernel,
-    parent_kernel_pid: u32,
-    child: &mut ActiveProcess,
-) -> Result<(), SidecarError> {
-    let Some(redirect) = child.child_process_redirect.take() else {
-        return Ok(());
-    };
-    let guest_path = resolve_shell_redirect_guest_path(&child.guest_cwd, &redirect.stdout_path);
-    let contents = if redirect.append_stdout {
-        let mut existing =
-            read_existing_redirect_stdout_for_append(kernel, parent_kernel_pid, &guest_path)?;
-        existing.extend_from_slice(&redirect.stdout);
-        existing
-    } else {
-        redirect.stdout
-    };
-    kernel
-        .write_file_for_process(
-            EXECUTION_DRIVER_NAME,
-            parent_kernel_pid,
-            &guest_path,
-            contents,
-            None,
-        )
-        .map_err(kernel_error)
-}
-
-fn read_existing_redirect_stdout_for_append(
-    kernel: &mut SidecarKernel,
-    parent_kernel_pid: u32,
-    guest_path: &str,
-) -> Result<Vec<u8>, SidecarError> {
-    match kernel.read_file_for_process(EXECUTION_DRIVER_NAME, parent_kernel_pid, guest_path) {
-        Ok(existing) => Ok(existing),
-        Err(error) if error.code() == "ENOENT" => Ok(Vec::new()),
-        Err(error) => Err(kernel_error(error)),
-    }
-}
-
-fn resolve_shell_redirect_guest_path(child_guest_cwd: &str, redirect_path: &str) -> String {
-    if redirect_path.starts_with('/') {
-        normalize_path(redirect_path)
-    } else {
-        normalize_path(&format!("{child_guest_cwd}/{redirect_path}"))
-    }
-}
-
-fn parse_simple_shell_redirect_command(command: &str) -> Option<SimpleShellRedirectCommand> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut quote: Option<char> = None;
-    let mut escaped = false;
-
-    let mut characters = command.chars().peekable();
-    while let Some(character) = characters.next() {
-        if quote.is_none() {
-            if escaped {
-                current.push(character);
-                escaped = false;
-                continue;
-            }
-            if character == '\\' {
-                escaped = true;
-                continue;
-            }
-            if character == '\'' || character == '"' {
-                quote = Some(character);
-                continue;
-            }
-            if character.is_whitespace() {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-                continue;
-            }
-            if character == '<' {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-                tokens.push(String::from("<"));
-                continue;
-            }
-            if character == '>' {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-                if characters.next_if_eq(&'>').is_some() {
-                    tokens.push(String::from(">>"));
-                } else {
-                    tokens.push(String::from(">"));
-                }
-                continue;
-            }
-            if matches!(
-                character,
-                '|' | '&'
-                    | ';'
-                    | '('
-                    | ')'
-                    | '$'
-                    | '`'
-                    | '*'
-                    | '?'
-                    | '['
-                    | ']'
-                    | '{'
-                    | '}'
-                    | '~'
-                    | '!'
-            ) {
-                return None;
-            }
-            current.push(character);
-            continue;
-        }
-
-        if quote == Some('\'') {
-            if character == '\'' {
-                quote = None;
-            } else {
-                current.push(character);
-            }
-            continue;
-        }
-
-        if escaped {
-            append_double_quoted_shell_escape(&mut current, character);
-            escaped = false;
-            continue;
-        }
-        if character == '\\' {
-            escaped = true;
-            continue;
-        }
-        if character == '"' {
-            quote = None;
-            continue;
-        }
-        if character == '$' || character == '`' {
-            return None;
-        }
-        current.push(character);
-    }
-
-    if quote.is_some() || escaped {
-        return None;
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    if tokens.is_empty() {
-        return None;
-    }
-
-    let mut command_name = None;
-    let mut args = Vec::new();
-    let mut stdin_path = None;
-    let mut stdout_path = None;
-    let mut append_stdout = false;
-    let mut index = 0;
-    while index < tokens.len() {
-        let token = &tokens[index];
-        if token == "<" || token == ">" || token == ">>" {
-            let redirect_path = tokens.get(index + 1)?;
-            if redirect_path == "<" || redirect_path == ">" || redirect_path == ">>" {
-                return None;
-            }
-            if token == "<" {
-                if stdin_path.is_some() {
-                    return None;
-                }
-                stdin_path = Some(redirect_path.clone());
-            } else {
-                if stdout_path.is_some() {
-                    return None;
-                }
-                stdout_path = Some(redirect_path.clone());
-                append_stdout = token == ">>";
-            }
-            index += 2;
-            continue;
-        }
-
-        if command_name.is_none() {
-            command_name = Some(token.clone());
-        } else {
-            args.push(token.clone());
-        }
-        index += 1;
-    }
-
-    Some(SimpleShellRedirectCommand {
-        command: command_name?,
-        args,
-        stdin_path,
-        stdout_path,
-        append_stdout,
-    })
-}
-
-fn append_double_quoted_shell_escape(current: &mut String, character: char) {
-    if matches!(character, '$' | '`' | '"' | '\\') {
-        current.push(character);
-    } else if character != '\n' {
-        current.push('\\');
-        current.push(character);
-    }
-}
-
 fn tokenize_shell_free_command(command: &str) -> Vec<String> {
     command
         .split_whitespace()
@@ -11038,6 +10574,36 @@ fn is_posix_shell_builtin(command: &str) -> bool {
             | "trap"
             | "umask"
             | "unset"
+    )
+}
+
+/// Single-token checks for shell-mode commands whose first word forces a real
+/// shell even when the command string has no shell metacharacters. This is not
+/// a parser: env-assignment prefixes (`FOO=bar cmd`) and shell reserved words
+/// have no meaning outside `sh`, so whitespace-tokenizing them would silently
+/// run the wrong program.
+fn shell_first_token_requires_shell(token: &str) -> bool {
+    token.contains('=') || is_shell_reserved_word(token)
+}
+
+fn is_shell_reserved_word(token: &str) -> bool {
+    matches!(
+        token,
+        "if" | "then"
+            | "elif"
+            | "else"
+            | "fi"
+            | "for"
+            | "in"
+            | "do"
+            | "done"
+            | "while"
+            | "until"
+            | "case"
+            | "esac"
+            | "{"
+            | "}"
+            | "!"
     )
 }
 
