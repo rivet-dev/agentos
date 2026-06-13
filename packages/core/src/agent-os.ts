@@ -3233,29 +3233,11 @@ export class AgentOs {
 			throw new Error(`Unknown agent type: ${agentType}`);
 		}
 
-		const toolReference = this._toolReference || undefined;
-		let extraArgs: string[] = [];
-		let extraEnv: Record<string, string> = {};
-		if (config.prepareInstructions) {
-			const cwd = options?.cwd ?? "/home/user";
-			const skipBase = options?.skipOsInstructions ?? false;
-			const hasToolRef = !!toolReference;
-			const hasAdditionalInstructions = !!options?.additionalInstructions;
-
-			if (!skipBase || hasToolRef || hasAdditionalInstructions) {
-				const prepared = await config.prepareInstructions(
-					this.#kernel,
-					cwd,
-					options?.additionalInstructions,
-					{ toolReference, skipBase },
-				);
-				if (prepared.args) extraArgs = prepared.args;
-				if (prepared.env) extraEnv = prepared.env;
-			}
-		}
-
-		const launchArgs = [...(config.launchArgs ?? []), ...extraArgs];
-		let launchEnv = { ...config.defaultEnv, ...extraEnv, ...options?.env };
+		// System-prompt assembly and injection (launch args / OPENCODE_CONTEXTPATHS) are owned by
+		// the sidecar at CreateSession. The host only forwards additionalInstructions /
+		// skipOsInstructions plus the agent's static launch args and env.
+		const launchArgs = [...(config.launchArgs ?? [])];
+		let launchEnv = { ...config.defaultEnv, ...options?.env };
 		const sessionCwd = options?.cwd ?? "/home/user";
 		const adapterEntrypoint = this._resolveAdapterBin(config.acpAdapter);
 		if (
@@ -3281,6 +3263,8 @@ export class AgentOs {
 				mcpServers: options?.mcpServers ?? [],
 				protocolVersion: ACP_PROTOCOL_VERSION,
 				clientCapabilities: defaultAcpClientCapabilities(),
+				additionalInstructions: options?.additionalInstructions,
+				skipOsInstructions: options?.skipOsInstructions ?? false,
 			},
 		);
 

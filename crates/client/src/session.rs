@@ -77,24 +77,8 @@ pub struct AgentRegistryEntry {
 /// Built-in agent ids (mirrors the keys of TS `AGENT_CONFIGS`).
 const BUILTIN_AGENT_IDS: [&str; 5] = ["pi", "pi-cli", "opencode", "claude", "codex"];
 
-/// opencode context-file paths injected via `OPENCODE_CONTEXTPATHS` (port of TS `OPENCODE_CONTEXT_PATHS`).
-const OPENCODE_CONTEXT_PATHS: [&str; 12] = [
-    ".github/copilot-instructions.md",
-    ".cursorrules",
-    ".cursor/rules/",
-    "CLAUDE.md",
-    "CLAUDE.local.md",
-    "opencode.md",
-    "opencode.local.md",
-    "OpenCode.md",
-    "OpenCode.local.md",
-    "OPENCODE.md",
-    "OPENCODE.local.md",
-    "/etc/agentos/instructions.md",
-];
-
-/// A built-in agent configuration (port of a TS `AGENT_CONFIGS` entry). `prepareInstructions` is a
-/// documented nuance not yet ported.
+/// A built-in agent configuration (port of a TS `AGENT_CONFIGS` entry). System-prompt assembly and
+/// injection are owned by the sidecar.
 struct AgentConfigDef {
     acp_adapter: &'static str,
     agent_package: &'static str,
@@ -1322,16 +1306,11 @@ impl AgentOs {
             .collect()
     }
 
-    /// Create an ACP session. Resolves the agent config, prepares instructions, merges env (user
-    /// wins), creates the session via the sidecar (`runtime: java_script`, protocol v1, default
-    /// client caps), and hydrates state. On hydration failure the session is removed and the error
-    /// rethrown. Returns the session id only.
-    ///
-    /// PARITY GAP: agent-config resolution + adapter-bin resolution + `prepareInstructions` live in
-    /// shared modules (`AgentConfig`/`AGENT_CONFIGS`/software roots) that are not present in the
-    /// scaffold and out of scope to edit. The local registration + hydration flow is implemented
-    /// against `register_session`, which the create path must call once that infra exists. See
-    /// `todosLeft`.
+    /// Create an ACP session. Resolves the agent config, merges env (user wins), creates the session
+    /// via the sidecar (`runtime: java_script`, protocol v1, default client caps), and hydrates
+    /// state. System-prompt assembly and injection are owned by the sidecar; the client only
+    /// forwards `additional_instructions` / `skip_os_instructions`. On hydration failure the session
+    /// is removed and the error rethrown. Returns the session id only.
     pub async fn create_session(
         &self,
         agent_type: &str,
@@ -1350,19 +1329,13 @@ impl AgentOs {
         let adapter_entrypoint =
             resolve_package_bin(&module_access_cwd, config.acp_adapter, None)?;
 
-        // prepareInstructions (per-agent OS-instruction injection): appended-prompt launch args for
-        // pi/pi-cli/claude/codex, OPENCODE_CONTEXTPATHS env for opencode.
-        let (args, prepared_env) = self.prepare_instructions(agent_type, &options).await?;
-
-        // Merge env: agent default_env (lowest) -> prepareInstructions env -> user env (wins).
+        // Merge env: agent default_env (lowest) -> user env (wins). System-prompt assembly and
+        // injection (launch args / OPENCODE_CONTEXTPATHS) are owned by the sidecar at CreateSession.
         let mut env: BTreeMap<String, String> = config
             .default_env
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
             .collect();
-        for (key, value) in prepared_env {
-            env.insert(key, value);
-        }
         for (key, value) in &options.env {
             env.insert(key.clone(), value.clone());
         }
@@ -1395,12 +1368,14 @@ impl AgentOs {
                     agent_type: agent_type.to_string(),
                     runtime: GuestRuntimeKind::JavaScript,
                     adapter_entrypoint,
-                    args,
+                    args: Vec::new(),
                     env,
                     cwd,
                     mcp_servers,
                     protocol_version: crate::ACP_PROTOCOL_VERSION,
                     client_capabilities,
+                    additional_instructions: options.additional_instructions.clone(),
+                    skip_os_instructions: options.skip_os_instructions,
                 }),
             )
             .await?;
@@ -1484,100 +1459,6 @@ impl AgentOs {
                 let _ = self.inner().sessions.remove(session_id);
                 Err(error)
             }
-        }
-    }
-
-    /// Read OS instructions from `/etc/agentos/instructions.md` inside the VM, optionally appending
-    /// session-level additional instructions. Port of TS `readVmInstructions` (tool-reference
-    /// injection is a noted nuance not yet wired).
-    async fn read_vm_instructions(
-        &self,
-        additional: Option<&str>,
-        skip_base: bool,
-    ) -> Result<String> {
-        let mut parts: Vec<String> = Vec::new();
-        if !skip_base {
-            // OS instructions are best-effort: a VM whose base layer predates the
-            // baked `/etc/agentos/instructions.md` (older sidecar) must not crash
-            // session creation. Treat a missing file as "no base instructions",
-            // matching the non-destructive, skip-able prompt-injection contract.
-            match self.read_file("/etc/agentos/instructions.md").await {
-                Ok(data) => parts.push(String::from_utf8_lossy(&data).into_owned()),
-                Err(error) => {
-                    tracing::warn!(
-                        ?error,
-                        "skipping OS instructions: /etc/agentos/instructions.md not readable"
-                    );
-                }
-            }
-        }
-        if let Some(additional) = additional {
-            if !additional.is_empty() {
-                parts.push(additional.to_string());
-            }
-        }
-        if parts.is_empty() {
-            return Ok(String::new());
-        }
-        // Horizontal rule so agents can distinguish the injected prompt from host-appended content.
-        parts.push("---".to_string());
-        Ok(parts.join("\n\n"))
-    }
-
-    /// Per-agent `prepareInstructions` (port of TS `AGENT_CONFIGS[*].prepareInstructions`). Returns
-    /// the launch args and env additions to apply. pi/pi-cli/claude/codex append the OS+session
-    /// instructions as a prompt arg; opencode injects them as `OPENCODE_CONTEXTPATHS`.
-    async fn prepare_instructions(
-        &self,
-        agent_type: &str,
-        options: &CreateSessionOptions,
-    ) -> Result<(Vec<String>, BTreeMap<String, String>)> {
-        let skip_base = options.skip_os_instructions;
-        match agent_type {
-            "pi" | "pi-cli" | "claude" | "codex" => {
-                let flag = if agent_type == "codex" {
-                    "--append-developer-instructions"
-                } else {
-                    "--append-system-prompt"
-                };
-                if !skip_base || options.additional_instructions.is_some() {
-                    let instructions = self
-                        .read_vm_instructions(options.additional_instructions.as_deref(), skip_base)
-                        .await?;
-                    if !instructions.is_empty() {
-                        return Ok((vec![flag.to_string(), instructions], BTreeMap::new()));
-                    }
-                }
-                Ok((Vec::new(), BTreeMap::new()))
-            }
-            "opencode" => {
-                let mut context_paths: Vec<String> = if skip_base {
-                    Vec::new()
-                } else {
-                    OPENCODE_CONTEXT_PATHS
-                        .iter()
-                        .map(|path| (*path).to_string())
-                        .collect()
-                };
-                if let Some(additional) = options.additional_instructions.as_deref() {
-                    if !additional.is_empty() {
-                        let path = "/tmp/agentos-additional-instructions.md";
-                        self.write_file(path, crate::fs::FileContent::Text(additional.to_string()))
-                            .await?;
-                        context_paths.push(path.to_string());
-                    }
-                }
-                if context_paths.is_empty() {
-                    return Ok((Vec::new(), BTreeMap::new()));
-                }
-                let mut env = BTreeMap::new();
-                env.insert(
-                    "OPENCODE_CONTEXTPATHS".to_string(),
-                    serde_json::to_string(&context_paths).unwrap_or_default(),
-                );
-                Ok((Vec::new(), env))
-            }
-            _ => Ok((Vec::new(), BTreeMap::new())),
         }
     }
 

@@ -72,11 +72,6 @@ export interface AgentSoftwareDescriptor extends SoftwareDescriptor {
 		env?: (ctx: SoftwareContext) => Record<string, string>;
 		/** Additional CLI args prepended when launching the ACP adapter. */
 		launchArgs?: string[];
-		/**
-		 * Prepare agent-specific spawn overrides for OS instruction injection.
-		 * When provided, replaces the default instruction injection behavior.
-		 */
-		prepareInstructions?: AgentConfig["prepareInstructions"];
 	};
 }
 
@@ -542,7 +537,6 @@ export function processSoftware(software: SoftwareInput[]): ProcessedSoftware {
 					launchArgs: pkg.agent.launchArgs,
 					defaultEnv:
 						Object.keys(combinedEnv).length > 0 ? combinedEnv : undefined,
-					prepareInstructions: pkg.agent.prepareInstructions,
 				};
 
 				agentConfigs.set(pkg.agent.id, agentConfig);
