@@ -283,7 +283,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
     expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/bash-output.txt'))).toBe('bash-ok');
   });
 
-  it('execSync unsupported redirection syntax falls back to the guest shell', async () => {
+  it('execSync multi-statement shell syntax runs through the guest shell', async () => {
     ctx = await createBridgeIntegrationKernel();
 
     const chunks: Uint8Array[] = [];
@@ -307,7 +307,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
     expect(new TextDecoder().decode(await ctx.vfs.readFile('/tmp/fallback-output.txt'))).toBe('fallback-ok\n');
   });
 
-  it('execSync append redirection preserves non-missing read errors', async () => {
+  it('execSync append redirection onto a write-only file succeeds like Linux', async () => {
     ctx = await createBridgeIntegrationKernel();
 
     const chunks: Uint8Array[] = [];
@@ -317,21 +317,14 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
       const { execSync } = require('child_process');
       fs.writeFileSync('/tmp/write-only.txt', 'original');
       fs.chmodSync('/tmp/write-only.txt', 0o200);
-      try {
-        execSync("printf changed >> /tmp/write-only.txt", { encoding: 'utf-8' });
-        fs.chmodSync('/tmp/write-only.txt', 0o600);
-        console.log(JSON.stringify({
-          mode: 'loaded',
-          file: fs.readFileSync('/tmp/write-only.txt', 'utf8')
-        }));
-      } catch (error) {
-        fs.chmodSync('/tmp/write-only.txt', 0o600);
-        console.log(JSON.stringify({
-          mode: 'error',
-          message: String(error && error.message ? error.message : error),
-          file: fs.readFileSync('/tmp/write-only.txt', 'utf8')
-        }));
-      }
+      // A real shell opens the append target write-only, so a 0o200 file is
+      // appendable even though it cannot be read back until the chmod below.
+      execSync("printf changed >> /tmp/write-only.txt", { encoding: 'utf-8' });
+      fs.chmodSync('/tmp/write-only.txt', 0o600);
+      console.log(JSON.stringify({
+        mode: 'loaded',
+        file: fs.readFileSync('/tmp/write-only.txt', 'utf8')
+      }));
     `], {
       cwd: '/tmp',
       onStdout: (data) => chunks.push(data),
@@ -343,9 +336,8 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
     const stderr = stderrChunks.map(c => new TextDecoder().decode(c)).join('');
     expect(code, `stdout:\n${output}\nstderr:\n${stderr}`).toBe(0);
     const result = JSON.parse(output.trim());
-    expect(result.mode).toBe('error');
-    expect(result.file).toBe('original');
-    expect(result.message).toMatch(/EACCES|permission/i);
+    expect(result.mode).toBe('loaded');
+    expect(result.file).toBe('originalchanged');
   });
 
   it('execFileSync on node_modules/.bin shell shims unwraps to the node entrypoint', async () => {
