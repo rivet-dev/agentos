@@ -147,6 +147,10 @@ When the user asks to track something in a note, store it in `~/.agents/notes/` 
 - Always return anyhow errors from failable Rust functions. Do not glob-import from anyhow. Prefer `.context()` over the `anyhow!` macro.
 - A failing fallback path must rethrow the original error with the fallback's failure attached as context. Never let the fallback's error replace the original.
 
+## Runtime Limits
+
+- **Every new limit-shaped constant must be classified.** Any `MAX_*` / `*_LIMIT` / `*_CAPACITY` / retention / sizing constant added under the scanned roots must get an entry in `crates/sidecar/tests/fixtures/limits-inventory.json`: either `policy` (wired through `VmLimits` with a `wired` field naming its config field) or `invariant`/`policy-deferred` with a one-line rationale. The `cargo test -p agent-os-sidecar --test limits_audit` audit fails when a qualifying constant is unclassified.
+
 ## Fail-By-Default Runtime
 
 - Avoid silent no-ops for required runtime behavior. If a capability is required, validate it and throw an explicit error with actionable context instead of returning early.
