@@ -323,7 +323,16 @@ fn kernel_fd_surface_supports_open_seek_positional_io_dup_and_dev_fd_views() {
         .expect("stat regular file fd");
     assert_eq!(file_stat.size, 5);
     assert_eq!(file_stat.blocks, 1);
-    assert_eq!(file_stat.dev, 1);
+    // Device ids are unique per filesystem instance; assert the fd stat
+    // reports the same device as a direct path stat on the same filesystem.
+    assert_eq!(
+        file_stat.dev,
+        kernel
+            .filesystem_mut()
+            .stat("/tmp/data.txt")
+            .expect("stat updated file")
+            .dev
+    );
     assert_eq!(file_stat.rdev, 0);
     assert!(!file_stat.is_directory);
 

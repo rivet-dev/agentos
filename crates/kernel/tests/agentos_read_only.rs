@@ -2,6 +2,10 @@ use agent_os_kernel::command_registry::CommandDriver;
 use agent_os_kernel::fd_table::{O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY};
 use agent_os_kernel::kernel::{KernelError, KernelResult, KernelVm, KernelVmConfig, SpawnOptions};
 use agent_os_kernel::permissions::Permissions;
+use agent_os_kernel::root_fs::{
+    FilesystemEntry, RootFileSystem, RootFilesystemDescriptor, RootFilesystemMode,
+    RootFilesystemSnapshot,
+};
 use agent_os_kernel::vfs::{
     MemoryFileSystem, VirtualFileSystem, VirtualTimeSpec, VirtualUtimeSpec,
 };
@@ -243,6 +247,58 @@ fn agentos_protection_rejects_preexisting_hardlink_aliases() {
         kernel
             .read_file(alias)
             .expect("hardlink alias should still exist"),
+        b"original instructions".to_vec()
+    );
+}
+
+#[test]
+fn agentos_protection_ignores_unrelated_files_in_other_overlay_layers() {
+    // Regression coverage for layered roots: the protected instructions file
+    // lives in a lower snapshot layer while new files land in the writable
+    // upper. Inode numbers overlap across layer filesystems, so the hardlink
+    // alias check must compare per-instance device ids instead of treating
+    // every equal inode number as an alias of the protected file.
+    let root = RootFileSystem::from_descriptor(RootFilesystemDescriptor {
+        mode: RootFilesystemMode::Ephemeral,
+        disable_default_base_layer: true,
+        lowers: vec![RootFilesystemSnapshot {
+            entries: vec![
+                FilesystemEntry::directory("/etc/agentos"),
+                FilesystemEntry::file(
+                    "/etc/agentos/instructions.md",
+                    b"original instructions".to_vec(),
+                ),
+                FilesystemEntry::directory("/bin"),
+                FilesystemEntry::directory("/tmp"),
+            ],
+        }],
+        bootstrap_entries: vec![],
+    })
+    .expect("create layered root filesystem");
+
+    let mut config = KernelVmConfig::new("vm-agentos-layered-alias");
+    config.permissions = Permissions::allow_all();
+    let mut kernel = KernelVm::new(root, config);
+
+    // Write enough files for the upper layer's inode counter to sweep past
+    // the lower layer's inode numbers, then verify metadata updates on every
+    // unrelated file still succeed.
+    for index in 0..8 {
+        let path = format!("/tmp/unrelated-{index}.txt");
+        kernel
+            .write_file(&path, "unrelated")
+            .expect("write unrelated file in upper layer");
+        kernel
+            .chmod(&path, 0o755)
+            .expect("chmod unrelated upper-layer file must not trip agentos protection");
+    }
+
+    assert_erofs(kernel.chmod("/etc/agentos/instructions.md", 0o777));
+    assert_erofs(kernel.write_file("/etc/agentos/instructions.md", "tampered"));
+    assert_eq!(
+        kernel
+            .read_file("/etc/agentos/instructions.md")
+            .expect("read instructions"),
         b"original instructions".to_vec()
     );
 }

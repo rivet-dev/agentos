@@ -2,12 +2,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const S_IFREG: u32 = 0o100000;
 pub const S_IFDIR: u32 = 0o040000;
 pub const S_IFLNK: u32 = 0o120000;
-const MEMORY_FILESYSTEM_DEVICE_ID: u64 = 1;
+
+// Each MemoryFileSystem instance gets its own device id, like a Linux
+// superblock. Inode numbers are only unique within one instance, so layered
+// or mounted compositions need distinct dev values for (dev, ino) file
+// identity comparisons to be meaningful. The counter starts above the small
+// constants reserved for synthetic device and pipe stats.
+static NEXT_MEMORY_FILESYSTEM_DEVICE_ID: AtomicU64 = AtomicU64::new(256);
+
+fn allocate_memory_filesystem_device_id() -> u64 {
+    NEXT_MEMORY_FILESYSTEM_DEVICE_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 const DEFAULT_UID: u32 = 1000;
 const DEFAULT_GID: u32 = 1000;
@@ -415,6 +426,7 @@ pub struct MemoryFileSystemSnapshot {
 
 #[derive(Debug)]
 pub struct MemoryFileSystem {
+    device_id: u64,
     path_index: BTreeMap<String, u64>,
     inodes: BTreeMap<u64, Inode>,
     next_ino: u64,
@@ -423,6 +435,7 @@ pub struct MemoryFileSystem {
 impl MemoryFileSystem {
     pub fn new() -> Self {
         let mut filesystem = Self {
+            device_id: allocate_memory_filesystem_device_id(),
             path_index: BTreeMap::new(),
             inodes: BTreeMap::new(),
             next_ino: 1,
@@ -776,7 +789,7 @@ impl MemoryFileSystem {
             mode: inode.metadata.mode,
             size,
             blocks: block_count_for_size(size),
-            dev: MEMORY_FILESYSTEM_DEVICE_ID,
+            dev: self.device_id,
             rdev: 0,
             is_directory: matches!(inode.kind, InodeKind::Directory),
             is_symbolic_link: matches!(inode.kind, InodeKind::SymbolicLink { .. }),
@@ -845,6 +858,7 @@ impl MemoryFileSystem {
 
     pub fn from_snapshot(snapshot: MemoryFileSystemSnapshot) -> Self {
         Self {
+            device_id: allocate_memory_filesystem_device_id(),
             path_index: snapshot.path_index,
             inodes: snapshot
                 .inodes
