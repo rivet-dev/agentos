@@ -183,190 +183,6 @@ function parseSimpleExecCommand(command: string): string[] | null {
 	return tokens;
 }
 
-interface SimpleExecRedirectCommand {
-	command: string;
-	args: string[];
-	stdinPath?: string;
-	stdoutPath?: string;
-	appendStdout: boolean;
-}
-
-function parseSimpleExecCommandWithRedirects(
-	command: string,
-): SimpleExecRedirectCommand | null {
-	const tokens: string[] = [];
-	let current = "";
-	let quote: "'" | '"' | null = null;
-	let escaped = false;
-
-	const flushCurrent = () => {
-		if (current) {
-			tokens.push(current);
-			current = "";
-		}
-	};
-
-	for (let index = 0; index < command.length; index += 1) {
-		const character = command[index];
-		if (quote === null) {
-			if (escaped) {
-				current += character;
-				escaped = false;
-				continue;
-			}
-			if (character === "\\") {
-				escaped = true;
-				continue;
-			}
-			if (character === "'" || character === '"') {
-				quote = character;
-				continue;
-			}
-			if (/\s/.test(character)) {
-				flushCurrent();
-				continue;
-			}
-			if (character === "<") {
-				flushCurrent();
-				tokens.push("<");
-				continue;
-			}
-			if (character === ">") {
-				flushCurrent();
-				if (command[index + 1] === ">") {
-					tokens.push(">>");
-					index += 1;
-				} else {
-					tokens.push(">");
-				}
-				continue;
-			}
-			if ("|&;()$`*?[]{}~!".includes(character)) {
-				return null;
-			}
-			current += character;
-			continue;
-		}
-
-		if (quote === "'") {
-			if (character === "'") {
-				quote = null;
-				continue;
-			}
-			current += character;
-			continue;
-		}
-
-		if (escaped) {
-			current = appendDoubleQuotedEscape(current, character);
-			escaped = false;
-			continue;
-		}
-		if (character === "\\") {
-			escaped = true;
-			continue;
-		}
-		if (character === '"') {
-			quote = null;
-			continue;
-		}
-		if (character === "$" || character === "`") {
-			return null;
-		}
-		current += character;
-	}
-
-	if (quote !== null || escaped) {
-		return null;
-	}
-	flushCurrent();
-	if (tokens.length === 0) {
-		return null;
-	}
-
-	let commandName: string | undefined;
-	const args: string[] = [];
-	let stdinPath: string | undefined;
-	let stdoutPath: string | undefined;
-	let appendStdout = false;
-
-	for (let index = 0; index < tokens.length; index += 1) {
-		const token = tokens[index];
-		if (token === "<" || token === ">" || token === ">>") {
-			const redirectPath = tokens[index + 1];
-			if (
-				!redirectPath ||
-				redirectPath === "<" ||
-				redirectPath === ">" ||
-				redirectPath === ">>"
-			) {
-				return null;
-			}
-			if (token === "<") {
-				if (stdinPath !== undefined) {
-					return null;
-				}
-				stdinPath = redirectPath;
-			} else {
-				if (stdoutPath !== undefined) {
-					return null;
-				}
-				stdoutPath = redirectPath;
-				appendStdout = token === ">>";
-			}
-			index += 1;
-			continue;
-		}
-
-		if (!commandName) {
-			commandName = token;
-			continue;
-		}
-		args.push(token);
-	}
-
-	if (!commandName) {
-		return null;
-	}
-
-	return {
-		command: commandName,
-		args,
-		stdinPath,
-		stdoutPath,
-		appendStdout,
-	};
-}
-
-function concatUint8Chunks(chunks: Uint8Array[]): Uint8Array {
-	const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-	const combined = new Uint8Array(totalLength);
-	let offset = 0;
-	for (const chunk of chunks) {
-		combined.set(chunk, offset);
-		offset += chunk.length;
-	}
-	return combined;
-}
-
-function resolveRedirectPath(cwd: string, targetPath: string): string {
-	return targetPath.startsWith("/")
-		? posixPath.normalize(targetPath)
-		: posixPath.normalize(posixPath.join(cwd, targetPath));
-}
-
-function isMissingFileError(error: unknown): boolean {
-	if (!error || typeof error !== "object") {
-		return false;
-	}
-	const maybeError = error as { code?: unknown; message?: unknown };
-	return (
-		maybeError.code === "ENOENT" ||
-		(typeof maybeError.message === "string" &&
-			maybeError.message.includes("ENOENT"))
-	);
-}
-
 function canUseDirectExec(
 	driver: string | undefined,
 	commandName: string | undefined,
@@ -461,15 +277,6 @@ interface TrackedProcessEntry {
 	waitWithFallbackPromise: Promise<number> | null;
 	hostExitObservedAt: number | null;
 	outputGeneration: number;
-	redirect: TrackedProcessRedirect | null;
-	redirectFlushPromise: Promise<number> | null;
-}
-
-interface TrackedProcessRedirect {
-	stdinPath?: string;
-	stdoutPath: string;
-	appendStdout: boolean;
-	stdoutChunks: Uint8Array[];
 }
 
 interface NativeSidecarKernelProxyOptions {
@@ -605,19 +412,6 @@ export class NativeSidecarKernelProxy {
 		const stderrChunks: Uint8Array[] = [];
 		const effectiveCwd = options?.cwd ?? this.defaultExecCwd ?? this.cwd;
 		const parsedCommand = parseSimpleExecCommand(command);
-		const parsedRedirectCommand = parseSimpleExecCommandWithRedirects(command);
-		const decodeChunks = (chunks: Uint8Array[]) =>
-			Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
-		const concatChunks = (chunks: Uint8Array[]) => {
-			const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-			const combined = new Uint8Array(totalLength);
-			let offset = 0;
-			for (const chunk of chunks) {
-				combined.set(chunk, offset);
-				offset += chunk.length;
-			}
-			return combined;
-		};
 		const resolveExecPath = (targetPath: string) =>
 			targetPath.startsWith("/")
 				? posixPath.normalize(targetPath)
@@ -717,99 +511,6 @@ export class NativeSidecarKernelProxy {
 				stderr: "",
 			};
 		}
-		const parsedRedirectCommandDriver = parsedRedirectCommand
-			? this.commands.get(parsedRedirectCommand.command)
-			: undefined;
-		// `kernel.exec()` accepts a shell command string. Only take the direct
-		// spawn fast path when the parser has already proven the command is a
-		// shell-free argv list. This keeps guest shell syntax on `sh -c` while
-		// letting simple `node ...` and Wasm commands preserve their real exit codes.
-		const canUseDirectExec = (
-			driver: string | undefined,
-			commandName: string | undefined,
-		) => driver === "wasmvm" || (driver === "node" && commandName === "node");
-		const parsedRedirectCommandHasRedirects = Boolean(
-			parsedRedirectCommand &&
-				(parsedRedirectCommand.stdinPath !== undefined ||
-					parsedRedirectCommand.stdoutPath !== undefined),
-		);
-		if (
-			parsedRedirectCommand &&
-			parsedRedirectCommandDriver &&
-			canUseDirectExec(
-				parsedRedirectCommandDriver,
-				parsedRedirectCommand.command,
-			) &&
-			parsedRedirectCommandHasRedirects
-		) {
-			if (parsedRedirectCommandDriver === "wasmvm") {
-				this.onWasmCommandResolved?.(parsedRedirectCommand.command);
-			}
-			const redirectedStdoutChunks: Uint8Array[] = [];
-			const redirectedStderrChunks: Uint8Array[] = [];
-			const stdinOverride: string | Uint8Array | undefined =
-				parsedRedirectCommand.stdinPath !== undefined
-					? new Uint8Array(
-							await this.readFile(
-							resolveExecPath(parsedRedirectCommand.stdinPath),
-							),
-						)
-					: options?.stdin;
-			const stdoutRedirectPath = parsedRedirectCommand.stdoutPath
-				? resolveExecPath(parsedRedirectCommand.stdoutPath)
-				: undefined;
-			const proc = this.spawn(
-				parsedRedirectCommand.command,
-				parsedRedirectCommand.args,
-				{
-					...options,
-					cwd: effectiveCwd,
-					onStdout: (chunk) => {
-						redirectedStdoutChunks.push(chunk);
-						if (!stdoutRedirectPath) {
-							options?.onStdout?.(chunk);
-						}
-					},
-					onStderr: (chunk) => {
-						redirectedStderrChunks.push(chunk);
-						options?.onStderr?.(chunk);
-					},
-				},
-			);
-			const result = await runAndCapture(proc, stdinOverride);
-			if (stdoutRedirectPath) {
-				const redirectedStdout = concatChunks(redirectedStdoutChunks);
-				if (parsedRedirectCommand.appendStdout) {
-					let existing = new Uint8Array(0);
-					try {
-						existing = new Uint8Array(await this.readFile(stdoutRedirectPath));
-					} catch (error) {
-						if (!isMissingFileError(error)) {
-							throw error;
-						}
-						// Appending to a nonexistent file should create it.
-					}
-					const combined = new Uint8Array(
-						existing.length + redirectedStdout.length,
-					);
-					combined.set(existing);
-					combined.set(redirectedStdout, existing.length);
-					await this.writeFile(stdoutRedirectPath, combined);
-				} else {
-					await this.writeFile(stdoutRedirectPath, redirectedStdout);
-				}
-				return {
-					exitCode: result.exitCode,
-					stdout: "",
-					stderr: decodeChunks(redirectedStderrChunks),
-				};
-			}
-			return {
-				exitCode: result.exitCode,
-				stdout: decodeChunks(redirectedStdoutChunks),
-				stderr: decodeChunks(redirectedStderrChunks),
-			};
-		}
 		const parsedCommandDriver = parsedCommand
 			? this.commands.get(parsedCommand[0])
 			: undefined;
@@ -861,42 +562,18 @@ export class NativeSidecarKernelProxy {
 	): ManagedProcess {
 		let spawnCommand = command;
 		let spawnArgs = [...args];
-		let redirect: TrackedProcessRedirect | null = null;
 		const shellOption = (options as ({ shell?: unknown } & KernelSpawnOptions) | undefined)
 			?.shell;
-		const parsedRedirectCommand =
-			(shellOption === true || typeof shellOption === "string") &&
-			spawnArgs.length === 0
-				? parseSimpleExecCommandWithRedirects(command)
-				: null;
-		const parsedRedirectCommandDriver = parsedRedirectCommand
-			? this.commands.get(parsedRedirectCommand.command)
-			: undefined;
-		if (
-			parsedRedirectCommand &&
-			parsedRedirectCommand.stdoutPath !== undefined &&
-			canUseDirectExec(
-				parsedRedirectCommandDriver,
-				parsedRedirectCommand.command,
-			)
-		) {
-			if (parsedRedirectCommandDriver === "wasmvm") {
-				this.onWasmCommandResolved?.(parsedRedirectCommand.command);
+		if (shellOption === true || typeof shellOption === "string") {
+			// Node's shell mode hands the raw command line to the shell. Shell
+			// grammar belongs to the guest shell, so the bridge never parses it.
+			if (!this.commands.has("sh")) {
+				throw new Error(
+					`native sidecar shell-mode spawn requires guest shell command 'sh': ${command}`,
+				);
 			}
-			const effectiveCwd = options?.cwd ?? this.cwd;
-			spawnCommand = parsedRedirectCommand.command;
-			spawnArgs = parsedRedirectCommand.args;
-			redirect = {
-				stdinPath: parsedRedirectCommand.stdinPath
-					? resolveRedirectPath(effectiveCwd, parsedRedirectCommand.stdinPath)
-					: undefined,
-				stdoutPath: resolveRedirectPath(
-					effectiveCwd,
-					parsedRedirectCommand.stdoutPath,
-				),
-				appendStdout: parsedRedirectCommand.appendStdout,
-				stdoutChunks: [],
-			};
+			spawnCommand = "sh";
+			spawnArgs = ["-c", [command, ...args].join(" ")];
 		}
 		const pid = this.nextSyntheticPid++;
 		const processId = `proc-${pid}`;
@@ -936,8 +613,6 @@ export class NativeSidecarKernelProxy {
 			waitWithFallbackPromise: null,
 			hostExitObservedAt: null,
 			outputGeneration: 0,
-			redirect,
-			redirectFlushPromise: null,
 		};
 		this.trackedProcesses.set(pid, entry);
 		this.trackedProcessesById.set(processId, entry);
@@ -1740,11 +1415,6 @@ export class NativeSidecarKernelProxy {
 		void this.refreshProcessSnapshot().catch(() => {});
 		await this.refreshSignalState(entry);
 
-		if (entry.redirect?.stdinPath) {
-			entry.pendingStdin.push(await this.readFile(entry.redirect.stdinPath));
-			entry.pendingCloseStdin = true;
-		}
-
 		void this.flushPendingStdin(entry).catch((error) => {
 			this.handleBackgroundProcessError(entry, error);
 		});
@@ -1781,13 +1451,6 @@ export class NativeSidecarKernelProxy {
 						await this.signalRefreshes.get(entry.pid);
 					}
 					const chunk = event.payload.chunk;
-					if (
-						event.payload.channel === "stdout" &&
-						entry.redirect?.stdoutPath
-					) {
-						entry.redirect.stdoutChunks.push(chunk);
-						continue;
-					}
 					const listeners =
 						event.payload.channel === "stdout"
 							? entry.onStdout
@@ -1837,18 +1500,12 @@ export class NativeSidecarKernelProxy {
 		entry.exitCode = exitCode;
 		entry.exitTime = Date.now();
 		this.updateTrackedProcessSnapshot(entry);
-		entry.redirectFlushPromise = this.flushTrackedRedirect(entry).then(
-			() => entry.exitCode ?? exitCode,
-			(error) => this.recordCompletedProcessError(entry, error),
-		);
-		void entry.redirectFlushPromise.then((finalExitCode) => {
-			entry.resolveWait(finalExitCode);
-		});
+		entry.resolveWait(exitCode);
 	}
 
 	private waitForTrackedProcess(entry: TrackedProcessEntry): Promise<number> {
 		if (entry.exitCode !== null) {
-			return entry.redirectFlushPromise ?? Promise.resolve(entry.exitCode);
+			return Promise.resolve(entry.exitCode);
 		}
 		if (entry.waitWithFallbackPromise !== null) {
 			return entry.waitWithFallbackPromise;
@@ -1909,35 +1566,6 @@ export class NativeSidecarKernelProxy {
 		});
 
 		return entry.waitWithFallbackPromise;
-	}
-
-	private async flushTrackedRedirect(entry: TrackedProcessEntry): Promise<void> {
-		const redirect = entry.redirect;
-		if (!redirect?.stdoutPath) {
-			return;
-		}
-		const redirectedStdout = concatUint8Chunks(redirect.stdoutChunks);
-		redirect.stdoutChunks = [];
-		if (redirect.appendStdout) {
-			let existing = new Uint8Array(0);
-			try {
-				existing = new Uint8Array(await this.readFile(redirect.stdoutPath));
-			} catch (error) {
-				if (!isMissingFileError(error)) {
-					throw error;
-				}
-				// Appending to a nonexistent file should create it.
-			}
-			const combined = new Uint8Array(
-				existing.length + redirectedStdout.length,
-			);
-			combined.set(existing);
-			combined.set(redirectedStdout, existing.length);
-			await this.writeFile(redirect.stdoutPath, combined);
-		} else {
-			await this.writeFile(redirect.stdoutPath, redirectedStdout);
-		}
-		entry.redirect = null;
 	}
 
 	private async signalProcess(
