@@ -292,7 +292,10 @@ fn interrupts_session_prompt(prompt_request: &RequestFrame, frame: &ProtocolFram
         return false;
     };
     match frame {
-        ProtocolFrame::Request(request) if request.ownership == prompt_request.ownership => {
+        ProtocolFrame::Request(request) => {
+            if request.ownership != prompt_request.ownership {
+                return false;
+            }
             match &request.payload {
                 RequestPayload::CloseAgentSession(payload) => {
                     payload.session_id == prompt_payload.session_id
@@ -302,10 +305,50 @@ fn interrupts_session_prompt(prompt_request: &RequestFrame, frame: &ProtocolFram
                         && payload.method == "session/cancel"
                 }
                 RequestPayload::KillProcess(_) => true,
-                _ => false,
+                // Control-plane setup, inspection, filesystem, process plumbing, and
+                // persistence requests run concurrently with an in-flight prompt and
+                // must not interrupt it. DisposeVm is deliberately non-interrupting for
+                // now; see the todo entry about dispose racing a blocked prompt.
+                RequestPayload::Authenticate(_)
+                | RequestPayload::OpenSession(_)
+                | RequestPayload::CreateVm(_)
+                | RequestPayload::CreateSession(_)
+                | RequestPayload::GetSessionState(_)
+                | RequestPayload::DisposeVm(_)
+                | RequestPayload::BootstrapRootFilesystem(_)
+                | RequestPayload::ConfigureVm(_)
+                | RequestPayload::RegisterToolkit(_)
+                | RequestPayload::CreateLayer(_)
+                | RequestPayload::SealLayer(_)
+                | RequestPayload::ImportSnapshot(_)
+                | RequestPayload::ExportSnapshot(_)
+                | RequestPayload::CreateOverlay(_)
+                | RequestPayload::GuestFilesystemCall(_)
+                | RequestPayload::SnapshotRootFilesystem(_)
+                | RequestPayload::Execute(_)
+                | RequestPayload::WriteStdin(_)
+                | RequestPayload::CloseStdin(_)
+                | RequestPayload::GetProcessSnapshot(_)
+                | RequestPayload::FindListener(_)
+                | RequestPayload::FindBoundUdp(_)
+                | RequestPayload::VmFetch(_)
+                | RequestPayload::GetSignalState(_)
+                | RequestPayload::GetZombieTimerCount(_)
+                | RequestPayload::HostFilesystemCall(_)
+                | RequestPayload::PermissionRequest(_)
+                | RequestPayload::PersistenceLoad(_)
+                | RequestPayload::PersistenceFlush(_) => false,
             }
         }
-        _ => false,
+        // Response, Event, and SidecarRequest frames are sidecar-to-host only. If one
+        // arrives on stdin it is requeued and rejected as a protocol error by
+        // handle_protocol_frame, so it must not synthesize a cancelled prompt first.
+        // SidecarResponse frames answer sidecar-initiated callbacks and may be the very
+        // response the blocked prompt dispatch is waiting on, so they never interrupt.
+        ProtocolFrame::Response(_)
+        | ProtocolFrame::Event(_)
+        | ProtocolFrame::SidecarRequest(_)
+        | ProtocolFrame::SidecarResponse(_) => false,
     }
 }
 
