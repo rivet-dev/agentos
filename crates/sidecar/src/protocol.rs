@@ -815,6 +815,10 @@ pub struct CreateSessionRequest {
         with = "json_utf8_value"
     )]
     pub client_capabilities: Value,
+    #[serde(default)]
+    pub additional_instructions: Option<String>,
+    #[serde(default)]
+    pub skip_os_instructions: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

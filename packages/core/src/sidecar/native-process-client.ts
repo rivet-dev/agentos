@@ -206,6 +206,8 @@ type RequestPayload =
 			mcp_servers: unknown[];
 			protocol_version?: number;
 			client_capabilities?: unknown;
+			additional_instructions?: string;
+			skip_os_instructions?: boolean;
 	  }
 	| {
 			type: "session_request";
@@ -1366,6 +1368,8 @@ export class NativeSidecarProcessClient {
 			mcpServers?: unknown[];
 			protocolVersion?: number;
 			clientCapabilities?: unknown;
+			additionalInstructions?: string;
+			skipOsInstructions?: boolean;
 		},
 	): Promise<SidecarSessionCreated> {
 		const response = await this.sendRequest({
@@ -1386,6 +1390,10 @@ export class NativeSidecarProcessClient {
 				mcp_servers: options.mcpServers ?? [],
 				protocol_version: options.protocolVersion ?? 1,
 				client_capabilities: options.clientCapabilities ?? {},
+				...(options.additionalInstructions !== undefined
+					? { additional_instructions: options.additionalInstructions }
+					: {}),
+				skip_os_instructions: options.skipOsInstructions ?? false,
 			},
 		});
 		if (response.payload.type !== "session_created") {
@@ -3482,6 +3490,10 @@ function encodeRequestPayload(
 					"create_session.client_capabilities",
 				),
 			);
+			writer.writeOptional(payload.additional_instructions, (value) =>
+				writer.writeString(value),
+			);
+			writer.writeBool(payload.skip_os_instructions ?? false);
 			return;
 		case "session_request":
 			writer.writeVarUint(5);

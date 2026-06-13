@@ -308,6 +308,10 @@ type CreateSessionRequest struct {
   env: map<str><str>
   cwd: str
   mcpServers: list<JsonUtf8>
+  protocolVersion: u64
+  clientCapabilities: JsonUtf8
+  additionalInstructions: optional<str>
+  skipOsInstructions: bool
 }
 
 type SessionRequest struct {
