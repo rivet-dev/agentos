@@ -185,6 +185,10 @@ All WASM command source code lives in `native/`:
 5. If it belongs in `common` or `build-essential`, add it as a dependency in the meta-package
 6. Run `make copy-wasm && make build && make test`
 
+## Stub Semantics
+
+- When a stub changes from fake-success to reporting `Unsupported`, audit every in-tree consumer in the same change. Best-effort capabilities (such as signal cleanup handlers) must soft-skip `Unsupported` rather than treat it as fatal.
+
 ## Git
 
 - **Commit messages**: Single-line conventional commits (e.g., `feat: add ripgrep package`). No body, no co-author trailers.
