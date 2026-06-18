@@ -4,7 +4,7 @@
  * Measures time from AgentOs.create() through workload ready:
  *   --workload=echo             Minimal VM + first exec("echo hello") completing
  *   --workload=pi-session       VM + createSession("pi") completing (ACP handshake done)
- *   --workload=pi-lite-session  VM + createSession("pi-lite") completing (ACP handshake done)
+ *   --workload=pi-rust-session  VM + createSession("pi-rust") completing (ACP handshake done)
  *   --workload=claude-session   VM + createSession("claude") completing (ACP handshake done)
  *   --workload=codex-session    VM + createSession("codex") completing (ACP handshake done)
  *
@@ -13,7 +13,7 @@
  * Usage:
  *   npx tsx scripts/benchmarks/coldstart.bench.ts --workload=echo
  *   npx tsx scripts/benchmarks/coldstart.bench.ts --workload=pi-session --iterations=3
- *   npx tsx scripts/benchmarks/coldstart.bench.ts --workload=pi-lite-session --iterations=3
+ *   npx tsx scripts/benchmarks/coldstart.bench.ts --workload=pi-rust-session --iterations=3
  *   npx tsx scripts/benchmarks/coldstart.bench.ts --workload=claude-session --iterations=3
  */
 

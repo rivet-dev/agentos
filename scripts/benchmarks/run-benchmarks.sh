@@ -32,8 +32,8 @@ run "coldstart-echo" \
 run "memory-pi-session" \
   --expose-gc scripts/benchmarks/memory.bench.ts --workload=pi-session --count=3
 
-run "memory-pi-lite-session" \
-  --expose-gc scripts/benchmarks/memory.bench.ts --workload=pi-lite-session --count=3
+run "memory-pi-rust-session" \
+  --expose-gc scripts/benchmarks/memory.bench.ts --workload=pi-rust-session --count=3
 
 run "memory-claude-session" \
   --expose-gc scripts/benchmarks/memory.bench.ts --workload=claude-session --count=3

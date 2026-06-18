@@ -1,0 +1,35 @@
+{
+	"name": "@rivet-dev/agent-os-pi-rust",
+	"version": "0.1.0",
+	"type": "module",
+	"license": "Apache-2.0",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist",
+		"bin"
+	],
+	"bin": {
+		"pi-rust-acp": "./dist/adapter.js",
+		"pi-rust": "./bin/pi-rust"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "node ./scripts/build-pi-rust.mjs && tsc",
+		"check-types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@agentclientprotocol/sdk": "^0.16.1",
+		"@rivet-dev/agent-os-core": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.2",
+		"typescript": "^5.7.2"
+	}
+}

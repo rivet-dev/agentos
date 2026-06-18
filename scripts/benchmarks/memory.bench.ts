@@ -8,7 +8,7 @@
  * Workloads:
  *   --workload=sleep             (default) Minimal VM with idle Node.js process
  *   --workload=pi-session        VM with PI agent session via createSession
- *   --workload=pi-lite-session   VM with PI Lite agent session via createSession
+ *   --workload=pi-rust-session   VM with PI Rust agent session via createSession
  *   --workload=claude-session    VM with Claude agent session via createSession
  *   --workload=codex-session     VM with Codex agent session via createSession
  *
@@ -17,7 +17,7 @@
  * Usage:
  *   npx tsx --expose-gc benchmarks/memory.bench.ts
  *   npx tsx --expose-gc benchmarks/memory.bench.ts --workload=pi-session --count=1
- *   npx tsx --expose-gc benchmarks/memory.bench.ts --workload=pi-lite-session --count=1
+ *   npx tsx --expose-gc benchmarks/memory.bench.ts --workload=pi-rust-session --count=1
  *   npx tsx --expose-gc benchmarks/memory.bench.ts --workload=claude-session --count=1
  */
 

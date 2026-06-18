@@ -23,7 +23,7 @@
 		"@rivet-dev/agent-os-codex-agent": "workspace:*",
 		"@rivet-dev/agent-os-core": "workspace:*",
 		"@rivet-dev/agent-os-pi": "workspace:*",
-		"@rivet-dev/agent-os-pi-lite": "workspace:*",
+		"@rivet-dev/agent-os-pi-rust": "workspace:*",
 		"@types/node": "^22.19.15",
 		"turbo": "^2.5.6",
 		"typescript": "^5.9.2"

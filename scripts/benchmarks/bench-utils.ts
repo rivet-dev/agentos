@@ -63,9 +63,9 @@ async function loadPiSoftware(): Promise<SoftwareInput[]> {
 	return [pi];
 }
 
-async function loadPiLiteSoftware(): Promise<SoftwareInput[]> {
-	const { default: piLite } = await import("@rivet-dev/agent-os-pi-lite");
-	return [piLite];
+async function loadPiRustSoftware(): Promise<SoftwareInput[]> {
+	const { default: piRust } = await import("@rivet-dev/agent-os-pi-rust");
+	return [piRust];
 }
 
 async function loadClaudeSoftware(): Promise<SoftwareInput[]> {
@@ -155,11 +155,11 @@ export const WORKLOADS: Record<string, Workload> = {
 		loadSoftware: loadPiSoftware,
 		processMarker: "agent-os-pi",
 	}),
-	"pi-lite-session": makeAgentSessionWorkload({
-		agentId: "pi-lite",
-		description: "VM with PI Lite agent session via createSession",
-		loadSoftware: loadPiLiteSoftware,
-		processMarker: "agent-os-pi-lite",
+	"pi-rust-session": makeAgentSessionWorkload({
+		agentId: "pi-rust",
+		description: "VM with PI Rust agent session via createSession",
+		loadSoftware: loadPiRustSoftware,
+		processMarker: "agent-os-pi-rust",
 	}),
 	"claude-session": makeAgentSessionWorkload({
 		agentId: "claude",
