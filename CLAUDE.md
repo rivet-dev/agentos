@@ -29,3 +29,15 @@ Agent OS is the agent-facing wrapper around secure-exec. It provides ACP session
 - Every quickstart change needs a matching automated test in the same change.
 - Confirm the docs repo path with the user before editing Agent OS docs.
 - Keep `website/src/data/registry.ts` current when package names or registry entries change.
+
+## Agent Working Directory
+
+All agent working files live user-scoped in `~/.agents/`, never inside the repo. Override the location with the `AGENTS_DIR` env var. These files are not committed; `.agent/` is gitignored as a safety net.
+
+- **Specs**: `~/.agents/specs/` — design specs and interface definitions for planned work.
+- **Research**: `~/.agents/research/` — research documents on external systems, prior art, and design analysis.
+- **Todo**: `~/.agents/todo/*.md` — deferred work items with context on what needs to be done and why.
+- **Notes**: `~/.agents/notes/` — general notes and tracking.
+- **Benchmarks**: `~/.agents/benchmarks/` — benchmark result artifacts.
+
+When the user asks to track something in a note, store it in `~/.agents/notes/` by default. When something is identified as "do later", add it to `~/.agents/todo/`. Design documents and interface specs go in `~/.agents/specs/`.
