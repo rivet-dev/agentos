@@ -42,3 +42,15 @@ Agent OS is the agent-facing wrapper around secure-exec. It provides ACP session
 - Auto-skip expensive resource-saturation tests. A test that proves the *absence* of a bound by actually saturating a resource — a JS/WASM infinite loop pinning a CPU core for the watchdog window, a heap/alloc bomb, a fork bomb, or anything that aborts the process — must be marked `#[ignore = "expensive: <resource> saturation; run with --ignored"]` (vitest: `it.skip` or an env gate). These pin cores or crash the runner and bog down normal runs.
 - Still test the expensive safeguards. A configured limit/watchdog/quota actually firing — CPU-time limit set → runaway terminated; WASM fuel set → exit 124; heap cap → bounded; fd/process/socket cap → denied — is bounded and fast because the safeguard ends it. Keep these in the default suite; they are the regression guard that the protection works.
 - Rule of thumb: if the test ends only when a timeout/watchdog whose *absence* you are documenting fires (slow, unbounded) → `#[ignore]`. If it ends because a *safeguard* fires (fast, bounded) → keep it running.
+
+## Agent Working Directory
+
+All agent working files live user-scoped in `~/.agents/`, never inside the repo. Override the location with the `AGENTS_DIR` env var. These files are not committed; `.agent/` is gitignored as a safety net.
+
+- **Specs**: `~/.agents/specs/` — design specs and interface definitions for planned work.
+- **Research**: `~/.agents/research/` — research documents on external systems, prior art, and design analysis.
+- **Todo**: `~/.agents/todo/*.md` — deferred work items with context on what needs to be done and why.
+- **Notes**: `~/.agents/notes/` — general notes and tracking.
+- **Benchmarks**: `~/.agents/benchmarks/` — benchmark result artifacts.
+
+When the user asks to track something in a note, store it in `~/.agents/notes/` by default. When something is identified as "do later", add it to `~/.agents/todo/`. Design documents and interface specs go in `~/.agents/specs/`.
