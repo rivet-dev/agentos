@@ -22,6 +22,7 @@ import type {
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
 } from "@secure-exec/core/descriptors";
+import type { CreateVmConfig } from "@secure-exec/core/vm-config";
 import type {
 	AgentCapabilities,
 	AgentInfo,
@@ -40,19 +41,19 @@ import type {
 	JsonRpcRequest,
 	JsonRpcResponse,
 } from "./json-rpc.js";
-import {
-	type ConnectTerminalOptions,
-	type Kernel,
-	type KernelExecOptions,
-	type KernelExecResult,
-	type ProcessInfo as KernelProcessInfo,
-	type KernelSpawnOptions,
-	type ManagedProcess,
-	type OpenShellOptions,
-	type Permissions,
-	type ShellHandle,
-	type VirtualFileSystem,
-	type VirtualStat,
+import type {
+	ConnectTerminalOptions,
+	Kernel,
+	KernelExecOptions,
+	KernelExecResult,
+	ProcessInfo as KernelProcessInfo,
+	KernelSpawnOptions,
+	ManagedProcess,
+	OpenShellOptions,
+	Permissions,
+	ShellHandle,
+	VirtualFileSystem,
+	VirtualStat,
 } from "./runtime-compat.js";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
@@ -182,8 +183,8 @@ import type {
 } from "./cron/types.js";
 import {
 	type FilesystemEntry,
-	sortFilesystemEntries,
 	snapshotVirtualFilesystem,
+	sortFilesystemEntries,
 } from "./filesystem-snapshot.js";
 import { createHostDirBackend } from "./host-dir-mount.js";
 import {
@@ -215,7 +216,6 @@ import {
 	encodeAcpCallbackResponse,
 	encodeAcpRequest,
 } from "./sidecar/agent-os-protocol.js";
-import { serializeLimitsForSidecar } from "./sidecar/limits.js";
 import { serializePermissionsForSidecar } from "./sidecar/permissions.js";
 import {
 	type AgentOsSidecarClient,
@@ -382,8 +382,8 @@ export type MountConfig =
  * Operator-tunable runtime limits for a VM. Every field is optional; unset fields fall back to
  * built-in defaults that match the runtime's historical hardcoded constants, so behavior is
  * unchanged unless a value is overridden. All values are JSON-serializable integers and are
- * forwarded to the native sidecar as `CreateVmRequest.metadata` entries. Unknown, negative, or
- * non-integer values throw at `AgentOs.create()` time.
+ * forwarded to the native sidecar in the typed create-VM JSON config. Unknown, negative, or
+ * non-integer values are rejected by the sidecar before VM construction.
  */
 export interface AgentOsLimits {
 	/** Kernel resource limits (processes, FDs, sockets, filesystem bytes, WASM caps, etc.). */
@@ -2060,9 +2060,7 @@ async function invokeHostTool({
 	const callbackKey = `${toolKit.name}:${toolName}`;
 	const permissionMode = toolPermissionMode(context.permissions, callbackKey);
 	if (permissionMode !== "allow") {
-		throw new Error(
-			`EACCES: blocked by tool.invoke policy for ${callbackKey}`,
-		);
+		throw new Error(`EACCES: blocked by tool.invoke policy for ${callbackKey}`);
 	}
 	const input = await parseHostToolInput(tool, args, cwd, context.readFile);
 	return executeHostTool(tool, callbackKey, input);
@@ -2087,7 +2085,9 @@ async function executeHostTool(
 			setTimeout(
 				() =>
 					reject(
-						new Error(`Tool "${callbackKey}" timed out after ${tool.timeout}ms`),
+						new Error(
+							`Tool "${callbackKey}" timed out after ${tool.timeout}ms`,
+						),
 					),
 				tool.timeout,
 			);
@@ -2122,7 +2122,10 @@ async function parseHostToolInput(
 	return parseToolArgv(toolToSidecarDefinition(tool).inputSchema, args);
 }
 
-function parseToolArgv(schema: unknown, argv: string[]): Record<string, unknown> {
+function parseToolArgv(
+	schema: unknown,
+	argv: string[],
+): Record<string, unknown> {
 	const schemaObject = asRecord(schema);
 	const properties = asRecord(schemaObject.properties);
 	const required = Array.isArray(schemaObject.required)
@@ -2185,9 +2188,7 @@ function parseToolArgv(schema: unknown, argv: string[]): Record<string, unknown>
 			const itemSchema = asRecord(fieldSchema).items;
 			const itemType = jsonSchemaType(itemSchema);
 			current.push(
-				itemType === "number" || itemType === "integer"
-					? Number(value)
-					: value,
+				itemType === "number" || itemType === "integer" ? Number(value) : value,
 			);
 			input[fieldName] = current;
 			index += 2;
@@ -2252,10 +2253,11 @@ function describeToolPayload(toolKit: ToolKit, toolName: string): unknown {
 		tool: toolName,
 		description: tool.description,
 		flags: describeToolFlags(toolToSidecarDefinition(tool).inputSchema),
-		examples: tool.examples?.map((example) => ({
-			description: example.description,
-			input: example.input,
-		})) ?? [],
+		examples:
+			tool.examples?.map((example) => ({
+				description: example.description,
+				input: example.input,
+			})) ?? [],
 	};
 }
 
@@ -2275,7 +2277,9 @@ function toolPermissionMode(
 		const operations = rule.operations ?? ["*"];
 		const patterns = rule.patterns ?? ["**"];
 		if (
-			operations.some((operation) => operation === "*" || operation === "invoke") &&
+			operations.some(
+				(operation) => operation === "*" || operation === "invoke",
+			) &&
 			patterns.some((pattern) => permissionPatternMatches(pattern, callbackKey))
 		) {
 			mode = rule.mode;
@@ -2506,19 +2510,19 @@ export class AgentOs {
 				};
 				const sidecarPermissions =
 					serializePermissionsForSidecar(hostPermissions);
-				const nativeVm = await client.createVm(session, {
-					runtime: "java_script",
-					metadata: {
-						...Object.fromEntries(
-							Object.entries(env).map(([key, value]) => [`env.${key}`, value]),
-						),
-						...serializeLimitsForSidecar(options?.limits),
-					},
+				const createVmConfig: CreateVmConfig = {
+					env,
 					rootFilesystem: serializeRootFilesystemForSidecar(
 						options?.rootFilesystem,
 						bootstrapLower,
 					),
 					permissions: sidecarPermissions,
+					limits: options?.limits,
+					loopbackExemptPorts: options?.loopbackExemptPorts ?? [],
+				};
+				const nativeVm = await client.createVm(session, {
+					runtime: "java_script",
+					config: createVmConfig,
 				});
 				await client.waitForEvent(
 					(event) =>

@@ -1,5 +1,5 @@
+import type { PermissionsPolicy } from "@secure-exec/core/vm-config";
 import type { Permissions } from "../runtime-compat.js";
-import type { SidecarPermissionsPolicy } from "./rpc-client.js";
 
 const ALL_OPERATIONS = ["*"];
 const ALL_RESOURCES = ["**"];
@@ -39,7 +39,7 @@ function serializePatternScope(
 
 export function serializePermissionsForSidecar(
 	permissions?: Permissions,
-): SidecarPermissionsPolicy {
+): PermissionsPolicy {
 	if (!permissions) {
 		return {
 			fs: "deny",

@@ -35,8 +35,12 @@ pub struct AgentOsConfig {
     pub schedule_driver: Option<Arc<dyn ScheduleDriver>>,
     /// Tool kits to register.
     pub tool_kits: Vec<ToolKit>,
+    /// Rust-only sidecar callback handler for `js_bridge`-style plugin requests.
+    pub sidecar_js_bridge_callback: Option<SidecarJsBridgeCallback>,
     /// Permission policy. Default: allow-all.
     pub permissions: Option<Permissions>,
+    /// Operator-tunable VM limits. Default: sidecar/kernel built-ins.
+    pub limits: Option<AgentOsLimits>,
     /// Sidecar placement/config. Default: shared `default` pool.
     pub sidecar: Option<AgentOsSidecarConfig>,
     /// Absolute path to the `agent-os-sidecar` binary, resolved from the npm
@@ -102,8 +106,18 @@ impl AgentOsConfigBuilder {
         self
     }
 
+    pub fn sidecar_js_bridge_callback(mut self, callback: SidecarJsBridgeCallback) -> Self {
+        self.config.sidecar_js_bridge_callback = Some(callback);
+        self
+    }
+
     pub fn permissions(mut self, permissions: Permissions) -> Self {
         self.config.permissions = Some(permissions);
+        self
+    }
+
+    pub fn limits(mut self, limits: AgentOsLimits) -> Self {
+        self.config.limits = Some(limits);
         self
     }
 
@@ -159,6 +173,29 @@ pub type ToolCallback = Arc<
         + Sync,
 >;
 
+/// A sidecar-initiated `js_bridge`-style filesystem callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidecarJsBridgeCall {
+    pub call_id: String,
+    pub mount_id: String,
+    pub operation: String,
+    pub args: serde_json::Value,
+}
+
+/// Host-side handler for sidecar `JsBridgeCallRequest` payloads.
+///
+/// This is Rust-only and intentionally not JSON-serializable. RivetKit uses it to bind a native
+/// sidecar root filesystem to actor-owned SQLite (`ctx.db_*`) without teaching secure-exec about
+/// Rivet actors.
+pub type SidecarJsBridgeCallback = Arc<
+    dyn Fn(
+            SidecarJsBridgeCall,
+        )
+            -> futures::future::BoxFuture<'static, Result<Option<serde_json::Value>, String>>
+        + Send
+        + Sync,
+>;
+
 /// A single host tool within a [`ToolKit`].
 #[derive(Clone)]
 pub struct HostTool {
@@ -179,6 +216,316 @@ pub struct ToolKit {
     pub name: String,
     pub description: String,
     pub tools: Vec<HostTool>,
+}
+
+// ---------------------------------------------------------------------------
+// VM limits (agent-os.ts AgentOsLimits / sidecar/limits.ts)
+// ---------------------------------------------------------------------------
+
+/// Operator-tunable runtime limits for a VM. Every field is optional; unset fields fall back to the
+/// sidecar defaults.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentOsLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<ResourceLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<HttpLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<ToolLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugins: Option<PluginLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp: Option<AcpLimits>,
+    #[serde(default, rename = "jsRuntime", skip_serializing_if = "Option::is_none")]
+    pub js_runtime: Option<JsRuntimeLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub python: Option<PythonLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wasm: Option<WasmLimits>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceLimits {
+    #[serde(default, rename = "cpuCount", skip_serializing_if = "Option::is_none")]
+    pub cpu_count: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxProcesses",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_processes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxOpenFds",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_open_fds: Option<u64>,
+    #[serde(default, rename = "maxPipes", skip_serializing_if = "Option::is_none")]
+    pub max_pipes: Option<u64>,
+    #[serde(default, rename = "maxPtys", skip_serializing_if = "Option::is_none")]
+    pub max_ptys: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxSockets",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_sockets: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxConnections",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_connections: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxSocketBufferedBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_socket_buffered_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxSocketDatagramQueueLen",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_socket_datagram_queue_len: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxFilesystemBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_filesystem_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxInodeCount",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_inode_count: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxBlockingReadMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_blocking_read_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPreadBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_pread_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxFdWriteBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_fd_write_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxProcessArgvBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_process_argv_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxProcessEnvBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_process_env_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxReaddirEntries",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_readdir_entries: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxWasmFuel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_wasm_fuel: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxWasmMemoryBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_wasm_memory_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxWasmStackBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_wasm_stack_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpLimits {
+    #[serde(
+        default,
+        rename = "maxFetchResponseBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_fetch_response_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolLimits {
+    #[serde(
+        default,
+        rename = "defaultToolTimeoutMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub default_tool_timeout_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxToolTimeoutMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_tool_timeout_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxRegisteredToolkits",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_registered_toolkits: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxRegisteredToolsPerVm",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_registered_tools_per_vm: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxToolsPerToolkit",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_tools_per_toolkit: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxToolSchemaBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_tool_schema_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxToolExamplesPerTool",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_tool_examples_per_tool: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxToolExampleInputBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_tool_example_input_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginLimits {
+    #[serde(
+        default,
+        rename = "maxPersistedManifestBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_persisted_manifest_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "maxPersistedManifestFileBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_persisted_manifest_file_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcpLimits {
+    #[serde(
+        default,
+        rename = "maxReadLineBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_read_line_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "stdoutBufferByteLimit",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stdout_buffer_byte_limit: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JsRuntimeLimits {
+    #[serde(
+        default,
+        rename = "v8HeapLimitMb",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub v8_heap_limit_mb: Option<u64>,
+    #[serde(
+        default,
+        rename = "capturedOutputLimitBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub captured_output_limit_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "stdinBufferLimitBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stdin_buffer_limit_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "eventPayloadLimitBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub event_payload_limit_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "v8IpcMaxFrameBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub v8_ipc_max_frame_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PythonLimits {
+    #[serde(
+        default,
+        rename = "outputBufferMaxBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub output_buffer_max_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "executionTimeoutMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub execution_timeout_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "vfsRpcTimeoutMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub vfs_rpc_timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WasmLimits {
+    #[serde(
+        default,
+        rename = "maxModuleFileBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_module_file_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "capturedOutputLimitBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub captured_output_limit_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "syncReadLimitBytes",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sync_read_limit_bytes: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +616,12 @@ pub struct RootFilesystemConfig {
     pub kind: RootFilesystemKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<RootFilesystemMode>,
+    #[serde(
+        default,
+        rename = "nativePlugin",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub native_plugin: Option<MountPlugin>,
     #[serde(default, rename = "disableDefaultBaseLayer")]
     pub disable_default_base_layer: bool,
     #[serde(default)]
@@ -280,18 +633,20 @@ impl Default for RootFilesystemConfig {
         Self {
             kind: RootFilesystemKind::Overlay,
             mode: None,
+            native_plugin: None,
             disable_default_base_layer: false,
             lowers: Vec::new(),
         }
     }
 }
 
-/// The root filesystem kind. Currently only `overlay`.
+/// The root filesystem kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RootFilesystemKind {
     #[default]
     Overlay,
+    Native,
 }
 
 /// Root filesystem mode.

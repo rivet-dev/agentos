@@ -16,15 +16,18 @@ use serde_json::{Map, Value};
 use tokio::sync::{broadcast, oneshot, watch};
 use tokio::task::JoinHandle;
 
-use agent_os_protocol::ACP_EXTENSION_NAMESPACE;
 use agent_os_protocol::generated::v1::{
     AcpCallback, AcpCallbackResponse, AcpEvent, AcpHostRequestCallbackResponse,
     AcpPermissionCallbackResponse,
 };
+use agent_os_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_client::wire;
+use secure_exec_vm_config as vm_config;
 
 use crate::config::{
-    AgentOsConfig, HostTool, MountConfig, PermissionMode, Permissions, SoftwareKind,
+    AgentOsConfig, AgentOsLimits, HostTool, MountConfig, PermissionMode, Permissions,
+    RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode as ConfigRootFilesystemMode,
+    RootLowerInput, SidecarJsBridgeCall, SidecarJsBridgeCallback, SoftwareKind,
     TimerScheduleDriver, ToolKit,
 };
 use crate::cron::CronManager;
@@ -32,8 +35,8 @@ use crate::error::ClientError;
 use crate::json_rpc::JsonRpcNotification;
 use crate::process::SYNTHETIC_PID_BASE;
 use crate::session::{
-    AgentCapabilities, AgentInfo, PermissionReply, PermissionRequest, PermissionRouteRequest,
-    PermissionRouteResult, SessionConfigOption, SessionModeState, record_live_session_event,
+    record_live_session_event, AgentCapabilities, AgentInfo, PermissionReply, PermissionRequest,
+    PermissionRouteRequest, PermissionRouteResult, SessionConfigOption, SessionModeState,
 };
 use crate::sidecar::{AgentOsSidecar, AgentOsSidecarPlacement, AgentOsSidecarVmLease};
 use crate::transport::{SidecarTransport, WireSidecarCallback};
@@ -246,16 +249,24 @@ impl AgentOs {
         // 3. Subscribe to events BEFORE CreateVm so the `ready` lifecycle event cannot be missed.
         let mut events = transport.subscribe_wire_events();
         let permissions = permissions_policy(&config);
+        let create_vm_config = serialize_create_vm_config_for_sidecar(&config)?;
+        if let Some(callback) = config.sidecar_js_bridge_callback.clone() {
+            let _ = session_js_bridge_callbacks()
+                .insert(sidecar_session_key(&connection_id, &session_id), callback);
+            transport.register_wire_callback("js_bridge_call", js_bridge_call_callback());
+        }
 
-        // 4. Create the VM (session scope). Default root filesystem keeps the bundled base layer.
+        // 4. Create the VM (session scope).
         let vm = match transport
             .request_wire(
                 wire_session_ownership(&connection_id, &session_id),
                 wire::RequestPayload::CreateVmRequest(wire::CreateVmRequest {
                     runtime: wire::GuestRuntimeKind::JavaScript,
-                    metadata: HashMap::new(),
-                    root_filesystem: default_wire_root_filesystem(),
-                    permissions: Some(permissions.clone()),
+                    config: serde_json::to_string(&create_vm_config).map_err(|error| {
+                        ClientError::Sidecar(format!(
+                            "failed to serialize create VM config: {error}"
+                        ))
+                    })?,
                 }),
             )
             .await?
@@ -616,6 +627,10 @@ impl AgentOs {
             .await;
         let _ = vm_tools().remove(&self.inner.vm_id);
         let _ = vm_permission_routers().remove(&self.inner.vm_id);
+        let _ = session_js_bridge_callbacks().remove(&sidecar_session_key(
+            &self.inner.connection_id,
+            &self.inner.session_id,
+        ));
         let sidecar = self.inner.sidecar.clone();
         if let Some(lease) = lease {
             lease.dispose().await?;
@@ -768,12 +783,300 @@ fn wire_vm_ownership(connection_id: &str, session_id: &str, vm_id: &str) -> wire
     })
 }
 
-fn default_wire_root_filesystem() -> wire::RootFilesystemDescriptor {
-    wire::RootFilesystemDescriptor {
-        mode: wire::RootFilesystemMode::Ephemeral,
-        disable_default_base_layer: false,
-        lowers: Vec::new(),
-        bootstrap_entries: Vec::new(),
+fn serialize_create_vm_config_for_sidecar(
+    config: &AgentOsConfig,
+) -> Result<vm_config::CreateVmConfig, ClientError> {
+    let (root_filesystem, native_root) =
+        serialize_root_filesystem_config_for_sidecar(&config.root_filesystem)?;
+    Ok(vm_config::CreateVmConfig {
+        cwd: None,
+        env: BTreeMap::new(),
+        root_filesystem,
+        permissions: Some(permissions_policy_config(config)),
+        limits: serialize_limits_config_for_sidecar(config.limits.as_ref())?,
+        dns: None,
+        native_root,
+        listen: None,
+        loopback_exempt_ports: config.loopback_exempt_ports.clone(),
+    })
+}
+
+fn serialize_root_filesystem_config_for_sidecar(
+    config: &RootFilesystemConfig,
+) -> Result<
+    (
+        vm_config::RootFilesystemConfig,
+        Option<vm_config::NativeRootFilesystemConfig>,
+    ),
+    ClientError,
+> {
+    let mode = match config.mode.unwrap_or(ConfigRootFilesystemMode::Ephemeral) {
+        ConfigRootFilesystemMode::Ephemeral => vm_config::RootFilesystemMode::Ephemeral,
+        ConfigRootFilesystemMode::ReadOnly => vm_config::RootFilesystemMode::ReadOnly,
+    };
+    match config.kind {
+        RootFilesystemKind::Overlay => {
+            if config.native_plugin.is_some() {
+                return Err(ClientError::Sidecar(
+                    "rootFilesystem.nativePlugin requires type \"native\"".to_string(),
+                ));
+            }
+            let lowers = config
+                .lowers
+                .iter()
+                .map(serialize_root_lower_config_for_sidecar)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((
+                vm_config::RootFilesystemConfig {
+                    mode,
+                    disable_default_base_layer: config.disable_default_base_layer,
+                    lowers,
+                    bootstrap_entries: Vec::new(),
+                },
+                None,
+            ))
+        }
+        RootFilesystemKind::Native => {
+            if !config.lowers.is_empty() {
+                return Err(ClientError::Sidecar(
+                    "native root filesystems do not support rootFilesystem.lowers".to_string(),
+                ));
+            }
+            let plugin = config.native_plugin.as_ref().ok_or_else(|| {
+                ClientError::Sidecar(
+                    "rootFilesystem.nativePlugin is required for type \"native\"".to_string(),
+                )
+            })?;
+            Ok((
+                vm_config::RootFilesystemConfig {
+                    mode,
+                    disable_default_base_layer: config.disable_default_base_layer,
+                    lowers: Vec::new(),
+                    bootstrap_entries: Vec::new(),
+                },
+                Some(vm_config::NativeRootFilesystemConfig {
+                    plugin: vm_config::MountPluginDescriptor {
+                        id: plugin.id.clone(),
+                        config: plugin
+                            .config
+                            .clone()
+                            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
+                    },
+                    read_only: config.mode == Some(ConfigRootFilesystemMode::ReadOnly),
+                }),
+            ))
+        }
+    }
+}
+
+fn serialize_root_lower_config_for_sidecar(
+    lower: &RootLowerInput,
+) -> Result<vm_config::RootFilesystemLowerDescriptor, ClientError> {
+    match lower {
+        RootLowerInput::BundledBaseFilesystem => {
+            Ok(vm_config::RootFilesystemLowerDescriptor::BundledBaseFilesystem)
+        }
+        RootLowerInput::SnapshotExport(snapshot) => {
+            let entries = snapshot
+                .source
+                .filesystem
+                .entries
+                .iter()
+                .map(serialize_filesystem_entry_config_for_sidecar)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(vm_config::RootFilesystemLowerDescriptor::Snapshot { entries })
+        }
+    }
+}
+
+fn serialize_filesystem_entry_config_for_sidecar(
+    entry: &crate::fs::FilesystemEntry,
+) -> Result<vm_config::RootFilesystemEntry, ClientError> {
+    let mode = u32::from_str_radix(entry.mode.trim_start_matches("0o"), 8).map_err(|error| {
+        ClientError::Sidecar(format!(
+            "invalid root filesystem mode {} for {}: {error}",
+            entry.mode, entry.path
+        ))
+    })?;
+    let kind = match entry.entry_type {
+        crate::fs::DirEntryType::File => vm_config::RootFilesystemEntryKind::File,
+        crate::fs::DirEntryType::Directory => vm_config::RootFilesystemEntryKind::Directory,
+        crate::fs::DirEntryType::Symlink => vm_config::RootFilesystemEntryKind::Symlink,
+    };
+    let encoding = entry.encoding.map(|encoding| match encoding {
+        crate::fs::FilesystemEntryEncoding::Utf8 => vm_config::RootFilesystemEntryEncoding::Utf8,
+        crate::fs::FilesystemEntryEncoding::Base64 => {
+            vm_config::RootFilesystemEntryEncoding::Base64
+        }
+    });
+
+    Ok(vm_config::RootFilesystemEntry {
+        path: entry.path.clone(),
+        kind,
+        mode: Some(mode),
+        uid: Some(entry.uid),
+        gid: Some(entry.gid),
+        content: entry.content.clone(),
+        encoding,
+        target: entry.target.clone(),
+        executable: entry.entry_type == crate::fs::DirEntryType::File && (mode & 0o111) != 0,
+    })
+}
+
+fn serialize_limits_config_for_sidecar(
+    limits: Option<&AgentOsLimits>,
+) -> Result<Option<vm_config::VmLimitsConfig>, ClientError> {
+    let Some(limits) = limits else {
+        return Ok(None);
+    };
+    let value = serde_json::to_value(limits).map_err(|error| {
+        ClientError::Sidecar(format!("failed to serialize VM limits config: {error}"))
+    })?;
+    serde_json::from_value(value).map(Some).map_err(|error| {
+        ClientError::Sidecar(format!("failed to encode VM limits config: {error}"))
+    })
+}
+
+fn permissions_policy_config(config: &AgentOsConfig) -> vm_config::PermissionsPolicy {
+    let Some(permissions) = config.permissions.as_ref() else {
+        return allow_all_permissions_policy_config();
+    };
+
+    vm_config::PermissionsPolicy {
+        fs: Some(
+            permissions
+                .fs
+                .as_ref()
+                .map(serialize_fs_permissions_config)
+                .unwrap_or(vm_config::FsPermissionScope::Mode(
+                    vm_config::PermissionMode::Allow,
+                )),
+        ),
+        network: Some(
+            permissions
+                .network
+                .as_ref()
+                .map(serialize_pattern_permissions_config)
+                .unwrap_or(vm_config::PatternPermissionScope::Mode(
+                    vm_config::PermissionMode::Allow,
+                )),
+        ),
+        child_process: Some(
+            permissions
+                .child_process
+                .as_ref()
+                .map(serialize_pattern_permissions_config)
+                .unwrap_or(vm_config::PatternPermissionScope::Mode(
+                    vm_config::PermissionMode::Allow,
+                )),
+        ),
+        process: Some(
+            permissions
+                .process
+                .as_ref()
+                .map(serialize_pattern_permissions_config)
+                .unwrap_or(vm_config::PatternPermissionScope::Mode(
+                    vm_config::PermissionMode::Allow,
+                )),
+        ),
+        env: Some(
+            permissions
+                .env
+                .as_ref()
+                .map(serialize_pattern_permissions_config)
+                .unwrap_or(vm_config::PatternPermissionScope::Mode(
+                    vm_config::PermissionMode::Allow,
+                )),
+        ),
+        tool: Some(
+            permissions
+                .tool
+                .as_ref()
+                .map(serialize_pattern_permissions_config)
+                .unwrap_or(vm_config::PatternPermissionScope::Mode(
+                    vm_config::PermissionMode::Allow,
+                )),
+        ),
+    }
+}
+
+fn allow_all_permissions_policy_config() -> vm_config::PermissionsPolicy {
+    vm_config::PermissionsPolicy {
+        fs: Some(vm_config::FsPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        network: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        child_process: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        process: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        env: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        tool: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+    }
+}
+
+fn serialize_fs_permissions_config(
+    permissions: &crate::config::FsPermissions,
+) -> vm_config::FsPermissionScope {
+    match permissions {
+        crate::config::FsPermissions::Mode(mode) => {
+            vm_config::FsPermissionScope::Mode(serialize_permission_mode_config(*mode))
+        }
+        crate::config::FsPermissions::Rules(rules) => {
+            vm_config::FsPermissionScope::Rules(vm_config::FsPermissionRuleSet {
+                default: rules.default.map(serialize_permission_mode_config),
+                rules: rules
+                    .rules
+                    .iter()
+                    .map(|rule| vm_config::FsPermissionRule {
+                        mode: serialize_permission_mode_config(rule.mode),
+                        operations: operation_wildcard_if_omitted(&rule.operations),
+                        paths: resource_wildcard_if_omitted(&rule.paths),
+                    })
+                    .collect(),
+            })
+        }
+    }
+}
+
+fn serialize_pattern_permissions_config(
+    permissions: &crate::config::PatternPermissions,
+) -> vm_config::PatternPermissionScope {
+    match permissions {
+        crate::config::PatternPermissions::Mode(mode) => {
+            vm_config::PatternPermissionScope::Mode(serialize_permission_mode_config(*mode))
+        }
+        crate::config::PatternPermissions::Rules(rules) => {
+            vm_config::PatternPermissionScope::Rules(vm_config::PatternPermissionRuleSet {
+                default: rules.default.map(serialize_permission_mode_config),
+                rules: rules
+                    .rules
+                    .iter()
+                    .map(|rule| vm_config::PatternPermissionRule {
+                        mode: serialize_permission_mode_config(rule.mode),
+                        operations: operation_wildcard_if_omitted(&rule.operations),
+                        patterns: resource_wildcard_if_omitted(&rule.patterns),
+                    })
+                    .collect(),
+            })
+        }
+    }
+}
+
+fn serialize_permission_mode_config(
+    mode: crate::config::PermissionMode,
+) -> vm_config::PermissionMode {
+    match mode {
+        crate::config::PermissionMode::Allow => vm_config::PermissionMode::Allow,
+        crate::config::PermissionMode::Deny => vm_config::PermissionMode::Deny,
     }
 }
 
@@ -837,6 +1140,129 @@ static VM_PERMISSION_ROUTERS: OnceCell<SccHashMap<String, Weak<AgentOsInner>>> =
 
 fn vm_permission_routers() -> &'static SccHashMap<String, Weak<AgentOsInner>> {
     VM_PERMISSION_ROUTERS.get_or_init(SccHashMap::new)
+}
+
+/// Process-global map of sidecar session -> Rust-host js_bridge callback.
+///
+/// Native root plugins can issue callbacks while `CreateVm` is still in flight, before the client
+/// knows the generated VM id. Session ownership is already known by then and stays stable for the VM.
+static SESSION_JS_BRIDGE_CALLBACKS: OnceCell<SccHashMap<String, SidecarJsBridgeCallback>> =
+    OnceCell::new();
+
+fn session_js_bridge_callbacks() -> &'static SccHashMap<String, SidecarJsBridgeCallback> {
+    SESSION_JS_BRIDGE_CALLBACKS.get_or_init(SccHashMap::new)
+}
+
+fn sidecar_session_key(connection_id: &str, session_id: &str) -> String {
+    format!("{connection_id}\0{session_id}")
+}
+
+fn wire_ownership_session_key(ownership: &wire::OwnershipScope) -> Option<String> {
+    match ownership {
+        wire::OwnershipScope::SessionOwnership(ownership) => Some(sidecar_session_key(
+            &ownership.connection_id,
+            &ownership.session_id,
+        )),
+        wire::OwnershipScope::VmOwnership(ownership) => Some(sidecar_session_key(
+            &ownership.connection_id,
+            &ownership.session_id,
+        )),
+        wire::OwnershipScope::ConnectionOwnership(_) => None,
+    }
+}
+
+fn js_bridge_call_callback() -> WireSidecarCallback {
+    Arc::new(|payload, ownership| {
+        Box::pin(async move {
+            let request = match payload {
+                wire::SidecarRequestPayload::JsBridgeCallRequest(request) => request,
+                wire::SidecarRequestPayload::HostCallbackRequest(_) => {
+                    return Ok(wire::SidecarResponsePayload::JsBridgeResultResponse(
+                        wire::JsBridgeResultResponse {
+                            call_id: "unknown".to_string(),
+                            result: None,
+                            error: Some(
+                                "js-bridge callback received a host callback request".to_string(),
+                            ),
+                        },
+                    ));
+                }
+                wire::SidecarRequestPayload::ExtEnvelope(_) => {
+                    return Ok(wire::SidecarResponsePayload::JsBridgeResultResponse(
+                        wire::JsBridgeResultResponse {
+                            call_id: "unknown".to_string(),
+                            result: None,
+                            error: Some(
+                                "js-bridge callback received an extension request".to_string(),
+                            ),
+                        },
+                    ));
+                }
+            };
+            Ok(wire::SidecarResponsePayload::JsBridgeResultResponse(
+                run_js_bridge_callback(&ownership, request).await,
+            ))
+        })
+    })
+}
+
+async fn run_js_bridge_callback(
+    ownership: &wire::OwnershipScope,
+    request: wire::JsBridgeCallRequest,
+) -> wire::JsBridgeResultResponse {
+    let call_id = request.call_id;
+    let args = match serde_json::from_str::<Value>(&request.args) {
+        Ok(args) => args,
+        Err(error) => {
+            return wire::JsBridgeResultResponse {
+                call_id,
+                result: None,
+                error: Some(format!("Invalid js_bridge args: {error}")),
+            };
+        }
+    };
+    let callback = wire_ownership_session_key(ownership)
+        .and_then(|key| session_js_bridge_callbacks().read(&key, |_, callback| callback.clone()));
+    let Some(callback) = callback else {
+        return wire::JsBridgeResultResponse {
+            call_id,
+            result: None,
+            error: Some("No js_bridge callback registered for sidecar session".to_string()),
+        };
+    };
+
+    let call = SidecarJsBridgeCall {
+        call_id: call_id.clone(),
+        mount_id: request.mount_id,
+        operation: request.operation,
+        args,
+    };
+    match callback(call).await {
+        Ok(result) => match result {
+            Some(value) => match serde_json::to_string(&value) {
+                Ok(result) => wire::JsBridgeResultResponse {
+                    call_id,
+                    result: Some(result),
+                    error: None,
+                },
+                Err(error) => wire::JsBridgeResultResponse {
+                    call_id,
+                    result: None,
+                    error: Some(format!("Invalid js_bridge result: {error}")),
+                },
+            },
+            None => wire::JsBridgeResultResponse {
+                call_id,
+                result: None,
+                error: None,
+            },
+        },
+        Err(error) => wire::JsBridgeResultResponse {
+            call_id,
+            result: None,
+            error: Some(error),
+        },
+    }
 }
 
 /// The transport callback that answers sidecar permission requests by routing them to the owning
@@ -2377,13 +2803,26 @@ fn rejected_to_error(rejected: wire::RejectedResponse) -> ClientError {
 
 #[cfg(test)]
 mod tests {
-    use super::{allow_all_permissions_policy, permissions_policy};
+    use super::{
+        allow_all_permissions_policy, permissions_policy, serialize_create_vm_config_for_sidecar,
+        serialize_root_filesystem_config_for_sidecar,
+    };
     use crate::config::{
-        AgentOsConfig, FsPermissionRule, FsPermissions, PatternPermissions, PermissionMode,
-        Permissions, RulePermissions,
+        AgentOsConfig, AgentOsLimits, FsPermissionRule, FsPermissions, HttpLimits, JsRuntimeLimits,
+        MountPlugin, PatternPermissions, PermissionMode, Permissions, ResourceLimits,
+        RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode, RootLowerInput,
+        RulePermissions, ToolLimits,
+    };
+    use crate::fs::{
+        DirEntryType, FilesystemEntry, FilesystemEntryEncoding, FilesystemSnapshotEntries,
+        FilesystemSnapshotExport, RootSnapshotExport, SnapshotExportKind,
     };
     use secure_exec_client::wire::{
         FsPermissionScope, PatternPermissionScope, PermissionMode as WirePermissionMode,
+    };
+    use secure_exec_vm_config::{
+        RootFilesystemEntryKind, RootFilesystemLowerDescriptor,
+        RootFilesystemMode as ConfigRootFilesystemMode,
     };
 
     #[test]
@@ -2463,5 +2902,154 @@ mod tests {
         assert_eq!(rules.default, Some(WirePermissionMode::Allow));
         assert_eq!(rules.rules[0].operations, vec!["*"]);
         assert_eq!(rules.rules[0].patterns, vec!["**"]);
+    }
+
+    #[test]
+    fn root_filesystem_serializer_preserves_configured_descriptor() {
+        let (descriptor, native_root) =
+            serialize_root_filesystem_config_for_sidecar(&RootFilesystemConfig {
+                mode: Some(RootFilesystemMode::ReadOnly),
+                disable_default_base_layer: true,
+                lowers: vec![
+                    RootLowerInput::BundledBaseFilesystem,
+                    RootLowerInput::SnapshotExport(RootSnapshotExport {
+                        kind: SnapshotExportKind::SnapshotExport,
+                        source: FilesystemSnapshotExport {
+                            format: "agent-os-filesystem-snapshot-v1".to_string(),
+                            filesystem: FilesystemSnapshotEntries {
+                                entries: vec![
+                                    FilesystemEntry {
+                                        path: "/bin/run".to_string(),
+                                        entry_type: DirEntryType::File,
+                                        mode: "0755".to_string(),
+                                        uid: 1000,
+                                        gid: 1000,
+                                        content: Some("#!/bin/sh".to_string()),
+                                        encoding: Some(FilesystemEntryEncoding::Utf8),
+                                        target: None,
+                                    },
+                                    FilesystemEntry {
+                                        path: "/link".to_string(),
+                                        entry_type: DirEntryType::Symlink,
+                                        mode: "0777".to_string(),
+                                        uid: 0,
+                                        gid: 0,
+                                        content: None,
+                                        encoding: None,
+                                        target: Some("/bin/run".to_string()),
+                                    },
+                                ],
+                            },
+                        },
+                    }),
+                ],
+                ..Default::default()
+            })
+            .expect("serialize root filesystem");
+
+        assert!(native_root.is_none());
+        assert_eq!(descriptor.mode, ConfigRootFilesystemMode::ReadOnly);
+        assert!(descriptor.disable_default_base_layer);
+        assert_eq!(descriptor.bootstrap_entries, Vec::new());
+        assert!(matches!(
+            descriptor.lowers[0],
+            RootFilesystemLowerDescriptor::BundledBaseFilesystem
+        ));
+
+        let RootFilesystemLowerDescriptor::Snapshot { entries } = &descriptor.lowers[1] else {
+            panic!("expected snapshot lower");
+        };
+        assert_eq!(entries[0].path, "/bin/run");
+        assert_eq!(entries[0].kind, RootFilesystemEntryKind::File);
+        assert_eq!(entries[0].mode, Some(0o755));
+        assert!(entries[0].executable);
+        assert_eq!(entries[1].kind, RootFilesystemEntryKind::Symlink);
+        assert_eq!(entries[1].target.as_deref(), Some("/bin/run"));
+    }
+
+    #[test]
+    fn create_vm_config_preserves_native_root_config() {
+        let config = serialize_create_vm_config_for_sidecar(&AgentOsConfig {
+            root_filesystem: RootFilesystemConfig {
+                kind: RootFilesystemKind::Native,
+                mode: Some(RootFilesystemMode::ReadOnly),
+                native_plugin: Some(MountPlugin {
+                    id: "sqlite_vfs".to_string(),
+                    config: Some(serde_json::json!({
+                        "databasePath": "/tmp/agent-os-root.sqlite"
+                    })),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .expect("serialize create VM config");
+        let native_root = config.native_root.expect("native root config");
+
+        assert_eq!(native_root.plugin.id, "sqlite_vfs");
+        assert_eq!(
+            native_root.plugin.config,
+            serde_json::json!({ "databasePath": "/tmp/agent-os-root.sqlite" })
+        );
+        assert!(native_root.read_only);
+    }
+
+    #[test]
+    fn create_vm_config_preserves_typed_limits() {
+        let config = serialize_create_vm_config_for_sidecar(&AgentOsConfig {
+            limits: Some(AgentOsLimits {
+                resources: Some(ResourceLimits {
+                    max_processes: Some(7),
+                    max_filesystem_bytes: Some(4096),
+                    ..Default::default()
+                }),
+                http: Some(HttpLimits {
+                    max_fetch_response_bytes: Some(1024),
+                }),
+                tools: Some(ToolLimits {
+                    default_tool_timeout_ms: Some(500),
+                    max_registered_tools_per_vm: Some(12),
+                    ..Default::default()
+                }),
+                js_runtime: Some(JsRuntimeLimits {
+                    v8_heap_limit_mb: Some(64),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .expect("serialize create VM config");
+        let limits = config.limits.expect("limits config");
+
+        let resources = limits.resources.expect("resource limits");
+        assert_eq!(resources.max_processes, Some(7));
+        assert_eq!(resources.max_filesystem_bytes, Some(4096));
+        assert_eq!(
+            limits.http.expect("http limits").max_fetch_response_bytes,
+            Some(1024)
+        );
+        assert_eq!(
+            limits
+                .tools
+                .as_ref()
+                .expect("tool limits")
+                .default_tool_timeout_ms,
+            Some(500)
+        );
+        assert_eq!(
+            limits
+                .tools
+                .expect("tool limits")
+                .max_registered_tools_per_vm,
+            Some(12)
+        );
+        assert_eq!(
+            limits
+                .js_runtime
+                .expect("js runtime limits")
+                .v8_heap_limit_mb,
+            Some(64)
+        );
     }
 }

@@ -29,5 +29,6 @@ secure-exec-client = { path = "../secure-exec/crates/secure-exec-client", versio
 secure-exec-bridge = { path = "../secure-exec/crates/bridge", version = "0.2.0-rc.3" }
 secure-exec-sidecar = { path = "../secure-exec/crates/sidecar", version = "0.2.0-rc.3" }
 secure-exec-sidecar-browser = { path = "../secure-exec/crates/sidecar-browser", version = "0.2.0-rc.3" }
+secure-exec-vm-config = { path = "../secure-exec/crates/vm-config", version = "0.2.0-rc.3" }
 vbare = "0.0.4"
 vbare-compiler = { package = "rivet-vbare-compiler", version = "0.0.5" }

@@ -16,13 +16,12 @@ use agent_os_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCO
 use bridge_support::RecordingBridge;
 use secure_exec_sidecar::wire::{
     AuthenticateRequest, ConnectionOwnership, CreateVmRequest, EventFrame, EventPayload,
-    ExtEnvelope, FsPermissionScope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope,
-    PatternPermissionScope, PermissionMode, PermissionsPolicy, RequestFrame, RequestPayload,
-    ResponsePayload, RootFilesystemDescriptor, RootFilesystemMode, SessionOwnership,
-    SidecarPlacement, SidecarPlacementShared, SidecarRequestPayload, SidecarResponseFrame,
-    SidecarResponsePayload, VmOwnership,
+    ExtEnvelope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope, RequestFrame,
+    RequestPayload, ResponsePayload, SessionOwnership, SidecarPlacement, SidecarPlacementShared,
+    SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload, VmOwnership,
 };
 use secure_exec_sidecar::{NativeSidecar, NativeSidecarConfig};
+use secure_exec_vm_config as vm_config;
 use serde_json::Value;
 
 #[test]
@@ -597,14 +596,12 @@ fn create_vm(
             }),
             payload: RequestPayload::CreateVmRequest(CreateVmRequest {
                 runtime: GuestRuntimeKind::JavaScript,
-                metadata: HashMap::from([(String::from("cwd"), cwd.to_string_lossy().into())]),
-                root_filesystem: RootFilesystemDescriptor {
-                    mode: RootFilesystemMode::Ephemeral,
-                    disable_default_base_layer: false,
-                    lowers: Vec::new(),
-                    bootstrap_entries: Vec::new(),
-                },
-                permissions: Some(allow_all_permissions()),
+                config: serde_json::to_string(&vm_config::CreateVmConfig {
+                    cwd: Some(cwd.to_string_lossy().into_owned()),
+                    permissions: Some(allow_all_permissions()),
+                    ..Default::default()
+                })
+                .expect("serialize create VM config"),
             }),
         })
         .expect("create VM");
@@ -614,23 +611,25 @@ fn create_vm(
     }
 }
 
-fn allow_all_permissions() -> PermissionsPolicy {
-    PermissionsPolicy {
-        fs: Some(FsPermissionScope::PermissionMode(PermissionMode::Allow)),
-        network: Some(PatternPermissionScope::PermissionMode(
-            PermissionMode::Allow,
+fn allow_all_permissions() -> vm_config::PermissionsPolicy {
+    vm_config::PermissionsPolicy {
+        fs: Some(vm_config::FsPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
         )),
-        child_process: Some(PatternPermissionScope::PermissionMode(
-            PermissionMode::Allow,
+        network: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
         )),
-        process: Some(PatternPermissionScope::PermissionMode(
-            PermissionMode::Allow,
+        child_process: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
         )),
-        env: Some(PatternPermissionScope::PermissionMode(
-            PermissionMode::Allow,
+        process: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
         )),
-        tool: Some(PatternPermissionScope::PermissionMode(
-            PermissionMode::Allow,
+        env: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
+        )),
+        tool: Some(vm_config::PatternPermissionScope::Mode(
+            vm_config::PermissionMode::Allow,
         )),
     }
 }

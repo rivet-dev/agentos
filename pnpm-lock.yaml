@@ -111,8 +111,8 @@ importers:
         specifier: workspace:*
         version: link:registry/agent/pi
       '@secure-exec/core':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../secure-exec/packages/core
+        version: link:../secure-exec/packages/core
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -237,8 +237,8 @@ importers:
         specifier: ^0.6.2
         version: 0.6.2
       '@secure-exec/core':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/packages/core
+        version: link:../../../secure-exec/packages/core
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
