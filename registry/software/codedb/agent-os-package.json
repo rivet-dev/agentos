@@ -1,0 +1,7 @@
+{
+  "name": "@rivet-dev/agent-os-codedb",
+  "type": "wasm",
+  "description": "codedb code intelligence CLI (reduced WASI fork)",
+  "aptName": "codedb",
+  "source": "zig"
+}

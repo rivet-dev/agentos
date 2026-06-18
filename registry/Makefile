@@ -8,13 +8,16 @@ COMMANDS_DIR := $(NATIVE_DIR)/target/wasm32-wasip1/release/commands
 MARKER_DIR  := .build-markers
 RUST_MARKER := $(MARKER_DIR)/rust-wasm-built
 C_MARKER    := $(MARKER_DIR)/c-wasm-built
+ZIG_MARKER  := $(MARKER_DIR)/zig-wasm-built
 COPY_MARKER := $(MARKER_DIR)/wasm-copied
 META_MARKER := $(MARKER_DIR)/meta-generated
 TS_MARKER   := $(MARKER_DIR)/ts-built
 
+ZIG ?= zig
+
 # Command packages (excludes _types and meta-packages)
 CMD_PACKAGES := coreutils sed grep gawk findutils diffutils tar gzip \
-                curl http-get wget zip unzip jq ripgrep fd tree file sqlite3 duckdb yq codex git
+                curl http-get wget zip unzip jq ripgrep fd tree file sqlite3 duckdb yq codex git codedb
 
 # Meta-packages
 META_PACKAGES := common build-essential everything
@@ -22,7 +25,7 @@ META_PACKAGES := common build-essential everything
 # All publishable packages
 ALL_PACKAGES := $(CMD_PACKAGES) $(META_PACKAGES)
 
-.PHONY: all build-wasm build-wasm-rust build-wasm-c copy-wasm generate-meta build test \
+.PHONY: all build-wasm build-wasm-rust build-wasm-c build-wasm-zig copy-wasm generate-meta build test \
         publish publish-dry publish-force publish-clean clean rebuild
 
 all: build
@@ -36,7 +39,7 @@ $(MARKER_DIR):
 # ---------------------------------------------------------------------------
 # Build WASM binaries from source (in native/)
 # ---------------------------------------------------------------------------
-build-wasm: build-wasm-rust build-wasm-c
+build-wasm: build-wasm-rust build-wasm-c build-wasm-zig
 
 build-wasm-rust: $(RUST_MARKER)
 $(RUST_MARKER): $(MARKER_DIR)
@@ -51,11 +54,23 @@ $(C_MARKER): $(MARKER_DIR)
 	cd $(NATIVE_DIR)/c && make install COMMANDS_DIR=../target/wasm32-wasip1/release/commands
 	@touch $(C_MARKER)
 
+build-wasm-zig: $(ZIG_MARKER)
+$(ZIG_MARKER): $(MARKER_DIR)
+	@echo "=== Building Zig WASM commands ==="
+	@if command -v "$(ZIG)" >/dev/null 2>&1; then \
+		cd $(NATIVE_DIR)/zig/codedb && \
+			"$(ZIG)" build -Dtarget=wasm32-wasi -Doptimize=ReleaseSmall && \
+			cp -f zig-out/bin/codedb.wasm zig-out/bin/codedb; \
+	else \
+		echo "  WARN: zig not found; skipping Zig builds"; \
+	fi
+	@touch $(ZIG_MARKER)
+
 # ---------------------------------------------------------------------------
 # Copy WASM binaries from native build output into per-package wasm/ dirs
 # ---------------------------------------------------------------------------
 copy-wasm: $(COPY_MARKER)
-$(COPY_MARKER): $(RUST_MARKER) $(C_MARKER)
+$(COPY_MARKER): $(RUST_MARKER) $(C_MARKER) $(ZIG_MARKER)
 	@echo "=== Copying WASM binaries to packages ==="
 
 	@# --- coreutils ---
@@ -185,6 +200,10 @@ $(COPY_MARKER): $(RUST_MARKER) $(C_MARKER)
 	@# --- git ---
 	@mkdir -p software/git/wasm
 	@[ -f "$(COMMANDS_DIR)/git" ] && cp -f "$(COMMANDS_DIR)/git" software/git/wasm/ || echo "  WARN: git not found"
+
+	@# --- codedb (repo-side Zig fork) ---
+	@mkdir -p software/codedb/wasm
+	@[ -f "$(NATIVE_DIR)/zig/codedb/zig-out/bin/codedb" ] && cp -f "$(NATIVE_DIR)/zig/codedb/zig-out/bin/codedb" software/codedb/wasm/ || echo "  WARN: codedb not found (needs Zig toolchain)"
 
 	@echo "=== Copy complete ==="
 	@touch $(COPY_MARKER)

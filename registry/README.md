@@ -48,6 +48,7 @@ Node.js agent and tool packages that are projected into the VM via the ModuleAcc
 
 | Package | apt Equivalent | Description | Source | Combined Size | Gzipped |
 |---------|---------------|-------------|--------|---------------|---------|
+| `@rivet-dev/agent-os-codedb` | codedb | codedb code intelligence CLI (reduced WASI fork) | zig | - | - |
 | `@rivet-dev/agent-os-codex` | codex | OpenAI Codex integration (codex, codex-exec) | rust | 274 KiB | 118 KiB |
 | `@rivet-dev/agent-os-coreutils` | coreutils | GNU coreutils: sh, cat, ls, cp, sort, and 80+ commands | rust | 51.4 MiB | 23.5 MiB |
 | `@rivet-dev/agent-os-curl` | curl | curl HTTP client | c | - | - |
@@ -92,6 +93,8 @@ make build-wasm    # Compile Rust + C commands to WASM
 make copy-wasm     # Copy binaries into per-package wasm/ directories
 make build         # Build TypeScript (includes above steps)
 ```
+
+`codedb` also has a repo-side Zig source tree under `native/zig/codedb/`. Rebuilding that package currently requires a Zig 0.15.x toolchain available as `zig`, or passing `ZIG=/path/to/zig` to `make`.
 
 ## Publishing
 

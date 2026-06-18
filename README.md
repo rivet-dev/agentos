@@ -154,6 +154,7 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 
 | Package | apt Equivalent | Description | Source | Combined Size | Gzipped |
 |---------|---------------|-------------|--------|---------------|---------|
+| `@rivet-dev/agent-os-codedb` | codedb | codedb code intelligence CLI (reduced WASI fork) | zig | 228 KiB | 36.7 KiB |
 | `@rivet-dev/agent-os-codex` | codex | OpenAI Codex integration (codex, codex-exec) | rust | - | - |
 | `@rivet-dev/agent-os-coreutils` | coreutils | GNU coreutils: sh, cat, ls, cp, sort, and 80+ commands | rust | - | - |
 | `@rivet-dev/agent-os-curl` | curl | curl HTTP client | c | - | - |

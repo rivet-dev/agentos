@@ -42,6 +42,7 @@ All published packages follow `@rivet-dev/agent-os-{apt-name}` where `{apt-name}
 | (none) | @rivet-dev/agent-os-codex | codex, codex-exec |
 | git | @rivet-dev/agent-os-git | git (planned) |
 | make | @rivet-dev/agent-os-make | make (planned) |
+| codedb | @rivet-dev/agent-os-codedb | codedb |
 
 ### Disabled packages (WASM binaries not built)
 
@@ -55,6 +56,8 @@ The following packages exist but **cannot be compiled** until a patched wasi-lib
 | @rivet-dev/agent-os-git | WASM binary not yet built |
 
 To unblock: run `cd native && ./scripts/patch-wasi-libc.sh` to build the patched sysroot, then `cd .. && make build-wasm-c copy-wasm`.
+
+`@rivet-dev/agent-os-codedb` is built from a repo-side Zig fork under `native/zig/codedb/`. It reuses upstream indexing/search code but only ships the single-shot CLI subcommands that work in WasmVM today: `tree`, `outline`, `find`, `search`, `word`, `deps`, and `read`. The upstream daemon, HTTP server, watcher loop, and MCP server still rely on threads, sockets, child-process spawning, and POSIX file locking, so they remain out of scope for the current WASI package.
 
 ### Meta-packages
 
