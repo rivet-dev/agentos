@@ -913,7 +913,14 @@ async fn send_json_rpc_request(
                 }
             }
             EventPayload::ProcessOutputEvent(output)
-                if output.process_id == process_id && output.channel == StreamChannel::Stderr => {}
+                if output.process_id == process_id && output.channel == StreamChannel::Stderr =>
+            {
+                tracing::error!(
+                    process_id,
+                    stderr = %String::from_utf8_lossy(&output.chunk),
+                    "ACP adapter stderr"
+                );
+            }
             EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
                 return Err(SidecarError::InvalidState(format!(
                     "ACP adapter process {process_id} exited with code {} before response id={response_id}",
@@ -1357,8 +1364,14 @@ fn response_result(response: Value, label: &str) -> Result<Map<String, Value>, S
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("unknown ACP error");
+        // Include `error.data` when present — adapters (e.g. Pi) put the real
+        // failure detail there while `message` stays a generic "Internal error".
+        let data = error
+            .get("data")
+            .map(|d| format!(" (data: {d})"))
+            .unwrap_or_default();
         return Err(SidecarError::InvalidState(format!(
-            "{label} failed: {message}"
+            "{label} failed: {message}{data}"
         )));
     }
     response
