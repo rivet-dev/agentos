@@ -25,6 +25,14 @@ secure-exec-status:
 dev-shell *args:
 	pnpm --filter @rivet-dev/agent-os-dev-shell dev-shell -- "$@"
 
+# Run the agentos-sdk.dev site (landing + /docs) locally with hot reload
+docs:
+	pnpm --filter @agent-os/website dev
+
+# Build the agentos-sdk.dev site to website/dist
+docs-build:
+	pnpm --filter @agent-os/website build
+
 test-bounded cmd='pnpm test':
 	#!/usr/bin/env bash
 	set -euo pipefail

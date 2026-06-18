@@ -22,8 +22,9 @@ Agent OS is the agent-facing wrapper around secure-exec. It provides ACP session
 - Keep ACP decoding and session state in Agent OS wrapper code, not in secure-exec core sidecar code.
 - The agent-os sidecar wrapper embeds and extends secure-exec; secure-exec must remain free of ACP, agent, and session dependencies.
 
-## Quickstarts And Docs
+## Website And Docs
 
+- The Agent OS website and docs live in `website/` (Astro + Starlight) and deploy to `agentos-sdk.dev` (docs at `agentos-sdk.dev/docs`). The marketing pages and docs were migrated out of `rivet.dev/agent-os` and `rivet.dev/docs/agent-os`, which now 301-redirect to this domain.
 - The core quickstart under `examples/quickstart/` and the RivetKit example must stay behaviorally identical.
 - Every quickstart change needs a matching automated test in the same change.
 - Confirm the docs repo path with the user before editing Agent OS docs.

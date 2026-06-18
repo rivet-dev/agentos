@@ -1,0 +1,18 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { Navigation } from "../components/Navigation";
+import { Footer } from "../components/Footer";
+import AgentOSPricingPage from "../components/marketing/solutions/AgentOSPricingPage";
+import FaqJsonLd from "../components/faq/FaqJsonLd.astro";
+import { agentOsPricingFaqs } from "../data/faqs/agent-os-pricing";
+---
+
+<Layout
+  title="Agent OS Pricing — Free, Open Source, Apache 2.0"
+  description="Agent OS is free and open source under the Apache 2.0 license. Self-host for free, or contact sales for enterprise support and on-premise deployment."
+>
+  <FaqJsonLd items={agentOsPricingFaqs} />
+  <Navigation client:load />
+  <AgentOSPricingPage client:load />
+  <Footer client:visible />
+</Layout>

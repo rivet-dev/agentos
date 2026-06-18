@@ -1,0 +1,93 @@
+---
+title: "Benchmarks"
+description: "Performance benchmarks comparing agentOS to traditional sandbox providers."
+skill: true
+---
+
+These are the benchmark figures shown on the agentOS marketing page. All numbers are computed from the same data source used by the marketing page. For independent sandbox comparison data, see the [ComputeSDK benchmarks](https://www.computesdk.com/benchmarks/).
+
+## Cold start
+
+Time from requesting an execution to first code running. Measured using the sleep workload (minimal shell command). Sandbox baseline: **E2B**, the fastest mainstream sandbox provider as of March 30, 2026. See [ComputeSDK benchmarks](https://www.computesdk.com/benchmarks/) for independent sandbox comparison data.
+
+| Metric | agentOS | Fastest sandbox (E2B) |
+|---|--:|--:|
+| Cold start p50 | 4.8 ms | 440 ms |
+| Cold start p95 | 5.6 ms | 950 ms |
+| Cold start p99 | 6.1 ms | 3,150 ms |
+
+## Memory per instance
+
+Measured via staircase benchmarking:
+
+1. **Warmup.** A throwaway VM is created, started, and destroyed before measurement begins. This pays one-time costs (module cache, JIT compilation) that are amortized away in any real deployment where the host process is long-lived.
+2. **Baseline.** GC is forced twice (`--expose-gc`), then RSS is sampled across the entire process tree by reading `/proc/[pid]/statm` for the host process and all descendants. This captures child processes (e.g. V8 isolates running as separate processes) that `process.memoryUsage().rss` would miss.
+3. **Staircase.** VMs are added one at a time. After each VM starts and settles, GC is forced and RSS is sampled again. The delta from the previous sample is the incremental cost of that VM.
+4. **Average.** The per-VM cost is the mean of all step deltas.
+5. **Teardown.** All VMs are disposed and the reclaimed RSS is recorded.
+
+RSS is a process-wide metric that includes thread stacks and OS-mapped pages beyond the VM itself, so the reported figure is an upper bound on the true per-VM cost.
+
+Sandbox baseline: **Daytona**, the cheapest mainstream sandbox provider as of March 30, 2026. Default sandbox: 1 vCPU + 1 GiB RAM.
+
+### Full coding agent
+
+Pi coding agent session with MCP servers and mounted file systems.
+
+| Metric | agentOS | Cheapest sandbox (Daytona) |
+|---|--:|--:|
+| Memory per instance | ~131 MB | ~1024 MB |
+
+### Simple shell command
+
+Minimal shell workload running simple commands.
+
+| Metric | agentOS | Cheapest sandbox (Daytona) |
+|---|--:|--:|
+| Memory per instance | ~22 MB | ~1024 MB |
+
+## Cost per execution-second
+
+Assumes one agent per sandbox (needed for isolation) and 70% host utilization for self-hosted hardware (the industry-standard HPA scaling threshold). Cost formula: `server cost per second / concurrent executions per server`, where concurrent executions = `floor(server RAM / agent memory) × 0.7`.
+
+Sandbox baseline: **Daytona** at $0.0504/vCPU-h + $0.0162/GiB-h with a 1 vCPU + 1 GiB minimum. Source: [daytona.io/pricing](https://www.daytona.io/pricing).
+
+### Full coding agent
+
+| Host tier | agentOS | Cheapest sandbox | Difference |
+|---|--:|--:|--:|
+| AWS ARM | $0.00000058/s | $0.000018/s | 32x cheaper |
+| AWS x86 | $0.00000072/s | $0.000018/s | 26x cheaper |
+| Hetzner ARM | $0.000000066/s | $0.000018/s | 281x cheaper |
+| Hetzner x86 | $0.00000011/s | $0.000018/s | 171x cheaper |
+
+### Simple shell command
+
+| Host tier | agentOS | Cheapest sandbox | Difference |
+|---|--:|--:|--:|
+| AWS ARM | $0.000000073/s | $0.000018/s | 254x cheaper |
+| AWS x86 | $0.000000090/s | $0.000018/s | 205x cheaper |
+| Hetzner ARM | $0.000000011/s | $0.000018/s | 1738x cheaper |
+| Hetzner x86 | $0.000000017/s | $0.000018/s | 1061x cheaper |
+
+## Test environment
+
+| Component | Details |
+|---|---|
+| CPU | 12th Gen Intel i7-12700KF, 12 cores / 20 threads @ 3.7 GHz, 25 MB cache |
+| RAM | 2× 32 GB DDR4 @ 2400 MT/s |
+| Node.js | v24.13.0 |
+| OS | Linux 6.1.0 (Debian), x86_64 |
+
+## Sandbox baselines
+
+| Comparison | Provider | Why this provider |
+|---|---|---|
+| Cold start | E2B | Fastest mainstream sandbox provider on [ComputeSDK](https://www.computesdk.com/benchmarks/) as of March 30, 2026 |
+| Memory and cost | Daytona | Cheapest mainstream sandbox provider as of March 30, 2026 ($0.0504/vCPU-h + $0.0162/GiB-h) |
+
+Self-hosted hardware tiers: AWS t4g.micro (ARM, $0.0084/h, 1 GiB), AWS t3.micro (x86, $0.0104/h, 1 GiB), Hetzner CAX11 (ARM, €3.29/mo, 4 GiB), Hetzner CX22 (x86, €5.39/mo, 4 GiB). All on-demand pricing.
+
+## Reproducing
+
+agentOS benchmarks live in the [agent-os repository](https://github.com/rivet-dev/agent-os) under `scripts/benchmarks/`.

@@ -1,0 +1,15 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { Navigation } from "../components/Navigation";
+import { Footer } from "../components/Footer";
+import AgentOSUseCasesPage from "../components/marketing/solutions/AgentOSUseCasesPage";
+---
+
+<Layout
+  title="Agent OS Use Cases — Who is Agent OS for?"
+  description="From background agents to production fleets, programming assistants to multi-agent systems — what you can build with Agent OS."
+>
+  <Navigation client:load />
+  <AgentOSUseCasesPage client:load />
+  <Footer client:visible />
+</Layout>
