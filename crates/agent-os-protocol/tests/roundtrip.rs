@@ -10,9 +10,12 @@ fn acp_protocol_round_trips_create_session() {
         adapter_entrypoint: String::from("/root/node_modules/agent/adapter.mjs"),
         cwd: String::from("/home/user"),
         args: vec![String::from("--model"), String::from("gpt-5")],
-        env: [(String::from("SECURE_EXEC_KEEP_STDIN_OPEN"), String::from("1"))]
-            .into_iter()
-            .collect(),
+        env: [(
+            String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
+            String::from("1"),
+        )]
+        .into_iter()
+        .collect(),
         protocol_version: 1,
         client_capabilities: String::from("{}"),
         mcp_servers: String::from("{}"),

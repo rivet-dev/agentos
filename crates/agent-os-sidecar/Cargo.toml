@@ -24,3 +24,4 @@ tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 [dev-dependencies]
 agent-os-bridge = { workspace = true }
+secure-exec-vm-config = { workspace = true }

@@ -6,6 +6,13 @@ import * as path from "node:path";
 import * as posixPath from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import {
+	type CreateVmConfig,
+	type RootFilesystemEntry as VmConfigRootFilesystemEntry,
+} from "@secure-exec/core/vm-config";
+import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
+import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
+import { serializePermissionsForSidecar } from "./sidecar/permissions.js";
+import {
 	type AuthenticatedSession,
 	type CreatedVm,
 	type LocalCompatMount,
@@ -15,8 +22,6 @@ import {
 	type RootFilesystemEntry,
 	serializeMountConfigForSidecar,
 } from "./sidecar/rpc-client.js";
-import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
-import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
 
 export const AF_INET = 2;
 export const AF_UNIX = 1;
@@ -1736,7 +1741,10 @@ class WasmVmRuntimeDescriptor implements KernelRuntimeDriver {
 			if (dirOffset === undefined) {
 				continue;
 			}
-			guestPaths.set(name, `/__secure_exec/commands/${startIndex + dirOffset}/${name}`);
+			guestPaths.set(
+				name,
+				`/__secure_exec/commands/${startIndex + dirOffset}/${name}`,
+			);
 		}
 		return guestPaths;
 	}
@@ -1745,8 +1753,8 @@ class WasmVmRuntimeDescriptor implements KernelRuntimeDriver {
 		const normalized = normalizeCommandLookup(command);
 		if (
 			this._commandPaths.has(normalized) ||
-			(!this.commandDirs || this.commandDirs.length === 0) &&
-				this.commands.includes(normalized)
+			((!this.commandDirs || this.commandDirs.length === 0) &&
+				this.commands.includes(normalized))
 		) {
 			this._moduleCache.set(normalized, true);
 		}
@@ -1828,14 +1836,25 @@ function ensureNativeSidecarBinary(): string {
 				stdio: "pipe",
 			});
 		} else if (!fsSync.existsSync(SIDECAR_BINARY)) {
-			execFileSync(resolveCargoBinary(), ["build", "-q", "-p", "agent-os-sidecar"], {
-				cwd: REPO_ROOT,
-				stdio: "pipe",
-			});
+			execFileSync(
+				resolveCargoBinary(),
+				["build", "-q", "-p", "agent-os-sidecar"],
+				{
+					cwd: REPO_ROOT,
+					stdio: "pipe",
+				},
+			);
 		}
 	}
 	ensuredSidecarBinary = SIDECAR_BINARY;
 	return ensuredSidecarBinary;
+}
+
+function rootEntryExecutable(
+	kind: RootFilesystemEntry["kind"],
+	mode: number,
+): boolean {
+	return kind === "file" && (mode & 0o111) !== 0;
 }
 
 function createBootstrapEntries(commandNames: string[]): RootFilesystemEntry[] {
@@ -1846,6 +1865,7 @@ function createBootstrapEntries(commandNames: string[]): RootFilesystemEntry[] {
 			mode: 0o755,
 			uid: 0,
 			gid: 0,
+			executable: false,
 		},
 		...KERNEL_POSIX_BOOTSTRAP_DIRS.map((entryPath) => ({
 			path: entryPath,
@@ -1853,6 +1873,7 @@ function createBootstrapEntries(commandNames: string[]): RootFilesystemEntry[] {
 			mode: 0o755,
 			uid: 0,
 			gid: 0,
+			executable: false,
 		})),
 		{
 			path: "/usr/bin/env",
@@ -1862,6 +1883,7 @@ function createBootstrapEntries(commandNames: string[]): RootFilesystemEntry[] {
 			gid: 0,
 			content: "",
 			encoding: "utf8",
+			executable: false,
 		},
 	];
 	for (const command of [...new Set(commandNames)].sort((left, right) =>
@@ -1875,6 +1897,7 @@ function createBootstrapEntries(commandNames: string[]): RootFilesystemEntry[] {
 			gid: 0,
 			content: KERNEL_COMMAND_STUB,
 			encoding: "utf8",
+			executable: true,
 		});
 	}
 	return entries;
@@ -1892,6 +1915,15 @@ function mergeRootFilesystemEntries(
 		merged.set(entry.path, entry);
 	}
 	return [...merged.values()];
+}
+
+function rootFilesystemEntriesForConfig(
+	entries: RootFilesystemEntry[],
+): VmConfigRootFilesystemEntry[] {
+	return entries.map((entry) => ({
+		...entry,
+		executable: entry.executable ?? false,
+	}));
 }
 
 async function snapshotFilesystemEntries(
@@ -1916,6 +1948,7 @@ async function snapshotFilesystemEntries(
 			uid: statInfo.uid,
 			gid: statInfo.gid,
 			target: await filesystem.readlink(targetPath),
+			executable: false,
 		});
 		return output;
 	}
@@ -1926,6 +1959,7 @@ async function snapshotFilesystemEntries(
 			mode: statInfo.mode,
 			uid: statInfo.uid,
 			gid: statInfo.gid,
+			executable: false,
 		});
 		if (passthroughDirectory) {
 			return output;
@@ -1953,6 +1987,7 @@ async function snapshotFilesystemEntries(
 			"base64",
 		),
 		encoding: "base64",
+		executable: rootEntryExecutable("file", statInfo.mode),
 	});
 	return output;
 }
@@ -1990,7 +2025,9 @@ async function materializeSnapshotEntriesIntoVm(
 	}
 }
 
-function decodeRootFilesystemEntryContent(entry: RootFilesystemEntry): Uint8Array {
+function decodeRootFilesystemEntryContent(
+	entry: RootFilesystemEntry,
+): Uint8Array {
 	const content = entry.content ?? "";
 	if (entry.encoding === "base64") {
 		return new Uint8Array(Buffer.from(content, "base64"));
@@ -2235,7 +2272,9 @@ async function ensureBoundParentDirectory(
 	if (parent === targetPath) {
 		return;
 	}
-	await callBoundFilesystemMethod(methods, "mkdir", parent, { recursive: true });
+	await callBoundFilesystemMethod(methods, "mkdir", parent, {
+		recursive: true,
+	});
 }
 
 async function syncLiveFilesystemToBoundMethods(
@@ -2243,8 +2282,8 @@ async function syncLiveFilesystemToBoundMethods(
 	methods: BoundVirtualFileSystemMethods,
 	paths: readonly string[],
 ): Promise<void> {
-	for (const targetPath of [...new Set(paths.map(normalizePath))].sort((left, right) =>
-		left.localeCompare(right),
+	for (const targetPath of [...new Set(paths.map(normalizePath))].sort(
+		(left, right) => left.localeCompare(right),
 	)) {
 		if (!(await live.exists(targetPath).catch(() => false))) {
 			continue;
@@ -2258,7 +2297,10 @@ async function syncLiveFilesystemPathToBoundMethods(
 	methods: BoundVirtualFileSystemMethods,
 	targetPath: string,
 ): Promise<void> {
-	const stat = targetPath === "/" ? await live.stat(targetPath) : await live.lstat(targetPath);
+	const stat =
+		targetPath === "/"
+			? await live.stat(targetPath)
+			: await live.lstat(targetPath);
 	if (stat.isSymbolicLink) {
 		await ensureBoundParentDirectory(methods, targetPath);
 		await callBoundFilesystemMethod(methods, "removeFile", targetPath).catch(
@@ -2284,15 +2326,26 @@ async function syncLiveFilesystemPathToBoundMethods(
 			await syncLiveFilesystemPathToBoundMethods(
 				live,
 				methods,
-				targetPath === "/" ? posixPath.join("/", child) : posixPath.join(targetPath, child),
+				targetPath === "/"
+					? posixPath.join("/", child)
+					: posixPath.join(targetPath, child),
 			);
 		}
 		return;
 	}
 
 	await ensureBoundParentDirectory(methods, targetPath);
-	await callBoundFilesystemMethod(methods, "writeFile", targetPath, new Uint8Array(0));
-	for (let offset = 0; offset < stat.size; offset += LIVE_FILESYSTEM_SYNC_CHUNK_SIZE) {
+	await callBoundFilesystemMethod(
+		methods,
+		"writeFile",
+		targetPath,
+		new Uint8Array(0),
+	);
+	for (
+		let offset = 0;
+		offset < stat.size;
+		offset += LIVE_FILESYSTEM_SYNC_CHUNK_SIZE
+	) {
 		const chunk = await live.pread(
 			targetPath,
 			offset,
@@ -2301,7 +2354,13 @@ async function syncLiveFilesystemPathToBoundMethods(
 		if (chunk.length === 0) {
 			break;
 		}
-		await callBoundFilesystemMethod(methods, "pwrite", targetPath, offset, chunk);
+		await callBoundFilesystemMethod(
+			methods,
+			"pwrite",
+			targetPath,
+			offset,
+			chunk,
+		);
 	}
 }
 
@@ -2736,23 +2795,26 @@ class NativeKernel implements Kernel {
 			"/",
 			[],
 			{
-				passthroughDirectories:
-					rootPassthroughPlan.passthroughDirectories,
+				passthroughDirectories: rootPassthroughPlan.passthroughDirectories,
 			},
 		);
 		this.liveFilesystemSyncRoots =
 			collectLiveFilesystemSyncRoots(snapshotEntries);
 		const rootFilesystem = {
+			mode: "ephemeral" as const,
 			disableDefaultBaseLayer: true,
 			lowers: [
 				{
 					kind: "snapshot" as const,
-					entries: mergeRootFilesystemEntries(
-						createBootstrapEntries([...NODE_RUNTIME_BOOTSTRAP_COMMANDS]),
-						snapshotEntries,
+					entries: rootFilesystemEntriesForConfig(
+						mergeRootFilesystemEntries(
+							createBootstrapEntries([...NODE_RUNTIME_BOOTSTRAP_COMMANDS]),
+							snapshotEntries,
+						),
 					),
 				},
 			],
+			bootstrapEntries: [],
 		};
 
 		const client = NativeSidecarProcessClient.spawn({
@@ -2762,18 +2824,17 @@ class NativeKernel implements Kernel {
 			frameTimeoutMs: NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
 		});
 		const session = await client.authenticateAndOpenSession();
+		const createVmConfig: CreateVmConfig = {
+			env: createVmEnv,
+			rootFilesystem,
+			permissions: bootstrapPermissions
+				? serializePermissionsForSidecar(bootstrapPermissions)
+				: undefined,
+			loopbackExemptPorts: this.loopbackExemptPorts,
+		};
 		const vm = await client.createVm(session, {
 			runtime: "java_script",
-			metadata: {
-				...Object.fromEntries(
-					Object.entries(createVmEnv).map(([key, value]) => [
-						`env.${key}`,
-						value,
-					]),
-				),
-			},
-			rootFilesystem,
-			permissions: bootstrapPermissions,
+			config: createVmConfig,
 		});
 		await client.waitForEvent(
 			{

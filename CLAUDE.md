@@ -8,6 +8,7 @@ Agent OS is the agent-facing wrapper around secure-exec. It provides ACP session
 - Keep generic runtime, kernel, VFS, language execution, and registry software behavior in secure-exec.
 - Agent OS owns ACP, sessions, agent adapters, toolkit semantics, quickstarts, and the AgentOs facade.
 - Call OS instances VMs, never sandboxes.
+- The protocol has no backwards compatibility. Clients and the sidecar ship in same-version lockstep, so never add protocol or config versioning, runtime negotiation, fallbacks, or converters. Configs such as `CreateVmConfig` carry no `version` field; the single same-version wire handshake is the only version check. Change the protocol freely and update both sides together.
 
 ## Agent Sessions
 
