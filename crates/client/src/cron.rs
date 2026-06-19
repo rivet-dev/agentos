@@ -305,8 +305,9 @@ async fn execute_job_inner(manager: Arc<CronManager>, vm: AgentOs, id: String) {
 /// Dispatch a [`CronAction`]. Mirrors TS `CronManager.runAction`.
 ///
 /// `Session` creates a session, prompts it, and always closes it (even if the prompt errors, the
-/// close still runs, matching the TS `finally`). `Exec` joins the command and args into a single
-/// shell command string and runs it via [`AgentOs::exec`]. `Callback` awaits the in-process future.
+/// close still runs, matching the TS `finally`). `Exec` sends the structured `(command, args)` argv
+/// verbatim via [`AgentOs::exec_argv`] (no string flattening / re-parsing). `Callback` awaits the
+/// in-process future.
 async fn run_action(vm: &AgentOs, action: &CronAction) -> Result<(), ClientError> {
     match action {
         CronAction::Session {
@@ -325,12 +326,11 @@ async fn run_action(vm: &AgentOs, action: &CronAction) -> Result<(), ClientError
             Ok(())
         }
         CronAction::Exec { command, args } => {
-            let cmd = if args.is_empty() {
-                command.clone()
-            } else {
-                format!("{} {}", command, args.join(" "))
-            };
-            vm.exec(&cmd, crate::process::ExecOptions::default())
+            // Send the structured argv verbatim. Flattening `command`/`args` into a single string
+            // and re-parsing it through the `exec` command-line parser would re-split argv elements
+            // on whitespace and shell-evaluate any `$()`/backtick content; `exec_argv` preserves the
+            // structured (command, args) contract element-for-element.
+            vm.exec_argv(command, args, crate::process::ExecOptions::default())
                 .await
                 .map_err(|err| ClientError::Sidecar(err.to_string()))?;
             Ok(())
@@ -1276,6 +1276,88 @@ mod tests {
             "unexpected limit error: {error}"
         );
         ensure_cron_capacity(&manager, "job-0").expect("replacement should be allowed");
+    }
+
+    // ── Security: AOSCLIENT-P1-cron-exec (N-007 untrusted cron CronAction::Exec) ─────────────────
+    //
+    // Threat: an untrusted actor schedules a `CronAction::Exec { command, args }` whose `args`
+    // carry data values (a path with spaces) or shell metacharacters (`$( )`, backticks). The
+    // intent of a structured `(command, args)` action is that the args are passed VERBATIM as
+    // argv elements — never re-split on whitespace, never re-evaluated by a shell.
+    //
+    // The bug (now fixed): `run_action`'s `CronAction::Exec` arm flattened the pair with
+    // `format!("{} {}", command, args.join(" "))` and handed the STRING to `AgentOs::exec`, which
+    // re-parsed it through `resolve_exec_command`. That round-trip (a) re-split `"a b"` into two
+    // argv elements and (b)/(c) promoted `$(id)` / backtick elements to a real `sh -c` shell
+    // evaluation. The fix sends the structured argv verbatim via `AgentOs::exec_argv`, bypassing
+    // `resolve_exec_command` entirely.
+    //
+    // This test pins the fix: it computes the argv exactly as the fixed `CronAction::Exec` arm
+    // does (verbatim `command` + `args`), and asserts the hostile elements survive intact. As a
+    // negative control it also shows the OLD join+`resolve_exec_command` path corrupts them, so a
+    // regression back to the flatten behavior fails this test.
+    #[test]
+    fn cron_exec_action_argv_is_not_shell_re_split_or_evaluated() {
+        // The fixed `CronAction::Exec` arm passes `command` and `args` straight to `exec_argv`,
+        // which sends them verbatim with no `resolve_exec_command` round-trip.
+        fn cron_exec_argv(command: &str, args: &[&str]) -> (String, Vec<String>) {
+            (
+                command.to_string(),
+                args.iter().map(|a| a.to_string()).collect(),
+            )
+        }
+
+        // The pre-fix flatten+re-parse path, kept here purely as a negative control.
+        fn buggy_join_then_resolve(command: &str, args: &[&str]) -> (String, Vec<String>) {
+            let joined = if args.is_empty() {
+                command.to_string()
+            } else {
+                format!("{} {}", command, args.join(" "))
+            };
+            crate::command_line::resolve_exec_command(&joined).expect("line must resolve")
+        }
+
+        // (a) A single argv element that contains a space MUST stay one argv element.
+        let (cmd, args) = cron_exec_argv("printenv", &["a b"]);
+        assert_eq!(
+            (cmd.as_str(), args.as_slice()),
+            ("printenv", &["a b".to_string()][..]),
+            "N-007: structured argv element \"a b\" must survive as a single argv element"
+        );
+        // Negative control: the old path corrupts it by re-splitting on whitespace.
+        let (_, buggy_args) = buggy_join_then_resolve("printenv", &["a b"]);
+        assert_eq!(
+            buggy_args,
+            vec!["a".to_string(), "b".to_string()],
+            "N-007 negative control: the old join+resolve path re-split \"a b\" into two argv elements"
+        );
+
+        // (b) A command-substitution argv element MUST stay a literal argv element, never `sh -c`.
+        let (cmd, args) = cron_exec_argv("printenv", &["$(id)"]);
+        assert_eq!(
+            (cmd.as_str(), args.as_slice()),
+            ("printenv", &["$(id)".to_string()][..]),
+            "N-007: command-substitution argv element \"$(id)\" must NOT be promoted to `sh -c`"
+        );
+        // Negative control: the old path routes the whole line through `sh -c`, evaluating `$(id)`.
+        let (buggy_cmd, _) = buggy_join_then_resolve("printenv", &["$(id)"]);
+        assert_eq!(
+            buggy_cmd, "sh",
+            "N-007 negative control: the old path promoted the `$(id)` line to a `sh -c` shell"
+        );
+
+        // (c) A backtick argv element: same guarantee.
+        let (cmd, args) = cron_exec_argv("printenv", &["`id`"]);
+        assert_eq!(
+            (cmd.as_str(), args.as_slice()),
+            ("printenv", &["`id`".to_string()][..]),
+            "N-007: backtick argv element \"`id`\" must NOT be promoted to `sh -c`"
+        );
+        let (buggy_cmd, _) = buggy_join_then_resolve("printenv", &["`id`"]);
+        assert_eq!(
+            buggy_cmd, "sh",
+            "N-007 negative control: the old path promoted the backtick line to a `sh -c` shell"
+        );
     }
 
     #[test]

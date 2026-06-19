@@ -171,17 +171,34 @@ impl AgentOs {
     /// process id immediately; stdout/stderr are accumulated and the call resolves once the matching
     /// `ProcessExited` event arrives. This mirrors the TS pass-through to `kernel.exec` semantically:
     /// the result is the full captured stdout/stderr plus exit code.
-    pub async fn exec(&self, command: &str, mut options: ExecOptions) -> Result<ExecResult> {
+    pub async fn exec(&self, command: &str, options: ExecOptions) -> Result<ExecResult> {
+        // Parse the command line into a `(command, args)` pair the same way the sidecar's
+        // child_process path does: shell-free argv lists spawn directly (preserving the command's
+        // real exit code), while shell syntax or a builtin head runs under `sh -c <line>`.
+        let (resolved_command, resolved_args) = resolve_exec_command(command)?;
+        self.exec_argv(&resolved_command, &resolved_args, options)
+            .await
+    }
+
+    /// Run a command to completion from an already-structured `(command, args)` argv, bypassing the
+    /// `exec` command-line parser. Each `args` element is sent verbatim as a distinct argv element —
+    /// no whitespace re-splitting, no shell metacharacter detection, and no routing through
+    /// `sh -c`. Callers that already hold a structured argv (for example the cron `Exec` action)
+    /// must use this so the structured-argv contract is preserved end to end.
+    pub async fn exec_argv(
+        &self,
+        command: &str,
+        args: &[String],
+        mut options: ExecOptions,
+    ) -> Result<ExecResult> {
         let process_id = self.next_process_id();
 
         // Subscribe to events BEFORE issuing the request so no output/exit is missed between the
         // request landing and the subscription being installed.
         let mut events = self.transport().subscribe_wire_events();
 
-        // Parse the command line into a `(command, args)` pair the same way the sidecar's
-        // child_process path does: shell-free argv lists spawn directly (preserving the command's
-        // real exit code), while shell syntax or a builtin head runs under `sh -c <line>`.
-        let (resolved_command, resolved_args) = resolve_exec_command(command)?;
+        let resolved_command = command.to_owned();
+        let resolved_args = args.to_vec();
         let started = self
             .send_execute(
                 &process_id,
