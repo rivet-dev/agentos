@@ -3836,6 +3836,16 @@ export class AgentOs {
 		}
 		const created = sidecarSessionCreatedFromAcp(response.val);
 
+		// The sessionId is chosen by the (untrusted/buggy) ACP adapter or sidecar. If it collides
+		// with a live session already in `_sessions`, blindly overwriting the entry would orphan the
+		// first session's event/permission handlers and pending permission replies. Fail closed:
+		// reject the colliding create and leave the original session intact. (A previously-closed,
+		// evicted id may still be re-used; only a live, non-closed entry is a collision.)
+		const existing = this._sessions.get(created.sessionId);
+		if (existing !== undefined && !existing.closed) {
+			throw new Error(`session id collision: ${created.sessionId}`);
+		}
+
 		const initData: SessionInitData = {
 			modes: toSessionModes(created.modes) ?? undefined,
 			configOptions: toSessionConfigOptions(created.configOptions),
