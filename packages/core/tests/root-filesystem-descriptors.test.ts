@@ -77,7 +77,7 @@ describe("sidecar root filesystem descriptors", () => {
 				bootstrapLower,
 			),
 		).toEqual({
-			mode: "read_only",
+			mode: "read-only",
 			disableDefaultBaseLayer: true,
 			lowers: [
 				{
@@ -108,7 +108,7 @@ describe("sidecar root filesystem descriptors", () => {
 		expect(descriptor.bootstrapEntries).toEqual([]);
 		expect(descriptor.lowers).toHaveLength(1);
 		expect(descriptor.lowers[0]).toEqual({
-			kind: "bundled_base_filesystem",
+			kind: "bundledBaseFilesystem",
 		});
 	});
 });

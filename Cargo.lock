@@ -2861,7 +2861,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-bridge"
-version = "0.2.0-rc.3"
+version = "0.3.0-rc.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2869,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-client"
-version = "0.2.0-rc.3"
+version = "0.3.0-rc.1"
 dependencies = [
  "futures",
  "parking_lot",
@@ -2882,7 +2882,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-execution"
-version = "0.2.0-rc.3"
+version = "0.3.0-rc.1"
 dependencies = [
  "base64 0.22.1",
  "ciborium",
@@ -2898,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-kernel"
-version = "0.2.0-rc.3"
+version = "0.3.0-rc.1"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
@@ -2911,7 +2911,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-sidecar"
-version = "0.2.0-rc.3"
+version = "0.3.0-rc.1"
 dependencies = [
  "aws-config",
  "aws-credential-types",
@@ -2956,7 +2956,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-sidecar-browser"
-version = "0.2.0-rc.3"
+version = "0.3.0-rc.1"
 dependencies = [
  "secure-exec-bridge",
  "secure-exec-kernel",
@@ -2964,7 +2964,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-v8-runtime"
-version = "0.2.0-rc.3"
+version = "0.3.0-rc.1"
 dependencies = [
  "ciborium",
  "crossbeam-channel",
@@ -2978,7 +2978,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-vm-config"
-version = "0.2.0-rc.3"
+version = "0.3.0-rc.1"
 dependencies = [
  "serde",
  "serde_json",

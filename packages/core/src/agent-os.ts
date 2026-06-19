@@ -2531,6 +2531,21 @@ export class AgentOs {
 					permissions: sidecarPermissions,
 					limits: options?.limits,
 					loopbackExemptPorts: options?.loopbackExemptPorts ?? [],
+					// 0.3: the Node builtin allow-list moved from configureVm to
+					// VM creation. `undefined` => engine default allow-list;
+					// `[]` => deny all; `[..]` => exactly those. Platform and
+					// module resolution keep their engine defaults (full Node
+					// emulation), matching the prior behavior where Agent OS only
+					// constrained the builtin allow-list.
+					...(options?.allowedNodeBuiltins !== undefined
+						? {
+								jsRuntime: {
+									platform: "node" as const,
+									moduleResolution: "node" as const,
+									allowedBuiltins: options.allowedNodeBuiltins,
+								},
+							}
+						: {}),
 				};
 				const nativeVm = await client.createVm(session, {
 					runtime: "java_script",
@@ -2546,7 +2561,6 @@ export class AgentOs {
 					mounts: sidecarMounts,
 					permissions: sidecarPermissions,
 					commandPermissions: processed.commandPermissions,
-					allowedNodeBuiltins: options?.allowedNodeBuiltins,
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 				});
 				if (toolKits && toolKits.length > 0) {

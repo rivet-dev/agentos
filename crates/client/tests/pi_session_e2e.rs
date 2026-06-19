@@ -58,6 +58,10 @@ struct LlmockServer {
 }
 
 impl LlmockServer {
+    // The spawned child is owned by `LlmockServer`, whose `Drop` kills and
+    // waits it; the only path that skips construction is an `assert!` that
+    // aborts the test process, so the zombie-process lint does not apply.
+    #[allow(clippy::zombie_processes)]
     fn start() -> Self {
         let root = repo_root();
         let mut child = Command::new("node")

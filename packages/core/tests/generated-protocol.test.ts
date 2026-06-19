@@ -104,7 +104,6 @@ describe("generated sidecar protocol", () => {
 							{ packageName: "workspace", entrypoint: "/workspace/index.js" },
 						],
 						commandPermissions: new Map([["cat", WasmPermissionTier.ReadOnly]]),
-						allowedNodeBuiltins: ["fs"],
 						loopbackExemptPorts: new Uint16Array([3000]),
 					},
 				},
@@ -140,7 +139,6 @@ describe("generated sidecar protocol", () => {
 					{ package_name: "workspace", entrypoint: "/workspace/index.js" },
 				],
 				command_permissions: { cat: "read-only" },
-				allowed_node_builtins: ["fs"],
 				loopback_exempt_ports: [3000],
 			},
 		};
@@ -302,7 +300,6 @@ describe("generated sidecar protocol", () => {
 						instructions: [],
 						projectedModules: [],
 						commandPermissions: new Map(),
-						allowedNodeBuiltins: [],
 						loopbackExemptPorts: new Uint16Array(),
 					},
 				},

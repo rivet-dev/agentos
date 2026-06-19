@@ -10,7 +10,7 @@
 mod common;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
 use agent_os_client::config::{
@@ -119,7 +119,7 @@ async fn launch_pi_session_with_tools_and_read_argv(
 }
 
 async fn run_session(
-    module_access_dir: &PathBuf,
+    module_access_dir: &Path,
     options: CreateSessionOptions,
     tool_kits: Vec<ToolKit>,
 ) -> Vec<String> {
@@ -156,7 +156,7 @@ async fn run_session(
     argv
 }
 
-fn injected_prompt<'a>(argv: &'a [String]) -> &'a str {
+fn injected_prompt(argv: &[String]) -> &str {
     let idx = argv
         .iter()
         .position(|arg| arg == "--append-system-prompt")

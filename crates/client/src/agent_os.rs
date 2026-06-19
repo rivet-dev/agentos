@@ -341,7 +341,6 @@ impl AgentOs {
                     instructions: config.additional_instructions.clone().into_iter().collect(),
                     projected_modules: Vec::new(),
                     command_permissions: HashMap::new(),
-                    allowed_node_builtins: config.allowed_node_builtins.clone().unwrap_or_default(),
                     loopback_exempt_ports: config.loopback_exempt_ports.clone(),
                 }),
             )
@@ -798,6 +797,18 @@ fn serialize_create_vm_config_for_sidecar(
         native_root,
         listen: None,
         loopback_exempt_ports: config.loopback_exempt_ports.clone(),
+        // 0.3: the Node builtin allow-list moved from ConfigureVmRequest to
+        // VM creation. `None` => engine default allow-list; `Some([..])` =>
+        // exactly those (`Some([])` denies all). Platform/module-resolution
+        // keep their engine defaults (full Node emulation), matching prior
+        // behavior where Agent OS only ever constrained the builtin allow-list.
+        js_runtime: config.allowed_node_builtins.as_ref().map(|allowed| {
+            vm_config::JsRuntimeConfig {
+                platform: vm_config::JsRuntimePlatform::default(),
+                module_resolution: vm_config::JsModuleResolution::default(),
+                allowed_builtins: Some(allowed.clone()),
+            }
+        }),
     })
 }
 

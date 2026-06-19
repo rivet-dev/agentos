@@ -18,17 +18,17 @@ repository = "https://github.com/rivet-dev/agent-os"
 # `cargo publish` can emit a registry-resolvable dependency). The release
 # tooling rewrites these versions together with `workspace.package.version`.
 [workspace.dependencies]
-agent-os-bridge = { package = "secure-exec-bridge", path = "../secure-exec/crates/bridge", version = "0.2.0-rc.3" }
+agent-os-bridge = { package = "secure-exec-bridge", path = "../secure-exec/crates/bridge", version = "0.3.0-rc.1" }
 agent-os-protocol = { path = "crates/agent-os-protocol", version = "0.2.0-rc.3" }
 agent-os-sidecar = { path = "crates/agent-os-sidecar", version = "0.2.0-rc.3" }
 agent-os-sidecar-browser = { path = "crates/agent-os-sidecar-browser", version = "0.2.0-rc.3" }
-agent-os-kernel = { package = "secure-exec-kernel", path = "../secure-exec/crates/kernel", version = "0.2.0-rc.3" }
-agent-os-execution = { package = "secure-exec-execution", path = "../secure-exec/crates/execution", version = "0.2.0-rc.3" }
-agent-os-v8-runtime = { package = "secure-exec-v8-runtime", path = "../secure-exec/crates/v8-runtime", version = "0.2.0-rc.3" }
-secure-exec-client = { path = "../secure-exec/crates/secure-exec-client", version = "0.2.0-rc.3" }
-secure-exec-bridge = { path = "../secure-exec/crates/bridge", version = "0.2.0-rc.3" }
-secure-exec-sidecar = { path = "../secure-exec/crates/sidecar", version = "0.2.0-rc.3" }
-secure-exec-sidecar-browser = { path = "../secure-exec/crates/sidecar-browser", version = "0.2.0-rc.3" }
-secure-exec-vm-config = { path = "../secure-exec/crates/vm-config", version = "0.2.0-rc.3" }
+agent-os-kernel = { package = "secure-exec-kernel", path = "../secure-exec/crates/kernel", version = "0.3.0-rc.1" }
+agent-os-execution = { package = "secure-exec-execution", path = "../secure-exec/crates/execution", version = "0.3.0-rc.1" }
+agent-os-v8-runtime = { package = "secure-exec-v8-runtime", path = "../secure-exec/crates/v8-runtime", version = "0.3.0-rc.1" }
+secure-exec-client = { path = "../secure-exec/crates/secure-exec-client", version = "0.3.0-rc.1" }
+secure-exec-bridge = { path = "../secure-exec/crates/bridge", version = "0.3.0-rc.1" }
+secure-exec-sidecar = { path = "../secure-exec/crates/sidecar", version = "0.3.0-rc.1" }
+secure-exec-sidecar-browser = { path = "../secure-exec/crates/sidecar-browser", version = "0.3.0-rc.1" }
+secure-exec-vm-config = { path = "../secure-exec/crates/vm-config", version = "0.3.0-rc.1" }
 vbare = "0.0.4"
 vbare-compiler = { package = "rivet-vbare-compiler", version = "0.0.5" }

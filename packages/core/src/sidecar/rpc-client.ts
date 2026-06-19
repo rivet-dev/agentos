@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { posix as posixPath } from "node:path";
 import type {
-	RootFilesystemConfig,
+	RootFilesystemConfig as VmConfigRootFilesystemConfig,
 	RootFilesystemEntry as VmConfigRootFilesystemEntry,
 	RootFilesystemLowerDescriptor as VmConfigRootFilesystemLowerDescriptor,
 } from "@secure-exec/core/vm-config";
@@ -2660,7 +2660,7 @@ export function serializeMountConfigForSidecar(
 	};
 }
 
-export type SidecarRootFilesystemDescriptor = RootFilesystemConfig;
+export type SidecarRootFilesystemDescriptor = VmConfigRootFilesystemConfig;
 export type SidecarRootFilesystemLowerDescriptor =
 	VmConfigRootFilesystemLowerDescriptor;
 export type SidecarRootFilesystemEntry = VmConfigRootFilesystemEntry;

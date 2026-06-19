@@ -348,9 +348,8 @@ impl AcpExtension {
     ) -> Result<AcpResponse, SidecarError> {
         let caller_connection_id = ownership_connection_id(ctx.ownership());
         let sessions = self.sessions.lock().await;
-        let unknown = || {
-            SidecarError::InvalidState(format!("unknown ACP session {}", request.session_id))
-        };
+        let unknown =
+            || SidecarError::InvalidState(format!("unknown ACP session {}", request.session_id));
         let session = sessions.get(&request.session_id).ok_or_else(unknown)?;
         // Enforce per-connection ownership: a session may only be read by the
         // connection that created it. Fail closed with the same error a missing

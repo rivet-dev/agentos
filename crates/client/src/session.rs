@@ -644,102 +644,6 @@ impl Drop for PendingSessionRequestGuard<'_> {
     }
 }
 
-// Private accumulator coverage stays inline because integration tests cannot construct the missed
-// broadcast plus hydrated-ring ordering without exposing client internals.
-#[cfg(test)]
-mod prompt_accumulation_tests {
-    use super::*;
-
-    fn notification(update: Value) -> JsonRpcNotification {
-        JsonRpcNotification {
-            jsonrpc: "2.0".to_string(),
-            method: "session/update".to_string(),
-            params: Some(json!({ "update": update })),
-        }
-    }
-
-    #[test]
-    fn non_chunk_events_do_not_affect_prompt_text() {
-        let chunk = notification(json!({
-            "sessionUpdate": "agent_message_chunk",
-            "content": { "text": "hello" },
-        }));
-        let non_chunk = notification(json!({
-            "sessionUpdate": "current_mode_update",
-            "currentModeId": "default",
-        }));
-
-        let mut delivered_chunks = 0;
-        let mut text = String::new();
-        accumulate_agent_message_chunk(&non_chunk, &mut delivered_chunks, &mut text)
-            .expect("non-chunk");
-        accumulate_agent_message_chunk(&chunk, &mut delivered_chunks, &mut text).expect("chunk");
-
-        assert_eq!(text, "hello");
-    }
-
-    #[test]
-    fn prompt_text_capture_limit_rejects_overflowing_chunk() {
-        let chunk = notification(json!({
-            "sessionUpdate": "agent_message_chunk",
-            "content": { "text": "abcd" },
-        }));
-        let mut delivered_chunks = 0;
-        let mut text = "x".repeat(PROMPT_TEXT_CAPTURE_LIMIT_BYTES - 3);
-        let error = accumulate_agent_message_chunk(&chunk, &mut delivered_chunks, &mut text)
-            .expect_err("chunk should exceed prompt text cap");
-        assert!(
-            error.to_string().contains("prompt text capture is"),
-            "unexpected error: {error}"
-        );
-        assert_eq!(text.len(), PROMPT_TEXT_CAPTURE_LIMIT_BYTES - 3);
-    }
-
-    #[test]
-    fn prompt_chunk_limit_rejects_more_tracked_chunks() {
-        let chunk = notification(json!({
-            "sessionUpdate": "agent_message_chunk",
-            "content": { "text": "x" },
-        }));
-        let mut delivered_chunks = PROMPT_DELIVERED_CHUNK_LIMIT;
-        let mut text = String::new();
-        let error = accumulate_agent_message_chunk(&chunk, &mut delivered_chunks, &mut text)
-            .expect_err("chunk should exceed chunk tracking cap");
-        assert!(
-            error
-                .to_string()
-                .contains("prompt chunk tracking limit exceeded"),
-            "unexpected error: {error}"
-        );
-        assert!(text.is_empty());
-    }
-
-    #[test]
-    fn pending_session_request_count_tracks_registered_resolvers() {
-        let (event_tx, _) = tokio::sync::broadcast::channel(1);
-        let (permission_tx, _) = tokio::sync::broadcast::channel(1);
-        let entry = SessionEntry {
-            agent_type: "pi".to_string(),
-            modes: parking_lot::Mutex::new(None),
-            config_options: parking_lot::Mutex::new(Vec::new()),
-            capabilities: parking_lot::Mutex::new(None),
-            agent_info: parking_lot::Mutex::new(None),
-            config_overrides: parking_lot::Mutex::new(BTreeMap::new()),
-            event_tx,
-            permission_tx,
-            pending_permission_replies: scc::HashMap::new(),
-            pending_session_request_lock: parking_lot::Mutex::new(()),
-            pending_prompt_resolvers: scc::HashMap::new(),
-        };
-        let (first_tx, _first_rx) = tokio::sync::oneshot::channel();
-        let (second_tx, _second_rx) = tokio::sync::oneshot::channel();
-        let _ = entry.pending_prompt_resolvers.insert(1, first_tx);
-        let _ = entry.pending_prompt_resolvers.insert(2, second_tx);
-
-        assert_eq!(pending_session_request_count(&entry), 2);
-    }
-}
-
 /// Re-apply synthetic config overrides onto the cached config options. Mirrors
 /// `_applySyntheticConfigOverrides`.
 fn apply_synthetic_config_overrides(entry: &SessionEntry) {
@@ -2023,5 +1927,101 @@ impl AgentOs {
                 }
             }
         }
+    }
+}
+
+// Private accumulator coverage stays inline because integration tests cannot construct the missed
+// broadcast plus hydrated-ring ordering without exposing client internals.
+#[cfg(test)]
+mod prompt_accumulation_tests {
+    use super::*;
+
+    fn notification(update: Value) -> JsonRpcNotification {
+        JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "session/update".to_string(),
+            params: Some(json!({ "update": update })),
+        }
+    }
+
+    #[test]
+    fn non_chunk_events_do_not_affect_prompt_text() {
+        let chunk = notification(json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "text": "hello" },
+        }));
+        let non_chunk = notification(json!({
+            "sessionUpdate": "current_mode_update",
+            "currentModeId": "default",
+        }));
+
+        let mut delivered_chunks = 0;
+        let mut text = String::new();
+        accumulate_agent_message_chunk(&non_chunk, &mut delivered_chunks, &mut text)
+            .expect("non-chunk");
+        accumulate_agent_message_chunk(&chunk, &mut delivered_chunks, &mut text).expect("chunk");
+
+        assert_eq!(text, "hello");
+    }
+
+    #[test]
+    fn prompt_text_capture_limit_rejects_overflowing_chunk() {
+        let chunk = notification(json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "text": "abcd" },
+        }));
+        let mut delivered_chunks = 0;
+        let mut text = "x".repeat(PROMPT_TEXT_CAPTURE_LIMIT_BYTES - 3);
+        let error = accumulate_agent_message_chunk(&chunk, &mut delivered_chunks, &mut text)
+            .expect_err("chunk should exceed prompt text cap");
+        assert!(
+            error.to_string().contains("prompt text capture is"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(text.len(), PROMPT_TEXT_CAPTURE_LIMIT_BYTES - 3);
+    }
+
+    #[test]
+    fn prompt_chunk_limit_rejects_more_tracked_chunks() {
+        let chunk = notification(json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "text": "x" },
+        }));
+        let mut delivered_chunks = PROMPT_DELIVERED_CHUNK_LIMIT;
+        let mut text = String::new();
+        let error = accumulate_agent_message_chunk(&chunk, &mut delivered_chunks, &mut text)
+            .expect_err("chunk should exceed chunk tracking cap");
+        assert!(
+            error
+                .to_string()
+                .contains("prompt chunk tracking limit exceeded"),
+            "unexpected error: {error}"
+        );
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn pending_session_request_count_tracks_registered_resolvers() {
+        let (event_tx, _) = tokio::sync::broadcast::channel(1);
+        let (permission_tx, _) = tokio::sync::broadcast::channel(1);
+        let entry = SessionEntry {
+            agent_type: "pi".to_string(),
+            modes: parking_lot::Mutex::new(None),
+            config_options: parking_lot::Mutex::new(Vec::new()),
+            capabilities: parking_lot::Mutex::new(None),
+            agent_info: parking_lot::Mutex::new(None),
+            config_overrides: parking_lot::Mutex::new(BTreeMap::new()),
+            event_tx,
+            permission_tx,
+            pending_permission_replies: scc::HashMap::new(),
+            pending_session_request_lock: parking_lot::Mutex::new(()),
+            pending_prompt_resolvers: scc::HashMap::new(),
+        };
+        let (first_tx, _first_rx) = tokio::sync::oneshot::channel();
+        let (second_tx, _second_rx) = tokio::sync::oneshot::channel();
+        let _ = entry.pending_prompt_resolvers.insert(1, first_tx);
+        let _ = entry.pending_prompt_resolvers.insert(2, second_tx);
+
+        assert_eq!(pending_session_request_count(&entry), 2);
     }
 }

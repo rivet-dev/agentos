@@ -371,7 +371,12 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
     );
     let attacker_session = open_session(&mut sidecar, &attacker_conn);
     let attacker_cwd = temp_dir("agent-os-acp-cross-conn-attacker-cwd");
-    let attacker_vm = create_vm(&mut sidecar, &attacker_conn, &attacker_session, &attacker_cwd);
+    let attacker_vm = create_vm(
+        &mut sidecar,
+        &attacker_conn,
+        &attacker_session,
+        &attacker_cwd,
+    );
 
     let leaked = dispatch_acp(
         &mut sidecar,
