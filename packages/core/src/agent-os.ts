@@ -1891,6 +1891,18 @@ async function handleHostCallback(
 		};
 	}
 
+	const permissionMode = toolPermissionMode(
+		context.permissions,
+		payload.callback_key,
+	);
+	if (permissionMode !== "allow") {
+		return {
+			type: "host_callback_result",
+			invocation_id: payload.invocation_id,
+			error: `EACCES: blocked by tool.invoke policy for ${payload.callback_key}`,
+		};
+	}
+
 	const parsed = tool.inputSchema.safeParse(payload.input);
 	if (!parsed.success) {
 		return {
