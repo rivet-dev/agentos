@@ -384,11 +384,313 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
         }),
     );
 
-    // SECURE expectation: a different connection must be denied (error response).
+    // SECURE expectation: a different connection must be denied, indistinguishably
+    // from a missing session (no existence leak).
+    assert_indistinguishable_deny(
+        leaked,
+        "cross-connection read of another connection's ACP session state",
+    );
+}
+
+/// AOS-ACP-1 (P1 / J.4 cross-connection ACP close): a second connection
+/// (attacker) must NOT be able to CLOSE the ACP session created by a different
+/// connection (victim). `close_session` (acp_extension.rs:367-408) resolves the
+/// session by `session_id` only and does not check `owner_connection_id`, so an
+/// attacker connection that knows/guesses the victim's `session_id` can
+/// `close_stdin` + `SIGTERM`/`SIGKILL` the victim's adapter process and dispose
+/// its resources — a cross-tenant DoS.
+///
+/// SECURE expectation: the cross-connection close is DENIED (error response) AND
+/// the victim's session stays alive (the owner can still read its own state and
+/// still drive a prompt afterwards). Today the code is expected to return
+/// `AcpSessionClosedResponse` and tear the victim down (FAIL = vuln present).
+///
+/// Bounded SAFEGUARD-shaped assertion: a single cross-connection close, fast.
+#[test]
+fn acp_close_session_denies_cross_connection_session_id() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("agent-os-acp-cross-conn-close");
+
+    // Victim connection creates a real ACP session.
+    let victim_conn = authenticate(&mut sidecar);
+    let victim_session = open_session(&mut sidecar, &victim_conn);
+    let cwd = temp_dir("agent-os-acp-cross-conn-close-cwd");
+    let adapter = cwd.join("adapter.mjs");
+    fs::write(&adapter, adapter_script()).expect("write adapter script");
+    let victim_vm = create_vm(&mut sidecar, &victim_conn, &victim_session, &cwd);
+
+    let created = dispatch_acp(
+        &mut sidecar,
+        4,
+        &victim_conn,
+        &victim_session,
+        &victim_vm,
+        AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
+            agent_type: String::from("pi"),
+            runtime: AcpRuntimeKind::JavaScript,
+            adapter_entrypoint: adapter.to_string_lossy().into_owned(),
+            cwd: cwd.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            protocol_version: i32::from(ACP_PROTOCOL_VERSION),
+            client_capabilities: String::from(r#"{"fs":{"readTextFile":true}}"#),
+            mcp_servers: String::from(r#"{"servers":[]}"#),
+            skip_os_instructions: true,
+            additional_instructions: None,
+        }),
+    );
+    let AcpResponse::AcpSessionCreatedResponse(_) = created else {
+        panic!("victim create failed: {created:?}");
+    };
+
+    // Attacker connection: separate auth + session + vm, then tries to close the
+    // victim's ACP session by its (guessed/known) session id.
+    let attacker_conn = authenticate(&mut sidecar);
+    assert_ne!(
+        attacker_conn, victim_conn,
+        "attacker must be a distinct connection"
+    );
+    let attacker_session = open_session(&mut sidecar, &attacker_conn);
+    let attacker_cwd = temp_dir("agent-os-acp-cross-conn-close-attacker-cwd");
+    let attacker_vm = create_vm(&mut sidecar, &attacker_conn, &attacker_session, &attacker_cwd);
+
+    let close_result = dispatch_acp(
+        &mut sidecar,
+        6,
+        &attacker_conn,
+        &attacker_session,
+        &attacker_vm,
+        AcpRequest::AcpCloseSessionRequest(AcpCloseSessionRequest {
+            session_id: String::from("adapter-session"),
+        }),
+    );
+
+    // SECURE expectation: a different connection must be denied, indistinguishably
+    // from a missing session (no existence leak).
+    assert_indistinguishable_deny(
+        close_result,
+        "cross-connection CLOSE of another connection's ACP session",
+    );
+
+    // ...and the victim session must remain alive and usable for its owner.
+    let owner_state = dispatch_acp(
+        &mut sidecar,
+        7,
+        &victim_conn,
+        &victim_session,
+        &victim_vm,
+        AcpRequest::AcpGetSessionStateRequest(AcpGetSessionStateRequest {
+            session_id: String::from("adapter-session"),
+        }),
+    );
+    let AcpResponse::AcpSessionStateResponse(owner_state) = owner_state else {
+        panic!(
+            "victim ACP session must survive an attacker's cross-connection close, \
+             but the owner can no longer read it: {owner_state:?}"
+        );
+    };
     assert!(
-        matches!(leaked, AcpResponse::AcpErrorResponse(_)),
-        "cross-connection read of another connection's ACP session state must be DENIED, \
-         but it returned: {leaked:?}"
+        !owner_state.closed,
+        "victim ACP session must not be marked closed after an attacker's \
+         cross-connection close attempt"
+    );
+
+    // The victim must still be able to drive its own adapter (process alive).
+    let prompt = dispatch_acp(
+        &mut sidecar,
+        8,
+        &victim_conn,
+        &victim_session,
+        &victim_vm,
+        AcpRequest::AcpSessionRequest(AcpSessionRequest {
+            session_id: String::from("adapter-session"),
+            method: String::from("session/prompt"),
+            params: Some(String::from(
+                r#"{"prompt":[{"type":"text","text":"hello"}]}"#,
+            )),
+        }),
+    );
+    assert!(
+        matches!(prompt, AcpResponse::AcpSessionRpcResponse(_)),
+        "victim must still be able to prompt its own ACP session after an \
+         attacker's cross-connection close attempt, got {prompt:?}"
+    );
+}
+
+/// AOS-ACP-2 (P1 / J.4 cross-connection ACP drive): a second connection
+/// (attacker) must NOT be able to DRIVE the ACP session created by a different
+/// connection (victim). `session_request` (acp_extension.rs:410-447) resolves the
+/// session by `session_id` only and does not check `owner_connection_id`, so an
+/// attacker connection can write to the victim's adapter stdin (prompt / cancel /
+/// arbitrary methods), advancing the victim's `next_request_id` and consuming its
+/// buffered stdout — cross-tenant session hijack + state corruption.
+///
+/// SECURE expectation: the cross-connection drive is DENIED (error response),
+/// has NO side effect on the victim, and the victim's OWN request still works
+/// afterwards. Today the code is expected to drive the victim's adapter (FAIL =
+/// vuln present).
+///
+/// Bounded SAFEGUARD-shaped assertion: a single cross-connection prompt, fast.
+#[test]
+fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("agent-os-acp-cross-conn-drive");
+
+    // Victim connection creates a real ACP session.
+    let victim_conn = authenticate(&mut sidecar);
+    let victim_session = open_session(&mut sidecar, &victim_conn);
+    let cwd = temp_dir("agent-os-acp-cross-conn-drive-cwd");
+    let adapter = cwd.join("adapter.mjs");
+    fs::write(&adapter, adapter_script()).expect("write adapter script");
+    let victim_vm = create_vm(&mut sidecar, &victim_conn, &victim_session, &cwd);
+
+    let created = dispatch_acp(
+        &mut sidecar,
+        4,
+        &victim_conn,
+        &victim_session,
+        &victim_vm,
+        AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
+            agent_type: String::from("pi"),
+            runtime: AcpRuntimeKind::JavaScript,
+            adapter_entrypoint: adapter.to_string_lossy().into_owned(),
+            cwd: cwd.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            protocol_version: i32::from(ACP_PROTOCOL_VERSION),
+            client_capabilities: String::from(r#"{"fs":{"readTextFile":true}}"#),
+            mcp_servers: String::from(r#"{"servers":[]}"#),
+            skip_os_instructions: true,
+            additional_instructions: None,
+        }),
+    );
+    let AcpResponse::AcpSessionCreatedResponse(_) = created else {
+        panic!("victim create failed: {created:?}");
+    };
+
+    // Attacker connection: separate auth + session + vm.
+    let attacker_conn = authenticate(&mut sidecar);
+    assert_ne!(
+        attacker_conn, victim_conn,
+        "attacker must be a distinct connection"
+    );
+    let attacker_session = open_session(&mut sidecar, &attacker_conn);
+    let attacker_cwd = temp_dir("agent-os-acp-cross-conn-drive-attacker-cwd");
+    let attacker_vm = create_vm(&mut sidecar, &attacker_conn, &attacker_session, &attacker_cwd);
+
+    // Attacker tries to DRIVE the victim's adapter by its session id. The mock
+    // adapter expects `session/prompt` to be RPC id 3 (the victim's first drive);
+    // if the attacker's prompt is forwarded it consumes that id and corrupts the
+    // victim's request stream.
+    let attacker_prompt = dispatch_acp(
+        &mut sidecar,
+        6,
+        &attacker_conn,
+        &attacker_session,
+        &attacker_vm,
+        AcpRequest::AcpSessionRequest(AcpSessionRequest {
+            session_id: String::from("adapter-session"),
+            method: String::from("session/prompt"),
+            params: Some(String::from(
+                r#"{"prompt":[{"type":"text","text":"attacker"}]}"#,
+            )),
+        }),
+    );
+    assert_indistinguishable_deny(
+        attacker_prompt,
+        "cross-connection PROMPT of another connection's ACP session",
+    );
+
+    // Attacker also tries to cancel the victim's session.
+    let attacker_cancel = dispatch_acp(
+        &mut sidecar,
+        7,
+        &attacker_conn,
+        &attacker_session,
+        &attacker_vm,
+        AcpRequest::AcpSessionRequest(AcpSessionRequest {
+            session_id: String::from("adapter-session"),
+            method: String::from("session/cancel"),
+            params: Some(String::from("{}")),
+        }),
+    );
+    assert_indistinguishable_deny(
+        attacker_cancel,
+        "cross-connection CANCEL of another connection's ACP session",
+    );
+
+    // The ownership guard precedes method dispatch, so it is method-agnostic: a
+    // state-mutating method (session/set_mode) is denied on the same path, before
+    // it could mutate the victim's mode/config.
+    let attacker_set_mode = dispatch_acp(
+        &mut sidecar,
+        8,
+        &attacker_conn,
+        &attacker_session,
+        &attacker_vm,
+        AcpRequest::AcpSessionRequest(AcpSessionRequest {
+            session_id: String::from("adapter-session"),
+            method: String::from("session/set_mode"),
+            params: Some(String::from(r#"{"modeId":"plan"}"#)),
+        }),
+    );
+    assert_indistinguishable_deny(
+        attacker_set_mode,
+        "cross-connection session/set_mode of another connection's ACP session",
+    );
+
+    // No side effect: the victim's OWN prompt must still succeed and round-trip
+    // through its adapter cleanly (proving the attacker did not consume the
+    // victim's request id / stdout buffer).
+    let (prompt, _events) = dispatch_acp_with_events(
+        &mut sidecar,
+        9,
+        &victim_conn,
+        &victim_session,
+        &victim_vm,
+        AcpRequest::AcpSessionRequest(AcpSessionRequest {
+            session_id: String::from("adapter-session"),
+            method: String::from("session/prompt"),
+            params: Some(String::from(
+                r#"{"prompt":[{"type":"text","text":"hello"}]}"#,
+            )),
+        }),
+    );
+    let AcpResponse::AcpSessionRpcResponse(prompt) = prompt else {
+        panic!(
+            "victim's own prompt must still succeed after an attacker's \
+             cross-connection drive attempt, got {prompt:?}"
+        );
+    };
+    let prompt_response: Value =
+        serde_json::from_str(&prompt.response).expect("prompt response json");
+    assert_eq!(
+        prompt_response["result"]["echo"], "hello",
+        "victim's own prompt must round-trip cleanly (id/stdout not corrupted by attacker)"
+    );
+    assert_eq!(prompt_response["result"]["sessionId"], "adapter-session");
+}
+
+/// Assert an ACP response is a deny that is INDISTINGUISHABLE from a missing
+/// session: same `invalid_state` code and the same "unknown ACP session" message
+/// a non-existent session produces. This locks in the no-existence-leak property
+/// — a non-owner must learn nothing (not even that the session exists), so a
+/// regression to a distinguishable error (e.g. an `unauthorized` code) fails here.
+#[track_caller]
+fn assert_indistinguishable_deny(response: AcpResponse, what: &str) {
+    let AcpResponse::AcpErrorResponse(error) = response else {
+        panic!("{what} must be DENIED with an error response, but it returned: {response:?}");
+    };
+    assert_eq!(
+        error.code, "invalid_state",
+        "{what} must fail closed with the same code as a missing session (no \
+         'unauthorized' existence oracle); got code {:?} / message {:?}",
+        error.code, error.message
+    );
+    assert!(
+        error.message.contains("unknown ACP session"),
+        "{what} must read like a missing session (no existence leak); got: {:?}",
+        error.message
     );
 }
 

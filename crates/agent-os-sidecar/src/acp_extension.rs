@@ -369,7 +369,24 @@ impl AcpExtension {
         mut ctx: ExtensionContext<'_>,
         request: AcpCloseSessionRequest,
     ) -> Result<AcpResponse, SidecarError> {
-        let session = self.sessions.lock().await.remove(&request.session_id);
+        // Enforce per-connection ownership before tearing anything down: only the
+        // connection that created the session may close it. A non-owner (or a
+        // missing session) fails closed with the same error, so a cross-connection
+        // close neither succeeds nor reveals that another connection's session
+        // exists — preventing a cross-tenant DoS. Mirrors the ownership check in
+        // `get_session_state`.
+        let caller_connection_id = ownership_connection_id(ctx.ownership());
+        let session = {
+            let mut sessions = self.sessions.lock().await;
+            let owned_by_caller = sessions
+                .get(&request.session_id)
+                .is_some_and(|session| session.owner_connection_id == caller_connection_id);
+            if owned_by_caller {
+                sessions.remove(&request.session_id)
+            } else {
+                None
+            }
+        };
         let Some(session) = session else {
             return Err(SidecarError::InvalidState(format!(
                 "unknown ACP session {}",
@@ -429,6 +446,7 @@ impl AcpExtension {
             Value::String(request.session_id.clone()),
         );
 
+        let caller_connection_id = ownership_connection_id(ctx.ownership());
         let (process_id, rpc_id, mut stdout_buffer) = {
             let mut sessions = self.sessions.lock().await;
             let Some(session) = sessions.get_mut(&request.session_id) else {
@@ -437,6 +455,18 @@ impl AcpExtension {
                     request.session_id
                 ))));
             };
+            // Enforce per-connection ownership: a non-owner must not be able to
+            // drive (prompt/cancel/set_mode/etc.) another connection's adapter.
+            // Fail closed with the same unknown-session error BEFORE mutating any
+            // session state, so the attempt has no side effect on the victim (no
+            // request id consumed, no stdout drained) and does not leak the
+            // session's existence. Mirrors `get_session_state`.
+            if session.owner_connection_id != caller_connection_id {
+                return AcpHandlerOutput::response(Err(SidecarError::InvalidState(format!(
+                    "unknown ACP session {}",
+                    request.session_id
+                ))));
+            }
             let rpc_id = session.next_request_id;
             session.next_request_id += 1;
             (
