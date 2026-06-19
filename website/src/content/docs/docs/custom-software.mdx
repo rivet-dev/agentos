@@ -1,0 +1,249 @@
+---
+title: "Custom Software Packages"
+description: "Author your own software descriptors with defineSoftware() to add agents, tools, and WASM commands to agentOS VMs."
+skill: true
+---
+
+The [Software](/docs/software) page covers installing pre-built registry packages. This page is the authoring counterpart: it documents how to write your own software descriptors with `defineSoftware()` so you can register custom agents, CLI tools, and WASM commands inside a VM.
+
+A descriptor is a plain object that tells agentOS what to mount into the VM and how to wire it up. You pass descriptors (or arrays of descriptors) through the `software` option to `AgentOs.create()`, exactly like registry packages.
+
+## defineSoftware()
+
+`defineSoftware()` is a type-safe identity helper. It validates the descriptor shape at compile time and returns it unchanged. Import it from `@rivet-dev/agent-os-core`:
+
+```ts
+import { defineSoftware } from "@rivet-dev/agent-os-core";
+```
+
+Every descriptor has a `name` and a `type`. The three descriptor kinds are `"agent"`, `"tool"`, and `"wasm-commands"`.
+
+## Agent descriptors
+
+An `"agent"` descriptor registers an ACP agent that callers can launch with `createSession(id)`. The descriptor names the npm packages the VM needs and how to spawn the ACP adapter.
+
+```ts
+import { defineSoftware } from "@rivet-dev/agent-os-core";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const packageDir = resolve(__dirname, "..");
+
+export default defineSoftware({
+  name: "pi",
+  type: "agent" as const,
+  packageDir,
+  requires: ["@rivet-dev/agent-os-pi", "@mariozechner/pi-coding-agent"],
+  agent: {
+    id: "pi",
+    acpAdapter: "@rivet-dev/agent-os-pi",
+    agentPackage: "@mariozechner/pi-coding-agent",
+  },
+});
+```
+
+Fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | `string` | Descriptor name. |
+| `type` | `"agent"` | Discriminant. |
+| `packageDir` | `string` | Root directory of this npm package on the host. Used to resolve everything in `requires` from this package's `node_modules/`. |
+| `requires` | `string[]` | npm packages that must be available inside the VM. |
+| `agent.id` | `string` | Unique agent ID used in `createSession(id)`. |
+| `agent.acpAdapter` | `string` | npm package name of the ACP adapter. Must be listed in `requires`. |
+| `agent.agentPackage` | `string` | npm package name of the agent CLI. Must be listed in `requires`. |
+| `agent.staticEnv` | `Record<string, string>` | Optional static env vars passed when spawning the adapter. |
+| `agent.env` | `(ctx: SoftwareContext) => Record<string, string>` | Optional dynamic env vars computed at boot. Merged on top of `staticEnv`. |
+| `agent.launchArgs` | `string[]` | Optional CLI args prepended when launching the ACP adapter. |
+
+`packageDir` is typically derived from `import.meta.url` so the descriptor resolves its own package root regardless of where it is installed.
+
+### Static environment variables
+
+Use `staticEnv` for fixed configuration:
+
+```ts
+defineSoftware({
+  name: "claude",
+  type: "agent" as const,
+  packageDir,
+  requires: ["@anthropic-ai/claude-agent-sdk"],
+  agent: {
+    id: "claude",
+    acpAdapter: "@rivet-dev/agent-os-claude",
+    agentPackage: "@anthropic-ai/claude-agent-sdk",
+    staticEnv: {
+      CLAUDE_AGENT_SDK_CLIENT_APP: "@rivet-dev/agent-os",
+      SHELL: "/bin/sh",
+    },
+  },
+});
+```
+
+### Dynamic environment variables
+
+Use `env` when a value depends on a VM-side path that is only known once packages are resolved. The function receives a [`SoftwareContext`](#softwarecontext). Dynamic values are merged on top of `staticEnv`.
+
+```ts
+defineSoftware({
+  name: "pi-cli",
+  type: "agent" as const,
+  packageDir,
+  requires: ["pi-acp", "@mariozechner/pi-coding-agent"],
+  agent: {
+    id: "pi-cli",
+    acpAdapter: "pi-acp",
+    agentPackage: "@mariozechner/pi-coding-agent",
+    env: (ctx) => ({
+      PI_ACP_PI_COMMAND: ctx.resolveBin(
+        "@mariozechner/pi-coding-agent",
+        "pi",
+      ),
+    }),
+  },
+});
+```
+
+## Tool descriptors
+
+A `"tool"` descriptor exposes CLI commands backed by npm packages. It maps each bin command name to the npm package that provides it.
+
+```ts
+defineSoftware({
+  name: "my-tool",
+  type: "tool" as const,
+  packageDir,
+  requires: ["some-cli-package"],
+  bins: {
+    "some-cli": "some-cli-package",
+  },
+});
+```
+
+Fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | `string` | Descriptor name. |
+| `type` | `"tool"` | Discriminant. |
+| `packageDir` | `string` | Root directory of this npm package on the host. |
+| `requires` | `string[]` | npm packages that must be available inside the VM. |
+| `bins` | `Record<string, string>` | Map of bin command name to npm package name. |
+
+## WASM command descriptors
+
+A `"wasm-commands"` descriptor adds commands compiled to WASM from a directory of binaries on the host. It supports symlink aliases and per-command permission tiers.
+
+```ts
+defineSoftware({
+  name: "my-commands",
+  type: "wasm-commands" as const,
+  commandDir: "/abs/path/to/wasm/commands",
+  aliases: {
+    ll: "ls",
+  },
+  permissions: {
+    full: ["mytool"],
+    readWrite: ["cp", "mv"],
+    readOnly: ["ls", "cat"],
+    isolated: ["sandbox-only"],
+  },
+});
+```
+
+Fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | `string` | Descriptor name. |
+| `type` | `"wasm-commands"` | Discriminant. |
+| `commandDir` | `string` | Absolute path to the directory containing WASM command binaries on the host. |
+| `aliases` | `Record<string, string>` | Optional symlink aliases: `aliasName` to `targetCommandName`. |
+| `permissions.full` | `string[]` | Commands granted the `full` tier. |
+| `permissions.readWrite` | `string[]` | Commands granted the `read-write` tier. |
+| `permissions.readOnly` | `string[] \| "*"` | Commands granted `read-only`; `"*"` applies to all. |
+| `permissions.isolated` | `string[]` | Commands granted the `isolated` tier. |
+
+The permission tiers map to the `full`, `read-write`, `read-only`, and `isolated` runtime tiers. See [Permissions](/docs/permissions) for what each tier allows.
+
+## SoftwareContext
+
+`SoftwareContext` is passed to an agent descriptor's `env` function. It resolves npm package entry points to their VM-side paths under `/root/node_modules`.
+
+```ts
+interface SoftwareContext {
+  resolveBin(packageName: string, binName?: string): string;
+  resolvePackage(packageName: string): string;
+}
+```
+
+- **`resolveBin(packageName, binName?)`** resolves a package's `bin` entry to a VM path. It reads the package's `bin` field on the host and maps it under `/root/node_modules`. If `binName` is omitted it defaults to the package name, falling back to the first bin entry.
+
+  ```ts
+  ctx.resolveBin("@mariozechner/pi-coding-agent", "pi")
+  // -> "/root/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
+  ```
+
+- **`resolvePackage(packageName)`** resolves a package's root directory to a VM path.
+
+  ```ts
+  ctx.resolvePackage("pi-acp")
+  // -> "/root/node_modules/pi-acp"
+  ```
+
+Both methods only accept packages declared in the descriptor's `requires` list and throw otherwise.
+
+## Meta-packages
+
+A descriptor module can export an array of descriptors instead of a single one. agentOS flattens nested arrays at boot, so a meta-package can bundle several sub-packages behind one import.
+
+```ts
+import coreutils from "@rivet-dev/agent-os-coreutils";
+import grep from "@rivet-dev/agent-os-grep";
+import sed from "@rivet-dev/agent-os-sed";
+
+// A meta-package: an array of descriptors.
+export default [coreutils, grep, sed];
+```
+
+`@rivet-dev/agent-os-common` is a meta-package built this way. Callers pass it like any other entry:
+
+```ts
+import common from "@rivet-dev/agent-os-common";
+
+const vm = await AgentOs.create({
+  software: [common],
+});
+```
+
+## Duck-typed command packages
+
+A typed descriptor is detected by its `type` field. As a convenience, any object with a `commandDir` property is also treated as a WASM command source, even without a `type`. This lets registry packages be passed directly to `software` without wrapping them in `defineSoftware()`. Such objects may carry their own `commands`, `aliases`, and per-command `permissionTier` metadata, which agentOS reads when registering the commands.
+
+## Package layout resolution
+
+`packageDir` anchors dependency resolution. For each entry in `requires`, agentOS walks up the directory tree from `packageDir` looking for `node_modules/<package>`, which supports both flat (npm) and nested (pnpm) layouts. When a package is found inside a pnpm store, the `.pnpm` store root is also mounted so transitive dependencies resolve.
+
+Each resolved package, plus the declaring package itself, is mounted read-only into the VM at `/root/node_modules/<package>`. Inside the VM the module resolver reads these mounts through the kernel VFS, so the entry points returned by `SoftwareContext.resolveBin` and `resolvePackage` are valid guest paths.
+
+## Using a custom descriptor
+
+Import your descriptor and pass it through `software`, mixing custom and registry packages freely:
+
+```ts
+import { AgentOs } from "@rivet-dev/agent-os-core";
+import common from "@rivet-dev/agent-os-common";
+import myAgent from "./my-agent.js";
+
+const vm = await AgentOs.create({
+  software: [common, myAgent],
+});
+
+const session = await vm.createSession("pi");
+```
+
+## Contributing to the registry
+
+To publish a descriptor as a shared package, see the [agent-os-registry contributing guide](https://github.com/rivet-dev/agent-os/blob/main/registry/CONTRIBUTING.md).

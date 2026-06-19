@@ -1,0 +1,121 @@
+---
+title: "VM Options"
+description: "Complete reference for the AgentOsOptions surface passed when creating an agentOS VM."
+skill: true
+---
+
+`AgentOsOptions` is the configuration object passed when creating an agentOS VM — directly to `AgentOs.create()` in the core API, or via `agentOs({ options: { ... } })` in RivetKit. Every field is optional; omitting one leaves the corresponding behavior at its default.
+
+This page is the complete reference for that surface. Most fields have a dedicated deep-dive page linked below; the rest are documented here.
+
+```ts
+import { AgentOs } from "@rivet-dev/agent-os-core";
+
+const vm = await AgentOs.create({
+  software: [/* ... */],
+  mounts: [/* ... */],
+  loopbackExemptPorts: [3000],
+  additionalInstructions: "Always write tests first.",
+});
+```
+
+```ts
+import { agentOs } from "rivetkit/agent-os";
+import { setup } from "rivetkit";
+
+const vm = agentOs({
+  options: {
+    software: [/* ... */],
+    mounts: [/* ... */],
+    loopbackExemptPorts: [3000],
+    additionalInstructions: "Always write tests first.",
+  },
+});
+
+export const registry = setup({ use: { vm } });
+```
+
+## Reference
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `software` | `SoftwareInput[]` | `[]` | Software to install in the VM — agents, tools, and WASM command packages. See [Software](/docs/software). |
+| `rootFilesystem` | `RootFilesystemConfig` | overlay with bundled base snapshot | Root filesystem configuration. Defaults to an overlay whose deepest lower is the bundled base snapshot. See [Filesystem](/docs/filesystem). |
+| `mounts` | `MountConfig[]` | `[]` | Filesystems to mount at boot time. See [Filesystem](/docs/filesystem). |
+| `permissions` | `Permissions` | `allowAll` | Kernel permission policy for filesystem, network, child-process, and environment operations. See [Capability Permissions](/docs/capability-permissions). |
+| `limits` | `AgentOsLimits` | runtime built-in constants | Operator-tunable runtime resource limits. Unset fields use built-in defaults. See [Limits](/docs/limits). |
+| `toolKits` | `ToolKit[]` | `[]` | Host-side toolkits exposed to agents as CLI commands inside the VM. See [Tools](/docs/tools). |
+| `additionalInstructions` | `string` | _(none)_ | Instructions appended to the base OS system prompt injected at session start. See [System Prompt](/docs/system-prompt). |
+| `loopbackExemptPorts` | `number[]` | `[]` | Loopback ports exempt from SSRF checks. See [below](#loopbackexemptports). |
+| `allowedNodeBuiltins` | `string[]` | hardened native-bridge set | Allowlist of Node.js builtin modules for guest Node processes. See [below](#allowednodebuiltins). |
+| `scheduleDriver` | `ScheduleDriver` | `TimerScheduleDriver` | Custom driver for cron jobs. See [below](#scheduledriver). |
+| `sidecar` | `AgentOsSidecarConfig` | shared `default` pool | Sidecar placement for the VM. See [below](#sidecar-placement). |
+
+The `preview`, `onBeforeConnect`, `onSessionEvent`, and `onPermissionRequest` options apply at the RivetKit `agentOs()` factory level rather than to an individual VM. See [Configuration](/docs/configuration).
+
+## `loopbackExemptPorts`
+
+By default, the VM's outbound networking is protected by SSRF checks that block requests to loopback addresses. `loopbackExemptPorts` exempts specific loopback ports from those checks — for example, to reach a host-side mock server during testing.
+
+```ts
+const vm = await AgentOs.create({
+  loopbackExemptPorts: [8080, 3000],
+});
+```
+
+Outbound network access remains governed by the kernel [`permissions`](/docs/capability-permissions) policy; exempting a port only relaxes the loopback SSRF guard, it does not grant network access on its own.
+
+## `allowedNodeBuiltins`
+
+`allowedNodeBuiltins` is the allowlist of Node.js builtin modules (e.g. `node:fs`, `node:path`) that guest Node processes are permitted to import. When unset, it defaults to the hardened builtin set used by the native sidecar bridge.
+
+Pass an explicit array to override the default — for example, to widen or narrow the set of builtins exposed to guest Node code:
+
+```ts
+const vm = await AgentOs.create({
+  allowedNodeBuiltins: ["node:path", "node:url", "node:buffer"],
+});
+```
+
+Builtin access interacts with the kernel [`permissions`](/docs/capability-permissions) model: an allowed builtin still performs its operations through the permission-checked runtime, so allowlisting a module does not bypass filesystem or network policy.
+
+## `scheduleDriver`
+
+`scheduleDriver` supplies the driver that backs cron jobs. When unset, agentOS uses `TimerScheduleDriver`, which schedules callbacks with in-process timers — parsing cron expressions and setting a single timeout for the next fire time, rescheduling after each fire, and firing ISO 8601 one-shot timestamps once.
+
+A `ScheduleDriver` implements three methods:
+
+```ts
+interface ScheduleDriver {
+  /** Schedule a callback to fire on a cron expression or at a specific time. */
+  schedule(entry: ScheduleEntry): ScheduleHandle;
+  /** Cancel a previously scheduled entry. */
+  cancel(handle: ScheduleHandle): void;
+  /** Tear down all scheduled work. */
+  dispose(): void;
+}
+```
+
+Provide a custom driver to integrate cron scheduling with a durable or external scheduler instead of in-process timers. See [Cron](/docs/cron) for the job API.
+
+## Sidecar placement
+
+`sidecar` controls which sidecar process hosts the VM. It defaults to the shared `default` pool, where VMs share a sidecar managed for you. Two placements are available:
+
+```ts
+type AgentOsSidecarConfig =
+  | { kind: "shared"; pool?: string }
+  | { kind: "explicit"; handle: AgentOsSidecar };
+```
+
+- **Shared** (`kind: "shared"`) — the VM runs in a shared sidecar. Omitting `pool` uses the `default` pool; passing a `pool` name groups VMs into a named shared sidecar.
+- **Explicit** (`kind: "explicit"`) — the VM is pinned to a caller-managed sidecar handle obtained from `AgentOs.createSidecar()`, giving you control over its lifecycle.
+
+```ts
+const sidecar = await AgentOs.createSidecar();
+const vm = await AgentOs.create({
+  sidecar: { kind: "explicit", handle: sidecar },
+});
+```
+
+See [Sidecar](/docs/sidecar) for managing sidecar lifecycles and pools.

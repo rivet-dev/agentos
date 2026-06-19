@@ -1,0 +1,133 @@
+---
+title: "Sidecar & VM Lifecycle"
+description: "Lease VMs from the native agentOS sidecar, manage caller-owned and shared sidecars, and control binary resolution."
+skill: true
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The native **sidecar** is the process that backs every agentOS VM in the standalone core package. It wraps the secure-exec runtime: it owns the VM processes, RPC framing, and event buffering, and resolves the prebuilt sidecar binary. When you call `AgentOs.create()`, the VM is **leased** from a sidecar rather than spawned directly. By default this is a process-global shared sidecar, but you can manage sidecars explicitly when you need to control their lifecycle.
+
+<Aside type="note">
+This page is primarily relevant to the standalone `@rivet-dev/agent-os-core` package. The RivetKit actor wrapper (`rivetkit/agent-os`) manages sidecars automatically — you do not interact with these APIs there.
+</Aside>
+
+## How VMs lease from the sidecar
+
+The sidecar wraps secure-exec and stays free of ACP, agent, and session concerns. It is responsible for:
+
+- Managing the underlying VM processes.
+- RPC request/response framing between the host and VMs.
+- Event buffering for VM-emitted events.
+- Resolving the prebuilt sidecar binary.
+
+Each `AgentOs.create()` call leases one VM from a sidecar. If you do not pass a sidecar, the call resolves the shared `default` pool. Disposing the VM releases its lease.
+
+## Shared sidecars
+
+`AgentOs.getSharedSidecar()` returns a process-global sidecar, pooled by name. Repeated calls for the same pool return the same handle (unless it has been disposed). The default pool name is `"default"`.
+
+```ts
+import { AgentOs } from "@rivet-dev/agent-os-core";
+
+// Pooled by name; defaults to the "default" pool.
+const sidecar = await AgentOs.getSharedSidecar();
+
+// A separate named pool.
+const isolated = await AgentOs.getSharedSidecar({ pool: "isolated" });
+```
+
+`AgentOsSharedSidecarOptions`:
+
+| Field | Type | Description |
+|---|---|---|
+| `pool` | `string` (optional) | Pool name. Defaults to `"default"`. |
+
+When you omit the `sidecar` option on `AgentOs.create()`, the VM is leased from the shared `default` pool implicitly — so most callers never touch these APIs directly.
+
+## Explicit, caller-managed sidecars
+
+`AgentOs.createSidecar()` returns a fresh sidecar handle that you own and are responsible for disposing. Each handle is independent and is not added to the shared pool.
+
+```ts
+import { AgentOs } from "@rivet-dev/agent-os-core";
+
+const sidecar = await AgentOs.createSidecar();
+// ... use it ...
+await sidecar.dispose();
+```
+
+`AgentOsCreateSidecarOptions`:
+
+| Field | Type | Description |
+|---|---|---|
+| `sidecarId` | `string` (optional) | Identifier for the sidecar. Defaults to a generated `agent-os-sidecar-<uuid>` id. |
+
+## Pinning a VM to a sidecar
+
+Pass a sidecar configuration through the `sidecar` option on `AgentOs.create()` to pin a VM to a specific sidecar. The option accepts an `AgentOsSidecarConfig`:
+
+- `{ kind: "shared", pool?: string }` — lease from a (named) shared pool.
+- `{ kind: "explicit", handle: AgentOsSidecar }` — lease from a caller-managed handle returned by `createSidecar()`.
+
+```ts
+import { AgentOs } from "@rivet-dev/agent-os-core";
+import common from "@agent-os-pkgs/common";
+
+const sidecar = await AgentOs.createSidecar();
+
+const vm = await AgentOs.create({
+  software: [common],
+  sidecar: { kind: "explicit", handle: sidecar },
+});
+
+await vm.dispose();
+await sidecar.dispose();
+```
+
+Omitting `sidecar` (or passing `{ kind: "shared" }`) leases from the shared pool. Leasing fails if the target sidecar is not in the `ready` state.
+
+## Inspecting a sidecar
+
+`AgentOsSidecar.describe()` returns a snapshot of the sidecar's current state:
+
+```ts
+const description = sidecar.describe();
+// {
+//   sidecarId: string;
+//   placement: { kind: "shared"; pool?: string } | { kind: "explicit"; sidecarId: string };
+//   state: "ready" | "disposing" | "disposed";
+//   activeVmCount: number;
+// }
+```
+
+`AgentOsSidecarDescription` fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `sidecarId` | `string` | The sidecar's identifier. |
+| `placement` | `AgentOsSidecarPlacement` | Whether the sidecar is `shared` (with optional `pool`) or `explicit` (with its `sidecarId`). |
+| `state` | `"ready" \| "disposing" \| "disposed"` | Current lifecycle state. |
+| `activeVmCount` | `number` | Number of VMs currently leased from this sidecar. |
+
+## Disposing a sidecar
+
+`AgentOsSidecar.dispose()` tears down the sidecar and **disposes every VM leased from it**. It transitions the sidecar through `disposing` to `disposed` and resets `activeVmCount` to `0`. Disposing an already-disposed sidecar is a no-op. If a shared sidecar disposes, it is removed from its pool so the next `getSharedSidecar()` call creates a fresh one. Errors disposing individual VMs are aggregated and rethrown after the rest are torn down.
+
+```ts
+await sidecar.dispose(); // tears down all VMs leased from this sidecar
+```
+
+## Binary resolution
+
+For published (non-repo) installs, the sidecar binary is resolved as follows:
+
+1. **`AGENT_OS_SIDECAR_BIN` override.** If set, it is used as an absolute path to the binary. The path is validated to exist; if it does not, resolution throws.
+2. **`@rivet-dev/agent-os-sidecar` package.** Otherwise, the platform-specific binary shipped by this package is resolved via its `getSidecarPath()` export. If the package is not installed, resolution throws with guidance to install it or set `AGENT_OS_SIDECAR_BIN`.
+
+In-repo developer builds use the local cargo build path instead and never reach published-binary resolution.
+
+```bash
+# Override the sidecar binary with a local build.
+export AGENT_OS_SIDECAR_BIN=/abs/path/to/agent-os-sidecar
+```

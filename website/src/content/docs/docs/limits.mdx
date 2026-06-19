@@ -1,0 +1,144 @@
+---
+title: "Limits"
+description: "Tune operator-facing runtime resource limits for agentOS VMs."
+skill: true
+---
+
+The `limits` option sets operator-tunable runtime resource limits for a VM. Every field is optional. Unset fields fall back to built-in defaults that match the runtime's historical constants, so omitting `limits` — or any individual field — leaves behavior unchanged.
+
+All values are JSON-serializable integers. They are forwarded as-is to the native sidecar in the typed create-VM config, where they are validated before VM construction.
+
+## Categories
+
+Limits are grouped into categories under `limits`.
+
+### `resources` — kernel resource limits
+
+Kernel-level caps on processes, file descriptors, sockets, filesystem usage, and guest WASM execution.
+
+| Field | Description |
+|-------|-------------|
+| `cpuCount` | Number of CPUs available to the VM. |
+| `maxProcesses` | Maximum concurrent processes. |
+| `maxOpenFds` | Maximum open file descriptors. |
+| `maxPipes` | Maximum open pipes. |
+| `maxPtys` | Maximum open PTYs. |
+| `maxSockets` | Maximum open sockets. |
+| `maxConnections` | Maximum concurrent connections. |
+| `maxSocketBufferedBytes` | Maximum bytes buffered per socket. |
+| `maxSocketDatagramQueueLen` | Maximum queued datagrams per socket. |
+| `maxFilesystemBytes` | Maximum total filesystem bytes. |
+| `maxInodeCount` | Maximum number of inodes. |
+| `maxBlockingReadMs` | Maximum duration for a blocking read. |
+| `maxPreadBytes` | Maximum bytes per positional read. |
+| `maxFdWriteBytes` | Maximum bytes per file-descriptor write. |
+| `maxProcessArgvBytes` | Maximum total argv bytes per process. |
+| `maxProcessEnvBytes` | Maximum total environment bytes per process. |
+| `maxReaddirEntries` | Maximum entries returned per directory read. |
+| `maxWasmFuel` | Maximum WASM execution fuel. |
+| `maxWasmMemoryBytes` | Maximum WASM linear memory bytes. |
+| `maxWasmStackBytes` | Maximum WASM stack bytes. |
+
+### `http` — HTTP body buffering
+
+| Field | Description |
+|-------|-------------|
+| `maxFetchResponseBytes` | Cap on `vm.fetch()` buffered response bodies. Must be `<=` the sidecar wire frame cap. |
+
+### `tools` — host-tool registration and invocation
+
+| Field | Description |
+|-------|-------------|
+| `defaultToolTimeoutMs` | Default per-tool invocation timeout. |
+| `maxToolTimeoutMs` | Maximum allowed per-tool invocation timeout. |
+| `maxRegisteredToolkits` | Maximum toolkits registered per VM. |
+| `maxRegisteredToolsPerVm` | Maximum tools registered per VM. |
+| `maxToolsPerToolkit` | Maximum tools per toolkit. |
+| `maxToolSchemaBytes` | Maximum serialized schema bytes per tool. |
+| `maxToolExamplesPerTool` | Maximum examples per tool. |
+| `maxToolExampleInputBytes` | Maximum input bytes per tool example. |
+
+### `plugins` — mount plugin manifest size
+
+| Field | Description |
+|-------|-------------|
+| `maxPersistedManifestBytes` | Maximum total persisted manifest bytes. |
+| `maxPersistedManifestFileBytes` | Maximum persisted manifest bytes per file. |
+
+### `acp` — ACP adapter buffering
+
+| Field | Description |
+|-------|-------------|
+| `maxReadLineBytes` | Maximum bytes per line read from the agent adapter. |
+| `stdoutBufferByteLimit` | Maximum buffered stdout bytes. |
+
+### `jsRuntime` — guest JavaScript runtime buffering
+
+| Field | Description |
+|-------|-------------|
+| `v8HeapLimitMb` | V8 heap limit, in MB. |
+| `capturedOutputLimitBytes` | Maximum captured output bytes. |
+| `stdinBufferLimitBytes` | Maximum buffered stdin bytes. |
+| `eventPayloadLimitBytes` | Maximum event payload bytes. |
+| `v8IpcMaxFrameBytes` | Maximum V8 IPC frame bytes. |
+
+### `python` — guest Python runtime
+
+| Field | Description |
+|-------|-------------|
+| `outputBufferMaxBytes` | Maximum output buffer bytes. |
+| `executionTimeoutMs` | Maximum execution duration. |
+| `vfsRpcTimeoutMs` | Maximum VFS RPC duration. |
+
+### `wasm` — guest WASM runtime
+
+| Field | Description |
+|-------|-------------|
+| `maxModuleFileBytes` | Maximum WASM module file bytes. |
+| `capturedOutputLimitBytes` | Maximum captured output bytes. |
+| `syncReadLimitBytes` | Maximum bytes per synchronous read. |
+
+WASM execution caps (fuel, memory, stack) live under [`resources`](#resources--kernel-resource-limits) as `maxWasmFuel`, `maxWasmMemoryBytes`, and `maxWasmStackBytes`.
+
+## Validation
+
+Limit values are validated by the sidecar before the VM is constructed. Unknown, negative, or non-integer values are rejected, so a malformed `limits` object fails the VM's creation rather than being silently ignored.
+
+## Defaults vs. overrides
+
+Omitting `limits` leaves every limit at its built-in default. Override only the fields you want to change; the rest stay at their defaults.
+
+```ts
+import { agentOs } from "rivetkit/agent-os";
+import { setup } from "rivetkit";
+import common from "@rivet-dev/agent-os-common";
+import pi from "@rivet-dev/agent-os-pi";
+
+const vm = agentOs({
+  options: {
+    software: [common, pi],
+    limits: {
+      // Tighten kernel resources for this VM.
+      resources: {
+        cpuCount: 1,
+        maxProcesses: 64,
+        maxFilesystemBytes: 512 * 1024 * 1024, // 512 MB
+        maxWasmMemoryBytes: 256 * 1024 * 1024, // 256 MB
+      },
+      // Cap buffered fetch response bodies.
+      http: {
+        maxFetchResponseBytes: 16 * 1024 * 1024, // 16 MB
+      },
+      // Shorten the default host-tool timeout.
+      tools: {
+        defaultToolTimeoutMs: 30_000,
+      },
+    },
+  },
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+
+The kernel `resources` category is also covered in [Security & Auth](/docs/security#resource-limits) as the primary lever for capping runaway agents.

@@ -66,6 +66,7 @@ export const siteConfig = {
 				},
 				{ slug: "docs/sessions", label: "Sessions & Transcripts", attrs: { "data-icon": "messages" } },
 				{ slug: "docs/permissions", attrs: { "data-icon": "key" } },
+				{ slug: "docs/capability-permissions", label: "Capability Permissions", attrs: { "data-icon": "shield" } },
 				{ slug: "docs/tools", attrs: { "data-icon": "wrench" } },
 				{ slug: "docs/llm-credentials", label: "LLM Credentials", attrs: { "data-icon": "key" } },
 				{ slug: "docs/llm-gateway", label: "LLM Gateway", badge: { text: "Coming Soon", variant: "caution" }, attrs: { "data-icon": "cloud" } },
@@ -75,6 +76,7 @@ export const siteConfig = {
 			label: "Operating System",
 			items: [
 				{ slug: "docs/software", attrs: { "data-icon": "download" } },
+				{ slug: "docs/custom-software", label: "Custom Software", attrs: { "data-icon": "blocks" } },
 				{ slug: "docs/filesystem", attrs: { "data-icon": "floppyDisk" } },
 				{ slug: "docs/processes", label: "Processes & Shell", attrs: { "data-icon": "terminal" } },
 				{ slug: "docs/networking", label: "Networking & Previews", attrs: { "data-icon": "globe" } },
@@ -100,6 +102,8 @@ export const siteConfig = {
 			items: [
 				{ slug: "docs/core", label: "agentOS Core", attrs: { "data-icon": "box" } },
 				{ slug: "docs/configuration", attrs: { "data-icon": "blocks" } },
+				{ slug: "docs/vm-options", label: "VM Options", attrs: { "data-icon": "sliders" } },
+				{ slug: "docs/limits", label: "Resource Limits", attrs: { "data-icon": "gauge" } },
 				{ slug: "docs/events", attrs: { "data-icon": "scroll" } },
 				{ slug: "docs/deployment", attrs: { "data-icon": "cloud" } },
 				{ slug: "docs/limitations", attrs: { "data-icon": "shield" } },
@@ -109,6 +113,7 @@ export const siteConfig = {
 						{ slug: "docs/security-model", label: "Security Model", attrs: { "data-icon": "lock" } },
 						{ slug: "docs/persistence", label: "Persistence & Sleep", attrs: { "data-icon": "hardDrive" } },
 						{ slug: "docs/system-prompt", label: "System Prompt", attrs: { "data-icon": "fileCode" } },
+						{ slug: "docs/sidecar", label: "Sidecar & Lifecycle", attrs: { "data-icon": "box" } },
 						{ slug: "docs/benchmarks", attrs: { "data-icon": "gauge" } },
 					],
 				},

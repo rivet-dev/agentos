@@ -1,0 +1,282 @@
+---
+title: "Capability Permissions"
+description: "Declarative deny-by-default capability policy for filesystem, network, process, env, and tool access inside the VM."
+skill: true
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
+
+The `permissions` option is a **declarative capability policy** evaluated by the VM kernel. It controls which low-level operations agent code can perform: reading and writing files, opening network connections, spawning child processes, inspecting other processes, reading environment variables, and invoking host tools.
+
+<Aside type="note">
+This is separate from the runtime tool-approval flow in [Permissions](/docs/permissions). That page covers human-in-the-loop approval of an agent's *tool requests* at run time. This page covers the static policy that decides what the VM is *capable of* in the first place. The two compose: an operation must pass the capability policy, and an agent tool request may still require approval.
+</Aside>
+
+## The `permissions` option
+
+`permissions` is a VM option passed to `agentOs()`. It accepts a `Permissions` object with one entry per capability domain.
+
+<Tabs>
+<TabItem label="server.ts">
+```ts title="server.ts"
+import { agentOs } from "rivetkit/agent-os";
+import { setup } from "rivetkit";
+import common from "@rivet-dev/agent-os-common";
+import pi from "@rivet-dev/agent-os-pi";
+
+const vm = agentOs({
+  options: {
+    software: [common, pi],
+    permissions: {
+      fs: "allow",
+      network: "deny",
+      childProcess: "deny",
+      process: "deny",
+      env: "deny",
+      tool: "deny",
+    },
+  },
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+</TabItem>
+</Tabs>
+
+### Domains
+
+`Permissions` has six optional domains:
+
+| Domain | Controls |
+|--------|----------|
+| `fs` | Virtual filesystem operations (e.g. `read`, `write`) on paths |
+| `network` | Outbound network operations (e.g. `dns`, `read`) to hosts and ports |
+| `childProcess` | Spawning child processes |
+| `process` | Inspecting processes (e.g. `inspect`) |
+| `env` | Reading environment variables |
+| `tool` | Invoking host toolkit tools (e.g. `invoke`) |
+
+### Defaults
+
+The default depends on whether you pass `permissions` at all:
+
+- **Omitted.** The VM is created with an allow-all host default (every domain `"allow"`, including `tool: "allow"`). This is the convenient default for trusted local development.
+- **Provided.** Only the domains you specify are honored. Any domain you leave out is denied by the kernel. There is no partial "inherit allow-all" — once you opt into a `permissions` object, unspecified domains are off.
+
+<Aside type="caution">
+Because an explicit `permissions` object denies everything you do not list, always enumerate every domain your workload needs. Set a domain to `"allow"` to grant it broadly, or use a rule object for fine-grained control.
+</Aside>
+
+## Per-domain rule shape
+
+Each domain accepts one of two forms:
+
+- **Shorthand:** the string `"allow"` or `"deny"`, applied to the whole domain.
+- **Rule-based:** an object with an optional `default` mode and an ordered `rules` array.
+
+```ts
+type PermissionMode = "allow" | "deny";
+
+interface RulePermissions<TRule> {
+  default?: PermissionMode; // mode when no rule matches
+  rules: TRule[];           // evaluated in order; last match wins
+}
+```
+
+Rules are evaluated in order and the **last matching rule wins**. When no rule matches, the domain's `default` mode applies. A rule matches when both its `operations` and its resource patterns match the request; an omitted or empty `operations`/pattern list is treated as a wildcard (`*` / `**`).
+
+### Filesystem rules
+
+`fs` rules use `paths` (glob patterns) and `operations`:
+
+```ts
+permissions: {
+  fs: {
+    default: "deny",
+    rules: [
+      {
+        mode: "allow",
+        operations: ["read"],
+        paths: ["/workspace/**"],
+      },
+    ],
+  },
+}
+```
+
+This denies all filesystem access except `read` operations under `/workspace/`.
+
+### Network rules
+
+`network` rules use `patterns` and `operations`. Patterns are URIs combining protocol, host, and port. Hosts and ports support glob wildcards:
+
+```ts
+permissions: {
+  network: {
+    default: "deny",
+    rules: [
+      {
+        mode: "allow",
+        patterns: ["dns://*.browserbase.com", "tcp://*.browserbase.com:*"],
+      },
+    ],
+  },
+}
+```
+
+Here `dns://*.browserbase.com` permits DNS resolution for the subdomain wildcard and `tcp://*.browserbase.com:*` permits TCP connections to any port on those hosts. Operations such as `dns` and `read` can also be scoped explicitly:
+
+```ts
+permissions: {
+  network: {
+    default: "deny",
+    rules: [
+      { mode: "allow", operations: ["dns"], patterns: ["dns://*.example.test"] },
+    ],
+  },
+}
+```
+
+### Child process rules
+
+`childProcess` controls whether agent code may spawn processes. Use the shorthand to allow or deny spawning, or a rule object with `patterns` to match commands:
+
+```ts
+permissions: {
+  childProcess: "deny",
+}
+```
+
+### Process rules
+
+`process` controls inspecting processes. Operations such as `inspect` are matched against `patterns`:
+
+```ts
+permissions: {
+  process: {
+    default: "deny",
+    rules: [
+      { mode: "allow", operations: ["inspect"], patterns: ["**"] },
+    ],
+  },
+}
+```
+
+### Env rules
+
+`env` controls which environment variables agent code can read. Variable names are matched against `patterns`:
+
+```ts
+permissions: {
+  env: {
+    default: "deny",
+    rules: [
+      { mode: "allow", patterns: ["PATH", "OPENAI_*"] },
+    ],
+  },
+}
+```
+
+Only `PATH` and variables beginning with `OPENAI_` are readable; all others are denied.
+
+### Tool rules
+
+`tool` controls invocation of host toolkit tools (registered via the `toolKits` option). Patterns use the `<toolkit>:<tool>` form, and the operation is `invoke`:
+
+```ts
+permissions: {
+  tool: {
+    default: "deny",
+    rules: [
+      { mode: "allow", operations: ["invoke"], patterns: ["math:add"] },
+    ],
+  },
+}
+```
+
+With this policy, invoking `math:add` succeeds while any other toolkit tool is rejected. Use a wildcard such as `math:*` to grant a whole toolkit. When a toolkit invocation is blocked, the call fails referencing the `tool.invoke` operation and the requested `<toolkit>:<tool>` name.
+
+## WASM command permission tiers
+
+WASM command packages (supplied via the `software` option) carry their own coarse-grained **permission tiers**, assigned per command in the package descriptor:
+
+| Tier | Meaning |
+|------|---------|
+| `full` | Full capability access |
+| `read-write` | Read and write access |
+| `read-only` | Read-only access |
+| `isolated` | No access to host-backed capabilities |
+
+In a package descriptor these are declared as command-name lists (`full`, `readWrite`, `readOnly`, `isolated`, where `readOnly` may be `"*"` to cover all commands). The tier scopes what a given command binary is permitted to do when it runs; the `permissions` policy above scopes what agent code and tools may do at the kernel level. The two layers are independent — a command still runs within the VM's `permissions` policy.
+
+## Worked example: a locked-down VM
+
+The example below builds a VM that can only read its workspace, reach a single API host, and invoke one toolkit tool. Everything else — writes, arbitrary network, child processes, environment variables — is denied.
+
+<Tabs>
+<TabItem label="server.ts">
+```ts title="server.ts"
+import { agentOs } from "rivetkit/agent-os";
+import { setup } from "rivetkit";
+import common from "@rivet-dev/agent-os-common";
+import pi from "@rivet-dev/agent-os-pi";
+
+const vm = agentOs({
+  options: {
+    software: [common, pi],
+    permissions: {
+      // Read-only access to the workspace.
+      fs: {
+        default: "deny",
+        rules: [
+          { mode: "allow", operations: ["read"], paths: ["/workspace/**"] },
+        ],
+      },
+      // Only reach one API host.
+      network: {
+        default: "deny",
+        rules: [
+          { mode: "allow", patterns: ["dns://api.example.com", "tcp://api.example.com:443"] },
+        ],
+      },
+      // No spawning, no process inspection.
+      childProcess: "deny",
+      process: "deny",
+      // Expose only the API key variable.
+      env: {
+        default: "deny",
+        rules: [{ mode: "allow", patterns: ["EXAMPLE_API_KEY"] }],
+      },
+      // Allow a single toolkit tool.
+      tool: {
+        default: "deny",
+        rules: [
+          { mode: "allow", operations: ["invoke"], patterns: ["search:query"] },
+        ],
+      },
+    },
+  },
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+</TabItem>
+</Tabs>
+
+## Capability policy vs runtime approval
+
+The capability policy and the [runtime approval flow](/docs/permissions) solve different problems:
+
+- **Capability policy (`permissions`).** A static, host-configured policy enforced by the VM kernel. It defines the outer bound of what the VM can do. Agent code physically cannot exceed it.
+- **Runtime approval (`permissionRequest` / `respondPermission`).** A dynamic, per-action gate. When an agent wants to use a tool, your host (or a human) approves or denies that specific request.
+
+Use the capability policy to draw hard boundaries that never change for the VM, and runtime approval to make case-by-case decisions inside those boundaries.
+
+## Further reading
+
+- [Permissions](/docs/permissions) for the runtime tool-approval flow.
+- [Security Model](/docs/security-model) for trust boundaries and isolation guarantees.
+- [Configuration](/docs/configuration) for the full set of VM options.
