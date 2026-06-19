@@ -34,13 +34,33 @@ const BLOCKED_PATTERNS: RegExp[] = [
 	/\bWebSocket\b/,
 	/\bfetch\s*\(/,
 
-	// Prototype pollution / constructor abuse
-	/\bconstructor\s*\[/,
+	// Prototype pollution / constructor abuse. `constructor` is never needed in
+	// a permission callback; blocking the bare identifier catches both the
+	// bracketed (`constructor[`) and the dot-chained
+	// (`.constructor.constructor(...)`) Function-escape forms.
+	/\bconstructor\b/,
 	/\b__proto__\b/,
 	/Object\s*\.\s*(?:defineProperty|setPrototypeOf|assign)\b/,
 
 	// Dynamic property access on dangerous objects
 	/\bpostMessage\b/,
+
+	// `this` is never needed in a permission callback and is a common pivot to
+	// reconstruct dangerous globals (e.g. `this['fet'+'ch']`). Block it.
+	/\bthis\b/,
+
+	// Computed/bracket member access to a dangerous identifier. This catches
+	// forms that dodge the dotted patterns above, e.g. `process['exit']`,
+	// `process['env']`, `req['constructor']`, `['constructor']['constructor']`,
+	// `obj["prototype"]`, `x['__proto__']`. Legitimate permission callbacks
+	// only read plain `req.*` properties and never bracket-index these names.
+	/\[\s*(['"`])(?:exit|kill|binding|_linkedBinding|env|constructor|prototype|__proto__|eval|fetch|importScripts|require|globalThis|self|window|postMessage|process)\1/,
+
+	// String-literal concatenation. Used to reconstruct a blocked identifier at
+	// runtime so it never appears as a literal token (e.g. `'fet' + 'ch'`).
+	// Permission callbacks have no legitimate need to concatenate string
+	// literals, so reject any `'...' + '...'`.
+	/(['"`])[^'"`]*\1\s*\+\s*(['"`])/,
 ];
 
 /**

