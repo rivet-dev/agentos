@@ -10,6 +10,11 @@ Agent OS is the agent-facing wrapper around secure-exec. It provides ACP session
 - Call OS instances VMs, never sandboxes.
 - The protocol has no backwards compatibility. Clients and the sidecar ship in same-version lockstep, so never add protocol or config versioning, runtime negotiation, fallbacks, or converters. Configs such as `CreateVmConfig` carry no `version` field; the single same-version wire handshake is the only version check. Change the protocol freely and update both sides together.
 
+## Security Model
+
+- Isolation is layered (defense in depth), like Cloudflare Workers. Untrusted guest code is isolated *within* the host process by V8/WASM virtualization today; host-level jailing (sandboxing the process itself) is a planned additional layer. Because the in-process layer is load-bearing: keep the embedded V8 patched to current security releases, and never let one isolate take down the shared process — a per-isolate failure (heap OOM, CPU runaway) must terminate that isolate, not abort the host process.
+- Match Cloudflare Workers wherever it makes sense. Use Workers' published behavior as the reference point for isolation semantics, resource limits, and egress defaults — e.g. ~128 MiB memory per isolate, bounded CPU time, default-deny network egress. Resource limits must be bounded by default (never `None`/0 for memory, heap, stack, or CPU time); operators may raise them.
+
 ## Agent Sessions
 
 - Every public method on `packages/core/src/agent-os.ts` must stay mirrored by RivetKit actor actions after the user confirms the Rivet repo path.
