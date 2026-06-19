@@ -16,7 +16,7 @@ See [agentOS vs Sandbox](/docs/versus-sandbox) for a detailed comparison.
 
 ### Software registry
 
-agentOS uses its own [software registry](/agent-os/registry) of popular tools cross-compiled for the runtime. Native language runtimes like Go, Rust, and C++ are supported. Standard Linux package managers (`apt`, `yum`) are not available since agentOS is not a full Linux OS.
+agentOS uses its own [software registry](/agent-os/registry) of popular tools cross-compiled for the runtime. You cannot download and install arbitrary binaries (for example via `curl` or `apt`), and standard Linux package managers (`apt`, `yum`) are not available since agentOS is not a full Linux OS. Native binaries that are not yet available in the registry (such as Go, Rust, or C++ toolchains) require a full [sandbox](/docs/sandbox).
 
 See [Software](/docs/software) for how to install and configure available packages.
 
@@ -26,6 +26,7 @@ agentOS provides a POSIX-compliant virtual kernel with full filesystem operation
 
 - Kernel modules and eBPF
 - Container runtimes (e.g. Docker)
+- File watching (`inotify`, `fs.watch`)
 
 ### No hardware access
 

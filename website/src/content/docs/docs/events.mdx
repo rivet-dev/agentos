@@ -29,7 +29,7 @@ Emitted when an agent requests permission to use a tool.
 ```ts
 agent.on("permissionRequest", async (data) => {
   // data.sessionId: string
-  // data.request: PermissionRequest (id, toolName, etc.)
+  // data.request: PermissionRequest (permissionId, description, params)
   console.log("Permission requested:", data.request);
 
   await agent.respondPermission(data.sessionId, data.request.permissionId, "once");

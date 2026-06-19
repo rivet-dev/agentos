@@ -6,7 +6,7 @@ skill: true
 
 agentOS automatically injects a system prompt into every agent session that describes the VM environment and available tools. The prompt is additive and never replaces the agent's own instructions (CLAUDE.md, AGENTS.md, etc.).
 
-The base prompt lives at `/etc/agentos/instructions.md` inside the VM.
+The base prompt is embedded in the sidecar (not written to a file inside the VM). At session start the sidecar assembles the base prompt with your additional instructions and generated tool docs, then injects the result into the agent adapter's launch arguments (for example, `--append-system-prompt` for Pi).
 
 ## Customization
 

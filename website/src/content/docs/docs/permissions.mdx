@@ -122,12 +122,15 @@ import pi from "@rivet-dev/agent-os-pi";
 
 const vm = agentOs({
   onPermissionRequest: async (c, sessionId, request) => {
-    // Auto-approve reads, require manual approval for writes
-    const toolName = (request as any).toolName ?? "";
-    if (toolName.includes("read")) {
+    // `request.description` and `request.params` carry the raw ACP
+    // permission details (the requested tool, paths, etc.).
+    // Auto-approve reads, require manual approval for writes.
+    const description = request.description ?? "";
+    if (description.toLowerCase().includes("read")) {
       await c.respondPermission(sessionId, request.permissionId, "always");
     }
-    // Writes are forwarded to the client via the permissionRequest event
+    // Anything not handled here is forwarded to the client via the
+    // permissionRequest event.
   },
   options: { software: [common, pi] },
 });

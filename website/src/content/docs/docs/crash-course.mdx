@@ -278,11 +278,11 @@ console.log("exit code:", result.exitCode);
 
 // Spawn a long-running process
 agent.on("processOutput", (data) => {
-  console.log(`[${data.processId}]`, data.output);
+  console.log(`[pid ${data.pid}]`, new TextDecoder().decode(data.data));
 });
 
-const proc = await agent.spawn("node", ["server.js"]);
-console.log("Process ID:", proc.processId);
+const { pid } = await agent.spawn("node", ["server.js"]);
+console.log("Process ID:", pid);
 ```
 </TabItem>
 <TabItem label="server.ts">
@@ -370,7 +370,7 @@ await agent.scheduleCron({
   schedule: "0 9 * * *",
   action: {
     type: "session",
-    agent: "pi",
+    agentType: "pi",
     prompt: "Review the codebase for security issues and write a report to /home/user/audit.md",
   },
 });
@@ -397,19 +397,31 @@ registry.start();
 
 ### Sandbox Mounting
 
-agentOS uses a hybrid model: agents run in a lightweight VM by default and spin up a full sandbox on demand for heavy workloads like browsers, compilation, and desktop automation.
+agentOS uses a hybrid model: agents run in a lightweight VM by default and mount a full sandbox on demand for heavy workloads like browsers, compilation, and desktop automation. Sandboxes are powered by [Sandbox Agent](https://sandboxagent.dev), so you can swap providers without changing agent code. Mount the sandbox as a filesystem and expose its process management as host tools.
 
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
+import { SandboxAgent } from "sandbox-agent";
+import { DockerProvider } from "sandbox-agent/docker";
 import common from "@rivet-dev/agent-os-common";
 import pi from "@rivet-dev/agent-os-pi";
+import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agent-os-sandbox";
+
+const sandbox = await SandboxAgent.start({
+  sandbox: new DockerProvider(),
+});
 
 const vm = agentOs({
-  options: { software: [common, pi],
-    sandbox: {
-      enabled: true,
-    },
+  options: {
+    software: [common, pi],
+    mounts: [
+      {
+        path: "/sandbox",
+        driver: createSandboxFs({ client: sandbox }),
+      },
+    ],
+    toolKits: [createSandboxToolkit({ client: sandbox })],
   },
 });
 

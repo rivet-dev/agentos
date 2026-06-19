@@ -1,16 +1,12 @@
 ---
 title: "Introduction"
 description: "Run coding agents inside isolated VMs with full filesystem, process, and network control."
+tableOfContents: false
 ---
 
-import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+import DocsLanding from '@rivet-dev/docs-theme/components/DocsLanding.astro';
+import AgentOSHeroLogo from '../../../components/AgentOSHeroLogo.astro';
 
-agentOS runs coding agents inside isolated VMs with full filesystem, process, and network control. It gives you a lightweight VM that runs inside your own process, with near-zero cold start and low memory, plus host tools, permissions, an LLM gateway, and orchestration built in.
-
-## Get Started
-
-<CardGrid>
-  <LinkCard title="Quickstart" href="/docs/quickstart" description="Boot a VM and run your first coding agent." />
-  <LinkCard title="Crash Course" href="/docs/crash-course" description="Learn the core agentOS concepts." />
-  <LinkCard title="agentOS vs Sandbox" href="/docs/versus-sandbox" description="How agentOS compares to a plain sandbox." />
-</CardGrid>
+<DocsLanding>
+	<AgentOSHeroLogo slot="hero" />
+</DocsLanding>

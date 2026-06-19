@@ -112,21 +112,18 @@ agentos-weather forecast --json '{"city":"Paris","days":3}'
 
 # Call a tool with JSON from a file
 agentos-weather forecast --json-file /tmp/input.json
-
-# Pipe JSON via stdin
-echo '{"city":"Paris"}' | agentos-weather forecast
 ```
 
-Tool responses are JSON:
+On success, the tool exits `0` and writes a JSON envelope to stdout:
 
 ```json
 {"ok":true,"result":{"temperature":22,"condition":"sunny"}}
 ```
 
-Error responses include an error code and message:
+On failure (validation or execution error), the tool exits non-zero and writes the error message to stderr:
 
-```json
-{"ok":false,"error":"VALIDATION_ERROR","message":"Expected string at \"city\", received number"}
+```text
+Missing required flag: --city
 ```
 
 ## Tools vs MCP servers
@@ -151,5 +148,5 @@ Tool calls from the agent securely invoke your `execute()` functions on the host
 
 - Keep tool descriptions concise. They are injected into the agent's system prompt and consume tokens.
 - Use `.describe()` on Zod fields to generate useful `--help` output.
-- Set explicit timeouts on long-running tools instead of relying on the 30s default.
+- Set an explicit `timeout` (in ms) on long-running tools. Tools run without a timeout unless one is set.
 - Tools execute on the host with full access to the host environment. Do not expose tools that could compromise the host without appropriate safeguards.

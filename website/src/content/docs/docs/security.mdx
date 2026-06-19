@@ -8,7 +8,7 @@ For the isolation model and trust boundaries, see [Security Model](/docs/securit
 
 ## Resource limits
 
-Restrict CPU and memory per actor to prevent runaway agents.
+Cap kernel resources per VM to prevent runaway agents. Resource limits live under `limits.resources`. Every field is optional and unset fields fall back to built-in defaults.
 
 ```ts
 import { agentOs } from "rivetkit/agent-os";
@@ -19,8 +19,14 @@ import pi from "@rivet-dev/agent-os-pi";
 const vm = agentOs({
   options: {
     software: [common, pi],
-    maxMemoryMb: 512,
-    maxCpuPercent: 50,
+    limits: {
+      resources: {
+        cpuCount: 1,
+        maxProcesses: 64,
+        maxFilesystemBytes: 512 * 1024 * 1024, // 512 MB
+        maxWasmMemoryBytes: 256 * 1024 * 1024, // 256 MB
+      },
+    },
   },
 });
 
@@ -30,7 +36,7 @@ registry.start();
 
 ## Network control
 
-Control which ports and hosts the VM can access.
+VM network access is governed by kernel [Permissions](/docs/permissions). By default, the VM's outbound networking is also protected by SSRF checks that block requests to loopback addresses. `loopbackExemptPorts` exempts specific loopback ports from those checks — for example, to reach a host-side mock server during testing.
 
 ```ts
 import { agentOs } from "rivetkit/agent-os";
@@ -54,15 +60,15 @@ Use the `onBeforeConnect` hook to validate clients before they access the agent.
 
 ```ts
 import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
+import { setup, UserError } from "rivetkit";
 import common from "@rivet-dev/agent-os-common";
 import pi from "@rivet-dev/agent-os-pi";
 
 const vm = agentOs({
-  onBeforeConnect: async (c, params) => {
-    const isValid = await verifyToken(params.token);
+  onBeforeConnect: async (c, params: { authToken: string }) => {
+    const isValid = await verifyToken(params.authToken);
     if (!isValid) {
-      throw new Error("Unauthorized");
+      throw new UserError("Forbidden", { code: "forbidden" });
     }
   },
   options: { software: [common, pi] },
@@ -77,13 +83,15 @@ async function verifyToken(token: string): Promise<boolean> {
 }
 ```
 
+See [Authentication](/docs/authentication) for `createConnState`, client usage, and more patterns.
+
 ## Permission system
 
 Agents request permission before using tools. See [Permissions](/docs/permissions) for auto-approve, selective approval, and human-in-the-loop patterns.
 
 ## Preview URL security
 
-Preview URLs use randomly generated 32-character alphanumeric tokens with configurable expiration. See [Networking & Previews](/docs/networking) for token management.
+Preview URLs use randomly generated 32-character lowercase alphanumeric (a-z0-9) tokens with configurable expiration. See [Networking & Previews](/docs/networking) for token management.
 
 - Tokens are stored in SQLite and survive sleep/wake
 - Expired tokens are automatically cleaned up

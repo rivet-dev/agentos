@@ -68,8 +68,9 @@ Pass credentials when connecting:
 
 ```ts
 import { createClient } from "rivetkit/client";
+import type { registry } from "./server";
 
-const client = createClient("http://localhost:6420");
+const client = createClient<typeof registry>("http://localhost:6420");
 const agent = client.vm.getOrCreate(["my-agent"], {
   params: { authToken: "my-jwt-token" },
 });

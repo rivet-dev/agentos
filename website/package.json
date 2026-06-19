@@ -12,6 +12,7 @@
     "astro": "astro"
   },
   "dependencies": {
+    "@rivet-dev/docs-theme": "github:rivet-dev/docs-theme#v0.2.0",
     "@astrojs/react": "^4.2.0",
     "@astrojs/sitemap": "^3.2.0",
     "@astrojs/starlight": "^0.36.0",

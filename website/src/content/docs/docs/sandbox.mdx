@@ -39,13 +39,13 @@ npm install @rivet-dev/agent-os-sandbox sandbox-agent
 
 ```ts
 import { SandboxAgent } from "sandbox-agent";
-import { DockerProvider } from "sandbox-agent/docker";
+import { docker } from "sandbox-agent/docker";
 import { AgentOs } from "@rivet-dev/agent-os-core";
 import common from "@rivet-dev/agent-os-common";
 import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agent-os-sandbox";
 
 const sandbox = await SandboxAgent.start({
-  sandbox: new DockerProvider(),
+  sandbox: docker(),
 });
 
 const vm = await AgentOs.create({
@@ -53,7 +53,7 @@ const vm = await AgentOs.create({
   mounts: [
     {
       path: "/sandbox",
-      driver: createSandboxFs({ client: sandbox }),
+      plugin: createSandboxFs({ client: sandbox }),
     },
   ],
   toolKits: [createSandboxToolkit({ client: sandbox })],
@@ -64,7 +64,7 @@ await vm.writeFile("/sandbox/app/index.ts", 'console.log("hello")');
 
 // Run it via the toolkit. Commands execute inside the sandbox, so paths are
 // relative to the sandbox root (/app/index.ts), not the VM mount (/sandbox/app/index.ts).
-const result = await vm.exec("agentos-sandbox run-command --command node --json '{\"args\": [\"/app/index.ts\"]}'");
+const result = await vm.exec("agentos-sandbox run-command --command node --args /app/index.ts");
 ```
 
 ## Tools reference
@@ -76,7 +76,7 @@ The toolkit exposes these commands inside the VM:
 agentos-sandbox run-command --command "npm install" --cwd "/app"
 
 # Start a background process
-agentos-sandbox create-process --command "npm" --json '{"args": ["run", "dev"]}'
+agentos-sandbox create-process --command "npm" --args "run" --args "dev"
 
 # List running processes
 agentos-sandbox list-processes
@@ -89,7 +89,7 @@ agentos-sandbox stop-process --id "proc_abc123"
 agentos-sandbox kill-process --id "proc_abc123"
 
 # Send input to an interactive process
-agentos-sandbox send-input --id "proc_abc123" --input "yes"
+agentos-sandbox send-input --id "proc_abc123" --data "yes"
 ```
 
 ## Sandbox providers

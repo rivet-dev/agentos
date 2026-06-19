@@ -15,7 +15,7 @@ Every VM comes with a persistent filesystem out of the box. Files written anywhe
 
 The default filesystem persists automatically across sleep/wake cycles with no setup required (up to 10 GB). For larger storage or external data, mount additional filesystem drivers via the `options.mounts` config.
 
-Each mount takes a `path` (where to mount inside the VM), a `driver` (the filesystem implementation), and an optional `readOnly` flag.
+Each mount takes a `path` (where to mount inside the VM) and an optional `readOnly` flag. JavaScript filesystem backends like `createInMemoryFileSystem()` are passed as `driver`, while native plugin backends like `createHostDirBackend()`, `createS3Backend()`, and `createGoogleDriveBackend()` are passed as `plugin`.
 
 ### In-memory
 
@@ -52,7 +52,7 @@ const vm = agentOs({
   options: {
     software: [common, pi],
     mounts: [
-      { path: "/mnt/code", driver: createHostDirBackend({ hostPath: "/path/to/repo" }), readOnly: true },
+      { path: "/mnt/code", plugin: createHostDirBackend({ hostPath: "/path/to/repo" }), readOnly: true },
     ],
   },
 });
@@ -65,44 +65,7 @@ registry.start();
 
 Install `@rivet-dev/agent-os-s3` for S3-compatible storage.
 
-#### Per-agent storage (recommended)
-
-Use `createS3BackendForAgent` to automatically scope S3 storage by agent key. Each agent instance gets its own prefix (`agents/{key}/`) within the bucket, so you don't need to manage prefixes manually.
-
-```ts
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import { createS3BackendForAgent } from "@rivet-dev/agent-os-s3";
-import type { AgentOsContext } from "@rivet-dev/agent-os-s3";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
-
-function createVm(context: AgentOsContext) {
-  return agentOs({
-    options: {
-      software: [common, pi],
-      mounts: [
-        {
-          path: "/mnt/data",
-          driver: createS3BackendForAgent(context, {
-            bucket: "my-bucket",
-            region: "us-east-1",
-          }),
-        },
-      ],
-    },
-  });
-}
-```
-
-The `AgentOsContext` object contains:
-
-- `key` — unique identifier for the agent instance (e.g. actor ID, user ID, session ID). Used as the S3 prefix.
-- `metadata` — optional key-value pairs with additional agent information.
-
-#### Fixed prefix
-
-For shared storage or custom prefix schemes, use `createS3Backend` with an explicit prefix.
+Use `createS3Backend` to mount a bucket. Pass an optional `prefix` to scope storage to a key path within the bucket — useful for sharing one bucket across multiple agents.
 
 ```ts
 import { agentOs } from "rivetkit/agent-os";
@@ -117,7 +80,7 @@ const vm = agentOs({
     mounts: [
       {
         path: "/mnt/data",
-        driver: createS3Backend({
+        plugin: createS3Backend({
           bucket: "my-bucket",
           prefix: "agent-data/",
           region: "us-east-1",
@@ -131,6 +94,8 @@ export const registry = setup({ use: { vm } });
 registry.start();
 ```
 
+`createS3Backend` also accepts `credentials` (`{ accessKeyId, secretAccessKey }`) and a custom `endpoint` for S3-compatible providers.
+
 ### Google Drive
 
 Install `@rivet-dev/agent-os-google-drive` for Google Drive storage.
@@ -138,7 +103,7 @@ Install `@rivet-dev/agent-os-google-drive` for Google Drive storage.
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import { GoogleDriveBlockStore } from "@rivet-dev/agent-os-google-drive";
+import { createGoogleDriveBackend } from "@rivet-dev/agent-os-google-drive";
 import common from "@rivet-dev/agent-os-common";
 import pi from "@rivet-dev/agent-os-pi";
 
@@ -148,7 +113,7 @@ const vm = agentOs({
     mounts: [
       {
         path: "/mnt/drive",
-        driver: new GoogleDriveBlockStore({
+        plugin: createGoogleDriveBackend({
           credentials: {
             clientEmail: process.env.GOOGLE_DRIVE_CLIENT_EMAIL!,
             privateKey: process.env.GOOGLE_DRIVE_PRIVATE_KEY!,
@@ -233,8 +198,8 @@ console.log(info.size, info.isDirectory, info.mtimeMs);
 await agent.move("/home/user/old.txt", "/home/user/new.txt");
 
 // Delete a file
-await agent.deleteFile("/home/user/new.txt");
+await agent.delete("/home/user/new.txt");
 
 // Delete a directory recursively
-await agent.deleteFile("/home/user/temp", { recursive: true });
+await agent.delete("/home/user/temp", { recursive: true });
 ```

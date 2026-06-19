@@ -13,7 +13,7 @@ Codex agent documentation is coming soon.
 ```ts
 import codex from "@rivet-dev/agent-os-codex-agent";
 
-const vm = await AgentOs.create({ software: [common, ...codex] });
+const vm = await AgentOs.create({ software: [common, codex] });
 const { sessionId } = await vm.createSession("codex", {
   env: { OPENAI_API_KEY: process.env.OPENAI_API_KEY },
 });
