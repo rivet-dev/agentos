@@ -296,6 +296,102 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
     assert_eq!(closed.session_id, "adapter-session");
 }
 
+// ---------------------------------------------------------------------------
+// Security tests (adversarial). The peer connection is UNTRUSTED; the test
+// asserts the ACP extension DENIES the attack and stays usable.
+// ---------------------------------------------------------------------------
+
+/// F-010 (T2 / J.4): a second connection (attacker) must NOT be able to read the
+/// ACP session state created by a different connection (victim). `get_session_state`
+/// must enforce per-connection ownership; a cross-connection read by a known/guessed
+/// `session_id` must fail closed (error response), not leak the victim's session
+/// metadata (agent_type, process_id, pid, modes, config_options, agent_info).
+///
+/// This is the bounded SAFEGUARD assertion and runs by default. It is fast: it
+/// performs a single cross-connection read and asserts the deny.
+#[test]
+fn acp_get_session_state_denies_cross_connection_session_id() {
+    assert_node_available();
+    let mut sidecar = new_sidecar("agent-os-acp-cross-conn-state");
+
+    // Victim connection creates a real ACP session.
+    let victim_conn = authenticate(&mut sidecar);
+    let victim_session = open_session(&mut sidecar, &victim_conn);
+    let cwd = temp_dir("agent-os-acp-cross-conn-state-cwd");
+    let adapter = cwd.join("adapter.mjs");
+    fs::write(&adapter, adapter_script()).expect("write adapter script");
+    let victim_vm = create_vm(&mut sidecar, &victim_conn, &victim_session, &cwd);
+
+    let created = dispatch_acp(
+        &mut sidecar,
+        4,
+        &victim_conn,
+        &victim_session,
+        &victim_vm,
+        AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
+            agent_type: String::from("pi"),
+            runtime: AcpRuntimeKind::JavaScript,
+            adapter_entrypoint: adapter.to_string_lossy().into_owned(),
+            cwd: cwd.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            env: HashMap::new(),
+            protocol_version: i32::from(ACP_PROTOCOL_VERSION),
+            client_capabilities: String::from(r#"{"fs":{"readTextFile":true}}"#),
+            mcp_servers: String::from(r#"{"servers":[]}"#),
+            skip_os_instructions: true,
+            additional_instructions: None,
+        }),
+    );
+    let AcpResponse::AcpSessionCreatedResponse(_) = created else {
+        panic!("victim create failed: {created:?}");
+    };
+
+    // The owner can still read its own session state.
+    let owner_state = dispatch_acp(
+        &mut sidecar,
+        5,
+        &victim_conn,
+        &victim_session,
+        &victim_vm,
+        AcpRequest::AcpGetSessionStateRequest(AcpGetSessionStateRequest {
+            session_id: String::from("adapter-session"),
+        }),
+    );
+    assert!(
+        matches!(owner_state, AcpResponse::AcpSessionStateResponse(_)),
+        "owner connection must still read its own ACP session state, got {owner_state:?}"
+    );
+
+    // Attacker connection: separate auth + session + vm, then tries to read the
+    // victim's ACP session state by its (guessed/known) session id.
+    let attacker_conn = authenticate(&mut sidecar);
+    assert_ne!(
+        attacker_conn, victim_conn,
+        "attacker must be a distinct connection"
+    );
+    let attacker_session = open_session(&mut sidecar, &attacker_conn);
+    let attacker_cwd = temp_dir("agent-os-acp-cross-conn-attacker-cwd");
+    let attacker_vm = create_vm(&mut sidecar, &attacker_conn, &attacker_session, &attacker_cwd);
+
+    let leaked = dispatch_acp(
+        &mut sidecar,
+        6,
+        &attacker_conn,
+        &attacker_session,
+        &attacker_vm,
+        AcpRequest::AcpGetSessionStateRequest(AcpGetSessionStateRequest {
+            session_id: String::from("adapter-session"),
+        }),
+    );
+
+    // SECURE expectation: a different connection must be denied (error response).
+    assert!(
+        matches!(leaked, AcpResponse::AcpErrorResponse(_)),
+        "cross-connection read of another connection's ACP session state must be DENIED, \
+         but it returned: {leaked:?}"
+    );
+}
+
 fn decode_single_acp_session_event(events: &[EventFrame]) -> Value {
     assert_eq!(events.len(), 1);
     let EventPayload::ExtEnvelope(envelope) = &events[0].payload else {

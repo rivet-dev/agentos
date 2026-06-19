@@ -12,7 +12,7 @@ use agent_os_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_sidecar::limits::DEFAULT_ACP_MAX_READ_LINE_BYTES;
 use secure_exec_sidecar::wire::{
     CloseStdinRequest, EventPayload, ExecuteRequest, GuestFilesystemCallRequest,
-    GuestFilesystemOperation, GuestRuntimeKind, KillProcessRequest, StreamChannel,
+    GuestFilesystemOperation, GuestRuntimeKind, KillProcessRequest, OwnershipScope, StreamChannel,
     WriteStdinRequest,
 };
 use secure_exec_sidecar::{
@@ -54,6 +54,10 @@ pub struct AcpExtension {
 #[derive(Debug, Clone)]
 struct AcpSessionRecord {
     session_id: String,
+    /// Connection that created this session. Used to enforce per-connection
+    /// ownership so one connection cannot read or drive another connection's
+    /// ACP session by its `session_id`.
+    owner_connection_id: String,
     agent_type: String,
     process_id: String,
     pid: Option<u32>,
@@ -81,7 +85,7 @@ impl AcpExtension {
         let response = match request {
             AcpRequest::AcpCreateSessionRequest(request) => self.create_session(ctx, request).await,
             AcpRequest::AcpGetSessionStateRequest(request) => {
-                AcpHandlerOutput::response(self.get_session_state(request).await)
+                AcpHandlerOutput::response(self.get_session_state(ctx, request).await)
             }
             AcpRequest::AcpCloseSessionRequest(request) => {
                 AcpHandlerOutput::response(self.close_session(ctx, request).await)
@@ -146,6 +150,7 @@ impl AcpExtension {
 
         let session = AcpSessionRecord {
             session_id: bootstrap.session_id.clone(),
+            owner_connection_id: ownership_connection_id(ctx.ownership()),
             agent_type: request.agent_type.clone(),
             process_id: process_id.clone(),
             pid: started.pid,
@@ -338,12 +343,22 @@ impl AcpExtension {
 
     async fn get_session_state(
         &self,
+        ctx: ExtensionContext<'_>,
         request: AcpGetSessionStateRequest,
     ) -> Result<AcpResponse, SidecarError> {
+        let caller_connection_id = ownership_connection_id(ctx.ownership());
         let sessions = self.sessions.lock().await;
-        let session = sessions.get(&request.session_id).ok_or_else(|| {
+        let unknown = || {
             SidecarError::InvalidState(format!("unknown ACP session {}", request.session_id))
-        })?;
+        };
+        let session = sessions.get(&request.session_id).ok_or_else(unknown)?;
+        // Enforce per-connection ownership: a session may only be read by the
+        // connection that created it. Fail closed with the same error a missing
+        // session produces so existence of another connection's session is not
+        // leaked across the connection tenant boundary.
+        if session.owner_connection_id != caller_connection_id {
+            return Err(unknown());
+        }
         Ok(AcpResponse::AcpSessionStateResponse(
             session.state_response(),
         ))
@@ -1427,6 +1442,17 @@ fn convert_runtime(runtime: AcpRuntimeKind) -> GuestRuntimeKind {
 
 fn hash_to_btree(map: HashMap<String, String>) -> BTreeMap<String, String> {
     map.into_iter().collect()
+}
+
+/// Extract the owning connection id from an ownership scope. Every scope carries
+/// a connection id, which is the tenant boundary secure-exec enforces; ACP
+/// session ownership is keyed off this same connection id.
+fn ownership_connection_id(ownership: &OwnershipScope) -> String {
+    match ownership {
+        OwnershipScope::ConnectionOwnership(inner) => inner.connection_id.clone(),
+        OwnershipScope::SessionOwnership(inner) => inner.connection_id.clone(),
+        OwnershipScope::VmOwnership(inner) => inner.connection_id.clone(),
+    }
 }
 
 fn parse_json_text(text: &str, label: &str) -> Result<Value, SidecarError> {
