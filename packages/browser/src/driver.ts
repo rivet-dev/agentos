@@ -17,6 +17,18 @@ import {
 const S_IFREG = 0o100000;
 const S_IFDIR = 0o040000;
 
+/**
+ * Captured reference to the platform `fetch` taken at module load, before any
+ * guest code runs and before the worker shadows the guest-visible `fetch`
+ * global (see worker.ts dangerousApis lockdown, F-012). The gated network
+ * adapter must keep working after the ambient `fetch` global is removed for the
+ * guest, so the adapter calls this private reference instead of the (now
+ * shadowed) global identifier. Bound to `globalThis` to preserve the correct
+ * `this` for the platform fetch implementation.
+ */
+const platformFetch: typeof fetch | undefined =
+	typeof fetch === "function" ? fetch.bind(globalThis) : undefined;
+
 const BROWSER_SYSTEM_DRIVER_OPTIONS = Symbol.for(
 	"agent-os.browserSystemDriverOptions",
 );
@@ -51,11 +63,65 @@ function dirname(path: string): string {
 	return `/${parts.slice(0, -1).join("/")}`;
 }
 
-async function getRootHandle(): Promise<FileSystemDirectoryHandle> {
+/**
+ * OPFS subdirectory under which every namespaced runtime root is created. The
+ * origin-wide OPFS root (`navigator.storage.getDirectory()`) is shared by all
+ * runtimes on the origin, so writing a runtime's files directly to it lets
+ * co-resident runtimes read each other's data (F-015). Each runtime instead
+ * gets its own subdirectory under this prefix.
+ */
+const OPFS_RUNTIME_NAMESPACE_ROOT = ".agent-os-runtimes";
+
+/**
+ * Translate an OPFS "not found" error into a Node-style ENOENT error so missing
+ * paths report consistently with the in-memory filesystem (and so callers see
+ * ENOENT rather than a raw DOMException). Non-not-found errors pass through
+ * unchanged to preserve existing behavior.
+ */
+function toEnoent(error: unknown, op: string, path: string): unknown {
+	const name = (error as { name?: string } | undefined)?.name;
+	if (name === "NotFoundError") {
+		const enoent = new Error(
+			`ENOENT: no such file or directory, ${op} '${path}'`,
+		);
+		(enoent as { code?: string }).code = "ENOENT";
+		return enoent;
+	}
+	return error;
+}
+
+/** Generate a unique, stable-for-this-instance OPFS namespace id. */
+function generateOpfsNamespace(): string {
+	const cryptoObj = (globalThis as { crypto?: Crypto }).crypto;
+	if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
+		return cryptoObj.randomUUID();
+	}
+	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function getOriginRootHandle(): Promise<FileSystemDirectoryHandle> {
 	if (!("storage" in navigator) || !("getDirectory" in navigator.storage)) {
 		throw createEnosysError("opfs");
 	}
 	return navigator.storage.getDirectory();
+}
+
+/**
+ * Resolve the per-runtime OPFS root, namespaced under
+ * `OPFS_RUNTIME_NAMESPACE_ROOT/<namespace>` so that two runtimes on the same
+ * origin never share storage (F-015). All of a runtime's paths resolve under
+ * this handle, so its own reads/writes work and persist for its lifetime while
+ * remaining invisible to other tenants.
+ */
+async function getRootHandle(
+	namespace: string,
+): Promise<FileSystemDirectoryHandle> {
+	const originRoot = await getOriginRootHandle();
+	const namespaceContainer = await originRoot.getDirectoryHandle(
+		OPFS_RUNTIME_NAMESPACE_ROOT,
+		{ create: true },
+	);
+	return namespaceContainer.getDirectoryHandle(namespace, { create: true });
 }
 
 /**
@@ -65,9 +131,16 @@ async function getRootHandle(): Promise<FileSystemDirectoryHandle> {
  */
 export class OpfsFileSystem implements VirtualFileSystem {
 	private rootPromise: Promise<FileSystemDirectoryHandle>;
+	readonly namespace: string;
 
-	constructor() {
-		this.rootPromise = getRootHandle();
+	/**
+	 * @param namespace Unique per-runtime/tenant OPFS namespace. Defaults to a
+	 * freshly generated id so co-resident runtimes never share storage (F-015).
+	 * Pass a stable id to persist a runtime's data across instances.
+	 */
+	constructor(namespace: string = generateOpfsNamespace()) {
+		this.namespace = namespace;
+		this.rootPromise = getRootHandle(namespace);
 	}
 
 	private async getDirHandle(
@@ -78,7 +151,11 @@ export class OpfsFileSystem implements VirtualFileSystem {
 		const parts = splitPath(path);
 		let current = root;
 		for (const part of parts) {
-			current = await current.getDirectoryHandle(part, { create });
+			try {
+				current = await current.getDirectoryHandle(part, { create });
+			} catch (error) {
+				throw toEnoent(error, "stat", normalizePath(path));
+			}
 		}
 		return current;
 	}
@@ -91,7 +168,11 @@ export class OpfsFileSystem implements VirtualFileSystem {
 		const parent = dirname(normalized);
 		const name = normalized.split("/").pop() || "";
 		const dir = await this.getDirHandle(parent, create);
-		return dir.getFileHandle(name, { create });
+		try {
+			return await dir.getFileHandle(name, { create });
+		} catch (error) {
+			throw toEnoent(error, "open", normalized);
+		}
 	}
 
 	async readFile(path: string): Promise<Uint8Array> {
@@ -313,24 +394,42 @@ export interface BrowserDriverOptions {
 	filesystem?: "opfs" | "memory";
 	permissions?: Permissions;
 	useDefaultNetwork?: boolean;
+	/**
+	 * Per-runtime/tenant OPFS namespace. Defaults to a freshly generated id so
+	 * co-resident runtimes never share storage (F-015). Pass a stable id to
+	 * persist a runtime's data across driver instances.
+	 */
+	opfsNamespace?: string;
 }
 
-/** Create an OPFS-backed filesystem, falling back to in-memory if OPFS is unavailable. */
-export async function createOpfsFileSystem(): Promise<VirtualFileSystem> {
+/**
+ * Create an OPFS-backed filesystem, falling back to in-memory if OPFS is
+ * unavailable. Each instance is namespaced under a unique per-runtime
+ * subdirectory (F-015); pass `namespace` to use a stable, persistent namespace.
+ */
+export async function createOpfsFileSystem(
+	namespace?: string,
+): Promise<VirtualFileSystem> {
 	if (
 		!("storage" in navigator) ||
 		typeof navigator.storage.getDirectory !== "function"
 	) {
 		return createInMemoryFileSystem();
 	}
-	return new OpfsFileSystem();
+	return new OpfsFileSystem(namespace);
 }
 
 /** Network adapter that delegates to the browser's native `fetch`. DNS and http2 are unsupported. */
 export function createBrowserNetworkAdapter(): NetworkAdapter {
+	// Use the reference captured at module load (platformFetch) so the gated
+	// adapter keeps working after worker.ts shadows the guest-visible `fetch`
+	// global (F-012). Fall back to the current global only if none was captured.
+	const fetchImpl: typeof fetch =
+		platformFetch ??
+		((...args: Parameters<typeof fetch>) => fetch(...args));
 	return {
 		async fetch(url, options) {
-			const response = await fetch(url, {
+			const response = await fetchImpl(url, {
 				method: options?.method || "GET",
 				headers: options?.headers,
 				body: options?.body as RequestInit["body"],
@@ -371,7 +470,7 @@ export function createBrowserNetworkAdapter(): NetworkAdapter {
 		},
 
 		async httpRequest(url, options) {
-			const response = await fetch(url, {
+			const response = await fetchImpl(url, {
 				method: options?.method || "GET",
 				headers: options?.headers,
 				body: options?.body as RequestInit["body"],
@@ -417,7 +516,7 @@ export async function createBrowserDriver(
 	const filesystem =
 		filesystemMode === "memory"
 			? createInMemoryFileSystem()
-			: await createOpfsFileSystem();
+			: await createOpfsFileSystem(options.opfsNamespace);
 	const networkAdapter = options.useDefaultNetwork
 		? wrapNetworkAdapter(createBrowserNetworkAdapter(), permissions)
 		: undefined;

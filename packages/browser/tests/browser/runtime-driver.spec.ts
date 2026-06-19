@@ -288,3 +288,122 @@ test("hard termination rejects pending work and clears sync bridge state", async
 	expect(terminated.debug.workerOnmessage).toBe("null");
 	expect(terminated.debug.workerOnerror).toBe("null");
 });
+
+// ---------------------------------------------------------------------------
+// Security: adversarial tests (security review shard aos-browser).
+// Untrusted guest code / peer runtimes try to escape the network gate or read
+// another tenant's storage. Each asserts the system DENIES the attack.
+// ---------------------------------------------------------------------------
+
+// F-012 (HIGH) — in-VM guest code: ambient `fetch` egress bypass.
+// Runtime created with network disabled (useDefaultNetwork omitted => no
+// network adapter, deny-all). The worker's deny-list (worker.ts dangerousApis)
+// must shadow the ambient WorkerGlobalScope.fetch. The guest MUST NOT be able
+// to touch an unmediated `fetch` that bypasses the kernel egress gate. We
+// assert that none of `fetch`/`globalThis.fetch`/`self.fetch` is a reachable
+// callable. A reachable callable `fetch` is the egress bypass and FAILS.
+test("guest cannot reach ambient fetch global to bypass the network gate", async ({
+	page,
+}) => {
+	const { runtimeId } = await createRuntime(page);
+
+	const probe = await execRuntime(
+		page,
+		runtimeId,
+		`
+			(() => {
+				const report = {};
+				// Direct global identifier reference.
+				try {
+					report.fetchType = typeof fetch;
+				} catch (e) {
+					report.fetchType = "throw:" + (e && e.message);
+				}
+				// Via globalThis / self (worker global).
+				try {
+					report.globalThisFetchType = typeof globalThis.fetch;
+				} catch (e) {
+					report.globalThisFetchType = "throw:" + (e && e.message);
+				}
+				try {
+					report.selfFetchType = typeof self.fetch;
+				} catch (e) {
+					report.selfFetchType = "throw:" + (e && e.message);
+				}
+				console.log(JSON.stringify(report));
+			})();
+		`,
+	);
+
+	expect(probe.result.code).toBe(0);
+	const report = JSON.parse(getLastStdioMessage(probe, "stdout")) as {
+		fetchType: string;
+		globalThisFetchType: string;
+		selfFetchType: string;
+	};
+
+	// The ambient fetch must be unreachable to guest code when the runtime has
+	// no permission-wrapped network adapter. A reachable callable `fetch` is an
+	// unmediated egress channel that bypasses the network permission gate.
+	const reachable = [
+		report.fetchType,
+		report.globalThisFetchType,
+		report.selfFetchType,
+	].filter((value) => value === "function");
+	expect(
+		reachable,
+		`ambient fetch reachable from guest (egress bypass): ${JSON.stringify(report)}`,
+	).toEqual([]);
+});
+
+// F-015 (HIGH) — peer runtimes, same origin: OPFS cross-tenant storage bleed.
+// driver.ts OpfsFileSystem must namespace each runtime under its own per-tenant
+// OPFS subdirectory. Runtime A writes /secret.txt; runtime B reads it. B MUST
+// get ENOENT. If B reads A's secret, that is a cross-tenant storage leak.
+test("two OPFS runtimes do not share storage across tenants", async ({
+	page,
+}) => {
+	const secret = `cross-tenant-${Date.now()}`;
+	const secretPath = "/secret.txt";
+
+	const runtimeA = await createRuntime(page, { filesystem: "opfs" });
+	const runtimeB = await createRuntime(page, { filesystem: "opfs" });
+
+	const writeResult = await execRuntime(
+		page,
+		runtimeA.runtimeId,
+		`
+			const fs = require("fs");
+			fs.writeFileSync(${JSON.stringify(secretPath)}, ${JSON.stringify(secret)});
+			console.log("wrote");
+		`,
+	);
+	expect(writeResult.result.code).toBe(0);
+
+	const readResult = await execRuntime(
+		page,
+		runtimeB.runtimeId,
+		`
+			const fs = require("fs");
+			let outcome;
+			try {
+				outcome = { read: fs.readFileSync(${JSON.stringify(secretPath)}, "utf8") };
+			} catch (e) {
+				outcome = { error: (e && e.message) || String(e) };
+			}
+			console.log(JSON.stringify(outcome));
+		`,
+	);
+	expect(readResult.result.code).toBe(0);
+	const outcome = JSON.parse(getLastStdioMessage(readResult, "stdout")) as {
+		read?: string;
+		error?: string;
+	};
+
+	expect(
+		outcome.read,
+		`runtime B read runtime A's secret (cross-tenant OPFS bleed): ${JSON.stringify(outcome)}`,
+	).toBeUndefined();
+	expect(outcome.error, "expected ENOENT for isolated tenant").toBeTruthy();
+	expect(outcome.error).toContain("ENOENT");
+});

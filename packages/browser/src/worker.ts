@@ -1170,8 +1170,17 @@ async function initRuntime(payload: BrowserWorkerInitPayload): Promise<void> {
 	globalEval(getRequireSetupCode());
 	ensureProcessGlobal();
 
-	// Block dangerous Web APIs that bypass bridge permission checks
+	// Block dangerous Web APIs that bypass bridge permission checks.
+	//
+	// `fetch` is included so guest code cannot reach the ambient
+	// WorkerGlobalScope.fetch and egress out-of-band, bypassing the kernel
+	// network permission gate (F-012). The gated network adapter does not rely
+	// on this global: createBrowserNetworkAdapter() captured the real platform
+	// fetch at module load (driver.ts `platformFetch`), so removing the
+	// guest-visible global here leaves the permission-wrapped network path
+	// working while denying unmediated egress.
 	const dangerousApis = [
+		"fetch",
 		"XMLHttpRequest",
 		"WebSocket",
 		"importScripts",
