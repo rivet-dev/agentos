@@ -55,7 +55,7 @@
     "check-types": "tsc --noEmit",
     "build": "tsc",
     "test:browser": "node ./scripts/run-browser-tests.mjs",
-    "test": "pnpm build && vitest run tests/runtime-driver/permission-validation.test.ts && pnpm run test:browser"
+    "test": "pnpm build && vitest run tests/runtime-driver && pnpm run test:browser"
   },
   "dependencies": {
     "sucrase": "^3.35.0"

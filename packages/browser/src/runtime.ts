@@ -405,6 +405,49 @@ export function wrapFileSystem(
 	};
 }
 
+/**
+ * Default port for a URL scheme, used when the URL omits an explicit port so
+ * host-keyed network policies can still reason about the effective port.
+ */
+function defaultPortForProtocol(protocol: string): number | undefined {
+	switch (protocol) {
+		case "http:":
+		case "ws:":
+			return 80;
+		case "https:":
+		case "wss:":
+			return 443;
+		case "ftp:":
+			return 21;
+		default:
+			return undefined;
+	}
+}
+
+/**
+ * Parse a request URL into the `{ url, host, port }` shape the network
+ * permission callback expects, so host-keyed deny rules (e.g.
+ * `req.host === "169.254.169.254"`) can match. Falls back to `{ url }` only
+ * when the URL cannot be parsed.
+ */
+function buildNetworkPermissionRequest(url: string): {
+	url: string;
+	host?: string;
+	port?: number;
+} {
+	try {
+		const parsed = new URL(url);
+		// `hostname` strips brackets from IPv6 literals and excludes the port.
+		const host = parsed.hostname || undefined;
+		const port = parsed.port
+			? Number(parsed.port)
+			: defaultPortForProtocol(parsed.protocol);
+		return { url, host, port };
+	} catch {
+		return { url };
+	}
+}
+
 export function wrapNetworkAdapter(
 	adapter: NetworkAdapter,
 	permissions?: Permissions,
@@ -423,7 +466,7 @@ export function wrapNetworkAdapter(
 	};
 	return {
 		async fetch(url, options) {
-			check({ url });
+			check(buildNetworkPermissionRequest(url));
 			return adapter.fetch(url, options);
 		},
 		async dnsLookup(hostname) {
@@ -431,7 +474,7 @@ export function wrapNetworkAdapter(
 			return adapter.dnsLookup(hostname);
 		},
 		async httpRequest(url, options) {
-			check({ url });
+			check(buildNetworkPermissionRequest(url));
 			return adapter.httpRequest(url, options);
 		},
 	};
