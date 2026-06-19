@@ -334,6 +334,9 @@ export function createBrowserNetworkAdapter(): NetworkAdapter {
 				method: options?.method || "GET",
 				headers: options?.headers,
 				body: options?.body as RequestInit["body"],
+				// Untrusted guest requests must never ride the embedding page's
+				// ambient cookies / HTTP-auth (F-008). Omit all credentials.
+				credentials: "omit",
 			});
 			const headers: Record<string, string> = {};
 			response.headers.forEach((v, k) => {
@@ -375,6 +378,9 @@ export function createBrowserNetworkAdapter(): NetworkAdapter {
 				method: options?.method || "GET",
 				headers: options?.headers,
 				body: options?.body as RequestInit["body"],
+				// Untrusted guest requests must never ride the embedding page's
+				// ambient cookies / HTTP-auth (F-008). Omit all credentials.
+				credentials: "omit",
 			});
 			const headers: Record<string, string> = {};
 			response.headers.forEach((v, k) => {
