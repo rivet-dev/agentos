@@ -317,4 +317,71 @@ mod tests {
             secure_exec_client::wire::DEFAULT_MAX_FRAME_BYTES
         );
     }
+
+    // ── Security: AOSCLIENT-P3-fetch (N-010 guest-server VmFetch response) ───────────────────────
+    //
+    // Threat: a guest server controls the `VmFetch` RESPONSE JSON that the client parses. A hostile
+    // server returns an out-of-range status (70000 / 0), a malformed base64 body ("!!!"), or an
+    // over-limit base64 body. Each must be handled as a clean `Err` on the client — never a panic
+    // (a panic in the shared host process is cross-tenant DoS, F.4). This is a regression guard for
+    // the parse path in `AgentOs::fetch`: `serde_json::from_str` -> `StatusCode::from_u16` ->
+    // `ensure_fetch_base64_body_within_limit` -> `BASE64.decode`.
+    use super::{VmFetchResponsePayload, BASE64};
+    use base64::Engine as _;
+
+    /// A status that overflows u16 (70000) must fail JSON deserialization of the response payload,
+    /// not panic. `status` is typed `u16`, so serde rejects the out-of-range value.
+    #[test]
+    fn vm_fetch_response_overflowing_status_fails_deserialization_without_panic() {
+        let json = r#"{"status":70000}"#;
+        let parsed: Result<VmFetchResponsePayload, _> = serde_json::from_str(json);
+        assert!(
+            parsed.is_err(),
+            "AOSCLIENT-P3-fetch: status 70000 overflows u16 and must fail to deserialize, not panic"
+        );
+    }
+
+    /// A status of 0 deserializes (it is a valid u16) but must be rejected by
+    /// `http::StatusCode::from_u16`, mirroring the `fetch` status construction, without panic.
+    #[test]
+    fn vm_fetch_response_zero_status_is_rejected_by_status_code_without_panic() {
+        let json = r#"{"status":0}"#;
+        let payload: VmFetchResponsePayload =
+            serde_json::from_str(json).expect("status 0 is a valid u16 and should deserialize");
+        let status = http::StatusCode::from_u16(payload.status);
+        assert!(
+            status.is_err(),
+            "AOSCLIENT-P3-fetch: status code 0 must be rejected by StatusCode::from_u16, not panic"
+        );
+    }
+
+    /// A malformed base64 body ("!!!") must produce a decode `Err`, never a panic.
+    #[test]
+    fn vm_fetch_response_malformed_base64_body_errors_without_panic() {
+        // First the size guard passes for a tiny body, so we reach the decode step the way
+        // `fetch` does.
+        ensure_fetch_base64_body_within_limit("!!!", VM_FETCH_BUFFER_LIMIT_BYTES)
+            .expect("tiny body is within the limit");
+        let decoded = BASE64.decode("!!!".as_bytes());
+        assert!(
+            decoded.is_err(),
+            "AOSCLIENT-P3-fetch: malformed base64 response body \"!!!\" must error on decode, not panic"
+        );
+    }
+
+    /// An over-limit base64 body must be rejected by the size guard BEFORE any allocation/decode,
+    /// without panic.
+    #[test]
+    fn vm_fetch_response_over_limit_base64_body_is_rejected_before_decode() {
+        // An encoded length strictly greater than the limit trips the guard on the encoded size.
+        let oversized = "A".repeat(VM_FETCH_BUFFER_LIMIT_BYTES + 4);
+        let result = ensure_fetch_base64_body_within_limit(&oversized, VM_FETCH_BUFFER_LIMIT_BYTES);
+        let error = result.expect_err(
+            "AOSCLIENT-P3-fetch: an over-limit base64 body must be rejected before decode",
+        );
+        assert!(
+            error.to_string().contains("fetch response body base64"),
+            "AOSCLIENT-P3-fetch: over-limit base64 body must be rejected by the size guard, got: {error}"
+        );
+    }
 }

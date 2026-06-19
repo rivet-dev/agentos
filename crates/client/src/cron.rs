@@ -1360,6 +1360,87 @@ mod tests {
         );
     }
 
+    // ── Security: AOSCLIENT-P2-cron-cap (N-008 cron job-limit flooding) ──────────────────────────
+    //
+    // Threat: an untrusted actor floods the cron registry to exhaust host scheduling resources.
+    // The public `AgentOs::schedule_cron` registers through `register_cron_job` ->
+    // `ensure_cron_capacity` (cron.rs:1162), which must cap distinct jobs at `CRON_JOB_LIMIT`
+    // while still allowing an existing id to be REPLACED at the cap. `AgentOs::schedule_cron`
+    // itself needs a live sidecar to construct, so we drive the exact same public registration
+    // chokepoint (`register_cron_job`) the public method funnels into, with a recording driver.
+    #[test]
+    fn schedule_cron_public_path_rejects_jobs_beyond_cron_job_limit() {
+        let driver = Arc::new(RecordingScheduleDriver::default());
+        let manager = Arc::new(CronManager::new(driver.clone()));
+
+        let make_callback =
+            || -> crate::config::ScheduleCallback { Arc::new(|| Box::pin(async {})) };
+
+        // Fill the registry to exactly CRON_JOB_LIMIT distinct ids through the public chokepoint.
+        for index in 0..CRON_JOB_LIMIT {
+            register_cron_job(
+                &manager,
+                format!("flood-{index}"),
+                "0 0 * * *".to_string(),
+                CronAction::Callback {
+                    callback: make_callback(),
+                },
+                CronOverlap::Allow,
+                None,
+                make_callback(),
+            )
+            .unwrap_or_else(|err| panic!("seed job {index} should register: {err}"));
+        }
+        assert_eq!(manager.jobs.len(), CRON_JOB_LIMIT);
+
+        // The CRON_JOB_LIMIT+1-th DISTINCT id must be denied. (Match instead of `.expect_err()`
+        // because the Ok type `CronJobHandle` does not implement Debug.)
+        let overflow = match register_cron_job(
+            &manager,
+            "flood-overflow".to_string(),
+            "0 0 * * *".to_string(),
+            CronAction::Callback {
+                callback: make_callback(),
+            },
+            CronOverlap::Allow,
+            None,
+            make_callback(),
+        ) {
+            Ok(_) => {
+                panic!("AOSCLIENT-P2-cron-cap: the job beyond CRON_JOB_LIMIT must be rejected")
+            }
+            Err(err) => err,
+        };
+        assert!(
+            overflow.to_string().contains("cron job limit exceeded"),
+            "AOSCLIENT-P2-cron-cap: overflow rejection must report the cron job limit, got: {overflow}"
+        );
+        assert_eq!(
+            manager.jobs.len(),
+            CRON_JOB_LIMIT,
+            "AOSCLIENT-P2-cron-cap: a rejected overflow job must not be inserted"
+        );
+
+        // Replacing an EXISTING id while at the cap must still succeed (replace, not grow).
+        register_cron_job(
+            &manager,
+            "flood-0".to_string(),
+            "0 1 * * *".to_string(),
+            CronAction::Callback {
+                callback: make_callback(),
+            },
+            CronOverlap::Allow,
+            None,
+            make_callback(),
+        )
+        .expect("AOSCLIENT-P2-cron-cap: replacing an existing id at the cap must be allowed");
+        assert_eq!(
+            manager.jobs.len(),
+            CRON_JOB_LIMIT,
+            "AOSCLIENT-P2-cron-cap: replacing an existing id must not grow the registry past the cap"
+        );
+    }
+
     #[test]
     fn cron_replacement_cancels_old_timer_before_scheduling_new_timer() {
         let driver = Arc::new(RecordingScheduleDriver::default());

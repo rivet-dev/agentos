@@ -150,4 +150,38 @@ mod tests {
         assert!(resolve_exec_command("").is_err());
         assert!(resolve_exec_command("   ").is_err());
     }
+
+    // ── Security: AOSCLIENT-P2-cmdline (N-009 guest exec line) ───────────────────────────────────
+    //
+    // Threat: an untrusted guest exec line that embeds command substitution, variable expansion,
+    // or an embedded newline (command chaining) must be routed through `sh -c <line>` with the
+    // ENTIRE original line as a SINGLE argv element. It must never be tokenized and direct-spawned
+    // (which would mis-parse it) and the verbatim line must be preserved so the sidecar — not this
+    // client — owns the shell decision and there are no re-quoting hazards. This asserts the
+    // safeguard (`command_requires_shell`, command_line.rs:23) catches every such metachar.
+    #[test]
+    fn command_substitution_and_newline_metachars_route_through_sh_c_single_arg() {
+        for line in [
+            "echo `id`",      // backtick command substitution
+            "echo $(whoami)", // $() command substitution
+            "echo a$VAR",     // variable expansion
+            "echo a\necho b", // embedded newline -> command chaining
+            "echo $HOME",     // bare variable expansion
+            "echo a;echo b",  // statement separator
+        ] {
+            let (command, args) = resolve_exec_command(line)
+                .unwrap_or_else(|err| panic!("line {line:?} must resolve, got: {err}"));
+            assert_eq!(
+                command, "sh",
+                "AOSCLIENT-P2-cmdline: line {line:?} contains shell metacharacters and must run \
+                 under `sh`, not be direct-spawned"
+            );
+            assert_eq!(
+                args,
+                vec!["-c".to_string(), line.to_string()],
+                "AOSCLIENT-P2-cmdline: line {line:?} must be passed to `sh -c` as a single \
+                 verbatim argv element (no re-splitting / re-quoting)"
+            );
+        }
+    }
 }
