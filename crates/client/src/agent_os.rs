@@ -1447,11 +1447,9 @@ impl From<ClientError> for AcpDispatchError {
         match error {
             // Preserve the kernel errno code where one exists (e.g. ENOENT), surfaced through the
             // JSON-RPC `data.code`, while keeping a JSON-RPC internal-error envelope.
-            ClientError::Kernel { code, message } => AcpDispatchError::with_data(
-                -32603,
-                message,
-                serde_json::json!({ "code": code }),
-            ),
+            ClientError::Kernel { code, message } => {
+                AcpDispatchError::with_data(-32603, message, serde_json::json!({ "code": code }))
+            }
             other => AcpDispatchError::new(-32603, other.to_string()),
         }
     }
@@ -1483,12 +1481,7 @@ async fn dispatch_acp_host_request(ownership: &wire::OwnershipScope, request: &s
             (id, method, value.get("params").cloned())
         }
         Err(error) => {
-            return acp_error_response(
-                Value::Null,
-                -32700,
-                &format!("Parse error: {error}"),
-                None,
-            );
+            return acp_error_response(Value::Null, -32700, &format!("Parse error: {error}"), None);
         }
     };
 
@@ -1502,9 +1495,7 @@ async fn dispatch_acp_host_request(ownership: &wire::OwnershipScope, request: &s
             "id": id,
             "result": result,
         }))
-        .unwrap_or_else(|error| {
-            acp_error_response(Value::Null, -32603, &error.to_string(), None)
-        }),
+        .unwrap_or_else(|error| acp_error_response(Value::Null, -32603, &error.to_string(), None)),
         Err(error) => acp_error_response(id, error.code, &error.message, error.data),
     }
 }
@@ -1677,7 +1668,9 @@ fn optional_acp_string_array(
                     None => {
                         return Err(AcpDispatchError::new(
                             -32602,
-                            format!("{method} requires {name} to be an array of strings when provided"),
+                            format!(
+                                "{method} requires {name} to be an array of strings when provided"
+                            ),
                         ))
                     }
                 }
@@ -1798,7 +1791,10 @@ async fn handle_acp_write_file(
         use base64::engine::general_purpose::STANDARD as BASE64;
         use base64::Engine as _;
         let decoded = BASE64.decode(content.as_bytes()).map_err(|error| {
-            AcpDispatchError::new(-32602, format!("{method} content is not valid base64: {error}"))
+            AcpDispatchError::new(
+                -32602,
+                format!("{method} content is not valid base64: {error}"),
+            )
         })?;
         agent.write_file(&path, decoded).await?;
     } else {
@@ -1911,10 +1907,7 @@ fn normalize_acp_permission_option_id(
 }
 
 /// Mirror of TS `_buildAcpPermissionResult`: produce `{ outcome: { outcome: "selected", optionId } }`.
-fn build_acp_permission_result(
-    decision: PermissionDecision,
-    params: &Map<String, Value>,
-) -> Value {
+fn build_acp_permission_result(decision: PermissionDecision, params: &Map<String, Value>) -> Value {
     let options = params.get("options").and_then(Value::as_array);
     let option_id = normalize_acp_permission_option_id(options, decision);
     serde_json::json!({
@@ -2012,7 +2005,10 @@ fn handle_acp_create_terminal(
     Ok(serde_json::json!({ "terminalId": terminal_id }))
 }
 
-fn append_acp_terminal_output(output: &Arc<parking_lot::Mutex<HostAcpTerminalOutput>>, data: &[u8]) {
+fn append_acp_terminal_output(
+    output: &Arc<parking_lot::Mutex<HostAcpTerminalOutput>>,
+    data: &[u8],
+) {
     let chunk = String::from_utf8_lossy(data);
     if chunk.is_empty() {
         return;
@@ -2046,7 +2042,10 @@ fn handle_acp_write_terminal(
         use base64::engine::general_purpose::STANDARD as BASE64;
         use base64::Engine as _;
         let decoded = BASE64.decode(data.as_bytes()).map_err(|error| {
-            AcpDispatchError::new(-32602, format!("{method} data is not valid base64: {error}"))
+            AcpDispatchError::new(
+                -32602,
+                format!("{method} data is not valid base64: {error}"),
+            )
         })?;
         crate::process::StdinInput::Bytes(decoded)
     } else {
@@ -2109,8 +2108,10 @@ async fn handle_acp_wait_for_terminal_exit(
             break code;
         }
         if exit_rx.changed().await.is_err() {
-            // Sender dropped (terminal released / VM disposed) without a recorded exit code.
-            break exit_rx.borrow().unwrap_or(0);
+            // Sender dropped (terminal released / VM disposed) without a recorded
+            // exit code. Surface that as an abnormal exit instead of pretending
+            // the terminal completed cleanly with exit 0.
+            break exit_rx.borrow().unwrap_or(1);
         }
     };
     Ok(serde_json::json!({ "exitCode": exit_code, "signal": Value::Null }))

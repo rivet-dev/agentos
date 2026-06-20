@@ -84,9 +84,7 @@ pub fn is_unknown_session(error: &JsonRpcError) -> bool {
         .data
         .as_ref()
         .and_then(|data| data.as_object())
-        .is_some_and(|data| {
-            data.get("kind").and_then(Value::as_str) == Some("unknown_session")
-        })
+        .is_some_and(|data| data.get("kind").and_then(Value::as_str) == Some("unknown_session"))
 }
 
 /// A JSON-RPC 2.0 notification (no id). `params` is opaque JSON.

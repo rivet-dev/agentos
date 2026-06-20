@@ -53,9 +53,9 @@ catalog:
   '@agent-os-pkgs/unzip': 0.0.0-split-runtime-preview.5d46b14
   '@agent-os-pkgs/yq': 0.0.0-split-runtime-preview.5d46b14
   '@agent-os-pkgs/zip': 0.0.0-split-runtime-preview.5d46b14
-  '@secure-exec/core': 0.0.0-main.bccb3a2
-  '@secure-exec/google-drive': 0.0.0-main.bccb3a2
+  '@secure-exec/core': 0.3.0
+  '@secure-exec/google-drive': 0.3.0
   '@secure-exec/nodejs': 0.2.1
-  '@secure-exec/s3': 0.0.0-main.bccb3a2
-  '@secure-exec/sandbox': 0.0.0-main.bccb3a2
+  '@secure-exec/s3': 0.3.0
+  '@secure-exec/sandbox': 0.3.0
 # <<< secure-exec catalog <<<

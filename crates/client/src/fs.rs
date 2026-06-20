@@ -775,10 +775,7 @@ impl AgentOs {
     /// List directory entries with their resolved type, mirroring the TS `readDirWithTypes` used by
     /// the ACP `fs/readDir` host request. `.`/`..` are filtered by the caller. A symlink is reported
     /// as a symlink (lstat-style, not followed); other entries are stat'd as directory vs file.
-    pub(crate) async fn acp_read_dir_with_types(
-        &self,
-        path: &str,
-    ) -> Result<Vec<VirtualDirEntry>> {
+    pub(crate) async fn acp_read_dir_with_types(&self, path: &str) -> Result<Vec<VirtualDirEntry>> {
         Self::assert_safe_absolute_path(path)?;
         let names = self.kernel_readdir(path).await?;
         let mut entries = Vec::with_capacity(names.len());

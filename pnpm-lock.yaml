@@ -6,9 +6,81 @@ settings:
 
 catalogs:
   default:
+    '@agent-os-pkgs/codex':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/common':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/coreutils':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/curl':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/diffutils':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/fd':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/file':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/findutils':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/gawk':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/git':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/grep':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/gzip':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/jq':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/ripgrep':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/sed':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/tar':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/tree':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/unzip':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/yq':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/zip':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@secure-exec/core':
+      specifier: 0.3.0
+      version: 0.3.0
+    '@secure-exec/google-drive':
+      specifier: 0.3.0
+      version: 0.3.0
     '@secure-exec/nodejs':
       specifier: 0.2.1
       version: 0.2.1
+    '@secure-exec/s3':
+      specifier: 0.3.0
+      version: 0.3.0
+    '@secure-exec/sandbox':
+      specifier: 0.3.0
+      version: 0.3.0
 
 overrides:
   '@rivet-dev/agent-os-core': workspace:*
@@ -18,8 +90,8 @@ importers:
   .:
     devDependencies:
       '@agent-os-pkgs/common':
-        specifier: link:../secure-exec/registry/software/common
-        version: link:../secure-exec/registry/software/common
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
@@ -39,8 +111,8 @@ importers:
         specifier: workspace:*
         version: link:registry/agent/pi
       '@secure-exec/core':
-        specifier: link:../secure-exec/packages/core
-        version: link:../secure-exec/packages/core
+        specifier: 'catalog:'
+        version: 0.3.0
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -60,11 +132,11 @@ importers:
   examples/quickstart:
     dependencies:
       '@agent-os-pkgs/common':
-        specifier: link:../../../secure-exec/registry/software/common
-        version: link:../../../secure-exec/registry/software/common
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@rivet-dev/agent-os-claude':
         specifier: workspace:*
         version: link:../../registry/agent/claude
@@ -81,8 +153,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/agent-os-sandbox
       '@secure-exec/s3':
-        specifier: link:../../../secure-exec/registry/file-system/s3
-        version: link:../../../secure-exec/registry/file-system/s3
+        specifier: 'catalog:'
+        version: 0.3.0
       dockerode:
         specifier: ^4.0.9
         version: 4.0.10
@@ -112,8 +184,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@secure-exec/sandbox':
-        specifier: link:../../../secure-exec/registry/tool/sandbox
-        version: link:../../../secure-exec/registry/tool/sandbox
+        specifier: 'catalog:'
+        version: 0.3.0(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -122,8 +194,8 @@ importers:
         version: 4.3.6
     devDependencies:
       '@agent-os-pkgs/common':
-        specifier: link:../../../secure-exec/registry/software/common
-        version: link:../../../secure-exec/registry/software/common
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -165,8 +237,8 @@ importers:
         specifier: ^0.6.2
         version: 0.6.2
       '@secure-exec/core':
-        specifier: link:../../../secure-exec/packages/core
-        version: link:../../../secure-exec/packages/core
+        specifier: 'catalog:'
+        version: 0.3.0
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -190,56 +262,56 @@ importers:
         version: 10.2.5
     devDependencies:
       '@agent-os-pkgs/codex':
-        specifier: link:../../../secure-exec/registry/software/codex
-        version: link:../../../secure-exec/registry/software/codex
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/coreutils':
-        specifier: link:../../../secure-exec/registry/software/coreutils
-        version: link:../../../secure-exec/registry/software/coreutils
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/curl':
-        specifier: link:../../../secure-exec/registry/software/curl
-        version: link:../../../secure-exec/registry/software/curl
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/diffutils':
-        specifier: link:../../../secure-exec/registry/software/diffutils
-        version: link:../../../secure-exec/registry/software/diffutils
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/fd':
-        specifier: link:../../../secure-exec/registry/software/fd
-        version: link:../../../secure-exec/registry/software/fd
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/file':
-        specifier: link:../../../secure-exec/registry/software/file
-        version: link:../../../secure-exec/registry/software/file
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/findutils':
-        specifier: link:../../../secure-exec/registry/software/findutils
-        version: link:../../../secure-exec/registry/software/findutils
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/gawk':
-        specifier: link:../../../secure-exec/registry/software/gawk
-        version: link:../../../secure-exec/registry/software/gawk
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/grep':
-        specifier: link:../../../secure-exec/registry/software/grep
-        version: link:../../../secure-exec/registry/software/grep
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/gzip':
-        specifier: link:../../../secure-exec/registry/software/gzip
-        version: link:../../../secure-exec/registry/software/gzip
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/jq':
-        specifier: link:../../../secure-exec/registry/software/jq
-        version: link:../../../secure-exec/registry/software/jq
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/ripgrep':
-        specifier: link:../../../secure-exec/registry/software/ripgrep
-        version: link:../../../secure-exec/registry/software/ripgrep
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/sed':
-        specifier: link:../../../secure-exec/registry/software/sed
-        version: link:../../../secure-exec/registry/software/sed
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/tar':
-        specifier: link:../../../secure-exec/registry/software/tar
-        version: link:../../../secure-exec/registry/software/tar
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/tree':
-        specifier: link:../../../secure-exec/registry/software/tree
-        version: link:../../../secure-exec/registry/software/tree
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/yq':
-        specifier: link:../../../secure-exec/registry/software/yq
-        version: link:../../../secure-exec/registry/software/yq
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.87
         version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
@@ -283,11 +355,11 @@ importers:
         specifier: link:../agent-os-sandbox
         version: link:../agent-os-sandbox
       '@secure-exec/google-drive':
-        specifier: link:../../../secure-exec/registry/file-system/google-drive
-        version: link:../../../secure-exec/registry/file-system/google-drive
+        specifier: 'catalog:'
+        version: 0.3.0
       '@secure-exec/s3':
-        specifier: link:../../../secure-exec/registry/file-system/s3
-        version: link:../../../secure-exec/registry/file-system/s3
+        specifier: 'catalog:'
+        version: 0.3.0
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -366,8 +438,8 @@ importers:
   packages/posix:
     dependencies:
       '@secure-exec/core':
-        specifier: link:../../../secure-exec/packages/core
-        version: link:../../../secure-exec/packages/core
+        specifier: 'catalog:'
+        version: 0.3.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -388,8 +460,8 @@ importers:
   packages/python:
     dependencies:
       '@secure-exec/core':
-        specifier: link:../../../secure-exec/packages/core
-        version: link:../../../secure-exec/packages/core
+        specifier: 'catalog:'
+        version: 0.3.0
       pyodide:
         specifier: ^0.28.3
         version: 0.28.3(bufferutil@4.1.0)
@@ -470,35 +542,35 @@ importers:
   packages/shell:
     dependencies:
       '@agent-os-pkgs/codex':
-        specifier: link:../../../secure-exec/registry/software/codex
-        version: link:../../../secure-exec/registry/software/codex
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/common':
-        specifier: link:../../../secure-exec/registry/software/common
-        version: link:../../../secure-exec/registry/software/common
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/fd':
-        specifier: link:../../../secure-exec/registry/software/fd
-        version: link:../../../secure-exec/registry/software/fd
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/file':
-        specifier: link:../../../secure-exec/registry/software/file
-        version: link:../../../secure-exec/registry/software/file
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/jq':
-        specifier: link:../../../secure-exec/registry/software/jq
-        version: link:../../../secure-exec/registry/software/jq
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/ripgrep':
-        specifier: link:../../../secure-exec/registry/software/ripgrep
-        version: link:../../../secure-exec/registry/software/ripgrep
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/tree':
-        specifier: link:../../../secure-exec/registry/software/tree
-        version: link:../../../secure-exec/registry/software/tree
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/unzip':
-        specifier: link:../../../secure-exec/registry/software/unzip
-        version: link:../../../secure-exec/registry/software/unzip
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/yq':
-        specifier: link:../../../secure-exec/registry/software/yq
-        version: link:../../../secure-exec/registry/software/yq
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/zip':
-        specifier: link:../../../secure-exec/registry/software/zip
-        version: link:../../../secure-exec/registry/software/zip
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@rivet-dev/agent-os-core':
         specifier: workspace:*
         version: link:../core
@@ -543,8 +615,8 @@ importers:
   registry/agent/codex:
     dependencies:
       '@agent-os-pkgs/codex':
-        specifier: link:../../../../secure-exec/registry/software/codex
-        version: link:../../../../secure-exec/registry/software/codex
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -691,6 +763,66 @@ importers:
         version: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3)
 
 packages:
+
+  '@agent-os-pkgs/codex@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-2Mz+uSOf1CdmeqPMWQznuaVym3bWufen610Gdyq4I49+rX2jx0ODervga0sdzPkBqBzG7OaBmo6mO4sQ3T2DzA==}
+
+  '@agent-os-pkgs/common@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-6TzgaSZzgDdgQzY1Zgb4zAlzvb49NYuXK1gNDjWAfQeivz2NcWyfaN1qPRATHXOtpGUGm05Z65OwjLF05tTbNg==}
+
+  '@agent-os-pkgs/coreutils@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-AOOiAYcPfFvTDzwpV2U6n0/lxJXuUhbq67Tt7HRiIyG76e4zHTSzAu55RoW/24myRsKVjRw5jPA0hB413TuEQA==}
+
+  '@agent-os-pkgs/curl@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-zx/FtXon8YFeylWyvfsChbyWgRiS66dWzXA3EY+xayoxKYcUja06MnE1nRuxgpH8n1CaAz1sIGG1J2w6+ivoYw==}
+
+  '@agent-os-pkgs/diffutils@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-i38lpZ24rm8nt4ImGuZ2KQBjI/ohADkponspwbHWiqR6t3jBKggg4PaSq3xcxY8O8rZ/05Igq1YBlrDh33Y4hQ==}
+
+  '@agent-os-pkgs/fd@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-Mi9yQe6xKlNImLUuLPedCA9DDmT6rk5O65/Q/y0t1nbdJ3sUdkOIRcLVZx+VayK4abhqy7MdmRPSp2fnlg6D3A==}
+
+  '@agent-os-pkgs/file@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-7vNMpudDFE/Xvam4nJO9RA/Y+Q551uLVuCDbkAjPAQpfMZbezVNYueARLDbbQ0xmmAX56PS9SkGN6id5VxxTNw==}
+
+  '@agent-os-pkgs/findutils@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-9IwymPoxtJveSB+HppgAUII05JBYGNhP9QSys5NoPSiaEOlIhcAVoKZHq6XFGyr33MhWmHyy3KEyrXFnkan+9Q==}
+
+  '@agent-os-pkgs/gawk@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-zjuyTyjXCz6LgZZqdA14vcgmyzjR5Ipeb3hlL+Tn3sCfAGp+Y7GSbTO9yBtTv8fkWNGOLq8il5zQJkJlHHMMfg==}
+
+  '@agent-os-pkgs/git@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-t11XTiymguMC1GpRlbNQ2NaXX/fyG4BN2HBJtHEl63vGNR/RPnddX28mnQJ8UVj7aZQO9366PmKLEshIw+HgcA==}
+
+  '@agent-os-pkgs/grep@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-xworE1A81YCKzXY2uW+2oK6BiB7YzEvcxU/RVxI7Psveylpfdlr/GJOVGfjyHTPi30hhDik3TEPSowS1WJqAfg==}
+
+  '@agent-os-pkgs/gzip@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-j8WENZbxekTBuMzLQCgqaA9vkkGGDn57mg/H4VaIIoiOWnUkKJMYbZ26twP0s6RbKDCe0vNWiAKDukhxe5jezQ==}
+
+  '@agent-os-pkgs/jq@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-2hHQJaxL2rcvu2JIXkvtHLM+nWXPkFgx8W3mkj5U8xskCRG56hgn/E/2P12dqoapieh9pcCqTqqZUPiqr8MqLQ==}
+
+  '@agent-os-pkgs/ripgrep@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-Gy6DGVpVhqMdBlRPUTF9N2tdWUvt2nbGVYV/ewLdfr61eO1KFlpVh9fc3qHD9DisVODivb+0vpk23pNAUp3b0A==}
+
+  '@agent-os-pkgs/sed@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-uPEuPNIve/IOLYb9kJDFv8LDisg0jjcvdwLqdm9kacvOuc19wjhUZG2xPB8cjzKCgNtDN91jN+uo8F9no+oQBA==}
+
+  '@agent-os-pkgs/tar@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-mkh3mZtalQJ3n7M4769q30hvYSbI8wEIUF3LS9IzMQ9XfHW4NmIbGjDDrJxTuv8DepsN6SMS4lkNXjbY5yh4DQ==}
+
+  '@agent-os-pkgs/tree@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-UqhPk5Hw/XSiF1BdfpW3R4kmiKYoiv9Wr1ZiZbmrh9w40st3LuhLrlCx3n8E/dZQ/6lgupFTe/fe6SYp+D0t9Q==}
+
+  '@agent-os-pkgs/unzip@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-s/G9m0K+dO6UmcTeazx35DmKpGZpm4BUntLts4eXEmL+5e/VpKT3HIHRf5CK17vPe/VxESrLqnBq1Hri0NSqRg==}
+
+  '@agent-os-pkgs/yq@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-IuNOKGlmVGF98IU4iMaJCuZbbaG00p50w3lH2FxrPNndeayTM0Z05JKQr2gMKX8Hnlq1+c7wIffkx7RqIAtelw==}
+
+  '@agent-os-pkgs/zip@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-ksS4rn0jN1Dt63Kx9vRxJiJ4kBCbT9j5kabZ/zcJBh22pEU3hwIiPoB63SZyop19gu9UMe2M/5B4/2wMhAwGnw==}
 
   '@agentclientprotocol/sdk@0.12.0':
     resolution: {integrity: sha512-V8uH/KK1t7utqyJmTA7y7DzKu6+jKFIXM+ZVouz8E55j8Ej2RV42rEvPKn3/PpBJlliI5crcGk1qQhZ7VwaepA==}
@@ -2538,8 +2670,30 @@ packages:
   '@secure-exec/core@0.2.1':
     resolution: {integrity: sha512-HsnUv6gClpMA1BBRmX86j30TKTZtgJC/fO1tVavr7IpM2zNKbHU8LgSlBd7mv2SNy02ImTmU/GnQ3aYB4NSbEg==}
 
+  '@secure-exec/core@0.3.0':
+    resolution: {integrity: sha512-/mk8OIyibjVxOrs8r2qu40aE58Vm2pCy2A6+DPiJYY3Ch1MJ3AeVcPtd0AUrLinTHQJM5Ps8K8iLWvLLSI5VbQ==}
+
+  '@secure-exec/google-drive@0.3.0':
+    resolution: {integrity: sha512-10FTqMZuZ1k19nGBYFSqcf574YUFrgPB3G/ZFCUm9h8G+LPGSBhMZfzS17gTDwUCGm02WgYMWVSx9d6h7JWzQA==}
+
   '@secure-exec/nodejs@0.2.1':
     resolution: {integrity: sha512-UJMJqVFxexlHJV0Q9nWURvrz6GElj8673DDOOFln6FHR6JS+9SaSU3eISrN158DuNC3SFi4rgjb/scKnK4YOYQ==}
+
+  '@secure-exec/s3@0.3.0':
+    resolution: {integrity: sha512-yrAt3qiuvT3GNxnGcyKEhrbA9uC4Hj13wVNL6ZbHZ12fjmENyaxhSRdoeKB1kD36iqWtOp6qOE2mTrcdohZaQQ==}
+
+  '@secure-exec/sandbox@0.3.0':
+    resolution: {integrity: sha512-sOXqjLbxAs/dsccIy27eFlgKZZM9iY16/IILahFbxlrxZ8J1gmzHOxKn4ixmE0Nv8JUkm6+bxQ/YnJWcApN5cA==}
+
+  '@secure-exec/sidecar-linux-x64-gnu@0.3.0':
+    resolution: {integrity: sha512-s/fWwtnngpV29y9v1x/KpiUUYPVL6cof+EESaYaVkahUyqHYGN/OfGTSMuKsJqlm0WwyYwjnBDu6gGCUdo84cQ==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [linux]
+
+  '@secure-exec/sidecar@0.3.0':
+    resolution: {integrity: sha512-v/vVM+y2GtTtzJ3Q+G0NRp/WpGDmCrgQgu4nYW+423QrzXFMgSmkTE8akNQcksDaVL/vxLipp3HIJ2/X44aAKg==}
+    engines: {node: '>=20'}
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     resolution: {integrity: sha512-gEWhMHzUpLwzuBNAD0lVkZXE8wFlWMLp4IOZ+56FYwOW/C+m07cYxuW4TjHyPqZ+vPm3IkoaMqqH5yT9VhjX/Q==}
@@ -6598,6 +6752,55 @@ packages:
 
 snapshots:
 
+  '@agent-os-pkgs/codex@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/common@0.0.0-split-runtime-preview.5d46b14':
+    dependencies:
+      '@agent-os-pkgs/coreutils': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/diffutils': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/findutils': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/gawk': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/grep': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/gzip': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/sed': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/tar': 0.0.0-split-runtime-preview.5d46b14
+
+  '@agent-os-pkgs/coreutils@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/curl@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/diffutils@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/fd@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/file@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/findutils@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/gawk@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/git@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/grep@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/gzip@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/jq@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/ripgrep@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/sed@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/tar@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/tree@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/unzip@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/yq@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/zip@0.0.0-split-runtime-preview.5d46b14': {}
+
   '@agentclientprotocol/sdk@0.12.0(zod@3.25.76)':
     dependencies:
       zod: 3.25.76
@@ -8815,6 +9018,15 @@ snapshots:
     dependencies:
       better-sqlite3: 12.8.0
 
+  '@secure-exec/core@0.3.0':
+    dependencies:
+      '@rivetkit/bare-ts': 0.6.2
+      '@secure-exec/sidecar': 0.3.0
+
+  '@secure-exec/google-drive@0.3.0':
+    dependencies:
+      '@secure-exec/core': 0.3.0
+
   '@secure-exec/nodejs@0.2.1':
     dependencies:
       '@secure-exec/core': 0.2.1
@@ -8825,6 +9037,33 @@ snapshots:
       esbuild: 0.27.4
       node-stdlib-browser: 1.3.1
       web-streams-polyfill: 4.2.0
+
+  '@secure-exec/s3@0.3.0':
+    dependencies:
+      '@secure-exec/core': 0.3.0
+
+  '@secure-exec/sandbox@0.3.0(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
+    dependencies:
+      '@secure-exec/core': 0.3.0
+      sandbox-agent: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+    transitivePeerDependencies:
+      - '@cloudflare/sandbox'
+      - '@daytonaio/sdk'
+      - '@e2b/code-interpreter'
+      - '@fly/sprites'
+      - '@vercel/sandbox'
+      - computesdk
+      - dockerode
+      - get-port
+      - modal
+      - zod
+
+  '@secure-exec/sidecar-linux-x64-gnu@0.3.0':
+    optional: true
+
+  '@secure-exec/sidecar@0.3.0':
+    optionalDependencies:
+      '@secure-exec/sidecar-linux-x64-gnu': 0.3.0
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     optional: true

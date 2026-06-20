@@ -165,12 +165,7 @@ impl AcpExtension {
             .create_session_inner(&mut ctx, &request, &process_id)
             .await;
         if bootstrap.is_err() {
-            let _ = ctx
-                .kill_process_wire(KillProcessRequest {
-                    process_id: process_id.clone(),
-                    signal: String::from("SIGTERM"),
-                })
-                .await;
+            kill_process_best_effort(&mut ctx, &process_id).await;
         }
         let bootstrap = match bootstrap {
             Ok(bootstrap) => bootstrap,
@@ -193,16 +188,6 @@ impl AcpExtension {
             exit_code: None,
             pending_preamble: None,
         };
-        if let Err(error) = ctx
-            .bind_process_to_session(&session.session_id, &process_id)
-            .await
-        {
-            return AcpHandlerOutput::response(Err(error));
-        }
-        self.sessions
-            .lock()
-            .await
-            .insert(session.session_id.clone(), session.clone());
 
         let mut events = Vec::new();
         for notification in bootstrap.notifications {
@@ -211,13 +196,31 @@ impl AcpExtension {
                 notification,
             })) {
                 Ok(event) => event,
-                Err(error) => return AcpHandlerOutput::response(Err(error)),
+                Err(error) => {
+                    kill_process_best_effort(&mut ctx, &process_id).await;
+                    return AcpHandlerOutput::response(Err(error));
+                }
             };
             match ctx.ext_event_wire(event) {
                 Ok(event) => events.push(event),
-                Err(error) => return AcpHandlerOutput::response(Err(error)),
+                Err(error) => {
+                    kill_process_best_effort(&mut ctx, &process_id).await;
+                    return AcpHandlerOutput::response(Err(error));
+                }
             }
         }
+
+        if let Err(error) = ctx
+            .bind_process_to_session(&session.session_id, &process_id)
+            .await
+        {
+            kill_process_best_effort(&mut ctx, &process_id).await;
+            return AcpHandlerOutput::response(Err(error));
+        }
+        self.sessions
+            .lock()
+            .await
+            .insert(session.session_id.clone(), session.clone());
 
         AcpHandlerOutput {
             response: Ok(AcpResponse::AcpSessionCreatedResponse(
@@ -725,12 +728,7 @@ impl AcpExtension {
             .resume_session_inner(&mut ctx, &request, &create_like, &process_id)
             .await;
         if outcome.is_err() {
-            let _ = ctx
-                .kill_process_wire(KillProcessRequest {
-                    process_id: process_id.clone(),
-                    signal: String::from("SIGTERM"),
-                })
-                .await;
+            kill_process_best_effort(&mut ctx, &process_id).await;
         }
         let outcome = match outcome {
             Ok(outcome) => outcome,
@@ -754,16 +752,6 @@ impl AcpExtension {
             // Fallback arms the transcript-continuation preamble for the first prompt.
             pending_preamble: outcome.pending_preamble,
         };
-        if let Err(error) = ctx
-            .bind_process_to_session(&session.session_id, &process_id)
-            .await
-        {
-            return AcpHandlerOutput::response(Err(error));
-        }
-        self.sessions
-            .lock()
-            .await
-            .insert(session.session_id.clone(), session.clone());
 
         let mut events = Vec::new();
         for notification in outcome.bootstrap.notifications {
@@ -772,13 +760,31 @@ impl AcpExtension {
                 notification,
             })) {
                 Ok(event) => event,
-                Err(error) => return AcpHandlerOutput::response(Err(error)),
+                Err(error) => {
+                    kill_process_best_effort(&mut ctx, &process_id).await;
+                    return AcpHandlerOutput::response(Err(error));
+                }
             };
             match ctx.ext_event_wire(event) {
                 Ok(event) => events.push(event),
-                Err(error) => return AcpHandlerOutput::response(Err(error)),
+                Err(error) => {
+                    kill_process_best_effort(&mut ctx, &process_id).await;
+                    return AcpHandlerOutput::response(Err(error));
+                }
             }
         }
+
+        if let Err(error) = ctx
+            .bind_process_to_session(&session.session_id, &process_id)
+            .await
+        {
+            kill_process_best_effort(&mut ctx, &process_id).await;
+            return AcpHandlerOutput::response(Err(error));
+        }
+        self.sessions
+            .lock()
+            .await
+            .insert(session.session_id.clone(), session.clone());
 
         AcpHandlerOutput {
             response: Ok(AcpResponse::AcpSessionResumedResponse(
@@ -1908,6 +1914,15 @@ fn prepend_prompt_preamble(params: &mut Map<String, Value>, preamble: &str) {
             params.insert(String::from("prompt"), Value::Array(vec![block]));
         }
     }
+}
+
+async fn kill_process_best_effort(ctx: &mut ExtensionContext<'_>, process_id: &str) {
+    let _ = ctx
+        .kill_process_wire(KillProcessRequest {
+            process_id: process_id.to_owned(),
+            signal: String::from("SIGTERM"),
+        })
+        .await;
 }
 
 /// Return the adapter native-resume RPC method from re-probed

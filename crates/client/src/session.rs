@@ -248,11 +248,7 @@ fn node_modules_mount_package_json_paths(
                 .as_ref()
                 .and_then(|config| config.get("hostPath"))
                 .and_then(Value::as_str)?;
-            Some(
-                Path::new(host_path)
-                    .join(package_name)
-                    .join("package.json"),
-            )
+            Some(Path::new(host_path).join(package_name).join("package.json"))
         })
         .collect()
 }
@@ -1472,13 +1468,15 @@ impl AgentOs {
             .unwrap_or_else(|| "/home/user".to_string());
 
         let response = self
-            .send_acp_request(AcpRequest::AcpResumeSessionRequest(AcpResumeSessionRequest {
-                session_id: session_id.to_string(),
-                agent_type: agent_type.to_string(),
-                transcript_path: options.transcript_path.clone(),
-                cwd,
-                env: env.into_iter().collect(),
-            }))
+            .send_acp_request(AcpRequest::AcpResumeSessionRequest(
+                AcpResumeSessionRequest {
+                    session_id: session_id.to_string(),
+                    agent_type: agent_type.to_string(),
+                    transcript_path: options.transcript_path.clone(),
+                    cwd,
+                    env: env.into_iter().collect(),
+                },
+            ))
             .await?;
         let AcpResponse::AcpSessionResumedResponse(resumed) = response else {
             return Err(unexpected_acp_response("AcpResumeSessionRequest", response).into());
