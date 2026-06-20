@@ -16,7 +16,7 @@ use secure_exec_client::wire;
 
 use crate::agent_os::AgentOs;
 use crate::error::ClientError;
-use crate::transport::SidecarTransport;
+use crate::transport::SidecarProcess;
 
 /// Maximum shared sidecar pool entries retained process-wide.
 const SHARED_SIDECAR_POOL_LIMIT: usize = 1024;
@@ -27,7 +27,7 @@ const AGENT_OS_SIDECAR_BIN_ENV: &str = "AGENT_OS_SIDECAR_BIN";
 /// The lazily-established shared sidecar process + authenticated connection. Multiple VMs in the same
 /// (shared) sidecar reuse this single process/connection, each opening its own session + VM on it.
 pub(crate) struct SharedConnection {
-    pub(crate) transport: Arc<SidecarTransport>,
+    pub(crate) transport: Arc<SidecarProcess>,
     pub(crate) connection_id: String,
 }
 
@@ -147,7 +147,7 @@ impl AgentOsSidecar {
     /// multiple VMs in one process.
     pub(crate) async fn ensure_connection(
         &self,
-    ) -> Result<(Arc<SidecarTransport>, String, usize), ClientError> {
+    ) -> Result<(Arc<SidecarProcess>, String, usize), ClientError> {
         let mut guard = self.connection.lock().await;
         if let Some(existing) = guard.as_ref() {
             let max_frame = existing.transport.max_frame_bytes();
@@ -158,7 +158,7 @@ impl AgentOsSidecar {
             ));
         }
 
-        let transport = SidecarTransport::spawn(Some(self.resolved_sidecar_binary_path())).await?;
+        let transport = SidecarProcess::spawn(Some(self.resolved_sidecar_binary_path())).await?;
         let authed = match transport
             .request_wire(
                 wire::OwnershipScope::ConnectionOwnership(wire::ConnectionOwnership {

@@ -90,6 +90,14 @@ export type { ConnectTerminalOptions } from "./runtime-compat.js";
 const ACP_PROTOCOL_VERSION = 1;
 const ACP_EXTENSION_NAMESPACE = "dev.rivet.agent-os.acp";
 const SHELL_DISPOSE_TIMEOUT_MS = 5_000;
+/**
+ * Reserved `env` key on `AcpResumeSessionRequest` carrying the resolved adapter
+ * bin entrypoint. The resume wire request omits a dedicated `adapterEntrypoint`
+ * field; the sidecar reads the entrypoint from this key and strips it before
+ * launching the adapter. Must stay in sync with the sidecar constant of the same
+ * name in `crates/agent-os-sidecar/src/acp_extension.rs`.
+ */
+const RESUME_ADAPTER_ENTRYPOINT_ENV = "AGENT_OS_RESUME_ADAPTER_ENTRYPOINT";
 
 function defaultAcpClientCapabilities(): Record<string, unknown> {
 	return {
@@ -230,7 +238,7 @@ import {
 	createAgentOsSidecarClient,
 	NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
 	NativeSidecarKernelProxy,
-	NativeSidecarProcessClient,
+	SidecarProcess,
 	type RootFilesystemEntry,
 	type SidecarRegisteredHostCallbackDefinition,
 	type SidecarRequestFrame,
@@ -282,7 +290,7 @@ interface AgentOsVmAdmin extends InProcessSidecarVmAdmin {
 	hostMounts: HostMountInfo[];
 	env: Record<string, string>;
 	permissions: Permissions;
-	sidecarClient: NativeSidecarProcessClient;
+	sidecarClient: SidecarProcess;
 	sidecarSession: AuthenticatedSession;
 	sidecarVm: CreatedVm;
 	snapshotRootFilesystem?: () => Promise<RootSnapshotExport>;
@@ -540,6 +548,39 @@ export interface CreateSessionOptions {
 	skipOsInstructions?: boolean;
 	/** Additional instructions appended to the base OS instructions. */
 	additionalInstructions?: string;
+}
+
+/**
+ * Options for {@link AgentOs.resumeSession}.
+ *
+ * Resume depends on a durable root: after a Rivet actor sleeps (VM destroyed) and
+ * wakes (fresh VM, actor SQLite intact) the caller can keep prompting an existing
+ * session. On a non-durable (default in-memory) root there is no surviving store,
+ * so the sidecar's universal fallback tier always runs and the transcript pointer
+ * is the only continuity mechanism.
+ */
+export interface ResumeSessionOptions {
+	/**
+	 * Guest-readable path to the reconstructed transcript. When present, the
+	 * fallback tier arms a continuation preamble pointing the agent at it.
+	 */
+	transcriptPath?: string;
+	/** Working directory for the resumed agent session (default `/home/user`). */
+	cwd?: string;
+	/** Environment variables to pass to the resumed agent process. */
+	env?: Record<string, string>;
+}
+
+/** Result from {@link AgentOs.resumeSession}. */
+export interface ResumeSessionResult {
+	/**
+	 * The live ACP session id in the fresh VM: equal to the requested id for
+	 * native loads, or a freshly assigned id for the fallback tier — the caller
+	 * remaps `external -> live`.
+	 */
+	sessionId: string;
+	/** `"native"` (session/load|resume) or `"fallback"` (session/new + preamble). */
+	mode: string;
 }
 
 export interface SessionInfo {
@@ -1341,7 +1382,7 @@ function buildLiveBootstrapDirectoryEntries(
 }
 
 async function bootstrapLiveBootstrapDirectories(
-	client: NativeSidecarProcessClient,
+	client: SidecarProcess,
 	session: AuthenticatedSession,
 	vm: CreatedVm,
 	config: RootFilesystemConfig | undefined,
@@ -2333,7 +2374,7 @@ function jsonSchemaType(schema: unknown): string | undefined {
 }
 
 async function registerToolkitsOnSidecar(
-	client: NativeSidecarProcessClient,
+	client: SidecarProcess,
 	session: AuthenticatedSession,
 	vm: CreatedVm,
 	toolKits: ToolKit[],
@@ -2404,7 +2445,7 @@ export class AgentOs {
 	private _env: Record<string, string>;
 	private _rootFilesystem: VirtualFileSystem;
 	private _sidecarLease: AgentOsSidecarVmLease<AgentOsVmAdmin> | null = null;
-	private readonly _sidecarClient: NativeSidecarProcessClient;
+	private readonly _sidecarClient: SidecarProcess;
 	private readonly _sidecarSession: AuthenticatedSession;
 	private readonly _sidecarVm: CreatedVm;
 	private readonly _disposeSidecarEventListener: () => void;
@@ -2417,7 +2458,7 @@ export class AgentOs {
 		hostMounts: HostMountInfo[],
 		env: Record<string, string>,
 		rootFilesystem: VirtualFileSystem,
-		sidecarClient: NativeSidecarProcessClient,
+		sidecarClient: SidecarProcess,
 		sidecarSession: AuthenticatedSession,
 		sidecarVm: CreatedVm,
 	) {
@@ -2478,7 +2519,7 @@ export class AgentOs {
 			let toolReference = "";
 			let rootBridge: NativeSidecarKernelProxy | null = null;
 			let kernel: Kernel | null = null;
-			let client: NativeSidecarProcessClient | null = null;
+			let client: SidecarProcess | null = null;
 			let toolShimDir: string | null = null;
 			let cleanedUp = false;
 
@@ -2509,7 +2550,7 @@ export class AgentOs {
 						commandDirs: preparedCommandDirs.commandDirs,
 						shimDir: toolShimDir,
 					});
-				client = NativeSidecarProcessClient.spawn({
+				client = SidecarProcess.spawn({
 					cwd: REPO_ROOT,
 					command: ensureNativeSidecarBinary(),
 					args: [],
@@ -3459,7 +3500,7 @@ export class AgentOs {
 	}
 
 	private _handleSidecarEvent(
-		event: Parameters<NativeSidecarProcessClient["onEvent"]>[0] extends (
+		event: Parameters<SidecarProcess["onEvent"]>[0] extends (
 			event: infer T,
 		) => void
 			? T
@@ -3882,6 +3923,80 @@ export class AgentOs {
 		}
 
 		return { sessionId: created.sessionId };
+	}
+
+	/**
+	 * Resume a session that exists in durable storage but is not live in this VM
+	 * (e.g. after a Rivet actor slept and woke with a fresh VM). Thin forwarder:
+	 * resolves the agent config + adapter entrypoint exactly as {@link createSession}
+	 * does, then forwards a single `AcpResumeSessionRequest` to the sidecar, which
+	 * owns the resume state machine (native `session/load` when the agent supports
+	 * it, else `session/new` + a transcript-continuation preamble). The returned
+	 * `sessionId` is the live id in this VM (equal to the requested id for native
+	 * loads, freshly assigned for the fallback); the caller remaps `external -> live`.
+	 * The new live session is registered + hydrated locally so subsequent prompts
+	 * route to it.
+	 *
+	 * Resume depends on a durable root; on a non-durable (default in-memory) root
+	 * there is no surviving store and the fallback tier always runs.
+	 */
+	async resumeSession(
+		sessionId: string,
+		agentType: AgentType | string,
+		options?: ResumeSessionOptions,
+	): Promise<ResumeSessionResult> {
+		const config = this._resolveAgentConfig(agentType);
+		if (!config) {
+			throw new Error(`Unknown agent type: ${agentType}`);
+		}
+
+		const adapterEntrypoint = this._resolveAdapterBin(config.acpAdapter);
+		let launchEnv = { ...config.defaultEnv, ...options?.env };
+		const sessionCwd = options?.cwd ?? "/home/user";
+		if (
+			(agentType === "pi" || agentType === "pi-cli") &&
+			!launchEnv.PI_ACP_PI_COMMAND
+		) {
+			launchEnv = {
+				...launchEnv,
+				PI_ACP_PI_COMMAND: this._resolvePackageBin(config.agentPackage, "pi"),
+			};
+		}
+		// The resume wire request has no dedicated `adapterEntrypoint` field; carry
+		// the resolved entrypoint through env under the sidecar's reserved key. The
+		// sidecar reads it and strips it before launching the adapter.
+		launchEnv = {
+			...launchEnv,
+			[RESUME_ADAPTER_ENTRYPOINT_ENV]: adapterEntrypoint,
+		};
+
+		const response = await this._sendAcpRequest({
+			tag: "AcpResumeSessionRequest",
+			val: {
+				sessionId,
+				agentType: String(agentType),
+				transcriptPath: options?.transcriptPath ?? null,
+				cwd: sessionCwd,
+				env: new Map(Object.entries(launchEnv)),
+			},
+		});
+		if (response.tag !== "AcpSessionResumedResponse") {
+			throw new Error(`unexpected resume_session response: ${response.tag}`);
+		}
+		const { sessionId: liveSessionId, mode } = response.val;
+
+		// Register + hydrate the live session so subsequent prompts route to it.
+		const session = sessionEntryFromInit(liveSessionId, String(agentType), {});
+		this._closedSessionIds.delete(liveSessionId);
+		this._sessions.set(liveSessionId, session);
+		try {
+			await this._hydrateSessionState(session);
+		} catch (error) {
+			this._removeSession(liveSessionId);
+			throw error;
+		}
+
+		return { sessionId: liveSessionId, mode };
 	}
 
 	/**

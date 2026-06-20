@@ -14,9 +14,21 @@ secure-exec-pinned:
 secure-exec-local:
 	node scripts/secure-exec-dep.mjs local
 
-# Bump the pinned secure-exec version across the whole workspace (npm + crates).
+# Bump the pinned @secure-exec/* npm version (core/s3/google-drive/sandbox).
 secure-exec-set-version VERSION:
+	node scripts/secure-exec-dep.mjs set-secure-exec-version "{{ VERSION }}"
+
+# Bump the pinned @agent-os-pkgs/* software-package npm version.
+agent-os-pkgs-set-version VERSION:
+	node scripts/secure-exec-dep.mjs set-agent-os-pkgs-version "{{ VERSION }}"
+
+# Bump BOTH scopes at once (only when secure-exec + software publish in lockstep).
+secure-exec-set-all-versions VERSION:
 	node scripts/secure-exec-dep.mjs set-version "{{ VERSION }}"
+
+# Bump the @secure-exec/* crate version requirement (must match the sibling crate version).
+secure-exec-set-crate-version VERSION:
+	node scripts/secure-exec-dep.mjs set-crate-version "{{ VERSION }}"
 
 # Show the current secure-exec dependency mode + pinned versions.
 secure-exec-status:

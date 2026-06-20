@@ -1,17 +1,17 @@
 import {
-	NativeSidecarProcessClient,
-	type NativeSidecarSpawnOptions,
+	SidecarProcess,
+	type SidecarSpawnOptions,
 } from "./native-process-client.js";
 
 export interface AgentOsSidecarProcessHandle {
-	client: NativeSidecarProcessClient;
+	client: SidecarProcess;
 	dispose(): Promise<void>;
 }
 
 export function spawnAgentOsSidecar(
-	options: NativeSidecarSpawnOptions,
+	options: SidecarSpawnOptions,
 ): AgentOsSidecarProcessHandle {
-	const client = NativeSidecarProcessClient.spawn(options);
+	const client = SidecarProcess.spawn(options);
 	return {
 		client,
 		dispose: () => client.dispose(),

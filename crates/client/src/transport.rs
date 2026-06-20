@@ -1,1 +1,1 @@
-pub use secure_exec_client::{SidecarTransport, WireSidecarCallback};
+pub use secure_exec_client::{SidecarProcess, WireSidecarCallback};

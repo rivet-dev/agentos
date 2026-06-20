@@ -8,7 +8,7 @@
 //! [`JsonRpcResponse`] whose `error` field may be set.
 
 use std::collections::{BTreeMap, BTreeSet};
-
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 
@@ -19,14 +19,14 @@ use serde_json::{json, Value};
 
 use agent_os_protocol::generated::v1::{
     AcpCloseSessionRequest, AcpCreateSessionRequest, AcpGetSessionStateRequest, AcpRequest,
-    AcpResponse, AcpRuntimeKind, AcpSessionCreatedResponse, AcpSessionRequest,
-    AcpSessionStateResponse,
+    AcpResponse, AcpResumeSessionRequest, AcpRuntimeKind, AcpSessionCreatedResponse,
+    AcpSessionRequest, AcpSessionStateResponse,
 };
 use agent_os_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_client::wire;
 
 use crate::agent_os::{AgentOs, SessionEntry};
-use crate::config::ToolKit;
+use crate::config::{AgentOsConfig, MountConfig, ToolKit};
 use crate::error::ClientError;
 use crate::json_rpc::{JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcResponse};
 use crate::stream::Subscription;
@@ -34,6 +34,17 @@ use crate::{CLOSED_SESSION_ID_RETENTION_LIMIT, PERMISSION_TIMEOUT_MS};
 
 /// ACP method name for legacy permission requests/responses.
 const LEGACY_PERMISSION_METHOD: &str = "request/permission";
+
+/// Reserved `env` key on `AcpResumeSessionRequest` carrying the resolved adapter
+/// bin entrypoint. The resume wire request omits a dedicated `adapterEntrypoint`
+/// field; the sidecar reads the entrypoint from this key and strips it before
+/// launching the adapter. Must stay in sync with the sidecar constant of the same
+/// name in `crates/agent-os-sidecar/src/acp_extension.rs`.
+const RESUME_ADAPTER_ENTRYPOINT_ENV: &str = "AGENT_OS_RESUME_ADAPTER_ENTRYPOINT";
+
+/// ACP method name for permission requests issued by the agent to the host (TS
+/// `ACP_PERMISSION_METHOD`). Used by the host-request ACP dispatcher in `agent_os.rs`.
+pub(crate) const ACP_PERMISSION_METHOD: &str = "session/request_permission";
 
 /// Maximum in-flight session RPC requests per session.
 const SESSION_PENDING_REQUEST_LIMIT: usize = 1024;
@@ -157,21 +168,43 @@ fn agent_config(agent_type: &str) -> Option<AgentConfigDef> {
     })
 }
 
-/// Resolve a package's VM bin entrypoint from the host `node_modules` (port of TS
-/// `_resolvePackageBin`, using `module_access_cwd` rather than software roots). Returns the
-/// guest-visible path `/root/node_modules/<package>/<bin>`.
+/// Resolve a package's VM bin entrypoint from the host `node_modules` (port of
+/// TS `_resolvePackageBin`). Prefer legacy `module_access_cwd/node_modules`,
+/// then fall back to the host directory backing a native `/root/node_modules`
+/// mount. The latter is the RivetKit actor path: the TS shim no longer forwards
+/// `moduleAccessCwd`; callers explicitly mount the desired `node_modules`
+/// directory instead.
 fn resolve_package_bin(
-    module_access_cwd: &str,
+    config: &AgentOsConfig,
     package_name: &str,
     bin_name: Option<&str>,
 ) -> std::result::Result<String, ClientError> {
-    let pkg_json_path = std::path::Path::new(module_access_cwd)
-        .join("node_modules")
-        .join(package_name)
-        .join("package.json");
-    let contents = std::fs::read_to_string(&pkg_json_path).map_err(|error| {
-        ClientError::Sidecar(format!("cannot read {}: {error}", pkg_json_path.display()))
-    })?;
+    let mut candidates = Vec::new();
+    let module_access_cwd = config
+        .module_access_cwd
+        .clone()
+        .unwrap_or_else(|| ".".to_string());
+    candidates.push(
+        Path::new(&module_access_cwd)
+            .join("node_modules")
+            .join(package_name)
+            .join("package.json"),
+    );
+    candidates.extend(node_modules_mount_package_json_paths(config, package_name));
+
+    let contents = candidates
+        .iter()
+        .find_map(|path| std::fs::read_to_string(path).ok())
+        .ok_or_else(|| {
+            let looked = candidates
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            ClientError::Sidecar(format!(
+                "cannot resolve package {package_name}: no package.json found (looked in {looked})"
+            ))
+        })?;
     let pkg: Value = serde_json::from_str(&contents).map_err(|error| {
         ClientError::Sidecar(format!("invalid package.json for {package_name}: {error}"))
     })?;
@@ -189,6 +222,39 @@ fn resolve_package_bin(
         ClientError::Sidecar(format!("No bin entry found in {package_name}/package.json"))
     })?;
     Ok(format!("/root/node_modules/{package_name}/{bin_entry}"))
+}
+
+fn node_modules_mount_package_json_paths(
+    config: &AgentOsConfig,
+    package_name: &str,
+) -> Vec<PathBuf> {
+    config
+        .mounts
+        .iter()
+        .filter_map(|mount| {
+            let MountConfig::Native {
+                path,
+                plugin,
+                read_only: _,
+            } = mount
+            else {
+                return None;
+            };
+            if path != "/root/node_modules" || plugin.id != "host_dir" {
+                return None;
+            }
+            let host_path = plugin
+                .config
+                .as_ref()
+                .and_then(|config| config.get("hostPath"))
+                .and_then(Value::as_str)?;
+            Some(
+                Path::new(host_path)
+                    .join(package_name)
+                    .join("package.json"),
+            )
+        })
+        .collect()
 }
 
 /// MCP server config used by `create_session`.
@@ -227,6 +293,30 @@ pub struct CreateSessionOptions {
 pub struct SessionId {
     #[serde(rename = "sessionId")]
     pub session_id: String,
+}
+
+/// Result of `resume_session`. `session_id` is the live ACP session id in the
+/// fresh VM: equal to the requested id for native loads, or a freshly assigned id
+/// for the fallback tier — the caller (e.g. the actor) remaps `external -> live`.
+/// `mode` is `"native"` or `"fallback"`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumeSessionResult {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub mode: String,
+}
+
+/// Options for `resume_session`. Mirrors the durability-dependent fields the
+/// sidecar fallback tier needs to re-launch the adapter, plus the transcript
+/// pointer.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ResumeSessionOptions {
+    /// Guest-readable path to the reconstructed transcript. When present, the
+    /// fallback tier arms a continuation preamble pointing the agent at it.
+    pub transcript_path: Option<String>,
+    /// Default `"/home/user"`.
+    pub cwd: Option<String>,
+    pub env: BTreeMap<String, String>,
 }
 
 /// Result of `prompt`.
@@ -1174,17 +1264,12 @@ impl AgentOs {
     /// shared modules this task may not edit. Returns an empty list until that infrastructure is
     /// added. See `todosLeft`.
     pub fn list_agents(&self) -> Vec<AgentRegistryEntry> {
-        let module_access_cwd = self
-            .config()
-            .module_access_cwd
-            .clone()
-            .unwrap_or_else(|| ".".to_string());
         BUILTIN_AGENT_IDS
             .iter()
             .filter_map(|id| {
                 let config = agent_config(id)?;
                 let installed =
-                    resolve_package_bin(&module_access_cwd, config.acp_adapter, None).is_ok();
+                    resolve_package_bin(self.config(), config.acp_adapter, None).is_ok();
                 Some(AgentRegistryEntry {
                     id: (*id).to_string(),
                     acp_adapter: config.acp_adapter.to_string(),
@@ -1207,15 +1292,10 @@ impl AgentOs {
     ) -> Result<SessionId> {
         let config = agent_config(agent_type)
             .ok_or_else(|| ClientError::Sidecar(format!("Unknown agent type: {agent_type}")))?;
-        let module_access_cwd = self
-            .config()
-            .module_access_cwd
-            .clone()
-            .unwrap_or_else(|| ".".to_string());
 
         // Resolve the ACP adapter's VM bin entrypoint from the host node_modules (mirrors TS
         // `_resolveAdapterBin` / `_resolvePackageBin`).
-        let adapter_entrypoint = resolve_package_bin(&module_access_cwd, config.acp_adapter, None)?;
+        let adapter_entrypoint = resolve_package_bin(self.config(), config.acp_adapter, None)?;
 
         // Merge env: agent default_env (lowest) -> user env (wins).
         let mut env: BTreeMap<String, String> = config
@@ -1229,7 +1309,7 @@ impl AgentOs {
         if (agent_type == "pi" || agent_type == "pi-cli") && !env.contains_key("PI_ACP_PI_COMMAND")
         {
             if let Ok(pi_command) =
-                resolve_package_bin(&module_access_cwd, config.agent_package, Some("pi"))
+                resolve_package_bin(self.config(), config.agent_package, Some("pi"))
             {
                 env.insert("PI_ACP_PI_COMMAND".to_string(), pi_command);
             }
@@ -1337,6 +1417,87 @@ impl AgentOs {
                 Err(error)
             }
         }
+    }
+
+    /// Resume a session that exists in durable storage but is not live in this VM
+    /// (e.g. after a Rivet actor slept and woke with a fresh VM). Thin forwarder:
+    /// resolves the agent config + adapter entrypoint exactly as `create_session`
+    /// does, then forwards a single [`AcpResumeSessionRequest`] to the sidecar,
+    /// which owns the resume state machine (native `session/load` when supported,
+    /// else `session/new` + transcript-continuation preamble). The returned
+    /// `session_id` is the live id in this VM (equal to `session_id` for native
+    /// loads, freshly assigned for the fallback); the caller remaps
+    /// `external -> live`. The new live session is registered + hydrated locally so
+    /// subsequent prompts route to it.
+    ///
+    /// Resume depends on a durable root; on a non-durable (default in-memory) root
+    /// there is no surviving store and the fallback tier always runs.
+    pub async fn resume_session(
+        &self,
+        session_id: &str,
+        agent_type: &str,
+        options: ResumeSessionOptions,
+    ) -> Result<ResumeSessionResult> {
+        let config = agent_config(agent_type)
+            .ok_or_else(|| ClientError::Sidecar(format!("Unknown agent type: {agent_type}")))?;
+        let adapter_entrypoint = resolve_package_bin(self.config(), config.acp_adapter, None)?;
+
+        // Merge env: agent default_env (lowest) -> user env (wins), then carry the
+        // resolved adapter entrypoint under the sidecar's reserved key (the resume
+        // wire request has no dedicated `adapterEntrypoint` field).
+        let mut env: BTreeMap<String, String> = config
+            .default_env
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        for (key, value) in &options.env {
+            env.insert(key.clone(), value.clone());
+        }
+        if (agent_type == "pi" || agent_type == "pi-cli") && !env.contains_key("PI_ACP_PI_COMMAND")
+        {
+            if let Ok(pi_command) =
+                resolve_package_bin(self.config(), config.agent_package, Some("pi"))
+            {
+                env.insert("PI_ACP_PI_COMMAND".to_string(), pi_command);
+            }
+        }
+        env.insert(
+            RESUME_ADAPTER_ENTRYPOINT_ENV.to_string(),
+            adapter_entrypoint,
+        );
+
+        let cwd = options
+            .cwd
+            .clone()
+            .unwrap_or_else(|| "/home/user".to_string());
+
+        let response = self
+            .send_acp_request(AcpRequest::AcpResumeSessionRequest(AcpResumeSessionRequest {
+                session_id: session_id.to_string(),
+                agent_type: agent_type.to_string(),
+                transcript_path: options.transcript_path.clone(),
+                cwd,
+                env: env.into_iter().collect(),
+            }))
+            .await?;
+        let AcpResponse::AcpSessionResumedResponse(resumed) = response else {
+            return Err(unexpected_acp_response("AcpResumeSessionRequest", response).into());
+        };
+
+        // Register + hydrate the live session so subsequent prompts route to it.
+        let empty_state = SessionStateResponse {
+            modes: None,
+            config_options: Vec::new(),
+            agent_capabilities: None,
+            agent_info: None,
+        };
+        self.register_session(&resumed.session_id, agent_type, &empty_state)
+            .await?;
+
+        Ok(ResumeSessionResult {
+            session_id: resumed.session_id,
+            mode: resumed.mode,
+        })
     }
 
     /// Destroy a session. Best-effort `cancel_session` then internal close.

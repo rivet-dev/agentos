@@ -32,7 +32,7 @@ import type {
 	AuthenticatedSession,
 	CreatedVm,
 	GuestFilesystemStat,
-	NativeSidecarProcessClient,
+	SidecarProcess,
 	SidecarProcessSnapshotEntry,
 	SidecarSignalHandlerRegistration,
 	SidecarSocketStateEntry,
@@ -283,7 +283,7 @@ interface TrackedProcessEntry {
 }
 
 interface NativeSidecarKernelProxyOptions {
-	client: NativeSidecarProcessClient;
+	client: SidecarProcess;
 	session: AuthenticatedSession;
 	vm: CreatedVm;
 	env: Record<string, string>;
@@ -303,7 +303,7 @@ export class NativeSidecarKernelProxy {
 	readonly processes = new Map<number, ProcessInfo>();
 	private readonly defaultExecCwd: string | undefined;
 
-	private readonly client: NativeSidecarProcessClient;
+	private readonly client: SidecarProcess;
 	private readonly session: AuthenticatedSession;
 	private readonly vm: CreatedVm;
 	private readonly localMounts: LocalCompatMount[];
@@ -2226,7 +2226,7 @@ export type {
 	AuthenticatedSession,
 	CreatedVm,
 	GuestFilesystemStat,
-	NativeSidecarSpawnOptions,
+	SidecarSpawnOptions,
 	RootFilesystemEntry,
 	SidecarEventSelector,
 	SidecarPermissionsPolicy,
@@ -2239,7 +2239,7 @@ export type {
 } from "./native-process-client.js";
 export {
 	NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
-	NativeSidecarProcessClient,
+	SidecarProcess,
 	SidecarEventBufferOverflow,
 	SidecarProcessError,
 	SidecarProcessExited,

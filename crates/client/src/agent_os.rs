@@ -39,7 +39,7 @@ use crate::session::{
     PermissionRouteRequest, PermissionRouteResult, SessionConfigOption, SessionModeState,
 };
 use crate::sidecar::{AgentOsSidecar, AgentOsSidecarPlacement, AgentOsSidecarVmLease};
-use crate::transport::{SidecarTransport, WireSidecarCallback};
+use crate::transport::{SidecarProcess, WireSidecarCallback};
 use secure_exec_client::TransportError;
 
 use once_cell::sync::OnceCell;
@@ -87,6 +87,30 @@ pub(crate) struct AcpTerminalEntry {
     pub exit_task: JoinHandle<()>,
 }
 
+/// Mutable output state of a host-request ACP terminal (mirrors the TS `AcpTerminalEntry`
+/// `output` / `truncated` accumulation behavior).
+pub(crate) struct HostAcpTerminalOutput {
+    /// Accumulated UTF-8 terminal output (stdout + stderr interleaved, like the TS handle).
+    pub buffer: String,
+    pub truncated: bool,
+    /// Byte limit; `output` is trimmed from the front once it exceeds this. Mirrors the TS
+    /// `outputByteLimit` (default 1 MiB).
+    pub output_byte_limit: usize,
+}
+
+/// A host-request ACP terminal created via `terminal/create` (mirrors the TS `_acpTerminals`
+/// value). Backed by a real PTY shell (`open_shell`); the background fan-out task accumulates
+/// output and records the exit code.
+pub(crate) struct HostAcpTerminal {
+    /// The backing shell id (`shell-N`) used for `terminal/write` / `terminal/resize` /
+    /// `terminal/kill`.
+    pub shell_id: String,
+    /// Shared output buffer updated by the fan-out task and read by `terminal/output`.
+    pub output: Arc<parking_lot::Mutex<HostAcpTerminalOutput>>,
+    /// Exit code once the process has exited (`None` while running). Mirrors `exitCode`.
+    pub exit_rx: watch::Receiver<Option<i32>>,
+}
+
 /// An ACP session (TS `_sessions` value). Keyed by ACP session id.
 pub(crate) struct SessionEntry {
     pub agent_type: String,
@@ -122,7 +146,7 @@ pub struct AgentOs {
 
 pub(crate) struct AgentOsInner {
     // Transport / connection / VM handle.
-    pub(crate) transport: Arc<SidecarTransport>,
+    pub(crate) transport: Arc<SidecarProcess>,
     pub(crate) connection_id: String,
     pub(crate) session_id: String,
     pub(crate) vm_id: String,
@@ -154,6 +178,11 @@ pub(crate) struct AgentOsInner {
     pub(crate) acp_terminals: SccHashMap<String, AcpTerminalEntry>,
     pub(crate) acp_terminal_count: AtomicUsize,
     pub(crate) acp_terminal_lifecycle_lock: tokio::sync::Mutex<()>,
+    /// Host-request ACP terminals created via `terminal/create` (TS `_acpTerminals`). Keyed by the
+    /// `acp-terminal-N` id the agent uses in subsequent `terminal/*` calls.
+    pub(crate) host_acp_terminals: SccHashMap<String, HostAcpTerminal>,
+    /// Monotonic counter for the `acp-terminal-N` ids (TS `_acpTerminalCounter`).
+    pub(crate) host_acp_terminal_counter: AtomicU64,
 
     // Session registries.
     pub(crate) sessions: SccHashMap<String, SessionEntry>,
@@ -501,6 +530,8 @@ impl AgentOs {
             acp_terminals: SccHashMap::new(),
             acp_terminal_count: AtomicUsize::new(0),
             acp_terminal_lifecycle_lock: tokio::sync::Mutex::new(()),
+            host_acp_terminals: SccHashMap::new(),
+            host_acp_terminal_counter: AtomicU64::new(0),
             sessions: SccHashMap::new(),
             closed_session_ids: parking_lot::Mutex::new(VecDeque::new()),
             closing_session_ids: SccHashSet::new(),
@@ -592,6 +623,19 @@ impl AgentOs {
                 exit_tasks.push(task);
             }
         }
+
+        // Tear down host-request ACP terminals (`terminal/create`). Close the backing shell, which
+        // sends SIGTERM, removes the shell entry, and ends the fan-out/exit task; the task itself is
+        // tracked in `pending_shell_exits` above and drained with the other shell exit tasks.
+        let mut host_terminal_shells = Vec::new();
+        self.inner.host_acp_terminals.retain(|_, terminal| {
+            host_terminal_shells.push(terminal.shell_id.clone());
+            false
+        });
+        for shell_id in host_terminal_shells {
+            let _ = self.close_shell(&shell_id);
+        }
+
         if !exit_tasks.is_empty() {
             let mut drain_tasks = exit_tasks;
             if tokio::time::timeout(
@@ -648,7 +692,7 @@ impl AgentOs {
         &self.inner
     }
 
-    pub(crate) fn transport(&self) -> &Arc<SidecarTransport> {
+    pub(crate) fn transport(&self) -> &Arc<SidecarProcess> {
         &self.inner.transport
     }
 
@@ -1333,30 +1377,9 @@ async fn handle_acp_ext_callback(
             })
         }
         AcpCallback::AcpHostRequestCallback(callback) => {
-            let response = serde_json::from_str::<serde_json::Value>(&callback.request)
-                .ok()
-                .and_then(|request| {
-                    let id = request
-                        .get("id")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null);
-                    let method = request
-                        .get("method")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("unknown");
-                    serde_json::to_string(&serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": {
-                            "code": -32601,
-                            "message": format!("Method not found: {method}"),
-                            "data": { "method": method },
-                        },
-                    }))
-                    .ok()
-                });
+            let response = dispatch_acp_host_request(ownership, &callback.request).await;
             AcpCallbackResponse::AcpHostRequestCallbackResponse(AcpHostRequestCallbackResponse {
-                response,
+                response: Some(response),
             })
         }
     };
@@ -1384,6 +1407,783 @@ async fn route_permission_request(
     };
     let client = AgentOs { inner };
     client.deliver_sidecar_permission_request(request).await
+}
+
+// ---------------------------------------------------------------------------
+// ACP host-request dispatch (mirrors TS `_dispatchAcpSidecarRequest` ->
+// `_handleSupportedAcpSidecarRequest`)
+// ---------------------------------------------------------------------------
+
+/// The default `terminal/create` output cap (1 MiB), matching the TS reference.
+const ACP_TERMINAL_DEFAULT_OUTPUT_BYTE_LIMIT: usize = 1_048_576;
+
+/// A JSON-RPC error raised while handling an ACP host request. Mirrors the TS `AcpDispatchError`.
+struct AcpDispatchError {
+    code: i64,
+    message: String,
+    data: Option<Value>,
+}
+
+impl AcpDispatchError {
+    fn new(code: i64, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: None,
+        }
+    }
+
+    fn with_data(code: i64, message: impl Into<String>, data: Value) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: Some(data),
+        }
+    }
+}
+
+impl From<ClientError> for AcpDispatchError {
+    fn from(error: ClientError) -> Self {
+        match error {
+            // Preserve the kernel errno code where one exists (e.g. ENOENT), surfaced through the
+            // JSON-RPC `data.code`, while keeping a JSON-RPC internal-error envelope.
+            ClientError::Kernel { code, message } => AcpDispatchError::with_data(
+                -32603,
+                message,
+                serde_json::json!({ "code": code }),
+            ),
+            other => AcpDispatchError::new(-32603, other.to_string()),
+        }
+    }
+}
+
+impl From<anyhow::Error> for AcpDispatchError {
+    fn from(error: anyhow::Error) -> Self {
+        // The filesystem methods return `anyhow::Result`; downcast to recover the kernel errno where
+        // the underlying cause is a `ClientError::Kernel` (so e.g. ENOENT survives into `data.code`).
+        match error.downcast::<ClientError>() {
+            Ok(client_error) => client_error.into(),
+            Err(error) => AcpDispatchError::new(-32603, error.to_string()),
+        }
+    }
+}
+
+/// Decode the inbound JSON-RPC request, dispatch it to the matching VM operation, and serialize the
+/// JSON-RPC response (success or error). Always returns a valid JSON-RPC response string; the
+/// `id`/`error` shape mirrors `_dispatchAcpSidecarRequest`.
+async fn dispatch_acp_host_request(ownership: &wire::OwnershipScope, request: &str) -> String {
+    let parsed = serde_json::from_str::<Value>(request);
+    let (id, method, params_value) = match parsed {
+        Ok(value) => {
+            let id = value.get("id").cloned().unwrap_or(Value::Null);
+            let method = value
+                .get("method")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            (id, method, value.get("params").cloned())
+        }
+        Err(error) => {
+            return acp_error_response(
+                Value::Null,
+                -32700,
+                &format!("Parse error: {error}"),
+                None,
+            );
+        }
+    };
+
+    let Some(method) = method else {
+        return acp_error_response(id, -32600, "Invalid Request: missing method", None);
+    };
+
+    match handle_acp_host_request(ownership, &method, params_value).await {
+        Ok(result) => serde_json::to_string(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        }))
+        .unwrap_or_else(|error| {
+            acp_error_response(Value::Null, -32603, &error.to_string(), None)
+        }),
+        Err(error) => acp_error_response(id, error.code, &error.message, error.data),
+    }
+}
+
+fn acp_error_response(id: Value, code: i64, message: &str, data: Option<Value>) -> String {
+    let mut error = serde_json::json!({
+        "code": code,
+        "message": message,
+    });
+    if let Some(data) = data {
+        if let Some(map) = error.as_object_mut() {
+            map.insert("data".to_string(), data);
+        }
+    }
+    serde_json::to_string(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": error,
+    }))
+    .unwrap_or_else(|_| {
+        String::from(r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"failed to encode error response"}}"#)
+    })
+}
+
+/// Resolve the `AgentOs` that owns the VM named in `ownership`, mirroring `route_permission_request`.
+fn resolve_acp_agent(ownership: &wire::OwnershipScope) -> Result<AgentOs, AcpDispatchError> {
+    let vm_id = wire_ownership_vm_id(ownership).unwrap_or("");
+    let inner = vm_permission_routers()
+        .read(vm_id, |_, weak| weak.clone())
+        .and_then(|weak| weak.upgrade());
+    inner
+        .map(|inner| AgentOs { inner })
+        .ok_or_else(|| AcpDispatchError::new(-32603, "VM is no longer available"))
+}
+
+/// Mirror of TS `_handleSupportedAcpSidecarRequest`: dispatch the JSON-RPC method to the matching VM
+/// operation. Returns the JSON-RPC `result` value on success.
+async fn handle_acp_host_request(
+    ownership: &wire::OwnershipScope,
+    method: &str,
+    params_value: Option<Value>,
+) -> Result<Value, AcpDispatchError> {
+    let params = acp_params(method, params_value)?;
+    match method {
+        crate::session::ACP_PERMISSION_METHOD => {
+            handle_acp_permission_request(ownership, method, &params).await
+        }
+        "fs/read" | "fs/read_text_file" => {
+            let agent = resolve_acp_agent(ownership)?;
+            handle_acp_read_file(&agent, &params).await
+        }
+        "fs/write" | "fs/write_text_file" => {
+            let agent = resolve_acp_agent(ownership)?;
+            handle_acp_write_file(&agent, &params).await
+        }
+        "fs/readDir" | "fs/read_dir" => {
+            let agent = resolve_acp_agent(ownership)?;
+            handle_acp_read_dir(&agent, &params).await
+        }
+        "terminal/create" => {
+            let agent = resolve_acp_agent(ownership)?;
+            handle_acp_create_terminal(&agent, &params)
+        }
+        "terminal/write" => {
+            let agent = resolve_acp_agent(ownership)?;
+            handle_acp_write_terminal(&agent, &params)
+        }
+        "terminal/output" | "terminal/read" => {
+            let agent = resolve_acp_agent(ownership)?;
+            handle_acp_read_terminal(&agent, &params)
+        }
+        "terminal/wait_for_exit" | "terminal/waitForExit" => {
+            let agent = resolve_acp_agent(ownership)?;
+            handle_acp_wait_for_terminal_exit(&agent, &params).await
+        }
+        "terminal/kill" => {
+            let agent = resolve_acp_agent(ownership)?;
+            handle_acp_kill_terminal(&agent, &params)
+        }
+        "terminal/release" | "terminal/close" => {
+            let agent = resolve_acp_agent(ownership)?;
+            handle_acp_release_terminal(&agent, &params)
+        }
+        "terminal/resize" => {
+            let agent = resolve_acp_agent(ownership)?;
+            handle_acp_resize_terminal(&agent, &params)
+        }
+        other => Err(AcpDispatchError::with_data(
+            -32601,
+            format!("Method not found: {other}"),
+            serde_json::json!({ "method": other }),
+        )),
+    }
+}
+
+// --- ACP host-request param helpers (mirror TS `_acpParams` / `_require*` / `_optional*`) ---
+
+fn acp_params(
+    method: &str,
+    params_value: Option<Value>,
+) -> Result<Map<String, Value>, AcpDispatchError> {
+    match params_value {
+        None | Some(Value::Null) => Ok(Map::new()),
+        Some(Value::Object(map)) => Ok(map),
+        Some(_) => Err(AcpDispatchError::new(
+            -32602,
+            format!("{method} requires object params"),
+        )),
+    }
+}
+
+fn require_acp_string(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<String, AcpDispatchError> {
+    match params.get(name).and_then(Value::as_str) {
+        Some(value) => Ok(value.to_string()),
+        None => Err(AcpDispatchError::new(
+            -32602,
+            format!("{method} requires a string {name}"),
+        )),
+    }
+}
+
+fn optional_acp_string(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<Option<String>, AcpDispatchError> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(AcpDispatchError::new(
+            -32602,
+            format!("{method} requires {name} to be a string when provided"),
+        )),
+    }
+}
+
+fn optional_acp_number(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<Option<f64>, AcpDispatchError> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => match value.as_f64() {
+            Some(number) if number.is_finite() => Ok(Some(number)),
+            _ => Err(AcpDispatchError::new(
+                -32602,
+                format!("{method} requires {name} to be a number when provided"),
+            )),
+        },
+    }
+}
+
+fn optional_acp_string_array(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<Option<Vec<String>>, AcpDispatchError> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(items)) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                match item.as_str() {
+                    Some(value) => out.push(value.to_string()),
+                    None => {
+                        return Err(AcpDispatchError::new(
+                            -32602,
+                            format!("{method} requires {name} to be an array of strings when provided"),
+                        ))
+                    }
+                }
+            }
+            Ok(Some(out))
+        }
+        Some(_) => Err(AcpDispatchError::new(
+            -32602,
+            format!("{method} requires {name} to be an array of strings when provided"),
+        )),
+    }
+}
+
+/// Parse the ACP `env` param, accepting either an object map or a `[{ name, value }]` array, matching
+/// the TS `_optionalAcpEnvParam`.
+fn optional_acp_env(
+    params: &Map<String, Value>,
+    name: &str,
+    method: &str,
+) -> Result<Option<BTreeMap<String, String>>, AcpDispatchError> {
+    match params.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(items)) => {
+            let mut env = BTreeMap::new();
+            for entry in items {
+                let Some(record) = entry.as_object() else {
+                    return Err(AcpDispatchError::new(
+                        -32602,
+                        format!("{method} requires {name} entries to be {{ name, value }} objects"),
+                    ));
+                };
+                match (
+                    record.get("name").and_then(Value::as_str),
+                    record.get("value").and_then(Value::as_str),
+                ) {
+                    (Some(key), Some(value)) => {
+                        env.insert(key.to_string(), value.to_string());
+                    }
+                    _ => {
+                        return Err(AcpDispatchError::new(
+                            -32602,
+                            format!(
+                                "{method} requires {name} entries to be {{ name, value }} objects"
+                            ),
+                        ))
+                    }
+                }
+            }
+            Ok(Some(env))
+        }
+        Some(Value::Object(map)) => {
+            let mut env = BTreeMap::new();
+            for (key, value) in map {
+                match value.as_str() {
+                    Some(value) => {
+                        env.insert(key.clone(), value.to_string());
+                    }
+                    None => {
+                        return Err(AcpDispatchError::new(
+                            -32602,
+                            format!("{method} requires {name} values to be strings"),
+                        ))
+                    }
+                }
+            }
+            Ok(Some(env))
+        }
+        Some(_) => Err(AcpDispatchError::new(
+            -32602,
+            format!("{method} requires {name} to be an object or name/value array"),
+        )),
+    }
+}
+
+// --- fs/* handlers ---
+
+async fn handle_acp_read_file(
+    agent: &AgentOs,
+    params: &Map<String, Value>,
+) -> Result<Value, AcpDispatchError> {
+    let method = "fs/read";
+    let path = require_acp_string(params, "path", method)?;
+    let line = optional_acp_number(params, "line", method)?;
+    let limit = optional_acp_number(params, "limit", method)?;
+    let encoding = optional_acp_string(params, "encoding", method)?;
+    let bytes = agent.read_file(&path).await?;
+    if encoding.as_deref() == Some("base64") {
+        use base64::engine::general_purpose::STANDARD as BASE64;
+        use base64::Engine as _;
+        return Ok(serde_json::json!({ "content": BASE64.encode(&bytes) }));
+    }
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    if line.is_none() && limit.is_none() {
+        return Ok(serde_json::json!({ "content": text }));
+    }
+    let start_line = line.map(|n| n.trunc() as i64).unwrap_or(1).max(1);
+    let lines: Vec<&str> = text.split('\n').collect();
+    let start_index = (start_line - 1).max(0) as usize;
+    let selected: Vec<&str> = match limit {
+        None => lines.into_iter().skip(start_index).collect(),
+        Some(limit) => {
+            let limit = limit.trunc().max(0.0) as usize;
+            lines.into_iter().skip(start_index).take(limit).collect()
+        }
+    };
+    Ok(serde_json::json!({ "content": selected.join("\n") }))
+}
+
+async fn handle_acp_write_file(
+    agent: &AgentOs,
+    params: &Map<String, Value>,
+) -> Result<Value, AcpDispatchError> {
+    let method = "fs/write";
+    let path = require_acp_string(params, "path", method)?;
+    let content = require_acp_string(params, "content", method)?;
+    let encoding = optional_acp_string(params, "encoding", method)?;
+    if encoding.as_deref() == Some("base64") {
+        use base64::engine::general_purpose::STANDARD as BASE64;
+        use base64::Engine as _;
+        let decoded = BASE64.decode(content.as_bytes()).map_err(|error| {
+            AcpDispatchError::new(-32602, format!("{method} content is not valid base64: {error}"))
+        })?;
+        agent.write_file(&path, decoded).await?;
+    } else {
+        agent.write_file(&path, content).await?;
+    }
+    Ok(Value::Null)
+}
+
+async fn handle_acp_read_dir(
+    agent: &AgentOs,
+    params: &Map<String, Value>,
+) -> Result<Value, AcpDispatchError> {
+    let method = "fs/readDir";
+    let path = require_acp_string(params, "path", method)?;
+    let entries = agent.acp_read_dir_with_types(&path).await?;
+    let mapped: Vec<Value> = entries
+        .into_iter()
+        .map(|entry| {
+            let child_path = if path == "/" {
+                format!("/{}", entry.name)
+            } else {
+                format!("{path}/{}", entry.name)
+            };
+            let entry_type = if entry.is_symbolic_link {
+                "symlink"
+            } else if entry.is_directory {
+                "directory"
+            } else {
+                "file"
+            };
+            serde_json::json!({
+                "name": entry.name,
+                "path": child_path,
+                "type": entry_type,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({ "entries": mapped }))
+}
+
+// --- session/request_permission handler ---
+
+async fn handle_acp_permission_request(
+    ownership: &wire::OwnershipScope,
+    method: &str,
+    params: &Map<String, Value>,
+) -> Result<Value, AcpDispatchError> {
+    let session_id = require_acp_string(params, "sessionId", method)?;
+
+    let result = route_permission_request(
+        ownership,
+        PermissionRouteRequest {
+            session_id: session_id.clone(),
+            // The host-request id is not available here as the permission key; use a generated key
+            // scoped to the session so concurrent permission requests do not collide.
+            permission_id: format!("acp-permission-{}", uuid::Uuid::new_v4()),
+            params: Value::Object(params.clone()),
+        },
+    )
+    .await;
+
+    // `reply: None` means the session/VM is gone or the request timed out -> cancelled outcome.
+    let reply = match result.reply.as_deref() {
+        Some("always") => PermissionDecision::Always,
+        Some("once") => PermissionDecision::Once,
+        _ => PermissionDecision::Reject,
+    };
+    Ok(build_acp_permission_result(reply, params))
+}
+
+#[derive(Clone, Copy)]
+enum PermissionDecision {
+    Always,
+    Once,
+    Reject,
+}
+
+/// Mirror of TS `_normalizeAcpPermissionOptionId`: pick the matching option id from the request's
+/// `options`, falling back to the canonical id for the decision.
+fn normalize_acp_permission_option_id(
+    options: Option<&Vec<Value>>,
+    decision: PermissionDecision,
+) -> String {
+    let (option_ids, kinds, fallback): (&[&str], &[&str], &str) = match decision {
+        PermissionDecision::Always => (
+            &["always", "allow_always"],
+            &["allow_always"],
+            "allow_always",
+        ),
+        PermissionDecision::Once => (&["once", "allow_once"], &["allow_once"], "allow_once"),
+        PermissionDecision::Reject => (&["reject", "reject_once"], &["reject_once"], "reject_once"),
+    };
+    if let Some(options) = options {
+        for option in options {
+            let Some(record) = option.as_object() else {
+                continue;
+            };
+            let option_id = record.get("optionId").and_then(Value::as_str);
+            let kind = record.get("kind").and_then(Value::as_str);
+            let matches = option_id.is_some_and(|id| option_ids.contains(&id))
+                || kind.is_some_and(|k| kinds.contains(&k));
+            if matches {
+                if let Some(id) = option_id {
+                    return id.to_string();
+                }
+            }
+        }
+    }
+    fallback.to_string()
+}
+
+/// Mirror of TS `_buildAcpPermissionResult`: produce `{ outcome: { outcome: "selected", optionId } }`.
+fn build_acp_permission_result(
+    decision: PermissionDecision,
+    params: &Map<String, Value>,
+) -> Value {
+    let options = params.get("options").and_then(Value::as_array);
+    let option_id = normalize_acp_permission_option_id(options, decision);
+    serde_json::json!({
+        "outcome": {
+            "outcome": "selected",
+            "optionId": option_id,
+        }
+    })
+}
+
+// --- terminal/* handlers ---
+
+fn require_acp_terminal_id(
+    params: &Map<String, Value>,
+    method: &str,
+) -> Result<String, AcpDispatchError> {
+    require_acp_string(params, "terminalId", method)
+}
+
+fn handle_acp_create_terminal(
+    agent: &AgentOs,
+    params: &Map<String, Value>,
+) -> Result<Value, AcpDispatchError> {
+    let method = "terminal/create";
+    let command = require_acp_string(params, "command", method)?;
+    let args = optional_acp_string_array(params, "args", method)?;
+    let env = optional_acp_env(params, "env", method)?;
+    let cwd = optional_acp_string(params, "cwd", method)?;
+    let cols = optional_acp_number(params, "cols", method)?;
+    let rows = optional_acp_number(params, "rows", method)?;
+    let output_byte_limit = optional_acp_number(params, "outputByteLimit", method)?
+        .map(|n| n.trunc().max(0.0) as usize)
+        .unwrap_or(ACP_TERMINAL_DEFAULT_OUTPUT_BYTE_LIMIT);
+
+    let counter = agent
+        .inner()
+        .host_acp_terminal_counter
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
+    let terminal_id = format!("acp-terminal-{counter}");
+
+    let output = Arc::new(parking_lot::Mutex::new(HostAcpTerminalOutput {
+        buffer: String::new(),
+        truncated: false,
+        output_byte_limit,
+    }));
+    let (exit_tx, exit_rx) = watch::channel::<Option<i32>>(None);
+
+    // Build the PTY shell. Both stdout and stderr are appended to the same output buffer, mirroring
+    // the TS handle where `onData` and `onStderr` both append to `terminal.output`.
+    let mut shell_options = crate::shell::OpenShellOptions {
+        command: Some(command),
+        cwd,
+        ..Default::default()
+    };
+    if let Some(args) = args {
+        shell_options.args = args;
+    }
+    if let Some(env) = env {
+        shell_options.env = env;
+    }
+    if let Some(cols) = cols {
+        shell_options.cols = Some(cols.trunc() as u16);
+    }
+    if let Some(rows) = rows {
+        shell_options.rows = Some(rows.trunc() as u16);
+    }
+    // Both stdout and stderr are appended to the single combined output buffer inside
+    // `acp_open_terminal`'s fan-out task (mirroring the TS handle's `onData`/`onStderr`).
+    let buffer_sink = output.clone();
+    let handle = agent
+        .acp_open_terminal(shell_options, exit_tx, move |data: &[u8]| {
+            append_acp_terminal_output(&buffer_sink, data);
+        })
+        .map_err(|error| AcpDispatchError::new(-32603, error.to_string()))?;
+    let shell_id = handle.shell_id.clone();
+
+    let entry = HostAcpTerminal {
+        shell_id,
+        output,
+        exit_rx,
+    };
+    if agent
+        .inner()
+        .host_acp_terminals
+        .insert(terminal_id.clone(), entry)
+        .is_err()
+    {
+        return Err(AcpDispatchError::new(
+            -32603,
+            format!("ACP terminal id collision: {terminal_id}"),
+        ));
+    }
+
+    Ok(serde_json::json!({ "terminalId": terminal_id }))
+}
+
+fn append_acp_terminal_output(output: &Arc<parking_lot::Mutex<HostAcpTerminalOutput>>, data: &[u8]) {
+    let chunk = String::from_utf8_lossy(data);
+    if chunk.is_empty() {
+        return;
+    }
+    let mut state = output.lock();
+    state.buffer.push_str(&chunk);
+    let limit = state.output_byte_limit;
+    if state.buffer.len() > limit {
+        // Trim from the front to the limit, on a char boundary, matching the TS slice-to-limit
+        // behavior (which trims to the last `limit` UTF-16 code units; bytes are an acceptable port).
+        let overflow = state.buffer.len() - limit;
+        let mut cut = overflow;
+        while cut < state.buffer.len() && !state.buffer.is_char_boundary(cut) {
+            cut += 1;
+        }
+        state.buffer = state.buffer.split_off(cut);
+        state.truncated = true;
+    }
+}
+
+fn handle_acp_write_terminal(
+    agent: &AgentOs,
+    params: &Map<String, Value>,
+) -> Result<Value, AcpDispatchError> {
+    let method = "terminal/write";
+    let terminal_id = require_acp_terminal_id(params, method)?;
+    let shell_id = acp_terminal_shell_id(agent, &terminal_id)?;
+    let data = require_acp_string(params, "data", method)?;
+    let encoding = optional_acp_string(params, "encoding", method)?;
+    let input = if encoding.as_deref() == Some("base64") {
+        use base64::engine::general_purpose::STANDARD as BASE64;
+        use base64::Engine as _;
+        let decoded = BASE64.decode(data.as_bytes()).map_err(|error| {
+            AcpDispatchError::new(-32602, format!("{method} data is not valid base64: {error}"))
+        })?;
+        crate::process::StdinInput::Bytes(decoded)
+    } else {
+        crate::process::StdinInput::Text(data)
+    };
+    agent
+        .write_shell(&shell_id, input)
+        .map_err(|error| AcpDispatchError::new(-32603, error.to_string()))?;
+    Ok(Value::Null)
+}
+
+fn handle_acp_read_terminal(
+    agent: &AgentOs,
+    params: &Map<String, Value>,
+) -> Result<Value, AcpDispatchError> {
+    let method = "terminal/output";
+    let terminal_id = require_acp_terminal_id(params, method)?;
+    agent
+        .inner()
+        .host_acp_terminals
+        .read(&terminal_id, |_, terminal| {
+            let (output, truncated) = {
+                let state = terminal.output.lock();
+                (state.buffer.clone(), state.truncated)
+            };
+            let mut result = serde_json::json!({
+                "output": output,
+                "truncated": truncated,
+            });
+            if let Some(exit_code) = *terminal.exit_rx.borrow() {
+                if let Some(map) = result.as_object_mut() {
+                    map.insert(
+                        "exitStatus".to_string(),
+                        serde_json::json!({ "exitCode": exit_code, "signal": Value::Null }),
+                    );
+                }
+            }
+            result
+        })
+        .ok_or_else(|| {
+            AcpDispatchError::new(-32602, format!("ACP terminal not found: {terminal_id}"))
+        })
+}
+
+async fn handle_acp_wait_for_terminal_exit(
+    agent: &AgentOs,
+    params: &Map<String, Value>,
+) -> Result<Value, AcpDispatchError> {
+    let method = "terminal/wait_for_exit";
+    let terminal_id = require_acp_terminal_id(params, method)?;
+    let mut exit_rx = agent
+        .inner()
+        .host_acp_terminals
+        .read(&terminal_id, |_, terminal| terminal.exit_rx.clone())
+        .ok_or_else(|| {
+            AcpDispatchError::new(-32602, format!("ACP terminal not found: {terminal_id}"))
+        })?;
+    let exit_code = loop {
+        if let Some(code) = *exit_rx.borrow() {
+            break code;
+        }
+        if exit_rx.changed().await.is_err() {
+            // Sender dropped (terminal released / VM disposed) without a recorded exit code.
+            break exit_rx.borrow().unwrap_or(0);
+        }
+    };
+    Ok(serde_json::json!({ "exitCode": exit_code, "signal": Value::Null }))
+}
+
+fn handle_acp_kill_terminal(
+    agent: &AgentOs,
+    params: &Map<String, Value>,
+) -> Result<Value, AcpDispatchError> {
+    let method = "terminal/kill";
+    let terminal_id = require_acp_terminal_id(params, method)?;
+    let shell_id = acp_terminal_shell_id(agent, &terminal_id)?;
+    // The native shell API only exposes SIGTERM teardown via `close_shell`'s kill; the explicit
+    // `signal` param is accepted for parity but the underlying kill is fixed to SIGTERM. The terminal
+    // entry is retained (matching TS `kill`, which does not delete the terminal) so `terminal/output`
+    // and `terminal/wait_for_exit` still work afterward.
+    agent
+        .acp_kill_terminal_shell(&shell_id)
+        .map_err(|error| AcpDispatchError::new(-32603, error.to_string()))?;
+    Ok(Value::Null)
+}
+
+fn handle_acp_release_terminal(
+    agent: &AgentOs,
+    params: &Map<String, Value>,
+) -> Result<Value, AcpDispatchError> {
+    let method = "terminal/release";
+    let terminal_id = require_acp_terminal_id(params, method)?;
+    let Some((_, terminal)) = agent.inner().host_acp_terminals.remove(&terminal_id) else {
+        return Err(AcpDispatchError::new(
+            -32602,
+            format!("ACP terminal not found: {terminal_id}"),
+        ));
+    };
+    // If the process has not exited yet, kill it (TS releases by killing when `exitCode === null`).
+    if terminal.exit_rx.borrow().is_none() {
+        let _ = agent.acp_kill_terminal_shell(&terminal.shell_id);
+    }
+    // Closing the shell removes the registry entry and ends the fan-out/exit task naturally.
+    let _ = agent.close_shell(&terminal.shell_id);
+    Ok(Value::Null)
+}
+
+fn handle_acp_resize_terminal(
+    agent: &AgentOs,
+    params: &Map<String, Value>,
+) -> Result<Value, AcpDispatchError> {
+    let method = "terminal/resize";
+    let terminal_id = require_acp_terminal_id(params, method)?;
+    let shell_id = acp_terminal_shell_id(agent, &terminal_id)?;
+    let cols = optional_acp_number(params, "cols", method)?;
+    let rows = optional_acp_number(params, "rows", method)?;
+    let (Some(cols), Some(rows)) = (cols, rows) else {
+        return Err(AcpDispatchError::new(
+            -32602,
+            format!("{method} requires numeric cols and rows"),
+        ));
+    };
+    agent
+        .resize_shell(&shell_id, cols.trunc() as u16, rows.trunc() as u16)
+        .map_err(|error| AcpDispatchError::new(-32603, error.to_string()))?;
+    Ok(Value::Null)
+}
+
+/// Look up the backing shell id for a host-request terminal, or a JSON-RPC -32602 error.
+fn acp_terminal_shell_id(agent: &AgentOs, terminal_id: &str) -> Result<String, AcpDispatchError> {
+    agent
+        .inner()
+        .host_acp_terminals
+        .read(terminal_id, |_, terminal| terminal.shell_id.clone())
+        .ok_or_else(|| {
+            AcpDispatchError::new(-32602, format!("ACP terminal not found: {terminal_id}"))
+        })
 }
 
 /// The transport callback that answers guest tool invocations by running the matching host tool.

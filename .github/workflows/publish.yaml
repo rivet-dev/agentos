@@ -115,7 +115,7 @@ jobs:
       # build (invoked by secure-exec's cargo build.rs) has esbuild + bridge srcs.
       - name: Checkout secure-exec sibling
         run: |
-          git clone --depth 1 --branch split/runtime-preview \
+          git clone --depth 1 --branch main \
             https://github.com/rivet-dev/secure-exec.git ../secure-exec
           (cd ../secure-exec && pnpm install --frozen-lockfile)
       # The V8 bridge build script (invoked by cargo build.rs) needs the pnpm
@@ -324,7 +324,7 @@ jobs:
       # bridge build (secure-exec's cargo build.rs) has esbuild + bridge sources.
       - name: Checkout secure-exec sibling
         run: |
-          git clone --depth 1 --branch split/runtime-preview \
+          git clone --depth 1 --branch main \
             https://github.com/rivet-dev/secure-exec.git ../secure-exec
           (cd ../secure-exec && pnpm install --frozen-lockfile)
       - run: pnpm install --frozen-lockfile

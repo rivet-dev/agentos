@@ -1,17 +1,17 @@
 export {
 	NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
-	NativeSidecarProcessClient,
+	SidecarProcess,
 	SidecarEventBufferOverflow,
 	SidecarProcessError,
 	SidecarProcessExited,
-} from "@secure-exec/core/sidecar-client";
+} from "@secure-exec/core/sidecar-process";
 
 export type {
 	AuthenticatedSession,
 	CreatedVm,
 	ExtEnvelope,
 	GuestFilesystemStat,
-	NativeSidecarSpawnOptions,
+	SidecarSpawnOptions,
 	RootFilesystemEntry,
 	RootFilesystemLowerDescriptor,
 	SidecarEventSelector,
@@ -38,4 +38,4 @@ export type {
 	SidecarSocketStateEntry,
 	SidecarSoftwareDescriptor,
 	SidecarZombieTimerCount,
-} from "@secure-exec/core/sidecar-client";
+} from "@secure-exec/core/sidecar-process";

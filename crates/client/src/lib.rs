@@ -90,11 +90,13 @@ pub use shell::{ConnectTerminalOptions, OpenShellOptions, ShellHandle};
 pub use session::{
     AgentCapabilities, AgentInfo, AgentRegistryEntry, ConfigAllowedValue, CreateSessionOptions,
     McpServerConfig, PermissionReply, PermissionRequest, PromptCapabilities, PromptResult,
-    SessionConfigOption, SessionId, SessionInfo, SessionInitData, SessionMode, SessionModeState,
+    ResumeSessionOptions, ResumeSessionResult, SessionConfigOption, SessionId, SessionInfo,
+    SessionInitData, SessionMode, SessionModeState,
 };
 
 pub use json_rpc::{
-    AcpTimeoutErrorData, JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcResponse,
+    is_unknown_session, AcpTimeoutErrorData, JsonRpcError, JsonRpcId, JsonRpcNotification,
+    JsonRpcResponse, UnknownSessionErrorData,
 };
 
 pub use cron::{

@@ -3,8 +3,9 @@ import {
 	type IncomingMessage,
 	type ServerResponse,
 } from "node:http";
-import { resolve } from "node:path";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import opencode from "@rivet-dev/agent-os-opencode";
 import { describe, expect, test } from "vitest";
@@ -21,9 +22,46 @@ import {
 	createVmWorkspace,
 	readVmText,
 } from "./helpers/opencode-helper.js";
-import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
+import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
+const REGISTRY_COMMAND_DIR_CANDIDATES = [
+	resolve(
+		import.meta.dirname,
+		"../../../registry/native/target/wasm32-wasip1/release/commands",
+	),
+	resolve(
+		import.meta.dirname,
+		"../../../../secure-exec/registry/native/target/wasm32-wasip1/release/commands",
+	),
+];
+
+function findShellCommandDir(): string | null {
+	for (const candidate of REGISTRY_COMMAND_DIR_CANDIDATES) {
+		if (
+			existsSync(candidate) &&
+			existsSync(resolve(candidate, "sh")) &&
+			existsSync(resolve(candidate, "bash"))
+		) {
+			return candidate;
+		}
+	}
+	return null;
+}
+
+const shellCommandDir = findShellCommandDir();
+const shellSoftware = shellCommandDir
+	? [
+			{
+				commandDir: shellCommandDir,
+				commands: [
+					{ name: "sh", permissionTier: "full" },
+					{ name: "bash", permissionTier: "full", aliasOf: "sh" },
+				],
+			},
+		]
+	: [];
+const testWithShell = shellCommandDir ? test : test.skip;
 
 type LlmockMessage = {
 	role?: string;
@@ -206,7 +244,14 @@ async function createOpenCodeVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		software: [opencode, ...REGISTRY_SOFTWARE],
+		software: [opencode, ...shellSoftware],
+	});
+}
+
+async function createOpenCodeOnlyVm(mockUrl: string): Promise<AgentOs> {
+	return AgentOs.create({
+		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
+		software: [opencode],
 	});
 }
 
@@ -512,6 +557,165 @@ describe("OpenCode session API integration", () => {
 		}
 	}, 120_000);
 
+	test("real OpenCode missing session/load degrades to transcript fallback", async () => {
+		const { mock, url } = await startLlmock([DEFAULT_TEXT_FIXTURE]);
+		const traceDir = mkdtempSync(join(tmpdir(), "agent-os-opencode-trace-"));
+		const tracePath = join(traceDir, "acp.jsonl");
+		const previousTracePath = process.env.AGENT_OS_ACP_TRACE_PATH;
+		process.env.AGENT_OS_ACP_TRACE_PATH = tracePath;
+
+		let vm: AgentOs | undefined;
+		let liveSessionId: string | undefined;
+		try {
+			vm = await createOpenCodeOnlyVm(url);
+			const homeDir = await createVmOpenCodeHome(vm, url);
+			const workspaceDir = await createVmWorkspace(vm);
+			const externalSessionId = "missing-opencode-session";
+			const transcriptPath = `/root/.agentos/threads/${externalSessionId}.md`;
+
+			const resumed = await vm.resumeSession(externalSessionId, "opencode", {
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+				},
+				transcriptPath,
+			});
+			liveSessionId = resumed.sessionId;
+
+			expect(resumed.mode).toBe("fallback");
+			expect(resumed.sessionId).not.toBe(externalSessionId);
+
+			const { response } = await vm.prompt(
+				liveSessionId,
+				"Continue from the missing native session.",
+			);
+			expect(response.error).toBeUndefined();
+
+			expect(
+				mock
+					.getRequests()
+					.some((request) =>
+						hasUserMessageContaining(
+							request,
+							"You are continuing an earlier session",
+						),
+					),
+			).toBe(true);
+			expect(
+				mock
+					.getRequests()
+					.some((request) => hasUserMessageContaining(request, transcriptPath)),
+			).toBe(true);
+
+			const traces = readFileSync(tracePath, "utf8")
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line) as Record<string, unknown>);
+			const loadTrace = traces.find((trace) => trace.method === "session/load");
+			expect(loadTrace?.response).toMatchObject({
+				error: {
+					code: -32603,
+					data: {
+						details: "NotFoundError",
+					},
+				},
+			});
+			expect(
+				(loadTrace?.response as { error?: { data?: { kind?: unknown } } }).error
+					?.data?.kind,
+			).toBeUndefined();
+		} finally {
+			if (liveSessionId) {
+				vm?.closeSession(liveSessionId);
+			}
+			if (vm) {
+				await vm.dispose();
+			}
+			await stopLlmock(mock);
+			if (previousTracePath === undefined) {
+				delete process.env.AGENT_OS_ACP_TRACE_PATH;
+			} else {
+				process.env.AGENT_OS_ACP_TRACE_PATH = previousTracePath;
+			}
+			rmSync(traceDir, { recursive: true, force: true });
+		}
+	}, 120_000);
+
+	test("real OpenCode session/load resumes an existing native session", async () => {
+		const firstPrompt = "Remember the native resume token: orchid-2718.";
+		const secondPrompt = "What native resume token did I give you earlier?";
+		const { mock, url } = await startLlmock([
+			createAnthropicFixture(
+				{
+					predicate: (req) => hasUserMessageContaining(req, firstPrompt),
+				},
+				{ content: "I will remember orchid-2718." },
+			),
+			createAnthropicFixture(
+				{
+					predicate: (req) => hasUserMessageContaining(req, secondPrompt),
+				},
+				{ content: "The token was orchid-2718." },
+			),
+		]);
+		const vm = await createOpenCodeOnlyVm(url);
+
+		let sessionId: string | undefined;
+		try {
+			const homeDir = await createVmOpenCodeHome(vm, url);
+			const workspaceDir = await createVmWorkspace(vm);
+			sessionId = (
+				await vm.createSession("opencode", {
+					cwd: workspaceDir,
+					env: {
+						HOME: homeDir,
+						ANTHROPIC_API_KEY: "mock-key",
+					},
+				})
+			).sessionId;
+
+			const firstResponse = await vm.prompt(sessionId, firstPrompt);
+			expect(firstResponse.response.error).toBeUndefined();
+			vm.closeSession(sessionId);
+
+			const resumed = await vm.resumeSession(sessionId, "opencode", {
+				cwd: workspaceDir,
+				env: {
+					HOME: homeDir,
+					ANTHROPIC_API_KEY: "mock-key",
+				},
+				transcriptPath: `/root/.agentos/threads/${sessionId}.md`,
+			});
+
+			expect(resumed).toMatchObject({
+				mode: "native",
+				sessionId,
+			});
+
+			const secondResponse = await vm.prompt(resumed.sessionId, secondPrompt);
+			expect(secondResponse.response.error).toBeUndefined();
+
+			const secondRequest = mock
+				.getRequests()
+				.find((request) => hasUserMessageContaining(request, secondPrompt));
+			expect(secondRequest).toBeDefined();
+			expect(hasUserMessageContaining(secondRequest, firstPrompt)).toBe(true);
+			expect(
+				hasUserMessageContaining(
+					secondRequest,
+					"You are continuing an earlier session",
+				),
+			).toBe(false);
+		} finally {
+			if (sessionId) {
+				vm.closeSession(sessionId);
+			}
+			await vm.dispose();
+			await stopLlmock(mock);
+		}
+	}, 120_000);
+
 	test("surfaces OpenCode cancelSession() honestly through the Agent OS session API", async () => {
 		const { mock, url } = await startLlmock([
 			{
@@ -573,103 +777,107 @@ describe("OpenCode session API integration", () => {
 		}
 	}, 120_000);
 
-	test("supports real OpenCode permission approval through the Agent OS session API", async () => {
-		const fixtures = [
-			createAnthropicFixture(
-				{
-					predicate: (req) => !hasAnyToolResult(req),
-				},
-				{
-					toolCalls: [
-						{
-							name: "bash",
-							arguments: JSON.stringify({
-								command: "printf 'perm-ok' > perm-output.txt",
-								description: "write perm-ok",
-							}),
-						},
-					],
-				},
-			),
-			createAnthropicFixture(
-				{
-					predicate: (req) => hasAnyToolResult(req),
-				},
-				{ content: "perm-output.txt was written after approval." },
-			),
-			createAnthropicFixture(
-				{
-					predicate: (req) =>
-						hasUserMessageContaining(
-							req,
-							"Generate a title for this conversation:",
-						),
-				},
-				{ content: "Permission approval check" },
-			),
-		];
-		const { mock, url } = await startLlmock(fixtures);
-		const vm = await createOpenCodeVm(url);
-
-		let sessionId: string | undefined;
-		const permissionIds: string[] = [];
-		const permissionParams: Record<string, unknown>[] = [];
-		const permissionResponses: Promise<unknown>[] = [];
-		try {
-			const homeDir = await createVmOpenCodeHome(vm, url, {
-				permission: { bash: "ask" },
-			});
-			const workspaceDir = await createVmWorkspace(vm);
-			sessionId = (
-				await vm.createSession("opencode", {
-					cwd: workspaceDir,
-					env: {
-						HOME: homeDir,
-						ANTHROPIC_API_KEY: "mock-key",
+	testWithShell(
+		"supports real OpenCode permission approval through the Agent OS session API",
+		async () => {
+			const fixtures = [
+				createAnthropicFixture(
+					{
+						predicate: (req) => !hasAnyToolResult(req),
 					},
-				})
-			).sessionId;
+					{
+						toolCalls: [
+							{
+								name: "bash",
+								arguments: JSON.stringify({
+									command: "echo perm-ok > perm-output.txt",
+									description: "write perm-ok",
+								}),
+							},
+						],
+					},
+				),
+				createAnthropicFixture(
+					{
+						predicate: (req) => hasAnyToolResult(req),
+					},
+					{ content: "perm-output.txt was written after approval." },
+				),
+				createAnthropicFixture(
+					{
+						predicate: (req) =>
+							hasUserMessageContaining(
+								req,
+								"Generate a title for this conversation:",
+							),
+					},
+					{ content: "Permission approval check" },
+				),
+			];
+			const { mock, url } = await startLlmock(fixtures);
+			const vm = await createOpenCodeVm(url);
 
-			vm.onPermissionRequest(sessionId, (request) => {
-				permissionIds.push(request.permissionId);
-				permissionParams.push(request.params);
-				permissionResponses.push(
-					vm.respondPermission(sessionId!, request.permissionId, "once"),
+			let sessionId: string | undefined;
+			const permissionIds: string[] = [];
+			const permissionParams: Record<string, unknown>[] = [];
+			const permissionResponses: Promise<unknown>[] = [];
+			try {
+				const homeDir = await createVmOpenCodeHome(vm, url, {
+					permission: { bash: "ask" },
+				});
+				const workspaceDir = await createVmWorkspace(vm);
+				sessionId = (
+					await vm.createSession("opencode", {
+						cwd: workspaceDir,
+						env: {
+							HOME: homeDir,
+							ANTHROPIC_API_KEY: "mock-key",
+						},
+					})
+				).sessionId;
+
+				vm.onPermissionRequest(sessionId, (request) => {
+					permissionIds.push(request.permissionId);
+					permissionParams.push(request.params);
+					permissionResponses.push(
+						vm.respondPermission(sessionId!, request.permissionId, "once"),
+					);
+				});
+
+				const { response } = await vm.prompt(
+					sessionId,
+					"Use bash to write perm-ok into perm-output.txt.",
 				);
-			});
-
-			const { response } = await vm.prompt(
-				sessionId,
-				"Use bash to write perm-ok into perm-output.txt.",
-			);
-			expect(response.error).toBeUndefined();
-			expect(permissionIds).toHaveLength(1);
-			expect(
-				(permissionParams[0]?._acpMethod as string | undefined) ?? "",
-			).toBe("session/request_permission");
-			expect(
-				(
-					permissionParams[0]?.options as
-						| Array<{ optionId?: string }>
-						| undefined
-				)?.map((option) => option.optionId),
-			).toEqual(["once", "always", "reject"]);
-			await expect(Promise.all(permissionResponses)).resolves.toEqual([
-				expect.objectContaining({
-					result: expect.objectContaining({ via: "sidecar-request" }),
-				}),
-			]);
-			expect(await readVmText(vm, `${workspaceDir}/perm-output.txt`)).toBe(
-				"perm-ok",
-			);
-		} finally {
-			if (sessionId) {
-				vm.closeSession(sessionId);
+				expect(response.error).toBeUndefined();
+				expect(permissionIds).toHaveLength(1);
+				expect(
+					(permissionParams[0]?._acpMethod as string | undefined) ?? "",
+				).toBe("session/request_permission");
+				expect(
+					(
+						permissionParams[0]?.options as
+							| Array<{ optionId?: string }>
+							| undefined
+					)?.map((option) => option.optionId),
+				).toEqual(["once", "always", "reject"]);
+				await expect(Promise.all(permissionResponses)).resolves.toEqual([
+					expect.objectContaining({
+						result: expect.objectContaining({ via: "sidecar-request" }),
+					}),
+				]);
+				expect(await readVmText(vm, `${workspaceDir}/perm-output.txt`)).toBe(
+					"perm-ok\n",
+				);
+			} finally {
+				if (sessionId) {
+					vm.closeSession(sessionId);
+				}
+				await vm.dispose();
+				await stopLlmock(mock);
 			}
-			await vm.dispose();
-			await stopLlmock(mock);
-		}
-	}, 120_000);
+		},
+		120_000,
+	);
 
 	test("supports real OpenCode permission rejection through the Agent OS session API", async () => {
 		const toolCall = {

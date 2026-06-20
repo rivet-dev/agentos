@@ -457,7 +457,12 @@ fn acp_close_session_denies_cross_connection_session_id() {
     );
     let attacker_session = open_session(&mut sidecar, &attacker_conn);
     let attacker_cwd = temp_dir("agent-os-acp-cross-conn-close-attacker-cwd");
-    let attacker_vm = create_vm(&mut sidecar, &attacker_conn, &attacker_session, &attacker_cwd);
+    let attacker_vm = create_vm(
+        &mut sidecar,
+        &attacker_conn,
+        &attacker_session,
+        &attacker_cwd,
+    );
 
     let close_result = dispatch_acp(
         &mut sidecar,
@@ -581,7 +586,12 @@ fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
     );
     let attacker_session = open_session(&mut sidecar, &attacker_conn);
     let attacker_cwd = temp_dir("agent-os-acp-cross-conn-drive-attacker-cwd");
-    let attacker_vm = create_vm(&mut sidecar, &attacker_conn, &attacker_session, &attacker_cwd);
+    let attacker_vm = create_vm(
+        &mut sidecar,
+        &attacker_conn,
+        &attacker_session,
+        &attacker_cwd,
+    );
 
     // Attacker tries to DRIVE the victim's adapter by its session id. The mock
     // adapter expects `session/prompt` to be RPC id 3 (the victim's first drive);

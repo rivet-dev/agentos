@@ -3,6 +3,7 @@ import {
 	InvalidScheduleError,
 	PastScheduleError,
 	isAcpTimeoutErrorData,
+	isUnknownSessionErrorData,
 	nodeModulesMount,
 	type AcpTimeoutErrorData,
 	type AgentOsLimits,
@@ -17,8 +18,11 @@ import {
 	type OpenShellOptions,
 	type PromptCapabilities,
 	type PromptResult,
+	type ResumeSessionOptions,
+	type ResumeSessionResult,
 	type StdioChannel,
 	type TimingMitigation,
+	type UnknownSessionErrorData,
 } from "../src/index.js";
 
 describe("root public API exports", () => {
@@ -36,8 +40,11 @@ describe("root public API exports", () => {
 		void (null as OpenShellOptions | null);
 		void (null as PromptCapabilities | null);
 		void (null as PromptResult | null);
+		void (null as ResumeSessionOptions | null);
+		void (null as ResumeSessionResult | null);
 		void (null as StdioChannel | null);
 		void (null as TimingMitigation | null);
+		void (null as UnknownSessionErrorData | null);
 
 		expect(true).toBe(true);
 	});
@@ -68,6 +75,22 @@ describe("root public API exports", () => {
 
 		expect(isAcpTimeoutErrorData(timeout)).toBe(true);
 		expect(isAcpTimeoutErrorData({ kind: "other" })).toBe(false);
+	});
+
+	test("re-exports unknown-session discriminator helper from the root entrypoint", () => {
+		const unknownSession: UnknownSessionErrorData = {
+			kind: "unknown_session",
+			sessionId: "sess-123",
+		};
+
+		expect(isUnknownSessionErrorData(unknownSession)).toBe(true);
+		// `sessionId` is optional — the discriminator is `kind` alone, matching the
+		// sidecar's normalized `{kind}`-only shape.
+		expect(isUnknownSessionErrorData({ kind: "unknown_session" })).toBe(true);
+		expect(
+			isUnknownSessionErrorData({ kind: "unknown_session", sessionId: 5 }),
+		).toBe(false);
+		expect(isUnknownSessionErrorData({ kind: "other" })).toBe(false);
 	});
 
 	test("re-exports cron scheduling errors from the root entrypoint", () => {

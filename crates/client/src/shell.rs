@@ -367,6 +367,155 @@ impl AgentOs {
         Ok(ShellHandle { shell_id })
     }
 
+    /// Open a PTY-backed terminal for the ACP `terminal/create` host request. Like [`open_shell`] it
+    /// registers a `shell-N` entry (so `write_shell`/`resize_shell`/`close_shell` address it), but the
+    /// background fan-out also (a) appends every stdout/stderr chunk to the caller's output buffer via
+    /// `on_output`, and (b) records the process exit code into `exit_tx` so `terminal/output` and
+    /// `terminal/wait_for_exit` can observe it. Mirrors the TS `_handleAcpCreateTerminal`, which builds
+    /// the terminal on top of `openShell` and tracks `output` / `exitCode` / `waitPromise`.
+    pub(crate) fn acp_open_terminal(
+        &self,
+        options: OpenShellOptions,
+        exit_tx: tokio::sync::watch::Sender<Option<i32>>,
+        on_output: impl Fn(&[u8]) + Send + Sync + 'static,
+    ) -> Result<ShellHandle> {
+        let inner = self.inner();
+        let counter = inner.shell_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        let shell_id = format!("shell-{counter}");
+        let process_id = format!("shell-{}", Uuid::new_v4());
+
+        let (data_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
+        let (stderr_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
+        let (spawned_tx, _) = tokio::sync::watch::channel(false);
+
+        let entry = ShellEntry {
+            pid: 0,
+            data_tx: data_tx.clone(),
+            stderr_tx: stderr_tx.clone(),
+            process_id: process_id.clone(),
+            spawned_tx: spawned_tx.clone(),
+        };
+        let _ = inner.shells.insert(shell_id.clone(), entry);
+
+        let command = options
+            .command
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SHELL_COMMAND.to_string());
+        let execute = wire::ExecuteRequest {
+            process_id: process_id.clone(),
+            command: Some(command),
+            runtime: None,
+            entrypoint: None,
+            args: options.args.clone(),
+            env: options.env.clone().into_iter().collect(),
+            cwd: options.cwd.clone(),
+            wasm_permission_tier: None,
+        };
+
+        let agent = self.clone();
+        let ownership = self.vm_ownership();
+        let route_process_id = process_id.clone();
+        let exit_shell_id = shell_id.clone();
+        let exit_key = counter;
+        let on_output = std::sync::Arc::new(on_output);
+        let handle = tokio::spawn(async move {
+            let mut events = agent.transport().subscribe_wire_events();
+
+            let response = match agent
+                .transport()
+                .request_wire(
+                    ownership.clone(),
+                    wire::RequestPayload::ExecuteRequest(execute),
+                )
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    tracing::warn!(?error, shell_id = %exit_shell_id, "acp_open_terminal spawn failed");
+                    agent.inner().shells.remove(&exit_shell_id);
+                    agent.inner().pending_shell_exits.remove(&exit_key);
+                    let _ = exit_tx.send(Some(1));
+                    return;
+                }
+            };
+
+            if let wire::ResponsePayload::ProcessStartedResponse(wire::ProcessStartedResponse {
+                pid: Some(pid),
+                ..
+            }) = response
+            {
+                agent
+                    .inner()
+                    .shells
+                    .update(&exit_shell_id, |_, existing| existing.pid = pid);
+            }
+            let _ = spawned_tx.send(true);
+
+            let mut exit_code: i32 = 0;
+            loop {
+                let (_scope, payload) = match events.recv().await {
+                    Ok(value) => value,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
+                match payload {
+                    EventPayload::ProcessOutputEvent(output) => {
+                        if output.process_id != route_process_id {
+                            continue;
+                        }
+                        // Both stdout and stderr are appended to the same terminal output buffer
+                        // (the agent reads a single combined stream), matching the TS handle.
+                        on_output(&output.chunk);
+                    }
+                    EventPayload::ProcessExitedEvent(exited) => {
+                        if exited.process_id == route_process_id {
+                            exit_code = exited.exit_code;
+                            break;
+                        }
+                    }
+                    EventPayload::VmLifecycleEvent(_)
+                    | EventPayload::StructuredEvent(_)
+                    | EventPayload::ExtEnvelope(_) => {}
+                }
+            }
+
+            agent.inner().pending_shell_exits.remove(&exit_key);
+            agent.inner().shells.remove_if(&exit_shell_id, |existing| {
+                existing.process_id == route_process_id
+            });
+            let _ = exit_tx.send(Some(exit_code));
+        });
+
+        // The fan-out/exit task is tracked in `pending_shell_exits` (drained by `dispose`), exactly
+        // like `open_shell`. It ends naturally when the process exits or is killed via
+        // `close_shell` / `acp_kill_terminal_shell`.
+        let _ = inner.pending_shell_exits.insert(counter, handle);
+        Ok(ShellHandle { shell_id })
+    }
+
+    /// Kill the backing process of an ACP terminal shell (SIGTERM), without removing the shell entry
+    /// or the host-terminal registry entry. Used by `terminal/kill`, which (unlike `close_shell` /
+    /// `terminal/release`) leaves the terminal addressable for output/exit queries afterward.
+    pub(crate) fn acp_kill_terminal_shell(
+        &self,
+        shell_id: &str,
+    ) -> std::result::Result<(), ClientError> {
+        let (process_id, spawned_rx) = self.shell_wire_handle(shell_id)?;
+        let agent = self.clone();
+        let ownership = self.vm_ownership();
+        tokio::spawn(async move {
+            wait_for_spawn(spawned_rx).await;
+            let payload = wire::RequestPayload::KillProcessRequest(wire::KillProcessRequest {
+                process_id,
+                signal: String::from("SIGTERM"),
+            });
+            if let Err(error) = agent.transport().request_wire(ownership, payload).await {
+                tracing::warn!(?error, "acp_kill_terminal_shell failed");
+            }
+        });
+        Ok(())
+    }
+
     /// Connect a terminal bound to host stdio. Returns a PID. NOT tracked in the shells map; cannot
     /// be addressed by other shell methods. Killed during dispose via the ACP-terminal registry.
     ///

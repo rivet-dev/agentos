@@ -104,8 +104,18 @@ export const siteConfig = {
 				{ slug: "docs/deployment", attrs: { "data-icon": "cloud" } },
 				{ slug: "docs/limitations", attrs: { "data-icon": "shield" } },
 				{
-					label: "Internals",
+					label: "Advanced",
 					items: [
+						{
+							label: "Architecture",
+							items: [
+								{
+									slug: "docs/architecture/sessions-persistence",
+									label: "Sessions & Persistence",
+									attrs: { "data-icon": "hardDrive" },
+								},
+							],
+						},
 						{ slug: "docs/security-model", label: "Security Model", attrs: { "data-icon": "lock" } },
 						{ slug: "docs/persistence", label: "Persistence & Sleep", attrs: { "data-icon": "hardDrive" } },
 						{ slug: "docs/system-prompt", label: "System Prompt", attrs: { "data-icon": "fileCode" } },

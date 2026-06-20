@@ -18,7 +18,7 @@
 		"test": "pnpm build && node --test tests/*.test.mjs"
 	},
 	"dependencies": {
-		"@agent-os-pkgs/codex": "catalog:"
+		"@agent-os-pkgs/codex": "link:../../../../secure-exec/registry/software/codex"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.2",
