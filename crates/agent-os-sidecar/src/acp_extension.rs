@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashMap};
-use std::env;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -514,8 +513,8 @@ impl AcpExtension {
                 pending_preamble,
             )
         };
-        if let Some(preamble) = pending_preamble {
-            prepend_prompt_preamble(&mut outbound_params, &preamble);
+        if let Some(preamble) = pending_preamble.as_deref() {
+            prepend_prompt_preamble(&mut outbound_params, preamble);
         }
         let method = request.method.clone();
         let timeout = request_timeout(&method);
@@ -537,7 +536,16 @@ impl AcpExtension {
         .await
         {
             Ok(exchange) => exchange,
-            Err(error) => return AcpHandlerOutput::response(Err(error)),
+            Err(error) => {
+                if let Some(preamble) = pending_preamble {
+                    if let Some(session) = self.sessions.lock().await.get_mut(&request.session_id) {
+                        if session.pending_preamble.is_none() {
+                            session.pending_preamble = Some(preamble);
+                        }
+                    }
+                }
+                return AcpHandlerOutput::response(Err(error));
+            }
         };
 
         if let Some(session) = self.sessions.lock().await.get_mut(&request.session_id) {
@@ -1923,7 +1931,11 @@ fn native_resume_method(agent_capabilities: Option<&Value>) -> Option<&'static s
 }
 
 fn trace_acp_response(method: &str, response: &Value) {
-    let Ok(path) = env::var(ACP_TRACE_PATH_ENV) else {
+    // Test-only diagnostics for compatibility regressions: the OpenCode resume
+    // test captures the raw native-resume response before normalization so we
+    // notice upstream error-shape changes. The env var is sidecar-process
+    // trusted input, not guest-controlled runtime surface.
+    let Ok(path) = std::env::var(ACP_TRACE_PATH_ENV) else {
         return;
     };
     if path.is_empty() {
