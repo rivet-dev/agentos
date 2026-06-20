@@ -558,6 +558,70 @@ export class NativeSidecarKernelProxy {
 		return runAndCapture(proc);
 	}
 
+	async execArgv(
+		command: string,
+		args: readonly string[] = [],
+		options?: KernelExecOptions,
+	): Promise<KernelExecResult> {
+		const stdoutChunks: Uint8Array[] = [];
+		const stderrChunks: Uint8Array[] = [];
+		const effectiveCwd = options?.cwd ?? this.defaultExecCwd ?? this.cwd;
+		const runAndCapture = async (
+			proc: ManagedProcess,
+		): Promise<KernelExecResult> => {
+			if (options?.stdin !== undefined) {
+				proc.writeStdin(options.stdin);
+			}
+			proc.closeStdin();
+
+			const waitPromise = proc.wait();
+			const exitCode =
+				typeof options?.timeout === "number"
+					? await new Promise<number>((resolve) => {
+							const timer = setTimeout(() => {
+								proc.kill(9);
+								void proc.wait().then(resolve);
+							}, options.timeout);
+							void waitPromise.then((code) => {
+								clearTimeout(timer);
+								resolve(code);
+							});
+						})
+					: await waitPromise;
+
+			await drainTrailingProcessOutputTurn();
+
+			return {
+				exitCode,
+				stdout: Buffer.concat(
+					stdoutChunks.map((chunk) => Buffer.from(chunk)),
+				).toString("utf8"),
+				stderr: Buffer.concat(
+					stderrChunks.map((chunk) => Buffer.from(chunk)),
+				).toString("utf8"),
+			};
+		};
+
+		if (this.commands.get(command) === "wasmvm") {
+			this.onWasmCommandResolved?.(command);
+		}
+
+		return runAndCapture(
+			this.spawn(command, [...args], {
+				...options,
+				cwd: effectiveCwd,
+				onStdout: (chunk) => {
+					stdoutChunks.push(chunk);
+					options?.onStdout?.(chunk);
+				},
+				onStderr: (chunk) => {
+					stderrChunks.push(chunk);
+					options?.onStderr?.(chunk);
+				},
+			}),
+		);
+	}
+
 	spawn(
 		command: string,
 		args: string[],

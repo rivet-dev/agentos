@@ -8,6 +8,7 @@ export type HarnessStdioEvent = {
 
 export type HarnessCreateRuntimeOptions = {
 	filesystem?: "memory" | "opfs";
+	opfsNamespace?: string;
 	timingMitigation?: TimingMitigation;
 	payloadLimits?: {
 		base64TransferBytes?: number;
@@ -71,6 +72,8 @@ type SecureExecBrowserHarness = {
 	): Promise<HarnessExecResponse>;
 	disposeRuntime(runtimeId: string): Promise<void>;
 	disposeAllRuntimes(): Promise<void>;
+	releaseOpfsNamespace(namespace: string): Promise<void>;
+	listOpfsNamespaces(): Promise<string[]>;
 	terminatePendingExec(
 		runtimeId: string,
 		code: string,
@@ -146,6 +149,29 @@ export async function disposeAllRuntimes(page: Page): Promise<void> {
 			return;
 		}
 		await harness.disposeAllRuntimes();
+	});
+}
+
+export async function releaseOpfsNamespace(
+	page: Page,
+	namespace: string,
+): Promise<void> {
+	await page.evaluate(async (namespaceArg) => {
+		const harness = window.__secureExecBrowserHarness;
+		if (!harness) {
+			throw new Error("Browser harness is unavailable on window");
+		}
+		await harness.releaseOpfsNamespace(namespaceArg);
+	}, namespace);
+}
+
+export async function listOpfsNamespaces(page: Page): Promise<string[]> {
+	return page.evaluate(async () => {
+		const harness = window.__secureExecBrowserHarness;
+		if (!harness) {
+			throw new Error("Browser harness is unavailable on window");
+		}
+		return harness.listOpfsNamespaces();
 	});
 }
 

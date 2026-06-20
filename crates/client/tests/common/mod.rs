@@ -144,11 +144,19 @@ fn wasm_command_mounts() -> Vec<MountConfig> {
 pub fn coreutils_wasm_dir() -> Option<PathBuf> {
     let pnpm = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../node_modules/.pnpm");
     for entry in std::fs::read_dir(&pnpm).ok()?.flatten() {
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with("@rivet-dev+agent-os-coreutils@")
-        {
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+
+        if file_name.starts_with("@agent-os-pkgs+coreutils@") {
+            let wasm = entry
+                .path()
+                .join("node_modules/@agent-os-pkgs/coreutils/wasm");
+            if wasm.is_dir() {
+                return std::fs::canonicalize(&wasm).ok();
+            }
+        }
+
+        if file_name.starts_with("@rivet-dev+agent-os-coreutils@") {
             let wasm = entry
                 .path()
                 .join("node_modules/@secure-exec/coreutils/wasm");

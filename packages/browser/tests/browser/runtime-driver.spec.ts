@@ -3,9 +3,12 @@ import {
 	createRuntime,
 	dispatchExtensionRequest,
 	disposeAllRuntimes,
+	disposeRuntime,
 	execRuntime,
 	getLastStdioMessage,
+	listOpfsNamespaces,
 	openHarnessPage,
+	releaseOpfsNamespace,
 	terminatePendingExec,
 } from "./harness.js";
 
@@ -406,4 +409,58 @@ test("two OPFS runtimes do not share storage across tenants", async ({
 	).toBeUndefined();
 	expect(outcome.error, "expected ENOENT for isolated tenant").toBeTruthy();
 	expect(outcome.error).toContain("ENOENT");
+});
+
+test("releaseOpfsNamespace removes a persisted runtime namespace", async ({
+	page,
+}) => {
+	const namespace = `release-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	const filePath = "/release-marker.txt";
+	const runtime = await createRuntime(page, {
+		filesystem: "opfs",
+		opfsNamespace: namespace,
+	});
+
+	const writeResult = await execRuntime(
+		page,
+		runtime.runtimeId,
+		`
+			const fs = require("fs");
+			fs.writeFileSync(${JSON.stringify(filePath)}, "released");
+			console.log("wrote");
+		`,
+	);
+	expect(writeResult.result.code).toBe(0);
+	expect(await listOpfsNamespaces(page)).toContain(namespace);
+
+	await disposeRuntime(page, runtime.runtimeId);
+	await releaseOpfsNamespace(page, namespace);
+	expect(await listOpfsNamespaces(page)).not.toContain(namespace);
+
+	const freshRuntime = await createRuntime(page, {
+		filesystem: "opfs",
+		opfsNamespace: namespace,
+	});
+	const readResult = await execRuntime(
+		page,
+		freshRuntime.runtimeId,
+		`
+			const fs = require("fs");
+			let outcome;
+			try {
+				outcome = { read: fs.readFileSync(${JSON.stringify(filePath)}, "utf8") };
+			} catch (e) {
+				outcome = { code: e && e.code, message: (e && e.message) || String(e) };
+			}
+			console.log(JSON.stringify(outcome));
+		`,
+	);
+	expect(readResult.result.code).toBe(0);
+	const outcome = JSON.parse(getLastStdioMessage(readResult, "stdout")) as {
+		read?: string;
+		code?: string;
+		message?: string;
+	};
+	expect(outcome.read).toBeUndefined();
+	expect(outcome.code ?? outcome.message ?? "").toContain("ENOENT");
 });

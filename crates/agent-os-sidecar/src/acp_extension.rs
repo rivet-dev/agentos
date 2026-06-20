@@ -305,35 +305,33 @@ impl AcpExtension {
                 args.push(String::from("--append-developer-instructions"));
                 args.push(prompt);
             }
-            "opencode" => {
-                if !env.contains_key("OPENCODE_CONTEXTPATHS") {
-                    ctx.guest_filesystem_call_wire(GuestFilesystemCallRequest {
-                        operation: GuestFilesystemOperation::WriteFile,
-                        path: String::from(OPENCODE_SYSTEM_PROMPT_PATH),
-                        destination_path: None,
-                        target: None,
-                        content: Some(prompt),
-                        encoding: None,
-                        recursive: false,
-                        mode: None,
-                        uid: None,
-                        gid: None,
-                        atime_ms: None,
-                        mtime_ms: None,
-                        len: None,
-                        offset: None,
-                    })
-                    .await?;
-                    let mut context_paths = OPENCODE_DEFAULT_CONTEXT_PATHS
-                        .iter()
-                        .map(|path| path.to_string())
-                        .collect::<Vec<_>>();
-                    context_paths.push(OPENCODE_SYSTEM_PROMPT_PATH.to_string());
-                    env.insert(
-                        String::from("OPENCODE_CONTEXTPATHS"),
-                        serde_json::to_string(&context_paths).expect("serialize context paths"),
-                    );
-                }
+            "opencode" if !env.contains_key("OPENCODE_CONTEXTPATHS") => {
+                ctx.guest_filesystem_call_wire(GuestFilesystemCallRequest {
+                    operation: GuestFilesystemOperation::WriteFile,
+                    path: String::from(OPENCODE_SYSTEM_PROMPT_PATH),
+                    destination_path: None,
+                    target: None,
+                    content: Some(prompt),
+                    encoding: None,
+                    recursive: false,
+                    mode: None,
+                    uid: None,
+                    gid: None,
+                    atime_ms: None,
+                    mtime_ms: None,
+                    len: None,
+                    offset: None,
+                })
+                .await?;
+                let mut context_paths = OPENCODE_DEFAULT_CONTEXT_PATHS
+                    .iter()
+                    .map(|path| path.to_string())
+                    .collect::<Vec<_>>();
+                context_paths.push(OPENCODE_SYSTEM_PROMPT_PATH.to_string());
+                env.insert(
+                    String::from("OPENCODE_CONTEXTPATHS"),
+                    serde_json::to_string(&context_paths).expect("serialize context paths"),
+                );
             }
             _ => {}
         }

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentOs, CreateSessionOptions } from "../agent-os.js";
-import type { AgentType } from "../agents.js";
+import type { AgentOs } from "../agent-os.js";
 import {
 	resolveSchedule,
 	validateScheduleForRegistration,
@@ -188,10 +187,7 @@ export class CronManager {
 				break;
 			}
 			case "exec": {
-				const cmd = action.args?.length
-					? `${action.command} ${action.args.join(" ")}`
-					: action.command;
-				await this.vm.exec(cmd);
+				await this.vm.execArgv(action.command, action.args ?? []);
 				break;
 			}
 			case "callback": {

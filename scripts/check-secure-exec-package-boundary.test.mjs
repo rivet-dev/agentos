@@ -164,6 +164,16 @@ test("ignores compatibility wrappers that intentionally depend on Agent OS", () 
 	});
 });
 
+test("ignores the temporary secure-exec sibling checkout", () => {
+	withFixture((root) => {
+		writePackageAt(root, join(root, "_secure-exec-sibling", "packages", "core"), {
+			name: "@secure-exec/core",
+		});
+
+		assert.deepEqual(checkSecureExecPackageBoundary({ root }), []);
+	});
+});
+
 test("does not require private secure-exec examples to export src modules", () => {
 	withFixture((root) => {
 		writePackage(

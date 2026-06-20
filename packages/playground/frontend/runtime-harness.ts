@@ -4,7 +4,9 @@ import {
 	createBrowserRuntimeDriverFactory,
 	type ExecOptions,
 	type ExecResult,
+	listOpfsNamespaces,
 	type NodeRuntimeDriver,
+	releaseOpfsNamespace,
 	type TimingMitigation,
 } from "@rivet-dev/agent-os-browser";
 
@@ -15,6 +17,7 @@ type HarnessStdioEvent = {
 
 type HarnessCreateRuntimeOptions = {
 	filesystem?: "memory" | "opfs";
+	opfsNamespace?: string;
 	timingMitigation?: TimingMitigation;
 	payloadLimits?: {
 		base64TransferBytes?: number;
@@ -82,6 +85,8 @@ interface SecureExecBrowserHarness {
 	): Promise<HarnessExecResponse>;
 	disposeRuntime(runtimeId: string): Promise<void>;
 	disposeAllRuntimes(): Promise<void>;
+	releaseOpfsNamespace(namespace: string): Promise<void>;
+	listOpfsNamespaces(): Promise<string[]>;
 	terminatePendingExec(
 		runtimeId: string,
 		code: string,
@@ -156,6 +161,7 @@ const harness: SecureExecBrowserHarness = {
 	async createRuntime(options) {
 		const system = await createBrowserDriver({
 			filesystem: options?.filesystem ?? "memory",
+			opfsNamespace: options?.opfsNamespace,
 			permissions: allowAll,
 			useDefaultNetwork: options?.useDefaultNetwork,
 		});
@@ -221,6 +227,14 @@ const harness: SecureExecBrowserHarness = {
 				entry.runtime.dispose();
 			}
 		}
+	},
+
+	async releaseOpfsNamespace(namespace) {
+		await releaseOpfsNamespace(namespace);
+	},
+
+	async listOpfsNamespaces() {
+		return listOpfsNamespaces();
 	},
 
 	async terminatePendingExec(runtimeId, code, delayMs = 20) {

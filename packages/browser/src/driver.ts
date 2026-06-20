@@ -124,6 +124,49 @@ async function getRootHandle(
 	return namespaceContainer.getDirectoryHandle(namespace, { create: true });
 }
 
+async function getNamespaceContainerHandle(
+	create = false,
+): Promise<FileSystemDirectoryHandle> {
+	const originRoot = await getOriginRootHandle();
+	return originRoot.getDirectoryHandle(OPFS_RUNTIME_NAMESPACE_ROOT, {
+		create,
+	});
+}
+
+function isNotFoundError(error: unknown): boolean {
+	return (error as { name?: string } | undefined)?.name === "NotFoundError";
+}
+
+export async function releaseOpfsNamespace(namespace: string): Promise<void> {
+	try {
+		const namespaceContainer = await getNamespaceContainerHandle(false);
+		await namespaceContainer.removeEntry(namespace, { recursive: true });
+	} catch (error) {
+		if (isNotFoundError(error)) {
+			return;
+		}
+		throw error;
+	}
+}
+
+export async function listOpfsNamespaces(): Promise<string[]> {
+	try {
+		const namespaceContainer = await getNamespaceContainerHandle(false);
+		const namespaces: string[] = [];
+		for await (const [name, handle] of namespaceContainer.entries()) {
+			if (handle.kind === "directory") {
+				namespaces.push(name);
+			}
+		}
+		return namespaces.sort();
+	} catch (error) {
+		if (isNotFoundError(error)) {
+			return [];
+		}
+		throw error;
+	}
+}
+
 /**
  * VFS backed by the Origin Private File System (OPFS) API. Falls back to
  * InMemoryFileSystem when OPFS is unavailable. Rename is not supported
@@ -397,7 +440,9 @@ export interface BrowserDriverOptions {
 	/**
 	 * Per-runtime/tenant OPFS namespace. Defaults to a freshly generated id so
 	 * co-resident runtimes never share storage (F-015). Pass a stable id to
-	 * persist a runtime's data across driver instances.
+	 * persist a runtime's data across driver instances. Generated default
+	 * namespaces are not garbage-collected automatically; long-lived embedders
+	 * should either pass a stable namespace or call `releaseOpfsNamespace`.
 	 */
 	opfsNamespace?: string;
 }
@@ -425,8 +470,7 @@ export function createBrowserNetworkAdapter(): NetworkAdapter {
 	// adapter keeps working after worker.ts shadows the guest-visible `fetch`
 	// global (F-012). Fall back to the current global only if none was captured.
 	const fetchImpl: typeof fetch =
-		platformFetch ??
-		((...args: Parameters<typeof fetch>) => fetch(...args));
+		platformFetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
 	return {
 		async fetch(url, options) {
 			const response = await fetchImpl(url, {

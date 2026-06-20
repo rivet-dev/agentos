@@ -6,6 +6,8 @@ export {
 	createBrowserDriver,
 	createBrowserNetworkAdapter,
 	createOpfsFileSystem,
+	listOpfsNamespaces,
+	releaseOpfsNamespace,
 } from "./driver.js";
 export { InMemoryFileSystem } from "./os-filesystem.js";
 export type {

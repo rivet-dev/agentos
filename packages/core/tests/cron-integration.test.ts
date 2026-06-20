@@ -40,9 +40,7 @@ class MockScheduleDriver implements ScheduleDriver {
 // WASM commands directory (needed for exec action tests)
 // ---------------------------------------------------------------------------
 
-import {
-	REGISTRY_SOFTWARE,
-} from "./helpers/registry-commands.js";
+import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
 
 describe("cron integration via AgentOs API", () => {
 	let driver: MockScheduleDriver;
@@ -61,38 +59,65 @@ describe("cron integration via AgentOs API", () => {
 	});
 
 	it("scheduleCron with exec action writes file inside VM on schedule", async () => {
-			vm.scheduleCron({
-				id: "exec-job",
-				schedule: "* * * * *",
-				action: {
-					type: "exec",
-					command: "echo cron-wrote-this > /tmp/cron-marker",
-				},
-			});
+		vm.scheduleCron({
+			id: "exec-job",
+			schedule: "* * * * *",
+			action: {
+				type: "exec",
+				command: "sh",
+				args: ["-c", "echo cron-wrote-this > /tmp/cron-marker"],
+			},
+		});
 
-			await driver.fire("exec-job");
+		await driver.fire("exec-job");
 
-			const data = await vm.readFile("/tmp/cron-marker");
-			const text = new TextDecoder().decode(data);
-			expect(text).toContain("cron-wrote-this");
+		const data = await vm.readFile("/tmp/cron-marker");
+		const text = new TextDecoder().decode(data);
+		expect(text).toContain("cron-wrote-this");
 	});
 
 	it("scheduleCron with exec action preserves shell cwd semantics", async () => {
-			vm.scheduleCron({
-				id: "exec-cwd-job",
-				schedule: "* * * * *",
-				action: {
-					type: "exec",
-					command:
-						"mkdir -p /tmp/cron-cwd && cd /tmp/cron-cwd && printf from-cron > marker.txt",
-				},
-			});
+		vm.scheduleCron({
+			id: "exec-cwd-job",
+			schedule: "* * * * *",
+			action: {
+				type: "exec",
+				command: "sh",
+				args: [
+					"-c",
+					"mkdir -p /tmp/cron-cwd && cd /tmp/cron-cwd && printf from-cron > marker.txt",
+				],
+			},
+		});
 
-			await driver.fire("exec-cwd-job");
+		await driver.fire("exec-cwd-job");
 
-			const data = await vm.readFile("/tmp/cron-cwd/marker.txt");
-			const text = new TextDecoder().decode(data);
-			expect(text).toBe("from-cron");
+		const data = await vm.readFile("/tmp/cron-cwd/marker.txt");
+		const text = new TextDecoder().decode(data);
+		expect(text).toBe("from-cron");
+	});
+
+	it("scheduleCron with exec action passes argv without shell evaluation", async () => {
+		vm.scheduleCron({
+			id: "exec-argv-job",
+			schedule: "* * * * *",
+			action: {
+				type: "exec",
+				command: "node",
+				args: [
+					"-e",
+					"require('fs').writeFileSync('/tmp/cron-argv.json', JSON.stringify(process.argv.slice(1)))",
+					"$(id)",
+					"a b",
+				],
+			},
+		});
+
+		await driver.fire("exec-argv-job");
+
+		const data = await vm.readFile("/tmp/cron-argv.json");
+		const argv = JSON.parse(new TextDecoder().decode(data)) as string[];
+		expect(argv).toEqual(["$(id)", "a b"]);
 	});
 
 	it("scheduleCron with callback action invokes function", async () => {

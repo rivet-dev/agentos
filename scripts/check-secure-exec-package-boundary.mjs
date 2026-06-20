@@ -35,6 +35,7 @@ const ignoredDirectories = new Set([
 	"coverage",
 	".turbo",
 	".vitest",
+	"_secure-exec-sibling",
 ]);
 
 const importSpecifierPatterns = [

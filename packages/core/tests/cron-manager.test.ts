@@ -48,6 +48,9 @@ class MockScheduleDriver implements ScheduleDriver {
 function createMockVm() {
 	return {
 		exec: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+		execArgv: vi
+			.fn()
+			.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
 		createSession: vi.fn().mockResolvedValue({ sessionId: "mock-session-1" }),
 		prompt: vi.fn().mockResolvedValue(undefined),
 		closeSession: vi.fn(),
@@ -215,8 +218,23 @@ describe("CronManager", () => {
 
 		await driver.fire("j4");
 
-		expect(vm.exec).toHaveBeenCalledTimes(1);
-		expect(vm.exec).toHaveBeenCalledWith("echo hello world");
+		expect(vm.execArgv).toHaveBeenCalledTimes(1);
+		expect(vm.execArgv).toHaveBeenCalledWith("echo", ["hello", "world"]);
+		expect(vm.exec).not.toHaveBeenCalled();
+	});
+
+	it("exec action passes argv verbatim without shell evaluation or splitting", async () => {
+		manager.schedule({
+			id: "j4-argv",
+			schedule: "* * * * *",
+			action: { type: "exec", command: "printenv", args: ["$(id)", "a b"] },
+		});
+
+		await driver.fire("j4-argv");
+
+		expect(vm.execArgv).toHaveBeenCalledTimes(1);
+		expect(vm.execArgv).toHaveBeenCalledWith("printenv", ["$(id)", "a b"]);
+		expect(vm.exec).not.toHaveBeenCalled();
 	});
 
 	// -----------------------------------------------------------------------

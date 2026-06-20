@@ -55,6 +55,7 @@ const ignoredPathPrefixes = [
 	"crates/v8-runtime/assets/generated/",
 	"scripts/ralph/archive/",
 	"scripts/ralph/codex-streams/",
+	"website/.astro/",
 ];
 
 const ignoredFiles = new Set([

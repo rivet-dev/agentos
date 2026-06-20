@@ -251,6 +251,11 @@ test("ignores generated and Ralph transcript paths", () => {
 			"scripts/ralph/codex-streams/step-1.log",
 			"AGENT_OS_KEEP_STDIN_OPEN ~/se1\n",
 		);
+		write(
+			root,
+			"website/.astro/data-store.json",
+			'{"legacy":"resumeSession getSessionEvents"}\n',
+		);
 
 		assert.deepEqual(checkStaleSplitNames({ root }), []);
 	});
