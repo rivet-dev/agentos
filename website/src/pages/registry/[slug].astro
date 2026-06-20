@@ -3,6 +3,7 @@ import Layout from "../../layouts/Layout.astro";
 import { Navigation } from "../../components/Navigation";
 import { Footer } from "../../components/Footer";
 import { registry } from "../../data/registry";
+import { REGISTRY_ICONS } from "../../data/registry-icons";
 import { InkChip } from "../../components/marketing/editorial/InkPanel";
 
 export function getStaticPaths() {
@@ -24,7 +25,7 @@ const TYPE_LABELS: Record<string, string> = {
 
 const isComingSoon = entry.status === "coming-soon";
 const installCmd = !isComingSoon ? `npm install ${entry.package}` : null;
-const EntryIcon = entry.icon;
+const EntryIcon = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
 ---
 
 <Layout

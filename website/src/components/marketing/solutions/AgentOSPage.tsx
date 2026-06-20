@@ -36,6 +36,8 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { InkPanel } from '../editorial/InkPanel';
 import { GLOW_PILL_CLASS, handleGlowPillMouseMove } from '../glowPill';
 import { registry } from '../../../data/registry';
+import { HarnessArchitecture } from '../diagrams/HarnessArchitecture';
+import { ColdStartRace } from '../diagrams/ColdStartRace';
 
 interface HeroTabCode {
 	key: string;
@@ -1952,9 +1954,51 @@ const TechnologyAndBenchmarks = () => (
 				</div>
 			</motion.div>
 
+			{/* Containers vs Isolate density comparison */}
+			<motion.div
+				initial={{ opacity: 0, y: 20 }}
+				whileInView={{ opacity: 1, y: 0 }}
+				viewport={{ once: true }}
+				transition={{ duration: 0.5 }}
+				className='mb-16'
+			>
+				<p className='mb-8 max-w-3xl text-base leading-relaxed text-ink-soft md:text-lg'>
+					Booting an agent in a container takes a full process and hundreds of milliseconds. Agent OS starts one in a lightweight isolate in about {Math.round(benchColdStart[0].agentOS)} ms &mdash; and packs far more into the same memory.
+				</p>
+				<ColdStartRace />
+			</motion.div>
+
 			{/* Benchmarks */}
 			<BenchmarkSection />
 
+		</div>
+	</section>
+);
+
+const HarnessSection = () => (
+	<section className='border-t border-ink/10 py-16 md:py-32'>
+		<div className='mx-auto grid max-w-5xl items-center gap-12 px-6 lg:grid-cols-2'>
+			<motion.div
+				initial={{ opacity: 0, y: 20 }}
+				whileInView={{ opacity: 1, y: 0 }}
+				viewport={{ once: true }}
+				transition={{ duration: 0.5 }}
+			>
+				<h2 className='mb-4 text-3xl font-medium tracking-[-0.015em] text-ink md:text-5xl'>
+					Everything routes through the harness.
+				</h2>
+				<p className='max-w-xl text-base leading-relaxed text-ink-soft md:text-lg'>
+					The harness is the kernel of every agent session &mdash; brokering requests and responses between your tools and MCP resources, session state, the sandbox where code runs, and the orchestration layer that ties agents together. Each piece stays isolated, yet composable.
+				</p>
+			</motion.div>
+			<motion.div
+				initial={{ opacity: 0, y: 20 }}
+				whileInView={{ opacity: 1, y: 0 }}
+				viewport={{ once: true }}
+				transition={{ duration: 0.5, delay: 0.1 }}
+			>
+				<HarnessArchitecture />
+			</motion.div>
 		</div>
 	</section>
 );
@@ -2030,6 +2074,18 @@ const SisterProducts = () => {
 			href: 'https://sandboxagent.dev/',
 			cta: 'sandboxagent.dev',
 		},
+		{
+			name: 'Rivet Actors',
+			tagline: 'Durable, stateful serverless for agents and realtime apps.',
+			bullets: [
+				'Long-lived, in-memory state — no external database',
+				'Built-in persistence, realtime, and workflow orchestration',
+				'Deploy Agent OS sessions as durable actors',
+				'Geo-distributed at the edge; scale to zero',
+			],
+			href: 'https://rivet.dev/',
+			cta: 'rivet.dev',
+		},
 	];
 
 	return (
@@ -2052,11 +2108,11 @@ const SisterProducts = () => {
 						transition={{ duration: 0.5, delay: 0.1 }}
 						className='text-base leading-relaxed text-ink-soft md:text-lg'
 					>
-						Agent OS is where agents live. Secure Exec is how you safely run the code they generate. Sandbox Agent SDK is how you control coding agents over HTTP.
+						Agent OS is where agents live. Secure Exec is how you safely run the code they generate. Sandbox Agent SDK is how you control coding agents over HTTP. Rivet Actors is how you deploy and scale them as durable, stateful services.
 					</motion.p>
 				</div>
 
-				<div className='grid grid-cols-1 gap-6 md:grid-cols-2'>
+				<div className='grid grid-cols-1 gap-6 md:grid-cols-3'>
 					{products.map((product, idx) => (
 						<motion.a
 							key={product.name}
@@ -2143,6 +2199,7 @@ export default function AgentOSPage({ heroTabs }: AgentOSPageProps) {
 			<main>
 				<Hero heroTabs={heroTabs} />
 				<TechnologyAndBenchmarks />
+				<HarnessSection />
 				<AgentOSFeatures />
 				<SisterProducts />
 				<FromUnixToAgents />
