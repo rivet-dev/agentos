@@ -1,0 +1,26 @@
+{
+	"name": "@rivet-dev/agentos-plugin-linux-x64-gnu",
+	"version": "0.2.0-rc.3",
+	"description": "Agent OS actor plugin cdylib for Linux x64 (glibc)",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/rivet-dev/agent-os.git",
+		"directory": "packages/agentos-plugin/npm/linux-x64-gnu"
+	},
+	"os": [
+		"linux"
+	],
+	"cpu": [
+		"x64"
+	],
+	"libc": [
+		"glibc"
+	],
+	"files": [
+		"libagentos_actor_plugin.so"
+	],
+	"engines": {
+		"node": ">=20"
+	}
+}

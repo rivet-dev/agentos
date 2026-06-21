@@ -115,9 +115,17 @@ jobs:
       # build (invoked by secure-exec's cargo build.rs) has esbuild + bridge srcs.
       - name: Checkout secure-exec sibling
         run: |
-          git clone --depth 1 --branch main \
+          git clone --depth 1 --branch agentos-dylib-base \
             https://github.com/rivet-dev/secure-exec.git ../secure-exec
-          (cd ../secure-exec && pnpm install --frozen-lockfile)
+          # secure-exec main commits broken absolute-path node_modules symlinks
+          # (a leaked dev artifact); strip them so pnpm creates real dirs (ENOTDIR otherwise).
+          (cd ../secure-exec && find . -name node_modules -type l -delete && pnpm install --no-frozen-lockfile)
+      # The agentos-actor-plugin workspace member path-depends on the r6 abi
+      # crate, so every cargo invocation in this workspace must resolve it.
+      - name: Checkout rivetkit (r6) sibling
+        run: |
+          git clone --depth 1 --branch feat/dylib-actor-plugin \
+            https://github.com/rivet-dev/rivet.git ../r6
       # The V8 bridge build script (invoked by cargo build.rs) needs the pnpm
       # workspace installed so esbuild and v8-bridge.source.js are available.
       - run: pnpm install --frozen-lockfile
@@ -143,12 +151,86 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
+  # build-plugin — agent-os actor plugin cdylib (debug preview / release)
+  # ---------------------------------------------------------------------------
+  # Ships inside the @rivet-dev/agentos-plugin-<platform> npm packages, declared
+  # as optionalDependencies of @rivet-dev/agentos. The cdylib path-depends on the
+  # secure-exec crates (sibling repo) AND the RivetKit native-plugin ABI crate
+  # (r6 sibling, not on crates.io yet), so both siblings are cloned for cargo to
+  # resolve the workspace path deps.
+  build-plugin:
+    needs: [context]
+    name: "Build plugin (${{ matrix.platform }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64-gnu
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: plugin-${{ matrix.target }}-${{ needs.context.outputs.trigger }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/.rusty_v8
+          key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
+      - name: Checkout secure-exec sibling
+        run: |
+          git clone --depth 1 --branch agentos-dylib-base \
+            https://github.com/rivet-dev/secure-exec.git ../secure-exec
+          # secure-exec main commits broken absolute-path node_modules symlinks
+          # (a leaked dev artifact); strip them so pnpm creates real dirs (ENOTDIR otherwise).
+          (cd ../secure-exec && find . -name node_modules -type l -delete && pnpm install --no-frozen-lockfile)
+      - name: Checkout rivetkit (r6) sibling
+        run: |
+          git clone --depth 1 --branch feat/dylib-actor-plugin \
+            https://github.com/rivet-dev/rivet.git ../r6
+      - run: pnpm install --frozen-lockfile
+      - name: Build plugin cdylib
+        id: build
+        run: |
+          set -euo pipefail
+          out="target/plugin-artifacts/${{ matrix.platform }}"
+          mkdir -p "$out"
+          if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then
+            cargo build --release -p agentos-actor-plugin --target ${{ matrix.target }}
+            profile="release"
+          else
+            cargo build -p agentos-actor-plugin --target ${{ matrix.target }}
+            profile="debug"
+          fi
+          cp "target/${{ matrix.target }}/${profile}/libagentos_actor_plugin.so" \
+            "$out/libagentos_actor_plugin.so"
+          echo "dir=$out" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.platform }}
+          path: ${{ steps.build.outputs.dir }}
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
   # publish-npm — place binaries, build TS, publish all packages (all triggers)
   # ---------------------------------------------------------------------------
   publish-npm:
-    needs: [context, build-sidecar]
+    needs: [context, build-sidecar, build-plugin]
     name: "Publish npm"
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-plugin.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -163,6 +245,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: sidecar-*
+          path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: plugin-*
           path: artifacts
       - name: Place sidecar binaries into platform packages
         run: |
@@ -181,6 +267,23 @@ jobs:
             cp "$agent_bin" "${agent_dest}/agent-os-sidecar"
             chmod +x "${agent_dest}/agent-os-sidecar"
             echo "Placed binaries for ${p}"
+          done
+      - name: Place plugin cdylib into platform packages
+        run: |
+          set -euo pipefail
+          for p in $SIDECAR_PLATFORMS; do
+            lib="artifacts/plugin-${p}/libagentos_actor_plugin.so"
+            dest="packages/agentos-plugin/npm/${p}"
+            if [ ! -f "$lib" ]; then
+              echo "::error::missing plugin cdylib artifact for ${p}"
+              exit 1
+            fi
+            if [ ! -d "$dest" ]; then
+              echo "::error::missing plugin platform package dir $dest"
+              exit 1
+            fi
+            cp "$lib" "${dest}/libagentos_actor_plugin.so"
+            echo "Placed plugin cdylib for ${p}"
           done
       - name: Bump package versions for build (version-only)
         run: |
@@ -324,9 +427,16 @@ jobs:
       # bridge build (secure-exec's cargo build.rs) has esbuild + bridge sources.
       - name: Checkout secure-exec sibling
         run: |
-          git clone --depth 1 --branch main \
+          git clone --depth 1 --branch agentos-dylib-base \
             https://github.com/rivet-dev/secure-exec.git ../secure-exec
-          (cd ../secure-exec && pnpm install --frozen-lockfile)
+          # secure-exec main commits broken absolute-path node_modules symlinks
+          # (a leaked dev artifact); strip them so pnpm creates real dirs (ENOTDIR otherwise).
+          (cd ../secure-exec && find . -name node_modules -type l -delete && pnpm install --no-frozen-lockfile)
+      # agentos-actor-plugin workspace member path-depends on the r6 abi crate.
+      - name: Checkout rivetkit (r6) sibling
+        run: |
+          git clone --depth 1 --branch feat/dylib-actor-plugin \
+            https://github.com/rivet-dev/rivet.git ../r6
       - run: pnpm install --frozen-lockfile
       - name: Bump Cargo versions
         run: |

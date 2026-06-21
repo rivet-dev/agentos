@@ -23,8 +23,8 @@
 		"@rivet-dev/agent-os-core": "workspace:*",
 		"@rivet-dev/agent-os-claude": "workspace:*",
 		"@rivet-dev/agent-os-codex-agent": "workspace:*",
-		"@agent-os-pkgs/common": "catalog:",
-		"@secure-exec/core": "catalog:",
+		"@agent-os-pkgs/common": "link:../secure-exec/registry/software/common",
+		"@secure-exec/core": "link:../secure-exec/packages/core",
 		"@rivet-dev/agent-os-pi": "workspace:*",
 		"@types/node": "^22.19.15",
 		"jszip": "^3.10.1",
@@ -34,5 +34,10 @@
 	},
 	"resolutions": {
 		"@rivet-dev/agent-os-core": "workspace:*"
+	},
+	"pnpm": {
+		"overrides": {
+			"@rivetkit/rivetkit-wasm": "2.3.2"
+		}
 	}
 }

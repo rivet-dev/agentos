@@ -62,12 +62,22 @@ export const META_PACKAGES: readonly MetaPackageSpec[] = [
 		meta: "@rivet-dev/agent-os-sidecar",
 		platformPrefix: "@rivet-dev/agent-os-sidecar-",
 	},
+	{
+		meta: "@rivet-dev/agentos",
+		platformPrefix: "@rivet-dev/agentos-plugin-",
+	},
 ];
 
 const SIDECAR_BINARY_PACKAGE_DIRS = [
 	"packages/sidecar-binary/npm",
 	"packages/sidecar/npm",
 ] as const;
+
+// Platform-specific cdylib packages for the agent-os actor plugin
+// (`@rivet-dev/agentos-plugin-<platform>`), injected as optionalDependencies of
+// the `@rivet-dev/agentos` meta package. Same discovery shape as the sidecar
+// binary packages: one dir per platform, allowlisted via sidecarPlatforms().
+const PLUGIN_BINARY_PACKAGE_DIRS = ["packages/agentos-plugin/npm"] as const;
 
 export const SECURE_EXEC_WORKSPACE_PACKAGES = new Set([
 	"@secure-exec/browser",
@@ -136,7 +146,10 @@ export function discoverPackages(
 	//    the meta package resolves at install time. Only the allowlisted
 	//    platforms are included so unbuilt platform dirs are never published.
 	const platformAllowlist = new Set(sidecarPlatforms());
-	for (const packageDir of SIDECAR_BINARY_PACKAGE_DIRS) {
+	for (const packageDir of [
+		...SIDECAR_BINARY_PACKAGE_DIRS,
+		...PLUGIN_BINARY_PACKAGE_DIRS,
+	]) {
 		const npmDir = join(repoRoot, packageDir);
 		if (existsSync(npmDir)) {
 			for (const entry of readdirSync(npmDir).sort()) {
@@ -165,6 +178,7 @@ export function discoverPackages(
 		if (!p.name) continue;
 		if (
 			!p.name.startsWith("@rivet-dev/agent-os-") &&
+			p.name !== "@rivet-dev/agentos" &&
 			!SECURE_EXEC_WORKSPACE_PACKAGES.has(p.name)
 		) {
 			continue;

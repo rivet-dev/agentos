@@ -6,92 +6,21 @@ settings:
 
 catalogs:
   default:
-    '@agent-os-pkgs/codex':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/common':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/coreutils':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/curl':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/diffutils':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/fd':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/file':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/findutils':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/gawk':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/git':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/grep':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/gzip':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/jq':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/ripgrep':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/sed':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/tar':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/tree':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/unzip':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/yq':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@agent-os-pkgs/zip':
-      specifier: 0.0.0-split-runtime-preview.5d46b14
-      version: 0.0.0-split-runtime-preview.5d46b14
-    '@secure-exec/core':
-      specifier: 0.3.0
-      version: 0.3.0
-    '@secure-exec/google-drive':
-      specifier: 0.3.0
-      version: 0.3.0
     '@secure-exec/nodejs':
       specifier: 0.2.1
       version: 0.2.1
-    '@secure-exec/s3':
-      specifier: 0.3.0
-      version: 0.3.0
-    '@secure-exec/sandbox':
-      specifier: 0.3.0
-      version: 0.3.0
 
 overrides:
   '@rivet-dev/agent-os-core': workspace:*
+  '@rivetkit/rivetkit-wasm': 2.3.2
 
 importers:
 
   .:
     devDependencies:
       '@agent-os-pkgs/common':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../secure-exec/registry/software/common
+        version: link:../secure-exec/registry/software/common
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
@@ -111,8 +40,8 @@ importers:
         specifier: workspace:*
         version: link:registry/agent/pi
       '@secure-exec/core':
-        specifier: 'catalog:'
-        version: 0.3.0
+        specifier: link:../secure-exec/packages/core
+        version: link:../secure-exec/packages/core
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -132,11 +61,11 @@ importers:
   examples/quickstart:
     dependencies:
       '@agent-os-pkgs/common':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@agent-os-pkgs/git':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@rivet-dev/agent-os-claude':
         specifier: workspace:*
         version: link:../../registry/agent/claude
@@ -153,8 +82,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/agent-os-sandbox
       '@secure-exec/s3':
-        specifier: 'catalog:'
-        version: 0.3.0
+        specifier: link:../../../secure-exec/registry/file-system/s3
+        version: link:../../../secure-exec/registry/file-system/s3
       dockerode:
         specifier: ^4.0.9
         version: 4.0.10
@@ -184,8 +113,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@secure-exec/sandbox':
-        specifier: 'catalog:'
-        version: 0.3.0(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/tool/sandbox
+        version: link:../../../secure-exec/registry/tool/sandbox
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -194,14 +123,36 @@ importers:
         version: 4.3.6
     devDependencies:
       '@agent-os-pkgs/common':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.15)
+
+  packages/agentos:
+    dependencies:
+      '@rivet-dev/agent-os-core':
+        specifier: workspace:*
+        version: link:../core
+      '@rivet-dev/agent-os-sidecar':
+        specifier: workspace:*
+        version: link:../sidecar-binary
+      zod:
+        specifier: ^4.1.11
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
+      rivetkit:
+        specifier: 0.0.0-feat-dylib-actor-plugin.5d959bc
+        version: 0.0.0-feat-dylib-actor-plugin.5d959bc(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.15)
@@ -237,8 +188,8 @@ importers:
         specifier: ^0.6.2
         version: 0.6.2
       '@secure-exec/core':
-        specifier: 'catalog:'
-        version: 0.3.0
+        specifier: link:../../../secure-exec/packages/core
+        version: link:../../../secure-exec/packages/core
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -262,56 +213,56 @@ importers:
         version: 10.2.5
     devDependencies:
       '@agent-os-pkgs/codex':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/codex
+        version: link:../../../secure-exec/registry/software/codex
       '@agent-os-pkgs/coreutils':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/coreutils
+        version: link:../../../secure-exec/registry/software/coreutils
       '@agent-os-pkgs/curl':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/curl
+        version: link:../../../secure-exec/registry/software/curl
       '@agent-os-pkgs/diffutils':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/diffutils
+        version: link:../../../secure-exec/registry/software/diffutils
       '@agent-os-pkgs/fd':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/fd
+        version: link:../../../secure-exec/registry/software/fd
       '@agent-os-pkgs/file':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/file
+        version: link:../../../secure-exec/registry/software/file
       '@agent-os-pkgs/findutils':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/findutils
+        version: link:../../../secure-exec/registry/software/findutils
       '@agent-os-pkgs/gawk':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/gawk
+        version: link:../../../secure-exec/registry/software/gawk
       '@agent-os-pkgs/git':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agent-os-pkgs/grep':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/grep
+        version: link:../../../secure-exec/registry/software/grep
       '@agent-os-pkgs/gzip':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/gzip
+        version: link:../../../secure-exec/registry/software/gzip
       '@agent-os-pkgs/jq':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/jq
+        version: link:../../../secure-exec/registry/software/jq
       '@agent-os-pkgs/ripgrep':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/ripgrep
+        version: link:../../../secure-exec/registry/software/ripgrep
       '@agent-os-pkgs/sed':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/sed
+        version: link:../../../secure-exec/registry/software/sed
       '@agent-os-pkgs/tar':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/tar
+        version: link:../../../secure-exec/registry/software/tar
       '@agent-os-pkgs/tree':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/tree
+        version: link:../../../secure-exec/registry/software/tree
       '@agent-os-pkgs/yq':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/yq
+        version: link:../../../secure-exec/registry/software/yq
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.87
         version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
@@ -355,11 +306,11 @@ importers:
         specifier: link:../agent-os-sandbox
         version: link:../agent-os-sandbox
       '@secure-exec/google-drive':
-        specifier: 'catalog:'
-        version: 0.3.0
+        specifier: link:../../../secure-exec/registry/file-system/google-drive
+        version: link:../../../secure-exec/registry/file-system/google-drive
       '@secure-exec/s3':
-        specifier: 'catalog:'
-        version: 0.3.0
+        specifier: link:../../../secure-exec/registry/file-system/s3
+        version: link:../../../secure-exec/registry/file-system/s3
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -438,8 +389,8 @@ importers:
   packages/posix:
     dependencies:
       '@secure-exec/core':
-        specifier: 'catalog:'
-        version: 0.3.0
+        specifier: link:../../../secure-exec/packages/core
+        version: link:../../../secure-exec/packages/core
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -460,8 +411,8 @@ importers:
   packages/python:
     dependencies:
       '@secure-exec/core':
-        specifier: 'catalog:'
-        version: 0.3.0
+        specifier: link:../../../secure-exec/packages/core
+        version: link:../../../secure-exec/packages/core
       pyodide:
         specifier: ^0.28.3
         version: 0.28.3(bufferutil@4.1.0)
@@ -542,35 +493,35 @@ importers:
   packages/shell:
     dependencies:
       '@agent-os-pkgs/codex':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/codex
+        version: link:../../../secure-exec/registry/software/codex
       '@agent-os-pkgs/common':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@agent-os-pkgs/fd':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/fd
+        version: link:../../../secure-exec/registry/software/fd
       '@agent-os-pkgs/file':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/file
+        version: link:../../../secure-exec/registry/software/file
       '@agent-os-pkgs/jq':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/jq
+        version: link:../../../secure-exec/registry/software/jq
       '@agent-os-pkgs/ripgrep':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/ripgrep
+        version: link:../../../secure-exec/registry/software/ripgrep
       '@agent-os-pkgs/tree':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/tree
+        version: link:../../../secure-exec/registry/software/tree
       '@agent-os-pkgs/unzip':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/unzip
+        version: link:../../../secure-exec/registry/software/unzip
       '@agent-os-pkgs/yq':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/yq
+        version: link:../../../secure-exec/registry/software/yq
       '@agent-os-pkgs/zip':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../secure-exec/registry/software/zip
+        version: link:../../../secure-exec/registry/software/zip
       '@rivet-dev/agent-os-core':
         specifier: workspace:*
         version: link:../core
@@ -615,8 +566,8 @@ importers:
   registry/agent/codex:
     dependencies:
       '@agent-os-pkgs/codex':
-        specifier: 'catalog:'
-        version: 0.0.0-split-runtime-preview.5d46b14
+        specifier: link:../../../../secure-exec/registry/software/codex
+        version: link:../../../../secure-exec/registry/software/codex
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -714,22 +665,22 @@ importers:
     dependencies:
       '@astrojs/react':
         specifier: ^4.2.0
-        version: 4.4.2(@types/node@24.13.2)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(jiti@1.21.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tsx@4.21.0)(yaml@2.8.3)
+        version: 4.4.2(@types/node@24.13.2)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(jiti@1.21.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tsx@4.21.0)(yaml@2.9.0)
       '@astrojs/sitemap':
         specifier: ^3.2.0
         version: 3.7.3
       '@astrojs/starlight':
         specifier: ^0.36.0
-        version: 0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))
+        version: 0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))
       '@astrojs/tailwind':
         specifier: ^6.0.0
-        version: 6.0.2(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.8.3))
+        version: 6.0.2(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))
       '@rivet-dev/docs-theme':
         specifier: github:rivet-dev/docs-theme#v0.2.0
-        version: https://codeload.github.com/rivet-dev/docs-theme/tar.gz/aa489f5252b356bb3f2a5b07532ccd7d70c6d35c(@astrojs/starlight@0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)))(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))
+        version: https://codeload.github.com/rivet-dev/docs-theme/tar.gz/aa489f5252b356bb3f2a5b07532ccd7d70c6d35c(@astrojs/starlight@0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)))(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))
       astro:
         specifier: ^5.18.2
-        version: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+        version: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
       framer-motion:
         specifier: ^12.0.0
         version: 12.40.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -747,7 +698,7 @@ importers:
         version: 0.33.5
       tailwindcss:
         specifier: ^3.4.0
-        version: 3.4.19(tsx@4.21.0)(yaml@2.8.3)
+        version: 3.4.19(tsx@4.21.0)(yaml@2.9.0)
     devDependencies:
       '@types/react':
         specifier: ^19.0.0
@@ -760,69 +711,9 @@ importers:
         version: 5.9.3
       vite:
         specifier: ^6.4.1
-        version: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3)
+        version: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0)
 
 packages:
-
-  '@agent-os-pkgs/codex@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-2Mz+uSOf1CdmeqPMWQznuaVym3bWufen610Gdyq4I49+rX2jx0ODervga0sdzPkBqBzG7OaBmo6mO4sQ3T2DzA==}
-
-  '@agent-os-pkgs/common@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-6TzgaSZzgDdgQzY1Zgb4zAlzvb49NYuXK1gNDjWAfQeivz2NcWyfaN1qPRATHXOtpGUGm05Z65OwjLF05tTbNg==}
-
-  '@agent-os-pkgs/coreutils@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-AOOiAYcPfFvTDzwpV2U6n0/lxJXuUhbq67Tt7HRiIyG76e4zHTSzAu55RoW/24myRsKVjRw5jPA0hB413TuEQA==}
-
-  '@agent-os-pkgs/curl@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-zx/FtXon8YFeylWyvfsChbyWgRiS66dWzXA3EY+xayoxKYcUja06MnE1nRuxgpH8n1CaAz1sIGG1J2w6+ivoYw==}
-
-  '@agent-os-pkgs/diffutils@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-i38lpZ24rm8nt4ImGuZ2KQBjI/ohADkponspwbHWiqR6t3jBKggg4PaSq3xcxY8O8rZ/05Igq1YBlrDh33Y4hQ==}
-
-  '@agent-os-pkgs/fd@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-Mi9yQe6xKlNImLUuLPedCA9DDmT6rk5O65/Q/y0t1nbdJ3sUdkOIRcLVZx+VayK4abhqy7MdmRPSp2fnlg6D3A==}
-
-  '@agent-os-pkgs/file@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-7vNMpudDFE/Xvam4nJO9RA/Y+Q551uLVuCDbkAjPAQpfMZbezVNYueARLDbbQ0xmmAX56PS9SkGN6id5VxxTNw==}
-
-  '@agent-os-pkgs/findutils@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-9IwymPoxtJveSB+HppgAUII05JBYGNhP9QSys5NoPSiaEOlIhcAVoKZHq6XFGyr33MhWmHyy3KEyrXFnkan+9Q==}
-
-  '@agent-os-pkgs/gawk@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-zjuyTyjXCz6LgZZqdA14vcgmyzjR5Ipeb3hlL+Tn3sCfAGp+Y7GSbTO9yBtTv8fkWNGOLq8il5zQJkJlHHMMfg==}
-
-  '@agent-os-pkgs/git@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-t11XTiymguMC1GpRlbNQ2NaXX/fyG4BN2HBJtHEl63vGNR/RPnddX28mnQJ8UVj7aZQO9366PmKLEshIw+HgcA==}
-
-  '@agent-os-pkgs/grep@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-xworE1A81YCKzXY2uW+2oK6BiB7YzEvcxU/RVxI7Psveylpfdlr/GJOVGfjyHTPi30hhDik3TEPSowS1WJqAfg==}
-
-  '@agent-os-pkgs/gzip@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-j8WENZbxekTBuMzLQCgqaA9vkkGGDn57mg/H4VaIIoiOWnUkKJMYbZ26twP0s6RbKDCe0vNWiAKDukhxe5jezQ==}
-
-  '@agent-os-pkgs/jq@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-2hHQJaxL2rcvu2JIXkvtHLM+nWXPkFgx8W3mkj5U8xskCRG56hgn/E/2P12dqoapieh9pcCqTqqZUPiqr8MqLQ==}
-
-  '@agent-os-pkgs/ripgrep@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-Gy6DGVpVhqMdBlRPUTF9N2tdWUvt2nbGVYV/ewLdfr61eO1KFlpVh9fc3qHD9DisVODivb+0vpk23pNAUp3b0A==}
-
-  '@agent-os-pkgs/sed@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-uPEuPNIve/IOLYb9kJDFv8LDisg0jjcvdwLqdm9kacvOuc19wjhUZG2xPB8cjzKCgNtDN91jN+uo8F9no+oQBA==}
-
-  '@agent-os-pkgs/tar@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-mkh3mZtalQJ3n7M4769q30hvYSbI8wEIUF3LS9IzMQ9XfHW4NmIbGjDDrJxTuv8DepsN6SMS4lkNXjbY5yh4DQ==}
-
-  '@agent-os-pkgs/tree@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-UqhPk5Hw/XSiF1BdfpW3R4kmiKYoiv9Wr1ZiZbmrh9w40st3LuhLrlCx3n8E/dZQ/6lgupFTe/fe6SYp+D0t9Q==}
-
-  '@agent-os-pkgs/unzip@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-s/G9m0K+dO6UmcTeazx35DmKpGZpm4BUntLts4eXEmL+5e/VpKT3HIHRf5CK17vPe/VxESrLqnBq1Hri0NSqRg==}
-
-  '@agent-os-pkgs/yq@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-IuNOKGlmVGF98IU4iMaJCuZbbaG00p50w3lH2FxrPNndeayTM0Z05JKQr2gMKX8Hnlq1+c7wIffkx7RqIAtelw==}
-
-  '@agent-os-pkgs/zip@0.0.0-split-runtime-preview.5d46b14':
-    resolution: {integrity: sha512-ksS4rn0jN1Dt63Kx9vRxJiJ4kBCbT9j5kabZ/zcJBh22pEU3hwIiPoB63SZyop19gu9UMe2M/5B4/2wMhAwGnw==}
 
   '@agentclientprotocol/sdk@0.12.0':
     resolution: {integrity: sha512-V8uH/KK1t7utqyJmTA7y7DzKu6+jKFIXM+ZVouz8E55j8Ej2RV42rEvPKn3/PpBJlliI5crcGk1qQhZ7VwaepA==}
@@ -991,6 +882,11 @@ packages:
     peerDependenciesMeta:
       zod:
         optional: true
+
+  '@asteasolutions/zod-to-openapi@8.5.0':
+    resolution: {integrity: sha512-SABbKiObg5dLRiTFnqiW1WWwGcg1BJfmHtT2asIBnBHg6Smy/Ms2KHc650+JI4Hw7lSkdiNebEGXpwoxfben8Q==}
+    peerDependencies:
+      zod: ^4.0.0
 
   '@astrojs/compiler@2.13.1':
     resolution: {integrity: sha512-f3FN83d2G/v32ipNClRKgYv30onQlMZX1vCeZMjPsMMPl1mDpmbl0+N5BYo4S/ofzqJyS5hvwacEo0CCVDn/Qg==}
@@ -1937,6 +1833,26 @@ packages:
     peerDependencies:
       hono: ^4
 
+  '@hono/node-ws@1.3.1':
+    resolution: {integrity: sha512-vo/MwCnpJAVHBkGzWjCJ28wF45fYHAfbPZcH2rodZODHtch2GHA94KtMfusmVycTUtsLAsaNsHhtY6P8X3RQsA==}
+    engines: {node: '>=18.14.1'}
+    peerDependencies:
+      '@hono/node-server': ^1.19.11
+      hono: ^4.6.0
+
+  '@hono/zod-openapi@1.4.0':
+    resolution: {integrity: sha512-AFchqR1N/NxfI4hUOSGI2/g8zLROxA1OE7Oh5JJFlTaGxhrdRyH+93gd0tIBpb0z8s9r8hUoNnaOBfHbdb4NMw==}
+    engines: {node: '>=16.0.0'}
+    peerDependencies:
+      hono: '>=4.10.0'
+      zod: ^4.0.0
+
+  '@hono/zod-validator@0.8.0':
+    resolution: {integrity: sha512-5uS4S1/LKtZQYvD4BtpPUFkOv8d1wNxHHrChm26buMiEYc1FrHWvDUaKVBwkiVtvSExHSpLGDvcnpI2Copyj9w==}
+    peerDependencies:
+      hono: '>=4.10.0'
+      zod: ^3.25.0 || ^4.0.0
+
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
     engines: {node: '>=18'}
@@ -2317,6 +2233,11 @@ packages:
       '@cfworker/json-schema':
         optional: true
 
+  '@napi-rs/cli@2.18.4':
+    resolution: {integrity: sha512-SgJeA4df9DE2iAEpr3M2H0OKl/yjtg1BnRI5/JyowS71tUWhrfSu2LT0V3vlHET+g1hBVlrO60PmEXwUEKp8Mg==}
+    engines: {node: '>= 10'}
+    hasBin: true
+
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
     engines: {node: '>= 8'}
@@ -2498,6 +2419,101 @@ packages:
     resolution: {integrity: sha512-3qndQUQXLdwafMEqfhz24hUtDPcsf1Bu3q52Kb8MqeH8JUh3h6R4HYW3ZJXiQsLcyYyFM68PuIwlLRlg1xDEpg==}
     engines: {node: ^14.18.0 || >=16.0.0}
 
+  '@rivetkit/engine-cli-darwin-arm64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-wJl0Nf9SeRiHDrtNR2dD+k06qQDARfAf7iYpK8ZsUlkdgn+o3mCPQ0fETe22mcNjVSr4d4V0P8QG/7HC9nPRlg==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@rivetkit/engine-cli-darwin-x64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-BS9G67AwDBWopqpyI+7exvAhadEFBONmDYUArtYvc7YPhgXgvnvFk/6e0BmlFqzoK4zyvZXH+2ilyFBLwULnVw==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-H2kRZIU6BKaiTpjfEqjK2yw5JQs9ZMJeBQhvIlG5ZDCtplFf0yQ+psDXsl4k+y2mrHMvHcYF9Piyxdn2IK+tIQ==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-e1tjbJt2PB8eJNYsm0Hj7IQkvQNamkjh+10F0RYlFC2eP77r5xUkCRfPRVHhg2ypUaesoakf4EBqvOu6rCPyxw==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [x64]
+    os: [linux]
+
+  '@rivetkit/engine-cli@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-0cuiePB8JTTXc8MUkIfNHjWcpa7fY4KEaGiubDWHBEm+MLSM7Qp0LkQXh7XXnjcfHxMPI47oShH4JvSMQZI11A==}
+    engines: {node: '>= 20.0.0'}
+
+  '@rivetkit/engine-envoy-protocol@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-OxIUt2/GYEpZGnwfdYL7rbl12t1FN0Ff+jU57fTr2TFJKr1/6B71rfYnoY4tff1/1nkrU9YyIg3Rzo4So1gnHQ==}
+
+  '@rivetkit/on-change@6.0.1':
+    resolution: {integrity: sha512-QBN/KRBXLJdCgN4gBTL3XAc/zKm58atSnieXWMOyFSPmo6F1/yIVV/LTRdvAktfCttrGx7W6c32i/lwqCHWnsQ==}
+    engines: {node: '>=20'}
+
+  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-yJL5B92gtOeJ17RgB+tya/NZaQ3K3VUxKztP+meQPYzEa4EVcXBChaxIDuoqzDxzLFqrWJUEqjJ5AoOa/cu8gA==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-ZIgWw6yHabRQe7yKgji4qtCIvxzHKLv+BKVfkhSCYSngFRQp0cYE0tByCvYhmQDG1yn7cOBFREr/yTI7ttCJiA==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-PtNW9pUewdRKRljg+Q+yvmBaiZUUH2Mxf4tUEig9tKgeMqlhWCP68GNz+e4651hcB3QRpE9PCZUBOYNV/l5gIg==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-tSnQ3y4nPfjYLuK2Yt4MCuRmnYhrWvQzmBHf0GJQ0nfVMn8CdbHG30UmoSRrWdHNLQ9QZbHoWaFAppVxtwk8kQ==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-F6eLyfDr3MZNrwTnjg8ip2uUn7bUQGR6xfAh/j8xB2QMyqH82VZBUqKerYTItlZdqCZx5mZ+kBhfTnCoNxVViw==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [x64]
+    os: [linux]
+
+  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-Md62KioImoFK0hsN3wOyWKV+U3FE7BwPp/NHD/+MLw+WR5RIfv7pskI+hRCWKm0gDV6MP31mmGs2C7KPHvW1Qw==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [x64]
+    os: [linux]
+
+  '@rivetkit/rivetkit-napi-win32-x64-msvc@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-ipYsi1ALwphc4aL0dZp7vuChYYKTZpWWZ+jasdWBxFvPzvT61CjF5l18VFDwl9mKH07taGmBrFI8wzPtTZsbnA==}
+    engines: {node: '>= 20.0.0'}
+    cpu: [x64]
+    os: [win32]
+
+  '@rivetkit/rivetkit-napi@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-OBImJIpIEI4ivxIsGMH7GAWtqFIqZ9oyN0t1jWDRwb2Y0/H4zsXnxGS/WJfiJ9FdmrGN82tBQ9aJMWLdAQDrIw==}
+    engines: {node: '>= 20.0.0'}
+
+  '@rivetkit/rivetkit-wasm@2.3.2':
+    resolution: {integrity: sha512-HNBzh6uQFi4ZYL0tHAZ6nrYKoGCfa+kObLCwdS+/ZzGePV7WGUl20Do1bHjBtnVgp9UwzQu+lka8kFwKfqm6WA==}
+
+  '@rivetkit/traces@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-4xaQmADhBesHHUo624Ug4lN/hyH8GSGAa2EOS/fBT0/uLbv/XX5iia5erA6FQhekMERI43VeGk6ja0zZWJfGjQ==}
+    engines: {node: '>=18.0.0'}
+
+  '@rivetkit/virtual-websocket@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-UsF0j8YT8+u1GJIr5i+fsGKt/uRrqpxbM5NWiB6pHAz6+SzKEDUyToLCHmP9vbOU0B9f/Kt3NqQRbOlhtQaWew==}
+
+  '@rivetkit/workflow-engine@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    resolution: {integrity: sha512-ccp6JjiZDD4ubV1ezVeoSHNzXby/dsKk3Wo8FrAKhbQsZD8OxyGu+FEcJXlFSL+zAhHy7FVhuVbgZK+2/gRDXg==}
+    engines: {node: '>=18.0.0'}
+
   '@rolldown/pluginutils@1.0.0-beta.27':
     resolution: {integrity: sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA==}
 
@@ -2670,30 +2686,8 @@ packages:
   '@secure-exec/core@0.2.1':
     resolution: {integrity: sha512-HsnUv6gClpMA1BBRmX86j30TKTZtgJC/fO1tVavr7IpM2zNKbHU8LgSlBd7mv2SNy02ImTmU/GnQ3aYB4NSbEg==}
 
-  '@secure-exec/core@0.3.0':
-    resolution: {integrity: sha512-/mk8OIyibjVxOrs8r2qu40aE58Vm2pCy2A6+DPiJYY3Ch1MJ3AeVcPtd0AUrLinTHQJM5Ps8K8iLWvLLSI5VbQ==}
-
-  '@secure-exec/google-drive@0.3.0':
-    resolution: {integrity: sha512-10FTqMZuZ1k19nGBYFSqcf574YUFrgPB3G/ZFCUm9h8G+LPGSBhMZfzS17gTDwUCGm02WgYMWVSx9d6h7JWzQA==}
-
   '@secure-exec/nodejs@0.2.1':
     resolution: {integrity: sha512-UJMJqVFxexlHJV0Q9nWURvrz6GElj8673DDOOFln6FHR6JS+9SaSU3eISrN158DuNC3SFi4rgjb/scKnK4YOYQ==}
-
-  '@secure-exec/s3@0.3.0':
-    resolution: {integrity: sha512-yrAt3qiuvT3GNxnGcyKEhrbA9uC4Hj13wVNL6ZbHZ12fjmENyaxhSRdoeKB1kD36iqWtOp6qOE2mTrcdohZaQQ==}
-
-  '@secure-exec/sandbox@0.3.0':
-    resolution: {integrity: sha512-sOXqjLbxAs/dsccIy27eFlgKZZM9iY16/IILahFbxlrxZ8J1gmzHOxKn4ixmE0Nv8JUkm6+bxQ/YnJWcApN5cA==}
-
-  '@secure-exec/sidecar-linux-x64-gnu@0.3.0':
-    resolution: {integrity: sha512-s/fWwtnngpV29y9v1x/KpiUUYPVL6cof+EESaYaVkahUyqHYGN/OfGTSMuKsJqlm0WwyYwjnBDu6gGCUdo84cQ==}
-    engines: {node: '>=20'}
-    cpu: [x64]
-    os: [linux]
-
-  '@secure-exec/sidecar@0.3.0':
-    resolution: {integrity: sha512-v/vVM+y2GtTtzJ3Q+G0NRp/WpGDmCrgQgu4nYW+423QrzXFMgSmkTE8akNQcksDaVL/vxLipp3HIJ2/X44aAKg==}
-    engines: {node: '>=20'}
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     resolution: {integrity: sha512-gEWhMHzUpLwzuBNAD0lVkZXE8wFlWMLp4IOZ+56FYwOW/C+m07cYxuW4TjHyPqZ+vPm3IkoaMqqH5yT9VhjX/Q==}
@@ -3064,6 +3058,9 @@ packages:
 
   '@types/retry@0.12.0':
     resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
+
+  '@types/retry@0.12.2':
+    resolution: {integrity: sha512-XISRgDJ2Tc5q4TRqvgJtzsRkFYNJzZrhTdtMoGVBttwzzQJkPnS3WWTFc7kuDRoPtPakl+T+OfdEUjYJj7Jbow==}
 
   '@types/sax@1.2.7':
     resolution: {integrity: sha512-rO73L89PJxeYM3s3pPPjiPgVVcymqU490g0YO5n5By0k2Erzj6tay/4lr1CHAAU4JyOWd1rpQ8bCf6cZfHU96A==}
@@ -3918,6 +3915,98 @@ packages:
     resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
     engines: {node: '>=12'}
 
+  drizzle-orm@0.44.7:
+    resolution: {integrity: sha512-quIpnYznjU9lHshEOAYLoZ9s3jweleHlZIAWR/jX9gAWNg/JhQ1wj0KGRf7/Zm+obRrYd9GjPVJg790QY9N5AQ==}
+    peerDependencies:
+      '@aws-sdk/client-rds-data': '>=3'
+      '@cloudflare/workers-types': '>=4'
+      '@electric-sql/pglite': '>=0.2.0'
+      '@libsql/client': '>=0.10.0'
+      '@libsql/client-wasm': '>=0.10.0'
+      '@neondatabase/serverless': '>=0.10.0'
+      '@op-engineering/op-sqlite': '>=2'
+      '@opentelemetry/api': ^1.4.1
+      '@planetscale/database': '>=1.13'
+      '@prisma/client': '*'
+      '@tidbcloud/serverless': '*'
+      '@types/better-sqlite3': '*'
+      '@types/pg': '*'
+      '@types/sql.js': '*'
+      '@upstash/redis': '>=1.34.7'
+      '@vercel/postgres': '>=0.8.0'
+      '@xata.io/client': '*'
+      better-sqlite3: '>=7'
+      bun-types: '*'
+      expo-sqlite: '>=14.0.0'
+      gel: '>=2'
+      knex: '*'
+      kysely: '*'
+      mysql2: '>=2'
+      pg: '>=8'
+      postgres: '>=3'
+      prisma: '*'
+      sql.js: '>=1'
+      sqlite3: '>=5'
+    peerDependenciesMeta:
+      '@aws-sdk/client-rds-data':
+        optional: true
+      '@cloudflare/workers-types':
+        optional: true
+      '@electric-sql/pglite':
+        optional: true
+      '@libsql/client':
+        optional: true
+      '@libsql/client-wasm':
+        optional: true
+      '@neondatabase/serverless':
+        optional: true
+      '@op-engineering/op-sqlite':
+        optional: true
+      '@opentelemetry/api':
+        optional: true
+      '@planetscale/database':
+        optional: true
+      '@prisma/client':
+        optional: true
+      '@tidbcloud/serverless':
+        optional: true
+      '@types/better-sqlite3':
+        optional: true
+      '@types/pg':
+        optional: true
+      '@types/sql.js':
+        optional: true
+      '@upstash/redis':
+        optional: true
+      '@vercel/postgres':
+        optional: true
+      '@xata.io/client':
+        optional: true
+      better-sqlite3:
+        optional: true
+      bun-types:
+        optional: true
+      expo-sqlite:
+        optional: true
+      gel:
+        optional: true
+      knex:
+        optional: true
+      kysely:
+        optional: true
+      mysql2:
+        optional: true
+      pg:
+        optional: true
+      postgres:
+        optional: true
+      prisma:
+        optional: true
+      sql.js:
+        optional: true
+      sqlite3:
+        optional: true
+
   dset@3.1.4:
     resolution: {integrity: sha512-2QF/g9/zTaPDc3BjNcVTGoBbXBgYfMTTceLaYcFJ/W9kggFUkhxD/hMEeuLKbugyef9SqAx8cpgwlIP/jinUTA==}
     engines: {node: '>=4'}
@@ -4158,6 +4247,9 @@ packages:
 
   fd-slicer@1.1.0:
     resolution: {integrity: sha512-cE1qsB/VwyQozZ+q1dGxR8LBYNZeofhEdUNGSMbQD3Gw2lAzX9Zb3uIU6Ebc/Fmyjo9AWWfnn0AUCHqtevs/8g==}
+
+  fdb-tuple@1.0.0:
+    resolution: {integrity: sha512-8jSvKPCYCgTpi9Pt87qlfTk6griyMx4Gk3Xv31Dp72Qp8b6XgIyFsMm8KzPmFJ9iJ8K4pGvRxvOS8D0XGnrkjw==}
 
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
@@ -4563,6 +4655,9 @@ packages:
   inline-style-parser@0.2.7:
     resolution: {integrity: sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==}
 
+  invariant@2.2.4:
+    resolution: {integrity: sha512-phJfQVBuaJM5raOpJjSfkiD6BpbCE4Ns//LaXl6wGYtUBY83nWS6Rf9tXm2e8VaK60JEjYldbPif/A2B1C2gNA==}
+
   ip-address@10.1.0:
     resolution: {integrity: sha512-XXADHxXmvT9+CRxhXg56LJovE+bmWnEWB78LB83VZTprKTmaC5QfruXocxzTZ2Kl0DNwKuBdlIhjL8LeY8Sf8Q==}
     engines: {node: '>= 12'}
@@ -4639,6 +4734,10 @@ packages:
   is-nan@1.3.2:
     resolution: {integrity: sha512-E+zBKpQ2t6MEo1VsonYmluk9NxGrbzpeeLC2xIViuO2EjU2xsXsBPwTr3Ykv9l08UYEVEdWeRZNouaZqF6RN0w==}
     engines: {node: '>= 0.4'}
+
+  is-network-error@1.3.2:
+    resolution: {integrity: sha512-PhBY86zaxNZUuWP6h13Vu5oFe0XY6/UlKzQnYFELzGVHygP3MxmvTfYSG7GN3aIab/iWudSMgjSnG9Dq+nHrgA==}
+    engines: {node: '>=16'}
 
   is-number@7.0.0:
     resolution: {integrity: sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==}
@@ -4814,6 +4913,10 @@ packages:
 
   longest-streak@3.1.0:
     resolution: {integrity: sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g==}
+
+  loose-envify@1.4.0:
+    resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
+    hasBin: true
 
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
@@ -5303,6 +5406,9 @@ packages:
       zod:
         optional: true
 
+  openapi3-ts@4.6.0:
+    resolution: {integrity: sha512-a4sfn6L2sIShhtzJqmjGrARvxAW/3F2BJDdyRVvNF9VhAsZSh5hSyI3a9TNvmzBxXmq66nY5LNT5bQcBxYAZZg==}
+
   os-browserify@0.3.0:
     resolution: {integrity: sha512-gjcpUc3clBf9+210TRaDWbf+rZZZEshZ+DlXMRCeAjp0xhTrnQsKHypIy1J3d5hKdUzj69t708EHtU8P6bUn0A==}
 
@@ -5333,6 +5439,10 @@ packages:
   p-retry@4.6.2:
     resolution: {integrity: sha512-312Id396EbJdvRONlngUx0NydfrIQ5lsYu0znKVUzVvArzEIt08V1qhtyESbGVd1FGX7UKtiFp5uwKZdM8wIuQ==}
     engines: {node: '>=8'}
+
+  p-retry@6.2.1:
+    resolution: {integrity: sha512-hEt02O4hUct5wtwg4H4KcWgDdm+l1bOaEy/hWzd8xtXB9BqxTWBBhb+2ImAtH4Cv4rPjV76xN3Zumqk3k3AhhQ==}
+    engines: {node: '>=16.17'}
 
   p-timeout@3.2.0:
     resolution: {integrity: sha512-rhIwUycgwwKcP9yTOOFK/AKsAopjjCakVqLHePO3CC6Mir1Z99xT+R63jZxAT5lFZLa2inS5h+ZS2GvR99/FBg==}
@@ -5828,6 +5938,21 @@ packages:
   ripemd160@2.0.3:
     resolution: {integrity: sha512-5Di9UC0+8h1L6ZD2d7awM7E/T4uA1fJRlx6zk/NvdCCVEoAnFqvHmCuNeIKoCeIixBX/q8uM+6ycDvF8woqosA==}
     engines: {node: '>= 0.8'}
+
+  rivetkit@0.0.0-feat-dylib-actor-plugin.5d959bc:
+    resolution: {integrity: sha512-XlJUt2Jd80AocINZXw/rNziYKCdqk0FbBZiuNz4EdLWjxjkf1aj3ztqJzGAcWaOLoT0qrOKv2OdkLzRbFNAoEw==}
+    engines: {node: '>=22.0.0'}
+    peerDependencies:
+      drizzle-kit: ^0.31.2
+      eventsource: ^4.0.0
+      ws: ^8.0.0
+    peerDependenciesMeta:
+      drizzle-kit:
+        optional: true
+      eventsource:
+        optional: true
+      ws:
+        optional: true
 
   rollup@4.60.1:
     resolution: {integrity: sha512-VmtB2rFU/GroZ4oL8+ZqXgSA38O6GR8KSIvWmEFv63pQ0G6KaBH9s07PO8XTXP4vI+3UJUEypOfjkGfmSBBR0w==}
@@ -6469,6 +6594,10 @@ packages:
     resolution: {integrity: sha512-0/A9rDy9P7cJ+8w1c9WD9V//9Wj15Ce2MPz8Ri6032usz+NfePxx5AcN3bN+r6ZL6jEo066/yNYB3tn4pQEx+A==}
     hasBin: true
 
+  uuid@12.0.1:
+    resolution: {integrity: sha512-9obBF8sMIHJWNQaO6IGOG8giGa/jUpKX34bz6o4whVs8M0WAvhID2tNxYp6A2XEBJPuZSX8wsS/6TEKfIDc+nw==}
+    hasBin: true
+
   uuid@9.0.1:
     resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
     deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
@@ -6477,6 +6606,10 @@ packages:
   vary@1.1.2:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
+
+  vbare@0.0.4:
+    resolution: {integrity: sha512-QsxSVw76NqYUWYPVcQmOnQPX8buIVjgn+yqldTHlWISulBTB9TJ9rnzZceDu+GZmycOtzsmuPbPN1YNxvK12fg==}
+    engines: {node: '>=18.0.0'}
 
   vfile-location@5.0.3:
     resolution: {integrity: sha512-5yXvWDEgqeiYiBe1lbxYF7UMAIm/IcopxMHrMQDq3nvKcjPKIhZklUKL+AE7J7uApI4kwe2snsK+eI6UTj9EHg==}
@@ -6688,6 +6821,11 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
+  yaml@2.9.0:
+    resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yargs-parser@20.2.9:
     resolution: {integrity: sha512-y11nGElTIV+CT3Zv9t7VKl+Q3hTQoT9a1Qzezhhl6Rp21gJ/IVTW7Z3y9EWXhuUBC2Shnf+DX0antecpAwSP8w==}
     engines: {node: '>=10'}
@@ -6751,55 +6889,6 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
-
-  '@agent-os-pkgs/codex@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/common@0.0.0-split-runtime-preview.5d46b14':
-    dependencies:
-      '@agent-os-pkgs/coreutils': 0.0.0-split-runtime-preview.5d46b14
-      '@agent-os-pkgs/diffutils': 0.0.0-split-runtime-preview.5d46b14
-      '@agent-os-pkgs/findutils': 0.0.0-split-runtime-preview.5d46b14
-      '@agent-os-pkgs/gawk': 0.0.0-split-runtime-preview.5d46b14
-      '@agent-os-pkgs/grep': 0.0.0-split-runtime-preview.5d46b14
-      '@agent-os-pkgs/gzip': 0.0.0-split-runtime-preview.5d46b14
-      '@agent-os-pkgs/sed': 0.0.0-split-runtime-preview.5d46b14
-      '@agent-os-pkgs/tar': 0.0.0-split-runtime-preview.5d46b14
-
-  '@agent-os-pkgs/coreutils@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/curl@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/diffutils@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/fd@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/file@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/findutils@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/gawk@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/git@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/grep@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/gzip@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/jq@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/ripgrep@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/sed@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/tar@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/tree@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/unzip@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/yq@0.0.0-split-runtime-preview.5d46b14': {}
-
-  '@agent-os-pkgs/zip@0.0.0-split-runtime-preview.5d46b14': {}
 
   '@agentclientprotocol/sdk@0.12.0(zod@3.25.76)':
     dependencies:
@@ -7020,6 +7109,11 @@ snapshots:
     optionalDependencies:
       zod: 4.3.6
 
+  '@asteasolutions/zod-to-openapi@8.5.0(zod@4.3.6)':
+    dependencies:
+      openapi3-ts: 4.6.0
+      zod: 4.3.6
+
   '@astrojs/compiler@2.13.1': {}
 
   '@astrojs/internal-helpers@0.7.6': {}
@@ -7050,12 +7144,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@astrojs/mdx@4.3.14(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))':
+  '@astrojs/mdx@4.3.14(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))':
     dependencies:
       '@astrojs/markdown-remark': 6.3.11
       '@mdx-js/mdx': 3.1.1
       acorn: 8.17.0
-      astro: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      astro: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
       es-module-lexer: 1.7.0
       estree-util-visit: 2.0.0
       hast-util-to-html: 9.0.5
@@ -7073,15 +7167,15 @@ snapshots:
     dependencies:
       prismjs: 1.30.0
 
-  '@astrojs/react@4.4.2(@types/node@24.13.2)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(jiti@1.21.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tsx@4.21.0)(yaml@2.8.3)':
+  '@astrojs/react@4.4.2(@types/node@24.13.2)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(jiti@1.21.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tsx@4.21.0)(yaml@2.9.0)':
     dependencies:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
-      '@vitejs/plugin-react': 4.7.0(vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3))
+      '@vitejs/plugin-react': 4.7.0(vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0))
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
       ultrahtml: 1.6.0
-      vite: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3)
+      vite: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0)
     transitivePeerDependencies:
       - '@types/node'
       - jiti
@@ -7102,17 +7196,17 @@ snapshots:
       stream-replace-string: 2.0.0
       zod: 4.3.6
 
-  '@astrojs/starlight@0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))':
+  '@astrojs/starlight@0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))':
     dependencies:
       '@astrojs/markdown-remark': 6.3.11
-      '@astrojs/mdx': 4.3.14(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))
+      '@astrojs/mdx': 4.3.14(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))
       '@astrojs/sitemap': 3.7.3
       '@pagefind/default-ui': 1.5.2
       '@types/hast': 3.0.4
       '@types/js-yaml': 4.0.9
       '@types/mdast': 4.0.4
-      astro: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      astro-expressive-code: 0.41.7(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))
+      astro: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
+      astro-expressive-code: 0.41.7(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))
       bcp-47: 2.1.0
       hast-util-from-html: 2.0.3
       hast-util-select: 6.0.4
@@ -7135,13 +7229,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@astrojs/tailwind@6.0.2(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.8.3))':
+  '@astrojs/tailwind@6.0.2(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))':
     dependencies:
-      astro: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      astro: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
       autoprefixer: 10.5.0(postcss@8.5.8)
       postcss: 8.5.8
       postcss-load-config: 4.0.2(postcss@8.5.8)
-      tailwindcss: 3.4.19(tsx@4.21.0)(yaml@2.8.3)
+      tailwindcss: 3.4.19(tsx@4.21.0)(yaml@2.9.0)
     transitivePeerDependencies:
       - ts-node
 
@@ -8271,6 +8365,28 @@ snapshots:
     dependencies:
       hono: 4.12.9
 
+  '@hono/node-ws@1.3.1(@hono/node-server@1.19.12(hono@4.12.9))(bufferutil@4.1.0)(hono@4.12.9)':
+    dependencies:
+      '@hono/node-server': 1.19.12(hono@4.12.9)
+      hono: 4.12.9
+      ws: 8.20.0(bufferutil@4.1.0)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@hono/zod-openapi@1.4.0(hono@4.12.9)(zod@4.3.6)':
+    dependencies:
+      '@asteasolutions/zod-to-openapi': 8.5.0(zod@4.3.6)
+      '@hono/zod-validator': 0.8.0(hono@4.12.9)(zod@4.3.6)
+      hono: 4.12.9
+      openapi3-ts: 4.6.0
+      zod: 4.3.6
+
+  '@hono/zod-validator@0.8.0(hono@4.12.9)(zod@4.3.6)':
+    dependencies:
+      hono: 4.12.9
+      zod: 4.3.6
+
   '@img/colour@1.1.0':
     optional: true
 
@@ -8762,6 +8878,8 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@napi-rs/cli@2.18.4': {}
+
   '@nodelib/fs.scandir@2.1.5':
     dependencies:
       '@nodelib/fs.stat': 2.0.5
@@ -8894,12 +9012,90 @@ snapshots:
       - supports-color
     optional: true
 
-  '@rivet-dev/docs-theme@https://codeload.github.com/rivet-dev/docs-theme/tar.gz/aa489f5252b356bb3f2a5b07532ccd7d70c6d35c(@astrojs/starlight@0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)))(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))':
+  '@rivet-dev/docs-theme@https://codeload.github.com/rivet-dev/docs-theme/tar.gz/aa489f5252b356bb3f2a5b07532ccd7d70c6d35c(@astrojs/starlight@0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)))(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))':
     dependencies:
-      '@astrojs/starlight': 0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3))
-      astro: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      '@astrojs/starlight': 0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))
+      astro: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
 
   '@rivetkit/bare-ts@0.6.2': {}
+
+  '@rivetkit/engine-cli-darwin-arm64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optional: true
+
+  '@rivetkit/engine-cli-darwin-x64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optional: true
+
+  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optional: true
+
+  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optional: true
+
+  '@rivetkit/engine-cli@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optionalDependencies:
+      '@rivetkit/engine-cli-darwin-arm64': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/engine-cli-darwin-x64': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/engine-cli-linux-arm64-musl': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/engine-cli-linux-x64-musl': 0.0.0-feat-dylib-actor-plugin.5d959bc
+
+  '@rivetkit/engine-envoy-protocol@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    dependencies:
+      '@rivetkit/bare-ts': 0.6.2
+
+  '@rivetkit/on-change@6.0.1': {}
+
+  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optional: true
+
+  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optional: true
+
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optional: true
+
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optional: true
+
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optional: true
+
+  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optional: true
+
+  '@rivetkit/rivetkit-napi-win32-x64-msvc@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    optional: true
+
+  '@rivetkit/rivetkit-napi@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    dependencies:
+      '@napi-rs/cli': 2.18.4
+      '@rivetkit/engine-envoy-protocol': 0.0.0-feat-dylib-actor-plugin.5d959bc
+    optionalDependencies:
+      '@rivetkit/rivetkit-napi-darwin-arm64': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/rivetkit-napi-darwin-x64': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/rivetkit-napi-linux-arm64-gnu': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/rivetkit-napi-linux-arm64-musl': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/rivetkit-napi-linux-x64-gnu': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/rivetkit-napi-linux-x64-musl': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/rivetkit-napi-win32-x64-msvc': 0.0.0-feat-dylib-actor-plugin.5d959bc
+
+  '@rivetkit/rivetkit-wasm@2.3.2': {}
+
+  '@rivetkit/traces@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    dependencies:
+      '@rivetkit/bare-ts': 0.6.2
+      cbor-x: 1.6.4
+      fdb-tuple: 1.0.0
+      vbare: 0.0.4
+
+  '@rivetkit/virtual-websocket@0.0.0-feat-dylib-actor-plugin.5d959bc': {}
+
+  '@rivetkit/workflow-engine@0.0.0-feat-dylib-actor-plugin.5d959bc':
+    dependencies:
+      '@rivetkit/bare-ts': 0.6.2
+      cbor-x: 1.6.4
+      fdb-tuple: 1.0.0
+      pino: 9.14.0
+      vbare: 0.0.4
 
   '@rolldown/pluginutils@1.0.0-beta.27': {}
 
@@ -9018,15 +9214,6 @@ snapshots:
     dependencies:
       better-sqlite3: 12.8.0
 
-  '@secure-exec/core@0.3.0':
-    dependencies:
-      '@rivetkit/bare-ts': 0.6.2
-      '@secure-exec/sidecar': 0.3.0
-
-  '@secure-exec/google-drive@0.3.0':
-    dependencies:
-      '@secure-exec/core': 0.3.0
-
   '@secure-exec/nodejs@0.2.1':
     dependencies:
       '@secure-exec/core': 0.2.1
@@ -9037,33 +9224,6 @@ snapshots:
       esbuild: 0.27.4
       node-stdlib-browser: 1.3.1
       web-streams-polyfill: 4.2.0
-
-  '@secure-exec/s3@0.3.0':
-    dependencies:
-      '@secure-exec/core': 0.3.0
-
-  '@secure-exec/sandbox@0.3.0(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
-    dependencies:
-      '@secure-exec/core': 0.3.0
-      sandbox-agent: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
-    transitivePeerDependencies:
-      - '@cloudflare/sandbox'
-      - '@daytonaio/sdk'
-      - '@e2b/code-interpreter'
-      - '@fly/sprites'
-      - '@vercel/sandbox'
-      - computesdk
-      - dockerode
-      - get-port
-      - modal
-      - zod
-
-  '@secure-exec/sidecar-linux-x64-gnu@0.3.0':
-    optional: true
-
-  '@secure-exec/sidecar@0.3.0':
-    optionalDependencies:
-      '@secure-exec/sidecar-linux-x64-gnu': 0.3.0
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     optional: true
@@ -9564,6 +9724,8 @@ snapshots:
 
   '@types/retry@0.12.0': {}
 
+  '@types/retry@0.12.2': {}
+
   '@types/sax@1.2.7':
     dependencies:
       '@types/node': 22.19.15
@@ -9585,7 +9747,7 @@ snapshots:
 
   '@vercel/oidc@3.1.0': {}
 
-  '@vitejs/plugin-react@4.7.0(vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3))':
+  '@vitejs/plugin-react@4.7.0(vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0))':
     dependencies:
       '@babel/core': 7.29.7
       '@babel/plugin-transform-react-jsx-self': 7.29.7(@babel/core@7.29.7)
@@ -9593,7 +9755,7 @@ snapshots:
       '@rolldown/pluginutils': 1.0.0-beta.27
       '@types/babel__core': 7.20.5
       react-refresh: 0.17.0
-      vite: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3)
+      vite: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -9774,12 +9936,12 @@ snapshots:
 
   astring@1.9.0: {}
 
-  astro-expressive-code@0.41.7(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)):
+  astro-expressive-code@0.41.7(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)):
     dependencies:
-      astro: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      astro: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
       rehype-expressive-code: 0.41.7
 
-  astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3):
+  astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0):
     dependencies:
       '@astrojs/compiler': 2.13.1
       '@astrojs/internal-helpers': 0.7.6
@@ -9836,8 +9998,8 @@ snapshots:
       unist-util-visit: 5.1.0
       unstorage: 1.17.5(aws4fetch@1.0.20)
       vfile: 6.0.3
-      vite: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3)
-      vitefu: 1.1.3(vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3))
+      vite: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0)
+      vitefu: 1.1.3(vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0))
       xxhash-wasm: 1.1.0
       yargs-parser: 21.1.1
       yocto-spinner: 0.2.3
@@ -10573,6 +10735,11 @@ snapshots:
 
   dotenv@16.6.1: {}
 
+  drizzle-orm@0.44.7(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0):
+    optionalDependencies:
+      '@opentelemetry/api': 1.9.0
+      better-sqlite3: 12.8.0
+
   dset@3.1.4: {}
 
   dunder-proto@1.0.1:
@@ -10925,6 +11092,8 @@ snapshots:
   fd-slicer@1.1.0:
     dependencies:
       pend: 1.2.0
+
+  fdb-tuple@1.0.0: {}
 
   fdir@6.5.0(picomatch@4.0.4):
     optionalDependencies:
@@ -11514,6 +11683,10 @@ snapshots:
 
   inline-style-parser@0.2.7: {}
 
+  invariant@2.2.4:
+    dependencies:
+      loose-envify: 1.4.0
+
   ip-address@10.1.0: {}
 
   ipaddr.js@1.9.1: {}
@@ -11577,6 +11750,8 @@ snapshots:
     dependencies:
       call-bind: 1.0.8
       define-properties: 1.2.1
+
+  is-network-error@1.3.2: {}
 
   is-number@7.0.0: {}
 
@@ -11731,6 +11906,10 @@ snapshots:
   long@5.3.2: {}
 
   longest-streak@3.1.0: {}
+
+  loose-envify@1.4.0:
+    dependencies:
+      js-tokens: 4.0.0
 
   loupe@3.2.1: {}
 
@@ -12504,6 +12683,10 @@ snapshots:
       ws: 8.20.0(bufferutil@4.1.0)
       zod: 4.3.6
 
+  openapi3-ts@4.6.0:
+    dependencies:
+      yaml: 2.9.0
+
   os-browserify@0.3.0: {}
 
   p-finally@1.0.0: {}
@@ -12533,6 +12716,12 @@ snapshots:
   p-retry@4.6.2:
     dependencies:
       '@types/retry': 0.12.0
+      retry: 0.13.1
+
+  p-retry@6.2.1:
+    dependencies:
+      '@types/retry': 0.12.2
+      is-network-error: 1.3.2
       retry: 0.13.1
 
   p-timeout@3.2.0:
@@ -12773,14 +12962,14 @@ snapshots:
     optionalDependencies:
       postcss: 8.5.8
 
-  postcss-load-config@6.0.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(yaml@2.8.3):
+  postcss-load-config@6.0.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(yaml@2.9.0):
     dependencies:
       lilconfig: 3.1.3
     optionalDependencies:
       jiti: 1.21.7
       postcss: 8.5.8
       tsx: 4.21.0
-      yaml: 2.8.3
+      yaml: 2.9.0
 
   postcss-nested@6.2.0(postcss@8.5.8):
     dependencies:
@@ -13184,6 +13373,65 @@ snapshots:
     dependencies:
       hash-base: 3.1.2
       inherits: 2.0.4
+
+  rivetkit@0.0.0-feat-dylib-actor-plugin.5d959bc(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0)):
+    dependencies:
+      '@hono/node-server': 1.19.12(hono@4.12.9)
+      '@hono/node-ws': 1.3.1(@hono/node-server@1.19.12(hono@4.12.9))(bufferutil@4.1.0)(hono@4.12.9)
+      '@hono/zod-openapi': 1.4.0(hono@4.12.9)(zod@4.3.6)
+      '@rivetkit/bare-ts': 0.6.2
+      '@rivetkit/engine-cli': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/engine-envoy-protocol': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/on-change': 6.0.1
+      '@rivetkit/rivetkit-napi': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/rivetkit-wasm': 2.3.2
+      '@rivetkit/traces': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/virtual-websocket': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/workflow-engine': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      cbor-x: 1.6.4
+      drizzle-orm: 0.44.7(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)
+      get-port: 7.2.0
+      hono: 4.12.9
+      invariant: 2.2.4
+      p-retry: 6.2.1
+      pino: 9.14.0
+      uuid: 12.0.1
+      vbare: 0.0.4
+      zod: 4.3.6
+    optionalDependencies:
+      ws: 8.20.0(bufferutil@4.1.0)
+    transitivePeerDependencies:
+      - '@aws-sdk/client-rds-data'
+      - '@cloudflare/workers-types'
+      - '@electric-sql/pglite'
+      - '@libsql/client'
+      - '@libsql/client-wasm'
+      - '@neondatabase/serverless'
+      - '@op-engineering/op-sqlite'
+      - '@opentelemetry/api'
+      - '@planetscale/database'
+      - '@prisma/client'
+      - '@tidbcloud/serverless'
+      - '@types/better-sqlite3'
+      - '@types/pg'
+      - '@types/sql.js'
+      - '@upstash/redis'
+      - '@vercel/postgres'
+      - '@xata.io/client'
+      - better-sqlite3
+      - bufferutil
+      - bun-types
+      - expo-sqlite
+      - gel
+      - knex
+      - kysely
+      - mysql2
+      - pg
+      - postgres
+      - prisma
+      - sql.js
+      - sqlite3
+      - utf-8-validate
 
   rollup@4.60.1:
     dependencies:
@@ -13599,7 +13847,7 @@ snapshots:
       picocolors: 1.1.1
       sax: 1.6.0
 
-  tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.8.3):
+  tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0):
     dependencies:
       '@alloc/quick-lru': 5.2.0
       arg: 5.0.2
@@ -13618,7 +13866,7 @@ snapshots:
       postcss: 8.5.8
       postcss-import: 15.1.0(postcss@8.5.8)
       postcss-js: 4.1.0(postcss@8.5.8)
-      postcss-load-config: 6.0.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(yaml@2.8.3)
+      postcss-load-config: 6.0.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(yaml@2.9.0)
       postcss-nested: 6.2.0(postcss@8.5.8)
       postcss-selector-parser: 6.1.4
       resolve: 1.22.11
@@ -13936,9 +14184,13 @@ snapshots:
 
   uuid@11.1.0: {}
 
+  uuid@12.0.1: {}
+
   uuid@9.0.1: {}
 
   vary@1.1.2: {}
+
+  vbare@0.0.4: {}
 
   vfile-location@5.0.3:
     dependencies:
@@ -13982,7 +14234,7 @@ snapshots:
       '@types/node': 22.19.15
       fsevents: 2.3.3
 
-  vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3):
+  vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0):
     dependencies:
       esbuild: 0.25.12
       fdir: 6.5.0(picomatch@4.0.4)
@@ -13995,11 +14247,11 @@ snapshots:
       fsevents: 2.3.3
       jiti: 1.21.7
       tsx: 4.21.0
-      yaml: 2.8.3
+      yaml: 2.9.0
 
-  vitefu@1.1.3(vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3)):
+  vitefu@1.1.3(vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0)):
     optionalDependencies:
-      vite: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.8.3)
+      vite: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0)
 
   vitest@2.1.9(@types/node@22.19.15):
     dependencies:
@@ -14111,6 +14363,8 @@ snapshots:
   yallist@3.1.1: {}
 
   yaml@2.8.3: {}
+
+  yaml@2.9.0: {}
 
   yargs-parser@20.2.9: {}
 
