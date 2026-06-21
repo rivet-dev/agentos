@@ -7,7 +7,7 @@ import { motion, useReducedMotion } from 'framer-motion';
 // ---------------------------------------------------------------------------
 // Shared primitives for the benchmark diagrams. Extracted from AgentOSPage so
 // the cold-start / memory / execution diagram components can reuse them without
-// importing from the page component. Styled for dark InkPanel surfaces.
+// importing from the page component. Styled for the light marketing cards.
 // ---------------------------------------------------------------------------
 
 // A help icon with a hover tooltip. The wrapper is intentionally not positioned
@@ -17,13 +17,13 @@ export function BenchInfoTooltip({ children }: { children: ReactNode }) {
 	return (
 		<span className='group/tip ml-1.5 inline-flex align-middle'>
 			<svg
-				className='h-3.5 w-3.5 cursor-help text-cream/35 transition-colors group-hover/tip:text-cream/70'
+				className='h-3.5 w-3.5 cursor-help text-ink/30 transition-colors group-hover/tip:text-ink/60'
 				viewBox='0 0 16 16'
 				fill='currentColor'
 			>
 				<path d='M8 0a8 8 0 100 16A8 8 0 008 0zm1 12H7V7h2v5zm-1-6a1 1 0 110-2 1 1 0 010 2z' />
 			</svg>
-			<span className='pointer-events-none absolute inset-x-3 bottom-12 z-50 rounded-lg border border-cream/15 bg-ink p-3 text-left text-[11px] leading-relaxed text-cream/80 opacity-0 shadow-xl transition-opacity duration-200 group-hover/tip:pointer-events-auto group-hover/tip:opacity-100 [&_a]:text-cream [&_a]:underline [&_a]:underline-offset-2 [&_strong]:font-medium [&_strong]:text-cream'>
+			<span className='pointer-events-none absolute inset-x-3 bottom-12 z-50 rounded-lg border border-ink/15 bg-white p-3 text-left text-[11px] leading-relaxed text-ink-soft opacity-0 shadow-xl transition-opacity duration-200 group-hover/tip:pointer-events-auto group-hover/tip:opacity-100 [&_a]:text-ink [&_a]:underline [&_a]:underline-offset-2 [&_strong]:font-medium [&_strong]:text-ink'>
 				{children}
 			</span>
 		</span>
@@ -38,7 +38,7 @@ export function BenchToggle({ options, active, onChange }: { options: string[]; 
 		options.length === 4 ? 'grid-cols-2 sm:grid-cols-4' : options.length === 3 ? 'grid-cols-3' : 'grid-cols-2';
 
 	return (
-		<div className={`grid w-full gap-1 rounded-lg border border-cream/10 bg-cream/[0.03] p-1 ${columns}`}>
+		<div className={`grid w-full gap-1 rounded-lg border border-ink/10 bg-white/55 p-1 ${columns}`}>
 			{options.map((label, i) => {
 				const isActive = i === active;
 				return (
@@ -49,13 +49,13 @@ export function BenchToggle({ options, active, onChange }: { options: string[]; 
 						aria-pressed={isActive}
 						whileTap={{ scale: 0.94 }}
 						className={`relative flex h-7 min-w-0 items-center justify-center rounded-md px-1.5 text-center font-mono text-[10px] uppercase tracking-[0.12em] transition-colors ${
-							isActive ? 'text-ink' : 'text-cream/45 hover:text-cream/75'
+							isActive ? 'text-cream' : 'text-ink-soft hover:text-ink'
 						}`}
 					>
 						{isActive && (
 							<motion.span
 								layoutId={`bench-toggle-${layoutId}`}
-								className='absolute inset-0 rounded-md bg-cream'
+								className='absolute inset-0 rounded-md bg-ink'
 								transition={{ type: 'spring', stiffness: 480, damping: 38 }}
 							/>
 						)}

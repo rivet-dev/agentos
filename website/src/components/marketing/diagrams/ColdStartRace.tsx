@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ArrowDown, Box, Check } from 'lucide-react';
 import { Reveal } from '../motion';
-import { InkPanel } from '../editorial/InkPanel';
 import { BenchToggle, CountUpStat } from './benchUI';
 import { benchColdStart } from '../../../data/bench';
 
@@ -21,7 +20,7 @@ import { benchColdStart } from '../../../data/bench';
 // and the race replays when the percentile changes.
 // ---------------------------------------------------------------------------
 
-const AGENTOS_MARK = '/images/agent-os/agentos-logo.svg'; // light variant for the dark panel
+const AGENTOS_MARK = '/images/agent-os/agentos-logo-ink.svg';
 const AGENT_LOGOS = [
 	'/images/agent-logos/pi.svg',
 	'/images/agent-logos/claude-code.svg',
@@ -41,7 +40,7 @@ const BOOT_SEC = 2.7; // base animation seconds for the container boot
 const AOS_DONE = 0.04; // fraction of the timeline at which Agent OS is finished
 
 const MiniBar = ({ width, color }: { width: MotionValue<string>; color: MotionValue<string> }) => (
-	<div className='h-1 w-full overflow-hidden rounded-full bg-cream/10'>
+	<div className='h-1 w-full overflow-hidden rounded-full bg-ink/10'>
 		<motion.div style={{ width, backgroundColor: color }} className='h-full rounded-full' />
 	</div>
 );
@@ -55,7 +54,7 @@ const ContainerBox = ({ progress, lo, hi, logo }: { progress: MotionValue<number
 		<div className='flex w-24 flex-col items-center gap-1'>
 			<motion.div
 				style={{ borderColor: border }}
-				className='flex h-12 w-full items-center justify-center rounded-lg border-2 bg-cream/[0.06] px-2'
+				className='flex h-12 w-full items-center justify-center rounded-lg border-2 bg-white/80 px-2 shadow-[0_1px_2px_rgba(27,25,22,0.05)]'
 			>
 				<img src={logo} alt='' aria-hidden='true' className='h-6 w-6 object-contain' />
 			</motion.div>
@@ -71,10 +70,10 @@ const SharedProcessBox = ({ progress, count }: { progress: MotionValue<number>; 
 	const barColor = useTransform(progress, [0, AOS_DONE], [RED, GREEN]);
 	return (
 		<div className='flex flex-col gap-1'>
-			<motion.div style={{ borderColor: border }} className='rounded-xl border-2 bg-cream/[0.04] p-2'>
+			<motion.div style={{ borderColor: border }} className='rounded-xl border-2 bg-white/60 p-2'>
 				<div className='flex flex-wrap items-center gap-1.5'>
 					{Array.from({ length: count }).map((_, i) => (
-						<span key={i} className='flex h-8 w-8 items-center justify-center rounded-md bg-cream/10 ring-1 ring-cream/15'>
+						<span key={i} className='flex h-8 w-8 items-center justify-center rounded-md bg-white/85 ring-1 ring-ink/10'>
 							<img src={agentAt(i)} alt='' aria-hidden='true' className='h-5 w-5 object-contain' />
 						</span>
 					))}
@@ -99,15 +98,15 @@ const Host = ({ cfg, progress }: { cfg: HostCfg; progress: MotionValue<number> }
 	const counter = useTransform(progress, (p) => `~${Math.round(Math.min(1, p / cfg.doneAt) * cfg.finalMs).toLocaleString()} ms`);
 	const checkOpacity = useTransform(progress, [0, cfg.doneAt * 0.95, cfg.doneAt], [0, 0, 1]);
 	return (
-		<div className={`rounded-xl border p-4 ${cfg.accent ? 'border-accent/40 bg-accent/[0.10]' : 'border-cream/10 bg-cream/[0.03]'}`}>
+		<div className={`rounded-xl border p-4 ${cfg.accent ? 'border-accent/30 bg-accent/[0.05]' : 'border-ink/10 bg-paper/40'}`}>
 			<div className='mb-3 flex items-center justify-between gap-3'>
-				<span className='flex items-center gap-2 text-sm font-medium text-cream'>{cfg.name}</span>
+				<span className='flex items-center gap-2 text-sm font-medium text-ink'>{cfg.name}</span>
 				<div className='flex items-center gap-3'>
 					{cfg.badge}
 					<motion.span style={{ opacity: checkOpacity }} aria-hidden='true'>
 						<Check className='h-4 w-4' style={{ color: GREEN }} />
 					</motion.span>
-					<motion.span className='w-[5rem] text-right font-mono text-sm tabular-nums text-cream'>{counter}</motion.span>
+					<motion.span className='w-[5rem] text-right font-mono text-sm tabular-nums text-ink'>{counter}</motion.span>
 				</div>
 			</div>
 			{cfg.grouped ? (
@@ -151,66 +150,64 @@ export const ColdStartRace = () => {
 
 	return (
 		<Reveal>
-			<InkPanel>
-				<div ref={ref} className='p-6 md:p-7'>
-					<div className='flex flex-wrap items-start justify-between gap-3'>
-						<div className='flex flex-col gap-1'>
-							<span className='font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-sage'>Cold Start</span>
-							<span className='inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.12em] text-cream/40'>
-								<ArrowDown className='h-3 w-3' /> lower is better
-							</span>
-						</div>
-						<div className='w-40 max-sm:w-full'>
-							<BenchToggle options={benchColdStart.map((g) => g.label)} active={pct} onChange={setPct} />
-						</div>
-					</div>
-
-					{/* Headline multiplier — recomputes per percentile (92x / 170x / 516x) */}
-					<div className='mt-5 flex items-baseline gap-2'>
-						<span className='font-sans text-[2.75rem] font-medium leading-[1.0] tracking-[-0.02em] tabular-nums text-cream md:text-5xl'>
-							<CountUpStat text={`${SPEEDUP}x`} active={inView} />
+			<div ref={ref} className='rounded-2xl border border-ink/10 bg-white/55 p-6 md:p-7'>
+				<div className='flex flex-wrap items-start justify-between gap-3'>
+					<div className='flex flex-col gap-1'>
+						<span className='font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-ink-faint'>Cold Start</span>
+						<span className='inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-faint'>
+							<ArrowDown className='h-3 w-3' /> lower is better
 						</span>
-						<span className='font-sans text-lg font-medium text-cream/45 md:text-xl'>faster</span>
 					</div>
-
-					<div key={pct} className='mt-7 flex flex-col gap-4'>
-						<Host
-							progress={progress}
-							cfg={{
-								name: (
-									<>
-										<Box className='h-4 w-4 text-cream/60' aria-hidden='true' /> Containers &mdash; one process each
-									</>
-								),
-								finalMs: CONTAINER_MS,
-								doneAt: 1,
-								units: 4,
-								grouped: false,
-								accent: false,
-							}}
-						/>
-						<Host
-							progress={progress}
-							cfg={{
-								name: (
-									<>
-										<img src={AGENTOS_MARK} alt='' aria-hidden='true' className='h-4 w-4' /> Agent OS &mdash; one shared process
-									</>
-								),
-								finalMs: AOS_MS,
-								doneAt: AOS_DONE,
-								units: 12,
-								grouped: true,
-								accent: true,
-							}}
-						/>
+					<div className='w-40 max-sm:w-full'>
+						<BenchToggle options={benchColdStart.map((g) => g.label)} active={pct} onChange={setPct} />
 					</div>
-
-					<p className='mt-4 font-mono text-[11px] leading-relaxed text-cream/40'>
-						Same host. Each container boots its own process before code can run; Agent OS runs every agent in one shared process &mdash; the first instruction executes in ~{AOS_MS} ms vs ~{CONTAINER_MS.toLocaleString()} ms ({SPEEDUP}&times; faster). Toggle the percentile to compare median vs tail latency.
-					</p>
 				</div>
-			</InkPanel>
+
+				{/* Headline multiplier — recomputes per percentile (92x / 170x / 516x) */}
+				<div className='mt-5 flex items-baseline gap-2'>
+					<span className='font-sans text-[2.75rem] font-medium leading-[1.0] tracking-[-0.02em] tabular-nums text-ink md:text-5xl'>
+						<CountUpStat text={`${SPEEDUP}x`} active={inView} />
+					</span>
+					<span className='font-sans text-lg font-medium text-ink-faint md:text-xl'>faster</span>
+				</div>
+
+				<div key={pct} className='mt-7 flex flex-col gap-4'>
+					<Host
+						progress={progress}
+						cfg={{
+							name: (
+								<>
+									<Box className='h-4 w-4 text-ink-soft' aria-hidden='true' /> Containers &mdash; one process each
+								</>
+							),
+							finalMs: CONTAINER_MS,
+							doneAt: 1,
+							units: 4,
+							grouped: false,
+							accent: false,
+						}}
+					/>
+					<Host
+						progress={progress}
+						cfg={{
+							name: (
+								<>
+									<img src={AGENTOS_MARK} alt='' aria-hidden='true' className='h-4 w-4' /> Agent OS &mdash; one shared process
+								</>
+							),
+							finalMs: AOS_MS,
+							doneAt: AOS_DONE,
+							units: 12,
+							grouped: true,
+							accent: true,
+						}}
+					/>
+				</div>
+
+				<p className='mt-4 font-mono text-[11px] leading-relaxed text-ink-faint'>
+					Same host. Each container boots its own process before code can run; Agent OS runs every agent in one shared process &mdash; the first instruction executes in ~{AOS_MS} ms vs ~{CONTAINER_MS.toLocaleString()} ms ({SPEEDUP}&times; faster). Toggle the percentile to compare median vs tail latency.
+				</p>
+			</div>
 		</Reveal>
 	);
 };
