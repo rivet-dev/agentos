@@ -17,29 +17,31 @@ import yq from "@agentos-software/yq";
 import zip from "@agentos-software/zip";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const fallbackCommandDir = resolve(
-	__dirname,
-	"../../..",
-	"registry/native/target/wasm32-wasip1/release/commands",
-);
-
+const COMMAND_SUBPATH = "registry/native/target/wasm32-wasip1/release/commands";
 // Published packages ship package-local wasm/ dirs. Workspace packages use the
-// native build output when those package-local dirs have not been materialized.
+// native build output: agent-os's own registry when present, or the sibling
+// secure-exec checkout under `just secure-exec-local` (where the WASM is built).
+const fallbackCommandDir = [
+	resolve(__dirname, "../../..", COMMAND_SUBPATH),
+	resolve(__dirname, "../../../../secure-exec", COMMAND_SUBPATH),
+].find((dir) => existsSync(dir));
+
 function withLocalCommandFallback(software: SoftwareInput): SoftwareInput {
 	if (Array.isArray(software)) {
 		return software.map(withLocalCommandFallback) as SoftwareInput;
 	}
 
 	if (
+		fallbackCommandDir !== undefined &&
 		"commandDir" in software &&
 		typeof software.commandDir === "string" &&
-		!existsSync(software.commandDir) &&
-		existsSync(fallbackCommandDir)
+		!existsSync(software.commandDir)
 	) {
+		const dir = fallbackCommandDir;
 		return {
 			...software,
 			get commandDir() {
-				return fallbackCommandDir;
+				return dir;
 			},
 		};
 	}
