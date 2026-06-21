@@ -3,18 +3,18 @@
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import codex from "@agent-os-pkgs/codex";
-import common from "@agent-os-pkgs/common";
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import type { SoftwareInput } from "@rivet-dev/agent-os-core";
-import fd from "@agent-os-pkgs/fd";
-import file from "@agent-os-pkgs/file";
-import jq from "@agent-os-pkgs/jq";
-import ripgrep from "@agent-os-pkgs/ripgrep";
-import tree from "@agent-os-pkgs/tree";
-import unzip from "@agent-os-pkgs/unzip";
-import yq from "@agent-os-pkgs/yq";
-import zip from "@agent-os-pkgs/zip";
+import codex from "@agentos-software/codex";
+import common from "@agentos-software/common";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import type { SoftwareInput } from "@rivet-dev/agentos-core";
+import fd from "@agentos-software/fd";
+import file from "@agentos-software/file";
+import jq from "@agentos-software/jq";
+import ripgrep from "@agentos-software/ripgrep";
+import tree from "@agentos-software/tree";
+import unzip from "@agentos-software/unzip";
+import yq from "@agentos-software/yq";
+import zip from "@agentos-software/zip";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fallbackCommandDir = resolve(

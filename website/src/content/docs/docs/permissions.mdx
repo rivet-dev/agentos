@@ -46,8 +46,8 @@ await agent.sendPrompt(session.sessionId, "Create a new file at /home/user/outpu
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -76,8 +76,8 @@ Use the `onPermissionRequest` hook in the actor config to approve permissions se
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   onPermissionRequest: async (c, sessionId, request) => {
@@ -117,8 +117,8 @@ Inspect the permission request to make approval decisions based on the tool or p
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   onPermissionRequest: async (c, sessionId, request) => {

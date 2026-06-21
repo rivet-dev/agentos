@@ -144,8 +144,8 @@ await agent.sendPrompt(session.sessionId, "Run the test suite");
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -190,8 +190,8 @@ for (const e of persisted) {
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },

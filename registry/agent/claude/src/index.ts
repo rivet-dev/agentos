@@ -1,4 +1,4 @@
-import { defineSoftware } from "@rivet-dev/agent-os-core";
+import { defineSoftware } from "@rivet-dev/agentos-core";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,10 +12,10 @@ const claude = defineSoftware({
 	requires: ["@anthropic-ai/claude-agent-sdk"],
 	agent: {
 		id: "claude",
-		acpAdapter: "@rivet-dev/agent-os-claude",
+		acpAdapter: "@rivet-dev/agentos-claude",
 		agentPackage: "@anthropic-ai/claude-agent-sdk",
 		staticEnv: {
-			CLAUDE_AGENT_SDK_CLIENT_APP: "@rivet-dev/agent-os",
+			CLAUDE_AGENT_SDK_CLIENT_APP: "@rivet-dev/agentos",
 			CLAUDE_CODE_SIMPLE: "1",
 			CLAUDE_CODE_FORCE_AGENT_OS_RIPGREP: "1",
 			CLAUDE_CODE_DEFER_GROWTHBOOK_INIT: "1",

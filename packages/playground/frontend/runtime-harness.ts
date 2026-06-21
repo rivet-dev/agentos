@@ -8,7 +8,7 @@ import {
 	type NodeRuntimeDriver,
 	releaseOpfsNamespace,
 	type TimingMitigation,
-} from "@rivet-dev/agent-os-browser";
+} from "@rivet-dev/agentos-browser";
 
 type HarnessStdioEvent = {
 	channel: "stdout" | "stderr";

@@ -26,7 +26,7 @@ See [agentOS vs Sandbox](/docs/versus-sandbox) for a detailed comparison.
 
 ## Getting started
 
-The `@rivet-dev/agent-os-sandbox` package integrates through two mechanisms:
+The `@rivet-dev/agentos-sandbox` package integrates through two mechanisms:
 
 - **Filesystem mount**: Projects the sandbox into the VM as a native directory, like mounting a hard drive on your own machine. Read and write files through the mount directly.
 - **Toolkit**: Exposes sandbox process management as [host tools](/docs/tools). Execute commands on the sandbox from within the VM.
@@ -34,15 +34,15 @@ The `@rivet-dev/agent-os-sandbox` package integrates through two mechanisms:
 Both are powered by [Sandbox Agent](https://sandboxagent.dev), so you can swap providers without changing agent code.
 
 ```bash
-npm install @rivet-dev/agent-os-sandbox sandbox-agent
+npm install @rivet-dev/agentos-sandbox sandbox-agent
 ```
 
 ```ts
 import { SandboxAgent } from "sandbox-agent";
 import { docker } from "sandbox-agent/docker";
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@rivet-dev/agent-os-common";
-import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agent-os-sandbox";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import common from "@rivet-dev/agentos-common";
+import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agentos-sandbox";
 
 const sandbox = await SandboxAgent.start({
   sandbox: docker(),

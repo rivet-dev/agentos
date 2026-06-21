@@ -63,7 +63,7 @@ const agentOsFacadeSymbolPatterns = [
 const agentOsDocumentationPatterns = [
 	{ label: "Agent OS", pattern: /\bAgent OS\b/g },
 	{ label: "AgentOs", pattern: /\bAgentOs\b/g },
-	{ label: "@rivet-dev/agent-os", pattern: /@rivet-dev\/agent-os(?:-|$)/g },
+	{ label: "@rivet-dev/agentos", pattern: /@rivet-dev\/agent-os(?:-|$)/g },
 ];
 
 function readJson(path) {

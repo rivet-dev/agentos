@@ -1,7 +1,7 @@
-import { AgentOs, type SoftwareInput } from "@rivet-dev/agent-os-core";
-import { coreutils } from "@agent-os-pkgs/common";
-import claude from "@rivet-dev/agent-os-claude";
-import pi from "@rivet-dev/agent-os-pi";
+import { AgentOs, type SoftwareInput } from "@rivet-dev/agentos-core";
+import { coreutils } from "@agentos-software/common";
+import claude from "@rivet-dev/agentos-claude";
+import pi from "@rivet-dev/agentos-pi";
 import { LLMock } from "@copilotkit/llmock";
 import os from "node:os";
 import { resolve } from "node:path";

@@ -1,5 +1,5 @@
 {
-  "name": "@rivet-dev/agent-os-shell",
+  "name": "@rivet-dev/agentos-shell",
   "private": true,
   "type": "module",
   "bin": {
@@ -12,17 +12,17 @@
     "test": "pnpm build && vitest run --fileParallelism=false"
   },
   "dependencies": {
-    "@rivet-dev/agent-os-core": "workspace:*",
-    "@agent-os-pkgs/common": "catalog:",
-    "@agent-os-pkgs/jq": "catalog:",
-    "@agent-os-pkgs/ripgrep": "catalog:",
-    "@agent-os-pkgs/fd": "catalog:",
-    "@agent-os-pkgs/tree": "catalog:",
-    "@agent-os-pkgs/file": "catalog:",
-    "@agent-os-pkgs/zip": "catalog:",
-    "@agent-os-pkgs/unzip": "catalog:",
-    "@agent-os-pkgs/yq": "catalog:",
-    "@agent-os-pkgs/codex": "catalog:"
+    "@rivet-dev/agentos-core": "workspace:*",
+    "@agentos-software/common": "catalog:",
+    "@agentos-software/jq": "catalog:",
+    "@agentos-software/ripgrep": "catalog:",
+    "@agentos-software/fd": "catalog:",
+    "@agentos-software/tree": "catalog:",
+    "@agentos-software/file": "catalog:",
+    "@agentos-software/zip": "catalog:",
+    "@agentos-software/unzip": "catalog:",
+    "@agentos-software/yq": "catalog:",
+    "@agentos-software/codex": "catalog:"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",

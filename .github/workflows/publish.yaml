@@ -190,7 +190,7 @@ jobs:
       - name: Build TypeScript packages
         run: |
           npx turbo build \
-            --filter='!@rivet-dev/agent-os-playground' \
+            --filter='!@rivet-dev/agentos-playground' \
             --filter='!./examples/*'
       - name: Finalize package versions for publish (inject optionalDeps)
         run: |

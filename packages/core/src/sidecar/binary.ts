@@ -10,7 +10,7 @@ interface SidecarBinaryModule {
  *
  * Honors `AGENT_OS_SIDECAR_BIN` as an absolute-path override, otherwise
  * resolves the platform-specific binary shipped by the
- * `@rivet-dev/agent-os-sidecar` package. In-repo developer builds use the local
+ * `@rivet-dev/agentos-sidecar` package. In-repo developer builds use the local
  * cargo build path instead and never reach this function.
  */
 export function resolvePublishedSidecarBinary(): string {
@@ -27,10 +27,10 @@ export function resolvePublishedSidecarBinary(): string {
 	const require = createRequire(import.meta.url);
 	let mod: SidecarBinaryModule;
 	try {
-		mod = require("@rivet-dev/agent-os-sidecar") as SidecarBinaryModule;
+		mod = require("@rivet-dev/agentos-sidecar") as SidecarBinaryModule;
 	} catch (error) {
 		throw new Error(
-			"failed to resolve the Agent OS sidecar binary: the @rivet-dev/agent-os-sidecar " +
+			"failed to resolve the Agent OS sidecar binary: the @rivet-dev/agentos-sidecar " +
 				"package is not installed. Install it, or set AGENT_OS_SIDECAR_BIN to a local " +
 				`agent-os-sidecar binary. (${(error as Error).message})`,
 		);

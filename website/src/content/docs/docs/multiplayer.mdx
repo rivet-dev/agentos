@@ -49,8 +49,8 @@ agentB.on("sessionEvent", (data) => {
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -92,8 +92,8 @@ agent.on("shellData", (data) => {
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -114,8 +114,8 @@ One client acts as the driver (sending prompts), while others observe.
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   onSessionEvent: async (c, sessionId, event) => {
@@ -188,8 +188,8 @@ agent.on("sessionEvent", (data) => {
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },

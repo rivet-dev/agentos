@@ -9,16 +9,16 @@ agentOS starts with no commands installed. The `software` option lets you declar
 ## Install
 
 ```bash
-npm install @rivet-dev/agent-os-core @rivet-dev/agent-os-common
+npm install @rivet-dev/agentos-core @rivet-dev/agentos-common
 ```
 
-`@rivet-dev/agent-os-common` is a meta-package that includes coreutils, sed, grep, gawk, findutils, diffutils, tar, and gzip. For a smaller footprint, install individual packages instead.
+`@rivet-dev/agentos-common` is a meta-package that includes coreutils, sed, grep, gawk, findutils, diffutils, tar, and gzip. For a smaller footprint, install individual packages instead.
 
 ## Usage
 
 ```ts
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@rivet-dev/agent-os-common";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import common from "@rivet-dev/agentos-common";
 
 const vm = await AgentOs.create({
   software: [common],
@@ -33,11 +33,11 @@ await vm.dispose();
 You can mix individual packages and meta-packages:
 
 ```ts
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import coreutils from "@rivet-dev/agent-os-coreutils";
-import grep from "@rivet-dev/agent-os-grep";
-import jq from "@rivet-dev/agent-os-jq";
-import ripgrep from "@rivet-dev/agent-os-ripgrep";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import coreutils from "@rivet-dev/agentos-coreutils";
+import grep from "@rivet-dev/agentos-grep";
+import jq from "@rivet-dev/agentos-jq";
+import ripgrep from "@rivet-dev/agentos-ripgrep";
 
 const vm = await AgentOs.create({
   software: [coreutils, grep, jq, ripgrep],

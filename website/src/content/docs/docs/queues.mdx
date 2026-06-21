@@ -19,8 +19,8 @@ Use actor queues to serialize work that an agent processes one task at a time.
 <TabItem label="server.ts">
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 import { actor, queue, setup } from "rivetkit";
 
 const taskRunner = actor({
@@ -73,8 +73,8 @@ Use completable messages when the caller needs to wait for the agent to finish.
 <TabItem label="server.ts">
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 import { actor, queue, setup } from "rivetkit";
 
 const reviewer = actor({
@@ -142,8 +142,8 @@ Accept tasks from webhooks, APIs, or other services and queue them for agent pro
 <TabItem label="server.ts">
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 import { actor, queue, setup } from "rivetkit";
 
 const issueWorker = actor({

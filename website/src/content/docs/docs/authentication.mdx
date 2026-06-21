@@ -15,8 +15,8 @@ Validate credentials before allowing a connection. Throw an error to reject.
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup, UserError } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   onBeforeConnect: async (c, params: { authToken: string }) => {
@@ -39,8 +39,8 @@ Extract user data from credentials and store it in connection state. Accessible 
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup, UserError } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 interface ConnState {
   userId: string;

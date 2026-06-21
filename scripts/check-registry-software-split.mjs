@@ -71,7 +71,7 @@ export function checkRegistrySoftwareSplit(options = {}) {
 		);
 
 		const manifest = readJson(manifestPath);
-		const expectedName = `@agent-os-pkgs/${dirName}`;
+		const expectedName = `@agentos-software/${dirName}`;
 		if (manifest.name !== expectedName) {
 			errors.push(
 				`${formatPath(root, manifestPath)} must be named ${expectedName}, found ${manifest.name}`,

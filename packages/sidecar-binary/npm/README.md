@@ -6,5 +6,5 @@ workflow, which builds the binary for each platform and copies it into the
 matching directory before `npm publish`. They are not pnpm workspace members and
 are not built by Turborepo.
 
-The meta package `@rivet-dev/agent-os-sidecar` (one directory up) resolves the
+The meta package `@rivet-dev/agentos-sidecar` (one directory up) resolves the
 correct platform package at runtime via npm `os`/`cpu`/`libc` selection.

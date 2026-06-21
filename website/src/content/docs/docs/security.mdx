@@ -13,8 +13,8 @@ Cap kernel resources per VM to prevent runaway agents. Resource limits live unde
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: {
@@ -41,7 +41,7 @@ VM network access is governed by kernel [Permissions](/docs/permissions). By def
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
+import common from "@rivet-dev/agentos-common";
 
 const vm = agentOs({
   options: {
@@ -61,8 +61,8 @@ Use the `onBeforeConnect` hook to validate clients before they access the agent.
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup, UserError } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   onBeforeConnect: async (c, params: { authToken: string }) => {

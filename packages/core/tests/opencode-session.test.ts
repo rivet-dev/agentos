@@ -6,7 +6,7 @@ import {
 import { resolve } from "node:path";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
-import opencode from "@rivet-dev/agent-os-opencode";
+import opencode from "@rivet-dev/agentos-opencode";
 import { describe, expect, test } from "vitest";
 import type { AgentCapabilities, AgentInfo } from "../src/agent-os.js";
 import { AgentOs } from "../src/agent-os.js";

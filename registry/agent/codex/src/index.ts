@@ -1,3 +1,3 @@
-import codexSoftware from "@agent-os-pkgs/codex";
+import codexSoftware from "@agentos-software/codex";
 
 export default codexSoftware;

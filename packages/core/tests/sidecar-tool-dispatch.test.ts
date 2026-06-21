@@ -1,4 +1,4 @@
-import common from "@agent-os-pkgs/common";
+import common from "@agentos-software/common";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { AgentOs, hostTool, toolKit } from "../src/index.js";

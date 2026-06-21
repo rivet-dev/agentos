@@ -45,7 +45,7 @@ builds a debug sidecar, and publishes every package to npm under that tag.
 Install a preview with:
 
 ```bash
-npm install @rivet-dev/agent-os-core@<sanitized-branch>
+npm install @rivet-dev/agentos-core@<sanitized-branch>
 ```
 
 ## Notes

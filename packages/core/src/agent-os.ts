@@ -461,7 +461,7 @@ export interface AgentOsOptions {
 	/**
 	 * Software to install in the VM. Each entry provides agents, tools,
 	 * or WASM commands. Any object with a `commandDir` property (e.g.,
-	 * registry packages like @agent-os-pkgs/coreutils) is treated
+	 * registry packages like @agentos-software/coreutils) is treated
 	 * as a WASM command source automatically. Arrays are flattened, so
 	 * meta-packages that export arrays of sub-packages work directly.
 	 */

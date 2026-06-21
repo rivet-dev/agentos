@@ -46,7 +46,7 @@ const nodeBuiltinAlias = {
 } as const;
 
 const playgroundAlias = {
-	"@rivet-dev/agent-os-browser": resolve(
+	"@rivet-dev/agentos-browser": resolve(
 		playgroundDir,
 		"../browser/src/index.ts",
 	),

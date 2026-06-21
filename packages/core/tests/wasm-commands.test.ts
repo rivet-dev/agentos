@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import curlPackage from "@agent-os-pkgs/curl";
+import curlPackage from "@agentos-software/curl";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { AgentOs } from "../src/index.js";
 import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";

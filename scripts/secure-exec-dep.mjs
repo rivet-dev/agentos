@@ -44,7 +44,7 @@ const SWAPPABLE_SCOPED = {
 	"@secure-exec/google-drive": "registry/file-system/google-drive",
 	"@secure-exec/sandbox": "registry/tool/sandbox",
 };
-// @agent-os-pkgs/<name> always maps to registry/software/<name> (renamed 3rd-party pkgs).
+// @agentos-software/<name> always maps to registry/software/<name> (renamed 3rd-party pkgs).
 const softwareSubpath = (name) => `registry/software/${name.split("/")[1]}`;
 // Published-only deps with no local source: always resolved from the registry.
 const REGISTRY_ONLY = new Set(["@secure-exec/nodejs"]);
@@ -93,16 +93,16 @@ function consumerManifests() {
 
 function isManaged(name) {
 	return (
-		name.startsWith("@agent-os-pkgs/") ||
+		name.startsWith("@agentos-software/") ||
 		name in SWAPPABLE_SCOPED ||
 		REGISTRY_ONLY.has(name)
 	);
 }
 function isSwappable(name) {
-	return name.startsWith("@agent-os-pkgs/") || name in SWAPPABLE_SCOPED;
+	return name.startsWith("@agentos-software/") || name in SWAPPABLE_SCOPED;
 }
 function localSubpath(name) {
-	if (name.startsWith("@agent-os-pkgs/")) return softwareSubpath(name);
+	if (name.startsWith("@agentos-software/")) return softwareSubpath(name);
 	return SWAPPABLE_SCOPED[name];
 }
 
@@ -181,7 +181,7 @@ function readVersions() {
 }
 function versionFor(name, pinned) {
 	if (pinned[name]) return pinned[name];
-	if (name.startsWith("@agent-os-pkgs/")) return SEED_SOFTWARE_VERSION;
+	if (name.startsWith("@agentos-software/")) return SEED_SOFTWARE_VERSION;
 	return SEED_VERSIONS[name] ?? SEED_SOFTWARE_VERSION;
 }
 function writeCatalog(setVersion) {

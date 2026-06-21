@@ -14,9 +14,9 @@
 
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
-import common from "@agent-os-pkgs/common";
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@agentos-software/common";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import pi from "@rivet-dev/agentos-pi";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
@@ -27,7 +27,7 @@ if (!ANTHROPIC_API_KEY) {
 
 const require = createRequire(import.meta.url);
 const MODULE_ACCESS_CWD = resolve(
-	dirname(require.resolve("@rivet-dev/agent-os-core")),
+	dirname(require.resolve("@rivet-dev/agentos-core")),
 	"..",
 );
 const HOME_DIR = "/home/user";

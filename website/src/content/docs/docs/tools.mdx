@@ -22,9 +22,9 @@ Define a toolkit with Zod input schemas and pass it to `agentOs()`. Each tool be
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
-import { toolKit, hostTool } from "@rivet-dev/agent-os-core";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
+import { toolKit, hostTool } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
 const weatherToolkit = toolKit({

@@ -22,9 +22,9 @@ Each mount takes a `path` (where to mount inside the VM) and an optional `readOn
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import { createInMemoryFileSystem } from "@rivet-dev/agent-os-core";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import { createInMemoryFileSystem } from "@rivet-dev/agentos-core";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: {
@@ -44,9 +44,9 @@ registry.start();
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import { createHostDirBackend } from "@rivet-dev/agent-os-core";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import { createHostDirBackend } from "@rivet-dev/agentos-core";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: {
@@ -63,16 +63,16 @@ registry.start();
 
 ### S3
 
-Install `@rivet-dev/agent-os-s3` for S3-compatible storage.
+Install `@rivet-dev/agentos-s3` for S3-compatible storage.
 
 Use `createS3Backend` to mount a bucket. Pass an optional `prefix` to scope storage to a key path within the bucket — useful for sharing one bucket across multiple agents.
 
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import { createS3Backend } from "@rivet-dev/agent-os-s3";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import { createS3Backend } from "@rivet-dev/agentos-s3";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: {
@@ -98,14 +98,14 @@ registry.start();
 
 ### Google Drive
 
-Install `@rivet-dev/agent-os-google-drive` for Google Drive storage.
+Install `@rivet-dev/agentos-google-drive` for Google Drive storage.
 
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import { createGoogleDriveBackend } from "@rivet-dev/agent-os-google-drive";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import { createGoogleDriveBackend } from "@rivet-dev/agentos-google-drive";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: {

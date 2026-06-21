@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { resolve } from "node:path";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
-import common from "@agent-os-pkgs/common";
+import common from "@agentos-software/common";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { AgentOs, hostTool, toolKit } from "../src/index.js";

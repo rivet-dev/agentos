@@ -1,5 +1,5 @@
-import common from "@agent-os-pkgs/common";
-import git from "@agent-os-pkgs/git";
+import common from "@agentos-software/common";
+import git from "@agentos-software/git";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";

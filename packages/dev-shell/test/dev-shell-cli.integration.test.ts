@@ -17,7 +17,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(__dirname, "..", "..", "..");
 const justfilePath = path.join(workspaceRoot, "justfile");
 const fallbackRecipe =
-	'pnpm --filter @rivet-dev/agent-os-dev-shell dev-shell -- "$@"';
+	'pnpm --filter @rivet-dev/agentos-dev-shell dev-shell -- "$@"';
 resolveWorkspacePaths(__dirname);
 
 function resolveExecutable(binaryName: string): string | undefined {
@@ -77,7 +77,7 @@ function createDevShellWrapperProcess(args: string[]) {
 		"pnpm",
 		[
 			"--filter",
-			"@rivet-dev/agent-os-dev-shell",
+			"@rivet-dev/agentos-dev-shell",
 			"dev-shell",
 			"--",
 			...forwardedArgs,
@@ -97,9 +97,9 @@ function stripJustPreamble(output: string): string {
 			(line) =>
 				line.length > 0 &&
 				!line.startsWith(
-					"pnpm --filter @rivet-dev/agent-os-dev-shell dev-shell --",
+					"pnpm --filter @rivet-dev/agentos-dev-shell dev-shell --",
 				) &&
-				!line.startsWith("> @rivet-dev/agent-os-dev-shell@ dev-shell ") &&
+				!line.startsWith("> @rivet-dev/agentos-dev-shell@ dev-shell ") &&
 				!line.startsWith("> pnpm exec tsx src/shell.ts ") &&
 				!line.startsWith("> tsx src/shell.ts ") &&
 				!line.startsWith(

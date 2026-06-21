@@ -1,8 +1,8 @@
-import common from "@agent-os-pkgs/common";
+import common from "@agentos-software/common";
 import {
 	createSandboxFs,
 	createSandboxToolkit,
-} from "@rivet-dev/agent-os-sandbox";
+} from "@rivet-dev/agentos-sandbox";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
 import type { MockSandboxAgentHandle } from "../src/test/sandbox-agent.js";

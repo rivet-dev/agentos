@@ -9,8 +9,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const forbiddenSpecifiers = new Set([
-	"@rivet-dev/agent-os-core/test/runtime",
-	"@rivet-dev/agent-os-core/internal/runtime-compat",
+	"@rivet-dev/agentos-core/test/runtime",
+	"@rivet-dev/agentos-core/internal/runtime-compat",
 	"@secure-exec/core/test-runtime",
 ]);
 const allowedRegistryHelper = "registry/tests/helpers.ts";

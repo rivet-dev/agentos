@@ -21,8 +21,8 @@ Session creation and prompting must happen within the same step because sessions
 <TabItem label="server.ts">
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 import { actor, setup, workflow } from "rivetkit";
 
 const automator = actor({
@@ -95,8 +95,8 @@ Output of one agent session feeds into the next. Each session is created and com
 <TabItem label="server.ts">
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 import { actor, setup, workflow } from "rivetkit";
 
 const pipeline = actor({

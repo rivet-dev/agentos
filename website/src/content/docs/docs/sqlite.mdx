@@ -13,10 +13,10 @@ Give the agent a single `sql` tool that executes any SQL query against the actor
 ```ts
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 import { db } from "rivetkit/db";
-import { toolKit, hostTool } from "@rivet-dev/agent-os-core";
+import { toolKit, hostTool } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
 const actorDb = db({});

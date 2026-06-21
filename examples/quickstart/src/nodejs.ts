@@ -1,7 +1,7 @@
 // Run a Node.js script inside the VM that does filesystem operations.
 
-import common from "@agent-os-pkgs/common";
-import { AgentOs } from "@rivet-dev/agent-os-core";
+import common from "@agentos-software/common";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
 const vm = await AgentOs.create({ software: [common] });
 

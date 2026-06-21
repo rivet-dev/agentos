@@ -4,7 +4,7 @@ import {
 	type Server,
 	type ServerResponse,
 } from "node:http";
-import coreutils from "@agent-os-pkgs/coreutils";
+import coreutils from "@agentos-software/coreutils";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import duckdb from "../../../registry/software/duckdb/dist/index.js";
 import httpGet from "../../../registry/software/http-get/dist/index.js";

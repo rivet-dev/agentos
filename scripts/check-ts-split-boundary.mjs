@@ -189,7 +189,7 @@ export function auditTsSplitBoundary(options = {}) {
 	);
 
 	const forbiddenSecureExecMatch = hasAnySourceMatch(secureExecCoreRoot, [
-		{ label: "@rivet-dev/agent-os import", pattern: /@rivet-dev\/agent-os/g },
+		{ label: "@rivet-dev/agentos import", pattern: /@rivet-dev\/agent-os/g },
 		{ label: "AgentOs facade", pattern: /\bclass\s+AgentOs\b|\bexport\s+\{\s*AgentOs\b/g },
 		{ label: "Agent OS host-tools sugar", pattern: /\bhostTool\b|\btoolKit\b|\bzodToJsonSchema\b/g },
 		{ label: "Agent OS cron sugar", pattern: /\bCronManager\b|\bTimerScheduleDriver\b/g },
@@ -221,14 +221,14 @@ export function auditTsSplitBoundary(options = {}) {
 	const secureExecDependency = dependencySpec(agentOsCoreManifest, "@secure-exec/core");
 	checks.push(
 		check(
-			"@rivet-dev/agent-os-core depends on sibling @secure-exec/core",
-			agentOsCoreManifest.name === "@rivet-dev/agent-os-core" &&
+			"@rivet-dev/agentos-core depends on sibling @secure-exec/core",
+			agentOsCoreManifest.name === "@rivet-dev/agentos-core" &&
 				typeof secureExecDependency === "string" &&
 				secureExecDependency.includes("secure-exec/packages/core"),
 			secureExecDependency ?? "missing",
 		),
 		check(
-			"@rivet-dev/agent-os-core exports the AgentOs facade and sugar",
+			"@rivet-dev/agentos-core exports the AgentOs facade and sugar",
 			requiredAgentOsExports.every((name) => agentOsCoreIndex.includes(name)),
 			relative(agentOsRoot, join(agentOsCoreRoot, "src/index.ts")),
 		),
@@ -250,7 +250,7 @@ export function auditTsSplitBoundary(options = {}) {
 		const path = join(agentOsCoreRoot, file);
 		checks.push(
 			check(
-				`@rivet-dev/agent-os-core keeps ${file}`,
+				`@rivet-dev/agentos-core keeps ${file}`,
 				existsSync(path) && statSync(path).isFile(),
 				relative(agentOsRoot, path),
 			),

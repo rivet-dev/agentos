@@ -41,8 +41,8 @@ console.log("Body:", new TextDecoder().decode(response.body));
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -82,8 +82,8 @@ console.log("Body:", new TextDecoder().decode(response.body));
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -104,8 +104,8 @@ Preview URLs are essentially port forwarding for VM services. They create a time
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   preview: {
@@ -166,8 +166,8 @@ await agent.expireSignedPreviewUrl(preview.token);
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },

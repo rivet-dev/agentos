@@ -2,5 +2,5 @@
 
 Browser driver primitives for Agent OS.
 
-- Package: `@rivet-dev/agent-os-browser`
+- Package: `@rivet-dev/agentos-browser`
 - Exports: `createBrowserDriver`, `createBrowserRuntimeDriverFactory`, `createOpfsFileSystem`, `BrowserWorkerAdapter`

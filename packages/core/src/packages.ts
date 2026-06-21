@@ -112,7 +112,7 @@ export interface WasmCommandSoftwareDescriptor extends SoftwareDescriptor {
 
 /**
  * Any object with a commandDir property is treated as a WASM command package.
- * This allows registry packages (e.g., @agent-os-pkgs/coreutils) to be
+ * This allows registry packages (e.g., @agentos-software/coreutils) to be
  * passed directly to the `software` option without wrapping.
  */
 export interface WasmCommandDirDescriptor {

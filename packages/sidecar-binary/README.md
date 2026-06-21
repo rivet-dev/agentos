@@ -1,14 +1,14 @@
-# @rivet-dev/agent-os-sidecar
+# @rivet-dev/agentos-sidecar
 
 Platform-specific resolver for the Agent OS native sidecar binary.
 
 The compiled `agent-os-sidecar` binary ships inside one of the
-`@rivet-dev/agent-os-sidecar-<platform>` packages, which this package declares as
+`@rivet-dev/agentos-sidecar-<platform>` packages, which this package declares as
 optional dependencies. npm installs only the package matching the current
 `os`/`cpu`/`libc` at install time.
 
 ```js
-const { getSidecarPath } = require("@rivet-dev/agent-os-sidecar");
+const { getSidecarPath } = require("@rivet-dev/agentos-sidecar");
 
 const binaryPath = getSidecarPath();
 ```

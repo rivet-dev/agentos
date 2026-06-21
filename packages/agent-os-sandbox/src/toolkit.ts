@@ -3,7 +3,7 @@
  * as host tools for agents running inside an agentOS VM.
  */
 
-import type { HostTool, ToolKit } from "@rivet-dev/agent-os-core";
+import type { HostTool, ToolKit } from "@rivet-dev/agentos-core";
 import type { SandboxAgent } from "sandbox-agent";
 import { z } from "zod";
 

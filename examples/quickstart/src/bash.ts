@@ -1,7 +1,7 @@
 // Run shell commands inside the VM.
 
-import common from "@agent-os-pkgs/common";
-import { AgentOs } from "@rivet-dev/agent-os-core";
+import common from "@agentos-software/common";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
 const vm = await AgentOs.create({ software: [common] });
 

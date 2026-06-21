@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
-import common from "@agent-os-pkgs/common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@agentos-software/common";
+import pi from "@rivet-dev/agentos-pi";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import {

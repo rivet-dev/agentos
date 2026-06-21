@@ -146,7 +146,7 @@ export async function bumpPackageJsons(
 					}
 					if (!spec.startsWith("workspace:")) continue;
 					const isOurPkg =
-						packageNames.has(dep) || dep.startsWith("@rivet-dev/agent-os-");
+						packageNames.has(dep) || dep.startsWith("@rivet-dev/agentos-");
 					if (!isOurPkg) continue;
 					deps[dep] = version;
 				}
@@ -211,7 +211,7 @@ export async function bumpCargoVersions(
 
 /**
  * Rewrite non-package.json, non-Cargo source files to the given version.
- * Called only by the local release cutter. Examples that pin `@rivet-dev/agent-os-*`
+ * Called only by the local release cutter. Examples that pin `@rivet-dev/agentos-*`
  * to a literal version (rather than `workspace:*`) get updated so released
  * examples carry the new version. `required: false` because a6 examples use
  * `workspace:*` today, so a no-match is expected and not an error.

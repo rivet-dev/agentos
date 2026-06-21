@@ -32,14 +32,14 @@ test("discovers Agent OS sidecar resolver packages", () => {
 	const names = packages.map((pkg) => pkg.name);
 
 	const hasAgentOsPackages = names.some((name) =>
-		name.startsWith("@rivet-dev/agent-os-"),
+		name.startsWith("@rivet-dev/agentos-"),
 	);
 	if (hasAgentOsPackages) {
-		assert(names.includes("@rivet-dev/agent-os-sidecar-linux-x64-gnu"));
-		assert(names.includes("@rivet-dev/agent-os-sidecar"));
+		assert(names.includes("@rivet-dev/agentos-sidecar-linux-x64-gnu"));
+		assert(names.includes("@rivet-dev/agentos-sidecar"));
 		assert(
-			names.indexOf("@rivet-dev/agent-os-sidecar-linux-x64-gnu") <
-				names.indexOf("@rivet-dev/agent-os-sidecar"),
+			names.indexOf("@rivet-dev/agentos-sidecar-linux-x64-gnu") <
+				names.indexOf("@rivet-dev/agentos-sidecar"),
 		);
 	}
 
@@ -83,7 +83,7 @@ test("discovers secure-exec-only staged packages", () => {
 		const names = packages.map((pkg) => pkg.name);
 
 		assert.deepEqual(
-			names.filter((name) => name.startsWith("@rivet-dev/agent-os-")),
+			names.filter((name) => name.startsWith("@rivet-dev/agentos-")),
 			[],
 		);
 		assert(names.includes("@secure-exec/browser"));
@@ -107,9 +107,9 @@ test("builds platform map for the agent-os sidecar meta package", () => {
 	const names = packages.map((pkg) => pkg.name);
 	const metaMap = buildMetaPlatformMap(packages);
 
-	if (names.includes("@rivet-dev/agent-os-sidecar")) {
-		assert.deepEqual(metaMap.get("@rivet-dev/agent-os-sidecar"), [
-			"@rivet-dev/agent-os-sidecar-linux-x64-gnu",
+	if (names.includes("@rivet-dev/agentos-sidecar")) {
+		assert.deepEqual(metaMap.get("@rivet-dev/agentos-sidecar"), [
+			"@rivet-dev/agentos-sidecar-linux-x64-gnu",
 		]);
 	}
 	// a6 no longer publishes the secure-exec sidecar meta package.

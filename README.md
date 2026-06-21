@@ -28,13 +28,13 @@ You don't have to choose: agentOS works with sandboxes through the [sandbox exte
 ## Quick start
 
 ```bash
-npm install @rivet-dev/agent-os-core @agent-os-pkgs/common @rivet-dev/agent-os-pi
+npm install @rivet-dev/agentos-core @agentos-software/common @rivet-dev/agentos-pi
 ```
 
 ```ts
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@agent-os-pkgs/common";
-import pi from "@rivet-dev/agent-os-pi";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import common from "@agentos-software/common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = await AgentOs.create({ software: [common, pi] });
 
@@ -145,38 +145,38 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 
 | Package | apt Equivalent | Description | Source | Combined Size | Gzipped |
 |---------|---------------|-------------|--------|---------------|---------|
-| `@agent-os-pkgs/codex` | codex | OpenAI Codex command package (codex, codex-exec) | rust | - | - |
-| `@agent-os-pkgs/coreutils` | coreutils | GNU coreutils: sh, cat, ls, cp, sort, and 80+ commands | rust | - | - |
-| `@agent-os-pkgs/curl` | curl | curl HTTP client | c | - | - |
-| `@agent-os-pkgs/diffutils` | diffutils | GNU diffutils (diff) | rust | - | - |
-| `@agent-os-pkgs/duckdb` | duckdb | DuckDB command-line interface | c | - | - |
-| `@agent-os-pkgs/fd` | fd-find | fd fast file finder | rust | - | - |
-| `@agent-os-pkgs/file` | file | file type detection | rust | - | - |
-| `@agent-os-pkgs/findutils` | findutils | GNU findutils (find, xargs) | rust | - | - |
-| `@agent-os-pkgs/gawk` | gawk | GNU awk text processing | rust | - | - |
-| `@agent-os-pkgs/git` | git | git version control | rust | - | - |
-| `@agent-os-pkgs/grep` | grep | GNU grep pattern matching (grep, egrep, fgrep) | rust | - | - |
-| `@agent-os-pkgs/gzip` | gzip | GNU gzip compression (gzip, gunzip, zcat) | rust | - | - |
-| `@agent-os-pkgs/http-get` | http-get | Minimal HTTP GET fetch helper | c | - | - |
-| `@agent-os-pkgs/jq` | jq | jq JSON processor | rust | - | - |
-| `@agent-os-pkgs/make` | make | GNU make build tool (planned) *(planned)* | rust | - | - |
-| `@agent-os-pkgs/ripgrep` | ripgrep | ripgrep fast recursive search | rust | - | - |
-| `@agent-os-pkgs/sed` | sed | GNU sed stream editor | rust | - | - |
-| `@agent-os-pkgs/sqlite3` | sqlite3 | SQLite3 command-line interface | c | - | - |
-| `@agent-os-pkgs/tar` | tar | GNU tar archiver | rust | - | - |
-| `@agent-os-pkgs/tree` | tree | tree directory listing | rust | - | - |
-| `@agent-os-pkgs/unzip` | unzip | unzip archive extraction | c | - | - |
-| `@agent-os-pkgs/wget` | wget | GNU wget HTTP client | c | - | - |
-| `@agent-os-pkgs/yq` | yq | yq YAML/JSON processor | rust | - | - |
-| `@agent-os-pkgs/zip` | zip | zip archive creation | c | - | - |
+| `@agentos-software/codex` | codex | OpenAI Codex command package (codex, codex-exec) | rust | - | - |
+| `@agentos-software/coreutils` | coreutils | GNU coreutils: sh, cat, ls, cp, sort, and 80+ commands | rust | - | - |
+| `@agentos-software/curl` | curl | curl HTTP client | c | - | - |
+| `@agentos-software/diffutils` | diffutils | GNU diffutils (diff) | rust | - | - |
+| `@agentos-software/duckdb` | duckdb | DuckDB command-line interface | c | - | - |
+| `@agentos-software/fd` | fd-find | fd fast file finder | rust | - | - |
+| `@agentos-software/file` | file | file type detection | rust | - | - |
+| `@agentos-software/findutils` | findutils | GNU findutils (find, xargs) | rust | - | - |
+| `@agentos-software/gawk` | gawk | GNU awk text processing | rust | - | - |
+| `@agentos-software/git` | git | git version control | rust | - | - |
+| `@agentos-software/grep` | grep | GNU grep pattern matching (grep, egrep, fgrep) | rust | - | - |
+| `@agentos-software/gzip` | gzip | GNU gzip compression (gzip, gunzip, zcat) | rust | - | - |
+| `@agentos-software/http-get` | http-get | Minimal HTTP GET fetch helper | c | - | - |
+| `@agentos-software/jq` | jq | jq JSON processor | rust | - | - |
+| `@agentos-software/make` | make | GNU make build tool (planned) *(planned)* | rust | - | - |
+| `@agentos-software/ripgrep` | ripgrep | ripgrep fast recursive search | rust | - | - |
+| `@agentos-software/sed` | sed | GNU sed stream editor | rust | - | - |
+| `@agentos-software/sqlite3` | sqlite3 | SQLite3 command-line interface | c | - | - |
+| `@agentos-software/tar` | tar | GNU tar archiver | rust | - | - |
+| `@agentos-software/tree` | tree | tree directory listing | rust | - | - |
+| `@agentos-software/unzip` | unzip | unzip archive extraction | c | - | - |
+| `@agentos-software/wget` | wget | GNU wget HTTP client | c | - | - |
+| `@agentos-software/yq` | yq | yq YAML/JSON processor | rust | - | - |
+| `@agentos-software/zip` | zip | zip archive creation | c | - | - |
 
 ### Meta-Packages
 
 | Package | Description | Includes |
 |---------|-------------|----------|
-| `@agent-os-pkgs/build-essential` | Build-essential WASM command set (standard + make + git + curl) | standard, make, git, curl |
-| `@agent-os-pkgs/common` | Common WASM command set (coreutils + sed + grep + gawk + findutils + diffutils + tar + gzip) | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip |
-| `@agent-os-pkgs/everything` | All available WASM command packages in a single bundle | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip, curl, zip, unzip, jq, ripgrep, fd, tree, file, yq, codex |
+| `@agentos-software/build-essential` | Build-essential WASM command set (standard + make + git + curl) | standard, make, git, curl |
+| `@agentos-software/common` | Common WASM command set (coreutils + sed + grep + gawk + findutils + diffutils + tar + gzip) | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip |
+| `@agentos-software/everything` | All available WASM command packages in a single bundle | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip, curl, zip, unzip, jq, ripgrep, fd, tree, file, yq, codex |
 <!-- END PACKAGE TABLE -->
 
 ## License

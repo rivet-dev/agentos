@@ -64,8 +64,8 @@ console.log(new TextDecoder().decode(content));
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -124,8 +124,8 @@ console.log(response);
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -148,8 +148,8 @@ Approve or deny agent tool use with human-in-the-loop patterns or auto-approve f
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 // Auto-approve all permissions server-side
 const vm = agentOs({
@@ -188,7 +188,7 @@ agent.on("permissionRequest", async (data) => {
 Expose your JavaScript functions to agents as CLI commands inside the VM. Agents call them as shell commands with auto-generated flags from Zod schemas.
 
 ```ts
-import { toolKit, hostTool } from "@rivet-dev/agent-os-core";
+import { toolKit, hostTool } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
 const myTools = toolKit({
@@ -243,8 +243,8 @@ console.log(files);
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -289,8 +289,8 @@ console.log("Process ID:", pid);
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -331,8 +331,8 @@ console.log("Expires at:", new Date(preview.expiresAt));
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -380,8 +380,8 @@ await agent.scheduleCron({
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -404,9 +404,9 @@ import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
 import { SandboxAgent } from "sandbox-agent";
 import { DockerProvider } from "sandbox-agent/docker";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
-import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agent-os-sandbox";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
+import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agentos-sandbox";
 
 const sandbox = await SandboxAgent.start({
   sandbox: new DockerProvider(),
@@ -462,8 +462,8 @@ agentB.on("sessionEvent", (data) => console.log("[B]", data.event.method));
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = agentOs({
   options: { software: [common, pi] },
@@ -486,8 +486,8 @@ Compose specialized agents into pipelines. Each agent gets its own isolated VM a
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 
 const coder = agentOs({
   options: { software: [common, pi] },
@@ -539,8 +539,8 @@ Orchestrate multi-step agent tasks with durable workflows that survive crashes a
 
 ```ts
 import { agentOs } from "rivetkit/agent-os";
-import common from "@rivet-dev/agent-os-common";
-import pi from "@rivet-dev/agent-os-pi";
+import common from "@rivet-dev/agentos-common";
+import pi from "@rivet-dev/agentos-pi";
 import { actor, setup, workflow } from "rivetkit";
 
 const automator = actor({

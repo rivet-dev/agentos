@@ -1,6 +1,6 @@
 # agentOS Core Package
 
-`@rivet-dev/agent-os-core` -- contains VM ops, ACP client, session management.
+`@rivet-dev/agentos-core` -- contains VM ops, ACP client, session management.
 
 **⚠️ CRITICAL INVARIANT: ALL guest code MUST execute inside the kernel with ZERO host escapes.** The VM is a fully virtualized OS — every file read, network connection, and process spawn goes through the kernel. Guest code must never touch real host APIs. The Node.js execution engine is currently broken (spawns real host `node` processes instead of V8 isolates). See `crates/execution/CLAUDE.md`.
 
@@ -40,7 +40,7 @@
 - Reference `~/sandbox-agent` for ACP integration patterns. Do not copy code from it.
 - ACP docs: https://agentclientprotocol.com/get-started/introduction
 - Session design is **agent-agnostic**: each agent type has a config specifying its ACP adapter package and main agent package name
-- Currently configured agents: PI (`@rivet-dev/agent-os-pi`), PI CLI (`@rivet-dev/agent-os-pi-cli`), OpenCode (`@rivet-dev/agent-os-opencode`), Claude (`@rivet-dev/agent-os-claude`), and Codex (`@rivet-dev/agent-os-codex-agent` + `@agent-os-pkgs/codex`).
+- Currently configured agents: PI (`@rivet-dev/agentos-pi`), PI CLI (`@rivet-dev/agentos-pi-cli`), OpenCode (`@rivet-dev/agentos-opencode`), Claude (`@rivet-dev/agentos-claude`), and Codex (`@rivet-dev/agentos-codex-agent` + `@agentos-software/codex`).
 - **No host agent exceptions.** Host-native wrappers and host binary launch paths are not allowed. OpenCode support must use the real upstream OpenCode implementation rebuilt into the VM adapter package and executed inside the VM.
 - `createSession("pi")` spawns the ACP adapter inside the VM, which calls the Pi SDK directly
 - Keep `src/agents.ts` aligned with the shipped registry agent packages. Derive the built-in `AgentType` union from `AGENT_CONFIGS` instead of maintaining a separate manual list, and verify launch args/env with the mock-adapter session tests when adding or changing an agent.
@@ -54,13 +54,13 @@
 ### Agent Adapter Approaches
 
 Each agent type can have two adapter approaches:
-- **SDK adapter** (default) -- Embeds the agent SDK directly via library import (`createAgentSession()`). Lower memory footprint (~100MB less for Pi). Binary: `pi-sdk-acp`. Package: `@rivet-dev/agent-os-pi`. Agent ID: `pi`.
-- **CLI adapter** -- Spawns the full agent CLI as a headless subprocess via its ACP adapter (`pi-acp` spawns `pi --mode rpc`). Higher memory overhead but provides full CLI feature set. Binary: `pi-acp`. Package: `@rivet-dev/agent-os-pi-cli`. Agent ID: `pi-cli`.
+- **SDK adapter** (default) -- Embeds the agent SDK directly via library import (`createAgentSession()`). Lower memory footprint (~100MB less for Pi). Binary: `pi-sdk-acp`. Package: `@rivet-dev/agentos-pi`. Agent ID: `pi`.
+- **CLI adapter** -- Spawns the full agent CLI as a headless subprocess via its ACP adapter (`pi-acp` spawns `pi --mode rpc`). Higher memory overhead but provides full CLI feature set. Binary: `pi-acp`. Package: `@rivet-dev/agentos-pi-cli`. Agent ID: `pi-cli`.
 
 ### Agent Configs
 
 Each agent type needs:
-- `acpAdapter`: npm package name for the ACP adapter (e.g., `@rivet-dev/agent-os-pi`)
+- `acpAdapter`: npm package name for the ACP adapter (e.g., `@rivet-dev/agentos-pi`)
 - `agentPackage`: npm package name for the underlying agent (e.g., `@mariozechner/pi-coding-agent`)
 - Any environment variables or flags needed
 - Package-provided agent descriptors registered through `processSoftware()` override the hardcoded `AGENT_CONFIGS` entries at session launch time. If a default shell/env tweak matters for both built-in and packaged flows, keep the two config surfaces in sync.
@@ -81,8 +81,8 @@ Each agent type needs:
 - When Node/Vitest code needs to shell out to Cargo, resolve it through `src/sidecar/cargo.ts` instead of assuming a login shell already put `~/.cargo/bin` on `PATH`.
 - For `tests/wasm-commands.test.ts`, broad `-t "grep"` or `-t "sed"` filters can pull in unrelated `rg`, `gzip`, or cross-package pipeline coverage via substring matches. When a story only gates the `grep`/`sed` blocks, use the explicit case names or a narrower `--testNamePattern` that only matches those block entries.
 - For `tests/wasm-commands.test.ts` and similar long-running VM truth suites, prefer one shared VM per `describe(...)` block over one VM per individual test unless the case truly needs pristine bootstrap state. Per-test VM boots push the file into multi-minute runtimes and make the RC sweep look hung even when it is still progressing.
-- Cross-workspace suites like `registry/tests/*` import `@rivet-dev/agent-os-core` from `packages/core/dist`, not directly from `src/`. After changing exported test-runtime code such as `src/runtime-compat.ts`, rebuild `packages/core` before trusting registry/package Vitest results.
-- The `examples/quickstart` package also resolves `@rivet-dev/agent-os-core` from `packages/core/dist`; after TypeScript changes in `packages/core/src`, rebuild `packages/core` before rerunning quickstart acceptance commands.
+- Cross-workspace suites like `registry/tests/*` import `@rivet-dev/agentos-core` from `packages/core/dist`, not directly from `src/`. After changing exported test-runtime code such as `src/runtime-compat.ts`, rebuild `packages/core` before trusting registry/package Vitest results.
+- The `examples/quickstart` package also resolves `@rivet-dev/agentos-core` from `packages/core/dist`; after TypeScript changes in `packages/core/src`, rebuild `packages/core` before rerunning quickstart acceptance commands.
 - The synthetic `openShell()` fallback in `src/sidecar/rpc-client.ts` needs PTY-style output semantics for xterm-based harnesses: normalize terminal-visible line endings to `\r\n`, and route command stderr through the main `onData` stream instead of treating it like a separate non-PTY stderr channel.
 - **Always verify related tests pass before considering work done.**
 - **All tests run inside the VM** -- network servers, file I/O, agent processes.
@@ -115,13 +115,13 @@ Each agent type needs:
 - Pi headless llmock tests should still pass `ANTHROPIC_BASE_URL` through the session env even with the `~/.pi/agent/models.json` override, because some Pi SDK request paths still consult the env-configured base URL during ACP-driven tool turns.
 - `packages/core` agent-session tests execute registry agent workspaces through their built `dist`/bin artifacts. After changing an adapter under `registry/agent/*/src`, rebuild that workspace before trusting the core Vitest result.
 - Keep Claude's default `CLAUDE_CODE_NODE_SHELL_WRAPPER` enabled (`"1"`) in both `src/agents.ts` and `registry/agent/claude/src/index.ts`. Forcing it to `"0"` breaks real Bash-tool execution under llmock-backed sessions: shell redirections can still create empty files, but the command output/tool result never lands, which regresses `tests/claude-session.test.ts` and filesystem visibility checks.
-- Registry/kernel suites that import `@rivet-dev/agent-os-core/test/runtime` read `packages/core/dist/test/runtime.js`, not the TypeScript sources directly. After changing `src/runtime-compat.ts`, `src/sidecar/rpc-client.ts`, or other runtime-test surfaces, run `pnpm --dir packages/core build` before rerunning those registry Vitest files or they will keep exercising stale code.
+- Registry/kernel suites that import `@rivet-dev/agentos-core/test/runtime` read `packages/core/dist/test/runtime.js`, not the TypeScript sources directly. After changing `src/runtime-compat.ts`, `src/sidecar/rpc-client.ts`, or other runtime-test surfaces, run `pnpm --dir packages/core build` before rerunning those registry Vitest files or they will keep exercising stale code.
 - **Module access**: Pass `mounts: [nodeModulesMount("<host>/node_modules")]` to `AgentOs.create()` to expose a host `node_modules` tree at `/root/node_modules`. The VM module resolver reads the mounted tree through the kernel VFS (no host-direct reads, no `moduleAccessCwd`). pnpm puts devDeps in `packages/core/node_modules/`, so tests use `nodeModulesMount(join(resolve(import.meta.dirname, ".."), "node_modules"))`. Software-package agents (`software: [pi]`) mount their own `/root/node_modules/<pkg>` roots and do not need this mount.
-- Quickstarts and integration tests that run full-tier registry commands (for example `@agent-os-pkgs/git`) should set both an explicit `/root/node_modules` mount (via `nodeModulesMount(...)`) and explicit `permissions` on `AgentOs.create()`. There is no `process.cwd()` default anymore: supply the exact `node_modules` tree (a flat install, not a pnpm workspace root whose symlinks escape the mount), and remember that omitting permissions defaults the native sidecar to deny-all.
+- Quickstarts and integration tests that run full-tier registry commands (for example `@agentos-software/git`) should set both an explicit `/root/node_modules` mount (via `nodeModulesMount(...)`) and explicit `permissions` on `AgentOs.create()`. There is no `process.cwd()` default anymore: supply the exact `node_modules` tree (a flat install, not a pnpm workspace root whose symlinks escape the mount), and remember that omitting permissions defaults the native sidecar to deny-all.
 - S3-backed core tests can use `tests/helpers/mock-s3.ts` as the explicit local harness instead of Docker/MinIO; when the endpoint resolves to `127.0.0.1` or `localhost`, set `AGENT_OS_ALLOW_LOCAL_S3_ENDPOINTS=1` before creating the VM so the sidecar accepts the local test endpoint.
 - Sandbox toolkit quickstarts/tests that depend on external Docker should use an explicit `SKIP_DOCKER=1` gate instead of `skipIf`, and the truthful host-tool path is to read `AGENTOS_TOOLS_PORT` inside the VM and `POST` `{ toolkit, tool, input }` to `http://127.0.0.1:$AGENTOS_TOOLS_PORT/call` from a guest Node script.
 - Shared Vitest helpers under `src/test/` should register optional capability coverage conditionally in code instead of with `describe.skipIf` / `test.skipIf`; `US-088` treats those markers as product-debt skips even when they only guard backend capability differences.
-- Pi bash-tool E2E coverage depends on registry WASM commands being built locally. Gate those tests with `tests/helpers/registry-commands.ts` `hasRegistryCommands` and include the `@agent-os-pkgs/common` software package only when the command artifacts exist.
+- Pi bash-tool E2E coverage depends on registry WASM commands being built locally. Gate those tests with `tests/helpers/registry-commands.ts` `hasRegistryCommands` and include the `@agentos-software/common` software package only when the command artifacts exist.
 - Registry package tests for C-built commands such as `duckdb` and `http_get` should also go through `tests/helpers/registry-commands.ts`: prefer copied `registry/software/*/wasm` artifacts, fall back to `registry/native/c/build` when available, and let the helper build missing C-source artifacts on demand before declaring the command unavailable. When bootstrapping from `registry/native/c`, build `make sysroot` first and then run a second `make` for the concrete `build/...` targets so `SYSROOT` resolves to the patched tree instead of the vanilla SDK sysroot chosen at parse time; in that second pass, treat `sysroot/lib/wasm32-wasi/libc.a` as already built so `make` does not loop back through the patch pipeline because of preserved sysroot timestamps.
 - `tests/claude-session.test.ts` is the Claude SDK truth suite. It runs the real `@anthropic-ai/claude-agent-sdk` session path through llmock and covers PATH-backed `xu`, text-only replies, nested `node` `execSync` and `spawn`, metadata, lifecycle, and mode updates. Run it with `pnpm --dir packages/core exec vitest run tests/claude-session.test.ts --reporter=verbose` when verifying Claude regressions.
 - **Kernel permissions are declarative pass-through config.** `AgentOsOptions.permissions` should stay JSON-serializable and be forwarded to the native sidecar without host-side probing or callback evaluation; Rust owns glob matching and policy decisions.
@@ -146,7 +146,7 @@ See `.agent/specs/test-structure.md` for the full restructuring plan. Target lay
 - `network/` -- connectivity and fetch behavior inside the VM
 - `tests/migration-parity.test.ts` is the dedicated Rust/native migration gate. Keep it on the default `AgentOs.create()` sidecar path and make it cover filesystem, process, layer snapshot, tool dispatch, networking, and at least one real agent prompt/session flow together; the canonical invocation is `pnpm test:migration-parity` from the repo root.
 - Host tool command-path coverage belongs with VM-backed sidecar tests such as `tests/sidecar-tool-dispatch.test.ts`, not a standalone TypeScript RPC server suite.
-- Shell-backed host-tool dispatch coverage in `tests/sidecar-tool-dispatch.test.ts` needs the `@agent-os-pkgs/common` software package in the test VM so `/bin/sh` exists; otherwise the suite only proves direct spawn/RPC dispatch and misses the guest-shell path.
+- Shell-backed host-tool dispatch coverage in `tests/sidecar-tool-dispatch.test.ts` needs the `@agentos-software/common` software package in the test VM so `/bin/sh` exists; otherwise the suite only proves direct spawn/RPC dispatch and misses the guest-shell path.
 - `sidecar/` -- sidecar client, native process
 - `cron/` -- cron integration
 

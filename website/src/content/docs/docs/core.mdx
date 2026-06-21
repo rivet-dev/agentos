@@ -1,6 +1,6 @@
 ---
 title: "Core Package"
-description: "Use @rivet-dev/agent-os-core standalone for direct VM control without the Rivet Actor runtime."
+description: "Use @rivet-dev/agentos-core standalone for direct VM control without the Rivet Actor runtime."
 skill: true
 ---
 
@@ -8,7 +8,7 @@ skill: true
 
 The `agentOs()` actor (from `rivetkit/agent-os`) wraps the core package and adds:
 
-| | Core (`@rivet-dev/agent-os-core`) | Actor (`rivetkit/agent-os`) |
+| | Core (`@rivet-dev/agentos-core`) | Actor (`rivetkit/agent-os`) |
 |-|---|---|
 | Persistence | In-memory by default (pluggable via [mounts](#mounts)) | Persistent filesystem and sessions |
 | Distributed state | Manage yourself | Built-in distributed statefulness |
@@ -26,14 +26,14 @@ We recommend using [Rivet Actors](/docs/actors) because they provide a portable 
 ## Install
 
 ```bash
-npm install @rivet-dev/agent-os-core
+npm install @rivet-dev/agentos-core
 ```
 
 ## Boot a VM
 
 ```ts
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@agent-os-pkgs/common";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import common from "@agentos-software/common";
 
 const vm = await AgentOs.create({
   software: [common],
@@ -49,8 +49,8 @@ await vm.dispose();
 ## Filesystem
 
 ```ts
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@agent-os-pkgs/common";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import common from "@agentos-software/common";
 
 const vm = await AgentOs.create({ software: [common] });
 
@@ -75,8 +75,8 @@ await vm.dispose();
 ## Processes
 
 ```ts
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@agent-os-pkgs/common";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import common from "@agentos-software/common";
 
 const vm = await AgentOs.create({ software: [common] });
 
@@ -108,9 +108,9 @@ await vm.dispose();
 The core package returns a `sessionId` string. All session operations are called on the `vm` instance with the session ID.
 
 ```ts
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@agent-os-pkgs/common";
-import pi from "@rivet-dev/agent-os-pi";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import common from "@agentos-software/common";
+import pi from "@rivet-dev/agentos-pi";
 
 const vm = await AgentOs.create({ software: [common, pi] });
 
@@ -149,8 +149,8 @@ prompt. There is no replay buffer or event history to read back after the fact.
 ## Interactive shell
 
 ```ts
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@agent-os-pkgs/common";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import common from "@agentos-software/common";
 
 const vm = await AgentOs.create({ software: [common] });
 
@@ -172,8 +172,8 @@ await vm.dispose();
 ## Networking
 
 ```ts
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@agent-os-pkgs/common";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import common from "@agentos-software/common";
 
 const vm = await AgentOs.create({ software: [common] });
 
@@ -193,8 +193,8 @@ await vm.dispose();
 The core package supports a `"callback"` action type in addition to `"exec"` and `"session"`.
 
 ```ts
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import common from "@agent-os-pkgs/common";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import common from "@agentos-software/common";
 
 const vm = await AgentOs.create({ software: [common] });
 
@@ -235,9 +235,9 @@ Native mount plugins (host directories, S3, etc.) are passed via `plugin`, while
 JavaScript filesystem backends are passed via `driver`.
 
 ```ts
-import { AgentOs, createHostDirBackend, createInMemoryFileSystem } from "@rivet-dev/agent-os-core";
+import { AgentOs, createHostDirBackend, createInMemoryFileSystem } from "@rivet-dev/agentos-core";
 import { createS3Backend } from "@secure-exec/s3";
-import common from "@agent-os-pkgs/common";
+import common from "@agentos-software/common";
 
 const vm = await AgentOs.create({
   software: [common],

@@ -42,11 +42,11 @@ test("rejects direct Agent OS test runtime imports in registry tests", () => {
 		write(
 			root,
 			"registry/tests/wasmvm/example.test.ts",
-			'import { createWasmVmRuntime } from "@rivet-dev/agent-os-core/test/runtime";\n',
+			'import { createWasmVmRuntime } from "@rivet-dev/agentos-core/test/runtime";\n',
 		);
 
 		assert.deepEqual(checkRegistryTestRuntimeBoundary({ root }), [
-			"registry/tests/wasmvm/example.test.ts must import registry test runtime helpers from ../helpers.js instead of @rivet-dev/agent-os-core/test/runtime",
+			"registry/tests/wasmvm/example.test.ts must import registry test runtime helpers from ../helpers.js instead of @rivet-dev/agentos-core/test/runtime",
 		]);
 	});
 });
@@ -56,11 +56,11 @@ test("rejects direct re-exports and requires", () => {
 		write(
 			root,
 			"registry/tests/kernel/example.test.ts",
-			'export { createKernel } from "@rivet-dev/agent-os-core/test/runtime";\nconst rt = require("@rivet-dev/agent-os-core/test/runtime");\n',
+			'export { createKernel } from "@rivet-dev/agentos-core/test/runtime";\nconst rt = require("@rivet-dev/agentos-core/test/runtime");\n',
 		);
 
 		assert.deepEqual(checkRegistryTestRuntimeBoundary({ root }), [
-			"registry/tests/kernel/example.test.ts must import registry test runtime helpers from ../helpers.js instead of @rivet-dev/agent-os-core/test/runtime",
+			"registry/tests/kernel/example.test.ts must import registry test runtime helpers from ../helpers.js instead of @rivet-dev/agentos-core/test/runtime",
 		]);
 	});
 });
@@ -70,11 +70,11 @@ test("rejects direct Agent OS runtime compat imports in registry tests", () => {
 		write(
 			root,
 			"registry/tests/wasmvm/example.test.ts",
-			'import { createWasmVmRuntime } from "@rivet-dev/agent-os-core/internal/runtime-compat";\n',
+			'import { createWasmVmRuntime } from "@rivet-dev/agentos-core/internal/runtime-compat";\n',
 		);
 
 		assert.deepEqual(checkRegistryTestRuntimeBoundary({ root }), [
-			"registry/tests/wasmvm/example.test.ts must import registry test runtime helpers from ../helpers.js instead of @rivet-dev/agent-os-core/internal/runtime-compat",
+			"registry/tests/wasmvm/example.test.ts must import registry test runtime helpers from ../helpers.js instead of @rivet-dev/agentos-core/internal/runtime-compat",
 		]);
 	});
 });
