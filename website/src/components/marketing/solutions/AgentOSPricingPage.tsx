@@ -16,7 +16,7 @@ import { HERO_H1_CLASS, SECTION_H2_CLASS } from '../typography';
 const pricingTiers = [
 	{
 		name: 'Free',
-		description: 'Run Agent OS anywhere. Free forever.',
+		description: 'Run agentOS anywhere. Free forever.',
 		price: 'Free',
 		priceSuffix: 'Apache 2.0',
 		icon: Server,
@@ -25,7 +25,7 @@ const pricingTiers = [
 		copyCommand: 'npm install @agent-os/core',
 		highlight: false,
 		features: [
-			{ text: 'Full Agent OS runtime', included: true },
+			{ text: 'Full agentOS runtime', included: true },
 			{ text: 'Unlimited agents', included: true },
 			{ text: 'WebAssembly + V8 isolation', included: true },
 			{ text: 'File system mounting (S3, local, etc.)', included: true },
@@ -150,7 +150,7 @@ const CTASection = () => (
 		<div className='mx-auto max-w-3xl text-center'>
 			<h2 className={`mb-4 ${SECTION_H2_CLASS}`}>Ready to get started?</h2>
 			<p className='mb-8 text-base leading-relaxed text-ink-soft md:text-lg'>
-				Deploy Agent OS today. Start with the open source version or contact us for enterprise support.
+				Deploy agentOS today. Start with the open source version or contact us for enterprise support.
 			</p>
 			<div className='flex flex-col items-center justify-center gap-4 sm:flex-row'>
 				<a
@@ -186,7 +186,7 @@ export default function AgentOSPricingPage() {
 						>
 							<h1 className={`mb-4 ${HERO_H1_CLASS}`}>Free and open source.</h1>
 							<p className='mx-auto max-w-2xl text-base leading-relaxed text-ink-soft md:text-lg'>
-								Agent OS is Apache 2.0 licensed and free to self-host. Contact us for enterprise support and on-premise deployment.
+								agentOS is Apache 2.0 licensed and free to self-host. Contact us for enterprise support and on-premise deployment.
 							</p>
 						</motion.div>
 					</div>

@@ -42,7 +42,7 @@ export const registry: RegistryEntry[] = [
 		title: "Claude Code",
 		status: "coming-soon",
 		description:
-			"Run Claude Code as an Agent OS agent with full tool access, file editing, and shell execution.",
+			"Run Claude Code as an agentOS agent with full tool access, file editing, and shell execution.",
 		types: ["agent"],
 		image: "/images/registry/claude-code.svg",
 	},
@@ -51,7 +51,7 @@ export const registry: RegistryEntry[] = [
 		title: "Codex",
 		status: "coming-soon",
 		description:
-			"Run OpenAI's Codex coding agent inside Agent OS with programmatic API access.",
+			"Run OpenAI's Codex coding agent inside agentOS with programmatic API access.",
 		types: ["agent"],
 		image: "/images/registry/codex.svg",
 	},
@@ -60,7 +60,7 @@ export const registry: RegistryEntry[] = [
 		title: "Amp",
 		status: "coming-soon",
 		description:
-			"Run Sourcegraph's Amp coding agent inside Agent OS.",
+			"Run Sourcegraph's Amp coding agent inside agentOS.",
 		types: ["agent"],
 		image: "/images/registry/amp.svg",
 	},
@@ -69,7 +69,7 @@ export const registry: RegistryEntry[] = [
 		title: "OpenCode",
 		status: "coming-soon",
 		description:
-			"Run OpenCode, an open-source coding agent, inside Agent OS.",
+			"Run OpenCode, an open-source coding agent, inside agentOS.",
 		types: ["agent"],
 		image: "/images/registry/opencode.svg",
 	},

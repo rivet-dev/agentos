@@ -174,7 +174,7 @@ const vm = await AgentOs.create({
   mounts: [{ path: "/mnt/data", driver: s3 }],
 });
 
-await vm.writeFile("/mnt/data/notes.txt", "Hello from Agent OS!");
+await vm.writeFile("/mnt/data/notes.txt", "Hello from agentOS!");
 const content = await vm.readFile("/mnt/data/notes.txt");
 console.log(content);` },
 
@@ -311,7 +311,7 @@ const vm = await AgentOs.create({
 });
 
 // Write a file through the mounted sandbox filesystem
-await vm.writeFile("/sandbox/hello.txt", "Hello from Agent OS!");
+await vm.writeFile("/sandbox/hello.txt", "Hello from agentOS!");
 const content = await vm.readFile("/sandbox/hello.txt");
 console.log(new TextDecoder().decode(content));
 
@@ -357,7 +357,7 @@ const heroTabs = await Promise.all(
 ---
 
 <Layout
-  title="Agent OS — Everything Agents Need to Run and Operate"
+  title="agentOS — Everything Agents Need to Run and Operate"
   description="A portable open-source operating system for agents. Stateful runtime, universal agent interface, and secure code execution. One SDK, deploy anywhere."
   ogImage="https://agentos-sdk.dev/og.png"
 >

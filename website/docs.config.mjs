@@ -1,5 +1,5 @@
 /**
- * Agent OS docs configuration — the only non-content surface consumed by
+ * agentOS docs configuration — the only non-content surface consumed by
  * @rivet-dev/docs-theme. Everything visual (theme, header chrome, sidebar
  * icons, code blocks) lives in the package; this file maps agentOS's product
  * identity, navigation, and pages onto it.
@@ -11,7 +11,7 @@
  * @type {import('@rivet-dev/docs-theme').SiteConfig}
  */
 export const siteConfig = {
-	product: "Agent OS",
+	product: "agentOS",
 	productLogo: "/images/agent-os/agentos-hero-logo.svg",
 	productHome: "/",
 	favicon: "/favicon.svg",

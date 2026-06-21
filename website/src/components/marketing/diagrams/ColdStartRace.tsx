@@ -1,21 +1,23 @@
 'use client';
 
 import { animate, motion, useInView, useMotionValue, useTransform, useReducedMotion } from 'framer-motion';
-import type { AnimationPlaybackControls, MotionValue } from 'framer-motion';
+import type { MotionValue } from 'framer-motion';
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Box, Check } from 'lucide-react';
-import { EASE, VIEWPORT, Reveal } from '../motion';
-import { benchColdStart, benchWorkloads } from '../../../data/bench';
+import { Reveal } from '../motion';
+import { BenchToggle, BenchInfoTooltip } from './benchUI';
+import { benchColdStart, SANDBOX_COLDSTART_PROVIDER, BENCHMARK_DATE } from '../../../data/bench';
 
 // ---------------------------------------------------------------------------
 // Cold-start comparison. Two hosts spin up agents, once, when scrolled into view.
 //   Containers — each agent gets its own process: a separate box that boots on
-//   its own (border red -> green + mini bar) and carries its own ~1 GB of memory.
-//   Agent OS   — every agent is packed into ONE shared process: a single box
-//   that boots once and shares memory, ~131 MB per agent.
-// The contrast (four separate boots vs one grouped boot) is the point. Numbers
-// come from bench.ts so they stay accurate.
+//   its own (border red -> green + mini bar).
+//   agentOS   — every agent is packed into ONE shared process: a single box
+//   that boots once.
+// The contrast (four separate boots vs one grouped boot) is the point. The
+// container boot is shown slowed ~6x so the wait is visible. Numbers come from
+// bench.ts so they stay accurate.
 // ---------------------------------------------------------------------------
 
 const AGENTOS_MARK = '/images/agent-os/agentos-logo-ink.svg';
@@ -33,34 +35,25 @@ const GREEN = '#3f9a59';
 const BORDER_RED = 'rgba(214,69,58,0.6)';
 const BORDER_GREEN = 'rgba(63,154,89,0.65)';
 
-// ---- Sourced numbers -------------------------------------------------------
-const cold = benchColdStart[0]; // p50
-const AOS_MS = Math.round(cold.agentOS); // ~5 ms
-const CONTAINER_MS = cold.sandbox; // ~440 ms
-const SPEEDUP = Math.round(cold.sandbox / cold.agentOS); // ~92x
-const mem = benchWorkloads.agent.memory; // { agentOS:"~131 MB", sandbox:"~1024 MB", multiplier:"8x smaller" }
-const cost = benchWorkloads.agent.cost[0]; // AWS ARM { ratio, multiplier }
-const MEM_X = mem.multiplier.split('x')[0]; // "8"
-const CONTAINER_MEM = '~1 GB'; // ~1024 MB sandbox baseline, rounded for the chip
-const AOS_MEM = mem.agentOS; // "~131 MB"
-
 // ---- Animation timing ------------------------------------------------------
-const BOOT_SEC = 2.7; // base animation seconds for the container boot (speed-adjustable)
-const AOS_DONE = 0.04; // fraction of the timeline at which Agent OS is finished
-// The speed slider maps to a playback-rate multiplier on the looping boot.
-const speedFromSlider = (s: number) => 0.2 * Math.pow(30, s / 100); // 0.2x .. 6x
-const slowdownLabel = (speed: number) => {
-	const factor = (BOOT_SEC * 1000) / CONTAINER_MS / speed; // ~6 / speed
-	return factor < 1.4 ? 'real time' : `slowed ~${Math.round(factor)}×`;
+// The boot is scaled to each percentile's REAL container cold start, always
+// slowed 6x — so p99 crawls ~6x longer than p50, in true proportion.
+const SLOWDOWN = 6;
+// agentOS boots near-instantly, so its box snaps done in a fixed, snappy time —
+// independent of the container's 6x slowdown. It must never appear to "wait".
+const AOS_BOOT_SEC = 0.5;
+const bootDuration = (containerMs: number) => (containerMs / 1000) * SLOWDOWN;
+const slowdownFactor = (containerMs: number) => (bootDuration(containerMs) * 1000) / containerMs;
+const slowdownLabel = (containerMs: number) => {
+	const factor = slowdownFactor(containerMs);
+	return factor < 1.4 ? 'in real time' : `slowed ~${Math.round(factor)}×`;
 };
-
-// A dashed grey box showing a memory figure.
-const MemBox = ({ value, sub }: { value: string; sub: string }) => (
-	<span className='flex flex-col items-center justify-center rounded-md border border-dashed border-ink/30 bg-ink/[0.05] px-1.5 py-0.5 leading-none'>
-		<span className='font-mono text-[10px] font-semibold text-ink-soft'>{value}</span>
-		<span className='mt-0.5 text-[7px] uppercase tracking-wide text-ink-faint'>{sub}</span>
-	</span>
-);
+// Pill copy for the containers row. Phrased as a playback note so it reads as a
+// display speed, not a perf claim that would clash with agentOS's "Nx faster".
+const slowdownPill = (containerMs: number) => {
+	const factor = slowdownFactor(containerMs);
+	return factor < 1.4 ? 'shown in real time' : `shown ~${Math.round(factor)}× slower`;
+};
 
 const MiniBar = ({ width, color }: { width: MotionValue<string>; color: MotionValue<string> }) => (
 	<div className='h-1 w-full overflow-hidden rounded-full bg-ink/10'>
@@ -68,30 +61,29 @@ const MiniBar = ({ width, color }: { width: MotionValue<string>; color: MotionVa
 	</div>
 );
 
-// One container: its own agent + its own memory, booting on its own.
+// One container: its own agent, booting on its own.
 const ContainerBox = ({ progress, lo, hi, logo }: { progress: MotionValue<number>; lo: number; hi: number; logo: string }) => {
 	const border = useTransform(progress, [lo, hi], [BORDER_RED, BORDER_GREEN]);
 	const barWidth = useTransform(progress, [lo, hi], ['14%', '100%']);
 	const barColor = useTransform(progress, [lo, hi], [RED, GREEN]);
 	return (
-		<div className='flex w-[6.5rem] flex-col items-center gap-1'>
+		<div className='flex w-16 flex-col items-center gap-1'>
 			<motion.div
 				style={{ borderColor: border }}
-				className='flex h-12 w-full items-center justify-center gap-1.5 rounded-lg border-2 bg-white/85 px-2 shadow-[0_1px_2px_rgba(27,25,22,0.05)]'
+				className='flex h-12 w-full items-center justify-center rounded-lg border-2 bg-white/85 shadow-[0_1px_2px_rgba(27,25,22,0.05)]'
 			>
 				<img src={logo} alt='' aria-hidden='true' className='h-6 w-6 object-contain' />
-				<MemBox value={CONTAINER_MEM} sub='/ agent' />
 			</motion.div>
 			<MiniBar width={barWidth} color={barColor} />
 		</div>
 	);
 };
 
-// Agent OS: all agents packed inside ONE process box that boots once.
-const SharedProcessBox = ({ progress, count }: { progress: MotionValue<number>; count: number }) => {
-	const border = useTransform(progress, [0, AOS_DONE], [BORDER_RED, BORDER_GREEN]);
-	const barWidth = useTransform(progress, [0, AOS_DONE], ['14%', '100%']);
-	const barColor = useTransform(progress, [0, AOS_DONE], [RED, GREEN]);
+// agentOS: all agents packed inside ONE process box that boots once.
+const SharedProcessBox = ({ progress, count, doneAt }: { progress: MotionValue<number>; count: number; doneAt: number }) => {
+	const border = useTransform(progress, [0, doneAt], [BORDER_RED, BORDER_GREEN]);
+	const barWidth = useTransform(progress, [0, doneAt], ['14%', '100%']);
+	const barColor = useTransform(progress, [0, doneAt], [RED, GREEN]);
 	return (
 		<div className='flex flex-col gap-1'>
 			<motion.div style={{ borderColor: border }} className='rounded-xl border-2 bg-white/60 p-2'>
@@ -101,7 +93,6 @@ const SharedProcessBox = ({ progress, count }: { progress: MotionValue<number>; 
 							<img src={agentAt(i)} alt='' aria-hidden='true' className='h-5 w-5 object-contain' />
 						</span>
 					))}
-					<MemBox value={AOS_MEM} sub='/ agent' />
 				</div>
 			</motion.div>
 			<MiniBar width={barWidth} color={barColor} />
@@ -114,7 +105,7 @@ type HostCfg = {
 	finalMs: number;
 	doneAt: number;
 	units: number;
-	grouped: boolean; // Agent OS packs all agents into one process box
+	grouped: boolean; // agentOS packs all agents into one process box
 	accent: boolean;
 	badge?: ReactNode;
 };
@@ -125,7 +116,7 @@ const Host = ({ cfg, progress }: { cfg: HostCfg; progress: MotionValue<number> }
 	return (
 		<div className={`rounded-xl border p-4 ${cfg.accent ? 'border-accent/30 bg-accent/[0.05]' : 'border-ink/10 bg-paper/40'}`}>
 			<div className='mb-3 flex items-center justify-between gap-3'>
-				<span className='flex items-center gap-2 text-sm font-medium text-ink'>{cfg.name}</span>
+				<span className='flex items-center gap-2 text-sm font-bold text-ink'>{cfg.name}</span>
 				<div className='flex items-center gap-3'>
 					{cfg.badge}
 					<motion.span style={{ opacity: checkOpacity }} aria-hidden='true'>
@@ -135,7 +126,7 @@ const Host = ({ cfg, progress }: { cfg: HostCfg; progress: MotionValue<number> }
 				</div>
 			</div>
 			{cfg.grouped ? (
-				<SharedProcessBox progress={progress} count={cfg.units} />
+				<SharedProcessBox progress={progress} count={cfg.units} doneAt={cfg.doneAt} />
 			) : (
 				<div className='flex flex-wrap items-start gap-3'>
 					{Array.from({ length: cfg.units }).map((_, i) => {
@@ -148,118 +139,103 @@ const Host = ({ cfg, progress }: { cfg: HostCfg; progress: MotionValue<number> }
 	);
 };
 
-const Stat = ({ value, label, sub }: { value: string; label: string; sub: string }) => (
-	<div className='rounded-xl border border-ink/10 bg-white/55 p-4 text-center'>
-		<div className='text-2xl font-medium text-accent-deep md:text-3xl'>{value}</div>
-		<div className='mt-0.5 text-sm font-medium text-ink'>{label}</div>
-		<div className='mt-0.5 font-mono text-[11px] text-ink-faint'>{sub}</div>
-	</div>
-);
-
 export const ColdStartRace = () => {
 	const reduced = useReducedMotion();
 	const ref = useRef<HTMLDivElement>(null);
 	const inView = useInView(ref, { once: true, margin: '-15% 0px' });
-	const progress = useMotionValue(0);
-	const [slider, setSlider] = useState(50);
-	const speed = speedFromSlider(slider);
-	const speedRef = useRef(speed);
-	speedRef.current = speed;
-	const controlsRef = useRef<AnimationPlaybackControls | null>(null);
+	const progress = useMotionValue(0); // containers — slowed boot
+	const aosProgress = useMotionValue(0); // agentOS — fixed snappy boot
+	const [pct, setPct] = useState(0); // p50 by default
 
-	// Create the looping boot once it scrolls into view; speed is adjusted live.
+	const cold = benchColdStart[pct];
+	const aosMs = Math.round(cold.agentOS);
+	const containerMs = cold.sandbox;
+	const speedup = Math.round(cold.sandbox / cold.agentOS);
+	const durationSec = bootDuration(containerMs);
+
+	// Play the boot once it scrolls into view; replay when the percentile changes.
+	// The containers crawl over the slowed duration; agentOS snaps done in a fixed
+	// fast time so it never appears to scale with the container slowdown.
 	useEffect(() => {
 		if (reduced) {
 			progress.set(1);
+			aosProgress.set(1);
 			return;
 		}
 		if (!inView) return;
-		const controls = animate(progress, [0, 1], { duration: BOOT_SEC, ease: 'easeInOut', repeat: Infinity, repeatDelay: 0.9 });
-		controls.speed = speedRef.current;
-		controlsRef.current = controls;
-		return () => controls.stop();
+		progress.set(0);
+		aosProgress.set(0);
+		const c1 = animate(progress, [0, 1], { duration: durationSec, ease: 'easeInOut' });
+		const c2 = animate(aosProgress, [0, 1], { duration: AOS_BOOT_SEC, ease: 'easeOut' });
+		return () => {
+			c1.stop();
+			c2.stop();
+		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [inView, reduced]);
-
-	useEffect(() => {
-		if (controlsRef.current) controlsRef.current.speed = speed;
-	}, [speed]);
+	}, [inView, reduced, pct]);
 
 	return (
-		<div>
-			<Reveal>
-				<div ref={ref} className='rounded-2xl border border-ink/10 bg-white/55 p-5 md:p-7'>
-					<div className='mb-5 flex flex-wrap items-center justify-between gap-3'>
-						<span className='font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint'>Cold start &middot; spinning up agents</span>
-						<div className='flex items-center gap-2'>
-							<span className='font-mono text-[10px] uppercase tracking-wide text-ink-faint'>Slow</span>
-							<input
-								type='range'
-								min={0}
-								max={100}
-								value={slider}
-								onChange={(e) => setSlider(Number(e.target.value))}
-								aria-label='Animation playback speed'
-								className='h-1.5 w-28 cursor-pointer accent-accent'
-							/>
-							<span className='font-mono text-[10px] uppercase tracking-wide text-ink-faint'>Fast</span>
-							<span className='w-[5.5rem] text-right font-mono text-[10px] text-ink-soft'>{slowdownLabel(speed)}</span>
-						</div>
+		<Reveal>
+			<div ref={ref} className='rounded-2xl border border-ink/10 bg-white/55 p-5 md:p-7'>
+				<div className='mb-5 flex flex-wrap items-center justify-between gap-3'>
+					<div className='flex items-center gap-2.5'>
+						<span className='font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-ink'>Cold start</span>
+						<span className='rounded-full bg-ink/[0.06] px-2 py-0.5 text-[10px] font-semibold text-ink-soft'>{slowdownPill(containerMs)}</span>
 					</div>
-
-					<div className='flex flex-col gap-4'>
-						<Host
-							progress={progress}
-							cfg={{
-								name: (
-									<>
-										<Box className='h-4 w-4 text-ink-soft' aria-hidden='true' /> Containers &mdash; one process each
-									</>
-								),
-								finalMs: CONTAINER_MS,
-								doneAt: 1,
-								units: 4,
-								grouped: false,
-								accent: false,
-							}}
-						/>
-						<Host
-							progress={progress}
-							cfg={{
-								name: (
-									<>
-										<img src={AGENTOS_MARK} alt='' aria-hidden='true' className='h-4 w-4' /> Agent OS &mdash; one shared process
-									</>
-								),
-								finalMs: AOS_MS,
-								doneAt: AOS_DONE,
-								units: 12,
-								grouped: true,
-								accent: true,
-								badge: (
-									<span className='rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent-deep'>{SPEEDUP}&times; faster</span>
-								),
-							}}
-						/>
+					<div className='w-44 max-sm:w-full'>
+						<BenchToggle options={benchColdStart.map((g) => g.label)} active={pct} onChange={setPct} />
 					</div>
-
-					<p className='mt-4 font-mono text-[11px] leading-relaxed text-ink-faint'>
-						Same host, same memory. Each container is its own process with its own ~1 GB; Agent OS packs every agent into one shared process at {AOS_MEM} each ({MEM_X}&times; less memory). Real cold start: ~{AOS_MS} ms vs ~{CONTAINER_MS} ms ({SPEEDUP}&times; faster) &mdash; drag the slider to set playback speed.
-					</p>
 				</div>
-			</Reveal>
 
-			<motion.div
-				className='mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3'
-				initial={reduced ? { opacity: 0 } : { opacity: 0, y: 12 }}
-				whileInView={{ opacity: 1, y: 0 }}
-				viewport={VIEWPORT}
-				transition={{ duration: 0.5, ease: [...EASE], delay: 0.1 }}
-			>
-				<Stat value={`${SPEEDUP}×`} label='faster cold start' sub={`~${AOS_MS} ms vs ~${CONTAINER_MS} ms`} />
-				<Stat value={`${MEM_X}×`} label='less memory' sub={`${mem.agentOS} vs ${mem.sandbox}`} />
-				<Stat value={`${cost.ratio}×`} label='cheaper to run' sub='vs. sandboxes' />
-			</motion.div>
-		</div>
+				<div key={pct} className='flex flex-col gap-4'>
+					<Host
+						progress={progress}
+						cfg={{
+							name: (
+								<>
+									<Box className='h-4 w-4 text-ink-soft' aria-hidden='true' /> Containers &mdash; one process each
+								</>
+							),
+							finalMs: containerMs,
+							doneAt: 1,
+							units: 4,
+							grouped: false,
+							accent: false,
+						}}
+					/>
+					<Host
+						progress={aosProgress}
+						cfg={{
+							name: (
+								<>
+									<img src={AGENTOS_MARK} alt='' aria-hidden='true' className='h-4 w-4' /> agentOS &mdash; one shared process
+									<BenchInfoTooltip>
+										<strong>What&apos;s measured:</strong> Time from requesting an execution to first code running.
+										<br /><br />
+										<strong>Why the gap:</strong> agentOS runs agents in-process &mdash; V8 isolates and Wasm inside your host. No VM to boot, no network hop, no disk image. Sandboxes must boot an entire environment, allocate memory, and establish a network connection before code can run.
+										<br /><br />
+										<strong>Sandbox baseline:</strong> {SANDBOX_COLDSTART_PROVIDER}, the fastest mainstream sandbox provider as of {BENCHMARK_DATE}.
+										<br /><br />
+										<strong>agentOS:</strong> Median of 10,000 runs (100 iterations x 100 samples) on Intel i7-12700KF.
+									</BenchInfoTooltip>
+								</>
+							),
+							finalMs: aosMs,
+							doneAt: 1,
+							units: 12,
+							grouped: true,
+							accent: true,
+							badge: (
+								<span className='rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent-deep'>{speedup}&times; faster</span>
+							),
+						}}
+					/>
+				</div>
+
+				<p className='mt-4 font-mono text-[11px] leading-relaxed text-ink-faint'>
+					Each container is its own process that boots on its own; agentOS packs every agent into one shared process that boots once. Real {cold.label} cold start: ~{aosMs} ms vs ~{containerMs.toLocaleString()} ms ({speedup}&times; faster) &mdash; container boot shown {slowdownLabel(containerMs)}.
+				</p>
+			</div>
+		</Reveal>
 	);
 };

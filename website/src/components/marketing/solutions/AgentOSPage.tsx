@@ -18,7 +18,6 @@ import {
 	HardDrive,
 	Code,
 	Cpu,
-	Package,
 	Users,
 	Webhook,
 	Workflow,
@@ -38,6 +37,8 @@ import { GLOW_PILL_CLASS, handleGlowPillMouseMove } from '../glowPill';
 import { registry } from '../../../data/registry';
 import { HarnessArchitecture } from '../diagrams/HarnessArchitecture';
 import { ColdStartRace } from '../diagrams/ColdStartRace';
+import { MemoryOverhead } from '../diagrams/MemoryOverhead';
+import { ExecutionDensity } from '../diagrams/ExecutionDensity';
 
 interface HeroTabCode {
 	key: string;
@@ -785,16 +786,11 @@ const heroTabMeta: Array<{ key: string; icon?: typeof Bot; label: string; docsHr
 	{ key: 'permissions', icon: ShieldCheck, label: 'Permissions', docsHref: '/docs/permissions' },
 ];
 
-const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
-	const [activeTab, setActiveTab] = useState(0);
+const Hero = () => {
 	const [hoveredAgent, setHoveredAgent] = useState<{ src: string; name: string } | null>(null);
 	const [autoPlayAgent, setAutoPlayAgent] = useState<{ src: string; name: string } | null>(null);
 	const [autoPlayComplete, setAutoPlayComplete] = useState(false);
-
-	const getStartedTabs = heroTabMeta.map((tab) => ({
-		...tab,
-		...heroTabs.find((heroTab) => heroTab.key === tab.key),
-	}));
+	const [statsIn, setStatsIn] = useState(false);
 
 	// Auto-cycle through agents starting 2.5s before stroke animation ends
 	useEffect(() => {
@@ -825,66 +821,157 @@ const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 	// Displayed agent is either hovered (if autoplay complete) or autoplay agent
 	const displayedAgent = autoPlayComplete ? hoveredAgent : autoPlayAgent;
 
+	// Highlight stats — best-case "up to" figures, sourced from bench.ts.
+	const heroStats = [
+		{ value: `${Math.round(benchColdStart[2].sandbox / benchColdStart[2].agentOS)}×`, label: 'faster cold starts', sub: 'vs. fastest sandbox', href: '#bench-cold-start' },
+		{ value: `${benchWorkloads.agent.memory.multiplier.split('x')[0]}×`, label: 'less memory', sub: 'per agent · vs. sandbox', href: '#bench-memory' },
+		{ value: `${Math.max(...Object.values(benchWorkloads).flatMap((w) => w.cost.map((t) => t.ratio)))}×`, label: 'cheaper to run', sub: 'vs. cheapest sandbox', href: '#bench-cost' },
+	];
+
 	return (
 		<section className='relative flex min-h-[100svh] flex-col justify-center px-6 pt-24 md:pt-24'>
-			<div className='mx-auto w-full max-w-5xl'>
-				{/* Title */}
-				<motion.div
-					initial={{ opacity: 0, y: 20 }}
-					animate={{ opacity: 1, y: 0 }}
-					transition={{ duration: 0.5, delay: 0.05 }}
-					className='mb-6 flex items-center justify-center md:justify-start'
-				>
-					<div className='relative'>
-						<AnimatedAgentOSLogo className='h-12 w-auto md:h-16 lg:h-20' displayedAgent={displayedAgent} />
-						<span className='absolute -right-[8px] -top-[7px] rounded-full border border-ink bg-paper px-2 py-0.5 text-[10px] font-medium text-ink'>Beta</span>
-					</div>
-				</motion.div>
+			<div className='mx-auto w-full max-w-6xl'>
+				{/* Top row: copy left, architecture image right */}
+				<div className='grid items-center gap-10 lg:grid-cols-2 lg:gap-14'>
+					{/* Left column */}
+					<div>
+						{/* Brand mark */}
+						<motion.div
+							initial={{ opacity: 0, y: 20 }}
+							animate={{ opacity: 1, y: 0 }}
+							transition={{ duration: 0.5, delay: 0.05 }}
+							className='mb-6 flex items-center justify-center md:justify-start'
+						>
+							<AnimatedAgentOSLogo className='h-10 w-auto md:h-12' displayedAgent={displayedAgent} />
+						</motion.div>
 
-				{/* Subtitle */}
-				<motion.p
-					initial={{ opacity: 0, y: 20 }}
-					animate={{ opacity: 1, y: 0 }}
-					transition={{ duration: 0.5, delay: 0.1 }}
-					className='mb-10 max-w-2xl text-center text-base text-ink-soft md:text-left md:text-lg'
-				>
-					A portable open-source operating system for agents. ~6 ms coldstarts, 32x cheaper than sandboxes. Powered by WebAssembly and V8 isolates.
-				</motion.p>
+						{/* Lead line (carries the hero now that the title is gone) */}
+						<motion.p
+							initial={{ opacity: 0, y: 20 }}
+							animate={{ opacity: 1, y: 0 }}
+							transition={{ duration: 0.5, delay: 0.1 }}
+							className='mb-10 max-w-xl text-balance text-center text-xl font-medium leading-snug tracking-[-0.01em] text-ink md:text-left md:text-2xl'
+						>
+							An open-source computer for agents that you can run anywhere.{' '}
+							<span className='text-ink-soft'>Faster, cheaper, and less memory than sandboxes.</span>
+						</motion.p>
 
-				{/* Supported Harnesses */}
-				<motion.div
-					initial={{ opacity: 0, y: 20 }}
-					animate={{ opacity: 1, y: 0 }}
-					transition={{ duration: 0.5, delay: 0.12 }}
-					className='mb-10 flex flex-wrap items-center justify-center gap-2 md:justify-start md:gap-4'
-				>
-					<span className='font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint'>Works with</span>
-					<div className='flex flex-wrap items-center justify-center gap-2 md:justify-start md:gap-4'>
-						{agents.map((agent) => (
-							<div
-								key={agent.name}
-								className='flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-ink/5'
-								onMouseEnter={() => autoPlayComplete && setHoveredAgent(agent)}
-								onMouseLeave={() => autoPlayComplete && setHoveredAgent(null)}
-							>
-								<img src={agent.src} alt={agent.name} className='h-4 w-4' />
-								<span className='text-sm text-ink-soft'>{agent.name}{agent.comingSoon && '*'}</span>
+						{/* Supported Harnesses */}
+						<motion.div
+							initial={{ opacity: 0, y: 20 }}
+							animate={{ opacity: 1, y: 0 }}
+							transition={{ duration: 0.5, delay: 0.12 }}
+							className='mb-10 flex flex-wrap items-center justify-center gap-2 md:justify-start md:gap-4'
+						>
+							<span className='font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint'>Works with</span>
+							<div className='flex flex-wrap items-center justify-center gap-2 md:justify-start md:gap-4'>
+								{agents.map((agent) => (
+									<div
+										key={agent.name}
+										className='flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-ink/5'
+										onMouseEnter={() => autoPlayComplete && setHoveredAgent(agent)}
+										onMouseLeave={() => autoPlayComplete && setHoveredAgent(null)}
+									>
+										<img src={agent.src} alt={agent.name} className='h-4 w-4' />
+										<span className='text-sm text-ink-soft'>{agent.name}{agent.comingSoon && '*'}</span>
+									</div>
+								))}
 							</div>
-						))}
-					</div>
-					<span className='text-xs text-ink-faint'>*Coming Soon</span>
-				</motion.div>
+							<span className='text-xs text-ink-faint'>*Coming Soon</span>
+						</motion.div>
 
-				{/* Code snippets */}
+						{/* CTAs */}
+						<motion.div
+							initial={{ opacity: 0, y: 20 }}
+							animate={{ opacity: 1, y: 0 }}
+							transition={{ duration: 0.5, delay: 0.18 }}
+							className='flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-center md:justify-start'
+						>
+							<a
+								href='/docs'
+								className='selection-dark inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md bg-accent-deep px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent'
+							>
+								Get started
+								<ArrowRight className='h-4 w-4' />
+							</a>
+							<CopyCommand command='npm install @agent-os/core' />
+						</motion.div>
+					</div>
+
+					{/* Right column — architecture image, right-aligned */}
+					<motion.div
+						initial={{ opacity: 0, y: 20 }}
+						animate={{ opacity: 1, y: 0 }}
+						transition={{ duration: 0.6, delay: 0.22 }}
+						className='mx-auto w-full max-w-xl lg:mx-0 lg:ml-auto'
+					>
+						<HarnessArchitecture />
+					</motion.div>
+				</div>
+
+				{/* Bottom row: larger stat cards */}
 				<motion.div
 					initial={{ opacity: 0, y: 20 }}
 					animate={{ opacity: 1, y: 0 }}
-					transition={{ duration: 0.5, delay: 0.15 }}
+					transition={{ duration: 0.5, delay: 0.3 }}
+					onAnimationComplete={() => setStatsIn(true)}
+					className='mt-12 grid grid-cols-1 gap-4 sm:grid-cols-3'
 				>
-					{/* Tabs */}
-					<HeroTabs tabs={getStartedTabs} activeTab={activeTab} onTabChange={setActiveTab} />
+					{heroStats.map((stat) => (
+						<a
+							key={stat.label}
+							href={stat.href}
+							aria-label={`Jump to the ${stat.label} benchmark`}
+							className='group block rounded-2xl border border-ink/10 bg-white/55 p-5 transition-colors hover:border-accent/40 hover:bg-white/75 md:p-6'
+						>
+							<div className='flex items-start justify-between gap-2'>
+								<span className='font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint'>Up to</span>
+								<ArrowDown className='h-4 w-4 shrink-0 text-ink-faint transition-all group-hover:translate-y-0.5 group-hover:text-accent-deep' aria-hidden='true' />
+							</div>
+							<div className='mt-1.5 text-4xl font-medium leading-none text-accent-deep md:text-5xl'>
+								<CountUpStat text={stat.value} active={statsIn} />
+							</div>
+							<div className='mt-2 text-base font-medium text-ink'>{stat.label}</div>
+							<div className='mt-0.5 text-xs text-ink-faint'>{stat.sub}</div>
+						</a>
+					))}
+				</motion.div>
+			</div>
+		</section>
+	);
+};
 
-					{/* Code block */}
+
+// --- Quickstart ---
+const Quickstart = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
+	const [activeTab, setActiveTab] = useState(0);
+	const getStartedTabs = heroTabMeta.map((tab) => ({
+		...tab,
+		...heroTabs.find((heroTab) => heroTab.key === tab.key),
+	}));
+
+	return (
+		<section className='border-t border-ink/10 px-6 py-16 md:py-24'>
+			<div className='mx-auto max-w-5xl'>
+				<motion.div
+					initial={{ opacity: 0, y: 20 }}
+					whileInView={{ opacity: 1, y: 0 }}
+					viewport={{ once: true }}
+					transition={{ duration: 0.5 }}
+					className='mb-8 max-w-2xl'
+				>
+					<h2 className='mb-3 text-3xl font-medium tracking-[-0.015em] text-ink md:text-4xl'>Up and running in seconds.</h2>
+					<p className='text-base leading-relaxed text-ink-soft md:text-lg'>
+						A full agent &mdash; sessions, tools, and isolated code execution &mdash; in a few lines. It&apos;s just an npm package.
+					</p>
+				</motion.div>
+				<motion.div
+					initial={{ opacity: 0, y: 20 }}
+					whileInView={{ opacity: 1, y: 0 }}
+					viewport={{ once: true }}
+					transition={{ duration: 0.5, delay: 0.1 }}
+				>
+					<HeroTabs tabs={getStartedTabs} activeTab={activeTab} onTabChange={setActiveTab} />
 					<div className='overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50'>
 						<div className='flex items-center gap-2 border-b border-zinc-200 px-4 py-3'>
 							<div className='h-3 w-3 rounded-full bg-zinc-200' />
@@ -892,7 +979,7 @@ const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 							<div className='h-3 w-3 rounded-full bg-zinc-200' />
 							<span className='ml-2 text-xs text-zinc-600'>{getStartedTabs[activeTab]?.fileName ?? 'index.ts'}</span>
 						</div>
-						<div className='relative h-[380px] overflow-y-auto'>
+						<div className='relative h-[420px] overflow-y-auto'>
 							<AnimatePresence mode='wait'>
 								<motion.div
 									key={activeTab}
@@ -911,39 +998,17 @@ const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 							</AnimatePresence>
 						</div>
 					</div>
+					<div className='mt-6 flex flex-wrap items-center gap-x-6 gap-y-2'>
+						<a href='/docs' className='inline-flex items-center gap-2 text-sm font-medium text-ink transition-colors hover:text-accent-deep'>
+							Read the docs
+							<ArrowRight className='h-4 w-4' />
+						</a>
+					</div>
 				</motion.div>
-
-				{/* Buttons */}
-				<motion.div
-					initial={{ opacity: 0, y: 20 }}
-					animate={{ opacity: 1, y: 0 }}
-					transition={{ duration: 0.5, delay: 0.2 }}
-					className='mt-6 flex flex-col items-center gap-3 sm:flex-row sm:items-center md:items-start w-full'
-				>
-					<a
-						href='/docs'
-						className='selection-dark inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-md bg-accent-deep px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent sm:w-auto'
-					>
-						Read the Docs
-						<ArrowRight className='h-4 w-4' />
-					</a>
-					<CopyCommand command='npm install @agent-os/core' />
-					<div className='flex-1' />
-					<a
-						href='/registry'
-						className='inline-flex items-center gap-2 whitespace-nowrap text-sm text-ink-soft transition-colors hover:text-ink'
-					>
-						<Package className='h-4 w-4' />
-						View Package Registry
-						<ArrowRight className='h-4 w-4' />
-					</a>
-				</motion.div>
-
 			</div>
 		</section>
 	);
 };
-
 
 // --- Feature Card ---
 const FeatureCard = ({
@@ -1069,7 +1134,7 @@ const themedSections: ThemedSection[] = [
 			{ icon: Terminal, title: 'Easy to deploy on prem', description: 'A single npm package. No Kubernetes operators, no sidecar containers. Just install and run.', docsHref: '/docs/deployment' },
 			{ icon: Clock, title: 'Low overhead', description: 'No VMs to boot. No containers to pull. Start in milliseconds with minimal memory footprint.' },
 			{ icon: FolderOpen, title: 'Mount anything as a file system', description: 'S3, GitHub, databases. No per-agent credentials needed. The host handles access scoping.', docsHref: '/docs/filesystem' },
-			{ icon: Shield, title: 'Extend with a sandbox when needed', description: 'Agent OS handles most tasks, but pairs seamlessly with sandboxes for heavier workloads.', docsHref: '/docs/sandbox' },
+			{ icon: Shield, title: 'Extend with a sandbox when needed', description: 'agentOS handles most tasks, but pairs seamlessly with sandboxes for heavier workloads.', docsHref: '/docs/sandbox' },
 		],
 	},
 	{
@@ -1121,15 +1186,11 @@ const StackingFeatureCards = () => {
 		return () => observer.disconnect();
 	}, []);
 
-	const coldStartP99 = benchColdStart[2]; // p99
-	const awsArmAgentCost = benchWorkloads.agent.cost[0]; // AWS ARM
-
 	const stackFeatures = [
-		{ icon: Clock, title: 'Low overhead and cost.', description: 'No VMs to boot. No containers to pull. Start in milliseconds with minimal memory footprint.', detail: 'Traditional sandboxes take seconds to spin up and consume hundreds of megabytes. Agent OS starts instantly and runs lean, so you can scale to thousands of agents without the cost. More details in benchmarks below.', metrics: [{ value: `~${Math.round(coldStartP99.agentOS)}ms`, label: 'p99 coldstart' }, { value: `${awsArmAgentCost.ratio}x`, label: 'cheaper than sandboxes' }] },
 		{ icon: Terminal, title: 'Embed in your backend.', detail: 'Your APIs. Your toolchains. No complex agent authentication needed. Just JavaScript functions or hooks.' },
-		{ icon: FolderOpen, title: 'Mount anything as a file system.', description: 'S3, SQLite, Google Drive, or the host file system. No per-agent credentials needed.', detail: 'Agents think in files. Agent OS lets you expose any storage backend as a familiar directory tree. The host handles credential scoping, so agents never see API keys or secrets.' },
+		{ icon: FolderOpen, title: 'Mount anything as a file system.', description: 'S3, SQLite, Google Drive, or the host file system. No per-agent credentials needed.', detail: 'Agents think in files. agentOS lets you expose any storage backend as a familiar directory tree. The host handles credential scoping, so agents never see API keys or secrets.' },
 		{ icon: Shield, title: 'Granular security.', detail: 'Fully configurable network and file system security. Control rate limits, bandwidth limits, and file system permissions. Set precise CPU and memory limitations per agent.' },
-		{ icon: Globe, title: 'Your laptop, your infra, or on-prem.', description: 'Railway, Vercel, Kubernetes, and more. Deploy wherever your code already runs.', detail: 'Agent OS is just an npm package. No vendor lock-in, no special infrastructure. Your agents run in your stack, on your terms.', tags: ['Railway', 'Vercel', 'Kubernetes', 'ECS', 'Lambda', 'Google Cloud Run'] },
+		{ icon: Globe, title: 'Your laptop, your infra, or on-prem.', description: 'Rivet, Railway, Vercel, Kubernetes, and more. Deploy wherever your code already runs.', detail: 'agentOS is just an npm package. No vendor lock-in, no special infrastructure. Your agents run in your stack, on your terms.', tags: ['Rivet', 'Railway', 'Vercel', 'Kubernetes', 'ECS', 'Lambda', 'Google Cloud Run'] },
 	];
 
 	return (
@@ -1471,7 +1532,7 @@ const RegistryCallout = () => (
       >
         <div className='mb-8 max-w-2xl'>
           <h3 className='mb-2 text-2xl font-medium tracking-[-0.015em] text-ink md:text-3xl'>
-            Agent OS Registry
+            agentOS Registry
           </h3>
           <p className='text-base leading-relaxed text-ink-soft'>
             A marketplace for agent capabilities. Browse and install pre-built tools, integrations, file systems, databases, and sandboxes &mdash; one command away.
@@ -1501,7 +1562,6 @@ const AgentOSFeatures = () => (
 	<div id='agentos'>
 		<StackingFeatureCards />
 		<ThemedFeatureSections />
-		<RegistryCallout />
 	</div>
 );
 
@@ -1733,15 +1793,15 @@ function BenchColdStartChart() {
 				{
 					label: (
 						<>
-							Agent OS
+							agentOS
 							<BenchInfoTooltip>
 								<strong>What&apos;s measured:</strong> Time from requesting an execution to first code running.
 								<br /><br />
-								<strong>Why the gap:</strong> Agent OS runs agents in-process — V8 isolates and Wasm inside your host. No VM to boot, no network hop, no disk image. Sandboxes must boot an entire environment, allocate memory, and establish a network connection before code can run.
+								<strong>Why the gap:</strong> agentOS runs agents in-process — V8 isolates and Wasm inside your host. No VM to boot, no network hop, no disk image. Sandboxes must boot an entire environment, allocate memory, and establish a network connection before code can run.
 								<br /><br />
 								<strong>Sandbox baseline:</strong> {SANDBOX_COLDSTART_PROVIDER}, the fastest mainstream sandbox provider as of {BENCHMARK_DATE}.
 								<br /><br />
-								<strong>Agent OS:</strong> Median of 10,000 runs (100 iterations x 100 samples) on Intel i7-12700KF.
+								<strong>agentOS:</strong> Median of 10,000 runs (100 iterations x 100 samples) on Intel i7-12700KF.
 							</BenchInfoTooltip>
 						</>
 					),
@@ -1767,7 +1827,7 @@ function BenchMemoryBar({ workload }: { workload: WorkloadKey }) {
 				{
 					label: (
 						<>
-							Agent OS
+							agentOS
 							<BenchInfoTooltip>
 								<strong>What&apos;s measured:</strong> Memory footprint added per concurrent execution.
 								<br /><br />
@@ -1775,7 +1835,7 @@ function BenchMemoryBar({ workload }: { workload: WorkloadKey }) {
 								<br /><br />
 								<strong>Sandbox baseline:</strong> {SANDBOX_COST_PROVIDER}, the cheapest mainstream sandbox provider as of {BENCHMARK_DATE}. Default sandbox: 1 vCPU + 1 GiB RAM.
 								<br /><br />
-								<strong>Agent OS:</strong> {workload === 'agent' ? `${benchWorkloads.agent.memory.agentOS} for a full Pi coding agent session with MCP servers and file system mounts.` : `${benchWorkloads.shell.memory.agentOS} for the minimal shell workload under sustained load.`}
+								<strong>agentOS:</strong> {workload === 'agent' ? `${benchWorkloads.agent.memory.agentOS} for a full Pi coding agent session with MCP servers and file system mounts.` : `${benchWorkloads.shell.memory.agentOS} for the minimal shell workload under sustained load.`}
 							</BenchInfoTooltip>
 						</>
 					),
@@ -1806,7 +1866,7 @@ function BenchCostChart({ workload }: { workload: WorkloadKey }) {
 				{
 					label: (
 						<>
-							Agent OS
+							agentOS
 							<BenchInfoTooltip>
 								<strong>What&apos;s measured:</strong> <code className='rounded bg-cream/10 px-1 py-0.5 text-[10px]'>server price per second / concurrent executions per server</code>
 								<br /><br />
@@ -1814,7 +1874,7 @@ function BenchCostChart({ workload }: { workload: WorkloadKey }) {
 								<br /><br />
 								<strong>Sandbox baseline:</strong> {SANDBOX_COST_PROVIDER}, the cheapest mainstream sandbox provider as of {BENCHMARK_DATE}. Default sandbox: 1 vCPU + 1 GiB RAM at $0.0504/vCPU-h + $0.0162/GiB-h.
 								<br /><br />
-								<strong>Agent OS:</strong> {benchWorkloads[workload].memory.agentOS} baseline per execution, assuming 70% utilization (industry-standard HPA scaling threshold). Select a hardware tier above to compare.
+								<strong>agentOS:</strong> {benchWorkloads[workload].memory.agentOS} baseline per execution, assuming 70% utilization (industry-standard HPA scaling threshold). Select a hardware tier above to compare.
 							</BenchInfoTooltip>
 						</>
 					),
@@ -1829,75 +1889,23 @@ function BenchCostChart({ workload }: { workload: WorkloadKey }) {
 }
 
 function BenchmarkSection() {
-	const [workload, setWorkload] = useState<WorkloadKey>('agent');
-	const wl = benchWorkloads[workload];
+	// Each card owns its own workload toggle so they switch independently.
+	const [memoryWorkload, setMemoryWorkload] = useState<WorkloadKey>('agent');
+	const [costWorkload, setCostWorkload] = useState<WorkloadKey>('agent');
 
 	return (
-		<motion.div
-			initial={{ opacity: 0, y: 20 }}
-			whileInView={{ opacity: 1, y: 0 }}
-			viewport={{ once: true }}
-			transition={{ duration: 0.5 }}
-		>
-			<div className='mb-8'>
-				<h3 className='mb-2 text-2xl font-medium tracking-[-0.015em] text-ink md:text-3xl'>
-					Performance benchmarks
-				</h3>
-				<p className='text-base leading-relaxed text-ink-soft'>
-					Agent OS vs. traditional sandboxes.
-				</p>
+		<div className='flex flex-col gap-6'>
+			<div id='bench-cold-start' className='scroll-mt-24'>
+				<ColdStartRace />
+			</div>
+			<div id='bench-memory' className='scroll-mt-24'>
+				<MemoryOverhead workload={memoryWorkload} onWorkloadChange={setMemoryWorkload} />
+			</div>
+			<div id='bench-cost' className='scroll-mt-24'>
+				<ExecutionDensity workload={costWorkload} onWorkloadChange={setCostWorkload} />
 			</div>
 
-			<div className='mb-6 flex items-center justify-between max-sm:flex-col max-sm:items-stretch max-sm:gap-2'>
-				<p className='text-xs text-ink-faint max-sm:order-2 max-sm:px-1 max-sm:leading-relaxed'>
-					Workload:{' '}
-					<AnimatePresence mode='wait' initial={false}>
-						<motion.span
-							key={workload}
-							initial={{ opacity: 0, y: 4 }}
-							animate={{ opacity: 1, y: 0 }}
-							exit={{ opacity: 0, y: -4 }}
-							transition={{ duration: 0.2, ease: 'easeOut' }}
-							className='inline-block'
-						>
-							{wl.description}
-						</motion.span>
-					</AnimatePresence>
-				</p>
-				<div className='flex gap-1 rounded-lg border border-ink/10 bg-white/55 p-1 max-sm:order-1 max-sm:grid max-sm:w-full max-sm:grid-cols-2 max-sm:rounded-xl'>
-					{(Object.keys(benchWorkloads) as WorkloadKey[]).map((key) => {
-              const isActive = workload === key;
-              return (
-                <motion.button
-                  key={key}
-                  onClick={() => setWorkload(key)}
-                  aria-pressed={isActive}
-                  whileTap={{ scale: 0.96 }}
-                  className={`relative rounded-md px-2.5 py-1 text-xs font-medium transition-colors max-sm:flex max-sm:min-h-10 max-sm:w-full max-sm:items-center max-sm:justify-center max-sm:rounded-lg max-sm:py-2 max-sm:text-center ${
-                    isActive ? 'text-cream' : 'text-ink-soft hover:text-ink'
-                  }`}
-                >
-                  {isActive && (
-                    <motion.span
-                      layoutId='bench-workload-toggle'
-                      className='absolute inset-0 rounded-md bg-ink max-sm:rounded-lg'
-                      transition={{ type: 'spring', stiffness: 480, damping: 38 }}
-                    />
-                  )}
-                  <span className='relative z-[1]'>{benchWorkloads[key].label}</span>
-                </motion.button>
-              );
-            })}
-				</div>
-			</div>
-
-			<div className='grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3'>
-				<BenchColdStartChart />
-				<BenchMemoryBar workload={workload} />
-				<BenchCostChart workload={workload} />
-			</div>
-
-			<p className='mt-8 font-mono text-xs leading-relaxed text-ink-faint'>
+			<p className='mt-2 font-mono text-xs leading-relaxed text-ink-faint'>
 				Measured on Intel i7-12700KF. Cold start baseline: {SANDBOX_COLDSTART_PROVIDER}, the fastest mainstream sandbox provider as of {BENCHMARK_DATE}. Cost baseline: {SANDBOX_COST_PROVIDER}, the cheapest mainstream sandbox provider as of {BENCHMARK_DATE} (1 vCPU + 1 GiB default). Cost assumes 70% utilization on self-hosted hardware vs. per-second sandbox billing.{' '}
 				<a
 					href='/docs/benchmarks'
@@ -1907,98 +1915,79 @@ function BenchmarkSection() {
 					<ExternalLink className='h-3 w-3' />
 				</a>
 			</p>
-		</motion.div>
+		</div>
 	);
 }
 
-const TechnologyAndBenchmarks = () => (
-	<section className='border-t border-ink/10 py-16 md:py-32'>
+const FoundationCard = ({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) => (
+	<div className='rounded-xl border border-ink/10 bg-white/55 p-4'>
+		<div className='mb-2 flex items-center gap-2.5'>
+			<div className='flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-ink/5'>{icon}</div>
+			<h4 className='text-sm font-medium text-ink'>{title}</h4>
+		</div>
+		<p className='text-[13px] leading-relaxed text-ink-soft'>{body}</p>
+	</div>
+);
+
+const reveal = {
+	initial: { opacity: 0, y: 20 },
+	whileInView: { opacity: 1, y: 0 },
+	viewport: { once: true },
+	transition: { duration: 0.5 },
+} as const;
+
+// The architecture section: one narrative in three movements — the OS framing,
+// the harness (structure + the isolate foundation it runs on), then the payoff
+// (cold start, memory, and cost diagrams that prove the model).
+const OperatingSystemArchitecture = () => (
+	<section id='architecture' className='border-t border-ink/10 py-16 md:py-32'>
 		<div className='mx-auto max-w-5xl px-6'>
-			{/* Technology intro */}
-			<motion.div
-				initial={{ opacity: 0, y: 20 }}
-				whileInView={{ opacity: 1, y: 0 }}
-				viewport={{ once: true }}
-				transition={{ duration: 0.5 }}
-				className='mb-16'
-			>
+			{/* 1 — Framing */}
+			<motion.div {...reveal} className='mb-16 max-w-3xl'>
 				<h2 className='mb-4 text-3xl font-medium tracking-[-0.015em] text-ink md:text-5xl'>
 					A new operating system architecture.
 				</h2>
-				<p className='mb-6 max-w-3xl text-base leading-relaxed text-ink-soft md:text-lg'>
-					Built from the ground up for lightweight agents. Agent OS provides the flexibility of Linux with lower overhead than sandboxes.
+				<p className='text-base leading-relaxed text-ink-soft md:text-lg'>
+					agentOS gives every agent &mdash; and the code it runs &mdash; its own lightweight VM: a V8 isolate with WebAssembly, not a full sandbox, with many packed into a single process. It&apos;s a real operating system for agents: an in-process kernel hands each VM its own filesystem, processes, and network, exposes your backend functions as host tools the agent calls directly, and schedules and bounds every isolate on its own &mdash; the flexibility of Linux at a fraction of the overhead.
 				</p>
-				<div className='grid gap-6 md:grid-cols-2'>
-					<div className='rounded-xl border border-ink/10 bg-white/55 p-6'>
-						<div className='mb-3 flex items-center gap-3'>
-							<div className='flex h-10 w-10 items-center justify-center rounded-lg bg-ink/5'>
-								<img src='/images/agent-os/webassembly-logo.svg' alt='WebAssembly' className='h-6 w-6 grayscale opacity-70' />
-							</div>
-							<h3 className='text-lg font-medium text-ink'>WebAssembly + V8 Isolates</h3>
-						</div>
-						<p className='text-sm leading-relaxed text-ink-soft'>
-							High-performance virtualization without specialized infrastructure. The same battle-hardened isolation technology that powers Google Chrome.
-						</p>
-					</div>
-					<div className='rounded-xl border border-ink/10 bg-white/55 p-6'>
-						<div className='mb-3 flex items-center gap-3'>
-							<div className='flex h-10 w-10 items-center justify-center rounded-lg bg-ink/5'>
-								<Globe className='h-5 w-5 text-ink-soft' />
-							</div>
-							<h3 className='text-lg font-medium text-ink'>Battle-tested technology</h3>
-						</div>
-						<p className='text-sm leading-relaxed text-ink-soft'>
-							You&apos;re probably using this technology right now to view this page. Bring the same power to your agents. No VMs, no containers, no overhead.
-						</p>
+			</motion.div>
+
+			{/* 2 — The harness (structure) + the foundation it runs on */}
+			<motion.div {...reveal} className='mb-20 grid items-center gap-10 lg:grid-cols-2 lg:gap-14'>
+				<div>
+					<h3 className='mb-3 text-2xl font-medium tracking-[-0.015em] text-ink md:text-3xl'>
+						One OS for every agent.
+					</h3>
+					<p className='mb-6 text-base leading-relaxed text-ink-soft'>
+						The agent sits at the center. The OS brokers Tools &amp; Resources over MCP and host tools, persists Session state, mounts a Sandbox for heavier code, and drives Orchestration — so any supported agent gets the same capabilities with no bespoke glue.
+					</p>
+					<div className='grid gap-3 sm:grid-cols-2'>
+						<FoundationCard
+							icon={<img src='/images/agent-os/webassembly-logo.svg' alt='' aria-hidden='true' className='h-5 w-5 grayscale opacity-70' />}
+							title='WebAssembly + V8 isolates'
+							body='The same isolation that powers Chrome — high-performance virtualization with no specialized infrastructure.'
+						/>
+						<FoundationCard
+							icon={<Globe className='h-4 w-4 text-ink-soft' />}
+							title='Battle-tested'
+							body="You're using it to view this page. Bring it to your agents — no VMs, no containers, no overhead."
+						/>
 					</div>
 				</div>
-			</motion.div>
-
-			{/* Containers vs Isolate density comparison */}
-			<motion.div
-				initial={{ opacity: 0, y: 20 }}
-				whileInView={{ opacity: 1, y: 0 }}
-				viewport={{ once: true }}
-				transition={{ duration: 0.5 }}
-				className='mb-16'
-			>
-				<p className='mb-8 max-w-3xl text-base leading-relaxed text-ink-soft md:text-lg'>
-					Booting an agent in a container takes a full process and hundreds of milliseconds. Agent OS starts one in a lightweight isolate in about {Math.round(benchColdStart[0].agentOS)} ms &mdash; and packs far more into the same memory.
-				</p>
-				<ColdStartRace />
-			</motion.div>
-
-			{/* Benchmarks */}
-			<BenchmarkSection />
-
-		</div>
-	</section>
-);
-
-const HarnessSection = () => (
-	<section className='border-t border-ink/10 py-16 md:py-32'>
-		<div className='mx-auto grid max-w-5xl items-center gap-12 px-6 lg:grid-cols-2'>
-			<motion.div
-				initial={{ opacity: 0, y: 20 }}
-				whileInView={{ opacity: 1, y: 0 }}
-				viewport={{ once: true }}
-				transition={{ duration: 0.5 }}
-			>
-				<h2 className='mb-4 text-3xl font-medium tracking-[-0.015em] text-ink md:text-5xl'>
-					Everything routes through the harness.
-				</h2>
-				<p className='max-w-xl text-base leading-relaxed text-ink-soft md:text-lg'>
-					The harness is the kernel of every agent session &mdash; brokering requests and responses between your tools and MCP resources, session state, the sandbox where code runs, and the orchestration layer that ties agents together. Each piece stays isolated, yet composable.
-				</p>
-			</motion.div>
-			<motion.div
-				initial={{ opacity: 0, y: 20 }}
-				whileInView={{ opacity: 1, y: 0 }}
-				viewport={{ once: true }}
-				transition={{ duration: 0.5, delay: 0.1 }}
-			>
 				<HarnessArchitecture />
 			</motion.div>
+
+			{/* 3 — The payoff (proof) */}
+			<motion.div {...reveal} className='mb-8 max-w-3xl'>
+				<h3 className='mb-4 text-2xl font-medium tracking-[-0.015em] text-ink md:text-3xl'>
+					Faster, lighter, cheaper than sandboxes.
+				</h3>
+				<p className='text-base leading-relaxed text-ink-soft md:text-lg'>
+					No VM to boot, no container to pull, no full gigabyte reserved per idle agent. agentOS cold-starts in about {Math.round(benchColdStart[0].agentOS)} ms and packs far more work into the same memory.
+				</p>
+			</motion.div>
+
+			<BenchmarkSection />
 		</div>
 	</section>
 );
@@ -2041,111 +2030,13 @@ const BeforeAfterSlider = ({ before, after }: { before: string; after: string })
 				<span className='absolute bottom-3 left-3 whitespace-nowrap rounded-full bg-black/50 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm'>Unix Operators</span>
 			</div>
 			<div className='absolute inset-0 overflow-hidden z-10 pointer-events-none' style={{ left: `${position}%`, width: `${100 - position}%` }}>
-				<span className='absolute bottom-3 right-3 whitespace-nowrap rounded-full bg-black/50 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm'>Agent OS Operators</span>
+				<span className='absolute bottom-3 right-3 whitespace-nowrap rounded-full bg-black/50 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm'>agentOS Operators</span>
 			</div>
 		</div>
 	);
 };
 
 // --- Pairs With ---
-const SisterProducts = () => {
-	const products = [
-		{
-			name: 'Secure Exec',
-			tagline: 'Secure Node.js execution without a sandbox.',
-			bullets: [
-				'V8 isolates with bridged Node APIs',
-				'npm-compatible: fs, child_process, http',
-				'176x faster cold start than containers',
-				'Just `npm install` — no Docker, no VMs',
-			],
-			href: 'https://secureexec.dev/',
-			cta: 'secureexec.dev',
-		},
-		{
-			name: 'Sandbox Agent SDK',
-			tagline: 'Run coding agents in sandboxes. Control them over HTTP.',
-			bullets: [
-				'One interface for Claude Code, Codex, OpenCode, Amp',
-				'Streams events, handles permissions, manages sessions',
-				'Replay, audit, and retain full transcripts',
-				'Swap agents with a config change',
-			],
-			href: 'https://sandboxagent.dev/',
-			cta: 'sandboxagent.dev',
-		},
-		{
-			name: 'Rivet Actors',
-			tagline: 'Durable, stateful serverless for agents and realtime apps.',
-			bullets: [
-				'Long-lived, in-memory state — no external database',
-				'Built-in persistence, realtime, and workflow orchestration',
-				'Deploy Agent OS sessions as durable actors',
-				'Geo-distributed at the edge; scale to zero',
-			],
-			href: 'https://rivet.dev/',
-			cta: 'rivet.dev',
-		},
-	];
-
-	return (
-		<section className='border-t border-ink/10 px-6 py-24 md:py-40'>
-			<div className='mx-auto max-w-5xl'>
-				<div className='mb-12 max-w-3xl'>
-					<motion.h2
-						initial={{ opacity: 0, y: 20 }}
-						whileInView={{ opacity: 1, y: 0 }}
-						viewport={{ once: true }}
-						transition={{ duration: 0.5, delay: 0.05 }}
-						className='mb-4 text-3xl font-medium tracking-[-0.015em] text-ink md:text-4xl'
-					>
-						Pairs with Agent OS.
-					</motion.h2>
-					<motion.p
-						initial={{ opacity: 0, y: 20 }}
-						whileInView={{ opacity: 1, y: 0 }}
-						viewport={{ once: true }}
-						transition={{ duration: 0.5, delay: 0.1 }}
-						className='text-base leading-relaxed text-ink-soft md:text-lg'
-					>
-						Agent OS is where agents live. Secure Exec is how you safely run the code they generate. Sandbox Agent SDK is how you control coding agents over HTTP. Rivet Actors is how you deploy and scale them as durable, stateful services.
-					</motion.p>
-				</div>
-
-				<div className='grid grid-cols-1 gap-6 md:grid-cols-3'>
-					{products.map((product, idx) => (
-						<motion.a
-							key={product.name}
-							href={product.href}
-							target='_blank'
-							rel='noopener noreferrer'
-							initial={{ opacity: 0, y: 20 }}
-							whileInView={{ opacity: 1, y: 0 }}
-							viewport={{ once: true }}
-							transition={{ duration: 0.5, delay: 0.05 * idx }}
-							className='group flex flex-col rounded-xl border border-ink/10 bg-white/55 p-6 transition-colors hover:border-ink/25'
-						>
-							<h3 className='mb-2 text-lg font-medium text-ink'>{product.name}</h3>
-							<p className='mb-6 text-sm leading-relaxed text-ink-soft'>{product.tagline}</p>
-							<ul className='mb-8 flex flex-grow flex-col gap-2'>
-								{product.bullets.map((bullet) => (
-									<li key={bullet} className='flex items-start gap-2 text-sm leading-relaxed text-ink-soft'>
-										<span className='mt-2 h-1 w-1 flex-shrink-0 rounded-full bg-ink/30' />
-										<span>{bullet}</span>
-									</li>
-								))}
-							</ul>
-							<div className='inline-flex items-center gap-2 text-sm font-medium text-ink transition-colors group-hover:text-ink'>
-								{product.cta}
-								<ArrowRight className='h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5' />
-							</div>
-						</motion.a>
-					))}
-				</div>
-			</div>
-		</section>
-	);
-};
 
 const FromUnixToAgents = () => (
 	<section className='border-t border-ink/10 px-6 py-24 md:py-40'>
@@ -2197,11 +2088,11 @@ export default function AgentOSPage({ heroTabs }: AgentOSPageProps) {
 	return (
 		<div className='paper-grain min-h-screen font-sans text-ink-soft' style={{ overflowX: 'clip' }}>
 			<main>
-				<Hero heroTabs={heroTabs} />
-				<TechnologyAndBenchmarks />
-				<HarnessSection />
+				<Hero />
+				<Quickstart heroTabs={heroTabs} />
+				<RegistryCallout />
+				<OperatingSystemArchitecture />
 				<AgentOSFeatures />
-				<SisterProducts />
 				<FromUnixToAgents />
 			</main>
 		</div>

@@ -7,11 +7,11 @@ import { Briefcase, ListChecks, SquareTerminal, Workflow } from 'lucide-react';
 import { EASE, VIEWPORT } from '../motion';
 
 // ---------------------------------------------------------------------------
-// Harness architecture diagram. A plus/cross layout branded as Agent OS: the
+// Harness architecture diagram. A plus/cross layout branded as agentOS: the
 // running agent sits at the center (cycling through every supported agent) and
 // the harness brokers bidirectional request/response traffic out to Tools,
 // Session, Sandbox, and Orchestration. Flow dots animate along the arrows to
-// show that everything routes through Agent OS.
+// show that everything routes through agentOS.
 // ---------------------------------------------------------------------------
 
 const ARROW_COLOR = '#8A8478'; // ink-faint
@@ -257,20 +257,21 @@ const MobileStack = () => (
 	</div>
 );
 
-export const HarnessArchitecture = () => {
+export const HarnessArchitecture = ({ footer }: { footer?: ReactNode }) => {
 	const reduced = useReducedMotion();
 	return (
 		<div
 			className='relative rounded-3xl border border-ink/10 bg-gradient-to-b from-white/45 to-white/5 p-4 sm:p-6'
 			role='img'
-			aria-label='Agent OS architecture: the agent sits at the center of the harness, which routes requests and responses out to Tools and Resources over MCP, Session state, the Sandbox where code runs, and the Orchestration layer.'
+			aria-label='agentOS architecture: the agent sits at the center of the OS, which routes requests and responses out to Tools and Resources over MCP, Session state, the Sandbox where code runs, and the Orchestration layer.'
 		>
 			<span className='absolute -top-3 left-5 inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-paper px-2.5 py-1 text-[11px] font-medium text-ink shadow-sm'>
 				<img src={AGENTOS_MARK} alt='' aria-hidden='true' className='h-3.5 w-3.5' />
-				Agent OS
+				agentOS
 			</span>
 			<DesktopCross reduced={reduced} />
 			<MobileStack />
+			{footer}
 		</div>
 	);
 };

@@ -28,7 +28,7 @@ const CATEGORY_ORDER: { type: string; label: string; description: string }[] = [
 		type: "sandbox-extension",
 		label: "Sandbox Mounting",
 		description:
-			"Agent OS is a hybrid OS. Mount sandbox file systems and interact with them via tools for heavier workloads. Use Agent OS natively for lightweight tasks.",
+			"agentOS is a hybrid OS. Mount sandbox file systems and interact with them via tools for heavier workloads. Use agentOS natively for lightweight tasks.",
 	},
 	{
 		type: "software",

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Menu, X } from "lucide-react";
 import { GitHubStars } from "./GitHubStars";
+import { registry } from "../data/registry";
 
 function DiscordIcon({ className }: { className?: string }) {
   return (
@@ -18,20 +19,29 @@ function DiscordIcon({ className }: { className?: string }) {
   );
 }
 
-const NAV_LINKS = [
+const NAV_LINKS: { href: string; label: string; badge?: number }[] = [
   { href: "/use-cases", label: "Use Cases" },
   { href: "/pricing", label: "Pricing" },
-  { href: "/registry", label: "Registry" },
+  { href: "/registry", label: "Registry", badge: registry.length },
   { href: "/docs", label: "Docs" },
 ];
 
-function NavItem({ href, children }: { href: string; children: React.ReactNode }) {
+function NavBadge({ count }: { count: number }) {
+  return (
+    <span className="inline-flex items-center rounded-full bg-ink/[0.06] px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-ink-faint">
+      {count}
+    </span>
+  );
+}
+
+function NavItem({ href, children, badge }: { href: string; children: React.ReactNode; badge?: number }) {
   return (
     <a
       href={href}
-      className="px-3 py-2 text-sm font-medium text-ink-soft transition-colors duration-200 hover:text-ink"
+      className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-ink-soft transition-colors duration-200 hover:text-ink"
     >
       {children}
+      {badge != null && <NavBadge count={badge} />}
     </a>
   );
 }
@@ -68,14 +78,14 @@ export function Navigation() {
               <a href="/" className="flex items-center gap-2">
                 <img
                   src="/images/agent-os/agentos-hero-logo.svg"
-                  alt="Agent OS"
+                  alt="agentOS"
                   className="h-7 w-auto"
                 />
               </a>
 
               <div className="ml-2 hidden items-center md:flex">
                 {NAV_LINKS.map((link) => (
-                  <NavItem key={link.href} href={link.href}>
+                  <NavItem key={link.href} href={link.href} badge={link.badge}>
                     {link.label}
                   </NavItem>
                 ))}
@@ -114,10 +124,11 @@ export function Navigation() {
               <a
                 key={link.href}
                 href={link.href}
-                className="block rounded-lg px-3 py-2.5 font-medium text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
+                className="flex items-center gap-2 rounded-lg px-3 py-2.5 font-medium text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 {link.label}
+                {link.badge != null && <NavBadge count={link.badge} />}
               </a>
             ))}
             <div className="mt-3 space-y-1 border-t border-ink/10 pt-3">

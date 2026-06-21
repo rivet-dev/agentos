@@ -1,17 +1,17 @@
 import type { FaqItem } from './types';
 
-// FAQ content for the Agent OS pricing page. Rendered by AgentOSPricingPage
+// FAQ content for the agentOS pricing page. Rendered by AgentOSPricingPage
 // and emitted as FAQPage JSON-LD from pages/pricing.astro.
 export const agentOsPricingFaqs: FaqItem[] = [
 	{
-		question: 'Is Agent OS really free?',
+		question: 'Is agentOS really free?',
 		answerHtml:
-			'Yes. Agent OS is open source under the Apache 2.0 license. You can run it on your own infrastructure at no cost, forever.',
+			'Yes. agentOS is open source under the Apache 2.0 license. You can run it on your own infrastructure at no cost, forever.',
 	},
 	{
-		question: 'Can I use Agent OS in production?',
+		question: 'Can I use agentOS in production?',
 		answerHtml:
-			'Absolutely. Agent OS is designed to run in production from your laptop to on-prem clusters. It is just an npm package, so it deploys wherever your code already runs.',
+			'Absolutely. agentOS is designed to run in production from your laptop to on-prem clusters. It is just an npm package, so it deploys wherever your code already runs.',
 	},
 	{
 		question: 'What does the Enterprise tier include?',

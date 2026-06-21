@@ -188,7 +188,7 @@ export default function AgentOSUseCasesPage() {
 							transition={{ duration: 0.5, delay: 0.05 }}
 							className='mx-auto max-w-2xl text-lg text-ink-soft md:text-xl'
 						>
-							From personal assistants to enterprise fleets, Agent OS powers every kind of AI agent.
+							From personal assistants to enterprise fleets, agentOS powers every kind of AI agent.
 						</motion.p>
 					</div>
 				</section>
@@ -223,7 +223,7 @@ export default function AgentOSUseCasesPage() {
 							transition={{ duration: 0.5, delay: 0.1 }}
 							className='mb-8 text-base leading-relaxed text-ink-soft'
 						>
-							Get started with Agent OS in minutes. One npm install, zero infrastructure.
+							Get started with agentOS in minutes. One npm install, zero infrastructure.
 						</motion.p>
 						<motion.div
 							initial={{ opacity: 0, y: 20 }}
