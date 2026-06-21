@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { RegistryEntry } from "../../../data/registry";
+import { REGISTRY_ICONS } from "../../../data/registry-icons";
 
 const CATEGORY_ORDER: { type: string; label: string; description: string }[] = [
 	{
@@ -68,7 +69,7 @@ function EntryIcon({
 	}
 
 	if (entry.icon) {
-		const IconComponent = entry.icon;
+		const IconComponent = REGISTRY_ICONS[entry.icon];
 		return (
 			<IconComponent
 				style={{ width: size, height: size }}
@@ -118,7 +119,7 @@ function MonoIcon({
 	}
 
 	if (entry.icon) {
-		const IconComponent = entry.icon;
+		const IconComponent = REGISTRY_ICONS[entry.icon];
 		return (
 			<IconComponent
 				style={{ width: size, height: size }}
