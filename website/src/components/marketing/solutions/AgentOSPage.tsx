@@ -823,31 +823,64 @@ const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 	// Displayed agent is either hovered (if autoplay complete) or autoplay agent
 	const displayedAgent = autoPlayComplete ? hoveredAgent : autoPlayAgent;
 
+	// Hero proof points, sourced from bench.ts so they stay accurate.
+	const heroStats = [
+		`~${Math.round(benchColdStart[2].agentOS)} ms cold start`,
+		`${benchWorkloads.agent.memory.multiplier.split('x')[0]}× less memory`,
+		`${benchWorkloads.agent.cost[0].ratio}× cheaper`,
+		'npm install',
+	];
+
 	return (
 		<section className='relative flex min-h-[100svh] flex-col justify-center px-6 pt-24 md:pt-24'>
 			<div className='mx-auto w-full max-w-5xl'>
-				{/* Title */}
+				{/* Brand mark */}
 				<motion.div
 					initial={{ opacity: 0, y: 20 }}
 					animate={{ opacity: 1, y: 0 }}
 					transition={{ duration: 0.5, delay: 0.05 }}
-					className='mb-6 flex items-center justify-center md:justify-start'
+					className='mb-5 flex items-center justify-center md:justify-start'
 				>
 					<div className='relative'>
-						<AnimatedAgentOSLogo className='h-12 w-auto md:h-16 lg:h-20' displayedAgent={displayedAgent} />
+						<AnimatedAgentOSLogo className='h-9 w-auto md:h-11' displayedAgent={displayedAgent} />
 						<span className='absolute -right-[8px] -top-[7px] rounded-full border border-ink bg-paper px-2 py-0.5 text-[10px] font-medium text-ink'>Beta</span>
 					</div>
 				</motion.div>
 
-				{/* Subtitle */}
+				{/* Headline */}
+				<motion.h1
+					initial={{ opacity: 0, y: 20 }}
+					animate={{ opacity: 1, y: 0 }}
+					transition={{ duration: 0.5, delay: 0.08 }}
+					className='text-balance text-center text-4xl font-medium leading-[1.06] tracking-[-0.015em] text-ink md:text-left md:text-6xl'
+				>
+					Thousands of agents. Milliseconds to start.
+				</motion.h1>
+
+				{/* Subhead */}
 				<motion.p
 					initial={{ opacity: 0, y: 20 }}
 					animate={{ opacity: 1, y: 0 }}
-					transition={{ duration: 0.5, delay: 0.1 }}
-					className='mb-10 max-w-2xl text-center text-base text-ink-soft md:text-left md:text-lg'
+					transition={{ duration: 0.5, delay: 0.12 }}
+					className='mt-4 max-w-2xl text-center text-base leading-relaxed text-ink-soft md:text-left md:text-lg'
 				>
-					A portable open-source operating system for agents. ~6 ms coldstarts, 32x cheaper than sandboxes. Powered by WebAssembly and V8 isolates.
+					Agent OS runs each AI agent in its own lightweight V8 isolate &mdash; the same technology that powers Chrome. No Docker, no VMs.
 				</motion.p>
+
+				{/* Proof strip */}
+				<motion.div
+					initial={{ opacity: 0, y: 20 }}
+					animate={{ opacity: 1, y: 0 }}
+					transition={{ duration: 0.5, delay: 0.15 }}
+					className='mt-6 mb-10 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 md:justify-start'
+				>
+					{heroStats.map((stat, i) => (
+						<span key={stat} className='inline-flex items-center gap-3 font-mono text-[12px] text-ink-soft'>
+							{i > 0 ? <span className='h-1 w-1 rounded-full bg-ink/25' /> : null}
+							{stat}
+						</span>
+					))}
+				</motion.div>
 
 				{/* Supported Harnesses */}
 				<motion.div
@@ -873,6 +906,23 @@ const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 					<span className='text-xs text-ink-faint'>*Coming Soon</span>
 				</motion.div>
 
+				{/* CTAs */}
+				<motion.div
+					initial={{ opacity: 0, y: 20 }}
+					animate={{ opacity: 1, y: 0 }}
+					transition={{ duration: 0.5, delay: 0.18 }}
+					className='mb-10 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-center md:justify-start'
+				>
+					<a
+						href='/docs'
+						className='selection-dark inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md bg-accent-deep px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent'
+					>
+						Get started
+						<ArrowRight className='h-4 w-4' />
+					</a>
+					<CopyCommand command='npm install @agent-os/core' />
+				</motion.div>
+
 				{/* Code snippets */}
 				<motion.div
 					initial={{ opacity: 0, y: 20 }}
@@ -890,7 +940,7 @@ const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 							<div className='h-3 w-3 rounded-full bg-zinc-200' />
 							<span className='ml-2 text-xs text-zinc-600'>{getStartedTabs[activeTab]?.fileName ?? 'index.ts'}</span>
 						</div>
-						<div className='relative h-[380px] overflow-y-auto'>
+						<div className='relative h-[320px] overflow-y-auto'>
 							<AnimatePresence mode='wait'>
 								<motion.div
 									key={activeTab}
@@ -911,29 +961,20 @@ const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 					</div>
 				</motion.div>
 
-				{/* Buttons */}
+				{/* Tertiary link */}
 				<motion.div
 					initial={{ opacity: 0, y: 20 }}
 					animate={{ opacity: 1, y: 0 }}
-					transition={{ duration: 0.5, delay: 0.2 }}
-					className='mt-6 flex flex-col items-center gap-3 sm:flex-row sm:items-center md:items-start w-full'
+					transition={{ duration: 0.5, delay: 0.22 }}
+					className='mt-4 flex justify-center md:justify-start'
 				>
 					<a
-						href='/docs'
-						className='selection-dark inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-md bg-accent-deep px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent sm:w-auto'
-					>
-						Read the Docs
-						<ArrowRight className='h-4 w-4' />
-					</a>
-					<CopyCommand command='npm install @agent-os/core' />
-					<div className='flex-1' />
-					<a
 						href='/registry'
-						className='inline-flex items-center gap-2 whitespace-nowrap text-sm text-ink-soft transition-colors hover:text-ink'
+						className='inline-flex items-center gap-1.5 whitespace-nowrap text-sm text-ink-faint transition-colors hover:text-ink'
 					>
-						<Package className='h-4 w-4' />
-						View Package Registry
-						<ArrowRight className='h-4 w-4' />
+						<Package className='h-3.5 w-3.5' />
+						Browse the package registry
+						<ArrowRight className='h-3.5 w-3.5' />
 					</a>
 				</motion.div>
 
