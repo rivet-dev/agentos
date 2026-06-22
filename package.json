@@ -23,7 +23,7 @@
 		"@rivet-dev/agentos-core": "workspace:*",
 		"@rivet-dev/agentos-claude": "workspace:*",
 		"@rivet-dev/agentos-codex-agent": "workspace:*",
-		"@agentos-software/common": "catalog:",
+		"@agentos-software/common": "link:../secure-exec/registry/software/common",
 		"@secure-exec/core": "link:../secure-exec/packages/core",
 		"@rivet-dev/agentos-pi": "workspace:*",
 		"@types/node": "^22.19.15",
