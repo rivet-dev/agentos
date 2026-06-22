@@ -11,7 +11,7 @@ Sessions launch an agent inside the VM, stream its responses in real time over `
 
 ## Create a session
 
-Use `createSession` to launch an agent inside the VM. Returns session metadata including capabilities and agent info. The agent starts in `/workspace` by default; override it with the `cwd` option below.
+Use `createSession` to launch an agent inside the VM. Returns session metadata including capabilities and agent info. The agent starts in `/home/user` by default; override it with the `cwd` option below.
 
 <CodeGroup>
 ```ts title="client.ts"
@@ -47,7 +47,7 @@ registry.start();
 The second argument to `createSession` accepts:
 
 - **`env`**: environment variables for the agent process (e.g. API keys). Not inherited from the host.
-- **`cwd`**: working directory inside the VM. Defaults to `/workspace`.
+- **`cwd`**: working directory inside the VM. Defaults to `/home/user`.
 - **`mcpServers`**: MCP servers (local child processes or remote URLs) exposing extra tools.
 - **`additionalInstructions`**: text appended to the agent's system prompt.
 - **`skipOsInstructions`**: skip the base OS instructions injection. Tool documentation is still included.

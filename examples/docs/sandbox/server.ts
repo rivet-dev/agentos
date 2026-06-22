@@ -12,7 +12,7 @@ const sandbox = await SandboxAgent.start({ sandbox: docker() });
 // process management as bindings.
 const vm = agentOS({
 	mounts: [
-		{ path: "/workspace/sandbox", plugin: createSandboxFs({ client: sandbox }) },
+		{ path: "/home/user/sandbox", plugin: createSandboxFs({ client: sandbox }) },
 	],
 	bindings: [createSandboxBindings({ client: sandbox })],
 });

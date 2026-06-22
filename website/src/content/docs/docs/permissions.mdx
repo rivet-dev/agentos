@@ -89,11 +89,11 @@ There is no typed `"ask"` mode. Interactive, human-in-the-loop approval lives in
 For finer control, a scope can be a rule set instead of a bare mode: a `default` mode plus an ordered list of `rules`. The `fs` scope matches by `paths` (filesystem globs). Each rule names its `operations` (`read`, `write`, `stat`, `readdir`, `create_dir`, `rm`, `rename`, `symlink`, `readlink`, `chmod`, `truncate`, `mount_sensitive`, or `["*"]` for all). Last matching rule wins; if no rule matches, `default` applies.
 
 ```ts
-// Allow the filesystem everywhere, but deny anything under /workspace/vault.
+// Allow the filesystem everywhere, but deny anything under /home/user/vault.
 const denyVault = {
 	fs: {
 		default: "allow",
-		rules: [{ mode: "deny", operations: ["*"], paths: ["/workspace/vault/**"] }],
+		rules: [{ mode: "deny", operations: ["*"], paths: ["/home/user/vault/**"] }],
 	},
 };
 ```
@@ -101,11 +101,11 @@ const denyVault = {
 To invert it, flip `default` to `"deny"` and allow just one subtree:
 
 ```ts
-// Deny the filesystem by default, allow only reads under /workspace/data.
+// Deny the filesystem by default, allow only reads under /home/user/data.
 const allowOnlyData = {
 	fs: {
 		default: "deny",
-		rules: [{ mode: "allow", operations: ["read", "readdir", "stat"], paths: ["/workspace/data/**"] }],
+		rules: [{ mode: "allow", operations: ["read", "readdir", "stat"], paths: ["/home/user/data/**"] }],
 	},
 };
 ```

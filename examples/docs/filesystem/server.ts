@@ -5,7 +5,7 @@ import pi from "./software/pi";
 const vm = agentOS({
   software: [pi],
   mounts: [
-    { path: "/workspace/scratch", driver: createInMemoryFileSystem() },
+    { path: "/home/user/scratch", driver: createInMemoryFileSystem() },
   ],
 });
 

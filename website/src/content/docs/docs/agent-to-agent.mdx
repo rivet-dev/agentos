@@ -29,7 +29,7 @@ async function reviewCode(code: string): Promise<string> {
   const reviewerHandle = client.reviewer.getOrCreate("my-project");
 
   // Write the submitted contents into the reviewer's VM.
-  await reviewerHandle.writeFile("/workspace/review.ts", code);
+  await reviewerHandle.writeFile("/home/user/review.ts", code);
 
   // Ask the reviewer to review.
   const session = await reviewerHandle.createSession("claude", {
@@ -37,7 +37,7 @@ async function reviewCode(code: string): Promise<string> {
   });
   const result = await reviewerHandle.sendPrompt(
     session.sessionId,
-    "Review the code at /workspace/review.ts and list any issues.",
+    "Review the code at /home/user/review.ts and list any issues.",
   );
   await reviewerHandle.closeSession(session.sessionId);
 
