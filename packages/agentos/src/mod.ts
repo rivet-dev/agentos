@@ -16,7 +16,7 @@
  * the native factory builder — the public types do not change.
  */
 
-import { actor, type ActorDefinition, event } from "rivetkit";
+import { actor, type ActorDefinition, event, type Type } from "rivetkit";
 
 // Re-export the RivetKit registry builder so consumers import everything they
 // need from `@rivet-dev/agentos` and never reach for `rivetkit` directly.
@@ -407,15 +407,22 @@ export interface CronEventPayload {
  * actor definition satisfy RivetKit's `EventSchemaConfig` while
  * `conn.on(name, cb)` infers the payload for each event with no casts.
  */
+// `event<T>()` returns RivetKit's internal `EventTypeToken<T>`, which is not
+// part of the public type surface and therefore "cannot be named" in the
+// generated `.d.ts` (tsup dts rollup → TS4023). `Type<T>` is the exported
+// public alias for that same token, so annotating through it keeps per-event
+// payload inference while emitting a nameable type.
+const typedEvent = <T>(): Type<T> => event<T>();
+
 const agentOsEvents = {
-	sessionEvent: event<SessionEventPayload>(),
-	permissionRequest: event<PermissionRequestPayload>(),
-	vmBooted: event<VmBootedPayload>(),
-	vmShutdown: event<VmShutdownPayload>(),
-	processOutput: event<ProcessOutputPayload>(),
-	processExit: event<ProcessExitPayload>(),
-	shellData: event<ShellDataPayload>(),
-	cronEvent: event<CronEventPayload>(),
+	sessionEvent: typedEvent<SessionEventPayload>(),
+	permissionRequest: typedEvent<PermissionRequestPayload>(),
+	vmBooted: typedEvent<VmBootedPayload>(),
+	vmShutdown: typedEvent<VmShutdownPayload>(),
+	processOutput: typedEvent<ProcessOutputPayload>(),
+	processExit: typedEvent<ProcessExitPayload>(),
+	shellData: typedEvent<ShellDataPayload>(),
+	cronEvent: typedEvent<CronEventPayload>(),
 };
 
 /** Event schema map type for the actor `events` config (payload-inferring). */
