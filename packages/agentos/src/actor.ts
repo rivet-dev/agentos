@@ -11,6 +11,7 @@
  */
 
 import { sep } from "node:path";
+import common from "@agent-os-pkgs/common";
 import { getSidecarPath } from "@rivet-dev/agentos-sidecar";
 import {
 	actor,
@@ -151,6 +152,20 @@ function withAutoAgentNodeModulesMount(
 	return [...(mounts ?? []), nodeModulesMount(hostNodeModulesDir)];
 }
 
+/**
+ * Stable identity for a software descriptor, used to de-duplicate the
+ * auto-injected default bundle against software the caller passed explicitly.
+ * Resolved `commandDir`/`packageDir` paths are the most reliable key; `name`
+ * is the fallback for descriptors without a directory.
+ */
+function softwareIdentity(d: SoftwareDescriptorLike): string {
+	if (typeof d.commandDir === "string") return `dir:${d.commandDir}`;
+	if (typeof d.packageDir === "string") return `dir:${d.packageDir}`;
+	const name = (d as { name?: unknown }).name;
+	if (typeof name === "string") return `name:${name}`;
+	return JSON.stringify(d);
+}
+
 function flattenSoftware(input: unknown, out: SoftwareDescriptorLike[]): void {
 	if (input == null) return;
 	if (Array.isArray(input)) {
@@ -168,6 +183,21 @@ export function buildConfigJson<TConnParams>(
 		(parsed.options as { software?: unknown })?.software,
 		descriptors,
 	);
+
+	// Auto-include the default software bundle (`@agent-os-pkgs/common`: `sh` +
+	// coreutils + the standard CLI tools agents rely on) unless the caller opted
+	// out with `defaultSoftware: false`. Anything already listed in `software`
+	// (e.g. an explicit `common`) is not duplicated. Prepended so the baseline
+	// tools come first, matching the previous explicit `[common, ...]` ordering.
+	const defaultSoftwareEnabled =
+		(parsed.options as { defaultSoftware?: unknown })?.defaultSoftware !== false;
+	if (defaultSoftwareEnabled) {
+		const defaults: SoftwareDescriptorLike[] = [];
+		flattenSoftware(common, defaults);
+		const seen = new Set(descriptors.map(softwareIdentity));
+		const toPrepend = defaults.filter((d) => !seen.has(softwareIdentity(d)));
+		descriptors.unshift(...toPrepend);
+	}
 
 	const software: Array<{ package: string; kind?: string }> = [];
 	for (const d of descriptors) {

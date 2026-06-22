@@ -12,6 +12,7 @@ import type {
 	NapiNativePluginOptions,
 } from "rivetkit";
 import { createClient } from "rivetkit/client";
+import common from "@agent-os-pkgs/common";
 import {
 	agentOs,
 	buildConfigJson,
@@ -350,6 +351,8 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 	test("buildConfigJson keeps software descriptors pointed at package roots", () => {
 		const configJson = buildConfigJson({
 			options: {
+				// Disable the default bundle so this stays focused on the mapping.
+				defaultSoftware: false,
 				software: [
 					{ commandDir: "/abs/wasm-command" },
 					{ packageDir: "/abs/agent-package", agent: {} },
@@ -360,13 +363,44 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 				defaultExpiresInSeconds: 3600,
 				maxExpiresInSeconds: 86400,
 			},
-		});
+		} as never);
 
 		expect(JSON.parse(configJson).software).toEqual([
 			{ package: "/abs/wasm-command" },
 			{ package: "/abs/agent-package", kind: "agent" },
 			{ package: "/abs/tool-package", kind: "tool" },
 		]);
+	});
+
+	test("auto-injects the default common software bundle unless disabled", () => {
+		const withDefault = JSON.parse(
+			buildConfigJson({
+				options: { software: [{ commandDir: "/x/wasm" }] },
+			} as never),
+		);
+		const pkgs = withDefault.software.map((s: { package: string }) => s.package);
+		expect(pkgs).toContain("/x/wasm");
+		// common (sh + coreutils + tools) is injected from @agent-os-pkgs/*.
+		expect(pkgs.some((p: string) => p.includes("@agent-os-pkgs"))).toBe(true);
+		expect(withDefault.software.length).toBeGreaterThan(1);
+
+		const noDefault = JSON.parse(
+			buildConfigJson({
+				options: { software: [{ commandDir: "/x/wasm" }], defaultSoftware: false },
+			} as never),
+		);
+		expect(noDefault.software).toEqual([{ package: "/x/wasm" }]);
+	});
+
+	test("does not duplicate an explicitly-provided default package", () => {
+		const onlyDefault = JSON.parse(
+			buildConfigJson({ options: {} } as never),
+		).software.length;
+		const withExplicitCommon = JSON.parse(
+			buildConfigJson({ options: { software: [common] } } as never),
+		).software.length;
+		// Passing common explicitly must not double the injected bundle.
+		expect(withExplicitCommon).toBe(onlyDefault);
 	});
 
 	test("auto-derives /root/node_modules mount from an agent's installed package dir", () => {

@@ -28,6 +28,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
+		"@agent-os-pkgs/common": "catalog:",
 		"@rivet-dev/agentos-core": "workspace:*",
 		"@rivet-dev/agentos-sidecar": "workspace:*",
 		"zod": "^4.1.11"

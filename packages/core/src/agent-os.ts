@@ -474,6 +474,14 @@ export interface AgentOsOptions {
 	 * meta-packages that export arrays of sub-packages work directly.
 	 */
 	software?: SoftwareInput[];
+	/**
+	 * Whether to auto-include the default software bundle (`@agent-os-pkgs/common`
+	 * — `sh` + coreutils + the standard CLI tools agents rely on) in addition to
+	 * any `software` you pass. Defaults to `true`; set `false` for a bare VM with
+	 * only the software you list explicitly. Entries already present in `software`
+	 * are not duplicated.
+	 */
+	defaultSoftware?: boolean;
 	/** Loopback ports to exempt from SSRF checks (for testing with host-side mock servers). */
 	loopbackExemptPorts?: number[];
 	/**
