@@ -25,10 +25,10 @@ use secure_exec_client::wire;
 use secure_exec_vm_config as vm_config;
 
 use crate::config::{
-    AgentOsConfig, AgentOsLimits, HostTool, MountConfig, PermissionMode, Permissions,
+    AgentOsConfig, AgentOsLimits, Binding, MountConfig, PermissionMode, Permissions,
     RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode as ConfigRootFilesystemMode,
     RootLowerInput, SidecarJsBridgeCall, SidecarJsBridgeCallback, SoftwareKind,
-    TimerScheduleDriver, ToolKit,
+    TimerScheduleDriver, Bindings,
 };
 use crate::cron::CronManager;
 use crate::error::ClientError;
@@ -387,11 +387,11 @@ impl AgentOs {
         // 6b. Register host tool kits (if any): forward each tool definition via `register_host_callbacks`,
         //     record the host execute callbacks in the per-VM registry, and install the shared
         //     host-callback that routes guest tool calls back to the host by VM.
-        if !config.tool_kits.is_empty() {
-            let mut tool_map: HashMap<String, HostTool> = HashMap::new();
-            for kit in &config.tool_kits {
+        if !config.bindings.is_empty() {
+            let mut tool_map: HashMap<String, Binding> = HashMap::new();
+            for kit in &config.bindings {
                 let mut tools = HashMap::new();
-                for tool in &kit.tools {
+                for tool in &kit.bindings {
                     tools.insert(
                         tool.name.clone(),
                         wire::RegisteredHostCallbackDefinition {
@@ -462,7 +462,7 @@ impl AgentOs {
             let _ = vm_tools().insert(
                 vm_id.clone(),
                 Arc::new(VmHostToolRegistry {
-                    tool_kits: config.tool_kits.clone(),
+                    bindings: config.bindings.clone(),
                     tool_map,
                     permissions: config.permissions.clone(),
                 }),
@@ -1135,8 +1135,8 @@ static VM_TOOLS: OnceCell<SccHashMap<String, Arc<VmHostToolRegistry>>> = OnceCel
 
 #[derive(Clone)]
 struct VmHostToolRegistry {
-    tool_kits: Vec<ToolKit>,
-    tool_map: HashMap<String, HostTool>,
+    bindings: Vec<Bindings>,
+    tool_map: HashMap<String, Binding>,
     permissions: Option<Permissions>,
 }
 
@@ -1531,7 +1531,7 @@ async fn run_host_command_callback(
         return handle_agentos_registry_command(ownership, registry, &command).await;
     }
     let Some(toolkit) = registry
-        .tool_kits
+        .bindings
         .iter()
         .find(|toolkit| format!("agentos-{}", toolkit.name) == command.command)
     else {
@@ -1566,27 +1566,27 @@ async fn handle_agentos_registry_command(
     }
     if subcommand == "list-tools" {
         return match command.args.get(1) {
-            Some(toolkit_name) => describe_toolkit_payload(&registry.tool_kits, toolkit_name),
-            None => Ok(list_toolkits_payload(&registry.tool_kits)),
+            Some(toolkit_name) => describe_toolkit_payload(&registry.bindings, toolkit_name),
+            None => Ok(list_toolkits_payload(&registry.bindings)),
         };
     }
 
     let Some(toolkit) = registry
-        .tool_kits
+        .bindings
         .iter()
         .find(|toolkit| toolkit.name == *subcommand)
     else {
         return Err(format!(
             "No toolkit \"{subcommand}\". Available: {}",
-            toolkit_names(&registry.tool_kits)
+            toolkit_names(&registry.bindings)
         ));
     };
 
     let Some(tool_name) = command.args.get(1) else {
-        return describe_toolkit_payload(&registry.tool_kits, subcommand);
+        return describe_toolkit_payload(&registry.bindings, subcommand);
     };
     if is_help_flag(tool_name) {
-        return describe_toolkit_payload(&registry.tool_kits, subcommand);
+        return describe_toolkit_payload(&registry.bindings, subcommand);
     }
     if command.args.get(2).is_some_and(|value| is_help_flag(value)) {
         return describe_tool_payload(toolkit, tool_name);
@@ -1606,13 +1606,13 @@ async fn handle_agentos_toolkit_command(
     ownership: &wire::OwnershipScope,
     registry: &VmHostToolRegistry,
     command: &HostCommandCallbackInput,
-    toolkit: &ToolKit,
+    toolkit: &Bindings,
 ) -> Result<Value, String> {
     let Some(tool_name) = command.args.first() else {
-        return describe_toolkit_payload(&registry.tool_kits, &toolkit.name);
+        return describe_toolkit_payload(&registry.bindings, &toolkit.name);
     };
     if is_help_flag(tool_name) {
-        return describe_toolkit_payload(&registry.tool_kits, &toolkit.name);
+        return describe_toolkit_payload(&registry.bindings, &toolkit.name);
     }
     if command.args.get(1).is_some_and(|value| is_help_flag(value)) {
         return describe_tool_payload(toolkit, tool_name);
@@ -1631,7 +1631,7 @@ async fn handle_agentos_toolkit_command(
 async fn invoke_host_tool(
     ownership: &wire::OwnershipScope,
     registry: &VmHostToolRegistry,
-    toolkit: &ToolKit,
+    toolkit: &Bindings,
     tool_name: &str,
     args: &[String],
     cwd: &str,
@@ -1667,7 +1667,7 @@ async fn invoke_host_tool(
 
 async fn parse_host_tool_input(
     ownership: &wire::OwnershipScope,
-    tool: &HostTool,
+    tool: &Binding,
     args: &[String],
     cwd: &str,
 ) -> Result<Value, String> {
@@ -2240,11 +2240,11 @@ fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| String::from("<invalid json>"))
 }
 
-fn list_toolkits_payload(tool_kits: &[ToolKit]) -> Value {
+fn list_toolkits_payload(bindings: &[Bindings]) -> Value {
     Value::Object(Map::from_iter([(
         String::from("toolkits"),
         Value::Array(
-            tool_kits
+            bindings
                 .iter()
                 .map(|toolkit| {
                     json_object([
@@ -2254,7 +2254,7 @@ fn list_toolkits_payload(tool_kits: &[ToolKit]) -> Value {
                             "tools",
                             Value::Array(
                                 toolkit
-                                    .tools
+                                    .bindings
                                     .iter()
                                     .map(|tool| Value::String(tool.name.clone()))
                                     .collect(),
@@ -2267,14 +2267,14 @@ fn list_toolkits_payload(tool_kits: &[ToolKit]) -> Value {
     )]))
 }
 
-fn describe_toolkit_payload(tool_kits: &[ToolKit], toolkit_name: &str) -> Result<Value, String> {
-    let Some(toolkit) = tool_kits
+fn describe_toolkit_payload(bindings: &[Bindings], toolkit_name: &str) -> Result<Value, String> {
+    let Some(toolkit) = bindings
         .iter()
         .find(|toolkit| toolkit.name == toolkit_name)
     else {
         return Err(format!(
             "No toolkit \"{toolkit_name}\". Available: {}",
-            toolkit_names(tool_kits)
+            toolkit_names(bindings)
         ));
     };
     Ok(json_object([
@@ -2282,7 +2282,7 @@ fn describe_toolkit_payload(tool_kits: &[ToolKit], toolkit_name: &str) -> Result
         ("description", Value::String(toolkit.description.clone())),
         (
             "tools",
-            Value::Object(Map::from_iter(toolkit.tools.iter().map(|tool| {
+            Value::Object(Map::from_iter(toolkit.bindings.iter().map(|tool| {
                 (
                     tool.name.clone(),
                     json_object([
@@ -2298,8 +2298,8 @@ fn describe_toolkit_payload(tool_kits: &[ToolKit], toolkit_name: &str) -> Result
     ]))
 }
 
-fn describe_tool_payload(toolkit: &ToolKit, tool_name: &str) -> Result<Value, String> {
-    let Some(tool) = toolkit.tools.iter().find(|tool| tool.name == tool_name) else {
+fn describe_tool_payload(toolkit: &Bindings, tool_name: &str) -> Result<Value, String> {
+    let Some(tool) = toolkit.bindings.iter().find(|tool| tool.name == tool_name) else {
         return Err(format!(
             "No tool \"{tool_name}\" in toolkit \"{}\". Available: {}",
             toolkit.name,
@@ -2472,17 +2472,17 @@ fn permission_pattern_matches(pattern: &str, value: &str) -> bool {
     pattern_index == pattern_bytes.len()
 }
 
-fn toolkit_names(tool_kits: &[ToolKit]) -> String {
-    tool_kits
+fn toolkit_names(bindings: &[Bindings]) -> String {
+    bindings
         .iter()
         .map(|toolkit| toolkit.name.clone())
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-fn tool_names(toolkit: &ToolKit) -> String {
+fn tool_names(toolkit: &Bindings) -> String {
     toolkit
-        .tools
+        .bindings
         .iter()
         .map(|tool| tool.name.clone())
         .collect::<Vec<_>>()

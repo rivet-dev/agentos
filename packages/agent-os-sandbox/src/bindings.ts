@@ -1,9 +1,9 @@
 /**
  * Sandbox toolkit exposing process management and command execution
- * as host tools for agents running inside an agentOS VM.
+ * as bindings for agents running inside an agentOS VM.
  */
 
-import type { HostTool, ToolKit } from "@rivet-dev/agentos-core";
+import type { Binding, Bindings } from "@rivet-dev/agentos-core";
 import type { SandboxAgent } from "sandbox-agent";
 import { z } from "zod";
 
@@ -12,25 +12,25 @@ export interface SandboxToolkitOptions {
 	client: SandboxAgent;
 }
 
-/** Host tool type alias for convenience. */
-function hostTool<INPUT, OUTPUT>(
-	def: HostTool<INPUT, OUTPUT>,
-): HostTool<INPUT, OUTPUT> {
+/** Binding type alias for convenience. */
+function binding<INPUT, OUTPUT>(
+	def: Binding<INPUT, OUTPUT>,
+): Binding<INPUT, OUTPUT> {
 	return def;
 }
 
 /**
- * Create a ToolKit that exposes sandbox process management operations.
+ * Create a Bindings group that exposes sandbox process management operations.
  */
-export function createSandboxToolkit(options: SandboxToolkitOptions): ToolKit {
+export function createSandboxBindings(options: SandboxToolkitOptions): Bindings {
 	const { client } = options;
 
 	return {
 		name: "sandbox",
 		description:
 			"Execute commands and manage processes in a remote sandbox environment.",
-		tools: {
-			"run-command": hostTool({
+		bindings: {
+			"run-command": binding({
 				description:
 					"Run a command synchronously in the sandbox and return its stdout, stderr, and exit code.",
 				inputSchema: z.object({
@@ -73,7 +73,7 @@ export function createSandboxToolkit(options: SandboxToolkitOptions): ToolKit {
 				},
 			}),
 
-			"create-process": hostTool({
+			"create-process": binding({
 				description:
 					"Start a long-running background process in the sandbox. Returns a process ID for later management.",
 				inputSchema: z.object({
@@ -108,7 +108,7 @@ export function createSandboxToolkit(options: SandboxToolkitOptions): ToolKit {
 				},
 			}),
 
-			"list-processes": hostTool({
+			"list-processes": binding({
 				description: "List all processes running in the sandbox.",
 				inputSchema: z.object({}),
 				execute: async () => {
@@ -126,7 +126,7 @@ export function createSandboxToolkit(options: SandboxToolkitOptions): ToolKit {
 				},
 			}),
 
-			"stop-process": hostTool({
+			"stop-process": binding({
 				description: "Gracefully stop a running process in the sandbox.",
 				inputSchema: z.object({
 					id: z.string().describe("The process ID to stop."),
@@ -141,7 +141,7 @@ export function createSandboxToolkit(options: SandboxToolkitOptions): ToolKit {
 				},
 			}),
 
-			"kill-process": hostTool({
+			"kill-process": binding({
 				description: "Forcefully kill a running process in the sandbox.",
 				inputSchema: z.object({
 					id: z.string().describe("The process ID to kill."),
@@ -156,7 +156,7 @@ export function createSandboxToolkit(options: SandboxToolkitOptions): ToolKit {
 				},
 			}),
 
-			"get-process-logs": hostTool({
+			"get-process-logs": binding({
 				description: "Get stdout/stderr logs from a sandbox process.",
 				inputSchema: z.object({
 					id: z.string().describe("The process ID."),
@@ -196,7 +196,7 @@ export function createSandboxToolkit(options: SandboxToolkitOptions): ToolKit {
 				},
 			}),
 
-			"send-input": hostTool({
+			"send-input": binding({
 				description:
 					"Send text input to an interactive sandbox process via stdin.",
 				inputSchema: z.object({

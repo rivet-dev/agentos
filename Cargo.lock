@@ -119,6 +119,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "arrayref"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
+
+[[package]]
+name = "arrayvec"
+version = "0.7.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f02882884d3e1bc524fb12c79f107f6ad0e1cfd498c536ffb494301740995dfe"
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -650,6 +662,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
 
 [[package]]
+name = "blake3"
+version = "1.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aa83c34e62843d924f905e0f5c866eb1dd6545fc4d719e803d9ba6030371fce"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+ "cpufeatures 0.3.0",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -810,6 +836,12 @@ name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
+
+[[package]]
+name = "constant_time_eq"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "core-foundation"
@@ -1284,8 +1316,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2868,13 +2902,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "secure-exec-build-support"
+version = "0.3.0-rc.1"
+
+[[package]]
 name = "secure-exec-client"
 version = "0.3.0-rc.1"
 dependencies = [
  "futures",
  "parking_lot",
  "scc",
- "secure-exec-sidecar",
+ "secure-exec-sidecar-protocol",
  "thiserror",
  "tokio",
  "tracing",
@@ -2889,6 +2927,7 @@ dependencies = [
  "getrandom 0.2.17",
  "nix",
  "secure-exec-bridge",
+ "secure-exec-build-support",
  "secure-exec-v8-runtime",
  "serde",
  "serde_json",
@@ -2902,17 +2941,20 @@ version = "0.3.0-rc.1"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
+ "hickory-proto",
  "hickory-resolver",
  "secure-exec-bridge",
  "serde",
  "serde_json",
  "tokio",
+ "vfs",
 ]
 
 [[package]]
 name = "secure-exec-sidecar"
 version = "0.3.0-rc.1"
 dependencies = [
+ "async-trait",
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
@@ -2929,7 +2971,6 @@ dependencies = [
  "nix",
  "openssl",
  "pbkdf2",
- "rivet-vbare-compiler",
  "rusqlite",
  "rustls 0.23.37",
  "rustls-native-certs",
@@ -2938,9 +2979,11 @@ dependencies = [
  "secure-exec-bridge",
  "secure-exec-execution",
  "secure-exec-kernel",
+ "secure-exec-sidecar-core",
+ "secure-exec-sidecar-protocol",
+ "secure-exec-vfs",
  "secure-exec-vm-config",
  "serde",
- "serde_bare",
  "serde_json",
  "sha1",
  "sha2",
@@ -2951,15 +2994,48 @@ dependencies = [
  "tracing-subscriber",
  "ureq",
  "url",
- "vbare",
+ "vfs",
 ]
 
 [[package]]
 name = "secure-exec-sidecar-browser"
 version = "0.3.0-rc.1"
 dependencies = [
+ "base64 0.22.1",
+ "getrandom 0.2.17",
+ "js-sys",
  "secure-exec-bridge",
  "secure-exec-kernel",
+ "secure-exec-sidecar-core",
+ "secure-exec-sidecar-protocol",
+ "secure-exec-vm-config",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "secure-exec-sidecar-core"
+version = "0.3.0-rc.1"
+dependencies = [
+ "base64 0.22.1",
+ "secure-exec-bridge",
+ "secure-exec-kernel",
+ "secure-exec-sidecar-protocol",
+ "secure-exec-vm-config",
+ "serde_json",
+ "vfs",
+]
+
+[[package]]
+name = "secure-exec-sidecar-protocol"
+version = "0.3.0-rc.1"
+dependencies = [
+ "rivet-vbare-compiler",
+ "secure-exec-vm-config",
+ "serde",
+ "serde_bare",
+ "serde_json",
+ "vbare",
 ]
 
 [[package]]
@@ -2971,9 +3047,22 @@ dependencies = [
  "libc",
  "openssl",
  "secure-exec-bridge",
+ "secure-exec-build-support",
  "serde",
  "signal-hook",
  "v8",
+]
+
+[[package]]
+name = "secure-exec-vfs"
+version = "0.3.0-rc.1"
+dependencies = [
+ "async-trait",
+ "aws-sdk-s3",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "vfs",
 ]
 
 [[package]]
@@ -3677,6 +3766,18 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vfs"
+version = "0.3.0-rc.1"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "blake3",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "vsimd"

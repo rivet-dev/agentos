@@ -96,7 +96,7 @@ describe("generated sidecar protocol", () => {
 							childProcess: null,
 							process: null,
 							env: null,
-							tool: null,
+							binding: null,
 						},
 						moduleAccessCwd: "/workspace",
 						instructions: ["keep it generic"],

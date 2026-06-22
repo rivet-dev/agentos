@@ -26,7 +26,7 @@ use agent_os_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_client::wire;
 
 use crate::agent_os::{AgentOs, SessionEntry};
-use crate::config::ToolKit;
+use crate::config::Bindings;
 use crate::error::ClientError;
 use crate::json_rpc::{JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcResponse};
 use crate::stream::Subscription;
@@ -809,8 +809,8 @@ fn combine_instructions(additional: Option<&str>, tool_reference: &str) -> Optio
     }
 }
 
-fn build_host_tool_reference(tool_kits: &[ToolKit]) -> String {
-    if tool_kits.is_empty() {
+fn build_host_tool_reference(bindings: &[Bindings]) -> String {
+    if bindings.is_empty() {
         return String::new();
     }
 
@@ -821,12 +821,12 @@ fn build_host_tool_reference(tool_kits: &[ToolKit]) -> String {
         String::new(),
     ];
 
-    for kit in tool_kits {
+    for kit in bindings {
         lines.push(format!("### {}", kit.name));
         lines.push(String::new());
         lines.push(kit.description.clone());
         lines.push(String::new());
-        for tool in &kit.tools {
+        for tool in &kit.bindings {
             let signature = build_tool_flag_signature(&tool.input_schema);
             let suffix = if signature.is_empty() {
                 String::new()
@@ -1248,7 +1248,7 @@ impl AgentOs {
             "fs": { "readTextFile": true, "writeTextFile": true },
             "terminal": true,
         });
-        let tool_reference = build_host_tool_reference(&self.config().tool_kits);
+        let tool_reference = build_host_tool_reference(&self.config().bindings);
         let additional_instructions =
             combine_instructions(options.additional_instructions.as_deref(), &tool_reference);
 

@@ -34,8 +34,8 @@ import type {
 	SessionInitData,
 	SessionModeState,
 } from "./agent-session-types.js";
-import { type HostTool, type ToolKit, validateToolkits } from "./host-tools.js";
-import { zodToJsonSchema } from "./host-tools-zod.js";
+import { type Binding, type Bindings, validateBindings } from "./bindings.js";
+import { zodToJsonSchema } from "./bindings-zod.js";
 import type {
 	JsonRpcNotification,
 	JsonRpcRequest,
@@ -205,6 +205,11 @@ import {
 	type SoftwareInput,
 	type SoftwareRoot,
 } from "./packages.js";
+// `@agentos-software/common` (coreutils, sed, grep, gawk, findutils, diffutils,
+// tar, gzip) is part of the default VM software set, so callers never have to add
+// it explicitly. It is prepended to any user-supplied `software` (deduped by
+// reference, so passing it explicitly is still harmless).
+import defaultCommonSoftware from "@agentos-software/common";
 import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
 import {
 	type AcpRequest,
@@ -286,7 +291,7 @@ interface AgentOsVmAdmin extends InProcessSidecarVmAdmin {
 	sidecarSession: AuthenticatedSession;
 	sidecarVm: CreatedVm;
 	snapshotRootFilesystem?: () => Promise<RootSnapshotExport>;
-	toolKits: ToolKit[];
+	bindings: Bindings[];
 	toolReference: string;
 }
 
@@ -486,8 +491,8 @@ export interface AgentOsOptions {
 	additionalInstructions?: string;
 	/** Custom schedule driver for cron jobs. Defaults to TimerScheduleDriver. */
 	scheduleDriver?: ScheduleDriver;
-	/** Host-side toolkits available to agents inside the VM. */
-	toolKits?: ToolKit[];
+	/** Host-side bindings available to agents inside the VM. */
+	bindings?: Bindings[];
 	/**
 	 * Custom permission policy for the kernel. Controls access to filesystem,
 	 * network, child process, and environment operations. Defaults to allowAll.
@@ -1026,6 +1031,7 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 	"/media",
 	"/home",
 	"/home/user",
+	"/workspace",
 	"/usr",
 	"/usr/bin",
 	"/usr/games",
@@ -1637,13 +1643,13 @@ function collectSidecarMountPlan(options: {
 	return { sidecarMounts, hostMounts, hostPathMappings };
 }
 
-function materializeToolShimDir(toolKits: ToolKit[]): string {
-	const shimDir = mkdtempSync(join(tmpdir(), "agent-os-host-tools-shims-"));
+function materializeToolShimDir(bindingGroups: Bindings[]): string {
+	const shimDir = mkdtempSync(join(tmpdir(), "agent-os-bindings-shims-"));
 	writeFileSync(join(shimDir, "agentos"), KERNEL_COMMAND_STUB, { mode: 0o755 });
 
-	for (const toolKit of toolKits) {
+	for (const group of bindingGroups) {
 		writeFileSync(
-			join(shimDir, `agentos-${toolKit.name}`),
+			join(shimDir, `agentos-${group.name}`),
 			KERNEL_COMMAND_STUB,
 			{ mode: 0o755 },
 		);
@@ -1652,12 +1658,12 @@ function materializeToolShimDir(toolKits: ToolKit[]): string {
 	return shimDir;
 }
 
-function collectToolkitBootstrapCommands(toolKits: ToolKit[]): string[] {
-	if (toolKits.length === 0) {
+function collectToolkitBootstrapCommands(bindingGroups: Bindings[]): string[] {
+	if (bindingGroups.length === 0) {
 		return [];
 	}
 
-	return ["agentos", ...toolKits.map((toolKit) => `agentos-${toolKit.name}`)];
+	return ["agentos", ...bindingGroups.map((group) => `agentos-${group.name}`)];
 }
 
 function validationMessage(error: unknown): string {
@@ -1683,7 +1689,7 @@ function validationMessage(error: unknown): string {
 }
 
 function toolToSidecarDefinition(
-	tool: HostTool,
+	tool: Binding,
 ): SidecarRegisteredHostCallbackDefinition {
 	return {
 		description: tool.description,
@@ -1713,52 +1719,52 @@ function combineInstructions(
 	return parts.join("\n\n");
 }
 
-function buildHostToolReference(toolKits: ToolKit[]): string {
-	if (toolKits.length === 0) {
+function buildHostToolReference(bindingGroups: Bindings[]): string {
+	if (bindingGroups.length === 0) {
 		return "";
 	}
 
 	const lines = [
-		"## Available Host Tools",
+		"## Available Bindings",
 		"",
-		"Run `agentos list-tools` to see all available tools.",
+		"Run `agentos list-tools` to see all available bindings.",
 		"",
 	];
 
-	for (const toolKit of toolKits) {
-		lines.push(`### ${toolKit.name}`);
+	for (const group of bindingGroups) {
+		lines.push(`### ${group.name}`);
 		lines.push("");
-		lines.push(toolKit.description);
+		lines.push(group.description);
 		lines.push("");
-		for (const [toolName, tool] of Object.entries(toolKit.tools)) {
+		for (const [bindingName, tool] of Object.entries(group.bindings)) {
 			const sidecarTool = toolToSidecarDefinition(tool);
 			const signature = buildToolFlagSignature(sidecarTool.inputSchema);
 			const suffix = signature.length > 0 ? ` ${signature}` : "";
 			lines.push(
-				`- \`agentos-${toolKit.name} ${toolName}${suffix}\` — ${tool.description}`,
+				`- \`agentos-${group.name} ${bindingName}${suffix}\` — ${tool.description}`,
 			);
 		}
 		lines.push("");
 
-		const toolsWithExamples = Object.entries(toolKit.tools).filter(
+		const toolsWithExamples = Object.entries(group.bindings).filter(
 			([, tool]) => tool.examples && tool.examples.length > 0,
 		);
 		if (toolsWithExamples.length > 0) {
 			lines.push("**Examples:**");
 			lines.push("");
-			for (const [toolName, tool] of toolsWithExamples) {
+			for (const [bindingName, tool] of toolsWithExamples) {
 				for (const example of tool.examples ?? []) {
 					const args = inputToToolFlags(example.input);
 					const suffix = args.length > 0 ? ` ${args}` : "";
 					lines.push(
-						`- ${example.description}: \`agentos-${toolKit.name} ${toolName}${suffix}\``,
+						`- ${example.description}: \`agentos-${group.name} ${bindingName}${suffix}\``,
 					);
 				}
 			}
 			lines.push("");
 		}
 
-		lines.push(`Run \`agentos-${toolKit.name} <tool> --help\` for details.`);
+		lines.push(`Run \`agentos-${group.name} <binding> --help\` for details.`);
 		lines.push("");
 	}
 
@@ -1932,11 +1938,11 @@ async function handleHostCallback(
 	}
 }
 
-function buildToolMap(toolKits: ToolKit[]): Map<string, HostTool> {
-	const toolMap = new Map<string, HostTool>();
-	for (const toolKit of toolKits) {
-		for (const [toolName, tool] of Object.entries(toolKit.tools)) {
-			toolMap.set(`${toolKit.name}:${toolName}`, tool);
+function buildToolMap(bindingGroups: Bindings[]): Map<string, Binding> {
+	const toolMap = new Map<string, Binding>();
+	for (const group of bindingGroups) {
+		for (const [bindingName, tool] of Object.entries(group.bindings)) {
+			toolMap.set(`${group.name}:${bindingName}`, tool);
 		}
 	}
 	return toolMap;
@@ -1950,8 +1956,8 @@ interface HostCommandCallbackInput {
 }
 
 interface HostCallbackContext {
-	toolKits: ToolKit[];
-	toolMap: ReadonlyMap<string, HostTool>;
+	bindings: Bindings[];
+	toolMap: ReadonlyMap<string, Binding>;
 	permissions: Permissions;
 	readFile(path: string): Promise<Uint8Array>;
 }
@@ -1981,8 +1987,8 @@ async function handleHostCommandCallback(
 	command: HostCommandCallbackInput,
 	context: HostCallbackContext,
 ): Promise<unknown> {
-	const directToolKit = context.toolKits.find(
-		(toolKit) => `agentos-${toolKit.name}` === command.command,
+	const directToolKit = context.bindings.find(
+		(group) => `agentos-${group.name}` === command.command,
 	);
 	if (command.command === "agentos") {
 		return handleAgentOsRegistryCommand(command, context);
@@ -2001,22 +2007,22 @@ async function handleAgentOsRegistryCommand(
 	if (!subcommand || isHelpFlag(subcommand)) {
 		return {
 			usage:
-				"agentos <command>: list-tools [toolkit], <toolkit> --help, or <toolkit> <tool> ...",
+				"agentos <command>: list-tools [bindings], <bindings> --help, or <bindings> <binding> ...",
 		};
 	}
 	if (subcommand === "list-tools") {
 		return toolkitName
-			? describeToolkitPayload(context.toolKits, toolkitName)
-			: listToolkitsPayload(context.toolKits);
+			? describeToolkitPayload(context.bindings, toolkitName)
+			: listToolkitsPayload(context.bindings);
 	}
-	const toolKit = context.toolKits.find((kit) => kit.name === subcommand);
+	const toolKit = context.bindings.find((kit) => kit.name === subcommand);
 	if (!toolKit) {
 		throw new Error(
-			`No toolkit "${subcommand}". Available: ${toolkitNames(context.toolKits)}`,
+			`No bindings "${subcommand}". Available: ${toolkitNames(context.bindings)}`,
 		);
 	}
 	if (!toolkitName || isHelpFlag(toolkitName)) {
-		return describeToolkitPayload(context.toolKits, subcommand);
+		return describeToolkitPayload(context.bindings, subcommand);
 	}
 	if (toolName && isHelpFlag(toolName)) {
 		return describeToolPayload(toolKit, toolkitName);
@@ -2035,11 +2041,11 @@ async function handleAgentOsRegistryCommand(
 async function handleAgentOsToolkitCommand(
 	command: HostCommandCallbackInput,
 	context: HostCallbackContext,
-	toolKit: ToolKit,
+	toolKit: Bindings,
 ): Promise<unknown> {
 	const [toolName, helpOrFirstArg, ...rest] = command.args;
 	if (!toolName || isHelpFlag(toolName)) {
-		return describeToolkitPayload(context.toolKits, toolKit.name);
+		return describeToolkitPayload(context.bindings, toolKit.name);
 	}
 	if (helpOrFirstArg && isHelpFlag(helpOrFirstArg)) {
 		return describeToolPayload(toolKit, toolName);
@@ -2062,29 +2068,29 @@ async function invokeHostTool({
 	cwd,
 	context,
 }: {
-	toolKit: ToolKit;
+	toolKit: Bindings;
 	toolName: string;
 	args: string[];
 	cwd: string;
 	context: HostCallbackContext;
 }): Promise<unknown> {
-	const tool = toolKit.tools[toolName];
+	const tool = toolKit.bindings[toolName];
 	if (!tool) {
 		throw new Error(
-			`No tool "${toolName}" in toolkit "${toolKit.name}". Available: ${toolNames(toolKit)}`,
+			`No binding "${toolName}" in bindings "${toolKit.name}". Available: ${toolNames(toolKit)}`,
 		);
 	}
 	const callbackKey = `${toolKit.name}:${toolName}`;
 	const permissionMode = toolPermissionMode(context.permissions, callbackKey);
 	if (permissionMode !== "allow") {
-		throw new Error(`EACCES: blocked by tool.invoke policy for ${callbackKey}`);
+		throw new Error(`EACCES: blocked by binding.invoke policy for ${callbackKey}`);
 	}
 	const input = await parseHostToolInput(tool, args, cwd, context.readFile);
 	return executeHostTool(tool, callbackKey, input);
 }
 
 async function executeHostTool(
-	tool: HostTool,
+	tool: Binding,
 	callbackKey: string,
 	input: unknown,
 ): Promise<unknown> {
@@ -2113,7 +2119,7 @@ async function executeHostTool(
 }
 
 async function parseHostToolInput(
-	tool: HostTool,
+	tool: Binding,
 	args: string[],
 	cwd: string,
 	readFile: (path: string) => Promise<Uint8Array>,
@@ -2223,32 +2229,32 @@ function parseToolArgv(
 	return input;
 }
 
-function listToolkitsPayload(toolKits: ToolKit[]): unknown {
+function listToolkitsPayload(bindingGroups: Bindings[]): unknown {
 	return {
-		toolkits: toolKits.map((toolKit) => ({
-			name: toolKit.name,
-			description: toolKit.description,
-			tools: Object.keys(toolKit.tools),
+		bindings: bindingGroups.map((group) => ({
+			name: group.name,
+			description: group.description,
+			bindings: Object.keys(group.bindings),
 		})),
 	};
 }
 
 function describeToolkitPayload(
-	toolKits: ToolKit[],
+	bindingGroups: Bindings[],
 	toolkitName: string,
 ): unknown {
-	const toolKit = toolKits.find((kit) => kit.name === toolkitName);
+	const toolKit = bindingGroups.find((kit) => kit.name === toolkitName);
 	if (!toolKit) {
 		throw new Error(
-			`No toolkit "${toolkitName}". Available: ${toolkitNames(toolKits)}`,
+			`No bindings "${toolkitName}". Available: ${toolkitNames(bindingGroups)}`,
 		);
 	}
 	return {
 		name: toolKit.name,
 		description: toolKit.description,
-		tools: Object.fromEntries(
-			Object.entries(toolKit.tools).map(([toolName, tool]) => [
-				toolName,
+		bindings: Object.fromEntries(
+			Object.entries(toolKit.bindings).map(([bindingName, tool]) => [
+				bindingName,
 				{
 					description: tool.description,
 					flags: describeToolFlags(toolToSidecarDefinition(tool).inputSchema),
@@ -2258,16 +2264,16 @@ function describeToolkitPayload(
 	};
 }
 
-function describeToolPayload(toolKit: ToolKit, toolName: string): unknown {
-	const tool = toolKit.tools[toolName];
+function describeToolPayload(toolKit: Bindings, toolName: string): unknown {
+	const tool = toolKit.bindings[toolName];
 	if (!tool) {
 		throw new Error(
-			`No tool "${toolName}" in toolkit "${toolKit.name}". Available: ${toolNames(toolKit)}`,
+			`No binding "${toolName}" in bindings "${toolKit.name}". Available: ${toolNames(toolKit)}`,
 		);
 	}
 	return {
-		toolkit: toolKit.name,
-		tool: toolName,
+		bindings: toolKit.name,
+		binding: toolName,
 		description: tool.description,
 		flags: describeToolFlags(toolToSidecarDefinition(tool).inputSchema),
 		examples:
@@ -2282,7 +2288,7 @@ function toolPermissionMode(
 	permissions: Permissions,
 	callbackKey: string,
 ): "allow" | "deny" {
-	const scope = permissions.tool;
+	const scope = permissions.binding;
 	if (!scope) {
 		return "deny";
 	}
@@ -2320,12 +2326,12 @@ function permissionPatternMatches(pattern: string, value: string): boolean {
 	return new RegExp(`^${source}$`).test(value);
 }
 
-function toolkitNames(toolKits: ToolKit[]): string {
-	return toolKits.map((toolKit) => toolKit.name).join(", ");
+function toolkitNames(bindingGroups: Bindings[]): string {
+	return bindingGroups.map((group) => group.name).join(", ");
 }
 
-function toolNames(toolKit: ToolKit): string {
-	return Object.keys(toolKit.tools).join(", ");
+function toolNames(toolKit: Bindings): string {
+	return Object.keys(toolKit.bindings).join(", ");
 }
 
 function isHelpFlag(value: string): boolean {
@@ -2341,28 +2347,28 @@ async function registerToolkitsOnSidecar(
 	client: NativeSidecarProcessClient,
 	session: AuthenticatedSession,
 	vm: CreatedVm,
-	toolKits: ToolKit[],
+	bindingGroups: Bindings[],
 ): Promise<string> {
-	if (toolKits.length === 0) {
+	if (bindingGroups.length === 0) {
 		return "";
 	}
 
-	for (const toolKit of toolKits) {
+	for (const group of bindingGroups) {
 		await client.registerHostCallbacks(session, vm, {
-			name: toolKit.name,
-			description: toolKit.description,
-			commandAliases: [`agentos-${toolKit.name}`],
+			name: group.name,
+			description: group.description,
+			commandAliases: [`agentos-${group.name}`],
 			registryCommandAliases: ["agentos"],
 			callbacks: Object.fromEntries(
-				Object.entries(toolKit.tools).map(([toolName, tool]) => [
-					toolName,
+				Object.entries(group.bindings).map(([bindingName, tool]) => [
+					bindingName,
 					toolToSidecarDefinition(tool),
 				]),
 			),
 		});
 	}
 
-	return buildHostToolReference(toolKits);
+	return buildHostToolReference(bindingGroups);
 }
 
 export class AgentOs {
@@ -2402,7 +2408,7 @@ export class AgentOs {
 	private _softwareRoots: SoftwareRoot[];
 	private _softwareAgentConfigs: Map<string, AgentConfig>;
 	private _cronManager!: CronManager;
-	private _toolKits: ToolKit[] = [];
+	private _bindings: Bindings[] = [];
 	private _toolReference = "";
 	private _permissions: Permissions = allowAll;
 	private _hostMounts: HostMountInfo[];
@@ -2460,17 +2466,26 @@ export class AgentOs {
 	}
 
 	static async create(options?: AgentOsOptions): Promise<AgentOs> {
-		const processed = processSoftware(options?.software ?? []);
+		// Prepend the default common software set, skipping any descriptors the
+		// caller already passed (so an explicit `software: [common, ...]` is safe).
+		const userSoftware = options?.software ?? [];
+		const software: SoftwareInput[] = [
+			...(defaultCommonSoftware as SoftwareInput[]).filter(
+				(pkg) => !userSoftware.includes(pkg),
+			),
+			...userSoftware,
+		];
+		const processed = processSoftware(software);
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
-		const toolKits = options?.toolKits;
-		if (toolKits && toolKits.length > 0) {
-			validateToolkits(toolKits);
+		const bindingGroups = options?.bindings;
+		if (bindingGroups && bindingGroups.length > 0) {
+			validateBindings(bindingGroups);
 		}
 
 		const createVmAdmin = async (): Promise<AgentOsVmAdmin> => {
 			const preparedCommandDirs = prepareCommandDirs(processed.commandPackages);
 			const toolBootstrapCommands = collectToolkitBootstrapCommands(
-				toolKits ?? [],
+				bindingGroups ?? [],
 			);
 			const bootstrapLower = createKernelBootstrapLower(
 				options?.rootFilesystem,
@@ -2501,8 +2516,8 @@ export class AgentOs {
 
 			try {
 				const env: Record<string, string> = getBaseEnvironment();
-				if (toolKits && toolKits.length > 0) {
-					toolShimDir = materializeToolShimDir(toolKits);
+				if (bindingGroups && bindingGroups.length > 0) {
+					toolShimDir = materializeToolShimDir(bindingGroups);
 				}
 				const commandGuestPaths = collectGuestCommandPaths(
 					preparedCommandDirs.commandDirs,
@@ -2536,7 +2551,7 @@ export class AgentOs {
 				const session = await client.authenticateAndOpenSession();
 				const hostPermissions = options?.permissions ?? {
 					...allowAll,
-					tool: "allow",
+					binding: "allow",
 				};
 				const sidecarPermissions =
 					serializePermissionsForSidecar(hostPermissions);
@@ -2581,18 +2596,18 @@ export class AgentOs {
 					commandPermissions: processed.commandPermissions,
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 				});
-				if (toolKits && toolKits.length > 0) {
+				if (bindingGroups && bindingGroups.length > 0) {
 					toolReference = await registerToolkitsOnSidecar(
 						client,
 						session,
 						nativeVm,
-						toolKits,
+						bindingGroups,
 					);
 					commandGuestPaths.set("agentos", "/bin/agentos");
-					for (const toolKit of toolKits) {
+					for (const group of bindingGroups) {
 						commandGuestPaths.set(
-							`agentos-${toolKit.name}`,
-							`/bin/agentos-${toolKit.name}`,
+							`agentos-${group.name}`,
+							`/bin/agentos-${group.name}`,
 						);
 					}
 				}
@@ -2602,7 +2617,7 @@ export class AgentOs {
 					session,
 					vm: nativeVm,
 					env,
-					cwd: "/home/user",
+					cwd: "/workspace",
 					localMounts,
 					commandGuestPaths,
 					onDispose: cleanup,
@@ -2632,7 +2647,7 @@ export class AgentOs {
 								await snapshotClient.snapshotRootFilesystem(session, nativeVm),
 							),
 						),
-					toolKits: toolKits ?? [],
+					bindings: bindingGroups ?? [],
 					toolReference,
 					async dispose() {
 						if (kernel) {
@@ -2685,7 +2700,7 @@ export class AgentOs {
 				vmAdmin.sidecarVm,
 			);
 			vm._sidecarLease = sidecarLease;
-			vm._toolKits = vmAdmin.toolKits;
+			vm._bindings = vmAdmin.bindings;
 			vm._toolReference = vmAdmin.toolReference;
 			vm._permissions = vmAdmin.permissions;
 			vm._installSidecarRequestHandler();
@@ -3847,7 +3862,7 @@ export class AgentOs {
 		// skipOsInstructions plus the agent's static launch args and env.
 		const launchArgs = [...(config.launchArgs ?? [])];
 		let launchEnv = { ...config.defaultEnv, ...options?.env };
-		const sessionCwd = options?.cwd ?? "/home/user";
+		const sessionCwd = options?.cwd ?? "/workspace";
 		const adapterEntrypoint = this._resolveAdapterBin(config.acpAdapter);
 		if (
 			(agentType === "pi" || agentType === "pi-cli") &&
@@ -3988,8 +4003,8 @@ export class AgentOs {
 
 	private _installSidecarRequestHandler(): void {
 		const context: HostCallbackContext = {
-			toolKits: this._toolKits,
-			toolMap: buildToolMap(this._toolKits),
+			bindings: this._bindings,
+			toolMap: buildToolMap(this._bindings),
 			permissions: this._permissions,
 			readFile: (path) => this.readFile(path),
 		};

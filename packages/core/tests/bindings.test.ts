@@ -1,27 +1,27 @@
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
 import {
-	HostToolSchemaConversionError,
+	BindingSchemaConversionError,
 	zodToJsonSchema,
-} from "../src/host-tools-zod.js";
+} from "../src/bindings-zod.js";
 import {
 	MAX_TOOL_DESCRIPTION_LENGTH,
-	hostTool,
-	toolKit,
-	validateToolkits,
+	binding,
+	bindings,
+	validateBindings,
 } from "../src/index.js";
 
-describe("host tool description limits", () => {
-	test("accepts toolkit and tool descriptions at the exported limit", () => {
+describe("binding description limits", () => {
+	test("accepts bindings and binding descriptions at the exported limit", () => {
 		const description = "a".repeat(MAX_TOOL_DESCRIPTION_LENGTH);
 
 		expect(() =>
-			validateToolkits([
-				toolKit({
+			validateBindings([
+				bindings({
 					name: "browser",
 					description,
-					tools: {
-						screenshot: hostTool({
+					bindings: {
+						screenshot: binding({
 							description,
 							inputSchema: z.object({ url: z.string() }),
 							execute: () => ({ ok: true }),
@@ -32,14 +32,14 @@ describe("host tool description limits", () => {
 		).not.toThrow();
 	});
 
-	test("rejects toolkit descriptions longer than the exported limit", () => {
+	test("rejects bindings descriptions longer than the exported limit", () => {
 		expect(() =>
-			validateToolkits([
-				toolKit({
+			validateBindings([
+				bindings({
 					name: "browser",
 					description: "a".repeat(MAX_TOOL_DESCRIPTION_LENGTH + 1),
-					tools: {
-						screenshot: hostTool({
+					bindings: {
+						screenshot: binding({
 							description: "Take a screenshot",
 							inputSchema: z.object({ url: z.string() }),
 							execute: () => ({ ok: true }),
@@ -48,18 +48,18 @@ describe("host tool description limits", () => {
 				}),
 			]),
 		).toThrow(
-			`Toolkit "browser" description is ${MAX_TOOL_DESCRIPTION_LENGTH + 1} characters, max is ${MAX_TOOL_DESCRIPTION_LENGTH}`,
+			`Bindings "browser" description is ${MAX_TOOL_DESCRIPTION_LENGTH + 1} characters, max is ${MAX_TOOL_DESCRIPTION_LENGTH}`,
 		);
 	});
 
-	test("rejects tool descriptions longer than the exported limit", () => {
+	test("rejects binding descriptions longer than the exported limit", () => {
 		expect(() =>
-			validateToolkits([
-				toolKit({
+			validateBindings([
+				bindings({
 					name: "browser",
 					description: "Browser automation",
-					tools: {
-						screenshot: hostTool({
+					bindings: {
+						screenshot: binding({
 							description: "a".repeat(MAX_TOOL_DESCRIPTION_LENGTH + 1),
 							inputSchema: z.object({ url: z.string() }),
 							execute: () => ({ ok: true }),
@@ -68,12 +68,12 @@ describe("host tool description limits", () => {
 				}),
 			]),
 		).toThrow(
-			`Tool "browser/screenshot" description is ${MAX_TOOL_DESCRIPTION_LENGTH + 1} characters, max is ${MAX_TOOL_DESCRIPTION_LENGTH}`,
+			`Binding "browser/screenshot" description is ${MAX_TOOL_DESCRIPTION_LENGTH + 1} characters, max is ${MAX_TOOL_DESCRIPTION_LENGTH}`,
 		);
 	});
 
-	test("fails loudly when a host tool input schema uses an unsupported discriminated union", () => {
-		const tool = hostTool({
+	test("fails loudly when a binding input schema uses an unsupported discriminated union", () => {
+		const tool = binding({
 			description: "Inspect a variant payload",
 			inputSchema: z.object({
 				payload: z.discriminatedUnion("kind", [
@@ -86,9 +86,9 @@ describe("host tool description limits", () => {
 
 		try {
 			zodToJsonSchema(tool.inputSchema);
-			throw new Error("Expected unsupported host tool schema to fail");
+			throw new Error("Expected unsupported binding schema to fail");
 		} catch (error) {
-			expect(error).toBeInstanceOf(HostToolSchemaConversionError);
+			expect(error).toBeInstanceOf(BindingSchemaConversionError);
 			expect(error).toMatchObject({
 				path: "$.payload",
 				zodType: "discriminatedUnion",

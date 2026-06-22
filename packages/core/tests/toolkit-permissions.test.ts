@@ -1,7 +1,7 @@
 import common from "@agentos-software/common";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
-import { AgentOs, hostTool, toolKit } from "../src/index.js";
+import { AgentOs, binding, bindings } from "../src/index.js";
 import { NativeSidecarProcessClient } from "../src/sidecar/rpc-client.js";
 
 // ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ function hostCallbackFrame(callbackKey: string, input: unknown) {
 // input that parses as `{type:'command',command,args,cwd}` through the SECOND
 // branch (`handleHostCommandCallback` -> `handleAgentOsToolkitCommand` ->
 // `invokeHostTool`), bypassing the `callback_key`/Zod path entirely. We forge a
-// CLI-style command frame to confirm THAT branch also enforces tool.invoke.
+// CLI-style command frame to confirm THAT branch also enforces binding.invoke.
 function commandHostCallbackFrame(command: string, args: string[]) {
 	return {
 		frame_type: "sidecar_request" as const,
@@ -93,11 +93,11 @@ function commandHostCallbackFrame(command: string, args: string[]) {
 	};
 }
 
-const mathToolKit = toolKit({
+const mathBindings = bindings({
 	name: "math",
 	description: "Math utilities",
-	tools: {
-		add: hostTool({
+	bindings: {
+		add: binding({
 			description: "Add two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -108,11 +108,11 @@ const mathToolKit = toolKit({
 	},
 });
 
-const duplicateMathToolKit = toolKit({
+const duplicateMathBindings = bindings({
 	name: "math",
 	description: "Duplicate math utilities",
-	tools: {
-		multiply: hostTool({
+	bindings: {
+		multiply: binding({
 			description: "Multiply two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -142,7 +142,7 @@ async function runCommand(vm: AgentOs, command: string, args: string[]) {
 	};
 }
 
-describe("toolkit permissions", () => {
+describe("bindings permissions", () => {
 	let vm: AgentOs | null = null;
 
 	afterEach(async () => {
@@ -150,18 +150,18 @@ describe("toolkit permissions", () => {
 		vm = null;
 	});
 
-	test("rejects duplicate toolkit registration with a conflict", async () => {
+	test("rejects duplicate bindings registration with a conflict", async () => {
 		await expect(
 			AgentOs.create({
-				toolKits: [mathToolKit, duplicateMathToolKit],
+				bindings: [mathBindings, duplicateMathBindings],
 			}),
 		).rejects.toThrow(/conflict: toolkit already registered: math/);
 	});
 
-	test("allows toolkit invocation with default permissions", async () => {
+	test("allows bindings invocation with default permissions", async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			toolKits: [mathToolKit],
+			bindings: [mathBindings],
 		});
 
 		const result = await runCommand(vm, "agentos-math", [
@@ -178,10 +178,10 @@ describe("toolkit permissions", () => {
 		});
 	});
 
-	test("denies toolkit invocation by default until tool permissions are granted", async () => {
+	test("denies bindings invocation by default until binding permissions are granted", async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			toolKits: [mathToolKit],
+			bindings: [mathBindings],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -197,18 +197,18 @@ describe("toolkit permissions", () => {
 		]);
 		expect(result.exitCode).toBe(1);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("tool.invoke");
+		expect(result.stderr).toContain("binding.invoke");
 		expect(result.stderr).toContain("math:add");
 	});
 
-	test("allows toolkit invocation when a matching tool permission is granted", async () => {
+	test("allows bindings invocation when a matching binding permission is granted", async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			toolKits: [mathToolKit],
+			bindings: [mathBindings],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				tool: {
+				binding: {
 					default: "deny",
 					rules: [
 						{
@@ -236,7 +236,7 @@ describe("toolkit permissions", () => {
 	});
 });
 
-describe("toolkit permissions — raw host_callback RPC path", () => {
+describe("bindings permissions — raw host_callback RPC path", () => {
 	let vm: AgentOs | null = null;
 
 	afterEach(async () => {
@@ -244,14 +244,14 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		vm = null;
 	});
 
-	// N-001 (J.1/J.2): host_callback RPC must honor tool.invoke deny.
-	test("denies host_callback RPC tool invocation when tool.invoke policy is deny (not just the CLI path)", async () => {
+	// N-001 (J.1/J.2): host_callback RPC must honor binding.invoke deny.
+	test("denies host_callback RPC binding invocation when binding.invoke policy is deny (not just the CLI path)", async () => {
 		const executed: unknown[] = [];
-		const spyKit = toolKit({
+		const spyKit = bindings({
 			name: "math",
 			description: "Math utilities",
-			tools: {
-				add: hostTool({
+			bindings: {
+				add: binding({
 					description: "Add two numbers",
 					inputSchema: z.object({ a: z.number(), b: z.number() }),
 					execute: ({ a, b }) => {
@@ -266,12 +266,12 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 			// No `software` needed: this exercises the raw host_callback RPC
 			// handler directly (the guest-controlled path), which does not spawn
 			// any in-VM CLI. Keeping the VM minimal makes the safeguard fast.
-			toolKits: [spyKit],
+			bindings: [spyKit],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				// Deny-by-default: no tool.invoke grant for math:add.
-				tool: { default: "deny", rules: [] },
+				// Deny-by-default: no binding.invoke grant for math:add.
+				binding: { default: "deny", rules: [] },
 			},
 		});
 		vm = created.vm;
@@ -286,17 +286,17 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		expect(response.type).toBe("host_callback_result");
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
-		expect(response.error).toMatch(/tool\.invoke|EACCES|denied|permission/i);
+		expect(response.error).toMatch(/binding\.invoke|EACCES|denied|permission/i);
 	});
 
-	// N-002 (J.2): host_callback RPC must respect tool.invoke pattern scope.
-	test("host_callback RPC respects tool.invoke pattern scope and denies a non-matching tool", async () => {
+	// N-002 (J.2): host_callback RPC must respect binding.invoke pattern scope.
+	test("host_callback RPC respects binding.invoke pattern scope and denies a non-matching binding", async () => {
 		const executed: string[] = [];
-		const dangerKit = toolKit({
+		const dangerKit = bindings({
 			name: "math",
 			description: "Math utilities with a dangerous tool",
-			tools: {
-				safe: hostTool({
+			bindings: {
+				safe: binding({
 					description: "Safe op",
 					inputSchema: z.object({ x: z.number() }),
 					execute: ({ x }) => {
@@ -304,7 +304,7 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 						return { x };
 					},
 				}),
-				danger: hostTool({
+				danger: binding({
 					description: "Dangerous op",
 					inputSchema: z.object({ x: z.number() }),
 					execute: ({ x }) => {
@@ -316,12 +316,12 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		});
 
 		const created = await createVmCapturingHandler({
-			toolKits: [dangerKit],
+			bindings: [dangerKit],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
 				// Only math:safe is allowed; math:danger is out of scope -> deny.
-				tool: {
+				binding: {
 					default: "deny",
 					rules: [
 						{ mode: "allow", operations: ["invoke"], patterns: ["math:safe"] },
@@ -339,7 +339,7 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		expect(response.type).toBe("host_callback_result");
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
-		expect(response.error).toMatch(/tool\.invoke|EACCES|denied|permission/i);
+		expect(response.error).toMatch(/binding\.invoke|EACCES|denied|permission/i);
 	});
 
 	// AOSFS-1 (P1, J.1/J.2): the raw host_callback RPC path is fully
@@ -352,11 +352,11 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 	// pollution may occur. Asserts the system strips the hostile/extra keys.
 	test("host_callback strips hostile/extra input keys; execute receives only validated Zod data and no prototype pollution", async () => {
 		const seen: unknown[] = [];
-		const kit = toolKit({
+		const kit = bindings({
 			name: "math",
 			description: "Math utilities",
-			tools: {
-				add: hostTool({
+			bindings: {
+				add: binding({
 					description: "Add two numbers",
 					inputSchema: z.object({ a: z.number(), b: z.number() }),
 					execute: (input) => {
@@ -370,11 +370,11 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		});
 
 		const created = await createVmCapturingHandler({
-			toolKits: [kit],
+			bindings: [kit],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				tool: {
+				binding: {
 					default: "deny",
 					rules: [
 						{ mode: "allow", operations: ["invoke"], patterns: ["math:add"] },
@@ -423,11 +423,11 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 	// safeParse and return a validation error WITHOUT invoking execute.
 	test("host_callback rejects schema-failing input without invoking execute", async () => {
 		const executed: unknown[] = [];
-		const kit = toolKit({
+		const kit = bindings({
 			name: "math",
 			description: "Math utilities",
-			tools: {
-				add: hostTool({
+			bindings: {
+				add: binding({
 					description: "Add two numbers",
 					inputSchema: z.object({ a: z.number(), b: z.number() }),
 					execute: ({ a, b }) => {
@@ -439,11 +439,11 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		});
 
 		const created = await createVmCapturingHandler({
-			toolKits: [kit],
+			bindings: [kit],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				tool: {
+				binding: {
 					default: "deny",
 					rules: [
 						{ mode: "allow", operations: ["invoke"], patterns: ["math:add"] },
@@ -468,16 +468,16 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 
 	// AOS-SESS-4 (N-014, P2, J.1/J.2): the *command-shaped* host_callback dispatch
 	// branch (handleHostCommandCallback -> invokeHostTool) must ALSO honor
-	// tool.invoke deny — defense-in-depth on the second dispatch path that the
+	// binding.invoke deny — defense-in-depth on the second dispatch path that the
 	// callback_key/Zod branch does not cover. (Hold-as-regression; not a
 	// re-discovery — assert the gate holds on this branch.)
-	test("forged {type:'command'} host_callback is denied by tool.invoke on the command dispatch branch", async () => {
+	test("forged {type:'command'} host_callback is denied by binding.invoke on the command dispatch branch", async () => {
 		const executed: unknown[] = [];
-		const spyKit = toolKit({
+		const spyKit = bindings({
 			name: "math",
 			description: "Math utilities",
-			tools: {
-				add: hostTool({
+			bindings: {
+				add: binding({
 					description: "Add two numbers",
 					inputSchema: z.object({ a: z.number(), b: z.number() }),
 					execute: ({ a, b }) => {
@@ -489,12 +489,12 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		});
 
 		const created = await createVmCapturingHandler({
-			toolKits: [spyKit],
+			bindings: [spyKit],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				// Deny-by-default: no tool.invoke grant for math:add.
-				tool: { default: "deny", rules: [] },
+				// Deny-by-default: no binding.invoke grant for math:add.
+				binding: { default: "deny", rules: [] },
 			},
 		});
 		vm = created.vm;
@@ -510,6 +510,6 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		expect(response.type).toBe("host_callback_result");
 		expect(response.result).toBeUndefined();
 		expect(typeof response.error).toBe("string");
-		expect(response.error).toMatch(/tool\.invoke|EACCES|denied|permission/i);
+		expect(response.error).toMatch(/binding\.invoke|EACCES|denied|permission/i);
 	});
 });

@@ -34,7 +34,7 @@ pub struct AgentOsConfig {
     /// Schedule driver used by the cron manager. Default: [`TimerScheduleDriver`].
     pub schedule_driver: Option<Arc<dyn ScheduleDriver>>,
     /// Tool kits to register.
-    pub tool_kits: Vec<ToolKit>,
+    pub bindings: Vec<Bindings>,
     /// Rust-only sidecar callback handler for `js_bridge`-style plugin requests.
     pub sidecar_js_bridge_callback: Option<SidecarJsBridgeCallback>,
     /// Permission policy. Default: allow-all.
@@ -101,8 +101,8 @@ impl AgentOsConfigBuilder {
         self
     }
 
-    pub fn tool_kits(mut self, tool_kits: Vec<ToolKit>) -> Self {
-        self.config.tool_kits = tool_kits;
+    pub fn bindings(mut self, bindings: Vec<Bindings>) -> Self {
+        self.config.bindings = bindings;
         self
     }
 
@@ -196,9 +196,9 @@ pub type SidecarJsBridgeCallback = Arc<
         + Sync,
 >;
 
-/// A single host tool within a [`ToolKit`].
+/// A single host tool within a [`Bindings`].
 #[derive(Clone)]
-pub struct HostTool {
+pub struct Binding {
     pub name: String,
     pub description: String,
     /// JSON Schema for the tool input (forwarded to the sidecar `register_host_callbacks` definition).
@@ -209,13 +209,13 @@ pub struct HostTool {
 }
 
 /// A registered tool kit (in-process; tool implementations stay host-side). Tools are exposed to the
-/// guest as `<toolkit>:<tool>` and dispatched back to [`HostTool::execute`] via the sidecar
+/// guest as `<toolkit>:<tool>` and dispatched back to [`Binding::execute`] via the sidecar
 /// host-callback channel.
 #[derive(Clone)]
-pub struct ToolKit {
+pub struct Bindings {
     pub name: String,
     pub description: String,
-    pub tools: Vec<HostTool>,
+    pub bindings: Vec<Binding>,
 }
 
 // ---------------------------------------------------------------------------

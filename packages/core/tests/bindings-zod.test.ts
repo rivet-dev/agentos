@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
 import {
-	HostToolSchemaConversionError,
+	BindingSchemaConversionError,
 	zodToJsonSchema,
-} from "../src/host-tools-zod.js";
+} from "../src/bindings-zod.js";
 
 describe("zodToJsonSchema", () => {
 	test("converts objects with supported scalar constraints", () => {
@@ -96,7 +96,7 @@ describe("zodToJsonSchema", () => {
 		});
 
 		expect(() => zodToJsonSchema(schema)).toThrowError(
-			HostToolSchemaConversionError,
+			BindingSchemaConversionError,
 		);
 		expect(() => zodToJsonSchema(schema)).toThrowError(
 			/Unsupported Zod schema at \$\.payload: discriminatedUnion/,
@@ -153,7 +153,7 @@ describe("zodToJsonSchema", () => {
 				zodToJsonSchema(testCase.schema);
 				throw new Error(`Expected ${testCase.type} to fail`);
 			} catch (error) {
-				expect(error).toBeInstanceOf(HostToolSchemaConversionError);
+				expect(error).toBeInstanceOf(BindingSchemaConversionError);
 				expect(error).toMatchObject({
 					path: testCase.path,
 					zodType: testCase.type,

@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { z } from "zod";
-import { AgentOs, hostTool, toolKit } from "../src/index.js";
+import { AgentOs, binding, bindings } from "../src/index.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 
@@ -46,11 +46,11 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
-const mathToolKit = toolKit({
+const mathBindings = bindings({
 	name: "math",
 	description: "Math utilities",
-	tools: {
-		add: hostTool({
+	bindings: {
+		add: binding({
 			description: "Add two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -73,7 +73,7 @@ describe("tool reference registration", () => {
 	beforeEach(async () => {
 		vm = await AgentOs.create({
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			toolKits: [mathToolKit],
+			bindings: [mathBindings],
 		});
 	});
 
@@ -99,9 +99,9 @@ describe("tool reference registration", () => {
 		const toolReference = (vm as unknown as { _toolReference: string })
 			._toolReference;
 
-		expect(toolReference).toContain("## Available Host Tools");
+		expect(toolReference).toContain("## Available Bindings");
 		expect(toolReference).toContain(
-			"Run `agentos list-tools` to see all available tools.",
+			"Run `agentos list-tools` to see all available bindings.",
 		);
 		expect(toolReference).toContain("### math");
 		expect(toolReference).toContain("Math utilities");
@@ -126,7 +126,7 @@ describe("tool reference registration", () => {
 			const argIndex = argv.indexOf("--append-system-prompt");
 			expect(argIndex).toBeGreaterThan(-1);
 			const prompt = argv[argIndex + 1];
-			expect(prompt).toContain("## Available Host Tools");
+			expect(prompt).toContain("## Available Bindings");
 			expect(prompt).toContain("`agentos-math add --a <number> --b <number>`");
 			expect(prompt).toContain("### math");
 

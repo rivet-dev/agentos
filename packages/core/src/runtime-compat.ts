@@ -53,6 +53,7 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 	"/media",
 	"/home",
 	"/home/user",
+	"/workspace",
 	"/usr",
 	"/usr/bin",
 	"/usr/games",
@@ -179,7 +180,7 @@ export type ProcessPermissions =
 export type EnvPermissions =
 	| PermissionMode
 	| RulePermissions<PatternPermissionRule>;
-export type ToolPermissions =
+export type BindingPermissions =
 	| PermissionMode
 	| RulePermissions<PatternPermissionRule>;
 
@@ -276,7 +277,7 @@ export interface Permissions {
 	childProcess?: ChildProcessPermissions;
 	process?: ProcessPermissions;
 	env?: EnvPermissions;
-	tool?: ToolPermissions;
+	binding?: BindingPermissions;
 }
 
 export interface ResourceBudgets {
@@ -2460,7 +2461,7 @@ class NativeKernel implements Kernel {
 		},
 	) {
 		this.env = { ...(options.env ?? {}) };
-		this.cwd = options.cwd ?? "/home/user";
+		this.cwd = options.cwd ?? "/workspace";
 		this.socketTable = {
 			hasHostNetworkAdapter: () => Boolean(options.hostNetworkAdapter),
 			findListener: (request: {
@@ -2901,7 +2902,7 @@ class NativeKernel implements Kernel {
 			vm,
 			env: this.env,
 			cwd: this.cwd,
-			defaultExecCwd: this.options.cwd === undefined ? "/home/user" : this.cwd,
+			defaultExecCwd: this.options.cwd === undefined ? "/workspace" : this.cwd,
 			localMounts: this.pendingLocalMounts,
 			commandGuestPaths: new Map<string, string>(),
 			onWasmCommandResolved: (command) => {

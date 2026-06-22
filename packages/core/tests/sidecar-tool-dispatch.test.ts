@@ -1,14 +1,14 @@
 import common from "@agentos-software/common";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { AgentOs, hostTool, toolKit } from "../src/index.js";
+import { AgentOs, binding, bindings } from "../src/index.js";
 import { ALLOW_ALL_VM_PERMISSIONS } from "./helpers/permissions.js";
 
-const mathToolKit = toolKit({
+const mathBindings = bindings({
 	name: "math",
 	description: "Math utilities",
-	tools: {
-		add: hostTool({
+	bindings: {
+		add: binding({
 			description: "Add two numbers",
 			inputSchema: z.object({
 				a: z.number(),
@@ -44,7 +44,7 @@ describe("native sidecar tool dispatch", () => {
 	beforeEach(async () => {
 		vm = await AgentOs.create({
 			software: [common],
-			toolKits: [mathToolKit],
+			bindings: [mathBindings],
 			permissions: ALLOW_ALL_VM_PERMISSIONS,
 		});
 	}, 20_000);
@@ -53,24 +53,24 @@ describe("native sidecar tool dispatch", () => {
 		await vm?.dispose();
 	});
 
-	test("agentos list-tools returns registered toolkits", async () => {
+	test("agentos list-tools returns registered bindings", async () => {
 		const result = await runCommand(vm, "agentos", ["list-tools"]);
 		expect(result.exitCode).toBe(0);
 		expect(JSON.parse(result.stdout)).toEqual({
 			ok: true,
 			result: {
-				toolkits: [
+				bindings: [
 					{
 						name: "math",
 						description: "Math utilities",
-						tools: ["add"],
+						bindings: ["add"],
 					},
 				],
 			},
 		});
 	});
 
-	test("agentos-<toolkit> executes the tool through the sidecar", async () => {
+	test("agentos-<bindings> executes the binding through the sidecar", async () => {
 		const result = await runCommand(vm, "agentos-math", [
 			"add",
 			"--a",
@@ -105,7 +105,7 @@ describe("native sidecar tool dispatch", () => {
 		});
 	});
 
-	test("invalid tool input exits non-zero and writes the error to stderr", async () => {
+	test("invalid binding input exits non-zero and writes the error to stderr", async () => {
 		const result = await runCommand(vm, "agentos-math", ["add", "--a", "5"]);
 		expect(result.exitCode).toBe(1);
 		expect(result.stderr).toContain("Missing required flag");

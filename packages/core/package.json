@@ -82,6 +82,7 @@
 		"@rivet-dev/agentos-claude": "link:../../registry/agent/claude",
 		"@agentos-software/codex": "catalog:",
 		"@rivet-dev/agentos-codex-agent": "link:../../registry/agent/codex",
+		"@agentos-software/common": "catalog:",
 		"@agentos-software/coreutils": "catalog:",
 		"@agentos-software/curl": "catalog:",
 		"@agentos-software/diffutils": "catalog:",

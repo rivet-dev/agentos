@@ -14,8 +14,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use agent_os_client::config::{
-    AgentOsConfig, AgentOsSidecarConfig, FsPermissions, HostTool, PatternPermissions,
-    PermissionMode, Permissions, ToolKit,
+    AgentOsConfig, AgentOsSidecarConfig, FsPermissions, Binding, PatternPermissions,
+    PermissionMode, Permissions, Bindings,
 };
 use agent_os_client::{AgentOs, CreateSessionOptions};
 use serde_json::json;
@@ -104,7 +104,7 @@ async fn launch_pi_session_and_read_argv(options: CreateSessionOptions) -> Vec<S
 
 async fn launch_pi_session_with_tools_and_read_argv(
     options: CreateSessionOptions,
-    tool_kits: Vec<ToolKit>,
+    bindings: Vec<Bindings>,
 ) -> Vec<String> {
     let module_access_dir = std::env::temp_dir().join(format!(
         "agent-os-client-os-instructions-{}",
@@ -112,7 +112,7 @@ async fn launch_pi_session_with_tools_and_read_argv(
     ));
     write_mock_pi_adapter(&module_access_dir);
 
-    let argv = run_session(&module_access_dir, options, tool_kits).await;
+    let argv = run_session(&module_access_dir, options, bindings).await;
 
     std::fs::remove_dir_all(&module_access_dir).ok();
     argv
@@ -121,14 +121,14 @@ async fn launch_pi_session_with_tools_and_read_argv(
 async fn run_session(
     module_access_dir: &Path,
     options: CreateSessionOptions,
-    tool_kits: Vec<ToolKit>,
+    bindings: Vec<Bindings>,
 ) -> Vec<String> {
     let os = AgentOs::create(AgentOsConfig {
         module_access_cwd: Some(module_access_dir.to_string_lossy().into_owned()),
         sidecar: Some(AgentOsSidecarConfig::Shared {
             pool: Some(format!("os-instructions-{}", Uuid::new_v4())),
         }),
-        tool_kits,
+        bindings,
         permissions: Some(allow_all_permissions()),
         ..Default::default()
     })
@@ -203,10 +203,10 @@ async fn create_session_injects_host_tool_reference_from_client_config() {
 
     let argv = launch_pi_session_with_tools_and_read_argv(
         CreateSessionOptions::default(),
-        vec![ToolKit {
+        vec![Bindings {
             name: "weather".to_string(),
             description: "Weather lookup tools.".to_string(),
-            tools: vec![HostTool {
+            tools: vec![Binding {
                 name: "forecast".to_string(),
                 description: "Get a forecast.".to_string(),
                 input_schema: json!({
