@@ -32,11 +32,11 @@ export interface DiscoverPackagesOptions {
  * that must never be published even if their `private` flag is dropped.
  */
 export const EXCLUDED = new Set<string>([
-	"@rivet-dev/agent-os-workspace",
-	"@rivet-dev/agent-os-dev-shell",
-	"@rivet-dev/agent-os-playground",
-	"@rivet-dev/agent-os-shell",
-	"@rivet-dev/agent-os-quickstart",
+	"@rivet-dev/agentos-workspace",
+	"@rivet-dev/agentos-dev-shell",
+	"@rivet-dev/agentos-playground",
+	"@rivet-dev/agentos-shell",
+	"@rivet-dev/agentos-quickstart",
 	"secure-exec",
 	"@secure-exec/typescript",
 	"publish",
@@ -59,8 +59,12 @@ export interface MetaPackageSpec {
 
 export const META_PACKAGES: readonly MetaPackageSpec[] = [
 	{
-		meta: "@rivet-dev/agent-os-sidecar",
-		platformPrefix: "@rivet-dev/agent-os-sidecar-",
+		meta: "@rivet-dev/agentos-sidecar",
+		platformPrefix: "@rivet-dev/agentos-sidecar-",
+	},
+	{
+		meta: "@rivet-dev/agentos",
+		platformPrefix: "@rivet-dev/agentos-plugin-",
 	},
 ];
 
@@ -68,6 +72,12 @@ const SIDECAR_BINARY_PACKAGE_DIRS = [
 	"packages/sidecar-binary/npm",
 	"packages/sidecar/npm",
 ] as const;
+
+// Platform-specific cdylib packages for the agent-os actor plugin
+// (`@rivet-dev/agentos-plugin-<platform>`), injected as optionalDependencies of
+// the `@rivet-dev/agentos` meta package. Same discovery shape as the sidecar
+// binary packages: one dir per platform, allowlisted via sidecarPlatforms().
+const PLUGIN_BINARY_PACKAGE_DIRS = ["packages/agentos-plugin/npm"] as const;
 
 export const SECURE_EXEC_WORKSPACE_PACKAGES = new Set([
 	"@secure-exec/browser",
@@ -136,7 +146,10 @@ export function discoverPackages(
 	//    the meta package resolves at install time. Only the allowlisted
 	//    platforms are included so unbuilt platform dirs are never published.
 	const platformAllowlist = new Set(sidecarPlatforms());
-	for (const packageDir of SIDECAR_BINARY_PACKAGE_DIRS) {
+	for (const packageDir of [
+		...SIDECAR_BINARY_PACKAGE_DIRS,
+		...PLUGIN_BINARY_PACKAGE_DIRS,
+	]) {
 		const npmDir = join(repoRoot, packageDir);
 		if (existsSync(npmDir)) {
 			for (const entry of readdirSync(npmDir).sort()) {
@@ -164,7 +177,8 @@ export function discoverPackages(
 	for (const p of workspacePkgs) {
 		if (!p.name) continue;
 		if (
-			!p.name.startsWith("@rivet-dev/agent-os-") &&
+			!p.name.startsWith("@rivet-dev/agentos-") &&
+			p.name !== "@rivet-dev/agentos" &&
 			!SECURE_EXEC_WORKSPACE_PACKAGES.has(p.name)
 		) {
 			continue;
@@ -202,7 +216,7 @@ export function buildMetaPlatformMap(
 export function assertDiscoverySanity(packages: Package[]): void {
 	const byName = new Set(packages.map((p) => p.name));
 	const hasAgentOsPackages = packages.some((p) =>
-		p.name.startsWith("@rivet-dev/agent-os-"),
+		p.name.startsWith("@rivet-dev/agentos-"),
 	);
 	const hasSecureExecPackages = packages.some((p) =>
 		p.name.startsWith("@secure-exec/"),
@@ -210,8 +224,8 @@ export function assertDiscoverySanity(packages: Package[]): void {
 	const required: string[] = [];
 	if (hasAgentOsPackages) {
 		required.push(
-			"@rivet-dev/agent-os-core",
-			"@rivet-dev/agent-os-sidecar",
+			"@rivet-dev/agentos-core",
+			"@rivet-dev/agentos-sidecar",
 		);
 	}
 	if (hasSecureExecPackages) {

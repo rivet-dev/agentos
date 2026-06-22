@@ -14,7 +14,6 @@ export type {
 	ExecResult,
 	Kernel,
 	KernelInterface,
-	ModuleAccessOptions,
 	NetworkAdapter,
 	NodeRuntimeDriver,
 	NodeRuntimeDriverFactory,
@@ -31,7 +30,7 @@ export type {
 	StdioHook,
 	TimingMitigation,
 	VirtualFileSystem,
-} from "@rivet-dev/agent-os-core/internal/runtime-compat";
+} from "@rivet-dev/agentos-core/internal/runtime-compat";
 export {
 	allowAll,
 	allowAllChildProcess,
@@ -54,4 +53,4 @@ export {
 	readDirWithTypes,
 	rename,
 	stat,
-} from "@rivet-dev/agent-os-core/internal/runtime-compat";
+} from "@rivet-dev/agentos-core/internal/runtime-compat";

@@ -22,7 +22,7 @@ use crate::transport::SidecarProcess;
 const SHARED_SIDECAR_POOL_LIMIT: usize = 1024;
 
 /// Env var that overrides the Agent OS wrapper sidecar binary path.
-const AGENT_OS_SIDECAR_BIN_ENV: &str = "AGENT_OS_SIDECAR_BIN";
+const AGENTOS_SIDECAR_BIN_ENV: &str = "AGENTOS_SIDECAR_BIN";
 
 /// The lazily-established shared sidecar process + authenticated connection. Multiple VMs in the same
 /// (shared) sidecar reuse this single process/connection, each opening its own session + VM on it.
@@ -113,7 +113,7 @@ pub struct AgentOsSidecar {
     pub(crate) shared_pool: Option<String>,
     pub(crate) state: AtomicU8,
     pub(crate) active_vm_count: AtomicU32,
-    /// Absolute path to the `agent-os-sidecar` binary, threaded from `AgentOsConfig` when present.
+    /// Absolute path to the `agentos-sidecar` binary, threaded from `AgentOsConfig` when present.
     /// Otherwise `ensure_connection` resolves the Agent OS env fallback and passes an explicit path
     /// to the generic transport.
     pub(crate) sidecar_binary_path: Option<String>,
@@ -142,7 +142,7 @@ impl AgentOsSidecar {
     }
 
     /// Get (or lazily establish) the shared sidecar process + authenticated connection. The first
-    /// caller spawns the `agent-os-sidecar` child and runs the `Authenticate` handshake; subsequent
+    /// caller spawns the `agentos-sidecar` child and runs the `Authenticate` handshake; subsequent
     /// callers reuse the same transport + connection id. This is what makes a shared sidecar host
     /// multiple VMs in one process.
     pub(crate) async fn ensure_connection(
@@ -208,8 +208,8 @@ impl AgentOsSidecar {
     fn resolved_sidecar_binary_path(&self) -> String {
         self.sidecar_binary_path
             .clone()
-            .or_else(|| std::env::var(AGENT_OS_SIDECAR_BIN_ENV).ok())
-            .unwrap_or_else(|| "agent-os-sidecar".to_string())
+            .or_else(|| std::env::var(AGENTOS_SIDECAR_BIN_ENV).ok())
+            .unwrap_or_else(|| "agentos-sidecar".to_string())
     }
 
     /// Snapshot the sidecar's current state. SYNC.
@@ -364,7 +364,7 @@ fn shared_sidecar_pool_limit_error() -> ClientError {
 }
 
 impl AgentOs {
-    /// Create an explicit sidecar handle. `sidecar_id` defaults to `agent-os-sidecar-<uuid>`.
+    /// Create an explicit sidecar handle. `sidecar_id` defaults to `agentos-sidecar-<uuid>`.
     ///
     /// Parity with TypeScript `createAgentOsSidecarInternal`: the explicit handle carries an
     /// `Explicit` placement whose `sidecar_id` echoes the resolved id and has no shared pool.
@@ -372,7 +372,7 @@ impl AgentOs {
         sidecar_id: Option<String>,
     ) -> Result<Arc<AgentOsSidecar>, ClientError> {
         let sidecar_id =
-            sidecar_id.unwrap_or_else(|| format!("agent-os-sidecar-{}", Uuid::new_v4()));
+            sidecar_id.unwrap_or_else(|| format!("agentos-sidecar-{}", Uuid::new_v4()));
         let placement = AgentOsSidecarPlacement::Explicit {
             sidecar_id: sidecar_id.clone(),
         };
@@ -468,8 +468,8 @@ mod tests {
     #[test]
     fn sidecar_binary_path_prefers_explicit_wrapper_path() {
         let _guard = ENV_LOCK.lock().expect("env lock");
-        let previous = std::env::var(AGENT_OS_SIDECAR_BIN_ENV).ok();
-        std::env::set_var(AGENT_OS_SIDECAR_BIN_ENV, "/tmp/from-env");
+        let previous = std::env::var(AGENTOS_SIDECAR_BIN_ENV).ok();
+        std::env::set_var(AGENTOS_SIDECAR_BIN_ENV, "/tmp/from-env");
         let sidecar = AgentOsSidecar::new(
             "explicit-test",
             AgentOsSidecarPlacement::Explicit {
@@ -481,34 +481,34 @@ mod tests {
 
         assert_eq!(sidecar.resolved_sidecar_binary_path(), "/tmp/from-config");
 
-        restore_env(AGENT_OS_SIDECAR_BIN_ENV, previous);
+        restore_env(AGENTOS_SIDECAR_BIN_ENV, previous);
     }
 
     #[test]
     fn sidecar_binary_path_uses_agent_os_env_fallback() {
         let _guard = ENV_LOCK.lock().expect("env lock");
-        let previous = std::env::var(AGENT_OS_SIDECAR_BIN_ENV).ok();
-        std::env::set_var(AGENT_OS_SIDECAR_BIN_ENV, "/tmp/agent-os-sidecar");
+        let previous = std::env::var(AGENTOS_SIDECAR_BIN_ENV).ok();
+        std::env::set_var(AGENTOS_SIDECAR_BIN_ENV, "/tmp/agentos-sidecar");
         let sidecar = shared("env-test", SidecarState::Ready);
 
         assert_eq!(
             sidecar.resolved_sidecar_binary_path(),
-            "/tmp/agent-os-sidecar"
+            "/tmp/agentos-sidecar"
         );
 
-        restore_env(AGENT_OS_SIDECAR_BIN_ENV, previous);
+        restore_env(AGENTOS_SIDECAR_BIN_ENV, previous);
     }
 
     #[test]
     fn sidecar_binary_path_defaults_to_agent_os_wrapper() {
         let _guard = ENV_LOCK.lock().expect("env lock");
-        let previous = std::env::var(AGENT_OS_SIDECAR_BIN_ENV).ok();
-        std::env::remove_var(AGENT_OS_SIDECAR_BIN_ENV);
+        let previous = std::env::var(AGENTOS_SIDECAR_BIN_ENV).ok();
+        std::env::remove_var(AGENTOS_SIDECAR_BIN_ENV);
         let sidecar = shared("default-test", SidecarState::Ready);
 
-        assert_eq!(sidecar.resolved_sidecar_binary_path(), "agent-os-sidecar");
+        assert_eq!(sidecar.resolved_sidecar_binary_path(), "agentos-sidecar");
 
-        restore_env(AGENT_OS_SIDECAR_BIN_ENV, previous);
+        restore_env(AGENTOS_SIDECAR_BIN_ENV, previous);
     }
 
     fn restore_env(key: &str, value: Option<String>) {

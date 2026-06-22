@@ -41,10 +41,9 @@ function assertBefore(crate: string, dependent: string) {
 test("Rust crate publish order satisfies internal dependencies", () => {
 	assert.equal(new Set(RUST_CRATES).size, RUST_CRATES.length);
 
-	// Only a6-owned crates; secure-exec runtime crates are published by secure-exec.
-	assertBefore("agent-os-protocol", "agent-os-sidecar");
-	assertBefore("agent-os-protocol", "agent-os-sidecar-browser");
-	assertBefore("agent-os-protocol", "agent-os-client");
+	// Only agentOS-owned crates; secure-exec runtime crates are published by secure-exec.
+	assertBefore("agentos-protocol", "agentos-sidecar");
+	assertBefore("agentos-protocol", "agentos-client");
 });
 
 test("discovers the publishable Rust crate subset from a workspace", () => {
@@ -55,25 +54,25 @@ test("discovers the publishable Rust crate subset from a workspace", () => {
 			[
 				"[workspace]",
 				"members = [",
-				'  "crates/agent-os-protocol",',
-				'  "crates/agent-os-sidecar",',
+				'  "crates/agentos-protocol",',
+				'  "crates/agentos-sidecar",',
 				'  "crates/client",',
 				"]",
 				"",
 			].join("\n"),
 		);
 		for (const [member, name] of [
-			["crates/agent-os-protocol", "agent-os-protocol"],
-			["crates/agent-os-sidecar", "agent-os-sidecar"],
-			["crates/client", "agent-os-client"],
+			["crates/agentos-protocol", "agentos-protocol"],
+			["crates/agentos-sidecar", "agentos-sidecar"],
+			["crates/client", "agentos-client"],
 		]) {
 			write(root, join(member, "Cargo.toml"), `[package]\nname = "${name}"\n`);
 		}
 
 		assert.deepEqual(discoverRustCrates(root), [
-			"agent-os-protocol",
-			"agent-os-sidecar",
-			"agent-os-client",
+			"agentos-protocol",
+			"agentos-sidecar",
+			"agentos-client",
 		]);
 	});
 });

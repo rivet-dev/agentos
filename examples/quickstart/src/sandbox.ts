@@ -4,11 +4,11 @@
 // at /sandbox, and registers the sandbox toolkit for running commands.
 
 import common from "@agent-os-pkgs/common";
-import { AgentOs } from "@rivet-dev/agent-os-core";
+import { AgentOs } from "@rivet-dev/agentos-core";
 import {
 	createSandboxFs,
 	createSandboxToolkit,
-} from "@rivet-dev/agent-os-sandbox";
+} from "@rivet-dev/agentos-sandbox";
 
 const SANDBOX_QUICKSTART_PERMISSIONS = {
 	fs: "allow",

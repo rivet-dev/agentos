@@ -1,5 +1,5 @@
 {
-  "name": "@rivet-dev/agent-os-shell",
+  "name": "@rivet-dev/agentos-shell",
   "private": true,
   "type": "module",
   "bin": {
@@ -12,7 +12,7 @@
     "test": "pnpm build && vitest run --fileParallelism=false"
   },
   "dependencies": {
-    "@rivet-dev/agent-os-core": "workspace:*",
+    "@rivet-dev/agentos-core": "workspace:*",
     "@agent-os-pkgs/common": "catalog:",
     "@agent-os-pkgs/jq": "catalog:",
     "@agent-os-pkgs/ripgrep": "catalog:",

@@ -1,4 +1,4 @@
-import { defineSoftware } from "@rivet-dev/agent-os-core";
+import { defineSoftware } from "@rivet-dev/agentos-core";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,10 +9,10 @@ const pi = defineSoftware({
 	name: "pi",
 	type: "agent" as const,
 	packageDir,
-	requires: ["@rivet-dev/agent-os-pi", "@mariozechner/pi-coding-agent"],
+	requires: ["@rivet-dev/agentos-pi", "@mariozechner/pi-coding-agent"],
 	agent: {
 		id: "pi",
-		acpAdapter: "@rivet-dev/agent-os-pi",
+		acpAdapter: "@rivet-dev/agentos-pi",
 		agentPackage: "@mariozechner/pi-coding-agent",
 	},
 });

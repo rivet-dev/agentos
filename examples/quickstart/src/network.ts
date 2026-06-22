@@ -4,7 +4,7 @@
 // Note: Preview URLs (createSignedPreviewUrl) are only available in the
 // RivetKit actor wrapper, not in the core API. See examples/agent-os/ for that.
 
-import { AgentOs } from "@rivet-dev/agent-os-core";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
 function settleWithin(promise: Promise<unknown>, ms: number): Promise<void> {
 	return Promise.race([

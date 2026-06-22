@@ -39,14 +39,14 @@ test("accepts agent-os-pkgs registry software package metadata", () => {
 test("rejects stale Agent OS package names and metadata files", () => {
 	withFixture((root) => {
 		writeJson(root, "registry/software/grep/package.json", {
-			name: "@rivet-dev/agent-os-grep",
+			name: "@rivet-dev/agentos-grep",
 		});
 		writeJson(root, "registry/software/grep/agent-os-package.json", {
-			name: "@rivet-dev/agent-os-grep",
+			name: "@rivet-dev/agentos-grep",
 		});
 
 		assert.deepEqual(checkRegistrySoftwareSplit({ root }), [
-			"registry/software/grep/package.json must be named @agent-os-pkgs/grep, found @rivet-dev/agent-os-grep",
+			"registry/software/grep/package.json must be named @agent-os-pkgs/grep, found @rivet-dev/agentos-grep",
 			"registry/software/grep/agent-os-package.json must be renamed to secure-exec-package.json",
 			"registry/software/grep/secure-exec-package.json is required",
 		]);
@@ -73,7 +73,7 @@ test("rejects Agent OS dependencies inside software manifests", () => {
 		writeJson(root, "registry/software/common/package.json", {
 			name: "@agent-os-pkgs/common",
 			dependencies: {
-				"@rivet-dev/agent-os-coreutils": "workspace:*",
+				"@rivet-dev/agentos-coreutils": "workspace:*",
 			},
 		});
 		writeJson(root, "registry/software/common/secure-exec-package.json", {
@@ -81,7 +81,7 @@ test("rejects Agent OS dependencies inside software manifests", () => {
 		});
 
 		assert.deepEqual(checkRegistrySoftwareSplit({ root }), [
-			"@agent-os-pkgs/common must not depend on Agent OS package @rivet-dev/agent-os-coreutils in registry software dependencies",
+			"@agent-os-pkgs/common must not depend on Agent OS package @rivet-dev/agentos-coreutils in registry software dependencies",
 		]);
 	});
 });

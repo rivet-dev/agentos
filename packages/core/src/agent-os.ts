@@ -95,7 +95,7 @@ const SHELL_DISPOSE_TIMEOUT_MS = 5_000;
  * bin entrypoint. The resume wire request omits a dedicated `adapterEntrypoint`
  * field; the sidecar reads the entrypoint from this key and strips it before
  * launching the adapter. Must stay in sync with the sidecar constant of the same
- * name in `crates/agent-os-sidecar/src/acp_extension.rs`.
+ * name in `crates/agentos-sidecar/src/acp_extension.rs`.
  */
 const RESUME_ADAPTER_ENTRYPOINT_ENV = "AGENT_OS_RESUME_ADAPTER_ENTRYPOINT";
 
@@ -474,6 +474,14 @@ export interface AgentOsOptions {
 	 * meta-packages that export arrays of sub-packages work directly.
 	 */
 	software?: SoftwareInput[];
+	/**
+	 * Whether to auto-include the default software bundle (`@agent-os-pkgs/common`
+	 * — `sh` + coreutils + the standard CLI tools agents rely on) in addition to
+	 * any `software` you pass. Defaults to `true`; set `false` for a bare VM with
+	 * only the software you list explicitly. Entries already present in `software`
+	 * are not duplicated.
+	 */
+	defaultSoftware?: boolean;
 	/** Loopback ports to exempt from SSRF checks (for testing with host-side mock servers). */
 	loopbackExemptPorts?: number[];
 	/**
@@ -1089,7 +1097,7 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 const NODE_RUNTIME_BOOTSTRAP_COMMANDS = ["node", "npm", "npx"] as const;
 const KERNEL_COMMAND_STUB = "#!/bin/sh\n# kernel command stub\n";
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agent-os-sidecar");
+const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
 const SIDECAR_BUILD_INPUTS = [
 	join(REPO_ROOT, "Cargo.toml"),
 	join(REPO_ROOT, "Cargo.lock"),
@@ -1446,9 +1454,9 @@ function convertSidecarRootSnapshotEntries(
 
 function ensureNativeSidecarBinary(): string {
 	// A published install has no in-repo Cargo workspace to build from: resolve
-	// the prebuilt platform binary (or the AGENT_OS_SIDECAR_BIN override).
+	// the prebuilt platform binary (or the AGENTOS_SIDECAR_BIN override).
 	if (
-		process.env.AGENT_OS_SIDECAR_BIN ||
+		process.env.AGENTOS_SIDECAR_BIN ||
 		!existsSync(join(REPO_ROOT, "Cargo.toml"))
 	) {
 		return resolvePublishedSidecarBinary();
@@ -1464,14 +1472,14 @@ function ensureNativeSidecarBinary(): string {
 	if (sidecarBinaryNeedsBuild()) {
 		const cargoBinary = findCargoBinary();
 		if (cargoBinary) {
-			execFileSync(cargoBinary, ["build", "-q", "-p", "agent-os-sidecar"], {
+			execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
 				cwd: REPO_ROOT,
 				stdio: "pipe",
 			});
 		} else if (!existsSync(SIDECAR_BINARY)) {
 			execFileSync(
 				resolveCargoBinary(),
-				["build", "-q", "-p", "agent-os-sidecar"],
+				["build", "-q", "-p", "agentos-sidecar"],
 				{
 					cwd: REPO_ROOT,
 					stdio: "pipe",
@@ -5151,7 +5159,7 @@ export class AgentOsSidecar {
 function createAgentOsSidecarInternal(
 	options: AgentOsCreateSidecarOptions = {},
 ): AgentOsSidecar {
-	const sidecarId = options.sidecarId ?? `agent-os-sidecar-${randomUUID()}`;
+	const sidecarId = options.sidecarId ?? `agentos-sidecar-${randomUUID()}`;
 	return new AgentOsSidecar(sidecarId, {
 		kind: "explicit",
 		sidecarId,

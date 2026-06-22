@@ -20,7 +20,7 @@ test("bumpCargoVersions bumps [workspace.package] but NOT secure-exec dep requir
 version = "0.2.0"
 
 [workspace.dependencies]
-agent-os-protocol = { path = "crates/agent-os-protocol", version = "0.2.0-rc.3" }
+agentos-protocol = { path = "crates/agentos-protocol", version = "0.2.0-rc.3" }
 secure-exec-sidecar = { path = "../secure-exec/crates/sidecar", version = "0.2.0-rc.3" }
 secure-exec-client = { path = "../secure-exec/crates/secure-exec-client", version = "0.2.0-rc.3" }
 serde = "1"
@@ -35,7 +35,7 @@ serde = "1"
 		// ...a6-owned crate dep (path = "crates/...") bumped...
 		assert.match(
 			cargoToml,
-			/agent-os-protocol = \{ path = "crates\/agent-os-protocol", version = "0\.3\.0" \}/,
+			/agentos-protocol = \{ path = "crates\/agentos-protocol", version = "0\.3\.0" \}/,
 		);
 		// ...but secure-exec crate dep requirements stay at the sibling version.
 		assert.match(
@@ -70,11 +70,11 @@ test("bumpPackageJsons injects agent-os sidecar platform optional dependency", a
 			].join("\n"),
 		);
 		for (const [rel, name] of [
-			["packages/core", "@rivet-dev/agent-os-core"],
-			["packages/sidecar-binary", "@rivet-dev/agent-os-sidecar"],
+			["packages/core", "@rivet-dev/agentos-core"],
+			["packages/sidecar-binary", "@rivet-dev/agentos-sidecar"],
 			[
 				"packages/sidecar-binary/npm/linux-x64-gnu",
-				"@rivet-dev/agent-os-sidecar-linux-x64-gnu",
+				"@rivet-dev/agentos-sidecar-linux-x64-gnu",
 			],
 		]) {
 			await writeJson(repoRoot, join(rel, "package.json"), {
@@ -92,7 +92,7 @@ test("bumpPackageJsons injects agent-os sidecar platform optional dependency", a
 			),
 		);
 		assert.deepEqual(sidecarManifest.optionalDependencies, {
-			"@rivet-dev/agent-os-sidecar-linux-x64-gnu": "0.3.0",
+			"@rivet-dev/agentos-sidecar-linux-x64-gnu": "0.3.0",
 		});
 	} finally {
 		await rm(repoRoot, { recursive: true, force: true });

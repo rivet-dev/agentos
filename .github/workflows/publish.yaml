@@ -109,17 +109,11 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
-      # agent-os-sidecar path-depends on the secure-exec crates, which live in the
-      # sibling repo (preview crates are not published to crates.io). Clone the
-      # matching preview branch and install its pnpm workspace so the V8 bridge
-      # build (invoked by secure-exec's cargo build.rs) has esbuild + bridge srcs.
-      - name: Checkout secure-exec sibling
-        run: |
-          git clone --depth 1 --branch main \
-            https://github.com/rivet-dev/secure-exec.git ../secure-exec
-          (cd ../secure-exec && pnpm install --frozen-lockfile)
-      # The V8 bridge build script (invoked by cargo build.rs) needs the pnpm
-      # workspace installed so esbuild and v8-bridge.source.js are available.
+      # All Rust dependencies resolve from published registries — no sibling
+      # checkouts: the secure-exec runtime crates from crates.io (0.3.0, which
+      # vendor the prebuilt V8 bridge) and the RivetKit native-plugin ABI crate
+      # from crates.io (rivet-actor-plugin-abi). pnpm install is still needed for
+      # the workspace tooling consumed by the build.
       - run: pnpm install --frozen-lockfile
       - name: Build sidecar binary
         id: build
@@ -128,13 +122,13 @@ jobs:
           out="target/sidecar-artifacts/${{ matrix.platform }}"
           mkdir -p "$out"
           if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then
-            cargo build --release -p agent-os-sidecar --target ${{ matrix.target }}
+            cargo build --release -p agentos-sidecar --target ${{ matrix.target }}
             profile="release"
           else
-            cargo build -p agent-os-sidecar --target ${{ matrix.target }}
+            cargo build -p agentos-sidecar --target ${{ matrix.target }}
             profile="debug"
           fi
-          cp "target/${{ matrix.target }}/${profile}/agent-os-sidecar" "$out/agent-os-sidecar"
+          cp "target/${{ matrix.target }}/${profile}/agentos-sidecar" "$out/agentos-sidecar"
           echo "dir=$out" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
@@ -143,12 +137,77 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
+  # build-plugin — agent-os actor plugin cdylib (debug preview / release)
+  # ---------------------------------------------------------------------------
+  # Ships inside the @rivet-dev/agentos-plugin-<platform> npm packages, declared
+  # as optionalDependencies of @rivet-dev/agentos. The cdylib path-depends on the
+  # secure-exec crates (sibling repo) AND the RivetKit native-plugin ABI crate
+  # (r6 sibling, not on crates.io yet), so both siblings are cloned for cargo to
+  # resolve the workspace path deps.
+  build-plugin:
+    needs: [context]
+    name: "Build plugin (${{ matrix.platform }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64-gnu
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: plugin-${{ matrix.target }}-${{ needs.context.outputs.trigger }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/.rusty_v8
+          key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
+      # All Rust deps resolve from crates.io (secure-exec 0.3.0 + the
+      # rivet-actor-plugin-abi ABI crate) — no sibling checkouts required.
+      - run: pnpm install --frozen-lockfile
+      - name: Build plugin cdylib
+        id: build
+        run: |
+          set -euo pipefail
+          out="target/plugin-artifacts/${{ matrix.platform }}"
+          mkdir -p "$out"
+          if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then
+            cargo build --release -p agentos-actor-plugin --target ${{ matrix.target }}
+            profile="release"
+          else
+            cargo build -p agentos-actor-plugin --target ${{ matrix.target }}
+            profile="debug"
+          fi
+          cp "target/${{ matrix.target }}/${profile}/libagentos_actor_plugin.so" \
+            "$out/libagentos_actor_plugin.so"
+          echo "dir=$out" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.platform }}
+          path: ${{ steps.build.outputs.dir }}
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
   # publish-npm — place binaries, build TS, publish all packages (all triggers)
   # ---------------------------------------------------------------------------
   publish-npm:
-    needs: [context, build-sidecar]
+    needs: [context, build-sidecar, build-plugin]
     name: "Publish npm"
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-plugin.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -164,23 +223,44 @@ jobs:
         with:
           pattern: sidecar-*
           path: artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: plugin-*
+          path: artifacts
       - name: Place sidecar binaries into platform packages
         run: |
           set -euo pipefail
           for p in $SIDECAR_PLATFORMS; do
-            agent_bin="artifacts/sidecar-${p}/agent-os-sidecar"
+            agent_bin="artifacts/sidecar-${p}/agentos-sidecar"
             agent_dest="packages/sidecar-binary/npm/${p}"
             if [ ! -f "$agent_bin" ]; then
-              echo "::error::missing agent-os-sidecar binary artifact for ${p}"
+              echo "::error::missing agentos-sidecar binary artifact for ${p}"
               exit 1
             fi
             if [ ! -d "$agent_dest" ]; then
               echo "::error::missing platform package dir $agent_dest"
               exit 1
             fi
-            cp "$agent_bin" "${agent_dest}/agent-os-sidecar"
-            chmod +x "${agent_dest}/agent-os-sidecar"
+            cp "$agent_bin" "${agent_dest}/agentos-sidecar"
+            chmod +x "${agent_dest}/agentos-sidecar"
             echo "Placed binaries for ${p}"
+          done
+      - name: Place plugin cdylib into platform packages
+        run: |
+          set -euo pipefail
+          for p in $SIDECAR_PLATFORMS; do
+            lib="artifacts/plugin-${p}/libagentos_actor_plugin.so"
+            dest="packages/agentos-plugin/npm/${p}"
+            if [ ! -f "$lib" ]; then
+              echo "::error::missing plugin cdylib artifact for ${p}"
+              exit 1
+            fi
+            if [ ! -d "$dest" ]; then
+              echo "::error::missing plugin platform package dir $dest"
+              exit 1
+            fi
+            cp "$lib" "${dest}/libagentos_actor_plugin.so"
+            echo "Placed plugin cdylib for ${p}"
           done
       - name: Bump package versions for build (version-only)
         run: |
@@ -190,7 +270,8 @@ jobs:
       - name: Build TypeScript packages
         run: |
           npx turbo build \
-            --filter='!@rivet-dev/agent-os-playground' \
+            --filter='!@rivet-dev/agentos-playground' \
+            --filter='!@agentos/website' \
             --filter='!./examples/*'
       - name: Finalize package versions for publish (inject optionalDeps)
         run: |
@@ -244,12 +325,12 @@ jobs:
           # (downloaded by the published execution crate's build.rs).
           mkdir -p release-assets
           for p in $SIDECAR_PLATFORMS; do
-            agent_bin="artifacts/sidecar-${p}/agent-os-sidecar"
+            agent_bin="artifacts/sidecar-${p}/agentos-sidecar"
             if [ -f "$agent_bin" ]; then
               target="${PLATFORM_TARGET[$p]}"
-              cp "$agent_bin" "release-assets/agent-os-sidecar-${target}"
+              cp "$agent_bin" "release-assets/agentos-sidecar-${target}"
             else
-              echo "::warning::missing agent-os-sidecar binary for ${p}"
+              echo "::warning::missing agentos-sidecar binary for ${p}"
             fi
           done
           for f in \
@@ -319,14 +400,8 @@ jobs:
           key: ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-
-      # a6 crates path-depend on the secure-exec runtime crates (sibling repo).
-      # Clone the matching preview branch + install its pnpm workspace so the V8
-      # bridge build (secure-exec's cargo build.rs) has esbuild + bridge sources.
-      - name: Checkout secure-exec sibling
-        run: |
-          git clone --depth 1 --branch main \
-            https://github.com/rivet-dev/secure-exec.git ../secure-exec
-          (cd ../secure-exec && pnpm install --frozen-lockfile)
+      # All Rust deps resolve from crates.io (secure-exec 0.3.0 + the
+      # rivet-actor-plugin-abi ABI crate) — no sibling checkouts required.
       - run: pnpm install --frozen-lockfile
       - name: Bump Cargo versions
         run: |

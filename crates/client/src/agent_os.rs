@@ -16,11 +16,11 @@ use serde_json::{Map, Value};
 use tokio::sync::{broadcast, oneshot, watch};
 use tokio::task::JoinHandle;
 
-use agent_os_protocol::generated::v1::{
+use agentos_protocol::generated::v1::{
     AcpCallback, AcpCallbackResponse, AcpEvent, AcpHostRequestCallbackResponse,
     AcpPermissionCallbackResponse,
 };
-use agent_os_protocol::ACP_EXTENSION_NAMESPACE;
+use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_client::wire;
 use secure_exec_vm_config as vm_config;
 
@@ -992,9 +992,56 @@ fn serialize_limits_config_for_sidecar(
     })
 }
 
+/// Hosts the VM may reach by default (egress). The default network policy is an
+/// allowlist of the common hosted LLM provider API endpoints so the standard
+/// agent quickstart works with zero network configuration, while still matching
+/// the Workers-style default-deny egress model: every other host is denied
+/// unless the client widens the `network` permission. Clients opt out by
+/// configuring `network` explicitly (e.g. `{ network: "allow" }`).
+const DEFAULT_EGRESS_HOSTS: &[&str] = &[
+    "api.anthropic.com",
+    "api.openai.com",
+    "generativelanguage.googleapis.com",
+    "openrouter.ai",
+];
+
+/// Resource patterns for the default egress allowlist. Network permission
+/// resources are `dns://<host>` for name resolution and `tcp://<host>:<port>`
+/// for the connection itself, so each allowed host needs both forms.
+fn default_egress_patterns() -> Vec<String> {
+    DEFAULT_EGRESS_HOSTS
+        .iter()
+        .flat_map(|host| [format!("dns://{host}"), format!("tcp://{host}:*")])
+        .collect()
+}
+
+/// vm_config variant of the default egress allowlist (deny-by-default rule set).
+fn default_network_egress_scope_config() -> vm_config::PatternPermissionScope {
+    vm_config::PatternPermissionScope::Rules(vm_config::PatternPermissionRuleSet {
+        default: Some(vm_config::PermissionMode::Deny),
+        rules: vec![vm_config::PatternPermissionRule {
+            mode: vm_config::PermissionMode::Allow,
+            operations: vec!["*".to_string()],
+            patterns: default_egress_patterns(),
+        }],
+    })
+}
+
+/// Wire variant of the default egress allowlist (deny-by-default rule set).
+fn default_network_egress_scope() -> wire::PatternPermissionScope {
+    wire::PatternPermissionScope::PatternPermissionRuleSet(wire::PatternPermissionRuleSet {
+        default: Some(wire::PermissionMode::Deny),
+        rules: vec![wire::PatternPermissionRule {
+            mode: wire::PermissionMode::Allow,
+            operations: vec!["*".to_string()],
+            patterns: default_egress_patterns(),
+        }],
+    })
+}
+
 fn permissions_policy_config(config: &AgentOsConfig) -> vm_config::PermissionsPolicy {
     let Some(permissions) = config.permissions.as_ref() else {
-        return allow_all_permissions_policy_config();
+        return default_permissions_policy_config();
     };
 
     vm_config::PermissionsPolicy {
@@ -1012,9 +1059,7 @@ fn permissions_policy_config(config: &AgentOsConfig) -> vm_config::PermissionsPo
                 .network
                 .as_ref()
                 .map(serialize_pattern_permissions_config)
-                .unwrap_or(vm_config::PatternPermissionScope::Mode(
-                    vm_config::PermissionMode::Allow,
-                )),
+                .unwrap_or_else(default_network_egress_scope_config),
         ),
         child_process: Some(
             permissions
@@ -1055,14 +1100,16 @@ fn permissions_policy_config(config: &AgentOsConfig) -> vm_config::PermissionsPo
     }
 }
 
-fn allow_all_permissions_policy_config() -> vm_config::PermissionsPolicy {
+/// Default permission policy when the client supplies no `permissions`:
+/// allow-all for fs/childProcess/process/env/tool (the VM is itself the
+/// isolation boundary), with network egress restricted to the default LLM
+/// allowlist (see [`default_network_egress_scope_config`]).
+fn default_permissions_policy_config() -> vm_config::PermissionsPolicy {
     vm_config::PermissionsPolicy {
         fs: Some(vm_config::FsPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
-        network: Some(vm_config::PatternPermissionScope::Mode(
-            vm_config::PermissionMode::Allow,
-        )),
+        network: Some(default_network_egress_scope_config()),
         child_process: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
@@ -3446,7 +3493,7 @@ fn serialize_mounts(config: &AgentOsConfig) -> Result<Vec<wire::MountDescriptor>
 
 fn permissions_policy(config: &AgentOsConfig) -> wire::PermissionsPolicy {
     let Some(permissions) = config.permissions.as_ref() else {
-        return allow_all_permissions_policy();
+        return default_permissions_policy();
     };
 
     wire::PermissionsPolicy {
@@ -3464,9 +3511,7 @@ fn permissions_policy(config: &AgentOsConfig) -> wire::PermissionsPolicy {
                 .network
                 .as_ref()
                 .map(serialize_pattern_permissions)
-                .unwrap_or(wire::PatternPermissionScope::PermissionMode(
-                    wire::PermissionMode::Allow,
-                )),
+                .unwrap_or_else(default_network_egress_scope),
         ),
         child_process: Some(
             permissions
@@ -3507,14 +3552,16 @@ fn permissions_policy(config: &AgentOsConfig) -> wire::PermissionsPolicy {
     }
 }
 
-fn allow_all_permissions_policy() -> wire::PermissionsPolicy {
+/// Default permission policy (wire form) when the client supplies no
+/// `permissions`: allow-all for fs/childProcess/process/env/tool, with network
+/// egress restricted to the default LLM allowlist
+/// (see [`default_network_egress_scope`]).
+fn default_permissions_policy() -> wire::PermissionsPolicy {
     wire::PermissionsPolicy {
         fs: Some(wire::FsPermissionScope::PermissionMode(
             wire::PermissionMode::Allow,
         )),
-        network: Some(wire::PatternPermissionScope::PermissionMode(
-            wire::PermissionMode::Allow,
-        )),
+        network: Some(default_network_egress_scope()),
         child_process: Some(wire::PatternPermissionScope::PermissionMode(
             wire::PermissionMode::Allow,
         )),
@@ -3616,7 +3663,7 @@ fn rejected_to_error(rejected: wire::RejectedResponse) -> ClientError {
 #[cfg(test)]
 mod tests {
     use super::{
-        allow_all_permissions_policy, permissions_policy, serialize_create_vm_config_for_sidecar,
+        default_permissions_policy, permissions_policy, serialize_create_vm_config_for_sidecar,
         serialize_root_filesystem_config_for_sidecar,
     };
     use crate::config::{
@@ -3638,11 +3685,39 @@ mod tests {
     };
 
     #[test]
-    fn permissions_policy_defaults_to_allow_all_when_unset() {
+    fn permissions_policy_defaults_to_default_policy_when_unset() {
         assert_eq!(
             permissions_policy(&AgentOsConfig::default()),
-            allow_all_permissions_policy()
+            default_permissions_policy()
         );
+    }
+
+    #[test]
+    fn default_network_egress_is_llm_allowlist_not_allow_all() {
+        let policy = permissions_policy(&AgentOsConfig::default());
+
+        // fs/childProcess/process/env stay allow-all (the VM is the boundary).
+        assert_eq!(
+            policy.child_process,
+            Some(PatternPermissionScope::PermissionMode(
+                WirePermissionMode::Allow
+            ))
+        );
+
+        // Network egress is a deny-by-default allowlist of LLM provider hosts,
+        // covering both DNS resolution and the TCP connection for each host.
+        let Some(PatternPermissionScope::PatternPermissionRuleSet(rules)) = policy.network else {
+            panic!("expected default network egress to be a rule set, not allow-all");
+        };
+        assert_eq!(rules.default, Some(WirePermissionMode::Deny));
+        assert_eq!(rules.rules.len(), 1);
+        assert_eq!(rules.rules[0].mode, WirePermissionMode::Allow);
+        let patterns = &rules.rules[0].patterns;
+        assert!(patterns.contains(&"dns://api.anthropic.com".to_string()));
+        assert!(patterns.contains(&"tcp://api.anthropic.com:*".to_string()));
+        assert!(patterns.contains(&"dns://api.openai.com".to_string()));
+        assert!(patterns.contains(&"dns://generativelanguage.googleapis.com".to_string()));
+        assert!(patterns.contains(&"dns://openrouter.ai".to_string()));
     }
 
     #[test]

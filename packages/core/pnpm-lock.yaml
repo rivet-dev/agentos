@@ -54,13 +54,13 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.60.0
         version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
-      '@rivet-dev/agent-os-claude':
+      '@rivet-dev/agentos-claude':
         specifier: link:../../registry/agent/claude
         version: link:../../registry/agent/claude
       '@secure-exec/codex':
         specifier: link:../../registry/software/codex
         version: link:../../registry/software/codex
-      '@rivet-dev/agent-os-codex-agent':
+      '@rivet-dev/agentos-codex-agent':
         specifier: link:../../registry/agent/codex
         version: link:../../registry/agent/codex
       '@secure-exec/coreutils':
@@ -93,13 +93,13 @@ importers:
       '@secure-exec/jq':
         specifier: link:../../registry/software/jq
         version: link:../../registry/software/jq
-      '@rivet-dev/agent-os-opencode':
+      '@rivet-dev/agentos-opencode':
         specifier: link:../../registry/agent/opencode
         version: link:../../registry/agent/opencode
-      '@rivet-dev/agent-os-pi':
+      '@rivet-dev/agentos-pi':
         specifier: link:../../registry/agent/pi
         version: link:../../registry/agent/pi
-      '@rivet-dev/agent-os-pi-cli':
+      '@rivet-dev/agentos-pi-cli':
         specifier: link:../../registry/agent/pi-cli
         version: link:../../registry/agent/pi-cli
       '@secure-exec/ripgrep':

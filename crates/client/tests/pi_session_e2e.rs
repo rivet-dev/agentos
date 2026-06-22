@@ -1,4 +1,4 @@
-//! Real Pi agent session e2e against a real `agent-os-sidecar`.
+//! Real Pi agent session e2e against a real `agentos-sidecar`.
 //!
 //! The HONEST regression gate for the agent-session path. When a built Pi adapter is available it
 //! ASSERTS that `create_session("pi")` succeeds and that a real prompt round-trips through the Pi
@@ -23,9 +23,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use agent_os_client::config::AgentOsConfig;
-use agent_os_client::fs::MkdirOptions;
-use agent_os_client::{AgentOs, CreateSessionOptions};
+use agentos_client::config::AgentOsConfig;
+use agentos_client::fs::MkdirOptions;
+use agentos_client::{AgentOs, CreateSessionOptions};
 
 const LLMOCK_SENTINEL: &str = "PONG_FROM_LLMOCK";
 

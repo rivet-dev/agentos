@@ -6,7 +6,7 @@ import {
 	type ExecResult,
 	type NodeRuntimeDriver,
 	type TimingMitigation,
-} from "@rivet-dev/agent-os-browser";
+} from "@rivet-dev/agentos-browser";
 
 type HarnessStdioEvent = {
 	channel: "stdout" | "stderr";

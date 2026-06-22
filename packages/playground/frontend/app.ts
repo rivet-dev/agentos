@@ -5,7 +5,7 @@ import {
 	type NodeRuntimeDriver,
 	type StdioChannel,
 	type StdioEvent,
-} from "@rivet-dev/agent-os-browser";
+} from "@rivet-dev/agentos-browser";
 
 type Language = "nodejs";
 type TypeScriptApi = typeof import("typescript");
@@ -562,7 +562,7 @@ function ensureWorkspacePanels(): void {
 			<div class="panel-header">
 				<div class="panel-title">SDK Usage</div>
 			</div>
-			<div class="snippet-code"><span class="sk">import</span> { <span class="sv">allowAll</span>, <span class="sf">createBrowserDriver</span>, <span class="sf">createBrowserRuntimeDriverFactory</span> } <span class="sk">from</span> <span class="ss">"@rivet-dev/agent-os-browser"</span>;
+			<div class="snippet-code"><span class="sk">import</span> { <span class="sv">allowAll</span>, <span class="sf">createBrowserDriver</span>, <span class="sf">createBrowserRuntimeDriverFactory</span> } <span class="sk">from</span> <span class="ss">"@rivet-dev/agentos-browser"</span>;
 
 <span class="sc">// Create a browser-backed runtime</span>
 <span class="sk">const</span> <span class="sv">system</span> = <span class="sk">await</span> <span class="sf">createBrowserDriver</span>({

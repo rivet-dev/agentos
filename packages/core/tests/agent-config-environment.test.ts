@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
-import claude from "@rivet-dev/agent-os-claude";
+import claude from "@rivet-dev/agentos-claude";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
-import opencode from "@rivet-dev/agent-os-opencode";
-import pi from "@rivet-dev/agent-os-pi";
-import piCli from "@rivet-dev/agent-os-pi-cli";
+import opencode from "@rivet-dev/agentos-opencode";
+import pi from "@rivet-dev/agentos-pi";
+import piCli from "@rivet-dev/agentos-pi-cli";
 import { describe, expect, test } from "vitest";
 import { AgentOs, type AgentInfo } from "../src/agent-os.js";
 import type { SoftwareInput } from "../src/packages.js";

@@ -20,15 +20,15 @@ function pkg(name, manifestPath, targets, overrides = {}) {
 
 const validMetadata = {
 	packages: [
-		pkg("agent-os-protocol", "crates/agent-os-protocol/Cargo.toml", [
-			{ kind: ["lib"], name: "agent_os_protocol" },
+		pkg("agentos-protocol", "crates/agentos-protocol/Cargo.toml", [
+			{ kind: ["lib"], name: "agentos_protocol" },
 		]),
-		pkg("agent-os-sidecar", "crates/agent-os-sidecar/Cargo.toml", [
-			{ kind: ["lib"], name: "agent_os_sidecar_wrapper" },
-			{ kind: ["bin"], name: "agent-os-sidecar" },
+		pkg("agentos-sidecar", "crates/agentos-sidecar/Cargo.toml", [
+			{ kind: ["lib"], name: "agentos_sidecar_wrapper" },
+			{ kind: ["bin"], name: "agentos-sidecar" },
 		]),
-		pkg("agent-os-client", "crates/client/Cargo.toml", [
-			{ kind: ["lib"], name: "agent_os_client" },
+		pkg("agentos-client", "crates/client/Cargo.toml", [
+			{ kind: ["lib"], name: "agentos_client" },
 		]),
 	],
 };
@@ -37,22 +37,22 @@ test("accepts expected Rust package metadata", () => {
 	assert.deepEqual(checkRustPackageMetadata({ root, metadata: validMetadata }), []);
 });
 
-test("rejects stale agent-os-client lib target names", () => {
+test("rejects stale agentos-client lib target names", () => {
 	const metadata = structuredClone(validMetadata);
-	const client = metadata.packages.find((item) => item.name === "agent-os-client");
+	const client = metadata.packages.find((item) => item.name === "agentos-client");
 	client.targets[0].name = "secure_exec_client";
 
 	assert.deepEqual(checkRustPackageMetadata({ root, metadata }), [
-		"agent-os-client must expose a lib target named agent_os_client",
+		"agentos-client must expose a lib target named agentos_client",
 	]);
 });
 
 test("rejects non-publishable required Rust packages", () => {
 	const metadata = structuredClone(validMetadata);
-	const client = metadata.packages.find((item) => item.name === "agent-os-client");
+	const client = metadata.packages.find((item) => item.name === "agentos-client");
 	client.publish = false;
 
 	assert.deepEqual(checkRustPackageMetadata({ root, metadata }), [
-		"agent-os-client must remain publishable",
+		"agentos-client must remain publishable",
 	]);
 });

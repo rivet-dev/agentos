@@ -1,4 +1,4 @@
-//! Port-based virtual `fetch` e2e against a real `agent-os-sidecar`.
+//! Port-based virtual `fetch` e2e against a real `agentos-sidecar`.
 //!
 //! `fetch` dispatches to a guest HTTP server listening on a port INSIDE the kernel (never the host).
 //! Standing up that guest listener requires the V8/JS guest runtime, which may be broken in this
@@ -15,7 +15,7 @@
 
 mod common;
 
-use agent_os_client::AgentOs;
+use agentos_client::AgentOs;
 use bytes::Bytes;
 use futures::StreamExt;
 

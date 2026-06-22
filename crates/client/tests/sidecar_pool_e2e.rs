@@ -4,7 +4,7 @@
 
 mod common;
 
-use agent_os_client::fs::FileContent;
+use agentos_client::fs::FileContent;
 
 #[tokio::test]
 async fn shared_sidecar_pooling_reuses_one_process() {

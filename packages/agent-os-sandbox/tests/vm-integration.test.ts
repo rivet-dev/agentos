@@ -1,7 +1,7 @@
 import common from "@agent-os-pkgs/common";
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import type { MockSandboxAgentHandle } from "@rivet-dev/agent-os-core/test/sandbox-agent";
-import { startMockSandboxAgent } from "@rivet-dev/agent-os-core/test/sandbox-agent";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import type { MockSandboxAgentHandle } from "@rivet-dev/agentos-core/test/sandbox-agent";
+import { startMockSandboxAgent } from "@rivet-dev/agentos-core/test/sandbox-agent";
 import {
 	afterAll,
 	afterEach,

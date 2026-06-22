@@ -3,12 +3,12 @@
 // NOTE: This example requires an API key for the chosen agent and a working
 // agent runtime. It may not complete in all environments.
 
-import claude from "@rivet-dev/agent-os-claude";
+import claude from "@rivet-dev/agentos-claude";
 import common from "@agent-os-pkgs/common";
-import type { SoftwareInput } from "@rivet-dev/agent-os-core";
-import { AgentOs } from "@rivet-dev/agent-os-core";
-import opencode from "@rivet-dev/agent-os-opencode";
-import pi from "@rivet-dev/agent-os-pi";
+import type { SoftwareInput } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos-core";
+import opencode from "@rivet-dev/agentos-opencode";
+import pi from "@rivet-dev/agentos-pi";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 

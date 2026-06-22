@@ -1,5 +1,5 @@
 {
-  "name": "@rivet-dev/agent-os-browser",
+  "name": "@rivet-dev/agentos-browser",
   "version": "0.2.0-rc.3",
   "type": "module",
   "license": "Apache-2.0",

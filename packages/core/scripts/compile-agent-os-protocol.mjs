@@ -8,7 +8,7 @@ const packageDir = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(packageDir, "../..");
 const schemaPath = path.join(
 	repoRoot,
-	"crates/agent-os-protocol/protocol/agent_os_acp_v1.bare",
+	"crates/agentos-protocol/protocol/agent_os_acp_v1.bare",
 );
 const outputPath = path.join(
 	packageDir,

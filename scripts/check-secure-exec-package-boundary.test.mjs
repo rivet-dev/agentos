@@ -149,7 +149,7 @@ test("ignores compatibility wrappers that intentionally depend on Agent OS", () 
 		writePackage(root, "secure-exec", {
 			name: "secure-exec",
 			dependencies: {
-				"@rivet-dev/agent-os-core": "workspace:*",
+				"@rivet-dev/agentos-core": "workspace:*",
 			},
 		});
 
@@ -187,12 +187,12 @@ test("rejects Agent OS manifest dependencies", () => {
 		writePackage(root, "secure-exec-core", {
 			name: "@secure-exec/core",
 			dependencies: {
-				"@rivet-dev/agent-os-core": "workspace:*",
+				"@rivet-dev/agentos-core": "workspace:*",
 			},
 		});
 
 		assert.deepEqual(checkSecureExecPackageBoundary({ root }), [
-			"@secure-exec/core must not depend on Agent OS package @rivet-dev/agent-os-core (dependencies)",
+			"@secure-exec/core must not depend on Agent OS package @rivet-dev/agentos-core (dependencies)",
 		]);
 	});
 });
@@ -216,7 +216,7 @@ test("rejects Agent OS package descriptions and readmes", () => {
 				"README.md": [
 					"# @secure-exec/core",
 					"",
-					"Use this package with AgentOs from @rivet-dev/agent-os-core.",
+					"Use this package with AgentOs from @rivet-dev/agentos-core.",
 					"",
 				].join("\n"),
 			},
@@ -235,12 +235,12 @@ test("audits secure-exec packages outside packages directory", () => {
 		writePackageAt(root, join(root, "registry/file-system/s3"), {
 			name: "@secure-exec/s3",
 			dependencies: {
-				"@rivet-dev/agent-os-core": "workspace:*",
+				"@rivet-dev/agentos-core": "workspace:*",
 			},
 		});
 
 		assert.deepEqual(checkSecureExecPackageBoundary({ root }), [
-			"@secure-exec/s3 must not depend on Agent OS package @rivet-dev/agent-os-core (dependencies)",
+			"@secure-exec/s3 must not depend on Agent OS package @rivet-dev/agentos-core (dependencies)",
 		]);
 	});
 });
@@ -260,12 +260,12 @@ test("rejects Agent OS source imports", () => {
 			},
 			{
 				"src/index.ts":
-					'import { createVm } from "@rivet-dev/agent-os-core";\n',
+					'import { createVm } from "@rivet-dev/agentos-core";\n',
 			},
 		);
 
 		assert.deepEqual(checkSecureExecPackageBoundary({ root }), [
-			"@secure-exec/core must not import Agent OS package @rivet-dev/agent-os-core (packages/secure-exec-core/src/index.ts)",
+			"@secure-exec/core must not import Agent OS package @rivet-dev/agentos-core (packages/secure-exec-core/src/index.ts)",
 		]);
 	});
 });
@@ -369,7 +369,7 @@ test("rejects relative imports into another package", () => {
 		);
 
 		writePackage(root, "core", {
-			name: "@rivet-dev/agent-os-core",
+			name: "@rivet-dev/agentos-core",
 		});
 
 		assert.deepEqual(checkSecureExecPackageBoundary({ root }), [

@@ -10,8 +10,8 @@ import type {
 	ManagedProcess,
 	ShellHandle,
 	VirtualFileSystem,
-} from "@rivet-dev/agent-os-core/internal/runtime-compat";
-import * as runtimeCompat from "@rivet-dev/agent-os-core/internal/runtime-compat";
+} from "@rivet-dev/agentos-core/internal/runtime-compat";
+import * as runtimeCompat from "@rivet-dev/agentos-core/internal/runtime-compat";
 import type { DebugLogger } from "./debug-logger.js";
 import { createDebugLogger, createNoopLogger } from "./debug-logger.js";
 import type { WorkspacePaths } from "./shared.js";

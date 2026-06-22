@@ -1,0 +1,47 @@
+{
+	"name": "@rivet-dev/agentos",
+	"version": "0.2.0-rc.3",
+	"description": "Agent OS actor for RivetKit — thin TS forwarder that loads the native actor plugin (cdylib) via RivetKit's generic native-plugin ABI.",
+	"license": "Apache-2.0",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/rivet-dev/agentos.git",
+		"directory": "packages/agentos"
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"check-types": "tsc --noEmit",
+		"build": "tsc",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@agent-os-pkgs/common": "catalog:",
+		"@rivet-dev/agentos-core": "workspace:*",
+		"@rivet-dev/agentos-sidecar": "workspace:*",
+		"zod": "^4.1.11"
+	},
+	"peerDependencies": {
+		"rivetkit": ">=0.0.0"
+	},
+	"devDependencies": {
+		"@types/node": "^22.19.15",
+		"rivetkit": "0.0.0-feat-dylib-actor-plugin.c44621f",
+		"vitest": "^2.1.8"
+	},
+	"engines": {
+		"node": ">=20"
+	}
+}

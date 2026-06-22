@@ -15,10 +15,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "agent-os-client"
+name = "agentos-actor-plugin"
 version = "0.2.0-rc.3"
 dependencies = [
- "agent-os-protocol",
+ "agentos-client",
+ "anyhow",
+ "base64 0.22.1",
+ "bytes",
+ "ciborium",
+ "futures",
+ "http 1.4.0",
+ "rivet-actor-plugin-abi",
+ "rusqlite",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "agentos-client"
+version = "0.2.0-rc.3"
+dependencies = [
+ "agentos-protocol",
  "anyhow",
  "async-trait",
  "base64 0.22.1",
@@ -43,7 +65,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-os-protocol"
+name = "agentos-protocol"
 version = "0.2.0-rc.3"
 dependencies = [
  "rivet-vbare-compiler",
@@ -52,10 +74,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-os-sidecar"
+name = "agentos-sidecar"
 version = "0.2.0-rc.3"
 dependencies = [
- "agent-os-protocol",
+ "agentos-protocol",
  "secure-exec-bridge",
  "secure-exec-sidecar",
  "secure-exec-vm-config",
@@ -64,16 +86,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "agent-os-sidecar-browser"
-version = "0.2.0-rc.3"
-dependencies = [
- "agent-os-protocol",
- "agent-os-sidecar",
- "secure-exec-bridge",
- "secure-exec-sidecar-browser",
 ]
 
 [[package]]
@@ -2615,6 +2627,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rivet-actor-plugin-abi"
+version = "2.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "482a4eb394807ff71045199ed94082539ef333f9e0f86b256f68889cb713f9fd"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "ciborium",
+ "serde",
+]
+
+[[package]]
 name = "rivet-vbare-compiler"
 version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2861,7 +2885,9 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-bridge"
-version = "0.3.0-rc.1"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c20741bbfc7bfff685280b99cb19b22f1d1c3c4ee49f5eb81a49ab9eef4d6f03"
 dependencies = [
  "serde",
  "serde_json",
@@ -2869,7 +2895,9 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-client"
-version = "0.3.0-rc.1"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "263314d0a18643a10d5b765cbea6590979e271414416fb3b78201b7fd3ca546d"
 dependencies = [
  "futures",
  "parking_lot",
@@ -2882,7 +2910,9 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-execution"
-version = "0.3.0-rc.1"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "940c30e9cf5e241418db55886a6a7d2cfae25a4135bcb4ac3b24f92affa18e17"
 dependencies = [
  "base64 0.22.1",
  "ciborium",
@@ -2898,7 +2928,9 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-kernel"
-version = "0.3.0-rc.1"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b026becba2617cce8ac13f70d1b5ff880e59ecefebc7f4ca4285f6a0b81c63e"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
@@ -2911,7 +2943,9 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-sidecar"
-version = "0.3.0-rc.1"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2dfcfacea683dbec65f46ee5e759594347130ff217f88a7dc5f7b2dec76fd773"
 dependencies = [
  "aws-config",
  "aws-credential-types",
@@ -2955,16 +2989,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "secure-exec-sidecar-browser"
-version = "0.3.0-rc.1"
-dependencies = [
- "secure-exec-bridge",
- "secure-exec-kernel",
-]
-
-[[package]]
 name = "secure-exec-v8-runtime"
-version = "0.3.0-rc.1"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e941ef18b855edc4464bd86ab5dc833f8f24c3cf76bfc97fbe4eb4a260257fb2"
 dependencies = [
  "ciborium",
  "crossbeam-channel",
@@ -2978,7 +3006,9 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-vm-config"
-version = "0.3.0-rc.1"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10102bbab0c0332119f06fe75bd5f74b99cf0d886300361c8bdb337c7e074272"
 dependencies = [
  "serde",
  "serde_json",
@@ -3031,6 +3061,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51c55386eed0f1ae957b091dc2ca8122f287b60c79c774cbe3d5f2b69fded660"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

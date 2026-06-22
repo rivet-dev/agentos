@@ -73,8 +73,8 @@ const stalePatterns = [
 	},
 	{
 		name: "legacy sidecar binary env var",
-		pattern: /\bAGENT_OS_SIDECAR_BINARY\b/g,
-		replacement: "AGENT_OS_SIDECAR_BIN",
+		pattern: /\bAGENTOS_SIDECAR_BINARY\b/g,
+		replacement: "AGENTOS_SIDECAR_BIN",
 	},
 	{
 		name: "legacy secure-exec repo path",
@@ -97,7 +97,7 @@ const stalePatterns = [
 		replacement: "secure_exec_client::wire::PROTOCOL_NAME",
 	},
 	{
-		name: "stale agent-os-client wire-surface documentation",
+		name: "stale agentos-client wire-surface documentation",
 		pattern:
 			/all\s+wire\s+types\s+are\s+reused\s+from\s+`secure_exec_client::protocol`/g,
 		replacement:
@@ -142,14 +142,14 @@ const stalePatterns = [
 	{
 		name: "legacy core ACP implementation path",
 		pattern: /crates\/sidecar\/src\/acp(?:\/(?:client|session)\.rs|\/)?/g,
-		replacement: "crates/agent-os-sidecar/src/acp_extension.rs",
+		replacement: "crates/agentos-sidecar/src/acp_extension.rs",
 		pathPattern: /\.md$/,
 	},
 	{
 		name: "legacy core ACP create-session guidance",
 		pattern: /crates\/sidecar\/src\/service\.rs[^.\n]*\bCreateSession\b/g,
 		replacement:
-			"crates/agent-os-sidecar/src/acp_extension.rs create-session handling",
+			"crates/agentos-sidecar/src/acp_extension.rs create-session handling",
 		pathPattern: /\.md$/,
 	},
 	{

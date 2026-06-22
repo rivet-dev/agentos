@@ -1,5 +1,5 @@
 {
-	"name": "@rivet-dev/agent-os-sidecar",
+	"name": "@rivet-dev/agentos-sidecar",
 	"version": "0.2.0-rc.3",
 	"description": "Platform-specific resolver for the Agent OS native sidecar binary",
 	"license": "Apache-2.0",

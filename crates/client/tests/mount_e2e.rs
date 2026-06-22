@@ -3,15 +3,15 @@ mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use agent_os_client::config::{AgentOsConfig, MountConfig, MountPlugin};
-use agent_os_client::AgentOs;
+use agentos_client::config::{AgentOsConfig, MountConfig, MountPlugin};
+use agentos_client::AgentOs;
 use uuid::Uuid;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_forwards_native_mounts() {
     if !common::sidecar_available() {
         panic!(
-            "create_forwards_native_mounts: sidecar binary is not built; build it with `cargo build -p agent-os-sidecar`"
+            "create_forwards_native_mounts: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
         );
     }
 

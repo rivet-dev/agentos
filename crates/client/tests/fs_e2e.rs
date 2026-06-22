@@ -1,4 +1,4 @@
-//! Filesystem e2e against a real `agent-os-sidecar`. Filesystem ops go straight through the kernel
+//! Filesystem e2e against a real `agentos-sidecar`. Filesystem ops go straight through the kernel
 //! VFS (no V8/WASM), so this is a clean, client-focused surface.
 //!
 //! One VM, many assertions (quality over quantity): text + binary round-trips, batch (never-rejects),
@@ -7,10 +7,10 @@
 
 mod common;
 
-use agent_os_client::fs::{
+use agentos_client::fs::{
     BatchWriteEntry, DeleteOptions, DirEntryType, FileContent, MkdirOptions,
 };
-use agent_os_client::ClientError;
+use agentos_client::ClientError;
 
 #[tokio::test]
 async fn base_layer_exposes_default_files() {

@@ -1,5 +1,5 @@
 {
-	"name": "@rivet-dev/agent-os-claude",
+	"name": "@rivet-dev/agentos-claude",
 	"version": "0.2.0-rc.3",
 	"type": "module",
 	"license": "Apache-2.0",
@@ -23,7 +23,7 @@
 	"dependencies": {
 		"@agentclientprotocol/sdk": "^0.16.1",
 		"@anthropic-ai/claude-agent-sdk": "^0.2.87",
-		"@rivet-dev/agent-os-core": "workspace:*",
+		"@rivet-dev/agentos-core": "workspace:*",
 		"zod": "^4.1.11"
 	},
 	"devDependencies": {

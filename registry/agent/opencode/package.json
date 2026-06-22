@@ -1,5 +1,5 @@
 {
-	"name": "@rivet-dev/agent-os-opencode",
+	"name": "@rivet-dev/agentos-opencode",
 	"version": "0.2.0-rc.3",
 	"type": "module",
 	"license": "Apache-2.0",
@@ -20,7 +20,7 @@
 		"check-types": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@rivet-dev/agent-os-core": "workspace:*"
+		"@rivet-dev/agentos-core": "workspace:*"
 	},
 	"devDependencies": {
 		"bun": "1.3.11",

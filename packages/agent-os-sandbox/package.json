@@ -1,5 +1,5 @@
 {
-	"name": "@rivet-dev/agent-os-sandbox",
+	"name": "@rivet-dev/agentos-sandbox",
 	"version": "0.2.0-rc.3",
 	"type": "module",
 	"license": "Apache-2.0",
@@ -21,7 +21,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@rivet-dev/agent-os-core": "workspace:*",
+		"@rivet-dev/agentos-core": "workspace:*",
 		"@secure-exec/sandbox": "catalog:",
 		"sandbox-agent": "^0.4.2",
 		"zod": "^4.1.11"

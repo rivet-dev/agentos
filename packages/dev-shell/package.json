@@ -1,5 +1,5 @@
 {
-  "name": "@rivet-dev/agent-os-dev-shell",
+  "name": "@rivet-dev/agentos-dev-shell",
   "private": true,
   "type": "module",
   "bin": {
@@ -12,7 +12,7 @@
 		"test": "NODE_OPTIONS=--max-old-space-size=256 pnpm exec vitest run --fileParallelism=false --reporter=verbose"
 	},
   "dependencies": {
-    "@rivet-dev/agent-os-core": "workspace:*",
+    "@rivet-dev/agentos-core": "workspace:*",
     "pino": "^10.3.1"
   },
   "devDependencies": {

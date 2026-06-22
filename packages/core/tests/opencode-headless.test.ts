@@ -22,11 +22,11 @@ describe("OpenCode VM package", () => {
 		const script = `
 const fs = require("fs");
 
-const pkgPath = "/root/node_modules/@rivet-dev/agent-os-opencode/package.json";
+const pkgPath = "/root/node_modules/@rivet-dev/agentos-opencode/package.json";
 const manifestPath =
-  "/root/node_modules/@rivet-dev/agent-os-opencode/dist/opencode-acp.manifest.json";
+  "/root/node_modules/@rivet-dev/agentos-opencode/dist/opencode-acp.manifest.json";
 const bundlePath =
-  "/root/node_modules/@rivet-dev/agent-os-opencode/dist/opencode-acp/acp.js";
+  "/root/node_modules/@rivet-dev/agentos-opencode/dist/opencode-acp/acp.js";
 
 const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
@@ -54,7 +54,7 @@ console.log("legacyWrapper:" + fs.existsSync("/root/node_modules/opencode-ai/pac
 		const exitCode = await vm.waitProcess(pid);
 
 		expect(exitCode, `Failed. stderr: ${stderr}`).toBe(0);
-		expect(stdout).toContain("pkg:@rivet-dev/agent-os-opencode");
+		expect(stdout).toContain("pkg:@rivet-dev/agentos-opencode");
 		expect(stdout).toContain("bundle:true");
 		expect(stdout).toContain("sourceRepo:anomalyco/opencode");
 		expect(stdout).toContain("sourceVersion:1.3.13");
@@ -65,7 +65,7 @@ console.log("legacyWrapper:" + fs.existsSync("/root/node_modules/opencode-ai/pac
 		const script = `
 const fs = require("fs");
 const modulePath =
-  "/root/node_modules/@rivet-dev/agent-os-opencode/dist/opencode-acp/acp.js";
+  "/root/node_modules/@rivet-dev/agentos-opencode/dist/opencode-acp/acp.js";
 const source = fs.readFileSync(modulePath, "utf8");
 console.log("hasAcpCommand:" + source.includes("AcpCommand"));
 `;

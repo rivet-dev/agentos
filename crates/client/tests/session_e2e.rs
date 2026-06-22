@@ -1,4 +1,4 @@
-//! Agent session (ACP) e2e against a real `agent-os-sidecar`.
+//! Agent session (ACP) e2e against a real `agentos-sidecar`.
 //!
 //! `create_session` requires agent adapters + a mock LLM + V8 execution. In this environment the
 //! client. This suite fails fast by default when session creation is unavailable; set
@@ -13,8 +13,8 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use agent_os_client::fs::FileContent;
-use agent_os_client::{AgentOs, ClientError, CreateSessionOptions};
+use agentos_client::fs::FileContent;
+use agentos_client::{AgentOs, ClientError, CreateSessionOptions};
 use futures::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -82,7 +82,7 @@ async fn try_create_session_with_options(
     }
 }
 
-fn agent_message_chunk_text(notification: &agent_os_client::JsonRpcNotification) -> Option<&str> {
+fn agent_message_chunk_text(notification: &agentos_client::JsonRpcNotification) -> Option<&str> {
     let params = notification.params.as_ref()?;
     let update = params.get("update").unwrap_or(params);
     if update.get("sessionUpdate").and_then(|value| value.as_str()) != Some("agent_message_chunk") {

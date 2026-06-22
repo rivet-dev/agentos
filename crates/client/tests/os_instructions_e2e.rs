@@ -13,11 +13,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use agent_os_client::config::{
+use agentos_client::config::{
     AgentOsConfig, AgentOsSidecarConfig, FsPermissions, HostTool, PatternPermissions,
     PermissionMode, Permissions, ToolKit,
 };
-use agent_os_client::{AgentOs, CreateSessionOptions};
+use agentos_client::{AgentOs, CreateSessionOptions};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -170,7 +170,7 @@ fn injected_prompt(argv: &[String]) -> &str {
 async fn create_session_injects_assembled_system_prompt() {
     if !common::sidecar_available() {
         panic!(
-            "create_session_injects_assembled_system_prompt: sidecar binary is not built; build it with `cargo build -p agent-os-sidecar`"
+            "create_session_injects_assembled_system_prompt: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
         );
     }
     common::ensure_sidecar_env();
@@ -196,7 +196,7 @@ async fn create_session_injects_assembled_system_prompt() {
 async fn create_session_injects_host_tool_reference_from_client_config() {
     if !common::sidecar_available() {
         panic!(
-            "create_session_injects_host_tool_reference_from_client_config: sidecar binary is not built; build it with `cargo build -p agent-os-sidecar`"
+            "create_session_injects_host_tool_reference_from_client_config: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
         );
     }
     common::ensure_sidecar_env();
@@ -238,7 +238,7 @@ async fn create_session_injects_host_tool_reference_from_client_config() {
 async fn create_session_skip_os_instructions_drops_base_but_keeps_additional() {
     if !common::sidecar_available() {
         panic!(
-            "create_session_skip_os_instructions_drops_base_but_keeps_additional: sidecar binary is not built; build it with `cargo build -p agent-os-sidecar`"
+            "create_session_skip_os_instructions_drops_base_but_keeps_additional: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
         );
     }
     common::ensure_sidecar_env();

@@ -63,7 +63,7 @@ function seedReadyFixture(root) {
 	write(secureExecRoot, "packages/core/src/native-client.ts", "export const native = true;\n");
 
 	writeJson(agentOsRoot, "packages/core/package.json", {
-		name: "@rivet-dev/agent-os-core",
+		name: "@rivet-dev/agentos-core",
 		dependencies: {
 			"@secure-exec/core": "link:../../../secure-exec/packages/core",
 		},

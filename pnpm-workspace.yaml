@@ -1,5 +1,6 @@
 packages:
   - packages/agent-os-sandbox
+  - packages/agentos
   - packages/browser
   - packages/core
   - packages/dev-shell

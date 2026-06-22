@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agent_os_protocol::generated::v1::{
+use agentos_protocol::generated::v1::{
     AcpCallback, AcpCallbackResponse, AcpCloseSessionRequest, AcpCreateSessionRequest, AcpEvent,
     AcpGetSessionStateRequest, AcpHostRequestCallbackResponse, AcpPermissionCallbackResponse,
     AcpRequest, AcpResponse, AcpRuntimeKind, AcpSessionRequest,
 };
-use agent_os_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCOL_VERSION};
+use agentos_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCOL_VERSION};
 use bridge_support::RecordingBridge;
 use secure_exec_sidecar::wire::{
     AuthenticateRequest, ConnectionOwnership, CreateVmRequest, EventFrame, EventPayload,
@@ -1017,7 +1017,7 @@ fn new_sidecar(name: &str) -> NativeSidecar<RecordingBridge> {
             compile_cache_root: Some(temp_dir(name).join("cache")),
             ..NativeSidecarConfig::default()
         },
-        agent_os_sidecar_wrapper::extensions(),
+        agentos_sidecar_wrapper::extensions(),
     )
     .expect("create native sidecar")
 }
@@ -1122,7 +1122,7 @@ fn allow_all_permissions() -> vm_config::PermissionsPolicy {
 
 fn temp_dir(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
-        "agent-os-sidecar-{name}-{}",
+        "agentos-sidecar-{name}-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time before unix epoch")

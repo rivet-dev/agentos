@@ -5,7 +5,7 @@ import type { SoftwareInput } from "../src/packages.js";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 
 // L2 (agent-os side): exercise the sidecar resume orchestration state machine
-// end-to-end against the REAL agent-os-sidecar with a MOCK ACP adapter (no LLM).
+// end-to-end against the REAL agentos-sidecar with a MOCK ACP adapter (no LLM).
 //
 // Spec: .agent/specs/session-resume.md §6
 //   - Tier 1 (native): agent advertises `loadSession` -> sidecar runs
