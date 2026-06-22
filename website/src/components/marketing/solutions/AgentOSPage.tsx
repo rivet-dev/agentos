@@ -2,7 +2,6 @@
 
 import { useId, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-	ArrowDown,
 	ArrowRight,
 	Shield,
 	Terminal,
@@ -793,7 +792,6 @@ const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 	const [hoveredAgent, setHoveredAgent] = useState<{ src: string; name: string } | null>(null);
 	const [autoPlayAgent, setAutoPlayAgent] = useState<{ src: string; name: string } | null>(null);
 	const [autoPlayComplete, setAutoPlayComplete] = useState(false);
-	const [statsIn, setStatsIn] = useState(false);
 
 	// Highlight stats — best-case "up to" figures, sourced from bench.ts.
 	const heroStats = [
@@ -854,35 +852,34 @@ const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 					initial={{ opacity: 0, y: 20 }}
 					animate={{ opacity: 1, y: 0 }}
 					transition={{ duration: 0.5, delay: 0.1 }}
-					className='mb-10 max-w-2xl text-center text-lg leading-relaxed text-ink-soft md:text-left md:text-xl'
+					className='mb-4 max-w-2xl text-center text-lg leading-relaxed text-ink-soft md:text-left md:text-xl'
 				>
 					<span className='font-medium text-ink'>A faster, lighter, cheaper alternative to sandboxes</span>{' '}
 					&mdash; with agent orchestration built in.
 				</motion.p>
 
-				{/* Supported Harnesses */}
+				{/* Benchmark highlights — proof for "faster, lighter, cheaper", linked to the benchmarks below */}
 				<motion.div
-					initial={{ opacity: 0, y: 20 }}
+					initial={{ opacity: 0, y: 10 }}
 					animate={{ opacity: 1, y: 0 }}
-					transition={{ duration: 0.5, delay: 0.12 }}
-					className='mb-10 flex flex-wrap items-center justify-center gap-2 md:justify-start md:gap-4'
+					transition={{ duration: 0.5, delay: 0.13 }}
+					className='mb-6 flex flex-wrap items-baseline justify-center gap-x-6 gap-y-2 md:justify-start'
 				>
-					<span className='font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint'>Works with</span>
-					<div className='flex flex-wrap items-center justify-center gap-2 md:justify-start md:gap-4'>
-						{agents.map((agent) => (
-							<div
-								key={agent.name}
-								className='flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-ink/5'
-								onMouseEnter={() => autoPlayComplete && setHoveredAgent(agent)}
-								onMouseLeave={() => autoPlayComplete && setHoveredAgent(null)}
-							>
-								<img src={agent.src} alt={agent.name} className='h-4 w-4' />
-								<span className='text-sm text-ink-soft'>{agent.name}{agent.comingSoon && '*'}</span>
-							</div>
-						))}
-					</div>
-					<span className='text-xs text-ink-faint'>*Coming Soon</span>
+					{heroStats.map((stat) => (
+						<a
+							key={stat.label}
+							href={stat.href}
+							aria-label={`Up to ${stat.value} ${stat.label} — jump to the benchmark`}
+							className='group inline-flex items-baseline gap-1.5'
+						>
+							<span className='text-xl font-medium text-pine md:text-2xl'>{stat.value}</span>
+							<span className='text-sm text-ink-soft transition-colors group-hover:text-ink md:text-base'>{stat.label}</span>
+						</a>
+					))}
 				</motion.div>
+
+				{/* Thin, very light divider between the stats and the tabs */}
+				<div className='mb-6 h-px w-full bg-ink/[0.08]' />
 
 				{/* Code snippets */}
 				<motion.div
@@ -927,7 +924,7 @@ const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 					initial={{ opacity: 0, y: 20 }}
 					animate={{ opacity: 1, y: 0 }}
 					transition={{ duration: 0.5, delay: 0.2 }}
-					className='mt-6 flex flex-col items-center gap-3 sm:flex-row sm:items-center md:items-start w-full'
+					className='mt-6 flex w-full flex-col flex-wrap items-center gap-x-4 gap-y-3 sm:flex-row sm:items-center'
 				>
 					<a
 						href='/docs'
@@ -937,43 +934,23 @@ const Hero = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 						<ArrowRight className='h-4 w-4' />
 					</a>
 					<CopyCommand command='npm install @agent-os/core' />
-					<div className='flex-1' />
-					<a
-						href='/registry'
-						className='inline-flex items-center gap-2 whitespace-nowrap text-sm text-ink-soft transition-colors hover:text-ink'
-					>
-						<Package className='h-4 w-4' />
-						View Package Registry
-						<ArrowRight className='h-4 w-4' />
-					</a>
-				</motion.div>
-
-				{/* Benchmark stat cards */}
-				<motion.div
-					initial={{ opacity: 0, y: 20 }}
-					animate={{ opacity: 1, y: 0 }}
-					transition={{ duration: 0.5, delay: 0.25 }}
-					onAnimationComplete={() => setStatsIn(true)}
-					className='mt-10 grid grid-cols-1 gap-4 sm:grid-cols-3'
-				>
-					{heroStats.map((stat) => (
-						<a
-							key={stat.label}
-							href={stat.href}
-							aria-label={`Jump to the ${stat.label} benchmark`}
-							className='group block rounded-xl border border-ink/10 bg-white/55 p-3.5 transition-colors hover:border-accent/40 hover:bg-white/75 md:p-4'
-						>
-							<div className='flex items-start justify-between gap-2'>
-								<span className='font-mono text-[9px] uppercase tracking-[0.16em] text-ink-faint'>Up to</span>
-								<ArrowDown className='h-3.5 w-3.5 shrink-0 text-ink-faint transition-all group-hover:translate-y-0.5 group-hover:text-accent-deep' aria-hidden='true' />
-							</div>
-							<div className='mt-1 text-2xl font-medium leading-none text-accent-deep md:text-3xl'>
-								<CountUpStat text={stat.value} active={statsIn} />
-							</div>
-							<div className='mt-1.5 text-sm font-medium text-ink'>{stat.label}</div>
-							<div className='mt-0.5 text-[11px] text-ink-faint'>{stat.sub}</div>
-						</a>
-					))}
+					{/* Works with — supported agent harnesses; inline with the buttons on wide screens, wraps below when narrow */}
+					<div className='flex flex-wrap items-center justify-center gap-2 md:ml-auto md:justify-end md:gap-3'>
+						<span className='font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint'>Works with</span>
+						<div className='flex flex-wrap items-center justify-center gap-1 md:justify-end md:gap-2'>
+							{agents.map((agent) => (
+								<div
+									key={agent.name}
+									className='flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-ink/5'
+									onMouseEnter={() => autoPlayComplete && setHoveredAgent(agent)}
+									onMouseLeave={() => autoPlayComplete && setHoveredAgent(null)}
+								>
+									<img src={agent.src} alt={agent.name} className='h-4 w-4' />
+									<span className='text-sm text-ink-soft'>{agent.name}</span>
+								</div>
+							))}
+						</div>
+					</div>
 				</motion.div>
 
 			</div>
@@ -1119,7 +1096,7 @@ const StackingFeatureCards = () => {
 	}, [titleOpacity, titleBlurPx]);
 
 	const stackFeatures = [
-		{ icon: Bot, title: 'Your agent, at the center.', description: 'Any supported harness, including Claude Code, Codex, and Pi, runs inside the OS instead of beside it.', detail: 'The agent speaks ACP. agentOS brokers every tool call, file read, and network request it makes, then streams every response back. The host stays in control of what the agent can see and do.' },
+		{ icon: Bot, title: 'Any agent.', description: 'Any supported harness, including Claude Code, Codex, and Pi, runs inside the OS instead of beside it.', detail: 'The agent speaks ACP. agentOS brokers every tool call, file read, and network request it makes, then streams every response back. The host stays in control of what the agent can see and do.' },
 		{ icon: Briefcase, title: 'Tools and resources over MCP.', description: 'Expose any API, toolchain, or data source as a tool or resource the agent can use.', detail: 'Host-defined tools and MCP servers plug straight into the session. The agent calls them like local functions while agentOS handles routing and scoping, so it never holds a raw API key.' },
 		{ icon: ListChecks, title: 'Durable agent sessions.', description: 'Every run is a managed session with its own state, history, and lifecycle.', detail: 'Start, pause, resume, and replay. Session state lives in the host, so you can attach lifecycle hooks, persist transcripts, and pick a conversation back up exactly where it left off.' },
 		{ icon: SquareTerminal, title: 'Extend with a sandbox.', description: 'agentOS runs most work in-process and reaches for a full sandbox when a job needs more.', detail: 'Hand heavier or untrusted workloads, like a real kernel, native binaries, or a GPU, to a sandbox without leaving the session. agentOS handles the fast path while sandboxes cover the long tail.' },
@@ -1913,7 +1890,7 @@ const TechnologyAndBenchmarks = () => (
 				className='mb-16'
 			>
 				<h2 className='mb-4 text-3xl font-medium tracking-[-0.015em] text-ink md:text-5xl'>
-					A new operating system architecture.
+					A new architecture.
 				</h2>
 				<p className='mb-6 max-w-3xl text-base leading-relaxed text-ink-soft md:text-lg'>
 					Built from the ground up for lightweight agents. agentOS provides the flexibility of Linux with lower overhead than sandboxes.
