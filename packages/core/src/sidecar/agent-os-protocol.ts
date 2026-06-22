@@ -1,4 +1,4 @@
-// @generated - run pnpm --dir packages/core build:agent-os-protocol
+// @generated - run pnpm --dir packages/core build:agentos-protocol
 import * as bare from "@rivetkit/bare-ts"
 
 const DEFAULT_CONFIG = /* @__PURE__ */ bare.Config({})

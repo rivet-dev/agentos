@@ -190,7 +190,7 @@ pub enum SnapshotExportKind {
     SnapshotExport,
 }
 
-/// `{ format: "agent-os-filesystem-snapshot-v1"; filesystem: { entries } }`.
+/// `{ format: "agentos-filesystem-snapshot-v1"; filesystem: { entries } }`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilesystemSnapshotExport {
     pub format: String,
@@ -869,7 +869,7 @@ impl AgentOs {
         Ok(RootSnapshotExport {
             kind: SnapshotExportKind::SnapshotExport,
             source: FilesystemSnapshotExport {
-                format: String::from("agent-os-filesystem-snapshot-v1"),
+                format: String::from("agentos-filesystem-snapshot-v1"),
                 filesystem: FilesystemSnapshotEntries { entries },
             },
         })

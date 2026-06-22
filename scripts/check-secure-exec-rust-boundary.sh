@@ -48,9 +48,9 @@ cd "${ROOT_DIR}"
 
 for package in "${secure_exec_packages[@]}"; do
 	tree="$(cargo tree -p "${package}" -e normal)"
-	if grep -E '(^|[[:space:]])(agent-os-protocol|agent-os-client|agent-os-sidecar)[[:space:]]' <<<"${tree}" >/dev/null; then
+	if grep -E '(^|[[:space:]])(agentos-protocol|agentos-client|agentos-sidecar)[[:space:]]' <<<"${tree}" >/dev/null; then
 		echo "secure-exec Rust boundary violation in ${package}:"
-		grep -E '(^|[[:space:]])(agent-os-protocol|agent-os-client|agent-os-sidecar)[[:space:]]' <<<"${tree}"
+		grep -E '(^|[[:space:]])(agentos-protocol|agentos-client|agentos-sidecar)[[:space:]]' <<<"${tree}"
 		exit 1
 	fi
 done

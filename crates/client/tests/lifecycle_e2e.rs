@@ -1,9 +1,9 @@
-//! Lifecycle e2e against a real `agent-os-sidecar`: independent VMs, post-shutdown isolation, and
+//! Lifecycle e2e against a real `agentos-sidecar`: independent VMs, post-shutdown isolation, and
 //! idempotent shutdown. No V8/WASM required.
 
 mod common;
 
-use agent_os_client::fs::FileContent;
+use agentos_client::fs::FileContent;
 
 #[tokio::test]
 async fn lifecycle_independent_vms_and_idempotent_shutdown() {

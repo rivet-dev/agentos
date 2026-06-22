@@ -6,7 +6,7 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"bin": {
-		"agent-os-opencode-acp": "./dist/adapter.js"
+		"agentos-opencode-acp": "./dist/adapter.js"
 	},
 	"exports": {
 		".": {

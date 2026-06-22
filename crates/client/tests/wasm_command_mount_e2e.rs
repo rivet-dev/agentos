@@ -12,7 +12,7 @@
 
 mod common;
 
-use agent_os_client::ExecOptions;
+use agentos_client::ExecOptions;
 
 #[tokio::test]
 async fn wasm_command_software_mounts_into_vm() {

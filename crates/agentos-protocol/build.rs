@@ -4,7 +4,7 @@ fn main() {
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
-    let source_schema = manifest_dir.join("protocol").join("agent_os_acp_v1.bare");
+    let source_schema = manifest_dir.join("protocol").join("agentos_acp_v1.bare");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={}", source_schema.display());
 

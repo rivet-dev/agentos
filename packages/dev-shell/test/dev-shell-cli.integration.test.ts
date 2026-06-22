@@ -167,7 +167,7 @@ describe("dev-shell justfile wrapper", { timeout: 60_000 }, () => {
 	});
 
 	it("passes --work-dir through the just wrapper", async () => {
-		workDir = await mkdtemp(path.join(tmpdir(), "agent-os-dev-shell-just-"));
+		workDir = await mkdtemp(path.join(tmpdir(), "agentos-dev-shell-just-"));
 		const result = await runJustDevShell([
 			"--work-dir",
 			workDir,
@@ -195,7 +195,7 @@ describe("dev-shell justfile wrapper", { timeout: 60_000 }, () => {
 	});
 
 	it("runs scripted shell commands through the just wrapper", async () => {
-		workDir = await mkdtemp(path.join(tmpdir(), "agent-os-dev-shell-shell-"));
+		workDir = await mkdtemp(path.join(tmpdir(), "agentos-dev-shell-shell-"));
 		const shellWorkDir = workDir;
 		const result = await runJustDevShell([
 			"--work-dir",

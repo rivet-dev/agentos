@@ -76,7 +76,7 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 	"/var/tmp",
 ] as const;
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = path.join(REPO_ROOT, "target/debug/agent-os-sidecar");
+const SIDECAR_BINARY = path.join(REPO_ROOT, "target/debug/agentos-sidecar");
 const SIDECAR_BUILD_INPUTS = [
 	path.join(REPO_ROOT, "Cargo.toml"),
 	path.join(REPO_ROOT, "Cargo.lock"),
@@ -1836,14 +1836,14 @@ function ensureNativeSidecarBinary(): string {
 	if (sidecarBinaryNeedsBuild()) {
 		const cargoBinary = findCargoBinary();
 		if (cargoBinary) {
-			execFileSync(cargoBinary, ["build", "-q", "-p", "agent-os-sidecar"], {
+			execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
 				cwd: REPO_ROOT,
 				stdio: "pipe",
 			});
 		} else if (!fsSync.existsSync(SIDECAR_BINARY)) {
 			execFileSync(
 				resolveCargoBinary(),
-				["build", "-q", "-p", "agent-os-sidecar"],
+				["build", "-q", "-p", "agentos-sidecar"],
 				{
 					cwd: REPO_ROOT,
 					stdio: "pipe",

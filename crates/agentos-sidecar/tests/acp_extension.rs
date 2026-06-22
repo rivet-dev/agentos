@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agent_os_protocol::generated::v1::{
+use agentos_protocol::generated::v1::{
     AcpCallback, AcpCallbackResponse, AcpCloseSessionRequest, AcpCreateSessionRequest, AcpEvent,
     AcpGetSessionStateRequest, AcpHostRequestCallbackResponse, AcpPermissionCallbackResponse,
     AcpRequest, AcpResponse, AcpRuntimeKind, AcpSessionRequest,
 };
-use agent_os_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCOL_VERSION};
+use agentos_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCOL_VERSION};
 use bridge_support::RecordingBridge;
 use secure_exec_sidecar::wire::{
     AuthenticateRequest, ConnectionOwnership, CreateVmRequest, EventFrame, EventPayload,
@@ -27,7 +27,7 @@ use serde_json::Value;
 #[test]
 fn acp_extension_creates_reports_and_closes_session_over_ext() {
     assert_node_available();
-    let mut sidecar = new_sidecar("agent-os-acp-extension-create");
+    let mut sidecar = new_sidecar("agentos-acp-extension-create");
     sidecar.set_wire_sidecar_request_handler(|frame| match frame.payload {
         SidecarRequestPayload::ExtEnvelope(envelope) => {
             assert_eq!(envelope.namespace, ACP_EXTENSION_NAMESPACE);
@@ -73,7 +73,7 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
     });
     let connection_id = authenticate(&mut sidecar);
     let session_id = open_session(&mut sidecar, &connection_id);
-    let cwd = temp_dir("agent-os-acp-extension-create-cwd");
+    let cwd = temp_dir("agentos-acp-extension-create-cwd");
     let adapter = cwd.join("adapter.mjs");
     fs::write(&adapter, adapter_script()).expect("write adapter script");
     let vm_id = create_vm(&mut sidecar, &connection_id, &session_id, &cwd);
@@ -312,12 +312,12 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
 #[test]
 fn acp_get_session_state_denies_cross_connection_session_id() {
     assert_node_available();
-    let mut sidecar = new_sidecar("agent-os-acp-cross-conn-state");
+    let mut sidecar = new_sidecar("agentos-acp-cross-conn-state");
 
     // Victim connection creates a real ACP session.
     let victim_conn = authenticate(&mut sidecar);
     let victim_session = open_session(&mut sidecar, &victim_conn);
-    let cwd = temp_dir("agent-os-acp-cross-conn-state-cwd");
+    let cwd = temp_dir("agentos-acp-cross-conn-state-cwd");
     let adapter = cwd.join("adapter.mjs");
     fs::write(&adapter, adapter_script()).expect("write adapter script");
     let victim_vm = create_vm(&mut sidecar, &victim_conn, &victim_session, &cwd);
@@ -370,7 +370,7 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
         "attacker must be a distinct connection"
     );
     let attacker_session = open_session(&mut sidecar, &attacker_conn);
-    let attacker_cwd = temp_dir("agent-os-acp-cross-conn-attacker-cwd");
+    let attacker_cwd = temp_dir("agentos-acp-cross-conn-attacker-cwd");
     let attacker_vm = create_vm(
         &mut sidecar,
         &attacker_conn,
@@ -414,12 +414,12 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
 #[test]
 fn acp_close_session_denies_cross_connection_session_id() {
     assert_node_available();
-    let mut sidecar = new_sidecar("agent-os-acp-cross-conn-close");
+    let mut sidecar = new_sidecar("agentos-acp-cross-conn-close");
 
     // Victim connection creates a real ACP session.
     let victim_conn = authenticate(&mut sidecar);
     let victim_session = open_session(&mut sidecar, &victim_conn);
-    let cwd = temp_dir("agent-os-acp-cross-conn-close-cwd");
+    let cwd = temp_dir("agentos-acp-cross-conn-close-cwd");
     let adapter = cwd.join("adapter.mjs");
     fs::write(&adapter, adapter_script()).expect("write adapter script");
     let victim_vm = create_vm(&mut sidecar, &victim_conn, &victim_session, &cwd);
@@ -456,7 +456,7 @@ fn acp_close_session_denies_cross_connection_session_id() {
         "attacker must be a distinct connection"
     );
     let attacker_session = open_session(&mut sidecar, &attacker_conn);
-    let attacker_cwd = temp_dir("agent-os-acp-cross-conn-close-attacker-cwd");
+    let attacker_cwd = temp_dir("agentos-acp-cross-conn-close-attacker-cwd");
     let attacker_vm = create_vm(
         &mut sidecar,
         &attacker_conn,
@@ -526,12 +526,12 @@ fn acp_close_session_denies_cross_connection_session_id() {
 #[test]
 fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
     assert_node_available();
-    let mut sidecar = new_sidecar("agent-os-acp-cross-conn-drive");
+    let mut sidecar = new_sidecar("agentos-acp-cross-conn-drive");
 
     // Victim connection creates a real ACP session.
     let victim_conn = authenticate(&mut sidecar);
     let victim_session = open_session(&mut sidecar, &victim_conn);
-    let cwd = temp_dir("agent-os-acp-cross-conn-drive-cwd");
+    let cwd = temp_dir("agentos-acp-cross-conn-drive-cwd");
     let adapter = cwd.join("adapter.mjs");
     fs::write(&adapter, adapter_script()).expect("write adapter script");
     let victim_vm = create_vm(&mut sidecar, &victim_conn, &victim_session, &cwd);
@@ -567,7 +567,7 @@ fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
         "attacker must be a distinct connection"
     );
     let attacker_session = open_session(&mut sidecar, &attacker_conn);
-    let attacker_cwd = temp_dir("agent-os-acp-cross-conn-drive-attacker-cwd");
+    let attacker_cwd = temp_dir("agentos-acp-cross-conn-drive-attacker-cwd");
     let attacker_vm = create_vm(
         &mut sidecar,
         &attacker_conn,
@@ -924,7 +924,7 @@ fn new_sidecar(name: &str) -> NativeSidecar<RecordingBridge> {
             compile_cache_root: Some(temp_dir(name).join("cache")),
             ..NativeSidecarConfig::default()
         },
-        agent_os_sidecar_wrapper::extensions(),
+        agentos_sidecar_wrapper::extensions(),
     )
     .expect("create native sidecar")
 }
@@ -941,7 +941,7 @@ fn authenticate(sidecar: &mut NativeSidecar<RecordingBridge>) -> String {
                 client_name: String::from("acp-extension-test"),
                 auth_token: String::new(),
                 protocol_version: secure_exec_sidecar::wire::PROTOCOL_VERSION,
-                bridge_version: agent_os_bridge::bridge_contract().version,
+                bridge_version: agentos_bridge::bridge_contract().version,
             }),
         })
         .expect("authenticate");
@@ -1029,7 +1029,7 @@ fn allow_all_permissions() -> vm_config::PermissionsPolicy {
 
 fn temp_dir(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
-        "agent-os-sidecar-{name}-{}",
+        "agentos-sidecar-{name}-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time before unix epoch")

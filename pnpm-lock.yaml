@@ -83,7 +83,7 @@ catalogs:
       version: 0.0.0-split-runtime-preview.5d46b14
 
 overrides:
-  '@rivet-dev/agent-os-core': workspace:*
+  '@rivet-dev/agentos-core': workspace:*
 
 importers:
 
@@ -98,16 +98,16 @@ importers:
       '@copilotkit/llmock':
         specifier: ^1.6.0
         version: 1.6.0
-      '@rivet-dev/agent-os-claude':
+      '@rivet-dev/agentos-claude':
         specifier: workspace:*
         version: link:registry/agent/claude
-      '@rivet-dev/agent-os-codex-agent':
+      '@rivet-dev/agentos-codex-agent':
         specifier: workspace:*
         version: link:registry/agent/codex
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:packages/core
-      '@rivet-dev/agent-os-pi':
+      '@rivet-dev/agentos-pi':
         specifier: workspace:*
         version: link:registry/agent/pi
       '@secure-exec/core':
@@ -137,21 +137,21 @@ importers:
       '@agent-os-pkgs/git':
         specifier: 'catalog:'
         version: 0.0.0-split-runtime-preview.5d46b14
-      '@rivet-dev/agent-os-claude':
+      '@rivet-dev/agentos-claude':
         specifier: workspace:*
         version: link:../../registry/agent/claude
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@rivet-dev/agent-os-opencode':
+      '@rivet-dev/agentos-opencode':
         specifier: workspace:*
         version: link:../../registry/agent/opencode
-      '@rivet-dev/agent-os-pi':
+      '@rivet-dev/agentos-pi':
         specifier: workspace:*
         version: link:../../registry/agent/pi
-      '@rivet-dev/agent-os-sandbox':
+      '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
-        version: link:../../packages/agent-os-sandbox
+        version: link:../../packages/agentos-sandbox
       '@secure-exec/s3':
         specifier: 'catalog:'
         version: 0.0.0-split-runtime-preview.5d46b14
@@ -178,9 +178,9 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
-  packages/agent-os-sandbox:
+  packages/agentos-sandbox:
     dependencies:
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
       '@secure-exec/sandbox':
@@ -230,7 +230,7 @@ importers:
       '@aws-sdk/client-s3':
         specifier: ^3.1019.0
         version: 3.1020.0
-      '@rivet-dev/agent-os-sidecar':
+      '@rivet-dev/agentos-sidecar':
         specifier: workspace:*
         version: link:../sidecar-binary
       '@rivetkit/bare-ts':
@@ -336,24 +336,24 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.60.0
         version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@rivet-dev/agent-os-claude':
+      '@rivet-dev/agentos-claude':
         specifier: link:../../registry/agent/claude
         version: link:../../registry/agent/claude
-      '@rivet-dev/agent-os-codex-agent':
+      '@rivet-dev/agentos-codex-agent':
         specifier: link:../../registry/agent/codex
         version: link:../../registry/agent/codex
-      '@rivet-dev/agent-os-opencode':
+      '@rivet-dev/agentos-opencode':
         specifier: link:../../registry/agent/opencode
         version: link:../../registry/agent/opencode
-      '@rivet-dev/agent-os-pi':
+      '@rivet-dev/agentos-pi':
         specifier: link:../../registry/agent/pi
         version: link:../../registry/agent/pi
-      '@rivet-dev/agent-os-pi-cli':
+      '@rivet-dev/agentos-pi-cli':
         specifier: link:../../registry/agent/pi-cli
         version: link:../../registry/agent/pi-cli
-      '@rivet-dev/agent-os-sandbox':
-        specifier: link:../agent-os-sandbox
-        version: link:../agent-os-sandbox
+      '@rivet-dev/agentos-sandbox':
+        specifier: link:../agentos-sandbox
+        version: link:../agentos-sandbox
       '@secure-exec/google-drive':
         specifier: 'catalog:'
         version: 0.0.0-split-runtime-preview.5d46b14
@@ -384,7 +384,7 @@ importers:
 
   packages/dev-shell:
     dependencies:
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
       pino:
@@ -409,10 +409,10 @@ importers:
 
   packages/playground:
     dependencies:
-      '@rivet-dev/agent-os-browser':
+      '@rivet-dev/agentos-browser':
         specifier: workspace:*
         version: link:../browser
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -481,7 +481,7 @@ importers:
 
   packages/secure-exec:
     dependencies:
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -571,7 +571,7 @@ importers:
       '@agent-os-pkgs/zip':
         specifier: 'catalog:'
         version: 0.0.0-split-runtime-preview.5d46b14
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -598,7 +598,7 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.87
         version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../../packages/core
       zod:
@@ -627,7 +627,7 @@ importers:
 
   registry/agent/opencode:
     dependencies:
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../../packages/core
     devDependencies:
@@ -652,7 +652,7 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.60.0
         version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../../packages/core
     devDependencies:
@@ -668,7 +668,7 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.60.0
         version: 0.60.0
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../../packages/core
       pi-acp:

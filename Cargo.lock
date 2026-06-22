@@ -15,10 +15,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "agent-os-client"
+name = "agentos-client"
 version = "0.2.0-rc.3"
 dependencies = [
- "agent-os-protocol",
+ "agentos-protocol",
  "anyhow",
  "async-trait",
  "base64 0.22.1",
@@ -43,7 +43,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-os-protocol"
+name = "agentos-protocol"
 version = "0.2.0-rc.3"
 dependencies = [
  "rivet-vbare-compiler",
@@ -52,10 +52,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-os-sidecar"
+name = "agentos-sidecar"
 version = "0.2.0-rc.3"
 dependencies = [
- "agent-os-protocol",
+ "agentos-protocol",
  "secure-exec-bridge",
  "secure-exec-sidecar",
  "secure-exec-vm-config",
@@ -67,11 +67,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-os-sidecar-browser"
+name = "agentos-sidecar-browser"
 version = "0.2.0-rc.3"
 dependencies = [
- "agent-os-protocol",
- "agent-os-sidecar",
+ "agentos-protocol",
+ "agentos-sidecar",
  "secure-exec-bridge",
  "secure-exec-sidecar-browser",
 ]

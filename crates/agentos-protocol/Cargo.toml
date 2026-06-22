@@ -1,5 +1,5 @@
 [package]
-name = "agent-os-protocol"
+name = "agentos-protocol"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

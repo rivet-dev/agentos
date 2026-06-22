@@ -8,7 +8,7 @@
 
 mod common;
 
-use agent_os_client::{AgentOs, ClientError, CronAction, CronJobOptions};
+use agentos_client::{AgentOs, ClientError, CronAction, CronJobOptions};
 use chrono::Utc;
 
 fn noop_action() -> CronAction {

@@ -14,7 +14,7 @@ test("defaults release artifact paths to agent-os", () => {
 	);
 	assert.equal(
 		releaseUserAgent({}),
-		"agent-os-release-publisher (https://github.com/rivet-dev/agent-os)",
+		"agentos-release-publisher (https://github.com/rivet-dev/agent-os)",
 	);
 });
 

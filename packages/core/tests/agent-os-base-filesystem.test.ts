@@ -166,7 +166,7 @@ describe("AgentOs base filesystem", () => {
 	});
 
 	test("read-only roots preserve software-declared alias commands on the sidecar path", async () => {
-		const commandDir = mkdtempSync(join(tmpdir(), "agent-os-command-fixture-"));
+		const commandDir = mkdtempSync(join(tmpdir(), "agentos-command-fixture-"));
 		try {
 			writeFileSync(
 				join(commandDir, "fixture"),

@@ -71,7 +71,7 @@ const reply = await new Promise((resolve, reject) => {
   const socket = new WebSocket(wsUrl, {
     rejectUnauthorized: false,
     headers: {
-      "User-Agent": "agent-os-wss-test",
+      "User-Agent": "agentos-wss-test",
     },
   });
   const timer = setTimeout(() => {

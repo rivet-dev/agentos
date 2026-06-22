@@ -62,7 +62,7 @@ const createResponse = await fetch("https://api.browserbase.com/v1/sessions", {
       viewport: { width: 1288, height: 711 },
     },
     userMetadata: {
-      agent_os_browserbase_ws_test: "true",
+      agentos_browserbase_ws_test: "true",
     },
   }),
   signal: AbortSignal.timeout(30_000),
@@ -83,7 +83,7 @@ ensure(created.connectUrl, "missing connectUrl");
 const cdpReply = await new Promise((resolve, reject) => {
   const socket = new WebSocket(created.connectUrl, {
     headers: {
-      "User-Agent": "agent-os-browserbase-ws-test",
+      "User-Agent": "agentos-browserbase-ws-test",
     },
   });
   const timer = setTimeout(() => {
@@ -297,7 +297,7 @@ const stagehand = new V3({
   disableAPI: true,
   browserbaseSessionCreateParams: {
     userMetadata: {
-      agent_os_browserbase_direct_stagehand_test: "true",
+      agentos_browserbase_direct_stagehand_test: "true",
     },
   },
 });
@@ -349,7 +349,7 @@ const created = await bb.sessions.create({
     viewport: { width: 1288, height: 711 },
   },
   userMetadata: {
-    agent_os_browserbase_sdk_test: "true",
+    agentos_browserbase_sdk_test: "true",
   },
 });
 note("after-create");
@@ -454,7 +454,7 @@ const createResponse = await requestJson(
       viewport: { width: 1288, height: 711 },
     },
     userMetadata: {
-      agent_os_https_browserbase_test: "true",
+      agentos_https_browserbase_test: "true",
     },
   },
   agent,
@@ -559,7 +559,7 @@ const createResponse = await fetch("https://api.browserbase.com/v1/sessions", {
       viewport: { width: 1288, height: 711 },
     },
     userMetadata: {
-      agent_os_browserbase_target_test: "true",
+      agentos_browserbase_target_test: "true",
     },
   }),
   signal: AbortSignal.timeout(30_000),
@@ -579,7 +579,7 @@ ensure(created.connectUrl, "missing connectUrl");
 const frameTreeSummary = await new Promise((resolve, reject) => {
   const socket = new WebSocket(created.connectUrl, {
     headers: {
-      "User-Agent": "agent-os-browserbase-target-test",
+      "User-Agent": "agentos-browserbase-target-test",
     },
   });
   let nextId = 1;
@@ -710,7 +710,7 @@ const createResponse = await fetch("https://api.browserbase.com/v1/sessions", {
       viewport: { width: 1288, height: 711 },
     },
     userMetadata: {
-      agent_os_browserbase_bootstrap_test: "true",
+      agentos_browserbase_bootstrap_test: "true",
     },
   }),
   signal: AbortSignal.timeout(30_000),
@@ -730,7 +730,7 @@ ensure(created.connectUrl, "missing connectUrl");
 const bootstrapSummary = await new Promise((resolve, reject) => {
   const socket = new WebSocket(created.connectUrl, {
     headers: {
-      "User-Agent": "agent-os-browserbase-bootstrap-test",
+      "User-Agent": "agentos-browserbase-bootstrap-test",
     },
   });
   let nextId = 1;

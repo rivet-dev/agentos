@@ -245,7 +245,7 @@ export function auditTsSplitBoundary(options = {}) {
 		"src/packages.ts",
 		"src/cron/index.ts",
 		"src/cron/cron-manager.ts",
-		"src/sidecar/agent-os-protocol.ts",
+		"src/sidecar/agentos-protocol.ts",
 	]) {
 		const path = join(agentOsCoreRoot, file);
 		checks.push(
@@ -268,7 +268,7 @@ export function auditTsSplitBoundary(options = {}) {
 		),
 		check(
 			"Agent OS facade uses generated ACP and secure-exec transport boundaries",
-			agentOsSource.includes('from "./sidecar/agent-os-protocol.js"') &&
+			agentOsSource.includes('from "./sidecar/agentos-protocol.js"') &&
 				agentOsSource.includes('from "./sidecar/rpc-client.js"') &&
 				agentOsSource.includes('from "@secure-exec/core/descriptors"') &&
 				agentOsSource.includes("extensionRequest("),
@@ -292,12 +292,12 @@ function parseArgs(argv) {
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
-		if (arg === "--agent-os-root") {
+		if (arg === "--agentos-root") {
 			options.agentOsRoot = argv[++i];
 			continue;
 		}
-		if (arg.startsWith("--agent-os-root=")) {
-			options.agentOsRoot = arg.slice("--agent-os-root=".length);
+		if (arg.startsWith("--agentos-root=")) {
+			options.agentOsRoot = arg.slice("--agentos-root=".length);
 			continue;
 		}
 		if (arg === "--secure-exec-root") {

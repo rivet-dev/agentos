@@ -42,7 +42,7 @@ describe("software projection on the sidecar path", () => {
 				[
 					"const fs = require('node:fs');",
 					"console.log('node_modules', fs.existsSync('/root/node_modules'));",
-					"console.log('scope', fs.readdirSync('/root/node_modules/@rivet-dev').includes('agent-os-pi'));",
+					"console.log('scope', fs.readdirSync('/root/node_modules/@rivet-dev').includes('agentos-pi'));",
 					"console.log('adapter', fs.existsSync('/root/node_modules/@rivet-dev/agentos-pi/package.json'));",
 					"console.log('adapterResolved', Boolean(require.resolve('@rivet-dev/agentos-pi')));",
 					"console.log('agent', fs.existsSync('/root/node_modules/@mariozechner/pi-coding-agent/package.json'));",

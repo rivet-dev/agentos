@@ -9,7 +9,7 @@
 
 mod common;
 
-use agent_os_client::ExecOptions;
+use agentos_client::ExecOptions;
 
 #[tokio::test]
 async fn exec_command_line_paths() {

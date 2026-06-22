@@ -6,7 +6,7 @@ import { describe, expect, test } from "vitest";
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const cliPath = join(packageRoot, "dist", "main.js");
 
-describe("agent-os-shell cli", () => {
+describe("agentos-shell cli", () => {
 	test("--help prints usage without starting a VM", () => {
 		const result = spawnSync(process.execPath, [cliPath, "--help"], {
 			cwd: packageRoot,
@@ -15,7 +15,7 @@ describe("agent-os-shell cli", () => {
 
 		expect(result.status).toBe(0);
 		expect(result.stderr).toContain("Usage:");
-		expect(result.stderr).toContain("agent-os-shell [--work-dir <path>]");
+		expect(result.stderr).toContain("agentos-shell [--work-dir <path>]");
 		expect(result.stderr).not.toContain("agent-os shell");
 		expect(result.stdout).toBe("");
 	});

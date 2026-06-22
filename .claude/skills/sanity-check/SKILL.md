@@ -27,12 +27,12 @@ description: Run an E2E smoke test that installs agent-os packages from npm in a
 
 ### 1. Set up the test project
 
-Create a temp directory (e.g. `/tmp/agent-os-sanity-XXXX`) with two files:
+Create a temp directory (e.g. `/tmp/agentos-sanity-XXXX`) with two files:
 
 **package.json:**
 ```json
 {
-  "name": "agent-os-sanity-check",
+  "name": "agentos-sanity-check",
   "private": true,
   "type": "module",
   "dependencies": {
@@ -106,7 +106,7 @@ await vm.dispose();
 
 **Default (temp dir on host):**
 ```bash
-cd /tmp/agent-os-sanity-XXXX
+cd /tmp/agentos-sanity-XXXX
 npm install
 node test.mjs
 ```
@@ -115,7 +115,7 @@ node test.mjs
 ```bash
 docker run --rm \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-  -v /tmp/agent-os-sanity-XXXX:/app \
+  -v /tmp/agentos-sanity-XXXX:/app \
   -w /app \
   node:22 \
   bash -c "npm install && timeout 120 node test.mjs"

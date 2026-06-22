@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { JsonRpcNotification } from "../src/index.js";
 import { AgentOs } from "../src/index.js";
-import { encodeAcpEvent } from "../src/sidecar/agent-os-protocol.js";
+import { encodeAcpEvent } from "../src/sidecar/agentos-protocol.js";
 
 // agent-os.ts keeps this namespace as a module-private const; mirror the literal.
 const ACP_EXTENSION_NAMESPACE = "dev.rivet.agent-os.acp";

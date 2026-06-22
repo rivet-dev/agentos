@@ -3559,7 +3559,7 @@ async function main() {
 		.digest("hex")
 		.slice(0, 16);
 	const sourceRoot = join(cacheDir, `source-v${SOURCE_VERSION}-${patchHash}`);
-	const preparedMarker = join(sourceRoot, ".agent-os-prepared.json");
+	const preparedMarker = join(sourceRoot, ".agentos-prepared.json");
 	const tarballPath = join(cacheDir, `opencode-v${SOURCE_VERSION}.tar.gz`);
 
 	if (!existsSync(preparedMarker)) {

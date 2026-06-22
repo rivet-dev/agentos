@@ -25,7 +25,7 @@ test("accepts current split names", () => {
 		write(
 			root,
 			"packages/core/src/example.ts",
-			'process.env.SECURE_EXEC_KEEP_STDIN_OPEN = "1";\nprocess.env.AGENT_OS_SIDECAR_BIN = "/tmp/agent-os-sidecar";\n',
+			'process.env.SECURE_EXEC_KEEP_STDIN_OPEN = "1";\nprocess.env.AGENT_OS_SIDECAR_BIN = "/tmp/agentos-sidecar";\n',
 		);
 		write(root, "Cargo.toml", '# secure exec lives at "../secure-exec"\n');
 
@@ -38,7 +38,7 @@ test("rejects stale env vars and legacy repo paths", () => {
 		write(
 			root,
 			"packages/core/src/example.ts",
-			'process.env.AGENT_OS_KEEP_STDIN_OPEN = "1";\nprocess.env.AGENT_OS_SIDECAR_BINARY = "/tmp/agent-os-sidecar";\n',
+			'process.env.AGENT_OS_KEEP_STDIN_OPEN = "1";\nprocess.env.AGENT_OS_SIDECAR_BINARY = "/tmp/agentos-sidecar";\n',
 		);
 		write(root, "Cargo.toml", '# legacy path: "../se1"\n');
 
@@ -71,7 +71,7 @@ test("rejects compat protocol schema constants in Rust callers", () => {
 	});
 });
 
-test("rejects stale agent-os-client wire-surface docs", () => {
+test("rejects stale agentos-client wire-surface docs", () => {
 	withFixture((root) => {
 		write(
 			root,
@@ -80,7 +80,7 @@ test("rejects stale agent-os-client wire-surface docs", () => {
 		);
 
 		assert.deepEqual(checkStaleSplitNames({ root }), [
-			"crates/client/src/lib.rs:1:33 uses stale agent-os-client wire-surface documentation all wire types are reused from `secure_exec_client::protocol`; use document secure_exec_client::wire as the generated schema surface",
+			"crates/client/src/lib.rs:1:33 uses stale agentos-client wire-surface documentation all wire types are reused from `secure_exec_client::protocol`; use document secure_exec_client::wire as the generated schema surface",
 		]);
 	});
 });
@@ -160,10 +160,10 @@ test("rejects stale core ACP relocation docs", () => {
 		);
 
 		assert.deepEqual(checkStaleSplitNames({ root }), [
-			"crates/CLAUDE.md:1:41 uses legacy core ACP implementation path crates/sidecar/src/acp/; use crates/agent-os-sidecar/src/acp_extension.rs",
-			"crates/CLAUDE.md:2:36 uses legacy core ACP implementation path crates/sidecar/src/acp/client.rs; use crates/agent-os-sidecar/src/acp_extension.rs",
-			"crates/CLAUDE.md:3:32 uses legacy core ACP implementation path crates/sidecar/src/acp/session.rs; use crates/agent-os-sidecar/src/acp_extension.rs",
-			"crates/CLAUDE.md:4:7 uses legacy core ACP create-session guidance crates/sidecar/src/service.rs`, `CreateSession; use crates/agent-os-sidecar/src/acp_extension.rs create-session handling",
+			"crates/CLAUDE.md:1:41 uses legacy core ACP implementation path crates/sidecar/src/acp/; use crates/agentos-sidecar/src/acp_extension.rs",
+			"crates/CLAUDE.md:2:36 uses legacy core ACP implementation path crates/sidecar/src/acp/client.rs; use crates/agentos-sidecar/src/acp_extension.rs",
+			"crates/CLAUDE.md:3:32 uses legacy core ACP implementation path crates/sidecar/src/acp/session.rs; use crates/agentos-sidecar/src/acp_extension.rs",
+			"crates/CLAUDE.md:4:7 uses legacy core ACP create-session guidance crates/sidecar/src/service.rs`, `CreateSession; use crates/agentos-sidecar/src/acp_extension.rs create-session handling",
 			"crates/CLAUDE.md:5:7 uses legacy core ACP orchestration guidance ACP orchestration embedded in `service.rs`; use ACP orchestration embedded in `acp_extension.rs`",
 			"crates/CLAUDE.md:6:25 uses legacy core ACP callback payload SidecarRequestPayload::AcpRequest; use ACP Ext callbacks",
 			"crates/CLAUDE.md:6:63 uses legacy core ACP callback payload SidecarResponsePayload::AcpRequestResult; use ACP Ext callbacks",
@@ -200,12 +200,12 @@ test("rejects stale secure-exec protocol schema names", () => {
 		write(
 			root,
 			"crates/sidecar/src/wire.rs",
-			'pub const PROTOCOL_NAME: &str = "agent-os-sidecar";\n',
+			'pub const PROTOCOL_NAME: &str = "agentos-sidecar";\n',
 		);
 		write(
 			root,
 			"crates/sidecar/protocol/README.md",
-			"- `ProtocolSchema.name` remains `agent-os-sidecar`\n- `ProtocolSchema.version` remains `1`\n",
+			"- `ProtocolSchema.name` remains `agentos-sidecar`\n- `ProtocolSchema.version` remains `1`\n",
 		);
 
 		assert.deepEqual(checkStaleSplitNames({ root }), [

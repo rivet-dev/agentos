@@ -84,7 +84,7 @@ function seedReadyFixture(root) {
 		"packages/core/src/agent-os.ts",
 		[
 			'import { convert } from "@secure-exec/core/descriptors";',
-			'import { makeAcp } from "./sidecar/agent-os-protocol.js";',
+			'import { makeAcp } from "./sidecar/agentos-protocol.js";',
 			'import { createAgentOsSidecarClient } from "./sidecar/rpc-client.js";',
 			"export class AgentOs {",
 			"static async create() { return new AgentOs(); }",
@@ -139,7 +139,7 @@ function seedReadyFixture(root) {
 		"packages.ts",
 		"cron/index.ts",
 		"cron/cron-manager.ts",
-		"sidecar/agent-os-protocol.ts",
+		"sidecar/agentos-protocol.ts",
 	]) {
 		write(agentOsRoot, `packages/core/src/${file}`, "export {};\n");
 	}

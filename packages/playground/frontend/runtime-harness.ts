@@ -108,7 +108,7 @@ declare global {
 
 const runtimes = new Map<string, HarnessRuntimeEntry>();
 const statusElement = document.querySelector<HTMLElement>("#harness-status");
-const workerUrl = new URL("/agent-os-worker.js", window.location.origin);
+const workerUrl = new URL("/agentos-worker.js", window.location.origin);
 const runtimeFactory = createBrowserRuntimeDriverFactory({ workerUrl });
 
 function setStatus(

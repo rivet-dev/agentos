@@ -289,7 +289,7 @@ Relevant files:
 - `crates/execution/src/v8_runtime.rs`
 
 What lives here:
-- Spawning and authenticating the `agent-os-v8` process.
+- Spawning and authenticating the `agentos-v8` process.
 - Multiplexed session registration and per-session frame routing.
 - The execution crate’s copy of the binary IPC framing and its schema mirror.
 
@@ -482,8 +482,8 @@ What lives here:
 This is the Agent OS extension-owned session-management surface for agent adapters that speak ACP over stdio.
 
 Relevant files:
-- `crates/agent-os-sidecar/src/acp_extension.rs`
-- `crates/agent-os-protocol/protocol/agent_os_acp_v1.bare`
+- `crates/agentos-sidecar/src/acp_extension.rs`
+- `crates/agentos-protocol/protocol/agentos_acp_v1.bare`
 - `crates/sidecar/src/extension.rs`
 - `crates/sidecar/src/stdio.rs`
 

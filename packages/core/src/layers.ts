@@ -14,7 +14,7 @@ import type { VirtualFileSystem } from "./runtime-compat.js";
 export type OverlayFilesystemMode = "ephemeral" | "read-only";
 
 export interface FilesystemSnapshotExport {
-	format: "agent-os-filesystem-snapshot-v1";
+	format: "agentos-filesystem-snapshot-v1";
 	filesystem: {
 		entries: FilesystemEntry[];
 	};
@@ -121,7 +121,7 @@ function isFilesystemSnapshotExport(
 	}
 
 	if (
-		(value as { format?: unknown }).format !== "agent-os-filesystem-snapshot-v1"
+		(value as { format?: unknown }).format !== "agentos-filesystem-snapshot-v1"
 	) {
 		return false;
 	}
@@ -142,7 +142,7 @@ function normalizeSnapshotExport(
 			throw new Error("Invalid base filesystem artifact");
 		}
 		return {
-			format: "agent-os-filesystem-snapshot-v1",
+			format: "agentos-filesystem-snapshot-v1",
 			filesystem: {
 				entries: source.source.filesystem.entries,
 			},
@@ -162,7 +162,7 @@ export function createSnapshotExport(
 	return {
 		kind: "snapshot-export",
 		source: {
-			format: "agent-os-filesystem-snapshot-v1",
+			format: "agentos-filesystem-snapshot-v1",
 			filesystem: { entries },
 		},
 	};

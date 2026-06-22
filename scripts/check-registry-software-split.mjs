@@ -64,10 +64,10 @@ export function checkRegistrySoftwareSplit(options = {}) {
 		const dirName = packageDir.split(/[\\/]/).at(-1);
 		const manifestPath = join(packageDir, "package.json");
 		const metadataPath = join(packageDir, "secure-exec-package.json");
-		const staleMetadataPath = join(packageDir, "agent-os-package.json");
+		const staleMetadataPath = join(packageDir, "agentos-package.json");
 		const staleArtifactMetadataPath = join(
 			packageDir,
-			"agent-os-package.meta.json",
+			"agentos-package.meta.json",
 		);
 
 		const manifest = readJson(manifestPath);

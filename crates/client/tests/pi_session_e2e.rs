@@ -1,4 +1,4 @@
-//! Real Pi agent session e2e against a real `agent-os-sidecar`.
+//! Real Pi agent session e2e against a real `agentos-sidecar`.
 //!
 //! The HONEST regression gate for the agent-session path. When a built Pi adapter is available it
 //! ASSERTS that `create_session("pi")` succeeds and that a real prompt round-trips through the Pi
@@ -6,9 +6,9 @@
 //! It skips only when the prerequisite is genuinely absent (Pi not built).
 //!
 //! Module-access dir resolution:
-//! - `AGENT_OS_PI_MODULE_CWD` env (a workspace with a built/installed `@rivet-dev/agent-os-pi`), else
+//! - `AGENT_OS_PI_MODULE_CWD` env (a workspace with a built/installed `@rivet-dev/agentos-pi`), else
 //! - the repo root, but only when the in-repo adapter is built
-//!   (`node_modules/@rivet-dev/agent-os-pi/dist/adapter.js`). Build it with `pnpm --dir packages/core
+//!   (`node_modules/@rivet-dev/agentos-pi/dist/adapter.js`). Build it with `pnpm --dir packages/core
 //!   build && pnpm --dir registry/agent/pi build` (core first for types).
 //!
 //! Background: a real agent SDK exercises module-loading patterns (tsc `__exportStar` CJS barrels,
@@ -23,9 +23,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use agent_os_client::config::AgentOsConfig;
-use agent_os_client::fs::MkdirOptions;
-use agent_os_client::{AgentOs, CreateSessionOptions};
+use agentos_client::config::AgentOsConfig;
+use agentos_client::fs::MkdirOptions;
+use agentos_client::{AgentOs, CreateSessionOptions};
 
 const LLMOCK_SENTINEL: &str = "PONG_FROM_LLMOCK";
 
@@ -45,7 +45,7 @@ fn pi_module_cwd() -> Option<String> {
         }
     }
     let root = repo_root();
-    let in_repo_adapter = root.join("node_modules/@rivet-dev/agent-os-pi/dist/adapter.js");
+    let in_repo_adapter = root.join("node_modules/@rivet-dev/agentos-pi/dist/adapter.js");
     in_repo_adapter
         .is_file()
         .then(|| root.to_string_lossy().into_owned())

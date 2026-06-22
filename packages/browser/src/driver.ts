@@ -70,7 +70,7 @@ function dirname(path: string): string {
  * co-resident runtimes read each other's data (F-015). Each runtime instead
  * gets its own subdirectory under this prefix.
  */
-const OPFS_RUNTIME_NAMESPACE_ROOT = ".agent-os-runtimes";
+const OPFS_RUNTIME_NAMESPACE_ROOT = ".agentos-runtimes";
 
 /**
  * Translate an OPFS "not found" error into a Node-style ENOENT error so missing

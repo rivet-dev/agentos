@@ -4,7 +4,7 @@ import {
 	decodeAcpCallbackResponse,
 	encodeAcpCallback,
 	encodeAcpResponse,
-} from "../src/sidecar/agent-os-protocol.js";
+} from "../src/sidecar/agentos-protocol.js";
 import { NativeSidecarProcessClient } from "../src/sidecar/rpc-client.js";
 
 const ACP_TEST_PERMISSIONS = {

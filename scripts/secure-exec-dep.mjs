@@ -118,7 +118,7 @@ function linkValue(manifestPath, name) {
 // Collect every managed dep name referenced anywhere (for catalog completeness).
 function collectManagedNames() {
 	const names = new Set();
-	const depRe = /"(@(?:secure-exec|agent-os-pkgs)\/[^"]+)"\s*:/g;
+	const depRe = /"(@(?:secure-exec|agentos-pkgs)\/[^"]+)"\s*:/g;
 	for (const m of consumerManifests()) {
 		const text = readFileSync(m, "utf8");
 		let g;
@@ -154,7 +154,7 @@ function rewriteConsumers(mode) {
 }
 function collectNamesIn(text) {
 	const names = new Set();
-	const depRe = /"(@(?:secure-exec|agent-os-pkgs)\/[^"]+)"\s*:/g;
+	const depRe = /"(@(?:secure-exec|agentos-pkgs)\/[^"]+)"\s*:/g;
 	let g;
 	while ((g = depRe.exec(text))) if (isManaged(g[1])) names.add(g[1]);
 	return names;
@@ -241,7 +241,7 @@ function rewriteCargo(mode, setVersion) {
 // ---------------------------------------------------------------------------
 function npmMode() {
 	const root = readFileSync(path.join(ROOT, "package.json"), "utf8");
-	return /"@(?:secure-exec|agent-os-pkgs)\/[^"]+"\s*:\s*"link:/.test(root)
+	return /"@(?:secure-exec|agentos-pkgs)\/[^"]+"\s*:\s*"link:/.test(root)
 		? "local"
 		: "pinned";
 }

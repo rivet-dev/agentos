@@ -17,7 +17,7 @@ import {
 	decodeAcpResponse,
 	encodeAcpRequest,
 	encodeAcpResponse,
-} from "../src/sidecar/agent-os-protocol.js";
+} from "../src/sidecar/agentos-protocol.js";
 import { NativeSidecarKernelProxy } from "../src/sidecar/rpc-client.js";
 import { getAgentOsKernel } from "../src/test/runtime.js";
 import type { SidecarSessionState } from "../src/sidecar/rpc-client.js";

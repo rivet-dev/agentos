@@ -8,11 +8,11 @@ const packageDir = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(packageDir, "../..");
 const schemaPath = path.join(
 	repoRoot,
-	"crates/agent-os-protocol/protocol/agent_os_acp_v1.bare",
+	"crates/agentos-protocol/protocol/agentos_acp_v1.bare",
 );
 const outputPath = path.join(
 	packageDir,
-	"src/sidecar/agent-os-protocol.ts",
+	"src/sidecar/agentos-protocol.ts",
 );
 
 const schema = await readFile(schemaPath, "utf8");
@@ -35,7 +35,7 @@ function postProcess(code) {
 	}
 
 	let header =
-		"// @generated - run pnpm --dir packages/core build:agent-os-protocol\n";
+		"// @generated - run pnpm --dir packages/core build:agentos-protocol\n";
 	if (/\bassert\(/.test(code)) {
 		header += `function assert(condition: boolean, message?: string): asserts condition {
 \tif (!condition) throw new Error(message ?? "Assertion failed");

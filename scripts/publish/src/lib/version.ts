@@ -228,7 +228,7 @@ export async function updateSourceFiles(
 	}> = [
 		{
 			path: "examples/**/package.json",
-			find: /"(@rivet-dev\/agent-os-[^"]+)": "\^?[0-9]+\.[0-9]+\.[0-9]+(?:-[^"]+)?"/g,
+			find: /"(@rivet-dev\/agentos-[^"]+)": "\^?[0-9]+\.[0-9]+\.[0-9]+(?:-[^"]+)?"/g,
 			replace: `"$1": "^${version}"`,
 			required: false,
 		},

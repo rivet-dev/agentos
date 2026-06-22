@@ -5,10 +5,10 @@ import { join } from "node:path";
 // runtime crates (bridge/kernel/v8-runtime/execution/sidecar/client) live in
 // ../secure-exec and are published by secure-exec, not a6.
 export const RUST_CRATE_ORDER = [
-	"agent-os-protocol",
-	"agent-os-sidecar",
-	"agent-os-sidecar-browser",
-	"agent-os-client",
+	"agentos-protocol",
+	"agentos-sidecar",
+	"agentos-sidecar-browser",
+	"agentos-client",
 ] as const;
 
 export type PublishableRustCrate = (typeof RUST_CRATE_ORDER)[number];

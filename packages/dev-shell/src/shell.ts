@@ -15,7 +15,7 @@ function printUsage(): void {
 	console.error(
 		[
 			"Usage:",
-			"  agent-os-dev-shell [--work-dir <path>] [--debug-log <path>] [--no-wasm] [--] [command] [args...]",
+			"  agentos-dev-shell [--work-dir <path>] [--debug-log <path>] [--no-wasm] [--] [command] [args...]",
 			"",
 			"Examples:",
 			"  just dev-shell",

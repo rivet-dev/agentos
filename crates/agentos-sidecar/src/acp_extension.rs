@@ -2,13 +2,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use agent_os_protocol::generated::v1::{
+use agentos_protocol::generated::v1::{
     AcpCallback, AcpCallbackResponse, AcpCloseSessionRequest, AcpCreateSessionRequest,
     AcpErrorResponse, AcpEvent, AcpGetSessionStateRequest, AcpHostRequestCallback,
     AcpPermissionCallback, AcpRequest, AcpResponse, AcpRuntimeKind, AcpSessionClosedResponse,
     AcpSessionCreatedResponse, AcpSessionEvent, AcpSessionRequest, AcpSessionStateResponse,
 };
-use agent_os_protocol::ACP_EXTENSION_NAMESPACE;
+use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_sidecar::limits::DEFAULT_ACP_MAX_READ_LINE_BYTES;
 use secure_exec_sidecar::wire::{
     CloseStdinRequest, EventPayload, ExecuteRequest, GuestFilesystemCallRequest,
@@ -546,7 +546,7 @@ impl AcpExtension {
 
         AcpHandlerOutput {
             response: Ok(AcpResponse::AcpSessionRpcResponse(
-                agent_os_protocol::generated::v1::AcpSessionRpcResponse {
+                agentos_protocol::generated::v1::AcpSessionRpcResponse {
                     session_id: request.session_id,
                     response: match serde_json::to_string(&exchange.response) {
                         Ok(response) => response,
@@ -1050,7 +1050,7 @@ fn encode_interrupted_cancel_response(session_id: &str) -> Option<Vec<u8>> {
 
 fn encode_session_rpc_response(session_id: &str, response: Value) -> Option<Vec<u8>> {
     let response = AcpResponse::AcpSessionRpcResponse(
-        agent_os_protocol::generated::v1::AcpSessionRpcResponse {
+        agentos_protocol::generated::v1::AcpSessionRpcResponse {
             session_id: session_id.to_string(),
             response: serde_json::to_string(&response).ok()?,
         },
@@ -1699,10 +1699,10 @@ fn error_code(error: &SidecarError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_os_protocol::PROTOCOL_VERSION;
+    use agentos_protocol::PROTOCOL_VERSION;
 
     #[test]
-    fn acp_extension_uses_agent_os_namespace() {
+    fn acp_extension_uses_agentos_namespace() {
         assert_eq!(AcpExtension::new().namespace(), ACP_EXTENSION_NAMESPACE);
     }
 

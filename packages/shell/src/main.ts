@@ -57,7 +57,7 @@ function printUsage(): void {
 	console.error(
 		[
 			"Usage:",
-			"  agent-os-shell [--work-dir <path>] [--] [command] [args...]",
+			"  agentos-shell [--work-dir <path>] [--] [command] [args...]",
 			"",
 			"Options:",
 			"  --work-dir <path>   Set the working directory inside the VM (default: /home/user)",

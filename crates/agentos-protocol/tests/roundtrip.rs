@@ -1,4 +1,4 @@
-use agent_os_protocol::generated::v1::{
+use agentos_protocol::generated::v1::{
     AcpCreateSessionRequest, AcpRequest, AcpResponse, AcpRuntimeKind, AcpSessionCreatedResponse,
 };
 

@@ -4,7 +4,7 @@ import {
 	AcpRuntimeKind,
 	decodeAcpRequest,
 	encodeAcpRequest,
-} from "../src/sidecar/agent-os-protocol.js";
+} from "../src/sidecar/agentos-protocol.js";
 
 describe("agent-os ACP protocol", () => {
 	test("round-trips create-session requests", () => {

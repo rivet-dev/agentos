@@ -6,7 +6,7 @@ import { build } from "esbuild";
 const playgroundDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const workerSourcePath = resolve(playgroundDir, "../browser/src/worker.ts");
 const workerSourceDir = dirname(workerSourcePath);
-const workerOutputPath = resolve(playgroundDir, "agent-os-worker.js");
+const workerOutputPath = resolve(playgroundDir, "agentos-worker.js");
 const appSourcePath = resolve(playgroundDir, "frontend/app.ts");
 const appOutputPath = resolve(playgroundDir, "dist/app.js");
 const runtimeHarnessSourcePath = resolve(

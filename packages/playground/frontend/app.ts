@@ -125,7 +125,7 @@ const MONACO_VS_URL = new URL("/vendor/monaco/vs", import.meta.url).href;
 const PLAYGROUND_RUNTIME_CWD = "/root";
 const PLAYGROUND_RUNTIME_HOME = "/root";
 const PLAYGROUND_RUNTIME_TMPDIR = "/tmp";
-const playgroundWorkerUrl = new URL("/agent-os-worker.js", import.meta.url);
+const playgroundWorkerUrl = new URL("/agentos-worker.js", import.meta.url);
 const playgroundRuntimeFactory = createBrowserRuntimeDriverFactory({
 	workerUrl: playgroundWorkerUrl,
 });

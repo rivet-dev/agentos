@@ -48,7 +48,7 @@ describe("WASM command permission tiers", () => {
 	}
 
 	test("sends unresolved WASM commands to the sidecar", async () => {
-		fixtureRoot = mkdtempSync(join(tmpdir(), "agent-os-wasm-tiers-"));
+		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-wasm-tiers-"));
 		const { client, execute } = createMockClient();
 
 		proxy = new NativeSidecarKernelProxy({
@@ -79,7 +79,7 @@ describe("WASM command permission tiers", () => {
 	});
 
 	test("shell-mode spawn without a guest sh fails loudly", async () => {
-		fixtureRoot = mkdtempSync(join(tmpdir(), "agent-os-wasm-tiers-"));
+		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-wasm-tiers-"));
 		const { client } = createMockClient();
 
 		proxy = new NativeSidecarKernelProxy({

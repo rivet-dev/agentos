@@ -53,7 +53,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 	}
 
 	async function captureExecutePayload() {
-		fixtureRoot = mkdtempSync(join(tmpdir(), "agent-os-allowed-builtins-"));
+		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-allowed-builtins-"));
 		const { client, execute } = createMockClient();
 
 		proxy = new NativeSidecarKernelProxy({
@@ -95,7 +95,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 	});
 
 	test("exec forwards simple node commands to the guest node driver", async () => {
-		fixtureRoot = mkdtempSync(join(tmpdir(), "agent-os-shell-exec-"));
+		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-shell-exec-"));
 		const { client, execute } = createMockClient();
 
 		proxy = new NativeSidecarKernelProxy({
@@ -125,7 +125,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 	});
 
 	test("exec rejects when the guest shell command is unavailable", async () => {
-		fixtureRoot = mkdtempSync(join(tmpdir(), "agent-os-shell-missing-"));
+		fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-shell-missing-"));
 		const { client } = createMockClient();
 
 		proxy = new NativeSidecarKernelProxy({

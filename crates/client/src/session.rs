@@ -17,12 +17,12 @@ use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use agent_os_protocol::generated::v1::{
+use agentos_protocol::generated::v1::{
     AcpCloseSessionRequest, AcpCreateSessionRequest, AcpGetSessionStateRequest, AcpRequest,
     AcpResponse, AcpRuntimeKind, AcpSessionCreatedResponse, AcpSessionRequest,
     AcpSessionStateResponse,
 };
-use agent_os_protocol::ACP_EXTENSION_NAMESPACE;
+use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_client::wire;
 
 use crate::agent_os::{AgentOs, SessionEntry};
@@ -113,7 +113,7 @@ struct AgentConfigDef {
 fn agent_config(agent_type: &str) -> Option<AgentConfigDef> {
     Some(match agent_type {
         "pi" => AgentConfigDef {
-            acp_adapter: "@rivet-dev/agent-os-pi",
+            acp_adapter: "@rivet-dev/agentos-pi",
             agent_package: "@mariozechner/pi-coding-agent",
             default_env: &[],
         },
@@ -123,15 +123,15 @@ fn agent_config(agent_type: &str) -> Option<AgentConfigDef> {
             default_env: &[],
         },
         "opencode" => AgentConfigDef {
-            acp_adapter: "@rivet-dev/agent-os-opencode",
-            agent_package: "@rivet-dev/agent-os-opencode",
+            acp_adapter: "@rivet-dev/agentos-opencode",
+            agent_package: "@rivet-dev/agentos-opencode",
             default_env: &[
                 ("OPENCODE_DISABLE_CONFIG_DEP_INSTALL", "1"),
                 ("OPENCODE_DISABLE_EMBEDDED_WEB_UI", "1"),
             ],
         },
         "claude" => AgentConfigDef {
-            acp_adapter: "@rivet-dev/agent-os-claude",
+            acp_adapter: "@rivet-dev/agentos-claude",
             agent_package: "@anthropic-ai/claude-agent-sdk",
             default_env: &[
                 ("CLAUDE_AGENT_SDK_CLIENT_APP", "@rivet-dev/agent-os"),

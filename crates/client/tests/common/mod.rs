@@ -1,15 +1,15 @@
-//! Shared e2e helpers: resolve/point at the real `agent-os-sidecar` binary and build VMs.
+//! Shared e2e helpers: resolve/point at the real `agentos-sidecar` binary and build VMs.
 //!
-//! Resolve order for the binary: `AGENT_OS_SIDECAR_BIN`, else `<workspace>/target/debug/agent-os-sidecar`.
-//! Build it first with `cargo build -p agent-os-sidecar`.
+//! Resolve order for the binary: `AGENT_OS_SIDECAR_BIN`, else `<workspace>/target/debug/agentos-sidecar`.
+//! Build it first with `cargo build -p agentos-sidecar`.
 
 #![allow(dead_code)]
 
 use std::path::PathBuf;
 use std::sync::Once;
 
-use agent_os_client::config::{AgentOsConfig, AgentOsSidecarConfig, MountConfig, MountPlugin};
-use agent_os_client::AgentOs;
+use agentos_client::config::{AgentOsConfig, AgentOsSidecarConfig, MountConfig, MountPlugin};
+use agentos_client::AgentOs;
 
 static INIT: Once = Once::new();
 
@@ -17,7 +17,7 @@ pub fn ensure_sidecar_env() {
     INIT.call_once(|| {
         if std::env::var("AGENT_OS_SIDECAR_BIN").is_err() {
             let bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../target/debug/agent-os-sidecar");
+                .join("../../target/debug/agentos-sidecar");
             // `std::env::set_var` is `unsafe` in the Rust 2024 edition (process-global mutation that
             // can race other threads reading the environment). This runs once, single-threaded, under
             // `Once::call_once` before any VM is created. The `allow` keeps it warning-free on the
@@ -54,7 +54,7 @@ pub fn require_sidecar(test_name: &str) -> bool {
         eprintln!("skipping {message}");
         false
     } else {
-        panic!("{message}; build it with `cargo build -p agent-os-sidecar` or set AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1 for local skip-only runs");
+        panic!("{message}; build it with `cargo build -p agentos-sidecar` or set AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1 for local skip-only runs");
     }
 }
 
@@ -156,7 +156,7 @@ pub fn coreutils_wasm_dir() -> Option<PathBuf> {
             }
         }
 
-        if file_name.starts_with("@rivet-dev+agent-os-coreutils@") {
+        if file_name.starts_with("@rivet-dev+agentos-coreutils@") {
             let wasm = entry
                 .path()
                 .join("node_modules/@secure-exec/coreutils/wasm");
@@ -175,10 +175,10 @@ pub async fn new_vm_with_commands() -> Option<AgentOs> {
     ensure_sidecar_env();
     let wasm_dir = coreutils_wasm_dir()?;
     let config = AgentOsConfig {
-        software: vec![agent_os_client::SoftwareInput {
+        software: vec![agentos_client::SoftwareInput {
             package: wasm_dir.to_string_lossy().into_owned(),
             version: None,
-            kind: agent_os_client::SoftwareKind::WasmCommands,
+            kind: agentos_client::SoftwareKind::WasmCommands,
         }],
         ..Default::default()
     };
@@ -193,7 +193,7 @@ pub async fn new_vm_with_commands() -> Option<AgentOs> {
 /// registry WASM command packages are absent (the common case in unbuilt trees), so the
 /// process/shell/fetch suites can gate cleanly without each re-implementing the probe.
 pub async fn wasm_commands_available(os: &AgentOs) -> bool {
-    os.exec("sh", agent_os_client::ExecOptions::default())
+    os.exec("sh", agentos_client::ExecOptions::default())
         .await
         .is_ok()
 }

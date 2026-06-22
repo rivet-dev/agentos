@@ -30,14 +30,14 @@ cat >"${FIXTURE_ROOT}/Cargo.toml" <<'EOF'
 members = [
 	"secure-exec-client",
 	"secure-exec-sidecar",
-	"agent-os-client",
+	"agentos-client",
 ]
 resolver = "2"
 EOF
 
 write_crate "secure-exec-client"
 write_crate "secure-exec-sidecar"
-write_crate "agent-os-client"
+write_crate "agentos-client"
 
 bash "${ROOT_DIR}/scripts/check-secure-exec-rust-boundary.sh" \
 	--root "${FIXTURE_ROOT}" \
@@ -45,13 +45,13 @@ bash "${ROOT_DIR}/scripts/check-secure-exec-rust-boundary.sh" \
 	--package secure-exec-sidecar
 
 cat >>"${FIXTURE_ROOT}/secure-exec-client/Cargo.toml" <<'EOF'
-agent-os-client = { path = "../agent-os-client" }
+agentos-client = { path = "../agentos-client" }
 EOF
 
 if bash "${ROOT_DIR}/scripts/check-secure-exec-rust-boundary.sh" \
 	--root "${FIXTURE_ROOT}" \
 	--package secure-exec-client >"${FAILURE_OUTPUT}" 2>&1; then
-	echo "expected Rust boundary checker to fail on agent-os-client dependency" >&2
+	echo "expected Rust boundary checker to fail on agentos-client dependency" >&2
 	exit 1
 fi
 

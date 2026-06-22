@@ -117,7 +117,7 @@ function captureSessionEventText(
  * The file-write, timeout, and abort cases depend on runtime behavior that is
  * still outstanding below the adapter layer (shell `>` redirect visibility
  * through `vm.readFile`, and a blocking guest `sleep`). They are tracked in
- * `~/.agents/todo/agent-os-runtime-fixes.md` and registered as skipped
+ * `~/.agents/todo/agentos-runtime-fixes.md` and registered as skipped
  * placeholders here so the file documents the full vanilla contract without
  * asserting behavior the runtime cannot yet deliver.
  */
@@ -254,7 +254,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 	// Blocked on shell `>` redirect output being visible to `vm.readFile()`.
 	// The redirect runs inside the guest shell but the written bytes do not
 	// reconcile to the host read path yet. Tracked in
-	// ~/.agents/todo/agent-os-runtime-fixes.md (shell-exec redirect visibility).
+	// ~/.agents/todo/agentos-runtime-fixes.md (shell-exec redirect visibility).
 	test.skip("writes a file through the default bash backend", async () => {
 		const fixtures = createBashFixtures(
 			bashToolCall({ command: "printf 'ok' > out.txt", timeout: 10 }),
@@ -298,7 +298,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 	// Blocked on a blocking guest `sleep`. The WASM `sleep` command currently
 	// fails to spawn ("operation not supported on this platform") because the
 	// host `sleep_ms` WASI import is unimplemented, so the timeout/kill path
-	// cannot be exercised. Tracked in ~/.agents/todo/agent-os-runtime-fixes.md.
+	// cannot be exercised. Tracked in ~/.agents/todo/agentos-runtime-fixes.md.
 	test.skip("enforces the bash timeout by killing the process tree", async () => {
 		const fixtures = createBashFixtures(
 			bashToolCall({ command: "sleep 30", timeout: 1 }),
@@ -346,7 +346,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 	// Blocked on the same blocking-guest-`sleep` gap as the timeout case: the
 	// in-flight bash command exits immediately instead of staying running, so
 	// the cancel-while-in-progress path cannot be observed. Tracked in
-	// ~/.agents/todo/agent-os-runtime-fixes.md.
+	// ~/.agents/todo/agentos-runtime-fixes.md.
 	test.skip("aborts an in-flight bash command on session cancel", async () => {
 		const fixtures: Fixture[] = [
 			createAnthropicFixture(

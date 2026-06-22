@@ -12,7 +12,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDevShellKernel } from "../src/index.ts";
 
-const DEV_SHELL_TMP_ROOT_PREFIX = `agent-os-dev-shell-${process.pid}-`;
+const DEV_SHELL_TMP_ROOT_PREFIX = `agentos-dev-shell-${process.pid}-`;
 type StreamWrite = (chunk: unknown, ...rest: unknown[]) => unknown;
 
 async function listDevShellTempRoots(): Promise<string[]> {
@@ -90,7 +90,7 @@ describe("dev-shell integration", { timeout: 60_000 }, () => {
 	});
 
 	it("boots the sandbox-native dev-shell surface and runs node, pi, and the Wasm shell", async () => {
-		workDir = await mkdtemp(path.join(tmpdir(), "agent-os-dev-shell-"));
+		workDir = await mkdtemp(path.join(tmpdir(), "agentos-dev-shell-"));
 		await writeFile(path.join(workDir, "note.txt"), "dev-shell\n");
 
 		shell = await createDevShellKernel({ workDir });
@@ -122,7 +122,7 @@ describe("dev-shell integration", { timeout: 60_000 }, () => {
 	});
 
 	it("resolves file listings through the Wasm shell", async () => {
-		workDir = await mkdtemp(path.join(tmpdir(), "agent-os-dev-shell-pty-"));
+		workDir = await mkdtemp(path.join(tmpdir(), "agentos-dev-shell-pty-"));
 		await writeFile(path.join(workDir, "note.txt"), "pty-dev-shell\n");
 		shell = await createDevShellKernel({ workDir });
 
@@ -138,9 +138,9 @@ describe("dev-shell integration", { timeout: 60_000 }, () => {
 
 	it("does not read or execute host-only paths outside the mounted VM roots", async () => {
 		workDir = await mkdtemp(
-			path.join(tmpdir(), "agent-os-dev-shell-isolated-"),
+			path.join(tmpdir(), "agentos-dev-shell-isolated-"),
 		);
-		hostOnlyDir = await mkdtemp("/var/tmp/agent-os-dev-shell-host-only-");
+		hostOnlyDir = await mkdtemp("/var/tmp/agentos-dev-shell-host-only-");
 		const hostOnlyFile = path.join(hostOnlyDir, "secret.txt");
 		const hostOnlyCommand = path.join(hostOnlyDir, "host-only-command.sh");
 
@@ -167,7 +167,7 @@ describe("dev-shell integration", { timeout: 60_000 }, () => {
 	});
 
 	it("keeps dev-shell writes in the VM shadow root instead of mutating the host work dir", async () => {
-		workDir = await mkdtemp(path.join(tmpdir(), "agent-os-dev-shell-shadow-"));
+		workDir = await mkdtemp(path.join(tmpdir(), "agentos-dev-shell-shadow-"));
 		const guestFilePath = path.join(workDir, "note.txt");
 		await writeFile(guestFilePath, "host-note\n");
 
@@ -187,10 +187,10 @@ describe("dev-shell integration", { timeout: 60_000 }, () => {
 
 	it("mounts /tmp on isolated per-session host temp dirs and removes them on dispose", async () => {
 		const workDirA = await mkdtemp(
-			path.join(tmpdir(), "agent-os-dev-shell-a-"),
+			path.join(tmpdir(), "agentos-dev-shell-a-"),
 		);
 		const workDirB = await mkdtemp(
-			path.join(tmpdir(), "agent-os-dev-shell-b-"),
+			path.join(tmpdir(), "agentos-dev-shell-b-"),
 		);
 		const tempRootsBefore = await listDevShellTempRoots();
 		let shellA: Awaited<ReturnType<typeof createDevShellKernel>> | undefined;
@@ -270,8 +270,8 @@ describe("dev-shell debug logger", { timeout: 60_000 }, () => {
 	});
 
 	it("writes structured debug logs to the requested file and keeps stdout/stderr clean", async () => {
-		workDir = await mkdtemp(path.join(tmpdir(), "agent-os-debug-log-"));
-		logDir = await mkdtemp(path.join(tmpdir(), "agent-os-debug-log-out-"));
+		workDir = await mkdtemp(path.join(tmpdir(), "agentos-debug-log-"));
+		logDir = await mkdtemp(path.join(tmpdir(), "agentos-debug-log-out-"));
 		const logPath = path.join(logDir, "debug.ndjson");
 
 		// Capture process stdout/stderr to detect any contamination.
@@ -347,8 +347,8 @@ describe("dev-shell debug logger", { timeout: 60_000 }, () => {
 	});
 
 	it("emits kernel diagnostic records for spawn, process exit, and PTY operations", async () => {
-		workDir = await mkdtemp(path.join(tmpdir(), "agent-os-debug-diag-"));
-		logDir = await mkdtemp(path.join(tmpdir(), "agent-os-debug-diag-out-"));
+		workDir = await mkdtemp(path.join(tmpdir(), "agentos-debug-diag-"));
+		logDir = await mkdtemp(path.join(tmpdir(), "agentos-debug-diag-out-"));
 		const logPath = path.join(logDir, "debug.ndjson");
 
 		shell = await createDevShellKernel({
@@ -406,9 +406,9 @@ describe("dev-shell debug logger", { timeout: 60_000 }, () => {
 	});
 
 	it("redacts secret keys in log records", async () => {
-		workDir = await mkdtemp(path.join(tmpdir(), "agent-os-debug-log-redact-"));
+		workDir = await mkdtemp(path.join(tmpdir(), "agentos-debug-log-redact-"));
 		logDir = await mkdtemp(
-			path.join(tmpdir(), "agent-os-debug-log-redact-out-"),
+			path.join(tmpdir(), "agentos-debug-log-redact-out-"),
 		);
 		const logPath = path.join(logDir, "debug.ndjson");
 

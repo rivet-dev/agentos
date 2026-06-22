@@ -254,7 +254,7 @@ export const WORKLOADS: Record<string, Workload> = {
 		agentId: "pi",
 		description: "VM with PI agent session via createSession",
 		software: [pi],
-		processMarker: "agent-os-pi",
+		processMarker: "agentos-pi",
 	}),
 	"pi-prompt-turn": makeAgentPromptWorkload({
 		agentId: "pi-cli",
@@ -268,7 +268,7 @@ export const WORKLOADS: Record<string, Workload> = {
 		agentId: "claude",
 		description: "VM with Claude agent session via createSession",
 		software: [claude],
-		processMarker: "agent-os-claude",
+		processMarker: "agentos-claude",
 	}),
 };
 

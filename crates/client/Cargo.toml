@@ -1,5 +1,5 @@
 [package]
-name = "agent-os-client"
+name = "agentos-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,8 +10,8 @@ description = "High-level Rust client SDK for the Agent OS native sidecar (1:1 p
 # Reuse the secure-exec BARE wire schema + IPC transport. No new wire types are defined here.
 secure-exec-client = { workspace = true }
 secure-exec-vm-config = { workspace = true }
-agent-os-protocol = { workspace = true }
-agent-os-bridge = { workspace = true }
+agentos-protocol = { workspace = true }
+agentos-bridge = { workspace = true }
 
 anyhow = "1"
 async-trait = "0.1"

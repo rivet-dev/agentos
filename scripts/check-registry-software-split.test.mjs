@@ -20,7 +20,7 @@ function writeJson(root, rel, value) {
 	writeFileSync(path, `${JSON.stringify(value, null, "\t")}\n`);
 }
 
-test("accepts agent-os-pkgs registry software package metadata", () => {
+test("accepts agentos-pkgs registry software package metadata", () => {
 	withFixture((root) => {
 		writeJson(root, "registry/software/coreutils/package.json", {
 			name: "@agentos-software/coreutils",
@@ -41,13 +41,13 @@ test("rejects stale Agent OS package names and metadata files", () => {
 		writeJson(root, "registry/software/grep/package.json", {
 			name: "@rivet-dev/agentos-grep",
 		});
-		writeJson(root, "registry/software/grep/agent-os-package.json", {
+		writeJson(root, "registry/software/grep/agentos-package.json", {
 			name: "@rivet-dev/agentos-grep",
 		});
 
 		assert.deepEqual(checkRegistrySoftwareSplit({ root }), [
 			"registry/software/grep/package.json must be named @agentos-software/grep, found @rivet-dev/agentos-grep",
-			"registry/software/grep/agent-os-package.json must be renamed to secure-exec-package.json",
+			"registry/software/grep/agentos-package.json must be renamed to secure-exec-package.json",
 			"registry/software/grep/secure-exec-package.json is required",
 		]);
 	});

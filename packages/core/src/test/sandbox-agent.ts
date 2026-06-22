@@ -232,7 +232,7 @@ async function runCommand(request: {
 }
 
 export async function startMockSandboxAgent(): Promise<MockSandboxAgentHandle> {
-	const rootDir = await mkdtemp(resolve(tmpdir(), "agent-os-sandbox-agent-"));
+	const rootDir = await mkdtemp(resolve(tmpdir(), "agentos-sandbox-agent-"));
 	const processes = new Map<string, ManagedProcess>();
 
 	const server = createServer(async (request, response) => {

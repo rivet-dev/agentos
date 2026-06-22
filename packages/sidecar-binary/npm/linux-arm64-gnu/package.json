@@ -18,7 +18,7 @@
 		"glibc"
 	],
 	"files": [
-		"agent-os-sidecar"
+		"agentos-sidecar"
 	],
 	"engines": {
 		"node": ">=20"

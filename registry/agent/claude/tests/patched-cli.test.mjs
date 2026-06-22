@@ -35,7 +35,7 @@ test("build writes patched Claude CLI and SDK manifests to dist", () => {
 });
 
 test("patched-path helpers fall back to the upstream SDK when manifests are missing", () => {
-	const tempDir = mkdtempSync(resolvePath(tmpdir(), "agent-os-claude-test-"));
+	const tempDir = mkdtempSync(resolvePath(tmpdir(), "agentos-claude-test-"));
 	try {
 		assert.equal(
 			resolveClaudeCliPath({ packageDir: tempDir, sdkPath }),
@@ -48,7 +48,7 @@ test("patched-path helpers fall back to the upstream SDK when manifests are miss
 });
 
 test("patched-path helpers resolve custom manifest entries from dist", () => {
-	const tempDir = mkdtempSync(resolvePath(tmpdir(), "agent-os-claude-test-"));
+	const tempDir = mkdtempSync(resolvePath(tmpdir(), "agentos-claude-test-"));
 	try {
 		const distDir = resolvePath(tempDir, "dist");
 		mkdirSync(distDir, { recursive: true });

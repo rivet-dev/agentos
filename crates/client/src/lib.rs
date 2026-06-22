@@ -1,12 +1,12 @@
 #![forbid(unsafe_code)]
 
-//! # agent-os-client
+//! # agentos-client
 //!
 //! High-level Rust client SDK for the Agent OS native sidecar. This is a 1:1 port of the TypeScript
 //! `AgentOs` client (`packages/core/src/agent-os.ts`): every public method, option type, return
 //! type, event, and error maps across with identical semantics.
 //!
-//! The client spawns the native `agent-os-sidecar` binary and speaks the existing framed BARE
+//! The client spawns the native `agentos-sidecar` binary and speaks the existing framed BARE
 //! protocol over its stdio (see [`transport`]). It does NOT embed the kernel in-process and does NOT
 //! define a new sidecar wire protocol. The generated Secure Exec schema surface comes from
 //! `secure_exec_client::wire`; Agent OS layers ACP/session semantics on top of those generated wire

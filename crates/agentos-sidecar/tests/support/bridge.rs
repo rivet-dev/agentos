@@ -1,4 +1,4 @@
-use agent_os_bridge::{
+use agentos_bridge::{
     BridgeTypes, ChmodRequest, ClockBridge, ClockRequest, CommandPermissionRequest,
     CreateDirRequest, CreateJavascriptContextRequest, CreateWasmContextRequest, DiagnosticRecord,
     DirectoryEntry, EnvironmentPermissionRequest, EventBridge, ExecutionBridge, ExecutionEvent,

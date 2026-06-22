@@ -44,7 +44,7 @@ registry/native/c/libs/
 registry/native/c/.cache/
 registry/native/c/sysroot/
 registry/software/*/wasm/
-registry/software/*/agent-os-package.meta.json
+registry/software/*/agentos-package.meta.json
 registry/.last-publish-hash
 registry/software/*/.last-publish-hash
 registry/.build-markers/
@@ -66,7 +66,7 @@ scripts/ralph/.codex-last-msg-*
 # Local caches and stray outputs
 crates/execution/assets/v8-bridge.js
 crates/execution/assets/v8-bridge-zlib.js
-crates/execution/.agent-os-pyodide-cache/
+crates/execution/.agentos-pyodide-cache/
 crates/execution/async-out.txt
 crates/sidecar/.tmp-sidecar-tests/
 packages/browser/.cache/

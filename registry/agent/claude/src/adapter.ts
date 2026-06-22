@@ -70,9 +70,9 @@ const traceFile = process.env.CLAUDE_CODE_TRACE_FILE;
 
 function traceAdapter(message: string): void {
 	if (!traceAdapterMessages) return;
-	process.stderr.write(`[agent-os-claude] ${message}\n`);
+	process.stderr.write(`[agentos-claude] ${message}\n`);
 	if (traceFile) {
-		appendFileSync(traceFile, `[agent-os-claude] ${message}\n`);
+		appendFileSync(traceFile, `[agentos-claude] ${message}\n`);
 	}
 }
 
@@ -94,7 +94,7 @@ async function loadPatchedClaudeSdkRuntime(): Promise<
 }
 
 function ensureClaudeCliWrapper(originalCliPath: string): string {
-	const cacheDir = resolvePath(tmpdir(), "agent-os-claude-sdk");
+	const cacheDir = resolvePath(tmpdir(), "agentos-claude-sdk");
 	mkdirSync(cacheDir, { recursive: true });
 
 const wrapperSource = `#!/usr/bin/env node
@@ -132,29 +132,29 @@ if (swapStdio) {
 }
 
 process.stderr.write(
-	"[agent-os-claude] wrapper_start cli=" + originalCliPath + "\\n",
+	"[agentos-claude] wrapper_start cli=" + originalCliPath + "\\n",
 );
 wrapperTrace(
-	"[agent-os-claude] wrapper_start cli=" + originalCliPath,
+	"[agentos-claude] wrapper_start cli=" + originalCliPath,
 );
 process.stderr.write(
-	"[agent-os-claude] wrapper_argv " +
+	"[agentos-claude] wrapper_argv " +
 		JSON.stringify(process.argv) +
 		"\\n",
 );
 wrapperTrace(
-	"[agent-os-claude] wrapper_argv " + JSON.stringify(process.argv),
+	"[agentos-claude] wrapper_argv " + JSON.stringify(process.argv),
 );
 
 process.on("unhandledRejection", (error) => {
 	process.stderr.write(
-		"[agent-os-claude] unhandledRejection " + inspect(error, { depth: 6 }) + "\\n",
+		"[agentos-claude] unhandledRejection " + inspect(error, { depth: 6 }) + "\\n",
 	);
 });
 
 process.on("uncaughtException", (error) => {
 	process.stderr.write(
-		"[agent-os-claude] uncaughtException " + inspect(error, { depth: 6 }) + "\\n",
+		"[agentos-claude] uncaughtException " + inspect(error, { depth: 6 }) + "\\n",
 	);
 });
 
@@ -162,7 +162,7 @@ function writeTrace(label, value) {
 	if (!traceExit) return;
 	const stack = new Error().stack ?? "";
 	process.stderr.write(
-		"[agent-os-claude] " +
+		"[agentos-claude] " +
 			label +
 			" " +
 			inspect(value, { depth: 4, breakLength: Infinity }) +
@@ -238,7 +238,7 @@ for (const stream of [process.stdout, process.stderr]) {
 if (traceStdio) {
 	realStdin.on("data", (chunk) => {
 		process.stderr.write(
-			"[agent-os-claude] stdin_chunk " +
+			"[agentos-claude] stdin_chunk " +
 				JSON.stringify(String(chunk)).slice(0, 4000) +
 				"\\n",
 		);
@@ -247,7 +247,7 @@ if (traceStdio) {
 	const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 	process.stdout.write = function (chunk, encoding, callback) {
 		process.stderr.write(
-			"[agent-os-claude] stdout_chunk " +
+			"[agentos-claude] stdout_chunk " +
 				JSON.stringify(
 					typeof chunk === "string"
 						? chunk

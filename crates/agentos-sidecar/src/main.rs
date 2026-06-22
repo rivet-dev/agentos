@@ -9,9 +9,9 @@ fn main() {
         .with_max_level(tracing::Level::ERROR)
         .init();
     if let Err(error) =
-        secure_exec_sidecar::stdio::run_with_extensions(agent_os_sidecar_wrapper::extensions())
+        secure_exec_sidecar::stdio::run_with_extensions(agentos_sidecar_wrapper::extensions())
     {
-        tracing::error!(?error, "agent-os-sidecar startup failed");
+        tracing::error!(?error, "agentos-sidecar startup failed");
         std::process::exit(1);
     }
 }

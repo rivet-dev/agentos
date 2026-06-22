@@ -35,8 +35,8 @@ run_step node --test scripts/check-rust-package-metadata.test.mjs
 run_step node scripts/check-rust-package-metadata.mjs
 run_step node --test scripts/check-stale-split-names.test.mjs
 run_step node scripts/check-stale-split-names.mjs
-run_step node --test scripts/check-agent-os-client-protocol-compat.test.mjs
-run_step node scripts/check-agent-os-client-protocol-compat.mjs
+run_step node --test scripts/check-agentos-client-protocol-compat.test.mjs
+run_step node scripts/check-agentos-client-protocol-compat.mjs
 run_step node --test scripts/check-registry-test-runtime-boundary.test.mjs
 run_step node scripts/check-registry-test-runtime-boundary.mjs
 run_step node --test scripts/check-registry-software-split.test.mjs
@@ -48,10 +48,10 @@ run_step cargo clippy --workspace --all-targets -- -D warnings
 # Agent OS owns only the wrapper crates; the generic runtime crates
 # (v8-runtime/execution/kernel/bridge/sidecar/client) live in ../secure-exec and
 # are tested by secure-exec's own CI.
-run_step cargo test -p agent-os-protocol -- --test-threads=1
-run_step cargo test -p agent-os-sidecar -- --test-threads=1
-run_step cargo test -p agent-os-sidecar-browser -- --test-threads=1
-run_step cargo test -p agent-os-client -- --test-threads=1
+run_step cargo test -p agentos-protocol -- --test-threads=1
+run_step cargo test -p agentos-sidecar -- --test-threads=1
+run_step cargo test -p agentos-sidecar-browser -- --test-threads=1
+run_step cargo test -p agentos-client -- --test-threads=1
 run_step pnpm check-types
 run_step pnpm lint
 

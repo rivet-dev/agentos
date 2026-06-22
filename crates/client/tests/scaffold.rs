@@ -1,11 +1,11 @@
-//! Integration test scaffold for `agent-os-client`.
+//! Integration test scaffold for `agentos-client`.
 //!
 //! Per repo rules, integration tests live under `tests/` (one module per SDK module, real
 //! sidecar/kernel/fs, no mocks). The actual per-module suites land alongside their method
 //! implementations. This file only asserts the crate's public surface is wired so the test target
 //! compiles before any method bodies exist.
 
-use agent_os_client::{
+use agentos_client::{
     ACP_PROTOCOL_VERSION, CLOSED_SESSION_ID_RETENTION_LIMIT, CRON_JOB_LIMIT, PERMISSION_TIMEOUT_MS,
     SHELL_DISPOSE_TIMEOUT_MS, VM_READY_TIMEOUT_MS,
 };

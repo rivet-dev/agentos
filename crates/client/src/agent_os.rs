@@ -16,11 +16,11 @@ use serde_json::{Map, Value};
 use tokio::sync::{broadcast, oneshot, watch};
 use tokio::task::JoinHandle;
 
-use agent_os_protocol::generated::v1::{
+use agentos_protocol::generated::v1::{
     AcpCallback, AcpCallbackResponse, AcpEvent, AcpHostRequestCallbackResponse,
     AcpPermissionCallbackResponse,
 };
-use agent_os_protocol::ACP_EXTENSION_NAMESPACE;
+use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_client::wire;
 use secure_exec_vm_config as vm_config;
 
@@ -2926,7 +2926,7 @@ mod tests {
                     RootLowerInput::SnapshotExport(RootSnapshotExport {
                         kind: SnapshotExportKind::SnapshotExport,
                         source: FilesystemSnapshotExport {
-                            format: "agent-os-filesystem-snapshot-v1".to_string(),
+                            format: "agentos-filesystem-snapshot-v1".to_string(),
                             filesystem: FilesystemSnapshotEntries {
                                 entries: vec![
                                     FilesystemEntry {
@@ -2987,7 +2987,7 @@ mod tests {
                 native_plugin: Some(MountPlugin {
                     id: "sqlite_vfs".to_string(),
                     config: Some(serde_json::json!({
-                        "databasePath": "/tmp/agent-os-root.sqlite"
+                        "databasePath": "/tmp/agentos-root.sqlite"
                     })),
                 }),
                 ..Default::default()
@@ -3000,7 +3000,7 @@ mod tests {
         assert_eq!(native_root.plugin.id, "sqlite_vfs");
         assert_eq!(
             native_root.plugin.config,
-            serde_json::json!({ "databasePath": "/tmp/agent-os-root.sqlite" })
+            serde_json::json!({ "databasePath": "/tmp/agentos-root.sqlite" })
         );
         assert!(native_root.read_only);
     }

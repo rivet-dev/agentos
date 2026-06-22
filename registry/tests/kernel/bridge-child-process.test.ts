@@ -517,7 +517,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('execFileSync on node_modules/.bin shell shims unwraps to the node entrypoint', async () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), 'agent-os-node-bin-shim-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'agentos-node-bin-shim-'));
     cleanupPaths.push(projectRoot);
 
     mkdirSync(join(projectRoot, 'node_modules', '.bin'), { recursive: true });
@@ -576,7 +576,7 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
   });
 
   it('execFileSync unwraps shell shims whose node entrypoint has no shebang or extension', async () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), 'agent-os-node-bin-shim-no-shebang-'));
+    const projectRoot = mkdtempSync(join(tmpdir(), 'agentos-node-bin-shim-no-shebang-'));
     cleanupPaths.push(projectRoot);
 
     mkdirSync(join(projectRoot, 'node_modules', '.bin'), { recursive: true });

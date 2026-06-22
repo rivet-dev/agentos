@@ -49,8 +49,8 @@
 	"scripts": {
 		"check-types": "pnpm run build:protocols && tsc --noEmit",
 		"build": "pnpm run build:protocols && tsc",
-		"build:agent-os-protocol": "node ./scripts/compile-agent-os-protocol.mjs",
-		"build:protocols": "pnpm run build:agent-os-protocol",
+		"build:agentos-protocol": "node ./scripts/compile-agentos-protocol.mjs",
+		"build:protocols": "pnpm run build:agentos-protocol",
 		"test": "vitest run --reporter=verbose"
 	},
 	"dependencies": {
@@ -74,7 +74,7 @@
 		"@browserbasehq/sdk": "2.10.0",
 		"@bare-ts/tools": "0.15.0",
 		"@copilotkit/llmock": "^1.6.0",
-		"@rivet-dev/agentos-sandbox": "link:../agent-os-sandbox",
+		"@rivet-dev/agentos-sandbox": "link:../agentos-sandbox",
 		"@agentos-software/git": "catalog:",
 		"@secure-exec/google-drive": "catalog:",
 		"@secure-exec/s3": "catalog:",

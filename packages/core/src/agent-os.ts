@@ -215,7 +215,7 @@ import {
 	decodeAcpResponse,
 	encodeAcpCallbackResponse,
 	encodeAcpRequest,
-} from "./sidecar/agent-os-protocol.js";
+} from "./sidecar/agentos-protocol.js";
 import { serializePermissionsForSidecar } from "./sidecar/permissions.js";
 import {
 	type AgentOsSidecarClient,
@@ -1053,7 +1053,7 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 const NODE_RUNTIME_BOOTSTRAP_COMMANDS = ["node", "npm", "npx"] as const;
 const KERNEL_COMMAND_STUB = "#!/bin/sh\n# kernel command stub\n";
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agent-os-sidecar");
+const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
 const SIDECAR_BUILD_INPUTS = [
 	join(REPO_ROOT, "Cargo.toml"),
 	join(REPO_ROOT, "Cargo.lock"),
@@ -1185,7 +1185,7 @@ function prepareCommandDirs(
 				continue;
 			}
 
-			const aliasDir = mkdtempSync(join(tmpdir(), "agent-os-command-aliases-"));
+			const aliasDir = mkdtempSync(join(tmpdir(), "agentos-command-aliases-"));
 			for (const [aliasName, sourcePath] of aliasEntries) {
 				writeFileSync(join(aliasDir, aliasName), readFileSync(sourcePath));
 			}
@@ -1428,14 +1428,14 @@ function ensureNativeSidecarBinary(): string {
 	if (sidecarBinaryNeedsBuild()) {
 		const cargoBinary = findCargoBinary();
 		if (cargoBinary) {
-			execFileSync(cargoBinary, ["build", "-q", "-p", "agent-os-sidecar"], {
+			execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
 				cwd: REPO_ROOT,
 				stdio: "pipe",
 			});
 		} else if (!existsSync(SIDECAR_BINARY)) {
 			execFileSync(
 				resolveCargoBinary(),
-				["build", "-q", "-p", "agent-os-sidecar"],
+				["build", "-q", "-p", "agentos-sidecar"],
 				{
 					cwd: REPO_ROOT,
 					stdio: "pipe",
@@ -1638,7 +1638,7 @@ function collectSidecarMountPlan(options: {
 }
 
 function materializeToolShimDir(toolKits: ToolKit[]): string {
-	const shimDir = mkdtempSync(join(tmpdir(), "agent-os-host-tools-shims-"));
+	const shimDir = mkdtempSync(join(tmpdir(), "agentos-host-tools-shims-"));
 	writeFileSync(join(shimDir, "agentos"), KERNEL_COMMAND_STUB, { mode: 0o755 });
 
 	for (const toolKit of toolKits) {
@@ -5069,7 +5069,7 @@ export class AgentOsSidecar {
 function createAgentOsSidecarInternal(
 	options: AgentOsCreateSidecarOptions = {},
 ): AgentOsSidecar {
-	const sidecarId = options.sidecarId ?? `agent-os-sidecar-${randomUUID()}`;
+	const sidecarId = options.sidecarId ?? `agentos-sidecar-${randomUUID()}`;
 	return new AgentOsSidecar(sidecarId, {
 		kind: "explicit",
 		sidecarId,
@@ -5111,7 +5111,7 @@ function getSharedAgentOsSidecarInternal(
 	}
 
 	const sidecar = new AgentOsSidecar(
-		`agent-os-shared-sidecar:${pool}`,
+		`agentos-shared-sidecar:${pool}`,
 		{ kind: "shared", ...(pool ? { pool } : {}) },
 		pool,
 	);

@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       # Check out the secure-exec sibling repo that packages/core links to via
       # `"@secure-exec/core": "link:../../../secure-exec/packages/core"`. That
-      # link resolves to `<agent-os-root>/../secure-exec/packages/core`, i.e.
+      # link resolves to `<agentos-root>/../secure-exec/packages/core`, i.e.
       # `$GITHUB_WORKSPACE/../secure-exec/packages/core`. actions/checkout can
       # only write inside the workspace, so we check out into a subdir and then
       # symlink it to the sibling path the link expects.
@@ -56,8 +56,8 @@ jobs:
       - run: node scripts/check-rust-package-metadata.mjs
       - run: node --test scripts/check-stale-split-names.test.mjs
       - run: node scripts/check-stale-split-names.mjs
-      - run: node --test scripts/check-agent-os-client-protocol-compat.test.mjs
-      - run: node scripts/check-agent-os-client-protocol-compat.mjs
+      - run: node --test scripts/check-agentos-client-protocol-compat.test.mjs
+      - run: node scripts/check-agentos-client-protocol-compat.mjs
       - run: node --test scripts/check-registry-test-runtime-boundary.test.mjs
       - run: node scripts/check-registry-test-runtime-boundary.mjs
       - run: node --test scripts/check-registry-software-split.test.mjs
@@ -66,10 +66,10 @@ jobs:
       - run: node scripts/check-secure-exec-package-boundary.mjs
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test -p agent-os-protocol -- --test-threads=1
-      - run: cargo test -p agent-os-sidecar -- --test-threads=1
-      - run: cargo test -p agent-os-sidecar-browser -- --test-threads=1
-      - run: cargo test -p agent-os-client -- --test-threads=1
+      - run: cargo test -p agentos-protocol -- --test-threads=1
+      - run: cargo test -p agentos-sidecar -- --test-threads=1
+      - run: cargo test -p agentos-sidecar-browser -- --test-threads=1
+      - run: cargo test -p agentos-client -- --test-threads=1
         env:
           AGENT_OS_CLIENT_ALLOW_E2E_SKIPS: '1'
       - run: pnpm check-types

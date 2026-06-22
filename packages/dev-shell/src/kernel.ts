@@ -19,7 +19,7 @@ import { collectShellEnv, resolveWorkspacePaths } from "./shared.js";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const moduleRequire = createRequire(import.meta.url);
-const DEV_SHELL_TMP_ROOT_PREFIX = `agent-os-dev-shell-${process.pid}-`;
+const DEV_SHELL_TMP_ROOT_PREFIX = `agentos-dev-shell-${process.pid}-`;
 export interface DevShellOptions {
 	workDir?: string;
 	mountWasm?: boolean;

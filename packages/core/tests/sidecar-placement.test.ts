@@ -28,7 +28,7 @@ describe("AgentOs sidecar placement", () => {
 
 	test("accepts explicit sidecar handle injection", async () => {
 		const sidecar = await AgentOs.createSidecar({
-			sidecarId: "agent-os-explicit-test-sidecar",
+			sidecarId: "agentos-explicit-test-sidecar",
 		});
 		const vm = await AgentOs.create({
 			sidecar: {
@@ -40,10 +40,10 @@ describe("AgentOs sidecar placement", () => {
 		try {
 			expect(vm.sidecar).toBe(sidecar);
 			expect(sidecar.describe()).toMatchObject({
-				sidecarId: "agent-os-explicit-test-sidecar",
+				sidecarId: "agentos-explicit-test-sidecar",
 				placement: {
 					kind: "explicit",
-					sidecarId: "agent-os-explicit-test-sidecar",
+					sidecarId: "agentos-explicit-test-sidecar",
 				},
 				state: "ready",
 				activeVmCount: 1,

@@ -3,7 +3,7 @@
 //! clean, isolated monorepo generated in Docker by
 //! `crates/sidecar/tests/fixtures/gen-pm-layouts.sh` (one node_modules per
 //! package manager). Point `PM_LAYOUTS_DIR` at that output and run:
-//!   PM_LAYOUTS_DIR=/path cargo test -p agent-os-client --test module_layout_e2e -- --nocapture
+//!   PM_LAYOUTS_DIR=/path cargo test -p agentos-client --test module_layout_e2e -- --nocapture
 //!
 //! This is a pure filesystem inspection (no VM): it proves that the failing
 //! package managers lay a transitive/direct dep into a store dir that escapes the

@@ -13,11 +13,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use agent_os_client::config::{
+use agentos_client::config::{
     AgentOsConfig, AgentOsSidecarConfig, FsPermissions, HostTool, PatternPermissions,
     PermissionMode, Permissions, ToolKit,
 };
-use agent_os_client::{AgentOs, CreateSessionOptions};
+use agentos_client::{AgentOs, CreateSessionOptions};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -76,18 +76,18 @@ fn allow_all_permissions() -> Permissions {
     }
 }
 
-/// Lay out a fake `node_modules/@rivet-dev/agent-os-pi` whose `bin` resolves to the mock adapter,
+/// Lay out a fake `node_modules/@rivet-dev/agentos-pi` whose `bin` resolves to the mock adapter,
 /// so the client's `resolve_package_bin("pi")` path projects it into the guest at
-/// `/root/node_modules/@rivet-dev/agent-os-pi/adapter.mjs` and the sidecar launches it.
+/// `/root/node_modules/@rivet-dev/agentos-pi/adapter.mjs` and the sidecar launches it.
 fn write_mock_pi_adapter(module_access_cwd: &std::path::Path) {
     let package_dir = module_access_cwd
         .join("node_modules")
         .join("@rivet-dev")
-        .join("agent-os-pi");
+        .join("agentos-pi");
     std::fs::create_dir_all(&package_dir).expect("create mock adapter package dir");
     std::fs::write(
         package_dir.join("package.json"),
-        r#"{ "name": "@rivet-dev/agent-os-pi", "version": "0.0.0", "bin": "./adapter.mjs" }"#,
+        r#"{ "name": "@rivet-dev/agentos-pi", "version": "0.0.0", "bin": "./adapter.mjs" }"#,
     )
     .expect("write mock adapter package.json");
     let adapter = MOCK_ACP_ADAPTER.replace(
@@ -107,7 +107,7 @@ async fn launch_pi_session_with_tools_and_read_argv(
     tool_kits: Vec<ToolKit>,
 ) -> Vec<String> {
     let module_access_dir = std::env::temp_dir().join(format!(
-        "agent-os-client-os-instructions-{}",
+        "agentos-client-os-instructions-{}",
         Uuid::new_v4()
     ));
     write_mock_pi_adapter(&module_access_dir);
@@ -170,7 +170,7 @@ fn injected_prompt(argv: &[String]) -> &str {
 async fn create_session_injects_assembled_system_prompt() {
     if !common::sidecar_available() {
         panic!(
-            "create_session_injects_assembled_system_prompt: sidecar binary is not built; build it with `cargo build -p agent-os-sidecar`"
+            "create_session_injects_assembled_system_prompt: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
         );
     }
     common::ensure_sidecar_env();
@@ -196,7 +196,7 @@ async fn create_session_injects_assembled_system_prompt() {
 async fn create_session_injects_host_tool_reference_from_client_config() {
     if !common::sidecar_available() {
         panic!(
-            "create_session_injects_host_tool_reference_from_client_config: sidecar binary is not built; build it with `cargo build -p agent-os-sidecar`"
+            "create_session_injects_host_tool_reference_from_client_config: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
         );
     }
     common::ensure_sidecar_env();
@@ -238,7 +238,7 @@ async fn create_session_injects_host_tool_reference_from_client_config() {
 async fn create_session_skip_os_instructions_drops_base_but_keeps_additional() {
     if !common::sidecar_available() {
         panic!(
-            "create_session_skip_os_instructions_drops_base_but_keeps_additional: sidecar binary is not built; build it with `cargo build -p agent-os-sidecar`"
+            "create_session_skip_os_instructions_drops_base_but_keeps_additional: sidecar binary is not built; build it with `cargo build -p agentos-sidecar`"
         );
     }
     common::ensure_sidecar_env();

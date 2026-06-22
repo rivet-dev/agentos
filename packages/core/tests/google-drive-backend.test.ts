@@ -49,7 +49,7 @@ describe("Google Drive filesystem backend", () => {
 								privateKey: privateKey!,
 							},
 							folderId: folderId!,
-							keyPrefix: `agent-os-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+							keyPrefix: `agentos-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 							chunkSize: 16,
 							inlineThreshold: 8,
 						}),

@@ -1,4 +1,4 @@
-//! Port-based virtual `fetch` e2e against a real `agent-os-sidecar`.
+//! Port-based virtual `fetch` e2e against a real `agentos-sidecar`.
 //!
 //! `fetch` dispatches to a guest HTTP server listening on a port INSIDE the kernel (never the host).
 //! Standing up that guest listener requires the V8/JS guest runtime, which may be broken in this
@@ -15,7 +15,7 @@
 
 mod common;
 
-use agent_os_client::AgentOs;
+use agentos_client::AgentOs;
 use bytes::Bytes;
 use futures::StreamExt;
 
@@ -85,7 +85,7 @@ const server = http.createServer((req, res) => {{
   req.on("data", (chunk) => chunks.push(chunk));
   req.on("end", () => {{
     res.writeHead(200, {{ "content-type": "text/plain" }});
-    res.end([req.method, req.url, req.headers["x-agent-os-test"] || "", Buffer.concat(chunks).toString()].join("\n"));
+    res.end([req.method, req.url, req.headers["x-agentos-test"] || "", Buffer.concat(chunks).toString()].join("\n"));
   }});
 }});
 server.listen({port}, "127.0.0.1", () => console.log("READY"));
@@ -135,7 +135,7 @@ server.listen({port}, "127.0.0.1", () => console.log("READY"));
     let post_request = http::Request::builder()
         .method(http::Method::POST)
         .uri("http://guest.local/echo-body")
-        .header("x-agent-os-test", "header-value")
+        .header("x-agentos-test", "header-value")
         .body(post_body.clone())
         .expect("build POST request");
     let response = fetch_tolerant(&os, port, post_request)

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "agent-os-shell": "./dist/main.js"
+    "agentos-shell": "./dist/main.js"
   },
   "scripts": {
     "build": "tsc",

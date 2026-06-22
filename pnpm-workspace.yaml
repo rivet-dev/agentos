@@ -1,5 +1,5 @@
 packages:
-  - packages/agent-os-sandbox
+  - packages/agentos-sandbox
   - packages/browser
   - packages/core
   - packages/dev-shell

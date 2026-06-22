@@ -1,4 +1,4 @@
-//! Cron e2e against a real `agent-os-sidecar`. Cron is client-side logic (CronManager +
+//! Cron e2e against a real `agentos-sidecar`. Cron is client-side logic (CronManager +
 //! TimerScheduleDriver); a `Callback` action runs in-process, so this needs no V8/WASM.
 //!
 //! Covers: a near-future one-shot callback actually fires and emits Fire/Complete events, and the
@@ -9,7 +9,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_os_client::{CronAction, CronEvent, CronJobOptions};
+use agentos_client::{CronAction, CronEvent, CronJobOptions};
 use chrono::Utc;
 
 #[tokio::test]

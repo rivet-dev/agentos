@@ -50,7 +50,7 @@ test("preserves sync filesystem and module loading parity in a real Chromium wor
 		await createRuntime(page);
 
 	expect(crossOriginIsolated).toBe(true);
-	expect(workerUrl).toContain("/agent-os-worker.js");
+	expect(workerUrl).toContain("/agentos-worker.js");
 
 	const filesystemRoundTrip = await execRuntime(
 		page,
