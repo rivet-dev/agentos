@@ -1,6 +1,6 @@
 // Platform-specific resolver for the prebuilt agent-os actor plugin cdylib
 // (`libagentos_actor_plugin.{so,dylib,dll}`). Mirrors the sidecar-binary
-// resolver (`@rivet-dev/agent-os-sidecar`): the library ships inside one of the
+// resolver (`@rivet-dev/agentos-sidecar`): the library ships inside one of the
 // `@rivet-dev/agentos-plugin-<platform>` packages, declared as
 // optionalDependencies so npm installs only the one matching the current
 // `os`/`cpu`/`libc` at install time (spec phase 6).

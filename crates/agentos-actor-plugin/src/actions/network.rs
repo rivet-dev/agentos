@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use agent_os_client::AgentOs;
+use agentos_client::AgentOs;
 use anyhow::Result;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};

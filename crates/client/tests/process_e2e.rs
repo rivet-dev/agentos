@@ -1,4 +1,4 @@
-//! Process e2e against a real `agent-os-sidecar`.
+//! Process e2e against a real `agentos-sidecar`.
 //!
 //! `exec`/`spawn` require WASM command packages (sh/echo/cat). This suite fails fast by default when
 //! those packages are unavailable; set `AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1` only for local skip-only
@@ -12,7 +12,7 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
-use agent_os_client::{ClientError, ExecOptions, SpawnOptions, StdinInput};
+use agentos_client::{ClientError, ExecOptions, SpawnOptions, StdinInput};
 use futures::StreamExt;
 
 #[tokio::test]

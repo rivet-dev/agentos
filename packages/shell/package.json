@@ -1,5 +1,5 @@
 {
-  "name": "@rivet-dev/agent-os-shell",
+  "name": "@rivet-dev/agentos-shell",
   "private": true,
   "type": "module",
   "bin": {
@@ -12,17 +12,17 @@
     "test": "pnpm build && vitest run --fileParallelism=false"
   },
   "dependencies": {
-    "@rivet-dev/agent-os-core": "workspace:*",
-    "@agent-os-pkgs/common": "link:../../../secure-exec/registry/software/common",
-    "@agent-os-pkgs/jq": "link:../../../secure-exec/registry/software/jq",
-    "@agent-os-pkgs/ripgrep": "link:../../../secure-exec/registry/software/ripgrep",
-    "@agent-os-pkgs/fd": "link:../../../secure-exec/registry/software/fd",
-    "@agent-os-pkgs/tree": "link:../../../secure-exec/registry/software/tree",
-    "@agent-os-pkgs/file": "link:../../../secure-exec/registry/software/file",
-    "@agent-os-pkgs/zip": "link:../../../secure-exec/registry/software/zip",
-    "@agent-os-pkgs/unzip": "link:../../../secure-exec/registry/software/unzip",
-    "@agent-os-pkgs/yq": "link:../../../secure-exec/registry/software/yq",
-    "@agent-os-pkgs/codex": "link:../../../secure-exec/registry/software/codex"
+    "@rivet-dev/agentos-core": "workspace:*",
+    "@agent-os-pkgs/common": "catalog:",
+    "@agent-os-pkgs/jq": "catalog:",
+    "@agent-os-pkgs/ripgrep": "catalog:",
+    "@agent-os-pkgs/fd": "catalog:",
+    "@agent-os-pkgs/tree": "catalog:",
+    "@agent-os-pkgs/file": "catalog:",
+    "@agent-os-pkgs/zip": "catalog:",
+    "@agent-os-pkgs/unzip": "catalog:",
+    "@agent-os-pkgs/yq": "catalog:",
+    "@agent-os-pkgs/codex": "catalog:"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",

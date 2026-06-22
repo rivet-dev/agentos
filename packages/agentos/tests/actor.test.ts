@@ -261,7 +261,7 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 				"--manifest-path",
 				join(repoRoot, "Cargo.toml"),
 				"-p",
-				"agent-os-sidecar",
+				"agentos-sidecar",
 				"-p",
 				"agentos-actor-plugin",
 			],
@@ -271,9 +271,9 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 				maxBuffer: 1024 * 1024 * 20,
 			},
 		);
-		const sidecarPath = join(repoRoot, "target", "debug", "agent-os-sidecar");
+		const sidecarPath = join(repoRoot, "target", "debug", "agentos-sidecar");
 		expect(existsSync(sidecarPath)).toBe(true);
-		process.env.AGENT_OS_SIDECAR_BIN = sidecarPath;
+		process.env.AGENTOS_SIDECAR_BIN = sidecarPath;
 		process.env.AGENTOS_PLUGIN_BIN = join(
 			repoRoot,
 			"target",
@@ -326,7 +326,7 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		expect(handle).toBe(expectedHandle);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].pluginPath).toBe(getPluginPath());
-		expect(calls[0].sidecarPath).toBe(process.env.AGENT_OS_SIDECAR_BIN);
+		expect(calls[0].sidecarPath).toBe(process.env.AGENTOS_SIDECAR_BIN);
 		expect(JSON.parse(calls[0].configJson)).toMatchObject({
 			additionalInstructions: ["stay deterministic"],
 			loopbackExemptPorts: [4020],
@@ -367,6 +367,70 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 			{ package: "/abs/agent-package", kind: "agent" },
 			{ package: "/abs/tool-package", kind: "tool" },
 		]);
+	});
+
+	test("auto-derives /root/node_modules mount from an agent's installed package dir", () => {
+		const config = JSON.parse(
+			buildConfigJson({
+				options: {
+					software: [
+						{ commandDir: "/proj/node_modules/@agent-os-pkgs/coreutils/wasm" },
+						{
+							packageDir: "/proj/node_modules/@rivet-dev/agentos-pi",
+							requires: [
+								"@rivet-dev/agentos-pi",
+								"@mariozechner/pi-coding-agent",
+							],
+							agent: { id: "pi" },
+						},
+					],
+				},
+			} as never),
+		);
+
+		expect(config.mounts).toEqual([
+			{
+				path: "/root/node_modules",
+				plugin: {
+					id: "host_dir",
+					config: { hostPath: "/proj/node_modules", readOnly: true },
+				},
+				readOnly: true,
+			},
+		]);
+	});
+
+	test("explicit /root/node_modules mount overrides the auto-derived one", () => {
+		const config = JSON.parse(
+			buildConfigJson({
+				options: {
+					software: [
+						{
+							packageDir: "/proj/node_modules/@rivet-dev/agentos-pi",
+							agent: { id: "pi" },
+						},
+					],
+					mounts: [nodeModulesMount("/custom/node_modules")],
+				},
+			} as never),
+		);
+
+		expect(config.mounts).toHaveLength(1);
+		expect(config.mounts[0].plugin.config.hostPath).toBe(
+			"/custom/node_modules",
+		);
+	});
+
+	test("does not auto-mount when an agent package is not inside node_modules", () => {
+		const config = JSON.parse(
+			buildConfigJson({
+				options: {
+					software: [{ packageDir: "/abs/agent-package", agent: { id: "x" } }],
+				},
+			} as never),
+		);
+
+		expect(config.mounts).toBeUndefined();
 	});
 
 	test("boots a VM through the dylib actor and handles filesystem actions", async () => {

@@ -19,7 +19,7 @@ pub mod session;
 
 use std::collections::HashMap;
 
-use agent_os_client::AgentOs;
+use agentos_client::AgentOs;
 use anyhow::Result;
 use rivet_actor_plugin_abi as abi;
 use serde::de::DeserializeOwned;

@@ -1,5 +1,5 @@
 {
-	"name": "@rivet-dev/agent-os-sidecar-linux-arm64-gnu",
+	"name": "@rivet-dev/agentos-sidecar-linux-arm64-gnu",
 	"version": "0.2.0-rc.3",
 	"description": "Agent OS native sidecar binary for Linux arm64 (glibc)",
 	"license": "Apache-2.0",
@@ -18,7 +18,7 @@
 		"glibc"
 	],
 	"files": [
-		"agent-os-sidecar"
+		"agentos-sidecar"
 	],
 	"engines": {
 		"node": ">=20"

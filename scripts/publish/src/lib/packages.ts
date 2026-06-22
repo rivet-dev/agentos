@@ -32,11 +32,11 @@ export interface DiscoverPackagesOptions {
  * that must never be published even if their `private` flag is dropped.
  */
 export const EXCLUDED = new Set<string>([
-	"@rivet-dev/agent-os-workspace",
-	"@rivet-dev/agent-os-dev-shell",
-	"@rivet-dev/agent-os-playground",
-	"@rivet-dev/agent-os-shell",
-	"@rivet-dev/agent-os-quickstart",
+	"@rivet-dev/agentos-workspace",
+	"@rivet-dev/agentos-dev-shell",
+	"@rivet-dev/agentos-playground",
+	"@rivet-dev/agentos-shell",
+	"@rivet-dev/agentos-quickstart",
 	"secure-exec",
 	"@secure-exec/typescript",
 	"publish",
@@ -59,8 +59,8 @@ export interface MetaPackageSpec {
 
 export const META_PACKAGES: readonly MetaPackageSpec[] = [
 	{
-		meta: "@rivet-dev/agent-os-sidecar",
-		platformPrefix: "@rivet-dev/agent-os-sidecar-",
+		meta: "@rivet-dev/agentos-sidecar",
+		platformPrefix: "@rivet-dev/agentos-sidecar-",
 	},
 	{
 		meta: "@rivet-dev/agentos",
@@ -177,7 +177,7 @@ export function discoverPackages(
 	for (const p of workspacePkgs) {
 		if (!p.name) continue;
 		if (
-			!p.name.startsWith("@rivet-dev/agent-os-") &&
+			!p.name.startsWith("@rivet-dev/agentos-") &&
 			p.name !== "@rivet-dev/agentos" &&
 			!SECURE_EXEC_WORKSPACE_PACKAGES.has(p.name)
 		) {
@@ -216,7 +216,7 @@ export function buildMetaPlatformMap(
 export function assertDiscoverySanity(packages: Package[]): void {
 	const byName = new Set(packages.map((p) => p.name));
 	const hasAgentOsPackages = packages.some((p) =>
-		p.name.startsWith("@rivet-dev/agent-os-"),
+		p.name.startsWith("@rivet-dev/agentos-"),
 	);
 	const hasSecureExecPackages = packages.some((p) =>
 		p.name.startsWith("@secure-exec/"),
@@ -224,8 +224,8 @@ export function assertDiscoverySanity(packages: Package[]): void {
 	const required: string[] = [];
 	if (hasAgentOsPackages) {
 		required.push(
-			"@rivet-dev/agent-os-core",
-			"@rivet-dev/agent-os-sidecar",
+			"@rivet-dev/agentos-core",
+			"@rivet-dev/agentos-sidecar",
 		);
 	}
 	if (hasSecureExecPackages) {

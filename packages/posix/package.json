@@ -1,5 +1,5 @@
 {
-  "name": "@rivet-dev/agent-os-posix",
+  "name": "@rivet-dev/agentos-posix",
   "version": "0.2.0-rc.3",
   "description": "POSIX runtime driver — WASI-based Unix userland for Agent OS",
   "type": "module",
@@ -23,7 +23,7 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "@secure-exec/core": "link:../../../secure-exec/packages/core"
+    "@secure-exec/core": "catalog:"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

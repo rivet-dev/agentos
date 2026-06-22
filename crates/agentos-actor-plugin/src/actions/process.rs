@@ -3,7 +3,7 @@
 //! by `exec` and other arms that need camelCase serialization live
 //! here so the dispatcher arms can reply directly.
 
-use agent_os_client::{
+use agentos_client::{
     AgentOs, ExecOptions, ExecResult, ProcessInfo, ProcessTreeNode, SpawnHandle, SpawnOptions,
     SpawnedProcessInfo,
 };
@@ -73,7 +73,7 @@ pub fn write_process_stdin(
     pid: u32,
     data: super::filesystem::WriteFileContent,
 ) -> Result<()> {
-    use agent_os_client::StdinInput;
+    use agentos_client::StdinInput;
     let stdin = StdinInput::Bytes(data.into_bytes());
     vm.write_process_stdin(pid, stdin)
         .map_err(anyhow::Error::from)

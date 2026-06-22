@@ -15,11 +15,11 @@ agentOS is in preview and the API is subject to change. If you run into issues, 
 1. **Install**
 
    - **rivetkit** — Actor framework with built-in persistence and orchestration
-   - **@rivet-dev/agent-os-common** — Standard VM software (curl, grep, git, and more)
-   - **@rivet-dev/agent-os-pi** — [Pi](https://github.com/mariozechner/pi-coding-agent) coding agent (Claude Code, Amp, and OpenCode coming soon)
+   - **@rivet-dev/agentos-common** — Standard VM software (curl, grep, git, and more)
+   - **@rivet-dev/agentos-pi** — [Pi](https://github.com/mariozechner/pi-coding-agent) coding agent (Claude Code, Amp, and OpenCode coming soon)
 
    ```bash
-   npm install rivetkit @rivet-dev/agent-os-common @rivet-dev/agent-os-pi
+   npm install rivetkit @rivet-dev/agentos-common @rivet-dev/agentos-pi
    ```
 
 2. **Create the Server & Client**
@@ -29,8 +29,8 @@ agentOS is in preview and the API is subject to change. If you run into issues, 
    ```ts title="server.ts"
    import { agentOs } from "rivetkit/agent-os";
    import { setup } from "rivetkit";
-   import common from "@rivet-dev/agent-os-common";
-   import pi from "@rivet-dev/agent-os-pi";
+   import common from "@rivet-dev/agentos-common";
+   import pi from "@rivet-dev/agentos-pi";
 
    const vm = agentOs({
      options: { software: [common, pi] },
@@ -96,6 +96,6 @@ agentOS is in preview and the API is subject to change. If you run into issues, 
 
 ## agentOS Core
 
-The quickstart above uses `rivetkit/agent-os`, which includes statefulness, multiplayer, and orchestration out of the box. If you only need direct VM control without those features, you can use the core package (`@rivet-dev/agent-os-core`) standalone.
+The quickstart above uses `rivetkit/agent-os`, which includes statefulness, multiplayer, and orchestration out of the box. If you only need direct VM control without those features, you can use the core package (`@rivet-dev/agentos-core`) standalone.
 
 See [agentOS core documentation](/docs/core) for reference.

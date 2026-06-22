@@ -25,7 +25,7 @@
 		"test:smoke": "tsc --noEmit -p tests/tsconfig.quickstart.json"
 	},
 	"dependencies": {
-		"@rivet-dev/agent-os-core": "workspace:*"
+		"@rivet-dev/agentos-core": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.2",

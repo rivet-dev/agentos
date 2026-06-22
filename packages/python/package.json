@@ -1,5 +1,5 @@
 {
-  "name": "@rivet-dev/agent-os-python",
+  "name": "@rivet-dev/agentos-python",
   "version": "0.2.0-rc.3",
   "type": "module",
   "license": "Apache-2.0",
@@ -32,7 +32,7 @@
     "test": "pnpm build && vitest run --fileParallelism=false"
   },
   "dependencies": {
-    "@secure-exec/core": "link:../../../secure-exec/packages/core",
+    "@secure-exec/core": "catalog:",
     "pyodide": "^0.28.3"
   },
   "peerDependencies": {

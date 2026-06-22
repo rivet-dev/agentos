@@ -3,7 +3,7 @@
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import common from "@agent-os-pkgs/common";
-import { AgentOs } from "@rivet-dev/agent-os-core";
+import { AgentOs } from "@rivet-dev/agentos-core";
 import git from "@agent-os-pkgs/git";
 
 type ExecResult = {
@@ -14,7 +14,7 @@ type ExecResult = {
 
 const require = createRequire(import.meta.url);
 const MODULE_ACCESS_CWD = resolve(
-	dirname(require.resolve("@rivet-dev/agent-os-core")),
+	dirname(require.resolve("@rivet-dev/agentos-core")),
 	"..",
 );
 const GIT_QUICKSTART_PERMISSIONS = {

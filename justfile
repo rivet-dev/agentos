@@ -35,15 +35,15 @@ secure-exec-status:
 	node scripts/secure-exec-dep.mjs status
 
 dev-shell *args:
-	pnpm --filter @rivet-dev/agent-os-dev-shell dev-shell -- "$@"
+	pnpm --filter @rivet-dev/agentos-dev-shell dev-shell -- "$@"
 
 # Run the agentos-sdk.dev site (landing + /docs) locally with hot reload
 docs:
-	pnpm --filter @agent-os/website dev
+	pnpm --filter @agentos/website dev
 
 # Build the agentos-sdk.dev site to website/dist
 docs-build:
-	pnpm --filter @agent-os/website build
+	pnpm --filter @agentos/website build
 
 test-bounded cmd='pnpm test':
 	#!/usr/bin/env bash

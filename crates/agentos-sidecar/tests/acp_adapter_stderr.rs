@@ -7,7 +7,7 @@
 //!
 //! In the current source the adapter runs inside the VM and the shared exchange
 //! loop `send_json_rpc_request()` in
-//! `crates/agent-os-sidecar/src/acp_extension.rs` now (a) forwards adapter
+//! `crates/agentos-sidecar/src/acp_extension.rs` now (a) forwards adapter
 //! stderr to `tracing::error!(... "ACP adapter stderr")` and (b) observes the
 //! adapter `ProcessExitedEvent` and returns
 //! `SidecarError::InvalidState("ACP adapter process {id} exited with code {} ...")`.
@@ -30,11 +30,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agent_os_protocol::generated::v1::{
+use agentos_protocol::generated::v1::{
     AcpCreateSessionRequest, AcpErrorResponse, AcpRequest, AcpResponse, AcpRuntimeKind,
     AcpSessionRequest,
 };
-use agent_os_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCOL_VERSION};
+use agentos_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCOL_VERSION};
 use bridge_support::RecordingBridge;
 use secure_exec_sidecar::wire::{
     AuthenticateRequest, ConnectionOwnership, CreateVmRequest, ExtEnvelope, GuestRuntimeKind,
@@ -225,7 +225,7 @@ fn new_sidecar(name: &str) -> NativeSidecar<RecordingBridge> {
             compile_cache_root: Some(temp_dir(name).join("cache")),
             ..NativeSidecarConfig::default()
         },
-        agent_os_sidecar_wrapper::extensions(),
+        agentos_sidecar_wrapper::extensions(),
     )
     .expect("create native sidecar")
 }
@@ -330,7 +330,7 @@ fn allow_all_permissions() -> vm_config::PermissionsPolicy {
 
 fn temp_dir(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
-        "agent-os-sidecar-{name}-{}",
+        "agentos-sidecar-{name}-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time before unix epoch")

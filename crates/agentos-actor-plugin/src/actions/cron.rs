@@ -2,7 +2,7 @@
 //! `CronJobInfo` are not serde types (they carry closures), so we define
 //! serde DTOs here and map to/from the client types.
 
-use agent_os_client::{AgentOs, CronAction, CronJobOptions, CronOverlap};
+use agentos_client::{AgentOs, CronAction, CronJobOptions, CronOverlap};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 

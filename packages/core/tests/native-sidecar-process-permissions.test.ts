@@ -17,12 +17,12 @@ import {
 import { findCargoBinary, resolveCargoBinary } from "../src/sidecar/cargo.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agent-os-sidecar");
+const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
 
 function ensureSidecarBinaryReady(): void {
 	const cargoBinary = findCargoBinary();
 	if (cargoBinary) {
-		execFileSync(cargoBinary, ["build", "-q", "-p", "agent-os-sidecar"], {
+		execFileSync(cargoBinary, ["build", "-q", "-p", "agentos-sidecar"], {
 			cwd: REPO_ROOT,
 			stdio: "pipe",
 		});
@@ -32,7 +32,7 @@ function ensureSidecarBinaryReady(): void {
 	if (!existsSync(SIDECAR_BINARY)) {
 		execFileSync(
 			resolveCargoBinary(),
-			["build", "-q", "-p", "agent-os-sidecar"],
+			["build", "-q", "-p", "agentos-sidecar"],
 			{
 				cwd: REPO_ROOT,
 				stdio: "pipe",
@@ -75,7 +75,7 @@ describe("native sidecar process client permissions", () => {
 
 	test("writes declarative permissions policies with child_process wire keys", async () => {
 		const fixtureRoot = mkdtempSync(
-			join(tmpdir(), "agent-os-sidecar-permissions-"),
+			join(tmpdir(), "agentos-sidecar-permissions-"),
 		);
 		cleanupPaths.push(fixtureRoot);
 		const capturePath = join(fixtureRoot, "captured-requests.json");
@@ -321,7 +321,7 @@ describe("native sidecar process client permissions", () => {
 
 	test("inspection RPCs are denied by default and allowed with explicit inspect permissions", async () => {
 		const fixtureRoot = mkdtempSync(
-			join(tmpdir(), "agent-os-sidecar-inspection-permissions-"),
+			join(tmpdir(), "agentos-sidecar-inspection-permissions-"),
 		);
 		cleanupPaths.push(fixtureRoot);
 		ensureSidecarBinaryReady();
@@ -585,7 +585,7 @@ describe("native sidecar process client permissions", () => {
 
 	test("keeps single-star fs permission globs within one path segment", async () => {
 		const fixtureRoot = mkdtempSync(
-			join(tmpdir(), "agent-os-sidecar-permission-glob-"),
+			join(tmpdir(), "agentos-sidecar-permission-glob-"),
 		);
 		cleanupPaths.push(fixtureRoot);
 		ensureSidecarBinaryReady();

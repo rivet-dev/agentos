@@ -1,5 +1,5 @@
 {
-	"name": "@rivet-dev/agent-os-codex-agent",
+	"name": "@rivet-dev/agentos-codex-agent",
 	"version": "0.2.0-rc.3",
 	"type": "module",
 	"license": "Apache-2.0",
@@ -18,7 +18,7 @@
 		"test": "pnpm build && node --test tests/*.test.mjs"
 	},
 	"dependencies": {
-		"@agent-os-pkgs/codex": "link:../../../../secure-exec/registry/software/codex"
+		"@agent-os-pkgs/codex": "catalog:"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.2",

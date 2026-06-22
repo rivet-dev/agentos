@@ -13,7 +13,7 @@ pub fn extensions() -> Vec<Box<dyn secure_exec_sidecar::Extension>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_os_protocol::ACP_EXTENSION_NAMESPACE;
+    use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 
     #[test]
     fn extensions_register_acp_namespace() {

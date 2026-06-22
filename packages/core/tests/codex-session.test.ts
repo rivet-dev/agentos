@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import codex from "@rivet-dev/agent-os-codex-agent";
+import codex from "@rivet-dev/agentos-codex-agent";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { afterEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";

@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use agent_os_client::AgentOs;
+use agentos_client::AgentOs;
 use bytes::Bytes;
 
 use crate::actions::preview;

@@ -2,7 +2,7 @@
 
 //! Agent OS browser sidecar wrapper.
 
-use agent_os_sidecar_wrapper::AcpExtension;
+use agentos_sidecar_wrapper::AcpExtension;
 use secure_exec_sidecar_browser::{
     BrowserExtension, BrowserExtensionContext, BrowserSidecar, BrowserSidecarBridge,
     BrowserSidecarConfig, BrowserSidecarError,
@@ -28,7 +28,7 @@ impl Default for BrowserAcpExtension {
 
 impl BrowserExtension for BrowserAcpExtension {
     fn namespace(&self) -> &str {
-        agent_os_protocol::ACP_EXTENSION_NAMESPACE
+        agentos_protocol::ACP_EXTENSION_NAMESPACE
     }
 
     fn handle_request(
@@ -62,7 +62,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_os_protocol::ACP_EXTENSION_NAMESPACE;
+    use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 
     #[test]
     fn browser_extensions_register_acp_namespace() {

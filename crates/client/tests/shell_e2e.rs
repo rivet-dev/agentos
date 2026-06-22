@@ -1,4 +1,4 @@
-//! Shell / PTY e2e against a real `agent-os-sidecar`.
+//! Shell / PTY e2e against a real `agentos-sidecar`.
 //!
 //! `open_shell` spawns a PTY-backed `sh` (a WASM command). This suite fails fast by default when
 //! that command is unavailable; set `AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1` only for local skip-only
@@ -10,7 +10,7 @@
 
 mod common;
 
-use agent_os_client::{ClientError, OpenShellOptions, StdinInput};
+use agentos_client::{ClientError, OpenShellOptions, StdinInput};
 use futures::StreamExt;
 
 #[tokio::test]

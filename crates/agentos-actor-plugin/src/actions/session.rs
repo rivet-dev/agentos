@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::host_ctx::HostCtx;
-use agent_os_client::{AgentOs, CreateSessionOptions};
+use agentos_client::{AgentOs, CreateSessionOptions};
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -174,7 +174,7 @@ pub async fn send_prompt(
     // `session_id` here is the client-facing `external_session_id`.
     //
     // Canonical resume state-machine documentation lives on the sidecar handler
-    // in `crates/agent-os-sidecar/src/acp_extension.rs` (spec §6); this is just
+    // in `crates/agentos-sidecar/src/acp_extension.rs` (spec §6); this is just
     // the actor-side trigger that drives it.
     if !vars.live_sessions.contains_key(session_id) && !is_session_live(vm, session_id) {
         if session_is_persisted(ctx, session_id).await? {
@@ -333,7 +333,7 @@ async fn read_session_registry(
 /// The canonical resume state machine (native `session/load`/`resume` tier with
 /// the `unknown_session` fallthrough, then the universal `session/new` +
 /// transcript-preamble fallback) lives on the sidecar handler in
-/// `crates/agent-os-sidecar/src/acp_extension.rs` (spec §6). This actor function
+/// `crates/agentos-sidecar/src/acp_extension.rs` (spec §6). This actor function
 /// only supplies the durable inputs (caps + transcript path) and records the
 /// remap the sidecar returns.
 pub async fn resume_session(
@@ -353,7 +353,7 @@ pub async fn resume_session(
     // (spec §6); it returns the live session id (== external for the native tier,
     // a new id for the `session/new` fallback). The actor records the remap.
     //
-    // TODO(session-resume): the `agent_os_client::AgentOs::resume_session` method
+    // TODO(session-resume): the `agentos_client::AgentOs::resume_session` method
     // is being implemented in parallel against the same spec §6 contract and is
     // not present in the pinned client yet. Once it lands, replace the error
     // below with the real call + remap:

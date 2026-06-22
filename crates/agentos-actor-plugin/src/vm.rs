@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use agent_os_client::{
+use agentos_client::{
     AgentOs, AgentOsConfig, MountPlugin, RootFilesystemConfig, RootFilesystemKind,
     SidecarJsBridgeCall, SidecarJsBridgeCallback,
 };

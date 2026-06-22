@@ -10,7 +10,8 @@
  * config envelope across the bridge — it owns no agent-os runtime logic.
  */
 
-import { getSidecarPath } from "@rivet-dev/agent-os-sidecar";
+import { sep } from "node:path";
+import { getSidecarPath } from "@rivet-dev/agentos-sidecar";
 import {
 	actor,
 	type ActorDefinition,
@@ -44,6 +45,7 @@ import type { AgentOsActorState, AgentOsActorVars } from "./types.js";
 interface SoftwareDescriptorLike {
 	commandDir?: string;
 	packageDir?: string;
+	requires?: string[];
 	agent?: unknown;
 	hostTool?: unknown;
 	toolkit?: unknown;
@@ -95,6 +97,60 @@ export function nodeModulesMount(
 	};
 }
 
+/**
+ * Derive the `node_modules` root that contains an installed package directory.
+ * For an agent descriptor whose `packageDir` is `<root>/node_modules/@scope/pkg`,
+ * this returns `<root>/node_modules` — the hoist root that also holds the agent's
+ * `requires` (the ACP adapter + agent SDK) and their transitive deps under a
+ * flat (npm) install. Returns `undefined` when `packageDir` is not inside a
+ * `node_modules` tree (e.g. a linked monorepo checkout), where the caller must
+ * supply an explicit `nodeModulesMount(...)`.
+ */
+function nodeModulesRootOf(packageDir: string): string | undefined {
+	const parts = packageDir.split(sep);
+	const idx = parts.lastIndexOf("node_modules");
+	if (idx === -1) return undefined;
+	return parts.slice(0, idx + 1).join(sep);
+}
+
+/**
+ * Agents run their ACP adapter + SDK inside the VM from `/root/node_modules`.
+ * Rather than make the caller hand-write `nodeModulesMount(...)`, auto-derive a
+ * read-only `host_dir` mount of the `node_modules` root that holds the agent
+ * packages (`requires`) from each agent descriptor's installed `packageDir`.
+ *
+ * An explicit `/root/node_modules` mount in `options.mounts` always wins. If
+ * agents resolve to more than one distinct `node_modules` root the derivation is
+ * ambiguous and the caller must mount explicitly.
+ */
+function withAutoAgentNodeModulesMount(
+	mounts: NativeMountLike[] | undefined,
+	descriptors: SoftwareDescriptorLike[],
+): NativeMountLike[] | undefined {
+	if (mounts?.some((mount) => mount.path === "/root/node_modules")) {
+		return mounts;
+	}
+
+	const roots = new Set<string>();
+	for (const d of descriptors) {
+		if (!d.agent || typeof d.packageDir !== "string") continue;
+		const root = nodeModulesRootOf(d.packageDir);
+		if (root) roots.add(root);
+	}
+
+	if (roots.size === 0) return mounts;
+	if (roots.size > 1) {
+		throw new Error(
+			"agentOs() could not auto-mount agent node_modules: agents resolved to " +
+				`multiple node_modules roots (${[...roots].join(", ")}). Pass an ` +
+				"explicit nodeModulesMount(...) in options.mounts.",
+		);
+	}
+
+	const [hostNodeModulesDir] = [...roots];
+	return [...(mounts ?? []), nodeModulesMount(hostNodeModulesDir)];
+}
+
 function flattenSoftware(input: unknown, out: SoftwareDescriptorLike[]): void {
 	if (input == null) return;
 	if (Array.isArray(input)) {
@@ -129,12 +185,16 @@ export function buildConfigJson<TConnParams>(
 		}
 	}
 
-	// `/root/node_modules` (agent SDK + transitive dep resolution) is supplied
-	// explicitly by the client via `options.mounts` (see `nodeModulesMount(...)`),
-	// not derived from a host cwd. The VM module resolver reads the mounted tree
-	// through the kernel VFS.
+	// `/root/node_modules` (agent ACP adapter + SDK + transitive dep resolution)
+	// is auto-derived from the agent descriptors so the standard quickstart needs
+	// no manual `nodeModulesMount(...)`: see `withAutoAgentNodeModulesMount`. An
+	// explicit `/root/node_modules` mount in `options.mounts` always wins. The VM
+	// module resolver reads the mounted tree through the kernel VFS.
 	const options = (parsed.options ?? {}) as Record<string, unknown>;
-	const mounts = serializeNativeMounts(options.mounts);
+	const mounts = withAutoAgentNodeModulesMount(
+		serializeNativeMounts(options.mounts),
+		descriptors,
+	);
 	const sidecar = serializeSidecar(options.sidecar);
 	return JSON.stringify({
 		software,
@@ -230,7 +290,7 @@ function buildNativeFactoryBuilder<TConnParams>(
 			// Opaque config envelope the plugin parses (config.rs::AgentOsConfigJson).
 			configJson: buildConfigJson(parsed),
 			// Resolve the prebuilt sidecar binary from the npm package so the plugin
-			// spawns the bundled binary rather than relying on `agent-os-sidecar`
+			// spawns the bundled binary rather than relying on `agentos-sidecar`
 			// being on PATH.
 			sidecarPath: getSidecarPath(),
 		};

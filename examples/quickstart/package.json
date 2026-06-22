@@ -1,5 +1,5 @@
 {
-	"name": "@rivet-dev/agent-os-quickstart",
+	"name": "@rivet-dev/agentos-quickstart",
 	"version": "0.1.0",
 	"private": true,
 	"description": "Quickstart examples for Agent OS. The scripts in this package are the supported example entrypoints.",
@@ -22,17 +22,17 @@
 		"pi-extensions": "node --import tsx src/pi-extensions.ts"
 	},
 	"dependencies": {
-		"@rivet-dev/agent-os-core": "workspace:*",
-		"@rivet-dev/agent-os-sandbox": "workspace:*",
+		"@rivet-dev/agentos-core": "workspace:*",
+		"@rivet-dev/agentos-sandbox": "workspace:*",
 		"sandbox-agent": "^0.4.2",
 		"dockerode": "^4.0.9",
 		"get-port": "^7.1.0",
-		"@agent-os-pkgs/common": "link:../../../secure-exec/registry/software/common",
-		"@agent-os-pkgs/git": "link:../../../secure-exec/registry/software/git",
-		"@rivet-dev/agent-os-claude": "workspace:*",
-		"@rivet-dev/agent-os-opencode": "workspace:*",
-		"@rivet-dev/agent-os-pi": "workspace:*",
-		"@secure-exec/s3": "link:../../../secure-exec/registry/file-system/s3",
+		"@agent-os-pkgs/common": "catalog:",
+		"@agent-os-pkgs/git": "catalog:",
+		"@rivet-dev/agentos-claude": "workspace:*",
+		"@rivet-dev/agentos-opencode": "workspace:*",
+		"@rivet-dev/agentos-pi": "workspace:*",
+		"@secure-exec/s3": "catalog:",
 		"zod": "^4.1.11"
 	},
 	"devDependencies": {

@@ -3,7 +3,7 @@
 //! used by batch operations live here too so the dispatcher arms can
 //! deserialize/serialize directly without re-declaring shapes.
 
-use agent_os_client::{
+use agentos_client::{
     AgentOs, BatchReadResult, BatchWriteEntry, BatchWriteResult, DeleteOptions, DirEntry,
     FileContent, MkdirOptions, ReaddirRecursiveOptions, VirtualStat,
 };

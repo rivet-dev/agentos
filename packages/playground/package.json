@@ -1,5 +1,5 @@
 {
-  "name": "@rivet-dev/agent-os-playground",
+  "name": "@rivet-dev/agentos-playground",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,8 +12,8 @@
     "test": "pnpm exec vitest run ./tests/"
   },
   "dependencies": {
-    "@rivet-dev/agent-os-core": "workspace:*",
-    "@rivet-dev/agent-os-browser": "workspace:*"
+    "@rivet-dev/agentos-core": "workspace:*",
+    "@rivet-dev/agentos-browser": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.19.15",

@@ -2,7 +2,7 @@
 //! of the core `AgentOs` API: they issue a signed, time-limited token that
 //! maps an external request path to a guest loopback port. The actor's HTTP
 //! event handler (`crate::run`) proxies `/preview/{token}/...` requests to
-//! that port via [`agent_os_client::AgentOs::fetch`].
+//! that port via [`agentos_client::AgentOs::fetch`].
 //!
 //! Tokens are persisted to the actor's SQLite database (`agent_os_preview_tokens`)
 //! via `ctx.db_*`, so issued previews survive actor sleep/wake.

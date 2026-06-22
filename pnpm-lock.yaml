@@ -6,12 +6,84 @@ settings:
 
 catalogs:
   default:
+    '@agent-os-pkgs/codex':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/common':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/coreutils':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/curl':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/diffutils':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/fd':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/file':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/findutils':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/gawk':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/git':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/grep':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/gzip':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/jq':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/ripgrep':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/sed':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/tar':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/tree':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/unzip':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/yq':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@agent-os-pkgs/zip':
+      specifier: 0.0.0-split-runtime-preview.5d46b14
+      version: 0.0.0-split-runtime-preview.5d46b14
+    '@secure-exec/core':
+      specifier: 0.3.0
+      version: 0.3.0
+    '@secure-exec/google-drive':
+      specifier: 0.3.0
+      version: 0.3.0
     '@secure-exec/nodejs':
       specifier: 0.2.1
       version: 0.2.1
+    '@secure-exec/s3':
+      specifier: 0.3.0
+      version: 0.3.0
+    '@secure-exec/sandbox':
+      specifier: 0.3.0
+      version: 0.3.0
 
 overrides:
-  '@rivet-dev/agent-os-core': workspace:*
+  '@rivet-dev/agentos-core': workspace:*
   '@rivetkit/rivetkit-wasm': 2.3.2
 
 importers:
@@ -19,29 +91,29 @@ importers:
   .:
     devDependencies:
       '@agent-os-pkgs/common':
-        specifier: link:../secure-exec/registry/software/common
-        version: link:../secure-exec/registry/software/common
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
       '@copilotkit/llmock':
         specifier: ^1.6.0
         version: 1.6.0
-      '@rivet-dev/agent-os-claude':
+      '@rivet-dev/agentos-claude':
         specifier: workspace:*
         version: link:registry/agent/claude
-      '@rivet-dev/agent-os-codex-agent':
+      '@rivet-dev/agentos-codex-agent':
         specifier: workspace:*
         version: link:registry/agent/codex
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:packages/core
-      '@rivet-dev/agent-os-pi':
+      '@rivet-dev/agentos-pi':
         specifier: workspace:*
         version: link:registry/agent/pi
       '@secure-exec/core':
-        specifier: link:../secure-exec/packages/core
-        version: link:../secure-exec/packages/core
+        specifier: 'catalog:'
+        version: 0.3.0
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -61,29 +133,29 @@ importers:
   examples/quickstart:
     dependencies:
       '@agent-os-pkgs/common':
-        specifier: link:../../../secure-exec/registry/software/common
-        version: link:../../../secure-exec/registry/software/common
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
-      '@rivet-dev/agent-os-claude':
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
+      '@rivet-dev/agentos-claude':
         specifier: workspace:*
         version: link:../../registry/agent/claude
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@rivet-dev/agent-os-opencode':
+      '@rivet-dev/agentos-opencode':
         specifier: workspace:*
         version: link:../../registry/agent/opencode
-      '@rivet-dev/agent-os-pi':
+      '@rivet-dev/agentos-pi':
         specifier: workspace:*
         version: link:../../registry/agent/pi
-      '@rivet-dev/agent-os-sandbox':
+      '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agent-os-sandbox
       '@secure-exec/s3':
-        specifier: link:../../../secure-exec/registry/file-system/s3
-        version: link:../../../secure-exec/registry/file-system/s3
+        specifier: 'catalog:'
+        version: 0.3.0
       dockerode:
         specifier: ^4.0.9
         version: 4.0.10
@@ -109,12 +181,12 @@ importers:
 
   packages/agent-os-sandbox:
     dependencies:
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
       '@secure-exec/sandbox':
-        specifier: link:../../../secure-exec/registry/tool/sandbox
-        version: link:../../../secure-exec/registry/tool/sandbox
+        specifier: 'catalog:'
+        version: 0.3.0(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -123,8 +195,8 @@ importers:
         version: 4.3.6
     devDependencies:
       '@agent-os-pkgs/common':
-        specifier: link:../../../secure-exec/registry/software/common
-        version: link:../../../secure-exec/registry/software/common
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -137,10 +209,10 @@ importers:
 
   packages/agentos:
     dependencies:
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
-      '@rivet-dev/agent-os-sidecar':
+      '@rivet-dev/agentos-sidecar':
         specifier: workspace:*
         version: link:../sidecar-binary
       zod:
@@ -151,8 +223,8 @@ importers:
         specifier: ^22.19.15
         version: 22.19.15
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.5d959bc
-        version: 0.0.0-feat-dylib-actor-plugin.5d959bc(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
+        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.15)
@@ -181,15 +253,15 @@ importers:
       '@aws-sdk/client-s3':
         specifier: ^3.1019.0
         version: 3.1020.0
-      '@rivet-dev/agent-os-sidecar':
+      '@rivet-dev/agentos-sidecar':
         specifier: workspace:*
         version: link:../sidecar-binary
       '@rivetkit/bare-ts':
         specifier: ^0.6.2
         version: 0.6.2
       '@secure-exec/core':
-        specifier: link:../../../secure-exec/packages/core
-        version: link:../../../secure-exec/packages/core
+        specifier: 'catalog:'
+        version: 0.3.0
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -213,56 +285,56 @@ importers:
         version: 10.2.5
     devDependencies:
       '@agent-os-pkgs/codex':
-        specifier: link:../../../secure-exec/registry/software/codex
-        version: link:../../../secure-exec/registry/software/codex
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/coreutils':
-        specifier: link:../../../secure-exec/registry/software/coreutils
-        version: link:../../../secure-exec/registry/software/coreutils
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/curl':
-        specifier: link:../../../secure-exec/registry/software/curl
-        version: link:../../../secure-exec/registry/software/curl
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/diffutils':
-        specifier: link:../../../secure-exec/registry/software/diffutils
-        version: link:../../../secure-exec/registry/software/diffutils
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/fd':
-        specifier: link:../../../secure-exec/registry/software/fd
-        version: link:../../../secure-exec/registry/software/fd
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/file':
-        specifier: link:../../../secure-exec/registry/software/file
-        version: link:../../../secure-exec/registry/software/file
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/findutils':
-        specifier: link:../../../secure-exec/registry/software/findutils
-        version: link:../../../secure-exec/registry/software/findutils
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/gawk':
-        specifier: link:../../../secure-exec/registry/software/gawk
-        version: link:../../../secure-exec/registry/software/gawk
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/grep':
-        specifier: link:../../../secure-exec/registry/software/grep
-        version: link:../../../secure-exec/registry/software/grep
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/gzip':
-        specifier: link:../../../secure-exec/registry/software/gzip
-        version: link:../../../secure-exec/registry/software/gzip
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/jq':
-        specifier: link:../../../secure-exec/registry/software/jq
-        version: link:../../../secure-exec/registry/software/jq
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/ripgrep':
-        specifier: link:../../../secure-exec/registry/software/ripgrep
-        version: link:../../../secure-exec/registry/software/ripgrep
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/sed':
-        specifier: link:../../../secure-exec/registry/software/sed
-        version: link:../../../secure-exec/registry/software/sed
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/tar':
-        specifier: link:../../../secure-exec/registry/software/tar
-        version: link:../../../secure-exec/registry/software/tar
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/tree':
-        specifier: link:../../../secure-exec/registry/software/tree
-        version: link:../../../secure-exec/registry/software/tree
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/yq':
-        specifier: link:../../../secure-exec/registry/software/yq
-        version: link:../../../secure-exec/registry/software/yq
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.87
         version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
@@ -287,30 +359,30 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.60.0
         version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@rivet-dev/agent-os-claude':
+      '@rivet-dev/agentos-claude':
         specifier: link:../../registry/agent/claude
         version: link:../../registry/agent/claude
-      '@rivet-dev/agent-os-codex-agent':
+      '@rivet-dev/agentos-codex-agent':
         specifier: link:../../registry/agent/codex
         version: link:../../registry/agent/codex
-      '@rivet-dev/agent-os-opencode':
+      '@rivet-dev/agentos-opencode':
         specifier: link:../../registry/agent/opencode
         version: link:../../registry/agent/opencode
-      '@rivet-dev/agent-os-pi':
+      '@rivet-dev/agentos-pi':
         specifier: link:../../registry/agent/pi
         version: link:../../registry/agent/pi
-      '@rivet-dev/agent-os-pi-cli':
+      '@rivet-dev/agentos-pi-cli':
         specifier: link:../../registry/agent/pi-cli
         version: link:../../registry/agent/pi-cli
-      '@rivet-dev/agent-os-sandbox':
+      '@rivet-dev/agentos-sandbox':
         specifier: link:../agent-os-sandbox
         version: link:../agent-os-sandbox
       '@secure-exec/google-drive':
-        specifier: link:../../../secure-exec/registry/file-system/google-drive
-        version: link:../../../secure-exec/registry/file-system/google-drive
+        specifier: 'catalog:'
+        version: 0.3.0
       '@secure-exec/s3':
-        specifier: link:../../../secure-exec/registry/file-system/s3
-        version: link:../../../secure-exec/registry/file-system/s3
+        specifier: 'catalog:'
+        version: 0.3.0
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -335,7 +407,7 @@ importers:
 
   packages/dev-shell:
     dependencies:
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
       pino:
@@ -360,10 +432,10 @@ importers:
 
   packages/playground:
     dependencies:
-      '@rivet-dev/agent-os-browser':
+      '@rivet-dev/agentos-browser':
         specifier: workspace:*
         version: link:../browser
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -389,8 +461,8 @@ importers:
   packages/posix:
     dependencies:
       '@secure-exec/core':
-        specifier: link:../../../secure-exec/packages/core
-        version: link:../../../secure-exec/packages/core
+        specifier: 'catalog:'
+        version: 0.3.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -411,8 +483,8 @@ importers:
   packages/python:
     dependencies:
       '@secure-exec/core':
-        specifier: link:../../../secure-exec/packages/core
-        version: link:../../../secure-exec/packages/core
+        specifier: 'catalog:'
+        version: 0.3.0
       pyodide:
         specifier: ^0.28.3
         version: 0.28.3(bufferutil@4.1.0)
@@ -432,7 +504,7 @@ importers:
 
   packages/secure-exec:
     dependencies:
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -493,36 +565,36 @@ importers:
   packages/shell:
     dependencies:
       '@agent-os-pkgs/codex':
-        specifier: link:../../../secure-exec/registry/software/codex
-        version: link:../../../secure-exec/registry/software/codex
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/common':
-        specifier: link:../../../secure-exec/registry/software/common
-        version: link:../../../secure-exec/registry/software/common
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/fd':
-        specifier: link:../../../secure-exec/registry/software/fd
-        version: link:../../../secure-exec/registry/software/fd
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/file':
-        specifier: link:../../../secure-exec/registry/software/file
-        version: link:../../../secure-exec/registry/software/file
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/jq':
-        specifier: link:../../../secure-exec/registry/software/jq
-        version: link:../../../secure-exec/registry/software/jq
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/ripgrep':
-        specifier: link:../../../secure-exec/registry/software/ripgrep
-        version: link:../../../secure-exec/registry/software/ripgrep
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/tree':
-        specifier: link:../../../secure-exec/registry/software/tree
-        version: link:../../../secure-exec/registry/software/tree
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/unzip':
-        specifier: link:../../../secure-exec/registry/software/unzip
-        version: link:../../../secure-exec/registry/software/unzip
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/yq':
-        specifier: link:../../../secure-exec/registry/software/yq
-        version: link:../../../secure-exec/registry/software/yq
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
       '@agent-os-pkgs/zip':
-        specifier: link:../../../secure-exec/registry/software/zip
-        version: link:../../../secure-exec/registry/software/zip
-      '@rivet-dev/agent-os-core':
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -549,7 +621,7 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.87
         version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../../packages/core
       zod:
@@ -566,8 +638,8 @@ importers:
   registry/agent/codex:
     dependencies:
       '@agent-os-pkgs/codex':
-        specifier: link:../../../../secure-exec/registry/software/codex
-        version: link:../../../../secure-exec/registry/software/codex
+        specifier: 'catalog:'
+        version: 0.0.0-split-runtime-preview.5d46b14
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -578,7 +650,7 @@ importers:
 
   registry/agent/opencode:
     dependencies:
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../../packages/core
     devDependencies:
@@ -603,7 +675,7 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.60.0
         version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../../packages/core
     devDependencies:
@@ -619,7 +691,7 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.60.0
         version: 0.60.0
-      '@rivet-dev/agent-os-core':
+      '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../../packages/core
       pi-acp:
@@ -714,6 +786,66 @@ importers:
         version: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0)
 
 packages:
+
+  '@agent-os-pkgs/codex@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-2Mz+uSOf1CdmeqPMWQznuaVym3bWufen610Gdyq4I49+rX2jx0ODervga0sdzPkBqBzG7OaBmo6mO4sQ3T2DzA==}
+
+  '@agent-os-pkgs/common@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-6TzgaSZzgDdgQzY1Zgb4zAlzvb49NYuXK1gNDjWAfQeivz2NcWyfaN1qPRATHXOtpGUGm05Z65OwjLF05tTbNg==}
+
+  '@agent-os-pkgs/coreutils@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-AOOiAYcPfFvTDzwpV2U6n0/lxJXuUhbq67Tt7HRiIyG76e4zHTSzAu55RoW/24myRsKVjRw5jPA0hB413TuEQA==}
+
+  '@agent-os-pkgs/curl@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-zx/FtXon8YFeylWyvfsChbyWgRiS66dWzXA3EY+xayoxKYcUja06MnE1nRuxgpH8n1CaAz1sIGG1J2w6+ivoYw==}
+
+  '@agent-os-pkgs/diffutils@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-i38lpZ24rm8nt4ImGuZ2KQBjI/ohADkponspwbHWiqR6t3jBKggg4PaSq3xcxY8O8rZ/05Igq1YBlrDh33Y4hQ==}
+
+  '@agent-os-pkgs/fd@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-Mi9yQe6xKlNImLUuLPedCA9DDmT6rk5O65/Q/y0t1nbdJ3sUdkOIRcLVZx+VayK4abhqy7MdmRPSp2fnlg6D3A==}
+
+  '@agent-os-pkgs/file@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-7vNMpudDFE/Xvam4nJO9RA/Y+Q551uLVuCDbkAjPAQpfMZbezVNYueARLDbbQ0xmmAX56PS9SkGN6id5VxxTNw==}
+
+  '@agent-os-pkgs/findutils@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-9IwymPoxtJveSB+HppgAUII05JBYGNhP9QSys5NoPSiaEOlIhcAVoKZHq6XFGyr33MhWmHyy3KEyrXFnkan+9Q==}
+
+  '@agent-os-pkgs/gawk@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-zjuyTyjXCz6LgZZqdA14vcgmyzjR5Ipeb3hlL+Tn3sCfAGp+Y7GSbTO9yBtTv8fkWNGOLq8il5zQJkJlHHMMfg==}
+
+  '@agent-os-pkgs/git@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-t11XTiymguMC1GpRlbNQ2NaXX/fyG4BN2HBJtHEl63vGNR/RPnddX28mnQJ8UVj7aZQO9366PmKLEshIw+HgcA==}
+
+  '@agent-os-pkgs/grep@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-xworE1A81YCKzXY2uW+2oK6BiB7YzEvcxU/RVxI7Psveylpfdlr/GJOVGfjyHTPi30hhDik3TEPSowS1WJqAfg==}
+
+  '@agent-os-pkgs/gzip@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-j8WENZbxekTBuMzLQCgqaA9vkkGGDn57mg/H4VaIIoiOWnUkKJMYbZ26twP0s6RbKDCe0vNWiAKDukhxe5jezQ==}
+
+  '@agent-os-pkgs/jq@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-2hHQJaxL2rcvu2JIXkvtHLM+nWXPkFgx8W3mkj5U8xskCRG56hgn/E/2P12dqoapieh9pcCqTqqZUPiqr8MqLQ==}
+
+  '@agent-os-pkgs/ripgrep@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-Gy6DGVpVhqMdBlRPUTF9N2tdWUvt2nbGVYV/ewLdfr61eO1KFlpVh9fc3qHD9DisVODivb+0vpk23pNAUp3b0A==}
+
+  '@agent-os-pkgs/sed@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-uPEuPNIve/IOLYb9kJDFv8LDisg0jjcvdwLqdm9kacvOuc19wjhUZG2xPB8cjzKCgNtDN91jN+uo8F9no+oQBA==}
+
+  '@agent-os-pkgs/tar@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-mkh3mZtalQJ3n7M4769q30hvYSbI8wEIUF3LS9IzMQ9XfHW4NmIbGjDDrJxTuv8DepsN6SMS4lkNXjbY5yh4DQ==}
+
+  '@agent-os-pkgs/tree@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-UqhPk5Hw/XSiF1BdfpW3R4kmiKYoiv9Wr1ZiZbmrh9w40st3LuhLrlCx3n8E/dZQ/6lgupFTe/fe6SYp+D0t9Q==}
+
+  '@agent-os-pkgs/unzip@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-s/G9m0K+dO6UmcTeazx35DmKpGZpm4BUntLts4eXEmL+5e/VpKT3HIHRf5CK17vPe/VxESrLqnBq1Hri0NSqRg==}
+
+  '@agent-os-pkgs/yq@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-IuNOKGlmVGF98IU4iMaJCuZbbaG00p50w3lH2FxrPNndeayTM0Z05JKQr2gMKX8Hnlq1+c7wIffkx7RqIAtelw==}
+
+  '@agent-os-pkgs/zip@0.0.0-split-runtime-preview.5d46b14':
+    resolution: {integrity: sha512-ksS4rn0jN1Dt63Kx9vRxJiJ4kBCbT9j5kabZ/zcJBh22pEU3hwIiPoB63SZyop19gu9UMe2M/5B4/2wMhAwGnw==}
 
   '@agentclientprotocol/sdk@0.12.0':
     resolution: {integrity: sha512-V8uH/KK1t7utqyJmTA7y7DzKu6+jKFIXM+ZVouz8E55j8Ej2RV42rEvPKn3/PpBJlliI5crcGk1qQhZ7VwaepA==}
@@ -1833,13 +1965,6 @@ packages:
     peerDependencies:
       hono: ^4
 
-  '@hono/node-ws@1.3.1':
-    resolution: {integrity: sha512-vo/MwCnpJAVHBkGzWjCJ28wF45fYHAfbPZcH2rodZODHtch2GHA94KtMfusmVycTUtsLAsaNsHhtY6P8X3RQsA==}
-    engines: {node: '>=18.14.1'}
-    peerDependencies:
-      '@hono/node-server': ^1.19.11
-      hono: ^4.6.0
-
   '@hono/zod-openapi@1.4.0':
     resolution: {integrity: sha512-AFchqR1N/NxfI4hUOSGI2/g8zLROxA1OE7Oh5JJFlTaGxhrdRyH+93gd0tIBpb0z8s9r8hUoNnaOBfHbdb4NMw==}
     engines: {node: '>=16.0.0'}
@@ -2419,99 +2544,93 @@ packages:
     resolution: {integrity: sha512-3qndQUQXLdwafMEqfhz24hUtDPcsf1Bu3q52Kb8MqeH8JUh3h6R4HYW3ZJXiQsLcyYyFM68PuIwlLRlg1xDEpg==}
     engines: {node: ^14.18.0 || >=16.0.0}
 
-  '@rivetkit/engine-cli-darwin-arm64@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-wJl0Nf9SeRiHDrtNR2dD+k06qQDARfAf7iYpK8ZsUlkdgn+o3mCPQ0fETe22mcNjVSr4d4V0P8QG/7HC9nPRlg==}
+  '@rivetkit/engine-cli-darwin-arm64@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-eQW1WTZEe51zXRdI9lqUI9lF/A8rTqVLK9P7ysYNXIl4H1NWv36rFepdKK/chSgrig4/xLRuch2MHtjxLPDPew==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [darwin]
 
-  '@rivetkit/engine-cli-darwin-x64@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-BS9G67AwDBWopqpyI+7exvAhadEFBONmDYUArtYvc7YPhgXgvnvFk/6e0BmlFqzoK4zyvZXH+2ilyFBLwULnVw==}
+  '@rivetkit/engine-cli-darwin-x64@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-NNMNULr3XIyKKAwQcc8RyUBpL+l5vfiFtWZPGVRgpVRYysU4RG5IwZa0uXzraf2yzkgZDym9U3UPkwHmsNthOA==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [darwin]
 
-  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-H2kRZIU6BKaiTpjfEqjK2yw5JQs9ZMJeBQhvIlG5ZDCtplFf0yQ+psDXsl4k+y2mrHMvHcYF9Piyxdn2IK+tIQ==}
+  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-DlsxDN7tIiOs89GTDZS9ID/ZNiDvKA0vJ+ojq5LDqcp8X+dFb2uLuMLjaPXVwurkzXLoaDzz20ctnUm44muWLw==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-e1tjbJt2PB8eJNYsm0Hj7IQkvQNamkjh+10F0RYlFC2eP77r5xUkCRfPRVHhg2ypUaesoakf4EBqvOu6rCPyxw==}
+  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-rBijR7naYpOyQnnK1gwFx6dDPTwGoON1wfia1fVCLJlpYcqqD5aVg4PU0oINRF9NPBqPW4vfVWSBKWHyF4YLFA==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
 
-  '@rivetkit/engine-cli@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-0cuiePB8JTTXc8MUkIfNHjWcpa7fY4KEaGiubDWHBEm+MLSM7Qp0LkQXh7XXnjcfHxMPI47oShH4JvSMQZI11A==}
+  '@rivetkit/engine-cli@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-gRmWkoU8ZiyaqYSHbl6nmAijREHEYdtQYUgA9CwxQa5Y3pglm+N3x4raOKUvmn+Xe1iV5KuHHyREhOO6Hkr5/Q==}
     engines: {node: '>= 20.0.0'}
 
-  '@rivetkit/engine-envoy-protocol@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-OxIUt2/GYEpZGnwfdYL7rbl12t1FN0Ff+jU57fTr2TFJKr1/6B71rfYnoY4tff1/1nkrU9YyIg3Rzo4So1gnHQ==}
+  '@rivetkit/engine-envoy-protocol@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-NJeYJdE1sbSqOyknL7w32K/hIOta3uOc5eZgagL/kaGrrFKlzaVi1BWAgzNbSdWHgGpqfMN3XtdwW/XllN9vHQ==}
 
   '@rivetkit/on-change@6.0.1':
     resolution: {integrity: sha512-QBN/KRBXLJdCgN4gBTL3XAc/zKm58atSnieXWMOyFSPmo6F1/yIVV/LTRdvAktfCttrGx7W6c32i/lwqCHWnsQ==}
     engines: {node: '>=20'}
 
-  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-yJL5B92gtOeJ17RgB+tya/NZaQ3K3VUxKztP+meQPYzEa4EVcXBChaxIDuoqzDxzLFqrWJUEqjJ5AoOa/cu8gA==}
+  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-Yg4vhX57FcE6ajn5qym6hRlzJY2ExoRJ1NXw3h2v2C3Fr+6VD+R0C7/voiv+u8OutUld2SImt62Er+cS9JT3tw==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [darwin]
 
-  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-ZIgWw6yHabRQe7yKgji4qtCIvxzHKLv+BKVfkhSCYSngFRQp0cYE0tByCvYhmQDG1yn7cOBFREr/yTI7ttCJiA==}
+  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-fThfkJnRIAmCuAvgqz2cWyYY1uIzOybcXfumCSfSGfU6bS8d0jFBjaHnAZ3dgrncS+nBwK/0rqFt2JHLs7IXOA==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [darwin]
 
-  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-PtNW9pUewdRKRljg+Q+yvmBaiZUUH2Mxf4tUEig9tKgeMqlhWCP68GNz+e4651hcB3QRpE9PCZUBOYNV/l5gIg==}
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-ZixJthmxswfHx0DTyjyuYP2L602rYAK1v7eKixXJjGNosjpXNVKkYnV5ML/kf5NbjZ3qeN4GONGR4Zf3WznuZQ==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-tSnQ3y4nPfjYLuK2Yt4MCuRmnYhrWvQzmBHf0GJQ0nfVMn8CdbHG30UmoSRrWdHNLQ9QZbHoWaFAppVxtwk8kQ==}
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-X1EpEj1TaYGfA2fOAUoJrnGg3AQynJBiKW0Q5KBVqJn3ofENQIomwCPrjb0jh+ctJg0EeRyEw1wC7Tj0cfPfjg==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-F6eLyfDr3MZNrwTnjg8ip2uUn7bUQGR6xfAh/j8xB2QMyqH82VZBUqKerYTItlZdqCZx5mZ+kBhfTnCoNxVViw==}
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-6L23MfUDBCasZBAOn5XveNNxLeBRqzSgWM7vpXkeWLn2Cz75IELHekJNEmnmM1qgWSahfCyTL2OCZh8MBHJAzQ==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-Md62KioImoFK0hsN3wOyWKV+U3FE7BwPp/NHD/+MLw+WR5RIfv7pskI+hRCWKm0gDV6MP31mmGs2C7KPHvW1Qw==}
+  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-cYTxBkW/V3STXTC2nHpp9vXcahkmRLXD7Y2HptqJNYGlcMs/tlUJM7YPQSuhrfpQxIgcdZJKAvsKBWStKexROA==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi-win32-x64-msvc@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-ipYsi1ALwphc4aL0dZp7vuChYYKTZpWWZ+jasdWBxFvPzvT61CjF5l18VFDwl9mKH07taGmBrFI8wzPtTZsbnA==}
-    engines: {node: '>= 20.0.0'}
-    cpu: [x64]
-    os: [win32]
-
-  '@rivetkit/rivetkit-napi@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-OBImJIpIEI4ivxIsGMH7GAWtqFIqZ9oyN0t1jWDRwb2Y0/H4zsXnxGS/WJfiJ9FdmrGN82tBQ9aJMWLdAQDrIw==}
+  '@rivetkit/rivetkit-napi@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-rpy4ObZRyqnUfHDf1Bo4QyGsQvYeAEhwPQk7806ObeguqrUozoST4eRHSLbvkOfwISdaHVuNjD6PySF4VWOwPg==}
     engines: {node: '>= 20.0.0'}
 
   '@rivetkit/rivetkit-wasm@2.3.2':
     resolution: {integrity: sha512-HNBzh6uQFi4ZYL0tHAZ6nrYKoGCfa+kObLCwdS+/ZzGePV7WGUl20Do1bHjBtnVgp9UwzQu+lka8kFwKfqm6WA==}
 
-  '@rivetkit/traces@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-4xaQmADhBesHHUo624Ug4lN/hyH8GSGAa2EOS/fBT0/uLbv/XX5iia5erA6FQhekMERI43VeGk6ja0zZWJfGjQ==}
+  '@rivetkit/traces@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-J903UVLDSJ1XdYDQnBVvs1SxnNJW/geoHc7t6l7g0tUrwovmA34XACIYhsZRJU0hJGCiIGp/ByuOLPOlkDlp/A==}
     engines: {node: '>=18.0.0'}
 
-  '@rivetkit/virtual-websocket@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-UsF0j8YT8+u1GJIr5i+fsGKt/uRrqpxbM5NWiB6pHAz6+SzKEDUyToLCHmP9vbOU0B9f/Kt3NqQRbOlhtQaWew==}
+  '@rivetkit/virtual-websocket@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-tBHwzPHBd3Wi5ACbdJgwXiDICvNjSEztptXAKkUcQ6OeFsVwPEJNwQEVIoCGBSFHUi9YFdAWKv8tDN5NATc1ZQ==}
 
-  '@rivetkit/workflow-engine@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    resolution: {integrity: sha512-ccp6JjiZDD4ubV1ezVeoSHNzXby/dsKk3Wo8FrAKhbQsZD8OxyGu+FEcJXlFSL+zAhHy7FVhuVbgZK+2/gRDXg==}
+  '@rivetkit/workflow-engine@0.0.0-feat-dylib-actor-plugin.c44621f':
+    resolution: {integrity: sha512-Y6DHCLM7IpLOvSVIhj+LQH38+ffnB84Sy2g3JeLinpyd2ku/iLC7aBvxj1KX43S54PeslU6Tz8kgi2B5jRfA/A==}
     engines: {node: '>=18.0.0'}
 
   '@rolldown/pluginutils@1.0.0-beta.27':
@@ -2686,8 +2805,30 @@ packages:
   '@secure-exec/core@0.2.1':
     resolution: {integrity: sha512-HsnUv6gClpMA1BBRmX86j30TKTZtgJC/fO1tVavr7IpM2zNKbHU8LgSlBd7mv2SNy02ImTmU/GnQ3aYB4NSbEg==}
 
+  '@secure-exec/core@0.3.0':
+    resolution: {integrity: sha512-/mk8OIyibjVxOrs8r2qu40aE58Vm2pCy2A6+DPiJYY3Ch1MJ3AeVcPtd0AUrLinTHQJM5Ps8K8iLWvLLSI5VbQ==}
+
+  '@secure-exec/google-drive@0.3.0':
+    resolution: {integrity: sha512-10FTqMZuZ1k19nGBYFSqcf574YUFrgPB3G/ZFCUm9h8G+LPGSBhMZfzS17gTDwUCGm02WgYMWVSx9d6h7JWzQA==}
+
   '@secure-exec/nodejs@0.2.1':
     resolution: {integrity: sha512-UJMJqVFxexlHJV0Q9nWURvrz6GElj8673DDOOFln6FHR6JS+9SaSU3eISrN158DuNC3SFi4rgjb/scKnK4YOYQ==}
+
+  '@secure-exec/s3@0.3.0':
+    resolution: {integrity: sha512-yrAt3qiuvT3GNxnGcyKEhrbA9uC4Hj13wVNL6ZbHZ12fjmENyaxhSRdoeKB1kD36iqWtOp6qOE2mTrcdohZaQQ==}
+
+  '@secure-exec/sandbox@0.3.0':
+    resolution: {integrity: sha512-sOXqjLbxAs/dsccIy27eFlgKZZM9iY16/IILahFbxlrxZ8J1gmzHOxKn4ixmE0Nv8JUkm6+bxQ/YnJWcApN5cA==}
+
+  '@secure-exec/sidecar-linux-x64-gnu@0.3.0':
+    resolution: {integrity: sha512-s/fWwtnngpV29y9v1x/KpiUUYPVL6cof+EESaYaVkahUyqHYGN/OfGTSMuKsJqlm0WwyYwjnBDu6gGCUdo84cQ==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [linux]
+
+  '@secure-exec/sidecar@0.3.0':
+    resolution: {integrity: sha512-v/vVM+y2GtTtzJ3Q+G0NRp/WpGDmCrgQgu4nYW+423QrzXFMgSmkTE8akNQcksDaVL/vxLipp3HIJ2/X44aAKg==}
+    engines: {node: '>=20'}
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     resolution: {integrity: sha512-gEWhMHzUpLwzuBNAD0lVkZXE8wFlWMLp4IOZ+56FYwOW/C+m07cYxuW4TjHyPqZ+vPm3IkoaMqqH5yT9VhjX/Q==}
@@ -5939,8 +6080,8 @@ packages:
     resolution: {integrity: sha512-5Di9UC0+8h1L6ZD2d7awM7E/T4uA1fJRlx6zk/NvdCCVEoAnFqvHmCuNeIKoCeIixBX/q8uM+6ycDvF8woqosA==}
     engines: {node: '>= 0.8'}
 
-  rivetkit@0.0.0-feat-dylib-actor-plugin.5d959bc:
-    resolution: {integrity: sha512-XlJUt2Jd80AocINZXw/rNziYKCdqk0FbBZiuNz4EdLWjxjkf1aj3ztqJzGAcWaOLoT0qrOKv2OdkLzRbFNAoEw==}
+  rivetkit@0.0.0-feat-dylib-actor-plugin.c44621f:
+    resolution: {integrity: sha512-/HF9QCzCtqnz6TbdcTS53IzngzIb/00VW1s15o43oATC1OpThvR2WVTpRk5dw33ViLIiMbGP8CzLwg3vvW8ZiA==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       drizzle-kit: ^0.31.2
@@ -6889,6 +7030,55 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
+
+  '@agent-os-pkgs/codex@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/common@0.0.0-split-runtime-preview.5d46b14':
+    dependencies:
+      '@agent-os-pkgs/coreutils': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/diffutils': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/findutils': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/gawk': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/grep': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/gzip': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/sed': 0.0.0-split-runtime-preview.5d46b14
+      '@agent-os-pkgs/tar': 0.0.0-split-runtime-preview.5d46b14
+
+  '@agent-os-pkgs/coreutils@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/curl@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/diffutils@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/fd@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/file@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/findutils@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/gawk@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/git@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/grep@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/gzip@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/jq@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/ripgrep@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/sed@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/tar@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/tree@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/unzip@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/yq@0.0.0-split-runtime-preview.5d46b14': {}
+
+  '@agent-os-pkgs/zip@0.0.0-split-runtime-preview.5d46b14': {}
 
   '@agentclientprotocol/sdk@0.12.0(zod@3.25.76)':
     dependencies:
@@ -8365,15 +8555,6 @@ snapshots:
     dependencies:
       hono: 4.12.9
 
-  '@hono/node-ws@1.3.1(@hono/node-server@1.19.12(hono@4.12.9))(bufferutil@4.1.0)(hono@4.12.9)':
-    dependencies:
-      '@hono/node-server': 1.19.12(hono@4.12.9)
-      hono: 4.12.9
-      ws: 8.20.0(bufferutil@4.1.0)
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-
   '@hono/zod-openapi@1.4.0(hono@4.12.9)(zod@4.3.6)':
     dependencies:
       '@asteasolutions/zod-to-openapi': 8.5.0(zod@4.3.6)
@@ -9019,77 +9200,73 @@ snapshots:
 
   '@rivetkit/bare-ts@0.6.2': {}
 
-  '@rivetkit/engine-cli-darwin-arm64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/engine-cli-darwin-arm64@0.0.0-feat-dylib-actor-plugin.c44621f':
     optional: true
 
-  '@rivetkit/engine-cli-darwin-x64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/engine-cli-darwin-x64@0.0.0-feat-dylib-actor-plugin.c44621f':
     optional: true
 
-  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
     optional: true
 
-  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
     optional: true
 
-  '@rivetkit/engine-cli@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/engine-cli@0.0.0-feat-dylib-actor-plugin.c44621f':
     optionalDependencies:
-      '@rivetkit/engine-cli-darwin-arm64': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/engine-cli-darwin-x64': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/engine-cli-linux-arm64-musl': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/engine-cli-linux-x64-musl': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/engine-cli-darwin-arm64': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/engine-cli-darwin-x64': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/engine-cli-linux-arm64-musl': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/engine-cli-linux-x64-musl': 0.0.0-feat-dylib-actor-plugin.c44621f
 
-  '@rivetkit/engine-envoy-protocol@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/engine-envoy-protocol@0.0.0-feat-dylib-actor-plugin.c44621f':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
 
   '@rivetkit/on-change@6.0.1': {}
 
-  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-feat-dylib-actor-plugin.c44621f':
     optional: true
 
-  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-feat-dylib-actor-plugin.c44621f':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-feat-dylib-actor-plugin.c44621f':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-feat-dylib-actor-plugin.c44621f':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
     optional: true
 
-  '@rivetkit/rivetkit-napi-win32-x64-msvc@0.0.0-feat-dylib-actor-plugin.5d959bc':
-    optional: true
-
-  '@rivetkit/rivetkit-napi@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/rivetkit-napi@0.0.0-feat-dylib-actor-plugin.c44621f':
     dependencies:
       '@napi-rs/cli': 2.18.4
-      '@rivetkit/engine-envoy-protocol': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/engine-envoy-protocol': 0.0.0-feat-dylib-actor-plugin.c44621f
     optionalDependencies:
-      '@rivetkit/rivetkit-napi-darwin-arm64': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/rivetkit-napi-darwin-x64': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/rivetkit-napi-linux-arm64-gnu': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/rivetkit-napi-linux-arm64-musl': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/rivetkit-napi-linux-x64-gnu': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/rivetkit-napi-linux-x64-musl': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/rivetkit-napi-win32-x64-msvc': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/rivetkit-napi-darwin-arm64': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/rivetkit-napi-darwin-x64': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/rivetkit-napi-linux-arm64-gnu': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/rivetkit-napi-linux-arm64-musl': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/rivetkit-napi-linux-x64-gnu': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/rivetkit-napi-linux-x64-musl': 0.0.0-feat-dylib-actor-plugin.c44621f
 
   '@rivetkit/rivetkit-wasm@2.3.2': {}
 
-  '@rivetkit/traces@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/traces@0.0.0-feat-dylib-actor-plugin.c44621f':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
       cbor-x: 1.6.4
       fdb-tuple: 1.0.0
       vbare: 0.0.4
 
-  '@rivetkit/virtual-websocket@0.0.0-feat-dylib-actor-plugin.5d959bc': {}
+  '@rivetkit/virtual-websocket@0.0.0-feat-dylib-actor-plugin.c44621f': {}
 
-  '@rivetkit/workflow-engine@0.0.0-feat-dylib-actor-plugin.5d959bc':
+  '@rivetkit/workflow-engine@0.0.0-feat-dylib-actor-plugin.c44621f':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
       cbor-x: 1.6.4
@@ -9214,6 +9391,15 @@ snapshots:
     dependencies:
       better-sqlite3: 12.8.0
 
+  '@secure-exec/core@0.3.0':
+    dependencies:
+      '@rivetkit/bare-ts': 0.6.2
+      '@secure-exec/sidecar': 0.3.0
+
+  '@secure-exec/google-drive@0.3.0':
+    dependencies:
+      '@secure-exec/core': 0.3.0
+
   '@secure-exec/nodejs@0.2.1':
     dependencies:
       '@secure-exec/core': 0.2.1
@@ -9224,6 +9410,33 @@ snapshots:
       esbuild: 0.27.4
       node-stdlib-browser: 1.3.1
       web-streams-polyfill: 4.2.0
+
+  '@secure-exec/s3@0.3.0':
+    dependencies:
+      '@secure-exec/core': 0.3.0
+
+  '@secure-exec/sandbox@0.3.0(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
+    dependencies:
+      '@secure-exec/core': 0.3.0
+      sandbox-agent: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+    transitivePeerDependencies:
+      - '@cloudflare/sandbox'
+      - '@daytonaio/sdk'
+      - '@e2b/code-interpreter'
+      - '@fly/sprites'
+      - '@vercel/sandbox'
+      - computesdk
+      - dockerode
+      - get-port
+      - modal
+      - zod
+
+  '@secure-exec/sidecar-linux-x64-gnu@0.3.0':
+    optional: true
+
+  '@secure-exec/sidecar@0.3.0':
+    optionalDependencies:
+      '@secure-exec/sidecar-linux-x64-gnu': 0.3.0
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     optional: true
@@ -13374,23 +13587,20 @@ snapshots:
       hash-base: 3.1.2
       inherits: 2.0.4
 
-  rivetkit@0.0.0-feat-dylib-actor-plugin.5d959bc(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0)):
+  rivetkit@0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0)):
     dependencies:
-      '@hono/node-server': 1.19.12(hono@4.12.9)
-      '@hono/node-ws': 1.3.1(@hono/node-server@1.19.12(hono@4.12.9))(bufferutil@4.1.0)(hono@4.12.9)
       '@hono/zod-openapi': 1.4.0(hono@4.12.9)(zod@4.3.6)
       '@rivetkit/bare-ts': 0.6.2
-      '@rivetkit/engine-cli': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/engine-envoy-protocol': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/engine-cli': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/engine-envoy-protocol': 0.0.0-feat-dylib-actor-plugin.c44621f
       '@rivetkit/on-change': 6.0.1
-      '@rivetkit/rivetkit-napi': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/rivetkit-napi': 0.0.0-feat-dylib-actor-plugin.c44621f
       '@rivetkit/rivetkit-wasm': 2.3.2
-      '@rivetkit/traces': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/virtual-websocket': 0.0.0-feat-dylib-actor-plugin.5d959bc
-      '@rivetkit/workflow-engine': 0.0.0-feat-dylib-actor-plugin.5d959bc
+      '@rivetkit/traces': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/virtual-websocket': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/workflow-engine': 0.0.0-feat-dylib-actor-plugin.c44621f
       cbor-x: 1.6.4
       drizzle-orm: 0.44.7(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)
-      get-port: 7.2.0
       hono: 4.12.9
       invariant: 2.2.4
       p-retry: 6.2.1
@@ -13419,7 +13629,6 @@ snapshots:
       - '@vercel/postgres'
       - '@xata.io/client'
       - better-sqlite3
-      - bufferutil
       - bun-types
       - expo-sqlite
       - gel
@@ -13431,7 +13640,6 @@ snapshots:
       - prisma
       - sql.js
       - sqlite3
-      - utf-8-validate
 
   rollup@4.60.1:
     dependencies:

@@ -28,8 +28,8 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@rivet-dev/agent-os-core": "workspace:*",
-		"@rivet-dev/agent-os-sidecar": "workspace:*",
+		"@rivet-dev/agentos-core": "workspace:*",
+		"@rivet-dev/agentos-sidecar": "workspace:*",
 		"zod": "^4.1.11"
 	},
 	"peerDependencies": {
@@ -37,7 +37,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "^22.19.15",
-		"rivetkit": "0.0.0-feat-dylib-actor-plugin.5d959bc",
+		"rivetkit": "0.0.0-feat-dylib-actor-plugin.c44621f",
 		"vitest": "^2.1.8"
 	},
 	"engines": {

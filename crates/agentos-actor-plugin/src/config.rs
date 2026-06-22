@@ -8,7 +8,7 @@
 //! `sidecar_js_bridge_callback`) are intentionally absent; passing them must
 //! fail loud, enforced by `deny_unknown_fields`.
 
-use agent_os_client::{
+use agentos_client::{
     AgentOsConfig, AgentOsLimits, AgentOsSidecarConfig, MountConfig, MountPlugin, Permissions,
     RootFilesystemConfig, SoftwareInput,
 };

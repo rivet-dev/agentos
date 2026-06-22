@@ -211,7 +211,7 @@ async fn actor_loop(
     pool: String,
     cancel: CancellationToken,
 ) {
-    let mut vm: Option<agent_os_client::AgentOs> = None;
+    let mut vm: Option<agentos_client::AgentOs> = None;
     let mut vars = actions::Vars::default();
     // Ensure the agent-os schema exists before handling events (best-effort;
     // mirrors rivetkit-agent-os run.rs).

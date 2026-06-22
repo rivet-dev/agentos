@@ -14,7 +14,7 @@
 //   S3 harness so `pnpm --dir examples/quickstart exec tsx src/s3-filesystem.ts`
 //   still exercises the real quickstart flow against signed S3 requests.
 
-import { AgentOs } from "@rivet-dev/agent-os-core";
+import { AgentOs } from "@rivet-dev/agentos-core";
 import { createS3Backend } from "@secure-exec/s3";
 import type { MockS3ServerHandle } from "../../../packages/core/src/test/mock-s3.js";
 import { startMockS3Server } from "../../../packages/core/src/test/mock-s3.js";

@@ -10,19 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Check out the secure-exec sibling repo that packages/core links to via
-      # `"@secure-exec/core": "link:../../../secure-exec/packages/core"`. That
-      # link resolves to `<agent-os-root>/../secure-exec/packages/core`, i.e.
-      # `$GITHUB_WORKSPACE/../secure-exec/packages/core`. actions/checkout can
-      # only write inside the workspace, so we check out into a subdir and then
-      # symlink it to the sibling path the link expects.
-      - uses: actions/checkout@v4
-        with:
-          repository: rivet-dev/secure-exec
-          ref: main
-          path: _secure-exec-sibling
-      - name: Place secure-exec at the sibling path the link expects
-        run: ln -s "$GITHUB_WORKSPACE/_secure-exec-sibling" "$GITHUB_WORKSPACE/../secure-exec"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -36,16 +23,9 @@ jobs:
         with:
           workspaces: |
             . -> target
-      # Build the link target so its dist/ exists. The `@secure-exec/core`
-      # subpath exports (./descriptors, ./vm-config, ./sidecar-client) resolve
-      # to dist/*.{js,d.ts}; without these the agent-os tsc build cannot find
-      # the module. The core build = protocol compile (Node) + a lightweight
-      # `cargo test -p secure-exec-vm-config` (pure serde/ts-rs crate, no V8
-      # bridge / native build) + tsc, so this stays cheap in CI.
-      - name: Install + build @secure-exec/core (link target)
-        run: |
-          pnpm -C "$GITHUB_WORKSPACE/_secure-exec-sibling" install --frozen-lockfile
-          pnpm -C "$GITHUB_WORKSPACE/_secure-exec-sibling" --filter @secure-exec/core build
+      # `@secure-exec/core` now resolves from the npm catalog (published 0.3.0),
+      # so a plain frozen install pulls it from the registry — no sibling
+      # checkout/symlink/build is needed.
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm --dir scripts/publish run check-types
@@ -66,10 +46,12 @@ jobs:
       - run: node scripts/check-secure-exec-package-boundary.mjs
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test -p agent-os-protocol -- --test-threads=1
-      - run: cargo test -p agent-os-sidecar -- --test-threads=1
-      - run: cargo test -p agent-os-sidecar-browser -- --test-threads=1
-      - run: cargo test -p agent-os-client -- --test-threads=1
+      - run: cargo test -p agentos-protocol -- --test-threads=1
+      - run: cargo test -p agentos-sidecar -- --test-threads=1
+      # NOTE: agentos-sidecar-browser is intentionally excluded from the
+      # workspace (it depends on secure-exec-sidecar-browser, unpublished on
+      # crates.io), so it is not tested here. Re-add once that crate publishes.
+      - run: cargo test -p agentos-client -- --test-threads=1
       - run: pnpm check-types
       - run: pnpm lint
       - if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
