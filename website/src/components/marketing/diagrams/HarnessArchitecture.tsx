@@ -223,16 +223,6 @@ const DesktopCross = ({ reduced }: { reduced: boolean | null }) => (
 	</div>
 );
 
-// Tiny vertical request/response indicator between stacked mobile cards.
-const StackConnector = () => (
-	<svg viewBox='0 0 24 18' className='mx-auto h-4 w-6' aria-hidden='true'>
-		<path d='M9 2 L9 13' stroke={ARROW_COLOR} strokeWidth={1.4} strokeLinecap='round' />
-		<path d='M6.5 10.5 L9 14 L11.5 10.5' fill='none' stroke={ARROW_COLOR} strokeWidth={1.4} strokeLinecap='round' strokeLinejoin='round' />
-		<path d='M15 16 L15 5' stroke={ARROW_COLOR} strokeWidth={1.4} strokeLinecap='round' strokeDasharray='3 3' />
-		<path d='M12.5 7.5 L15 4 L17.5 7.5' fill='none' stroke={ARROW_COLOR} strokeWidth={1.4} strokeLinecap='round' strokeLinejoin='round' />
-	</svg>
-);
-
 const StackRow = ({ title, subtitle, icon, accent }: { title: string; subtitle?: string; icon: ReactNode; accent?: boolean }) => (
 	<div className={`flex items-center gap-3 rounded-2xl border bg-white/70 p-3 ${accent ? 'border-accent/40 bg-accent/[0.06] ring-1 ring-accent/15' : 'border-ink/10'}`}>
 		<div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl ${accent ? 'bg-accent/10' : 'bg-ink/5'}`}>{icon}</div>
@@ -243,17 +233,88 @@ const StackRow = ({ title, subtitle, icon, accent }: { title: string; subtitle?:
 	</div>
 );
 
-const MobileStack = () => (
-	<div className='mx-auto flex w-full max-w-sm flex-col gap-2 md:hidden'>
+// Horizontal request/response branch peeling off the trunk into a satellite
+// card. Mirrors the desktop cross: solid accent points INTO the card (request
+// out), dashed ink points back toward the trunk (response in). Flow dots make
+// the routing live, suppressed under reduced motion.
+const Branch = ({ reduced }: { reduced: boolean | null }) => (
+	<svg viewBox='0 0 28 16' className='h-4 w-7 flex-shrink-0 self-center' aria-hidden='true'>
+		{/* request: out toward the card (accent, solid, arrowhead on the right) */}
+		<path d='M2 5 L23 5' stroke={ACCENT} strokeWidth={1.4} strokeLinecap='round' />
+		<path d='M20 2.5 L23.5 5 L20 7.5' fill='none' stroke={ACCENT} strokeWidth={1.4} strokeLinecap='round' strokeLinejoin='round' />
+		{/* response: back toward the trunk (ink, dashed, arrowhead on the left) */}
+		<path d='M25 11 L4 11' stroke={ARROW_COLOR} strokeWidth={1.3} strokeLinecap='round' strokeDasharray='3 3' />
+		<path d='M7 8.5 L3.5 11 L7 13.5' fill='none' stroke={ARROW_COLOR} strokeWidth={1.3} strokeLinecap='round' strokeLinejoin='round' />
+		{!reduced && (
+			<>
+				<motion.circle
+					r={1.6}
+					fill={ACCENT}
+					initial={{ cx: 2, cy: 5, opacity: 0 }}
+					animate={{ cx: [2, 23], cy: 5, opacity: [0, 1, 1, 0] }}
+					transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut', repeatDelay: 0.6 }}
+				/>
+				<motion.circle
+					r={1.5}
+					fill={ARROW_COLOR}
+					initial={{ cx: 25, cy: 11, opacity: 0 }}
+					animate={{ cx: [25, 4], cy: 11, opacity: [0, 1, 1, 0] }}
+					transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut', delay: 0.7, repeatDelay: 0.6 }}
+				/>
+			</>
+		)}
+	</svg>
+);
+
+// One satellite hung off the trunk: [trunk rail][branch][full-width card]. The
+// rail draws the shared vertical trunk segment; isLast trims it to half height
+// so the trunk terminates at the last branch instead of dangling onward.
+const SpokeRow = ({
+	title,
+	subtitle,
+	icon,
+	isLast,
+	reduced,
+}: {
+	title: string;
+	subtitle?: string;
+	icon: ReactNode;
+	isLast?: boolean;
+	reduced: boolean | null;
+}) => (
+	<div className={`flex items-stretch ${isLast ? '' : 'pb-2'}`}>
+		<div className='relative w-3 flex-shrink-0' aria-hidden='true'>
+			{/* Trunk segment. Non-last rows extend 0.5rem past their box to bridge
+			    the pb-2 gap into the next row, so the spine reads as one continuous
+			    line; the last row stops at half height so the trunk terminates at
+			    the final branch instead of dangling onward. */}
+			<span className={`absolute left-1/2 top-0 w-px -translate-x-1/2 bg-ink-faint/40 ${isLast ? 'h-1/2' : 'h-[calc(100%+0.5rem)]'}`} />
+		</div>
+		<Branch reduced={reduced} />
+		<div className='min-w-0 flex-1'>
+			<StackRow title={title} subtitle={subtitle} icon={icon} />
+		</div>
+	</div>
+);
+
+// Mobile hub-and-spoke ("comb"): a single trunk descends from the Agent hub and
+// four horizontal branches fan out to the satellites, mirroring the desktop
+// cross — the agent brokers each service, not a linear pipeline.
+const MobileStack = ({ reduced }: { reduced: boolean | null }) => (
+	<div className='mx-auto flex w-full max-w-sm flex-col md:hidden'>
 		<StackRow title='Agent' subtitle='any supported agent' icon={<CyclingAgentLogo size='h-7 w-7' />} accent />
-		<StackConnector />
-		<StackRow {...SATELLITES.tools} />
-		<StackConnector />
-		<StackRow {...SATELLITES.session} />
-		<StackConnector />
-		<StackRow {...SATELLITES.sandbox} />
-		<StackConnector />
-		<StackRow {...SATELLITES.orchestration} />
+		{/* trunk stub: the spine visibly descends out of the agent hub. Its height
+		    is the same 0.5rem gap that pb-2 puts between the satellite cards, so the
+		    agent sits the same distance above Tools as the rest of the stack. */}
+		<div className='flex h-2' aria-hidden='true'>
+			<div className='relative w-3 flex-shrink-0'>
+				<span className='absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-ink-faint/40' />
+			</div>
+		</div>
+		<SpokeRow {...SATELLITES.tools} reduced={reduced} />
+		<SpokeRow {...SATELLITES.session} reduced={reduced} />
+		<SpokeRow {...SATELLITES.sandbox} reduced={reduced} />
+		<SpokeRow {...SATELLITES.orchestration} isLast reduced={reduced} />
 	</div>
 );
 
@@ -270,7 +331,7 @@ export const HarnessArchitecture = ({ footer }: { footer?: ReactNode }) => {
 				agentOS
 			</span>
 			<DesktopCross reduced={reduced} />
-			<MobileStack />
+			<MobileStack reduced={reduced} />
 			{footer}
 		</div>
 	);
