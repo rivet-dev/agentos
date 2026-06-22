@@ -67,7 +67,6 @@ export const siteConfig = {
 				},
 				{ slug: "docs/sessions", label: "Sessions & Transcripts", attrs: { "data-icon": "messages" } },
 				{ slug: "docs/approvals", label: "Approvals", attrs: { "data-icon": "check" } },
-				{ slug: "docs/bindings", label: "Bindings", attrs: { "data-icon": "wrench" } },
 				{ slug: "docs/llm-credentials", label: "LLM Credentials", attrs: { "data-icon": "key" } },
 				{ slug: "docs/llm-gateway", label: "LLM Gateway", badge: { text: "Coming Soon", variant: "caution" }, attrs: { "data-icon": "cloud" } },
 			],
@@ -77,6 +76,7 @@ export const siteConfig = {
 			items: [
 				{ slug: "docs/software", attrs: { "data-icon": "download" } },
 				{ slug: "docs/filesystem", attrs: { "data-icon": "floppyDisk" } },
+				{ slug: "docs/bindings", label: "Bindings", attrs: { "data-icon": "wrench" } },
 				{ slug: "docs/processes", label: "Processes & Shell", attrs: { "data-icon": "terminal" } },
 				{ slug: "docs/networking", label: "Networking & Previews", attrs: { "data-icon": "globe" } },
 				{ slug: "docs/cron", label: "Cron Jobs", attrs: { "data-icon": "clock" } },
