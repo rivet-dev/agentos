@@ -5,7 +5,6 @@ import { motion } from "framer-motion";
 const footer = {
   product: [
     { name: "Use Cases", href: "/use-cases" },
-    { name: "Pricing", href: "/pricing" },
     { name: "Registry", href: "/registry" },
   ],
   developers: [

@@ -21,7 +21,6 @@ function DiscordIcon({ className }: { className?: string }) {
 
 const NAV_LINKS: { href: string; label: string; badge?: number }[] = [
   { href: "/use-cases", label: "Use Cases" },
-  { href: "/pricing", label: "Pricing" },
   { href: "/registry", label: "Registry", badge: registry.length },
   { href: "/docs", label: "Docs" },
 ];
