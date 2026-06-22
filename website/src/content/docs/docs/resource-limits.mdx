@@ -1,0 +1,55 @@
+---
+title: "Resource Limits"
+description: "Cap per-VM processes, file descriptors, sockets, and filesystem bytes so guest code can never exhaust the host."
+skill: true
+---
+
+Every agentOS VM runs with **per-VM resource caps**. Runaway or malicious guest code can exhaust its own VM, but it can never starve the host or any sibling VM.
+
+- **Bounded by default**: each VM ships with conservative caps. Unset fields fall back to built-in defaults that match the runtime's historical constants.
+- **Per-VM**: every VM gets its own budget. Limits are not shared across VMs.
+- **Enforced by the kernel**: a guest that exceeds a cap fails inside the VM (out-of-memory, `EMFILE`, `EAGAIN`, etc.). The host is never affected.
+- **Operator-raisable**: the operator (the trusted process that creates the VM) may raise any cap for trusted workloads. Guest code can never raise its own caps.
+
+## Setting limits
+
+Set caps on the `limits` object in the `agentOS` config. Limits are grouped by subsystem (`resources` and more). Omitted limits keep their secure default.
+
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+	software: [pi],
+	limits: {
+		resources: {
+			maxProcesses: 64, // concurrent processes
+			maxOpenFds: 256, // open file descriptors
+			maxSockets: 128, // open sockets
+			maxFilesystemBytes: 256 * 1024 * 1024, // VFS storage budget
+			maxWasmStackBytes: 4 * 1024 * 1024, // WASM call-stack ceiling
+		},
+	},
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/resource-limits)*
+
+## Available caps
+
+| Limit | Controls | Notes |
+|---|---|---|
+| `resources.maxProcesses` | Concurrent processes in the VM process table | Caps fork bombs and runaway spawning. New spawns fail with `EAGAIN`. |
+| `resources.maxOpenFds` | Open file descriptors | Exhausting the table fails with `EMFILE` / `ENFILE`. |
+| `resources.maxSockets` | Open sockets in the socket table | Bounds concurrent connections; excess `connect`/`accept` fail. |
+| `resources.maxFilesystemBytes` | Total bytes stored in the virtual filesystem | Bounds VFS storage; writes past the budget fail with a no-space error. |
+| `resources.maxWasmStackBytes` | Maximum WASM call-stack size, in bytes | Deep recursion fails with a stack overflow instead of crashing the VM. |
+
+## Behavior at the limit
+
+- **WASM stack**: deep recursion throws a stack-overflow error in the guest, never a host crash.
+- **Filesystem bytes**: writing past the VFS budget fails with a no-space error to the guest.
+- **Counts (fds / processes / sockets)**: hitting a table cap returns the standard POSIX errno (`EMFILE`, `EAGAIN`, etc.), exactly as a real Linux kernel would under `ulimit`.

@@ -1,0 +1,186 @@
+---
+title: "Approvals"
+description: "Approve or deny agent tool use with human-in-the-loop or auto-approve patterns."
+skill: true
+---
+
+import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
+
+When an agent wants to use a tool (write a file, run a command, etc.), it asks for permission. You approve or deny that request, either interactively or with a server-side hook.
+
+- **Human-in-the-loop**: subscribe to `permissionRequest` on the client and respond per-request.
+- **Auto-approve**: use the `onPermissionRequest` server hook to decide without a client round-trip.
+- **Selective approval**: inspect the request and approve some, forward others to the client.
+
+## Permission request flow
+
+When an agent wants to use a tool, it emits a `permissionRequest`. Every request is delivered to two places at once, and you respond from whichever fits your app:
+
+- **On the client**: subscribe to the `permissionRequest` event and call `respondPermission(sessionId, permissionId, reply)`.
+- **On the server**: the `onPermissionRequest` hook on the actor runs for every request, with no client round-trip.
+- If neither responds, the request blocks until a reply arrives, then rejects after 120 seconds.
+
+<CodeGroup>
+```ts title="client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
+
+// Listen for permission requests over a live connection. The payload is
+// inferred from the actor's event schema, so no cast is needed.
+const conn = agent.connect();
+conn.on("permissionRequest", async (data) => {
+  console.log("Permission requested:", data.request);
+
+  // Approve this single request.
+  await agent.respondPermission(
+    data.sessionId,
+    data.request.permissionId,
+    "once",
+  );
+});
+
+const session = await agent.createSession("claude", {
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+});
+await agent.sendPrompt(session.sessionId, "Create a new file at /home/user/output.txt");
+```
+
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+  // Runs server-side for every permission request, before any client round-trip.
+  onPermissionRequest: async (sessionId, request) => {
+    console.log("permission requested:", sessionId, request.permissionId);
+  },
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+</CodeGroup>
+
+The `permissionRequest` event payload:
+
+- **`data.sessionId`**: the session the request belongs to.
+- **`data.request.permissionId`**: the id to pass back to `respondPermission`.
+- **`data.request.description`**: human-readable summary of the requested action.
+- **`data.request.params`**: raw ACP permission details (requested tool, paths, etc.).
+
+Reply options for `respondPermission`:
+
+| Reply | Behavior |
+|-------|----------|
+| `"once"` | Approve this single request |
+| `"always"` | Approve this and all future requests of the same type |
+| `"reject"` | Deny the request |
+
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/approvals)*
+
+## Patterns
+
+### Auto-approve
+
+The `onPermissionRequest` hook runs server-side for every permission request before it reaches any client. Useful for fully automated pipelines.
+
+- **Signature**: `onPermissionRequest: async (sessionId, request) => { ... }`.
+- **Inspect**: `request.permissionId`, `request.description`, and `request.params`.
+- **Anything not handled** in the hook is forwarded to the client via the `permissionRequest` event.
+
+<CodeGroup>
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+  // The onPermissionRequest hook runs server-side for every request before it
+  // is forwarded to clients. Use it to inspect requests in fully automated
+  // pipelines without a client round-trip.
+  onPermissionRequest: async (sessionId, request) => {
+    console.log("auto-approving", sessionId, request.permissionId);
+  },
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+
+```ts title="client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
+
+// No need to handle permissions on the client. The server hook handles them.
+const session = await agent.createSession("claude", {
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+});
+await agent.sendPrompt(session.sessionId, "Write files as needed");
+```
+</CodeGroup>
+
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/approvals)*
+
+### Selective approval
+
+Inspect the permission request to make approval decisions based on the tool or path. Approve some server-side, forward the rest to the client for human review.
+
+<CodeGroup>
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+  onPermissionRequest: async (sessionId, request) => {
+    // `request.description` and `request.params` carry the raw ACP permission
+    // details (the requested tool, paths, etc.). Inspect them to decide which
+    // requests to handle server-side and which to forward to clients.
+    const description = request.description ?? "";
+    if (description.toLowerCase().includes("read")) {
+      console.log("read request handled server-side", sessionId, request.permissionId);
+    }
+  },
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+
+```ts title="client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
+
+// Permission requests forwarded by the server reach the client here. The
+// payload is inferred from the actor's event schema, so no cast is needed.
+const conn = agent.connect();
+conn.on("permissionRequest", async (data) => {
+  const approved = confirm(`Allow: ${JSON.stringify(data.request)}?`);
+  await agent.respondPermission(
+    data.sessionId,
+    data.request.permissionId,
+    approved ? "once" : "reject",
+  );
+});
+
+const session = await agent.createSession("claude", {
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+});
+await agent.sendPrompt(session.sessionId, "Read config.json and update it");
+```
+</CodeGroup>
+
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/approvals)*
+
+- For interactive applications, subscribe to `permissionRequest` on the client and build an approval UI.
+- If neither the server hook nor the client responds, the agent blocks until a response is given or the action times out.

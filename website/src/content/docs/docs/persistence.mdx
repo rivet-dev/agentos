@@ -4,12 +4,9 @@ description: "How agentOS persists data and manages sleep/wake cycles."
 skill: true
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
-- **Persistent filesystem** backs `/home/user` automatically
-- **Session transcripts** persisted with sequence numbers for replay
-- **Configurable sleep** with a 15-minute grace period by default
-- **Automatic wake** when a client connects or a cron job triggers
+agentOS automatically persists the `/home/user` filesystem and session transcripts (with sequence numbers for replay) across sleep/wake, sleeping after a configurable grace period (15 minutes by default) and waking automatically when a client connects or a cron job triggers.
 
 ## What persists across sleep
 
@@ -47,6 +44,15 @@ Activity stops ──> 15 min grace period ──> Actor sleeps
 New client connects ──> Actor wakes ──> VM boots ──> Filesystem restored
 ```
 
+## Timeouts
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Action timeout | 15 minutes | Maximum time for any single action |
+| Sleep grace period | 15 minutes | Time before sleeping after all activity stops |
+
+These are set internally by the `agentOS()` factory and cannot be overridden per-call.
+
 ## Sleep vs destroy
 
 | | Sleep | Destroy |
@@ -62,94 +68,69 @@ New client connects ──> Actor wakes ──> VM boots ──> Filesystem rest
 
 Subscribe to `vmBooted` and `vmShutdown` events to track VM lifecycle.
 
-<Tabs>
-<TabItem label="client.ts">
-```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+<CodeGroup>
+```ts title="lifecycle-client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 
-agent.on("vmBooted", () => {
+const conn = client.vm.getOrCreate("my-agent").connect();
+
+conn.on("vmBooted", () => {
   console.log("VM is ready");
 });
 
-agent.on("vmShutdown", (data) => {
-  console.log("VM shutdown reason:", data.reason);
+conn.on("vmShutdown", (payload) => {
+  console.log("VM shutdown reason:", payload.reason);
   // reason: "sleep" | "destroy" | "error"
 });
 ```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
 
-const vm = agentOs({
-  options: { software: [common, pi] },
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+//                import pi from "@agentos-software/pi";
+import pi from "./software/pi";
+
+const vm = agentOS({
+  software: [pi],
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
+
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/persistence)*
 
 ## Resuming after sleep
 
-When the actor wakes up:
+When the actor wakes up, the VM boots and the filesystem is restored from SQLite, session records and event history are immediately available, and processes and shells from the previous session are gone. Clients can reconnect, list prior work with `listPersistedSessions` (which works without a running VM), and replay a session's persisted transcript with `getSessionEvents`.
 
-1. The VM boots and the filesystem is restored from SQLite
-2. Session records and event history are available immediately
-3. Processes and shells from the previous session are gone
-4. Clients can reconnect and resume sessions using `resumeSession`
-5. Use `getSessionEvents` to replay missed events
-
-<Tabs>
-<TabItem label="client.ts">
-```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+<CodeGroup>
+```ts title="resume-client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const vm = client.vm.getOrCreate("my-agent");
 
-// List sessions from before sleep
-const sessions = await agent.listPersistedSessions();
+// List sessions persisted before sleep (works without a running VM)
+const sessions = await vm.listPersistedSessions();
 console.log("Previous sessions:", sessions.length);
 
-// Resume the most recent session
-if (sessions.length > 0) {
-  const last = sessions[0];
-  await agent.resumeSession(last.sessionId);
-
-  // Replay events for transcript
-  const events = await agent.getSessionEvents(last.sessionId);
+// Replay the most recent session's transcript from durable storage
+const last = sessions[0];
+if (last) {
+  const events = await vm.getSessionEvents(last.sessionId);
   for (const e of events) {
     console.log(e.seq, e.event.method);
   }
 }
 ```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
+</CodeGroup>
 
-const vm = agentOs({
-  options: { software: [common, pi] },
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-</TabItem>
-</Tabs>
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/persistence)* (uses the same `server.ts` as above)
 
 ## Persisted tables schema
 

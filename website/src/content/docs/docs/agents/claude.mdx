@@ -11,9 +11,9 @@ Claude agent documentation is coming soon.
 </Aside>
 
 ```ts
-import claude from "@rivet-dev/agentos-claude";
+import claude from "@agentos-software/claude";
 
-const vm = await AgentOs.create({ software: [common, claude] });
+const vm = await AgentOs.create({ software: [claude] });
 const { sessionId } = await vm.createSession("claude", {
   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY },
 });

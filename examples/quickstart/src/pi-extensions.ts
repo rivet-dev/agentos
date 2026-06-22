@@ -14,7 +14,6 @@
 
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
-import common from "@agentos-software/common";
 import { AgentOs } from "@rivet-dev/agentos-core";
 import pi from "@rivet-dev/agentos-pi";
 
@@ -61,7 +60,7 @@ const vm = await AgentOs.create({
 			}
 		: {}),
 	moduleAccessCwd: MODULE_ACCESS_CWD,
-	software: [common, pi],
+	software: [pi],
 });
 
 // Write the extension into Pi's global extensions directory.

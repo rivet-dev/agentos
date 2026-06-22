@@ -1,79 +1,65 @@
 ---
 title: "Authentication"
-description: "Authenticate connections to agentOS actors using hooks."
+description: "Authenticate connections to agentOS actors using Rivet Actor connection params and hooks."
 skill: true
 ---
 
-agentOS uses the same authentication system as Rivet Actors. Validate credentials in `onBeforeConnect` or extract user data with `createConnState`.
+import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
-For full documentation including JWT examples, role-based access control, rate limiting, and token caching, see [Actor Authentication](/docs/actors/authentication).
+agentOS uses the same authentication system as [Rivet Actors](/docs/actors/authentication): clients send credentials as connection params, and you validate them server-side.
 
-## `onBeforeConnect`
+- Clients pass credentials in `params` when they connect.
+- Validate them on the server in `onBeforeConnect` (throw to reject the connection), or extract user data into connection state with `createConnState` (read it in actions via `c.conn.state`).
+- You can declare the credential shape with `agentOS<ConnParams>(...)` to document what you accept, but the client's `params` is `unknown` and is not checked against it. The real check is your hook, not the types.
+- The current `@rivet-dev/agentos` runtime is an interim stub, so wiring these hooks end to end depends on the native runtime landing.
 
-Validate credentials before allowing a connection. Throw an error to reject.
+## Example
 
-```ts
-import { agentOs } from "rivetkit/agent-os";
-import { setup, UserError } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
+The server declares the credential shape and validates it in `onBeforeConnect` (throw to reject); the client passes credentials as `params`.
 
-const vm = agentOs({
-  onBeforeConnect: async (c, params: { authToken: string }) => {
-    const isValid = await validateToken(params.authToken);
-    if (!isValid) {
-      throw new UserError("Forbidden", { code: "forbidden" });
-    }
-  },
-  options: { software: [common, pi] },
-});
+<CodeGroup>
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
 
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
-## `createConnState`
-
-Extract user data from credentials and store it in connection state. Accessible in actions via `c.conn.state`.
-
-```ts
-import { agentOs } from "rivetkit/agent-os";
-import { setup, UserError } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
-
-interface ConnState {
-  userId: string;
-  role: string;
+interface ConnParams {
+  authToken: string;
 }
 
-const vm = agentOs({
-  createConnState: async (c, params: { authToken: string }): Promise<ConnState> => {
-    const payload = await validateToken(params.authToken);
-    if (!payload) {
-      throw new UserError("Forbidden", { code: "forbidden" });
-    }
-    return { userId: payload.sub, role: payload.role };
-  },
-  options: { software: [common, pi] },
-});
+// Validate credentials server-side. onBeforeConnect receives the connection
+// params and rejects the connection by throwing. Wired via the underlying Rivet
+// Actor; see Actor Authentication for the full hook signatures.
+export function onBeforeConnect(_c: unknown, params: ConnParams): void {
+  if (typeof params?.authToken !== "string" || params.authToken.length === 0) {
+    throw new Error("missing or invalid authToken");
+  }
+  // verify the token (JWT signature, lookup, ...) here
+}
+
+const vm = agentOS<ConnParams>({ software: [pi] });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
 
-## Client usage
-
-Pass credentials when connecting:
-
-```ts
-import { createClient } from "rivetkit/client";
+```ts title="client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"], {
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+
+// Pass credentials when connecting; the server hook validates them.
+const agent = client.vm.getOrCreate("my-agent", {
   params: { authToken: "my-jwt-token" },
 });
-```
 
-See [Actor Authentication](/docs/actors/authentication) for more patterns including external auth providers, role-based access control, and token caching.
+const session = await agent.createSession("claude", {
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+});
+await agent.sendPrompt(session.sessionId, "List the files in the working directory.");
+```
+</CodeGroup>
+
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/authentication)*
+
+See [Actor Authentication](/docs/actors/authentication) for JWT validation, role-based access control, external auth providers, and token caching.

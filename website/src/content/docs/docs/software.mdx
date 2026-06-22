@@ -4,49 +4,62 @@ description: "Install software packages and configure the commands available ins
 skill: true
 ---
 
-agentOS starts with no commands installed. The `software` option lets you declare which packages to include. Each package provides one or more CLI commands.
+import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
+
+agentOS ships with a common set of POSIX utilities (coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip) out of the box. The `software` option installs additional packages, each providing one or more CLI commands.
 
 ## Install
 
 ```bash
-npm install @rivet-dev/agentos-core @rivet-dev/agentos-common
+npm install @rivet-dev/agentos @agentos-software/pi
 ```
 
-`@rivet-dev/agentos-common` is a meta-package that includes coreutils, sed, grep, gawk, findutils, diffutils, tar, and gzip. For a smaller footprint, install individual packages instead.
+Add packages like `@agentos-software/ripgrep` or `@agentos-software/jq` for anything beyond the default utilities. Browse the full catalog on the [Registry](/registry).
 
 ## Usage
 
-```ts
-import { AgentOs } from "@rivet-dev/agentos-core";
-import common from "@rivet-dev/agentos-common";
+Import the software packages you want, list them in the `software` array on the actor, then run commands through the client handle.
 
-const vm = await AgentOs.create({
-  software: [common],
+<CodeGroup>
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+import ripgrep from "@agentos-software/ripgrep";
+import jq from "@agentos-software/jq";
+
+// Each entry adds its CLI commands to the VM. Common POSIX utilities ship by
+// default; `pi` is the agent, and `ripgrep`/`jq` add the `rg` and `jq`
+// commands. Browse the registry for more packages.
+const vm = agentOS({
+	software: [pi, ripgrep, jq],
 });
 
-const result = await vm.exec("echo hello | grep hello");
-console.log(result.stdout); // "hello\n"
+export const registry = setup({ use: { vm } });
 
-await vm.dispose();
+registry.start();
 ```
 
-You can mix individual packages and meta-packages:
+```ts title="client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
 
-```ts
-import { AgentOs } from "@rivet-dev/agentos-core";
-import coreutils from "@rivet-dev/agentos-coreutils";
-import grep from "@rivet-dev/agentos-grep";
-import jq from "@rivet-dev/agentos-jq";
-import ripgrep from "@rivet-dev/agentos-ripgrep";
-
-const vm = await AgentOs.create({
-  software: [coreutils, grep, jq, ripgrep],
+const client = createClient<typeof registry>({
+	endpoint: "http://localhost:6420",
 });
+const agent = client.vm.getOrCreate("my-agent");
+
+// `rg` (ripgrep) and `jq` are now available inside the VM. Find files containing
+// "TODO" and pretty-print the matching paths as JSON.
+const result = await agent.exec("rg --files-with-matches TODO /home/user | jq -R .");
+console.log(result.stdout);
 ```
+</CodeGroup>
+
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/software)*
 
 ## Available Packages
 
-Browse all available software packages on the [Registry](/agent-os/registry).
+Browse all available software packages on the [Registry](/registry).
 
 
 ## Publishing Custom Packages

@@ -2,7 +2,6 @@
 
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
-import common from "@agentos-software/common";
 import { AgentOs } from "@rivet-dev/agentos-core";
 import git from "@agentos-software/git";
 
@@ -49,7 +48,7 @@ function parseHeadRef(content: string): string {
 const vm = await AgentOs.create({
 	moduleAccessCwd: MODULE_ACCESS_CWD,
 	permissions: GIT_QUICKSTART_PERMISSIONS,
-	software: [common, git],
+	software: [git],
 });
 
 async function run(command: string): Promise<ExecResult> {

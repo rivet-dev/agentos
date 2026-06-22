@@ -4,7 +4,6 @@
 // agent runtime. It may not complete in all environments.
 
 import claude from "@rivet-dev/agentos-claude";
-import common from "@agentos-software/common";
 import type { SoftwareInput } from "@rivet-dev/agentos-core";
 import { AgentOs } from "@rivet-dev/agentos-core";
 import opencode from "@rivet-dev/agentos-opencode";
@@ -12,7 +11,7 @@ import pi from "@rivet-dev/agentos-pi";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
-const software: SoftwareInput[] = [common, claude, opencode, pi];
+const software: SoftwareInput[] = [claude, opencode, pi];
 
 const vm = await AgentOs.create({
 	software,

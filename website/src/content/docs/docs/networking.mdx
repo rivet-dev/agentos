@@ -4,128 +4,118 @@ description: "Proxy HTTP requests into agentOS VMs and create shareable preview 
 skill: true
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
-- **`vmFetch`** proxies HTTP requests to services running inside the VM
-- **Preview URLs** create time-limited, shareable public URLs to VM services
-- **Token-based access** with configurable expiration and revocation
-- **CORS enabled** for browser access to preview URLs
+Proxy HTTP requests into VM services with `vmFetch` and create time-limited, token-based preview URLs (with configurable expiration, revocation, and CORS), all carried over one transport (the kernel socket table) that is loopback-only by default under a three-layer confinement model.
 
-## Fetch from a VM service
+## Run an HTTP server in the VM
 
-Use `vmFetch` to send HTTP requests to a service running inside the VM.
+Guest code runs a normal Node HTTP server: it binds a loopback port inside the VM exactly like any Node process. Write the server file and spawn it.
 
-<Tabs>
-<TabItem label="client.ts">
+<CodeGroup>
 ```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
 
-// Start a web server inside the VM
+// Write a simple Node HTTP server and run it inside the VM. It binds a loopback
+// port (3000) exactly like any normal Node process.
 await agent.writeFile(
   "/home/user/server.js",
-  'require("http").createServer((req, res) => res.end("Hello from VM")).listen(3000);',
+  `const http = require("http");
+http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Hello from inside the VM");
+}).listen(3000, () => console.log("listening on http://127.0.0.1:3000"));`,
 );
-await agent.spawn("node", ["/home/user/server.js"]);
-
-// Fetch from the VM service
-const response = await agent.vmFetch(3000, "/");
-console.log("Status:", response.status);
-console.log("Body:", new TextDecoder().decode(response.body));
+const { pid } = await agent.spawn("node", ["/home/user/server.js"]);
+console.log("server pid:", pid);
 ```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
 
-const vm = agentOs({
-  options: { software: [common, pi] },
-});
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+
+const vm = agentOS();
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
-## vmFetch with options
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/networking)*
 
-Send requests with custom methods, headers, and body.
+## Fetch from a VM service
 
-<Tabs>
-<TabItem label="client.ts">
+With the HTTP server running in the VM (above), send requests to it with `vmFetch`, including custom methods, headers, and body.
+
+<CodeGroup>
 ```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
 
-const response = await agent.vmFetch(3000, "/api/data", {
+// Simple GET from the VM service started above.
+const response = await agent.vmFetch(3000, "/");
+console.log("Status:", response.status);
+console.log("Body:", new TextDecoder().decode(response.body));
+
+// With a custom method, headers, and body.
+const posted = await agent.vmFetch(3000, "/api/data", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ key: "value" }),
 });
-
-console.log("Status:", response.status, response.statusText);
-console.log("Headers:", response.headers);
-console.log("Body:", new TextDecoder().decode(response.body));
+console.log("Status:", posted.status, posted.statusText);
+console.log("Headers:", posted.headers);
+console.log("Body:", new TextDecoder().decode(posted.body));
 ```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
 
-const vm = agentOs({
-  options: { software: [common, pi] },
-});
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+
+const vm = agentOS({ software: [] });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
-## Create a preview URL
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/networking)*
 
-Preview URLs are essentially port forwarding for VM services. They create a time-limited, publicly accessible URL that proxies HTTP requests to a specific port inside the VM. Use them to share web app previews with users, embed dev servers in iframes, or give external tools access to services running inside the agent's VM.
+## Preview URLs
 
-<Tabs>
-<TabItem label="server.ts">
+Preview URLs are port forwarding for VM services: a time-limited, public URL that proxies HTTP to a port inside the VM, for browser or external access (use `vmFetch` for server-to-server). Tokens survive sleep/wake and CORS is enabled; see [Security](/docs/security-model) for details.
+
+### Create a preview URL
+
+Token lifetimes are configured under the `preview` key:
+
+<CodeGroup>
 ```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
+import { agentOS, setup } from "@rivet-dev/agentos";
 
-const vm = agentOs({
+const vm = agentOS({
+  software: [],
   preview: {
-    defaultExpiresInSeconds: 3600,   // 1 hour default
-    maxExpiresInSeconds: 86400,      // 24 hour maximum
+    defaultExpiresInSeconds: 3600, // 1 hour default
+    maxExpiresInSeconds: 86400, // 24 hour maximum
   },
-  options: { software: [common, pi] },
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-<TabItem label="client.ts">
+
 ```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
 
 // Start a web app in the VM
 await agent.spawn("node", ["/home/user/app.js"]);
@@ -140,49 +130,52 @@ console.log("Expires at:", new Date(preview.expiresAt));
 const shortPreview = await agent.createSignedPreviewUrl(3000, 300); // 5 minutes
 console.log("Short-lived preview:", shortPreview.path);
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
-## Revoke a preview URL
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/networking)*
 
-Use `expireSignedPreviewUrl` to immediately revoke a preview token.
+### Revoke a preview URL
 
-<Tabs>
-<TabItem label="client.ts">
+Mint short-lived preview tokens so access expires automatically; the lifetime is capped by `preview.maxExpiresInSeconds`.
+
+<CodeGroup>
 ```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 
-const preview = await agent.createSignedPreviewUrl(3000);
-
-// Revoke the token immediately
-await agent.expireSignedPreviewUrl(preview.token);
+// Mint a short-lived preview token so access expires automatically.
+const preview = await client.vm.getOrCreate("my-agent").createSignedPreviewUrl(3000, 300); // 5 minutes
+console.log("Preview path:", preview.path);
+console.log("Expires at:", new Date(preview.expiresAt));
 ```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
 
-const vm = agentOs({
-  options: { software: [common, pi] },
-});
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+
+const vm = agentOS({ software: [] });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
-## Recommendations
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/networking)*
 
-- Preview tokens are stored in SQLite and survive sleep/wake cycles. Expired tokens are cleaned up automatically.
-- Default preview expiration is 1 hour. Configure `preview.maxExpiresInSeconds` to cap the maximum lifetime.
-- CORS is enabled on preview URLs, allowing browser access from any origin.
-- Use `vmFetch` for server-to-server access. Use preview URLs for browser or external access.
-- See [Security](/docs/security) for more on preview URL token security.
+## Permissions
+
+Network access is governed by the VM permission policy. By default the guest cannot reach the network; grant it, or allow only specific destinations:
+
+```ts
+const vm = agentOS({
+  permissions: {
+    network: {
+      default: "deny",
+      rules: [{ mode: "allow", operations: ["*"], patterns: ["api.example.com"] }],
+    },
+  },
+});
+```
+
+See [Permissions](/docs/permissions) for the full configuration.

@@ -1,5 +1,5 @@
 /**
- * Agent OS docs configuration — the only non-content surface consumed by
+ * agentOS docs configuration — the only non-content surface consumed by
  * @rivet-dev/docs-theme. Everything visual (theme, header chrome, sidebar
  * icons, code blocks) lives in the package; this file maps agentOS's product
  * identity, navigation, and pages onto it.
@@ -11,7 +11,7 @@
  * @type {import('@rivet-dev/docs-theme').SiteConfig}
  */
 export const siteConfig = {
-	product: "Agent OS",
+	product: "agentOS",
 	productLogo: "/images/agent-os/agentos-hero-logo.svg",
 	productHome: "/",
 	favicon: "/favicon.svg",
@@ -19,8 +19,10 @@ export const siteConfig = {
 	editPath: "website/",
 
 	topNav: [
-		{ label: "Documentation", href: "/docs", match: "/docs" },
-		{ label: "Changelog", href: "https://github.com/rivet-dev/agent-os/releases" },
+		{ label: "Use Cases", href: "/use-cases" },
+		{ label: "Pricing", href: "/pricing" },
+		{ label: "Registry", href: "/registry" },
+		{ label: "Docs", href: "/docs", match: "/docs" },
 	],
 	cta: { label: "Get Started", href: "/docs/quickstart" },
 	social: { discord: "https://rivet.dev/discord" },
@@ -30,23 +32,22 @@ export const siteConfig = {
 	landing: {
 		title: "Documentation",
 		subtitle:
-			"agentOS runs coding agents inside isolated VMs with full filesystem, process, and network control — a lightweight VM in your own process with host tools, permissions, and orchestration built in.",
+			"agentOS runs coding agents inside isolated VMs with full filesystem, process, and network control — a lightweight VM in your own process with bindings, permissions, and orchestration built in.",
 		cards: [
 			{ title: "Quickstart", href: "/docs/quickstart", icon: "rocket", description: "Boot a VM and run your first coding agent." },
 			{ title: "Crash Course", href: "/docs/crash-course", icon: "lightbulb", description: "Learn the core agentOS concepts." },
 			{ title: "Agents", href: "/docs/agents/pi", icon: "bot", description: "Run Pi, Claude Code, Codex, Amp, and OpenCode." },
-			{ title: "Operating System", href: "/docs/software", icon: "cpu", description: "Software, filesystem, processes, and networking." },
-			{ title: "Orchestration", href: "/docs/workflows", icon: "diagramNext", description: "Webhooks, workflows, queues, and agent-to-agent." },
-			{ title: "Reference", href: "/docs/core", icon: "book", description: "Core API, configuration, events, and deployment." },
 		],
 	},
 
+	sidebarGroupIcons: { Agents: "bot" },
+
 	sidebar: [
+		{ slug: "docs", label: "Introduction", attrs: { "data-icon": "info" } },
 		{
 			label: "General",
 			items: [
-				{ slug: "docs", label: "Introduction", attrs: { "data-icon": "info" } },
-				{ slug: "docs/quickstart", attrs: { "data-icon": "rocket" } },
+				{ slug: "docs/quickstart", attrs: { "data-icon": "fastForward" } },
 				{ slug: "docs/crash-course", label: "Crash Course", attrs: { "data-icon": "lightbulb" } },
 				{ slug: "docs/versus-sandbox", label: "agentOS vs Sandbox", attrs: { "data-icon": "scaleBalanced" } },
 			],
@@ -57,16 +58,16 @@ export const siteConfig = {
 				{
 					label: "Agents",
 					items: [
-						{ slug: "docs/agents/pi", label: "Pi" },
-						{ slug: "docs/agents/claude", label: "ClaudeCode", badge: { text: "Coming Soon", variant: "caution" } },
-						{ slug: "docs/agents/codex", label: "Codex", badge: { text: "Coming Soon", variant: "caution" } },
-						{ slug: "docs/agents/amp", label: "Amp", badge: { text: "Coming Soon", variant: "caution" } },
-						{ slug: "docs/agents/opencode", label: "OpenCode", badge: { text: "Coming Soon", variant: "caution" } },
+						{ slug: "docs/agents/pi", label: "Pi", attrs: { "data-icon-src": "/images/registry/pi.svg" } },
+						{ slug: "docs/agents/claude", label: "ClaudeCode", attrs: { "data-icon-src": "/images/registry/claude-code.svg" }, badge: { text: "Coming Soon", variant: "caution" } },
+						{ slug: "docs/agents/codex", label: "Codex", attrs: { "data-icon-src": "/images/registry/codex.svg" }, badge: { text: "Coming Soon", variant: "caution" } },
+						{ slug: "docs/agents/amp", label: "Amp", attrs: { "data-icon-src": "/images/registry/amp.svg" }, badge: { text: "Coming Soon", variant: "caution" } },
+						{ slug: "docs/agents/opencode", label: "OpenCode", attrs: { "data-icon-src": "/images/registry/opencode.svg" }, badge: { text: "Coming Soon", variant: "caution" } },
 					],
 				},
 				{ slug: "docs/sessions", label: "Sessions & Transcripts", attrs: { "data-icon": "messages" } },
-				{ slug: "docs/permissions", attrs: { "data-icon": "key" } },
-				{ slug: "docs/tools", attrs: { "data-icon": "wrench" } },
+				{ slug: "docs/approvals", label: "Approvals", attrs: { "data-icon": "check" } },
+				{ slug: "docs/bindings", label: "Bindings", attrs: { "data-icon": "wrench" } },
 				{ slug: "docs/llm-credentials", label: "LLM Credentials", attrs: { "data-icon": "key" } },
 				{ slug: "docs/llm-gateway", label: "LLM Gateway", badge: { text: "Coming Soon", variant: "caution" }, attrs: { "data-icon": "cloud" } },
 			],
@@ -80,7 +81,9 @@ export const siteConfig = {
 				{ slug: "docs/networking", label: "Networking & Previews", attrs: { "data-icon": "globe" } },
 				{ slug: "docs/cron", label: "Cron Jobs", attrs: { "data-icon": "clock" } },
 				{ slug: "docs/sandbox", label: "Sandbox Mounting", attrs: { "data-icon": "hardDrive" } },
-				{ slug: "docs/security", label: "Security & Auth", attrs: { "data-icon": "lock" } },
+				{ slug: "docs/js-runtime", label: "JavaScript Runtime", attrs: { "data-icon": "nodejs" } },
+				{ slug: "docs/permissions", attrs: { "data-icon": "key" } },
+				{ slug: "docs/resource-limits", label: "Resource Limits", attrs: { "data-icon": "gauge" } },
 			],
 		},
 		{
@@ -91,25 +94,40 @@ export const siteConfig = {
 				{ slug: "docs/multiplayer", label: "Multiplayer & Realtime", attrs: { "data-icon": "towerBroadcast" } },
 				{ slug: "docs/agent-to-agent", label: "Agent-to-Agent", attrs: { "data-icon": "arrowsLeftRight" } },
 				{ slug: "docs/workflows", attrs: { "data-icon": "diagramNext" } },
-				{ slug: "docs/queues", attrs: { "data-icon": "mailbox" } },
-				{ slug: "docs/sqlite", label: "SQLite", attrs: { "data-icon": "database" } },
 			],
 		},
 		{
 			label: "Reference",
 			items: [
-				{ slug: "docs/core", label: "agentOS Core", attrs: { "data-icon": "box" } },
-				{ slug: "docs/configuration", attrs: { "data-icon": "blocks" } },
-				{ slug: "docs/events", attrs: { "data-icon": "scroll" } },
-				{ slug: "docs/deployment", attrs: { "data-icon": "cloud" } },
-				{ slug: "docs/limitations", attrs: { "data-icon": "shield" } },
+				{ label: "API Reference", link: "/api", attrs: { target: "_blank" } },
+				{ slug: "docs/deployment", label: "Deploy" },
 				{
-					label: "Internals",
+					label: "Architecture",
 					items: [
-						{ slug: "docs/security-model", label: "Security Model", attrs: { "data-icon": "lock" } },
-						{ slug: "docs/persistence", label: "Persistence & Sleep", attrs: { "data-icon": "hardDrive" } },
-						{ slug: "docs/system-prompt", label: "System Prompt", attrs: { "data-icon": "fileCode" } },
-						{ slug: "docs/benchmarks", attrs: { "data-icon": "gauge" } },
+						{ slug: "docs/architecture", label: "Overview" },
+						{ slug: "docs/security-model", label: "Security Model" },
+						{ slug: "docs/limitations" },
+						{
+							label: "Advanced",
+							items: [
+								{ slug: "docs/architecture/agent-sessions", label: "Agent Sessions" },
+								{ slug: "docs/architecture/processes", label: "Processes" },
+								{ slug: "docs/architecture/filesystem", label: "Filesystem" },
+								{ slug: "docs/architecture/networking", label: "Networking" },
+								{ slug: "docs/architecture/posix-syscalls", label: "POSIX Syscalls" },
+								{ slug: "docs/architecture/compiler-toolchain", label: "Compiler Toolchain" },
+								{ slug: "docs/system-prompt", label: "System Prompt" },
+								{ slug: "docs/persistence", label: "Persistence & Sleep" },
+							],
+						},
+					],
+				},
+				{
+					label: "More",
+					items: [
+						{ slug: "docs/core", label: "Core SDK" },
+						{ slug: "docs/benchmarks" },
+						{ slug: "docs/cost-evaluation", label: "Cost Evaluation" },
 					],
 				},
 			],

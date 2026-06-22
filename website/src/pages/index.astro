@@ -19,17 +19,17 @@ vm.onSessionEvent(sessionId, (event) => console.log(event));
 // Send a prompt and wait for the response
 await vm.prompt(sessionId, "Write a Python script that calculates pi");` },
 
-	{ key: 'tools', fileName: 'tools.ts', code: `import { z } from "zod";
-import { AgentOs, hostTool, toolKit } from "@agent-os/core";
+	{ key: 'tools', fileName: 'bindings.ts', code: `import { z } from "zod";
+import { AgentOs, binding, bindings } from "@agent-os/core";
 import common from "@agent-os/common";
 
-// Agents call tools as CLI commands inside the VM:
+// Agents call bindings as CLI commands inside the VM:
 // $ agentos-weather get --city London
-const weatherToolkit = toolKit({
+const weatherBindings = bindings({
 	name: "weather",
 	description: "Look up weather information for cities.",
-	tools: {
-		get: hostTool({
+	bindings: {
+		get: binding({
 			description: "Get the current weather for a city.",
 			inputSchema: z.object({
 				city: z.string().describe("City name (e.g. 'London')."),
@@ -46,25 +46,25 @@ const weatherToolkit = toolKit({
 
 const vm = await AgentOs.create({
 	software: [common],
-	toolKits: [weatherToolkit],
+	bindings: [weatherBindings],
 });
 
-// Tools are injected into the agent's system prompt automatically
+// Bindings are injected into the agent's system prompt automatically
 await vm.prompt(sessionId, "What's the weather in London?");
 // The agent will call: agentos-weather get --city London` },
 
 	{ key: 'agent-agent', fileName: 'agent-agent.ts', code: `import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import { toolKit, hostTool } from "@agent-os/core";
+import { bindings, binding } from "@agent-os/core";
 import { createClient } from "rivetkit/client";
 import { z } from "zod";
 
-// Tool that lets the writer request a code review from the reviewer
-const reviewToolkit = toolKit({
+// Binding that lets the writer request a code review from the reviewer
+const reviewBindings = bindings({
   name: "review",
   description: "Send code to the reviewer agent",
-  tools: {
-    submit: hostTool({
+  bindings: {
+    submit: binding({
       description: "Submit a file for code review",
       inputSchema: z.object({
         path: z.string().describe("Path to the file"),
@@ -86,9 +86,9 @@ const reviewToolkit = toolKit({
   },
 });
 
-// Writer gets the review tool; reviewer is plain
+// Writer gets the review binding; reviewer is plain
 // The writer calls: agentos-review submit --path /home/user/api.ts
-const writer = agentOs({ options: { toolKits: [reviewToolkit] } });
+const writer = agentOs({ options: { bindings: [reviewBindings] } });
 const reviewer = agentOs();
 
 export const registry = setup({ use: { writer, reviewer } });
@@ -298,16 +298,16 @@ console.log(new TextDecoder().decode(content));` },
 import common from "@agent-os/common";
 import { SandboxAgent } from "sandbox-agent";
 import { docker } from "sandbox-agent/docker";
-import { createSandboxFs, createSandboxToolkit } from "@agent-os/sandbox";
+import { createSandboxFs, createSandboxBindings } from "@agent-os/sandbox";
 
 // Start a Docker-backed sandbox
 const sandbox = await SandboxAgent.start({ sandbox: docker() });
 
-// Mount its filesystem and register the toolkit
+// Mount its filesystem and register the bindings
 const vm = await AgentOs.create({
   software: [common],
   mounts: [{ path: "/sandbox", driver: createSandboxFs({ client: sandbox }) }],
-  toolKits: [createSandboxToolkit({ client: sandbox })],
+  bindings: [createSandboxBindings({ client: sandbox })],
 });
 
 // Write a file through the mounted sandbox filesystem

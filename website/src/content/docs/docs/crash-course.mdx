@@ -4,22 +4,14 @@ description: "Run coding agents inside isolated VMs with full filesystem, proces
 skill: true
 ---
 
-import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
+import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
 <Aside type="note">
 agentOS is in preview and the API is subject to change. If you run into issues, please [report them on GitHub](https://github.com/rivet-dev/rivet/issues) or [join our Discord](https://rivet.dev/discord).
 </Aside>
 
 {/* SKILL_OVERVIEW_START */}
-
-## Features
-
-- **Isolated VMs**: Each agent gets its own filesystem, processes, and networking. No shared state, no cross-contamination.
-- **Multi-Agent Support**: Run Amp, Claude Code, Codex, OpenCode, and PI with a unified API. Swap agents without changing your code.
-- **Host Tools**: Expose your JavaScript functions to agents as CLI commands. Direct binding with near-zero latency and automatic code mode for up to 80% token reduction.
-- **Persistent State**: Filesystem and transcripts survive sleep/wake cycles automatically. No external database needed.
-- **Orchestration**: Workflows, queues, cron jobs, and multi-agent coordination built on Rivet Actors.
-- **Hybrid Sandboxes**: Run agents in the lightweight VM by default. Spin up a full sandbox on demand for browsers, compilation, and desktop automation.
 
 ## When to Use agentOS
 
@@ -31,17 +23,17 @@ agentOS is in preview and the API is subject to change. If you run into issues, 
 
 ## Minimal Project
 
-<Tabs>
-<TabItem label="client.ts">
+<CodeGroup>
 ```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
 
 // Subscribe to streaming events
-agent.on("sessionEvent", (data) => {
+const conn = agent.connect();
+conn.on("sessionEvent", (data) => {
   console.log(data.event);
 });
 
@@ -53,63 +45,53 @@ const response = await agent.sendPrompt(
   session.sessionId,
   "Write a hello world script to /home/user/hello.js",
 );
-console.log(response);
+console.log(response.text);
 
 // Read the file the agent created
 const content = await agent.readFile("/home/user/hello.js");
 console.log(new TextDecoder().decode(content));
 ```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
 
-const vm = agentOs({
-  options: { software: [common, pi] },
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
-After the quickstart, customize your agent with the [Registry](/agent-os/registry).
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/crash-course)*
 
-## Quick Reference
+After the quickstart, customize your agent with the [Registry](/registry).
+
+## Agents
 
 ### Sessions & Transcripts
 
 Create agent sessions, send prompts, and stream responses in realtime. Transcripts are persisted automatically across sleep/wake cycles.
 
-<Tabs>
-<TabItem label="client.ts">
+<CodeGroup>
 ```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
 
 // Stream events as they arrive
-agent.on("sessionEvent", (data) => {
+const conn = agent.connect();
+conn.on("sessionEvent", (data) => {
   console.log(data.event.method, data.event);
 });
 
-// Create a session with MCP servers
+// Create a session
 const session = await agent.createSession("pi", {
   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-  mcpServers: [
-    {
-      type: "local",
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user"],
-      env: {},
-    },
-  ],
 });
 
 // Send a prompt and wait for the response
@@ -117,159 +99,349 @@ const response = await agent.sendPrompt(
   session.sessionId,
   "List all files in the home directory",
 );
-console.log(response);
+console.log(response.text);
 ```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
 
-const vm = agentOs({
-  options: { software: [common, pi] },
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
-[Documentation](/docs/sessions)
+*See [Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/crash-course) or [Documentation](/docs/sessions)*
 
-### Permissions
+### Approvals
 
 Approve or deny agent tool use with human-in-the-loop patterns or auto-approve for trusted workloads.
 
-<Tabs>
-<TabItem label="server.ts">
+<CodeGroup>
 ```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
 
 // Auto-approve all permissions server-side
-const vm = agentOs({
-  onPermissionRequest: async (c, sessionId, request) => {
-    await c.respondPermission(sessionId, request.permissionId, "always");
+const vm = agentOS({
+  software: [pi],
+  onPermissionRequest: async (sessionId, request) => {
+    console.log("Auto-approving", sessionId, request.permissionId);
   },
-  options: { software: [common, pi] },
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-<TabItem label="client.ts">
+
 ```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
 
 // Or handle permissions client-side for human-in-the-loop
-agent.on("permissionRequest", async (data) => {
+const conn = agent.connect();
+conn.on("permissionRequest", async (data) => {
   console.log("Permission requested:", data.request);
   // "once" | "always" | "reject"
   await agent.respondPermission(data.sessionId, data.request.permissionId, "once");
 });
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
-[Documentation](/docs/permissions)
+*See [Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/crash-course) or [Documentation](/docs/approvals)*
 
-### Tools
+### Bindings
 
-Expose your JavaScript functions to agents as CLI commands inside the VM. Agents call them as shell commands with auto-generated flags from Zod schemas.
+Expose your JavaScript functions to agents as CLI commands inside the VM. Each binding group becomes a binary at `/usr/local/bin/agentos-{name}`, and each binding becomes a subcommand with flags auto-generated from its Zod input schema. The server below defines a `weather` binding group with a `forecast` binding; the client opens a session and prompts the agent, which calls the binding itself as a shell command.
 
-```ts
-import { toolKit, hostTool } from "@rivet-dev/agentos-core";
+<CodeGroup>
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
 import { z } from "zod";
 
-const myTools = toolKit({
-  name: "myapp",
-  description: "Application tools",
-  tools: {
-    createTicket: hostTool({
-      description: "Create a ticket in the issue tracker",
+// Define a group of bindings (host functions). Each binding has a Zod input
+// schema and an `execute` handler that runs on the host. Bindings are exposed to
+// the agent as CLI commands at /usr/local/bin/agentos-{name} inside the VM.
+const weatherBindings = {
+  name: "weather",
+  description: "Weather data bindings",
+  bindings: {
+    forecast: {
+      description: "Get the weather forecast for a city",
       inputSchema: z.object({
-        title: z.string().describe("Ticket title"),
-        priority: z.enum(["low", "medium", "high"]).describe("Priority level"),
+        city: z.string().describe("City name"),
+        days: z.number().optional().describe("Number of days"),
       }),
-      execute: async (input) => {
-        const ticket = await db.tickets.create(input);
-        return { id: ticket.id, url: ticket.url };
+      execute: async (input: { city: string; days?: number }) => {
+        const res = await fetch(
+          `https://api.weather.example/forecast?city=${input.city}&days=${input.days ?? 3}`,
+        );
+        return res.json();
       },
-    }),
+      examples: [
+        { description: "3-day forecast for Paris", input: { city: "Paris", days: 3 } },
+      ],
+    },
   },
-});
+};
 
-// Agent calls: agentos-myapp createTicket --title "Fix login" --priority high
-```
-
-[Documentation](/docs/tools)
-
-### Filesystem
-
-Read, write, and manage files inside the VM. The `/home/user` directory is persisted automatically across sleep/wake cycles.
-
-<Tabs>
-<TabItem label="client.ts">
-```ts title="client.ts"
-import { createClient } from "rivetkit/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
-
-// Write a file
-await agent.writeFile("/home/user/config.json", JSON.stringify({ key: "value" }));
-
-// Read a file
-const content = await agent.readFile("/home/user/config.json");
-console.log(new TextDecoder().decode(content));
-
-// List directory contents recursively
-const files = await agent.readdirRecursive("/home/user", { maxDepth: 2 });
-console.log(files);
-```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
-
-const vm = agentOs({
-  options: { software: [common, pi] },
+const vm = agentOS({
+  bindings: [weatherBindings],
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-</Tabs>
 
-[Documentation](/docs/filesystem)
+```ts title="client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
+
+// The agent invokes the binding itself as a shell command:
+//   agentos-weather forecast --city Paris --days 3
+const session = await agent.createSession("claude", {
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+});
+await agent.sendPrompt(session.sessionId, "What's the weather in Paris?");
+```
+</CodeGroup>
+
+*See [Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/bindings) or [Documentation](/docs/bindings)*
+
+### Agent-to-Agent
+
+Let one agent call another through a [binding](/docs/bindings). The coder gets a `review` binding it invokes itself, which bridges into the reviewer's isolated VM.
+
+<CodeGroup>
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import { createClient } from "@rivet-dev/agentos/client";
+import { z } from "zod";
+import pi from "@agentos-software/pi";
+
+// The reviewer is its own isolated agent VM.
+const reviewer = agentOS({ software: [pi] });
+
+// The coder gets a `review` binding it can call itself: it copies a file from the
+// coder's VM into the reviewer's VM and asks the reviewer to review it.
+const coder = agentOS({
+  software: [pi],
+  bindings: [
+    {
+      name: "review",
+      description: "Send a file to the reviewer agent and get back a review.",
+      bindings: {
+        submit: {
+          description: "Submit a file path for review by the reviewer agent.",
+          inputSchema: z.object({ path: z.string() }),
+          execute: async ({ path }: { path: string }) => {
+            const client = createClient<typeof registry>({
+              endpoint: "http://localhost:6420",
+            });
+            const content = await client.coder
+              .getOrCreate("feature-auth")
+              .readFile(path);
+            const reviewerHandle = client.reviewer.getOrCreate("feature-auth");
+            await reviewerHandle.writeFile(path, content);
+            const session = await reviewerHandle.createSession("pi", {
+              env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+            });
+            const result = await reviewerHandle.sendPrompt(
+              session.sessionId,
+              `Review ${path} for security issues`,
+            );
+            return { review: result.text };
+          },
+        },
+      },
+    },
+  ],
+});
+
+export const registry = setup({ use: { coder, reviewer } });
+registry.start();
+```
+
+```ts title="client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./agent-to-agent-server";
+
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const coderAgent = client.coder.getOrCreate("feature-auth");
+const session = await coderAgent.createSession("pi", {
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+});
+
+// The coder implements the feature, then calls the `review` binding itself so the
+// reviewer agent reviews the code. This is true agent-to-agent: the coder drives it.
+await coderAgent.sendPrompt(
+  session.sessionId,
+  "Implement the login feature in /home/user/src/auth.ts, then run `agentos-review submit --path /home/user/src/auth.ts` to have it reviewed.",
+);
+```
+</CodeGroup>
+
+*See [Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/crash-course) or [Documentation](/docs/agent-to-agent)*
+
+### Multiplayer & Realtime
+
+Connect multiple clients to the same agent VM. All subscribers see session output, process logs, and shell data in realtime.
+
+<CodeGroup>
+```ts title="client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+// Client A: creates the session and sends prompts
+const clientA = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agentA = clientA.vm.getOrCreate("shared-agent");
+const connA = agentA.connect();
+connA.on("sessionEvent", (data) =>
+  console.log("[A]", data.event.method),
+);
+
+const session = await agentA.createSession("pi", {
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+});
+await agentA.sendPrompt(session.sessionId, "Build a REST API");
+
+// Client B: observes the same session (separate process)
+const clientB = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const connB = clientB.vm.getOrCreate("shared-agent").connect();
+connB.on("sessionEvent", (data) =>
+  console.log("[B]", data.event.method),
+);
+// Client B sees the same events as Client A
+```
+
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+</CodeGroup>
+
+*See [Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/crash-course) or [Documentation](/docs/multiplayer)*
+
+### Workflows
+
+Orchestrate multi-step agent tasks with durable workflows that survive crashes and restarts.
+
+```ts
+import { agentOS, setup } from "@rivet-dev/agentos";
+import { actor, queue } from "rivetkit";
+import { workflow } from "rivetkit/workflow";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({ software: [pi] });
+
+// A durable workflow actor. Its `run` is built with `workflow()`, so every
+// `step(...)` is recorded, retried, and resumed: if the process crashes
+// mid-run, replay skips completed steps and continues where it left off.
+const bugFixer = actor({
+  queues: {
+    fixBug: queue<{ repo: string; issue: string }>(),
+  },
+  run: workflow(async (ctx) => {
+    await ctx.loop("fix-bug-loop", async (loopCtx) => {
+      // Wait durably for the next bug-fix request from the queue.
+      const message = await loopCtx.queue.next("wait-fix-bug");
+      const { repo, issue } = message.body;
+      const agent = loopCtx.client<typeof registry>().vm.getOrCreate("bug-fixer");
+
+      await loopCtx.step("clone-repo", () =>
+        agent.exec(`git clone ${repo} /home/user/repo`),
+      );
+
+      await loopCtx.step("fix-bug", async () => {
+        const session = await agent.createSession("claude", {
+          env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+        });
+        await agent.sendPrompt(session.sessionId, `Fix the bug in issue: ${issue}`);
+        await agent.closeSession(session.sessionId);
+      });
+
+      await loopCtx.step("run-tests", () =>
+        agent.exec("cd /home/user/repo && npm test"),
+      );
+    });
+  }),
+});
+
+export const registry = setup({ use: { vm, bugFixer } });
+registry.start();
+```
+
+[Documentation](/docs/workflows)
+
+## Operating System
+
+### Filesystem
+
+Read, write, and manage files inside the VM. The `/workspace` directory is persisted automatically across sleep/wake cycles.
+
+<CodeGroup>
+```ts title="client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
+
+// Write a file
+await agent.writeFile("/workspace/config.json", JSON.stringify({ key: "value" }));
+
+// Read a file
+const content = await agent.readFile("/workspace/config.json");
+console.log(new TextDecoder().decode(content));
+
+// List directory contents recursively
+const files = await agent.readdirRecursive("/workspace", { maxDepth: 2 });
+console.log(files);
+```
+
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+</CodeGroup>
+
+*See [Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/crash-course) or [Documentation](/docs/filesystem)*
 
 ### Processes & Shell
 
 Execute commands, spawn long-running processes, and open interactive shells.
 
-<Tabs>
-<TabItem label="client.ts">
+<CodeGroup>
 ```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
 
 // One-shot execution
 const result = await agent.exec("echo hello && ls /home/user");
@@ -277,45 +449,41 @@ console.log("stdout:", result.stdout);
 console.log("exit code:", result.exitCode);
 
 // Spawn a long-running process
-agent.on("processOutput", (data) => {
+const conn = agent.connect();
+conn.on("processOutput", (data) => {
   console.log(`[pid ${data.pid}]`, new TextDecoder().decode(data.data));
 });
 
-const { pid } = await agent.spawn("node", ["server.js"]);
+const { pid } = await agent.spawn("node", ["/workspace/server.js"]);
 console.log("Process ID:", pid);
 ```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
 
-const vm = agentOs({
-  options: { software: [common, pi] },
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
-[Documentation](/docs/processes)
+*See [Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/crash-course) or [Documentation](/docs/processes)*
 
 ### Networking & Previews
 
 Proxy HTTP requests into VMs with `vmFetch`. Create preview URLs for port forwarding VM services to shareable public URLs.
 
-<Tabs>
-<TabItem label="client.ts">
+<CodeGroup>
 ```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
 
 // Fetch from a service running inside the VM
 const response = await agent.vmFetch(3000, "/api/health");
@@ -326,38 +494,33 @@ const preview = await agent.createSignedPreviewUrl(3000);
 console.log("Public URL:", preview.path);
 console.log("Expires at:", new Date(preview.expiresAt));
 ```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
 
-const vm = agentOs({
-  options: { software: [common, pi] },
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
-[Documentation](/docs/networking)
+*See [Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/crash-course) or [Documentation](/docs/networking)*
 
 ### Cron Jobs
 
 Schedule recurring commands and agent sessions with cron expressions.
 
-<Tabs>
-<TabItem label="client.ts">
+<CodeGroup>
 ```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate(["my-agent"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
 
 // Schedule a command every hour
 await agent.scheduleCron({
@@ -375,54 +538,41 @@ await agent.scheduleCron({
   },
 });
 ```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
 
-const vm = agentOs({
-  options: { software: [common, pi] },
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
-[Documentation](/docs/cron)
+*See [Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/crash-course) or [Documentation](/docs/cron)*
 
 ### Sandbox Mounting
 
-agentOS uses a hybrid model: agents run in a lightweight VM by default and mount a full sandbox on demand for heavy workloads like browsers, compilation, and desktop automation. Sandboxes are powered by [Sandbox Agent](https://sandboxagent.dev), so you can swap providers without changing agent code. Mount the sandbox as a filesystem and expose its process management as host tools.
+agentOS uses a hybrid model: agents run in a lightweight VM by default and mount a full sandbox on demand for heavy workloads like browsers, compilation, and desktop automation. Sandboxes are powered by [Sandbox Agent](https://sandboxagent.dev), so you can swap providers without changing agent code. Mount the sandbox as a filesystem and expose its process management as bindings.
 
 ```ts
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
+import { agentOS, setup } from "@rivet-dev/agentos";
+import { createSandboxFs, createSandboxBindings } from "@rivet-dev/agentos-sandbox";
 import { SandboxAgent } from "sandbox-agent";
-import { DockerProvider } from "sandbox-agent/docker";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
-import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agentos-sandbox";
+import { docker } from "sandbox-agent/docker";
 
-const sandbox = await SandboxAgent.start({
-  sandbox: new DockerProvider(),
-});
+const sandbox = await SandboxAgent.start({ sandbox: docker() });
 
-const vm = agentOs({
-  options: {
-    software: [common, pi],
-    mounts: [
-      {
-        path: "/sandbox",
-        driver: createSandboxFs({ client: sandbox }),
-      },
-    ],
-    toolKits: [createSandboxToolkit({ client: sandbox })],
-  },
+const vm = agentOS({
+  // Bindings let the agent control the sandbox
+  bindings: [createSandboxBindings({ client: sandbox })],
+  // Mounts let the agent read the sandbox filesystem (optional)
+  mounts: [
+    { path: "/workspace/sandbox", plugin: createSandboxFs({ client: sandbox }) },
+  ],
 });
 
 export const registry = setup({ use: { vm } });
@@ -430,202 +580,5 @@ registry.start();
 ```
 
 [Documentation](/docs/sandbox)
-
-### Multiplayer & Realtime
-
-Connect multiple clients to the same agent VM. All subscribers see session output, process logs, and shell data in realtime.
-
-<Tabs>
-<TabItem label="client.ts">
-```ts title="client.ts"
-import { createClient } from "rivetkit/client";
-import type { registry } from "./server";
-
-// Client A: creates the session and sends prompts
-const clientA = createClient<typeof registry>("http://localhost:6420");
-const agentA = clientA.vm.getOrCreate(["shared-agent"]);
-agentA.on("sessionEvent", (data) => console.log("[A]", data.event.method));
-
-const session = await agentA.createSession("pi", {
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-});
-await agentA.sendPrompt(session.sessionId, "Build a REST API");
-
-// Client B: observes the same session (separate process)
-const clientB = createClient<typeof registry>("http://localhost:6420");
-const agentB = clientB.vm.getOrCreate(["shared-agent"]);
-agentB.on("sessionEvent", (data) => console.log("[B]", data.event.method));
-// Client B sees the same events as Client A
-```
-</TabItem>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
-
-const vm = agentOs({
-  options: { software: [common, pi] },
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-</TabItem>
-</Tabs>
-
-[Documentation](/docs/multiplayer)
-
-### Agent-to-Agent
-
-Compose specialized agents into pipelines. Each agent gets its own isolated VM and filesystem.
-
-<Tabs>
-<TabItem label="server.ts">
-```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
-
-const coder = agentOs({
-  options: { software: [common, pi] },
-});
-const reviewer = agentOs({
-  options: { software: [common, pi] },
-});
-
-export const registry = setup({ use: { coder, reviewer } });
-registry.start();
-```
-</TabItem>
-<TabItem label="client.ts">
-```ts title="client.ts"
-import { createClient } from "rivetkit/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>("http://localhost:6420");
-
-// Coder writes the feature
-const coderAgent = client.coder.getOrCreate(["feature-auth"]);
-const coderSession = await coderAgent.createSession("pi", {
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-});
-await coderAgent.sendPrompt(coderSession.sessionId, "Implement the login feature");
-
-// Pass files to the reviewer
-const src = await coderAgent.readFile("/home/user/src/auth.ts");
-const reviewerAgent = client.reviewer.getOrCreate(["feature-auth"]);
-await reviewerAgent.writeFile("/home/user/src/auth.ts", src);
-
-// Reviewer checks the code
-const reviewSession = await reviewerAgent.createSession("pi", {
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-});
-await reviewerAgent.sendPrompt(
-  reviewSession.sessionId,
-  "Review auth.ts for security issues",
-);
-```
-</TabItem>
-</Tabs>
-
-[Documentation](/docs/agent-to-agent)
-
-### Workflows
-
-Orchestrate multi-step agent tasks with durable workflows that survive crashes and restarts.
-
-```ts
-import { agentOs } from "rivetkit/agent-os";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
-import { actor, setup, workflow } from "rivetkit";
-
-const automator = actor({
-  workflows: {
-    fixBug: workflow<{ repo: string; issue: string }>(),
-  },
-  run: async (c) => {
-    for await (const message of c.workflow.iter("fixBug")) {
-      const { repo, issue } = message.body;
-      const agentHandle = c.actors.vm.getOrCreate([`fix-${issue}`]);
-
-      await c.step("clone-repo", async (c) => {
-        return agentHandle.exec(`git clone ${repo} /home/user/repo`);
-      });
-
-      await c.step("fix-bug", async (c) => {
-        const session = await agentHandle.createSession("pi", {
-          env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-        });
-        const response = await agentHandle.sendPrompt(
-          session.sessionId,
-          `Fix the bug described in issue: ${issue}`,
-        );
-        await agentHandle.closeSession(session.sessionId);
-        return response;
-      });
-
-      await c.step("run-tests", async (c) => {
-        return agentHandle.exec("cd /home/user/repo && npm test");
-      });
-
-      await message.complete();
-    }
-  },
-});
-
-const vm = agentOs({
-  options: { software: [common, pi] },
-});
-
-export const registry = setup({ use: { automator, vm } });
-registry.start();
-```
-
-[Documentation](/docs/workflows)
-
-### SQLite
-
-Use actor-local SQLite as structured long-term memory that persists across sessions and sleep/wake cycles.
-
-```ts
-import { actor, setup } from "rivetkit";
-import { db } from "rivetkit/db";
-
-const memoryAgent = actor({
-  db: db({
-    onMigrate: async (db) => {
-      await db.execute(`
-        CREATE TABLE IF NOT EXISTS memories (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          session_id TEXT NOT NULL,
-          category TEXT NOT NULL,
-          content TEXT NOT NULL,
-          created_at INTEGER NOT NULL
-        );
-      `);
-    },
-  }),
-  actions: {
-    store: async (c, sessionId: string, category: string, content: string) => {
-      await c.db.execute(
-        "INSERT INTO memories (session_id, category, content, created_at) VALUES (?, ?, ?, ?)",
-        sessionId, category, content, Date.now(),
-      );
-    },
-    search: async (c, query: string) => {
-      return c.db.execute(
-        "SELECT category, content FROM memories WHERE content LIKE ? ORDER BY created_at DESC LIMIT 20",
-        `%${query}%`,
-      );
-    },
-  },
-});
-```
-
-[Documentation](/docs/sqlite)
 
 {/* SKILL_OVERVIEW_END */}

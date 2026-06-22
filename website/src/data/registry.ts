@@ -1,5 +1,4 @@
-import type { LucideIcon } from "lucide-react";
-import { HardDrive, Database, Monitor } from "lucide-react";
+import type { RegistryIconName } from "./registry-icons";
 
 export interface RegistryEntryBase {
 	slug: string;
@@ -7,8 +6,10 @@ export interface RegistryEntryBase {
 	description: string;
 	types: ("file-system" | "tool" | "agent" | "sandbox-extension" | "software")[];
 	featured?: boolean;
-	// Lucide icon component, used when no `image` is provided.
-	icon?: LucideIcon;
+	// Lucide icon name, resolved via REGISTRY_ICONS. Used when no `image` is
+	// provided. Must be a serializable string so it survives the Astro island
+	// prop boundary.
+	icon?: RegistryIconName;
 	image?: string;
 }
 
@@ -240,18 +241,7 @@ export const registry: RegistryEntry[] = [
 		description:
 			"Mount and manage virtual filesystems with support for S3, local, and overlay drivers.",
 		types: ["file-system"],
-		icon: HardDrive,
-	},
-	{
-		slug: "s3",
-		title: "S3",
-		status: "available",
-		package: "@agent-os/s3",
-		description:
-			"Mount S3-compatible object storage as a filesystem inside the VM.",
-		types: ["file-system"],
-		featured: true,
-		image: "/images/registry/s3.svg",
+		icon: "HardDrive",
 	},
 	{
 		slug: "sqlite",
@@ -260,7 +250,7 @@ export const registry: RegistryEntry[] = [
 		description:
 			"Mount a SQLite-backed virtual filesystem for persistent, queryable storage.",
 		types: ["file-system"],
-		icon: Database,
+		icon: "Database",
 	},
 	{
 		slug: "postgres",
@@ -269,18 +259,7 @@ export const registry: RegistryEntry[] = [
 		description:
 			"Mount a Postgres-backed filesystem for shared, durable storage across agents.",
 		types: ["file-system"],
-		icon: Database,
-	},
-	{
-		slug: "google-drive",
-		title: "Google Drive",
-		status: "available",
-		package: "@agent-os/google-drive",
-		description:
-			"Mount Google Drive as a filesystem for reading and writing documents and files.",
-		types: ["file-system"],
-		featured: true,
-		image: "/images/registry/google-drive.svg",
+		icon: "Database",
 	},
 
 	// Tools
@@ -292,7 +271,7 @@ export const registry: RegistryEntry[] = [
 		description:
 			"Mount a sandbox filesystem and expose process management tools. Works with any Sandbox Agent provider.",
 		types: ["tool", "file-system"],
-		icon: Monitor,
+		icon: "Monitor",
 	},
 	{
 		slug: "browserbase",
@@ -313,7 +292,7 @@ export const registry: RegistryEntry[] = [
 		description:
 			"Run sandboxes directly on the local machine for development and testing.",
 		types: ["sandbox-extension"],
-		icon: Monitor,
+		icon: "Monitor",
 	},
 	{
 		slug: "docker",

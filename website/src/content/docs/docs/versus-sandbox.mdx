@@ -4,7 +4,7 @@ description: "When to use the lightweight agentOS VM, a full sandbox, or both to
 skill: true
 ---
 
-- **agentOS** is a lightweight VM that runs inside your process. Near-zero cold start, low memory, direct backend integration via [host tools](/docs/tools).
+- **agentOS** is a lightweight VM that runs inside your process. Near-zero cold start, low memory, direct backend integration via [bindings](/docs/bindings).
 - **Sandboxes** are full Linux environments with root access, system packages, and native binary support.
 - **You can use both.** agentOS works with sandboxes through [sandbox mounting](/docs/sandbox). Agents run in the lightweight VM by default and spin up a full sandbox on demand.
 
@@ -14,7 +14,7 @@ skill: true
 |---|---|---|
 | **Cost** | Very low. Runs in your process. | Pay per second of uptime. |
 | **Startup** | Near-zero cold start (~6 ms). | Seconds to spin up. |
-| **Backend integration** | Direct. [Host tools](/docs/tools) call your functions with zero latency. | Indirect. Requires network calls back to your backend. |
+| **Backend integration** | Direct. [Bindings](/docs/bindings) call your functions with zero latency. | Indirect. Requires network calls back to your backend. |
 | **API keys** | Stay on the server via the [LLM gateway](/docs/llm-gateway). | Must be injected into the sandbox environment. |
 | **Permissions** | Granular, deny-by-default. | Coarse-grained (container-level). |
 | **Infrastructure** | `npm install` | Vendor account + API keys. |
@@ -28,7 +28,7 @@ Use the lightweight VM for most agent workloads:
 
 - Coding and file editing
 - Running scripts and CLI tools
-- Calling APIs and services via host tools
+- Calling APIs and services via bindings
 - Multi-agent orchestration and workflows
 - Tasks where backend integration matters (permissions, tool access, LLM routing)
 
@@ -45,7 +45,7 @@ Spin up a sandbox when the workload needs a real Linux kernel:
 
 Use agentOS with [sandbox mounting](/docs/sandbox) for workflows that need both:
 
-- Agent runs in the agentOS VM with full access to host tools and permissions
+- Agent runs in the agentOS VM with full access to bindings and permissions
 - Sandbox spins up on demand for heavy tasks
 - Sandbox filesystem is mounted into the VM as a native directory
 - Agent reads and writes sandbox files the same way it reads local files

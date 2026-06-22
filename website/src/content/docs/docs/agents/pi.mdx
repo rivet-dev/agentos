@@ -4,27 +4,24 @@ description: "Run the Pi coding agent inside a VM with extensions and custom con
 skill: true
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
 ## Quick start
 
-<Tabs>
-<TabItem label="server.ts">
+<CodeGroup>
 ```ts title="server.ts"
 import { agentOs } from "rivetkit/agent-os";
 import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
+import pi from "@agentos-software/pi";
 
 const vm = agentOs({
-  options: { software: [common, pi] },
+  options: { software: [pi] },
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
-</TabItem>
-<TabItem label="client.ts">
+
 ```ts title="client.ts"
 import { createClient } from "rivetkit/client";
 import type { registry } from "./server";
@@ -42,8 +39,7 @@ const { text } = await agent.sendPrompt(
 );
 console.log(text);
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
 Read [Sessions](/docs/sessions) first for session options, streaming events, prompts, and lifecycle management.
 
