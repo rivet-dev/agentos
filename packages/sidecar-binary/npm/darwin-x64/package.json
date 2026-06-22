@@ -1,0 +1,23 @@
+{
+	"name": "@rivet-dev/agentos-sidecar-darwin-x64",
+	"version": "0.2.0-rc.3",
+	"description": "Agent OS native sidecar binary for macOS x64 (Intel)",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/rivet-dev/agent-os.git",
+		"directory": "packages/sidecar-binary/npm/darwin-x64"
+	},
+	"os": [
+		"darwin"
+	],
+	"cpu": [
+		"x64"
+	],
+	"files": [
+		"agent-os-sidecar"
+	],
+	"engines": {
+		"node": ">=20"
+	}
+}

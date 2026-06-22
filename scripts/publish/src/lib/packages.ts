@@ -80,9 +80,13 @@ export const SECURE_EXEC_WORKSPACE_PACKAGES = new Set([
  * Platforms whose sidecar binary package is built and published. Kept in sync
  * with the build matrix in `.github/workflows/publish.yaml`. Override via the
  * `SIDECAR_PLATFORMS` env var (space-separated) to publish a different set.
- * arm64 is deferred until its portability fix is verified end-to-end.
+ * linux arm64 is deferred until its portability fix is verified end-to-end.
  */
-export const DEFAULT_SIDECAR_PLATFORMS = ["linux-x64-gnu"] as const;
+export const DEFAULT_SIDECAR_PLATFORMS = [
+	"linux-x64-gnu",
+	"darwin-arm64",
+	"darwin-x64",
+] as const;
 
 export function sidecarPlatforms(): string[] {
 	const env = process.env.SIDECAR_PLATFORMS?.trim();
