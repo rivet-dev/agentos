@@ -27,6 +27,11 @@ function getPlatformPackageName() {
 			if (arch === "x64") return "@rivet-dev/agentos-sidecar-linux-x64-gnu";
 			if (arch === "arm64") return "@rivet-dev/agentos-sidecar-linux-arm64-gnu";
 			break;
+		case "darwin":
+			// macOS packages carry no libc suffix; the `-gnu` tag is linux-only.
+			if (arch === "arm64") return "@rivet-dev/agentos-sidecar-darwin-arm64";
+			if (arch === "x64") return "@rivet-dev/agentos-sidecar-darwin-x64";
+			break;
 		default:
 			break;
 	}
@@ -53,7 +58,7 @@ function getSidecarPath() {
 	if (!platformPkg) {
 		throw new Error(
 			`@rivet-dev/agentos-sidecar: unsupported platform ${process.platform}/${process.arch}. ` +
-				"The Agent OS sidecar currently supports linux x64 and arm64. " +
+				"The Agent OS sidecar currently supports linux (x64, arm64) and macOS (arm64, x64). " +
 				"Set AGENT_OS_SIDECAR_BIN to a local agent-os-sidecar binary to override.",
 		);
 	}
