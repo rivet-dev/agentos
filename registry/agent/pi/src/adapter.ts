@@ -74,6 +74,7 @@ type SessionManagerLike = {
 type ModelLike = {
 	id: string;
 	provider: string;
+	baseUrl?: string;
 	reasoning?: boolean;
 };
 
@@ -663,7 +664,7 @@ async function createAgentSession(options: {
 	const homeDir = process.env.HOME || "/home/user";
 	const agentDir = join(homeDir, ".pi", "agent");
 	const settingsManager = SettingsManager.create(cwd, agentDir);
-	return createPiAgentSession({
+	const result = await createPiAgentSession({
 		cwd,
 		agentDir,
 		sessionManager: options.sessionManager,
@@ -672,6 +673,18 @@ async function createAgentSession(options: {
 		tools: options.tools,
 		customTools: options.tools,
 	});
+	applyAnthropicBaseUrlOverride(result.session);
+	return result;
+}
+
+function applyAnthropicBaseUrlOverride(session: PiSessionLike): void {
+	const baseUrl = process.env.ANTHROPIC_BASE_URL;
+	if (!baseUrl) return;
+	const agent = (session as { agent?: { state?: { model?: ModelLike } } }).agent;
+	const model = agent?.state?.model;
+	if (model?.provider !== "anthropic") return;
+	if (!agent?.state) return;
+	agent.state.model = { ...model, baseUrl };
 }
 
 // ── CLI argument parsing ────────────────────────────────────────────

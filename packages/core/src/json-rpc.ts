@@ -9,7 +9,26 @@ export interface AcpTimeoutErrorData {
 	recentActivity: string[];
 }
 
-export type JsonRpcErrorData = AcpTimeoutErrorData | Record<string, unknown>;
+/**
+ * Structured error payload meaning "the session id is not known to the agent" —
+ * e.g. a `session/load` / `session/resume` against a session whose on-disk store did
+ * not survive a VM teardown. The sidecar normalizes the adapter's native error into
+ * this shape so the resume orchestration can distinguish "fall through to a fresh
+ * session" from a transport/timeout error (which must propagate). Mirrors the
+ * `acp_timeout` convention.
+ */
+export interface UnknownSessionErrorData {
+	kind: "unknown_session";
+	/** Optional metadata. The discriminator is `kind` alone — the sidecar's
+	 * normalized error carries only `kind`, so this stays optional to keep the
+	 * sidecar and client contracts aligned. */
+	sessionId?: string;
+}
+
+export type JsonRpcErrorData =
+	| AcpTimeoutErrorData
+	| UnknownSessionErrorData
+	| Record<string, unknown>;
 
 export interface JsonRpcRequest {
 	jsonrpc: "2.0";
@@ -53,5 +72,18 @@ export function isAcpTimeoutErrorData(
 		typeof record.timeoutMs === "number" &&
 		Array.isArray(record.recentActivity) &&
 		record.recentActivity.every((entry) => typeof entry === "string")
+	);
+}
+
+export function isUnknownSessionErrorData(
+	value: unknown,
+): value is UnknownSessionErrorData {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return false;
+	}
+	const record = value as Record<string, unknown>;
+	return (
+		record.kind === "unknown_session" &&
+		(record.sessionId === undefined || typeof record.sessionId === "string")
 	);
 }

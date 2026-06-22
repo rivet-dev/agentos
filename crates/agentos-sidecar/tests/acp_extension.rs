@@ -395,6 +395,8 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
         leaked,
         "cross-connection read of another connection's ACP session state",
     );
+
+    close_owned_session(&mut sidecar, 7, &victim_conn, &victim_session, &victim_vm);
 }
 
 /// AOS-ACP-1 (P1 / J.4 cross-connection ACP close): a second connection
@@ -415,6 +417,7 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
 fn acp_close_session_denies_cross_connection_session_id() {
     assert_node_available();
     let mut sidecar = new_sidecar("agentos-acp-cross-conn-close");
+    install_default_acp_callback_handler(&mut sidecar);
 
     // Victim connection creates a real ACP session.
     let victim_conn = authenticate(&mut sidecar);
@@ -507,6 +510,8 @@ fn acp_close_session_denies_cross_connection_session_id() {
 
     // This test harness does not install the host callback transport needed by
     // `session/prompt`; owner-readable state is the stable liveness assertion.
+
+    close_owned_session(&mut sidecar, 9, &victim_conn, &victim_session, &victim_vm);
 }
 
 /// AOS-ACP-2 (P1 / J.4 cross-connection ACP drive): a second connection
@@ -527,6 +532,7 @@ fn acp_close_session_denies_cross_connection_session_id() {
 fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
     assert_node_available();
     let mut sidecar = new_sidecar("agentos-acp-cross-conn-drive");
+    install_default_acp_callback_handler(&mut sidecar);
 
     // Victim connection creates a real ACP session.
     let victim_conn = authenticate(&mut sidecar);
@@ -664,6 +670,8 @@ fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
         modes["currentModeId"], "default",
         "denied cross-connection set_mode must not mutate victim mode state"
     );
+
+    close_owned_session(&mut sidecar, 10, &victim_conn, &victim_session, &victim_vm);
 }
 
 /// Assert an ACP response is a deny that is INDISTINGUISHABLE from a missing
@@ -686,6 +694,71 @@ fn assert_indistinguishable_deny(response: AcpResponse, what: &str) {
         error.message.contains("unknown ACP session"),
         "{what} must read like a missing session (no existence leak); got: {:?}",
         error.message
+    );
+}
+
+fn install_default_acp_callback_handler(sidecar: &mut NativeSidecar<RecordingBridge>) {
+    sidecar.set_wire_sidecar_request_handler(|frame| match frame.payload {
+        SidecarRequestPayload::ExtEnvelope(envelope) => {
+            assert_eq!(envelope.namespace, ACP_EXTENSION_NAMESPACE);
+            let callback: AcpCallback =
+                serde_bare::from_slice(&envelope.payload).expect("decode ACP callback");
+            let response = match callback {
+                AcpCallback::AcpPermissionCallback(callback) => {
+                    AcpCallbackResponse::AcpPermissionCallbackResponse(
+                        AcpPermissionCallbackResponse {
+                            permission_id: callback.permission_id,
+                            reply: String::from("once"),
+                        },
+                    )
+                }
+                AcpCallback::AcpHostRequestCallback(callback) => {
+                    let request: Value =
+                        serde_json::from_str(&callback.request).expect("host callback request");
+                    assert_eq!(request["method"], "fs/read_text_file");
+                    AcpCallbackResponse::AcpHostRequestCallbackResponse(
+                        AcpHostRequestCallbackResponse {
+                            response: Some(String::from(
+                                r#"{"jsonrpc":"2.0","id":100,"result":{"content":"host callback ok"}}"#,
+                            )),
+                        },
+                    )
+                }
+            };
+            Ok(SidecarResponseFrame {
+                schema: frame.schema,
+                request_id: frame.request_id,
+                ownership: frame.ownership,
+                payload: SidecarResponsePayload::ExtEnvelope(ExtEnvelope {
+                    namespace: envelope.namespace,
+                    payload: serde_bare::to_vec(&response).expect("encode callback response"),
+                }),
+            })
+        }
+        other => panic!("unexpected sidecar callback: {other:?}"),
+    });
+}
+
+fn close_owned_session(
+    sidecar: &mut NativeSidecar<RecordingBridge>,
+    request_id: i64,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+) {
+    let closed = dispatch_acp(
+        sidecar,
+        request_id,
+        connection_id,
+        session_id,
+        vm_id,
+        AcpRequest::AcpCloseSessionRequest(AcpCloseSessionRequest {
+            session_id: String::from("adapter-session"),
+        }),
+    );
+    assert!(
+        matches!(closed, AcpResponse::AcpSessionClosedResponse(_)),
+        "owner cleanup close must succeed, got {closed:?}"
     );
 }
 

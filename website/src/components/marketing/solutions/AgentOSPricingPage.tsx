@@ -10,7 +10,7 @@ import {
 	Copy,
 } from 'lucide-react';
 import { FaqSection } from '../../faq/FaqSection';
-import { agentOsPricingFaqs } from '../../../data/faqs/agent-os-pricing';
+import { agentOsPricingFaqs } from '../../../data/faqs/agentos-pricing';
 import { HERO_H1_CLASS, SECTION_H2_CLASS } from '../typography';
 
 const pricingTiers = [

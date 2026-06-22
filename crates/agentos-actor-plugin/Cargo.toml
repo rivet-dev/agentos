@@ -1,0 +1,38 @@
+[package]
+name = "agentos-actor-plugin"
+version.workspace = true
+edition.workspace = true
+description = "Agent OS actor as a RivetKit native actor plugin (cdylib). Implements the plugin side of rivet-actor-plugin-abi; spawns the agent-os sidecar via the unmodified agentos-client."
+# Distributed as a prebuilt cdylib inside the @rivet-dev/agentos-plugin-<platform>
+# npm packages, not as a crates.io library — and it path-depends on the r6 abi
+# crate which the crates.io publish flow does not clone. Keep it out of crates.io.
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# RivetKit native-plugin ABI crate, consumed from crates.io like any other
+# published dependency (no repo clone / git / local path). Published from the
+# rivet repo's `feat/dylib-actor-plugin` preview (commit 5d959bc1), matching the
+# `rivetkit@0.0.0-feat-dylib-actor-plugin.5d959bc` npm preview the TS forwarder uses.
+rivet-actor-plugin-abi = "=2.3.2"
+agentos-client = { path = "../client" }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio-util = "0.7"
+anyhow = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"
+serde_bytes = "0.11"
+ciborium = "0.2"
+base64 = "0.22"
+bytes = "1"
+http = "1"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+futures = "0.3"
+
+[dev-dependencies]
+# Real SQLite backing the mock host in the persistence e2e test (the durable
+# storage the VM's sqlite_vfs callback drives through the db_* ABI contract).
+rusqlite = { version = "0.32", features = ["bundled"] }

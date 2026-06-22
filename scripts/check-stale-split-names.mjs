@@ -74,8 +74,8 @@ const stalePatterns = [
 	},
 	{
 		name: "legacy sidecar binary env var",
-		pattern: /\bAGENT_OS_SIDECAR_BINARY\b/g,
-		replacement: "AGENT_OS_SIDECAR_BIN",
+		pattern: /\bAGENTOS_SIDECAR_BINARY\b/g,
+		replacement: "AGENTOS_SIDECAR_BIN",
 	},
 	{
 		name: "legacy secure-exec repo path",

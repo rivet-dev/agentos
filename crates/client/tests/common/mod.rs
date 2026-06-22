@@ -1,6 +1,6 @@
 //! Shared e2e helpers: resolve/point at the real `agentos-sidecar` binary and build VMs.
 //!
-//! Resolve order for the binary: `AGENT_OS_SIDECAR_BIN`, else `<workspace>/target/debug/agentos-sidecar`.
+//! Resolve order for the binary: `AGENTOS_SIDECAR_BIN`, else `<workspace>/target/debug/agentos-sidecar`.
 //! Build it first with `cargo build -p agentos-sidecar`.
 
 #![allow(dead_code)]
@@ -15,7 +15,7 @@ static INIT: Once = Once::new();
 
 pub fn ensure_sidecar_env() {
     INIT.call_once(|| {
-        if std::env::var("AGENT_OS_SIDECAR_BIN").is_err() {
+        if std::env::var("AGENTOS_SIDECAR_BIN").is_err() {
             let bin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../target/debug/agentos-sidecar");
             // `std::env::set_var` is `unsafe` in the Rust 2024 edition (process-global mutation that
@@ -24,7 +24,7 @@ pub fn ensure_sidecar_env() {
             // 2021 edition, where the call is still safe.
             #[allow(unused_unsafe)]
             unsafe {
-                std::env::set_var("AGENT_OS_SIDECAR_BIN", bin);
+                std::env::set_var("AGENTOS_SIDECAR_BIN", bin);
             }
         }
     });
@@ -33,7 +33,7 @@ pub fn ensure_sidecar_env() {
 /// Whether the sidecar binary is present.
 pub fn sidecar_available() -> bool {
     ensure_sidecar_env();
-    std::env::var("AGENT_OS_SIDECAR_BIN")
+    std::env::var("AGENTOS_SIDECAR_BIN")
         .map(|path| PathBuf::from(path).exists())
         .unwrap_or(false)
 }
@@ -147,10 +147,10 @@ pub fn coreutils_wasm_dir() -> Option<PathBuf> {
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
 
-        if file_name.starts_with("@agent-os-pkgs+coreutils@") {
+        if file_name.starts_with("@agentos-software+coreutils@") {
             let wasm = entry
                 .path()
-                .join("node_modules/@agent-os-pkgs/coreutils/wasm");
+                .join("node_modules/@agentos-software/coreutils/wasm");
             if wasm.is_dir() {
                 return std::fs::canonicalize(&wasm).ok();
             }

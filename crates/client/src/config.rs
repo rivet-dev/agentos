@@ -44,9 +44,9 @@ pub struct AgentOsConfig {
     /// Sidecar placement/config. Default: shared `default` pool.
     pub sidecar: Option<AgentOsSidecarConfig>,
     /// Absolute path to the `agentos-sidecar` binary, resolved from the npm
-    /// package on the TypeScript side. Threaded to `SidecarTransport::spawn`
+    /// package on the TypeScript side. Threaded to `SidecarProcess::spawn`
     /// (mirroring rivetkit's `engine_binary_path`) instead of relying on the
-    /// `AGENT_OS_SIDECAR_BIN` env var. `None` falls back to env, then `PATH`.
+    /// `AGENTOS_SIDECAR_BIN` env var. `None` falls back to env, then `PATH`.
     pub sidecar_binary_path: Option<String>,
 }
 

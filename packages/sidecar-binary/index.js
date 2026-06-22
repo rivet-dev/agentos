@@ -6,7 +6,7 @@
 // matching the current `os`/`cpu`/`libc` at install time.
 //
 // Resolution priority:
-//   1. `AGENT_OS_SIDECAR_BIN` env var (absolute path override).
+//   1. `AGENTOS_SIDECAR_BIN` env var (absolute path override).
 //   2. A `agentos-sidecar` binary placed next to this package (dev builds).
 //   3. The platform-specific `@rivet-dev/agentos-sidecar-<platform>` package.
 
@@ -34,11 +34,11 @@ function getPlatformPackageName() {
 }
 
 function getSidecarPath() {
-	const override = process.env.AGENT_OS_SIDECAR_BIN;
+	const override = process.env.AGENTOS_SIDECAR_BIN;
 	if (override) {
 		if (!existsSync(override)) {
 			throw new Error(
-				`AGENT_OS_SIDECAR_BIN is set to ${override} but the file does not exist`,
+				`AGENTOS_SIDECAR_BIN is set to ${override} but the file does not exist`,
 			);
 		}
 		return override;
@@ -54,7 +54,7 @@ function getSidecarPath() {
 		throw new Error(
 			`@rivet-dev/agentos-sidecar: unsupported platform ${process.platform}/${process.arch}. ` +
 				"The Agent OS sidecar currently supports linux x64 and arm64. " +
-				"Set AGENT_OS_SIDECAR_BIN to a local agentos-sidecar binary to override.",
+				"Set AGENTOS_SIDECAR_BIN to a local agentos-sidecar binary to override.",
 		);
 	}
 
@@ -66,7 +66,7 @@ function getSidecarPath() {
 			`@rivet-dev/agentos-sidecar: platform package ${platformPkg} is not installed.\n` +
 				"This usually means the platform is unsupported or optionalDependencies were\n" +
 				`skipped during install. Try: npm install --include=optional ${platformPkg}\n` +
-				"Or set AGENT_OS_SIDECAR_BIN to a local agentos-sidecar binary.",
+				"Or set AGENTOS_SIDECAR_BIN to a local agentos-sidecar binary.",
 		);
 	}
 

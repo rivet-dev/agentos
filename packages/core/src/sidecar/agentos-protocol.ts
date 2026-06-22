@@ -212,11 +212,46 @@ export function writeAcpCloseSessionRequest(bc: bare.ByteCursor, x: AcpCloseSess
     bare.writeString(bc, x.sessionId)
 }
 
+/**
+ * Resume a session that exists in durable storage but is not live in the current
+ * VM (e.g. after a Rivet actor slept and woke with a fresh VM). The sidecar runs
+ * the stateless resume state machine (native session/load when the agent supports
+ * it, else a fresh session/new + transcript continuation preamble). `cwd`/`env`
+ * describe the fresh adapter launch used by the fallback tier. `transcriptPath`,
+ * when present, is a guest-readable path the fallback preamble points the agent at.
+ */
+export type AcpResumeSessionRequest = {
+    readonly sessionId: string
+    readonly agentType: string
+    readonly transcriptPath: string | null
+    readonly cwd: string
+    readonly env: ReadonlyMap<string, string>
+}
+
+export function readAcpResumeSessionRequest(bc: bare.ByteCursor): AcpResumeSessionRequest {
+    return {
+        sessionId: bare.readString(bc),
+        agentType: bare.readString(bc),
+        transcriptPath: read2(bc),
+        cwd: bare.readString(bc),
+        env: read1(bc),
+    }
+}
+
+export function writeAcpResumeSessionRequest(bc: bare.ByteCursor, x: AcpResumeSessionRequest): void {
+    bare.writeString(bc, x.sessionId)
+    bare.writeString(bc, x.agentType)
+    write2(bc, x.transcriptPath)
+    bare.writeString(bc, x.cwd)
+    write1(bc, x.env)
+}
+
 export type AcpRequest =
     | { readonly tag: "AcpCreateSessionRequest"; readonly val: AcpCreateSessionRequest }
     | { readonly tag: "AcpSessionRequest"; readonly val: AcpSessionRequest }
     | { readonly tag: "AcpGetSessionStateRequest"; readonly val: AcpGetSessionStateRequest }
     | { readonly tag: "AcpCloseSessionRequest"; readonly val: AcpCloseSessionRequest }
+    | { readonly tag: "AcpResumeSessionRequest"; readonly val: AcpResumeSessionRequest }
 
 export function readAcpRequest(bc: bare.ByteCursor): AcpRequest {
     const offset = bc.offset
@@ -230,6 +265,8 @@ export function readAcpRequest(bc: bare.ByteCursor): AcpRequest {
             return { tag: "AcpGetSessionStateRequest", val: readAcpGetSessionStateRequest(bc) }
         case 3:
             return { tag: "AcpCloseSessionRequest", val: readAcpCloseSessionRequest(bc) }
+        case 4:
+            return { tag: "AcpResumeSessionRequest", val: readAcpResumeSessionRequest(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -257,6 +294,11 @@ export function writeAcpRequest(bc: bare.ByteCursor, x: AcpRequest): void {
         case "AcpCloseSessionRequest": {
             bare.writeU8(bc, 3)
             writeAcpCloseSessionRequest(bc, x.val)
+            break
+        }
+        case "AcpResumeSessionRequest": {
+            bare.writeU8(bc, 4)
+            writeAcpResumeSessionRequest(bc, x.val)
             break
         }
     }
@@ -423,6 +465,30 @@ export function writeAcpSessionClosedResponse(bc: bare.ByteCursor, x: AcpSession
     bare.writeString(bc, x.sessionId)
 }
 
+/**
+ * Result of AcpResumeSessionRequest. `sessionId` is the live ACP session id after
+ * resume: equal to the requested id for native loads, or the freshly assigned id
+ * for the fallback tier (the caller remaps external -> live). `mode` is "native"
+ * (session/load|resume succeeded) or "fallback" (a new session was created and the
+ * transcript-continuation preamble was armed for the next prompt).
+ */
+export type AcpSessionResumedResponse = {
+    readonly sessionId: string
+    readonly mode: string
+}
+
+export function readAcpSessionResumedResponse(bc: bare.ByteCursor): AcpSessionResumedResponse {
+    return {
+        sessionId: bare.readString(bc),
+        mode: bare.readString(bc),
+    }
+}
+
+export function writeAcpSessionResumedResponse(bc: bare.ByteCursor, x: AcpSessionResumedResponse): void {
+    bare.writeString(bc, x.sessionId)
+    bare.writeString(bc, x.mode)
+}
+
 export type AcpErrorResponse = {
     readonly code: string
     readonly message: string
@@ -445,6 +511,7 @@ export type AcpResponse =
     | { readonly tag: "AcpSessionRpcResponse"; readonly val: AcpSessionRpcResponse }
     | { readonly tag: "AcpSessionStateResponse"; readonly val: AcpSessionStateResponse }
     | { readonly tag: "AcpSessionClosedResponse"; readonly val: AcpSessionClosedResponse }
+    | { readonly tag: "AcpSessionResumedResponse"; readonly val: AcpSessionResumedResponse }
     | { readonly tag: "AcpErrorResponse"; readonly val: AcpErrorResponse }
 
 export function readAcpResponse(bc: bare.ByteCursor): AcpResponse {
@@ -460,6 +527,8 @@ export function readAcpResponse(bc: bare.ByteCursor): AcpResponse {
         case 3:
             return { tag: "AcpSessionClosedResponse", val: readAcpSessionClosedResponse(bc) }
         case 4:
+            return { tag: "AcpSessionResumedResponse", val: readAcpSessionResumedResponse(bc) }
+        case 5:
             return { tag: "AcpErrorResponse", val: readAcpErrorResponse(bc) }
         default: {
             bc.offset = offset
@@ -490,8 +559,13 @@ export function writeAcpResponse(bc: bare.ByteCursor, x: AcpResponse): void {
             writeAcpSessionClosedResponse(bc, x.val)
             break
         }
-        case "AcpErrorResponse": {
+        case "AcpSessionResumedResponse": {
             bare.writeU8(bc, 4)
+            writeAcpSessionResumedResponse(bc, x.val)
+            break
+        }
+        case "AcpErrorResponse": {
+            bare.writeU8(bc, 5)
             writeAcpErrorResponse(bc, x.val)
             break
         }

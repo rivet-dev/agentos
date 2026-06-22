@@ -47,7 +47,6 @@ function parseHeadRef(content: string): string {
 }
 
 const vm = await AgentOs.create({
-	moduleAccessCwd: MODULE_ACCESS_CWD,
 	permissions: GIT_QUICKSTART_PERMISSIONS,
 	software: [common, git],
 });

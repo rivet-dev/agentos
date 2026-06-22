@@ -14,7 +14,6 @@ export type {
 	ExecResult,
 	Kernel,
 	KernelInterface,
-	ModuleAccessOptions,
 	NetworkAdapter,
 	NodeRuntimeDriver,
 	NodeRuntimeDriverFactory,

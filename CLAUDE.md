@@ -4,7 +4,9 @@ Agent OS is the agent-facing wrapper around secure-exec. It provides ACP session
 
 ## Boundaries
 
-- Local Agent OS development dependencies on secure-exec must point to `../secure-exec`.
+- secure-exec dependency workflow. Manage the secure-exec dependency ONLY through `scripts/secure-exec-dep.mjs` (the `just secure-exec-*` recipes); never hand-edit the `path` / `version` / `catalog:` pins.
+  - Testing against local secure-exec changes: run `just secure-exec-local` to repoint npm (`link:`) and crates (`path = "../secure-exec/..."`) at the sibling checkout, then `node scripts/secure-exec-dep.mjs set-crate-version <sibling-version>` so the Cargo version requirement matches the sibling crate version (otherwise cargo cannot resolve the path deps). Use `just secure-exec-status` to inspect. This mode is for local builds/tests ONLY.
+  - Pushing changes that depend on secure-exec changes: NEVER push with local (`path:` / `link:`) dependencies. First preview-publish the secure-exec changes to their own secure-exec branch (the `preview-publish-secure-exec` flow), then point agent-os back at that exact published version with `just secure-exec-pinned` + `just secure-exec-set-version <version>` (and `set-crate-version <version>` for the crates). Only commit/push the pinned-to-remote state.
 - Keep generic runtime, kernel, VFS, language execution, and registry software behavior in secure-exec.
 - Agent OS owns ACP, sessions, agent adapters, toolkit semantics, quickstarts, and the AgentOs facade.
 - Call OS instances VMs, never sandboxes.
@@ -35,11 +37,13 @@ Trust model (decide which side of the boundary something is on before judging wh
 - Agent OS extension payloads use the secure-exec `Ext` envelope with Agent OS-owned namespaces and generated ACP payloads.
 - Keep ACP decoding and session state in Agent OS wrapper code, not in secure-exec core sidecar code.
 - The agent-os sidecar wrapper embeds and extends secure-exec; secure-exec must remain free of ACP, agent, and session dependencies.
+- Prefer the agent-os sidecar wrapper for heavy lifting. Multi-step ACP/session orchestration, state machines, and anything that would otherwise cost several client→sidecar round-trips belong in the sidecar (`crates/agentos-sidecar`), exposed as a single wire request; the TypeScript (`packages/core`) and Rust (`crates/client`) clients stay thin forwarders and must BOTH expose it. Rationale: (a) keep clients simple and in parity, (b) cut client↔sidecar latency. Keep logic client-side only when it needs state the sidecar cannot reach — e.g. RivetKit actor durable storage (`ctx.db_*`/SQLite), which the sidecar has no access to. Even then, the sidecar must not pull ACP/session deps into secure-exec core.
 
 ## Website And Docs
 
 - The Agent OS website and docs live in `website/` (Astro + Starlight) and deploy to `agentos-sdk.dev` (docs at `agentos-sdk.dev/docs`). The marketing pages and docs were migrated out of `rivet.dev/agent-os` and `rivet.dev/docs/agent-os`, which now 301-redirect to this domain.
 - Docs styling is owned by the shared **`@rivet-dev/docs-theme`** repo (`github.com/rivet-dev/docs-theme`), consumed via `github:rivet-dev/docs-theme#<tag>` and wired in via `...docsTheme(starlight, siteConfig)`. To change any docs styling (palette, header, sidebar, code blocks, fonts), edit that repo and follow its CLAUDE.md release workflow — never restyle docs in `website/src`. This site owns only content + `website/docs.config.mjs` (sidebar icons via each item's `attrs['data-icon']`).
+- Architecture reference docs live in `website/src/content/docs/docs/architecture/` and are surfaced in `website/docs.config.mjs` under Reference → Advanced → Architecture. Treat these pages as the canonical human-facing architecture reference. When architecture behavior changes or new architecture is added, recommend the corresponding docs update to the user; do not proactively edit the docs unless the user asks for docs work or the task explicitly includes it.
 - The core quickstart under `examples/quickstart/` and the RivetKit example must stay behaviorally identical.
 - Every quickstart change needs a matching automated test in the same change.
 - Confirm the docs repo path with the user before editing Agent OS docs.

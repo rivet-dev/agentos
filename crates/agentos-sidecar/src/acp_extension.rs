@@ -1,12 +1,15 @@
 use std::collections::{BTreeMap, HashMap};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use agentos_protocol::generated::v1::{
     AcpCallback, AcpCallbackResponse, AcpCloseSessionRequest, AcpCreateSessionRequest,
     AcpErrorResponse, AcpEvent, AcpGetSessionStateRequest, AcpHostRequestCallback,
-    AcpPermissionCallback, AcpRequest, AcpResponse, AcpRuntimeKind, AcpSessionClosedResponse,
-    AcpSessionCreatedResponse, AcpSessionEvent, AcpSessionRequest, AcpSessionStateResponse,
+    AcpPermissionCallback, AcpRequest, AcpResponse, AcpResumeSessionRequest, AcpRuntimeKind,
+    AcpSessionClosedResponse, AcpSessionCreatedResponse, AcpSessionEvent, AcpSessionRequest,
+    AcpSessionResumedResponse, AcpSessionStateResponse,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_sidecar::limits::DEFAULT_ACP_MAX_READ_LINE_BYTES;
@@ -26,6 +29,25 @@ const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 const SESSION_NEW_TIMEOUT: Duration = Duration::from_secs(30);
 const SESSION_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const ACP_CANCEL_METHOD: &str = "session/cancel";
+/// Transcript-continuation preamble prepended (once) to the first prompt after a
+/// fallback resume. Lossy-but-universal floor: the agent is handed a *pointer* to
+/// the rendered transcript and reads it on demand with its own file tools. `{path}`
+/// is substituted with the guest-readable transcript path. Tunable; see spec §6.
+const CONTINUATION_PREAMBLE: &str = "You are continuing an earlier session. The full prior transcript is at `{path}`. Read it with your file tools if you need context before answering.";
+/// Reserved `env` key on `AcpResumeSessionRequest` carrying the adapter bin
+/// entrypoint. The resume wire request intentionally omits a dedicated
+/// `adapterEntrypoint` field; the thin client resolves it exactly as it does for
+/// create and forwards it through `env` under this key so the sidecar still owns
+/// the launch. Stripped before the adapter process env is assembled.
+const RESUME_ADAPTER_ENTRYPOINT_ENV: &str = "AGENT_OS_RESUME_ADAPTER_ENTRYPOINT";
+const ACP_TRACE_PATH_ENV: &str = "AGENT_OS_ACP_TRACE_PATH";
+/// ACP protocol version used for the resume handshake. Lockstep single version.
+const ACP_RESUME_PROTOCOL_VERSION: i32 = 1;
+/// Client capabilities advertised during the resume `initialize`. Mirrors the
+/// client's `defaultAcpClientCapabilities()` so resumed sessions behave like
+/// freshly created ones.
+const DEFAULT_RESUME_CLIENT_CAPABILITIES: &str =
+    "{\"fs\":{\"readTextFile\":true,\"writeTextFile\":true},\"terminal\":true}";
 const OPENCODE_SYSTEM_PROMPT_PATH: &str = "/tmp/agentos-system-prompt.md";
 const OPENCODE_DEFAULT_CONTEXT_PATHS: [&str; 11] = [
     ".github/copilot-instructions.md",
@@ -69,6 +91,12 @@ struct AcpSessionRecord {
     next_request_id: i64,
     closed: bool,
     exit_code: Option<i32>,
+    /// Set by the resume fallback tier (`session/new` instead of native
+    /// `session/load`). The transcript-continuation preamble is prepended, once,
+    /// as a leading text content block on this session's next `session/prompt`,
+    /// then cleared. See `CONTINUATION_PREAMBLE` and the resume state machine on
+    /// `AcpExtension::resume_session`.
+    pending_preamble: Option<String>,
 }
 
 impl AcpExtension {
@@ -91,6 +119,7 @@ impl AcpExtension {
                 AcpHandlerOutput::response(self.close_session(ctx, request).await)
             }
             AcpRequest::AcpSessionRequest(request) => self.session_request(ctx, request).await,
+            AcpRequest::AcpResumeSessionRequest(request) => self.resume_session(ctx, request).await,
         };
         let payload = encode_response(response.response.unwrap_or_else(error_response))?;
         ExtensionResponse::with_wire_events(payload, response.events)
@@ -136,12 +165,7 @@ impl AcpExtension {
             .create_session_inner(&mut ctx, &request, &process_id)
             .await;
         if bootstrap.is_err() {
-            let _ = ctx
-                .kill_process_wire(KillProcessRequest {
-                    process_id: process_id.clone(),
-                    signal: String::from("SIGTERM"),
-                })
-                .await;
+            kill_process_best_effort(&mut ctx, &process_id).await;
         }
         let bootstrap = match bootstrap {
             Ok(bootstrap) => bootstrap,
@@ -162,17 +186,8 @@ impl AcpExtension {
             next_request_id: 3,
             closed: false,
             exit_code: None,
+            pending_preamble: None,
         };
-        if let Err(error) = ctx
-            .bind_process_to_session(&session.session_id, &process_id)
-            .await
-        {
-            return AcpHandlerOutput::response(Err(error));
-        }
-        self.sessions
-            .lock()
-            .await
-            .insert(session.session_id.clone(), session.clone());
 
         let mut events = Vec::new();
         for notification in bootstrap.notifications {
@@ -181,13 +196,31 @@ impl AcpExtension {
                 notification,
             })) {
                 Ok(event) => event,
-                Err(error) => return AcpHandlerOutput::response(Err(error)),
+                Err(error) => {
+                    kill_process_best_effort(&mut ctx, &process_id).await;
+                    return AcpHandlerOutput::response(Err(error));
+                }
             };
             match ctx.ext_event_wire(event) {
                 Ok(event) => events.push(event),
-                Err(error) => return AcpHandlerOutput::response(Err(error)),
+                Err(error) => {
+                    kill_process_best_effort(&mut ctx, &process_id).await;
+                    return AcpHandlerOutput::response(Err(error));
+                }
             }
         }
+
+        if let Err(error) = ctx
+            .bind_process_to_session(&session.session_id, &process_id)
+            .await
+        {
+            kill_process_best_effort(&mut ctx, &process_id).await;
+            return AcpHandlerOutput::response(Err(error));
+        }
+        self.sessions
+            .lock()
+            .await
+            .insert(session.session_id.clone(), session.clone());
 
         AcpHandlerOutput {
             response: Ok(AcpResponse::AcpSessionCreatedResponse(
@@ -305,33 +338,35 @@ impl AcpExtension {
                 args.push(String::from("--append-developer-instructions"));
                 args.push(prompt);
             }
-            "opencode" if !env.contains_key("OPENCODE_CONTEXTPATHS") => {
-                ctx.guest_filesystem_call_wire(GuestFilesystemCallRequest {
-                    operation: GuestFilesystemOperation::WriteFile,
-                    path: String::from(OPENCODE_SYSTEM_PROMPT_PATH),
-                    destination_path: None,
-                    target: None,
-                    content: Some(prompt),
-                    encoding: None,
-                    recursive: false,
-                    mode: None,
-                    uid: None,
-                    gid: None,
-                    atime_ms: None,
-                    mtime_ms: None,
-                    len: None,
-                    offset: None,
-                })
-                .await?;
-                let mut context_paths = OPENCODE_DEFAULT_CONTEXT_PATHS
-                    .iter()
-                    .map(|path| path.to_string())
-                    .collect::<Vec<_>>();
-                context_paths.push(OPENCODE_SYSTEM_PROMPT_PATH.to_string());
-                env.insert(
-                    String::from("OPENCODE_CONTEXTPATHS"),
-                    serde_json::to_string(&context_paths).expect("serialize context paths"),
-                );
+            "opencode" => {
+                if !env.contains_key("OPENCODE_CONTEXTPATHS") {
+                    ctx.guest_filesystem_call_wire(GuestFilesystemCallRequest {
+                        operation: GuestFilesystemOperation::WriteFile,
+                        path: String::from(OPENCODE_SYSTEM_PROMPT_PATH),
+                        destination_path: None,
+                        target: None,
+                        content: Some(prompt),
+                        encoding: None,
+                        recursive: false,
+                        mode: None,
+                        uid: None,
+                        gid: None,
+                        atime_ms: None,
+                        mtime_ms: None,
+                        len: None,
+                        offset: None,
+                    })
+                    .await?;
+                    let mut context_paths = OPENCODE_DEFAULT_CONTEXT_PATHS
+                        .iter()
+                        .map(|path| path.to_string())
+                        .collect::<Vec<_>>();
+                    context_paths.push(OPENCODE_SYSTEM_PROMPT_PATH.to_string());
+                    env.insert(
+                        String::from("OPENCODE_CONTEXTPATHS"),
+                        serde_json::to_string(&context_paths).expect("serialize context paths"),
+                    );
+                }
             }
             _ => {}
         }
@@ -444,7 +479,7 @@ impl AcpExtension {
         );
 
         let caller_connection_id = ownership_connection_id(ctx.ownership());
-        let (process_id, rpc_id, mut stdout_buffer) = {
+        let (process_id, rpc_id, mut stdout_buffer, pending_preamble) = {
             let mut sessions = self.sessions.lock().await;
             let Some(session) = sessions.get_mut(&request.session_id) else {
                 return AcpHandlerOutput::response(Err(SidecarError::InvalidState(format!(
@@ -466,12 +501,24 @@ impl AcpExtension {
             }
             let rpc_id = session.next_request_id;
             session.next_request_id += 1;
+            // Take (and clear) any armed transcript-continuation preamble. It is
+            // consumed once, on this session's first `session/prompt` after a
+            // fallback resume; non-prompt methods leave it untouched.
+            let pending_preamble = if request.method == "session/prompt" {
+                session.pending_preamble.take()
+            } else {
+                None
+            };
             (
                 session.process_id.clone(),
                 rpc_id,
                 std::mem::take(&mut session.stdout_buffer),
+                pending_preamble,
             )
         };
+        if let Some(preamble) = pending_preamble.as_deref() {
+            prepend_prompt_preamble(&mut outbound_params, preamble);
+        }
         let method = request.method.clone();
         let timeout = request_timeout(&method);
         let outbound = json!({
@@ -492,7 +539,16 @@ impl AcpExtension {
         .await
         {
             Ok(exchange) => exchange,
-            Err(error) => return AcpHandlerOutput::response(Err(error)),
+            Err(error) => {
+                if let Some(preamble) = pending_preamble {
+                    if let Some(session) = self.sessions.lock().await.get_mut(&request.session_id) {
+                        if session.pending_preamble.is_none() {
+                            session.pending_preamble = Some(preamble);
+                        }
+                    }
+                }
+                return AcpHandlerOutput::response(Err(error));
+            }
         };
 
         if let Some(session) = self.sessions.lock().await.get_mut(&request.session_id) {
@@ -560,6 +616,333 @@ impl AcpExtension {
             )),
             events: exchange.events,
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Resume state machine (spec §6 / §8) — CANONICAL doc comment.
+    //
+    // `resume_session` is the *stateless* orchestration that re-attaches a session
+    // which exists in the actor's durable storage but is not live in this VM
+    // (e.g. after a Rivet actor slept and woke with a fresh VM). The actor is the
+    // lazy-resume trigger: a prompt arrives for an `external_session_id` that is
+    // known to `agent_os_sessions` but absent from `Vars.live_sessions`, so the
+    // actor reconstructs the transcript, calls the client `resume_session`, then
+    // remaps `external -> live` and forwards the (preamble-prefixed) prompt.
+    //
+    // This handler holds NO event state and NO durable remap: it only knows live
+    // ids for the current VM lifetime, which keeps the "ACP session events are
+    // live-only" invariant intact (no event buffer / cursor replay is added).
+    //
+    //   resume(sessionId, agentType, transcriptPath?, cwd, env):
+    //     # Launch a fresh adapter and probe its real capabilities via `initialize`
+    //     # (capabilities cannot be trusted across a wake; we re-probe here).
+    //     caps = initialize(agentType)          # agentCapabilities from the adapter
+    //
+    //     # Tier 1 — native (capability-gated optimization).
+    //     if caps.loadSession || caps.resume:
+    //         r = session/load (sessionId)       # or session/resume
+    //         ok               -> return { sessionId, mode: "native" }
+    //         UNKNOWN_SESSION  -> fall through    # store didn't survive the wake
+    //         other error      -> propagate
+    //
+    //     # Tier 2 — universal fallback (no adapter code, no capability needed).
+    //     live = session/new(agentType, cwd, env)
+    //     if transcriptPath present:
+    //         arm CONTINUATION_PREAMBLE(transcriptPath) on `live`'s next prompt
+    //     return { sessionId: live, mode: "fallback" }   # caller remaps external->live
+    //
+    // The `UNKNOWN_SESSION` discriminator is a JSON-RPC error with
+    // `error.data.kind === "unknown_session"`, following the `acp_timeout`
+    // convention; only it triggers fallthrough. Transport/timeout errors propagate.
+    async fn resume_session(
+        &self,
+        mut ctx: ExtensionContext<'_>,
+        request: AcpResumeSessionRequest,
+    ) -> AcpHandlerOutput {
+        // Reconstruct a create-shaped request so we reuse the exact adapter launch
+        // + initialize flow. Resume does not carry MCP servers or extra instructions
+        // (the durable transcript, not re-injected instructions, carries context);
+        // skip the base OS instructions for the same reason — they were already
+        // delivered to the original session.
+        let create_like = AcpCreateSessionRequest {
+            agent_type: request.agent_type.clone(),
+            runtime: AcpRuntimeKind::JavaScript,
+            // The resume request does not carry the adapter entrypoint; the caller
+            // resolves it the same way create does and forwards it through `env`
+            // under the reserved key below. This keeps the resume wire request
+            // minimal while letting the sidecar own the launch.
+            adapter_entrypoint: match request.env.get(RESUME_ADAPTER_ENTRYPOINT_ENV) {
+                Some(entrypoint) => entrypoint.clone(),
+                None => {
+                    return AcpHandlerOutput::response(Err(SidecarError::InvalidState(format!(
+                        "resume request missing reserved env `{RESUME_ADAPTER_ENTRYPOINT_ENV}` (adapter entrypoint)"
+                    ))));
+                }
+            },
+            cwd: request.cwd.clone(),
+            args: Vec::new(),
+            env: {
+                let mut env = request.env.clone();
+                env.remove(RESUME_ADAPTER_ENTRYPOINT_ENV);
+                env
+            },
+            protocol_version: ACP_RESUME_PROTOCOL_VERSION,
+            client_capabilities: DEFAULT_RESUME_CLIENT_CAPABILITIES.to_string(),
+            mcp_servers: "[]".to_string(),
+            skip_os_instructions: true,
+            additional_instructions: None,
+        };
+
+        let process_id = self.allocate_process_id("acp-agent");
+        let mut args = create_like.args.clone();
+        let mut env = hash_to_btree(create_like.env.clone());
+        env.insert(
+            String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
+            String::from("1"),
+        );
+        if let Err(error) = self
+            .apply_prompt_injection(&mut ctx, &create_like, &mut args, &mut env)
+            .await
+        {
+            return AcpHandlerOutput::response(Err(error));
+        }
+
+        let started = match ctx
+            .spawn_process_wire(ExecuteRequest {
+                process_id: process_id.clone(),
+                command: None,
+                runtime: Some(convert_runtime(create_like.runtime.clone())),
+                entrypoint: Some(create_like.adapter_entrypoint.clone()),
+                args,
+                env: env.into_iter().collect(),
+                cwd: Some(create_like.cwd.clone()),
+                wasm_permission_tier: None,
+            })
+            .await
+        {
+            Ok(started) => started,
+            Err(error) => return AcpHandlerOutput::response(Err(error)),
+        };
+
+        let outcome = self
+            .resume_session_inner(&mut ctx, &request, &create_like, &process_id)
+            .await;
+        if outcome.is_err() {
+            kill_process_best_effort(&mut ctx, &process_id).await;
+        }
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => return AcpHandlerOutput::response(Err(error)),
+        };
+
+        let session = AcpSessionRecord {
+            session_id: outcome.bootstrap.session_id.clone(),
+            owner_connection_id: ownership_connection_id(ctx.ownership()),
+            agent_type: request.agent_type.clone(),
+            process_id: process_id.clone(),
+            pid: started.pid,
+            modes: outcome.bootstrap.modes,
+            config_options: outcome.bootstrap.config_options,
+            agent_capabilities: outcome.bootstrap.agent_capabilities,
+            agent_info: outcome.bootstrap.agent_info,
+            stdout_buffer: outcome.bootstrap.stdout_buffer,
+            next_request_id: outcome.next_request_id,
+            closed: false,
+            exit_code: None,
+            // Fallback arms the transcript-continuation preamble for the first prompt.
+            pending_preamble: outcome.pending_preamble,
+        };
+
+        let mut events = Vec::new();
+        for notification in outcome.bootstrap.notifications {
+            let event = match encode_event(AcpEvent::AcpSessionEvent(AcpSessionEvent {
+                session_id: session.session_id.clone(),
+                notification,
+            })) {
+                Ok(event) => event,
+                Err(error) => {
+                    kill_process_best_effort(&mut ctx, &process_id).await;
+                    return AcpHandlerOutput::response(Err(error));
+                }
+            };
+            match ctx.ext_event_wire(event) {
+                Ok(event) => events.push(event),
+                Err(error) => {
+                    kill_process_best_effort(&mut ctx, &process_id).await;
+                    return AcpHandlerOutput::response(Err(error));
+                }
+            }
+        }
+
+        if let Err(error) = ctx
+            .bind_process_to_session(&session.session_id, &process_id)
+            .await
+        {
+            kill_process_best_effort(&mut ctx, &process_id).await;
+            return AcpHandlerOutput::response(Err(error));
+        }
+        self.sessions
+            .lock()
+            .await
+            .insert(session.session_id.clone(), session.clone());
+
+        AcpHandlerOutput {
+            response: Ok(AcpResponse::AcpSessionResumedResponse(
+                AcpSessionResumedResponse {
+                    session_id: session.session_id,
+                    mode: outcome.mode,
+                },
+            )),
+            events,
+        }
+    }
+
+    /// Drive the resume handshake: `initialize`, then native `session/load` (when
+    /// the adapter advertises it) or the `session/new` fallback. Returns the
+    /// bootstrap state plus the chosen `mode` and any armed preamble.
+    async fn resume_session_inner(
+        &self,
+        ctx: &mut ExtensionContext<'_>,
+        request: &AcpResumeSessionRequest,
+        create_like: &AcpCreateSessionRequest,
+        process_id: &str,
+    ) -> Result<ResumeOutcome, SidecarError> {
+        let mut stdout = String::new();
+        let mut notifications = Vec::new();
+        let client_capabilities =
+            parse_json_text(&create_like.client_capabilities, "clientCapabilities")?;
+
+        let initialize = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": create_like.protocol_version,
+                "clientCapabilities": client_capabilities,
+            },
+        });
+        let initialize_response = send_json_rpc_request(
+            ctx,
+            process_id,
+            initialize,
+            1,
+            INITIALIZE_TIMEOUT,
+            &mut stdout,
+            None,
+        )
+        .await?;
+        notifications.extend(initialize_response.notifications);
+        let init_result = response_result(initialize_response.response, "ACP initialize")?;
+        validate_initialize_result(&init_result, create_like.protocol_version)?;
+
+        let agent_capabilities = init_result.get("agentCapabilities").cloned();
+
+        // Tier 1 — native (capability-gated). Re-probed caps decide eligibility.
+        if let Some(native_resume_method) = native_resume_method(agent_capabilities.as_ref()) {
+            let load = json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": native_resume_method,
+                "params": {
+                    "sessionId": request.session_id,
+                    "cwd": request.cwd,
+                    "mcpServers": [],
+                },
+            });
+            let mut load_response = send_json_rpc_request(
+                ctx,
+                process_id,
+                load,
+                2,
+                SESSION_NEW_TIMEOUT,
+                &mut stdout,
+                None,
+            )
+            .await?;
+            notifications.extend(load_response.notifications);
+            trace_acp_response(native_resume_method, &load_response.response);
+            normalize_unknown_session_error(&mut load_response.response);
+
+            if load_response.response.get("error").is_none() {
+                let load_result = response_result(
+                    load_response.response,
+                    &format!("ACP {native_resume_method}"),
+                )?;
+                let bootstrap = build_resume_bootstrap(
+                    request.session_id.clone(),
+                    &init_result,
+                    &load_result,
+                    &request.agent_type,
+                    agent_capabilities.as_ref(),
+                    stdout,
+                    notifications,
+                )?;
+                return Ok(ResumeOutcome {
+                    bootstrap,
+                    mode: String::from("native"),
+                    next_request_id: 3,
+                    pending_preamble: None,
+                });
+            }
+
+            // Native load failed. Only the `unknown_session` sentinel falls through
+            // to the universal fallback; every other error propagates (surfaced
+            // verbatim via `response_result`, which returns Err when `error` is set).
+            if !is_unknown_session_error(&load_response.response) {
+                return Err(response_result(
+                    load_response.response,
+                    &format!("ACP {native_resume_method}"),
+                )
+                .expect_err("native resume error object must map to a SidecarError"));
+            }
+            // fall through to Tier 2
+        }
+
+        // Tier 2 — universal fallback. A fresh session, plus the transcript pointer.
+        let session_new = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "session/new",
+            "params": {
+                "cwd": request.cwd,
+                "mcpServers": [],
+            },
+        });
+        let session_response = send_json_rpc_request(
+            ctx,
+            process_id,
+            session_new,
+            2,
+            SESSION_NEW_TIMEOUT,
+            &mut stdout,
+            None,
+        )
+        .await?;
+        notifications.extend(session_response.notifications);
+        let session_result = response_result(session_response.response, "ACP session/new")?;
+        let live_session_id = session_id_from_session_result(&session_result, process_id);
+
+        let pending_preamble = request
+            .transcript_path
+            .as_deref()
+            .filter(|path| !path.is_empty())
+            .map(|path| CONTINUATION_PREAMBLE.replace("{path}", path));
+
+        let bootstrap = build_resume_bootstrap(
+            live_session_id,
+            &init_result,
+            &session_result,
+            &request.agent_type,
+            agent_capabilities.as_ref(),
+            stdout,
+            notifications,
+        )?;
+        Ok(ResumeOutcome {
+            bootstrap,
+            mode: String::from("fallback"),
+            next_request_id: 3,
+            pending_preamble,
+        })
     }
 
     fn allocate_process_id(&self, prefix: &str) -> String {
@@ -637,6 +1020,7 @@ impl Extension for AcpExtension {
                     AcpRequest::AcpCreateSessionRequest(_)
                     | AcpRequest::AcpGetSessionStateRequest(_)
                     | AcpRequest::AcpCloseSessionRequest(_)
+                    | AcpRequest::AcpResumeSessionRequest(_)
                     | AcpRequest::AcpSessionRequest(_) => None,
                 }
             }
@@ -667,6 +1051,18 @@ struct CreateSessionBootstrap {
     agent_info: Option<String>,
     stdout_buffer: String,
     notifications: Vec<String>,
+}
+
+/// Result of the resume state machine (`resume_session_inner`).
+#[derive(Debug)]
+struct ResumeOutcome {
+    bootstrap: CreateSessionBootstrap,
+    /// `"native"` (session/load|resume) or `"fallback"` (session/new + preamble).
+    mode: String,
+    /// First request id available for post-resume RPCs (initialize=1, load/new=2).
+    next_request_id: i64,
+    /// Transcript-continuation preamble armed for the first prompt (fallback only).
+    pending_preamble: Option<String>,
 }
 
 impl AcpSessionRecord {
@@ -1504,6 +1900,158 @@ fn session_id_from_session_result(session_result: &Map<String, Value>, fallback:
         .unwrap_or_else(|| fallback.to_string())
 }
 
+/// Prepend the transcript-continuation preamble as a leading text content block
+/// on a `session/prompt`'s `prompt` array. This is the fallback-tier mechanism
+/// for handing the agent a pointer to the prior transcript: it rides in-band on
+/// the user's first post-resume prompt (a single turn) rather than as a separate
+/// RPC, so the agent sees one coherent prompt. A missing/non-array `prompt` is
+/// initialized to a single-element array so the preamble is still delivered.
+fn prepend_prompt_preamble(params: &mut Map<String, Value>, preamble: &str) {
+    let block = json!({ "type": "text", "text": preamble });
+    match params.get_mut("prompt").and_then(Value::as_array_mut) {
+        Some(prompt) => prompt.insert(0, block),
+        None => {
+            params.insert(String::from("prompt"), Value::Array(vec![block]));
+        }
+    }
+}
+
+async fn kill_process_best_effort(ctx: &mut ExtensionContext<'_>, process_id: &str) {
+    let _ = ctx
+        .kill_process_wire(KillProcessRequest {
+            process_id: process_id.to_owned(),
+            signal: String::from("SIGTERM"),
+        })
+        .await;
+}
+
+/// Return the adapter native-resume RPC method from re-probed
+/// `agentCapabilities`. Prefer ACP `loadSession`/`session/load`; fall back to the
+/// non-standard `resume`/`session/resume` capability some adapters expose.
+fn native_resume_method(agent_capabilities: Option<&Value>) -> Option<&'static str> {
+    let Some(caps) = agent_capabilities.and_then(Value::as_object) else {
+        return None;
+    };
+    if caps
+        .get("loadSession")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Some("session/load");
+    }
+    if caps.get("resume").and_then(Value::as_bool).unwrap_or(false) {
+        return Some("session/resume");
+    }
+    None
+}
+
+fn trace_acp_response(method: &str, response: &Value) {
+    // Test-only diagnostics for compatibility regressions: the OpenCode resume
+    // test captures the raw native-resume response before normalization so we
+    // notice upstream error-shape changes. The env var is sidecar-process
+    // trusted input, not guest-controlled runtime surface.
+    let Ok(path) = std::env::var(ACP_TRACE_PATH_ENV) else {
+        return;
+    };
+    if path.is_empty() {
+        return;
+    }
+    let payload = json!({
+        "method": method,
+        "response": response,
+    });
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    let _ = writeln!(file, "{payload}");
+}
+
+/// Normalize adapter-specific "no such session" errors from `session/load` into
+/// the shared `unknown_session` discriminator used by the resume state machine.
+///
+/// OpenCode currently reports a missing session as JSON-RPC `-32603` with
+/// `error.data.details == "NotFoundError"`: its ACP server converts thrown
+/// non-`RequestError` exceptions into `internalError({ details: error.message })`,
+/// and `Session.get` throws a `NotFoundError` whose message is the class name.
+/// Convert exactly that shape into `error.data.kind = "unknown_session"` before
+/// fallback matching. Do not broaden this to message substrings or all
+/// `-32603`/`-32602` errors; malformed `session/load` must still propagate.
+fn normalize_unknown_session_error(response: &mut Value) {
+    let Some(error) = response.get_mut("error").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let code = error.get("code").and_then(Value::as_i64);
+    let Some(data) = error.get_mut("data").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let details = data.get("details").and_then(Value::as_str);
+    if code == Some(-32603) && details == Some("NotFoundError") {
+        data.insert(
+            String::from("kind"),
+            Value::String(String::from("unknown_session")),
+        );
+    }
+}
+
+/// Detect a normalized adapter "no such session" error from `session/load` and
+/// treat it as the `unknown_session` fallthrough sentinel (the durable store did
+/// not survive the VM teardown). Only this triggers the Tier 2 fallback;
+/// transport/timeout errors propagate.
+///
+/// The matcher is intentionally strict: by the time it runs, adapter-specific
+/// shapes must already be normalized by [`normalize_unknown_session_error`].
+/// This prevents a malformed load request or unrelated internal error from
+/// silently resetting the user's context via a fresh fallback session.
+fn is_unknown_session_error(response: &Value) -> bool {
+    response
+        .get("error")
+        .and_then(Value::as_object)
+        .and_then(|error| error.get("data"))
+        .and_then(Value::as_object)
+        .and_then(|d| d.get("kind"))
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "unknown_session")
+}
+
+/// Build the post-resume bootstrap state from `initialize` + `session/load|new`
+/// results. Mirrors the config-option / modes / capabilities derivation at the
+/// tail of `create_session_inner` so a resumed session hydrates identically to a
+/// freshly created one.
+fn build_resume_bootstrap(
+    session_id: String,
+    init_result: &Map<String, Value>,
+    session_result: &Map<String, Value>,
+    agent_type: &str,
+    agent_capabilities: Option<&Value>,
+    stdout_buffer: String,
+    notifications: Vec<String>,
+) -> Result<CreateSessionBootstrap, SidecarError> {
+    let mut config_options = init_result
+        .get("configOptions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(overrides) = session_result
+        .get("configOptions")
+        .and_then(Value::as_array)
+    {
+        config_options = overrides.clone();
+    }
+    if !config_options.iter().any(is_model_config_option) {
+        config_options.extend(derive_config_options(agent_type, session_result));
+    }
+
+    Ok(CreateSessionBootstrap {
+        session_id,
+        modes: json_field(session_result, init_result, "modes")?,
+        config_options: json_array_to_strings(config_options)?,
+        agent_capabilities: json_optional_string(agent_capabilities)?,
+        agent_info: json_optional_string(init_result.get("agentInfo"))?,
+        stdout_buffer,
+        notifications,
+    })
+}
+
 fn append_stdout_chunk(
     buffer: &mut String,
     chunk: &[u8],
@@ -1702,8 +2250,65 @@ mod tests {
     use agentos_protocol::PROTOCOL_VERSION;
 
     #[test]
-    fn acp_extension_uses_agentos_namespace() {
+    fn acp_extension_uses_agent_os_namespace() {
         assert_eq!(AcpExtension::new().namespace(), ACP_EXTENSION_NAMESPACE);
+    }
+
+    #[test]
+    fn unknown_session_normalization_pins_opencode_shape() {
+        let mut opencode = serde_json::json!({
+            "error": { "code": -32603, "message": "Internal error", "data": { "details": "NotFoundError" } }
+        });
+        normalize_unknown_session_error(&mut opencode);
+        assert_eq!(
+            opencode.pointer("/error/data/kind").and_then(Value::as_str),
+            Some("unknown_session")
+        );
+        assert!(is_unknown_session_error(&opencode));
+
+        let mut malformed = serde_json::json!({
+            "error": { "code": -32602, "message": "Invalid params",
+                       "data": { "_errors": [], "sessionId": { "_errors": ["expected string"] } } }
+        });
+        normalize_unknown_session_error(&mut malformed);
+        assert!(!is_unknown_session_error(&malformed));
+
+        let mut other_internal = serde_json::json!({
+            "error": { "code": -32603, "message": "Internal error", "data": { "details": "SomethingElse" } }
+        });
+        normalize_unknown_session_error(&mut other_internal);
+        assert!(!is_unknown_session_error(&other_internal));
+    }
+
+    #[test]
+    fn unknown_session_matcher_recognizes_normalized_sentinel_only() {
+        assert!(is_unknown_session_error(&serde_json::json!({
+            "error": { "code": -32000, "message": "x", "data": { "kind": "unknown_session" } }
+        })));
+
+        // Raw OpenCode shape must be normalized before matching.
+        assert!(!is_unknown_session_error(&serde_json::json!({
+            "error": { "code": -32603, "message": "Internal error", "data": { "details": "NotFoundError" } }
+        })));
+        assert!(!is_unknown_session_error(&serde_json::json!({
+            "error": { "code": -32602, "message": "Invalid params",
+                       "data": { "_errors": [], "sessionId": { "_errors": ["expected string"] } } }
+        })));
+        // Must NOT match: a -32603 internal error that is NOT a NotFoundError.
+        assert!(!is_unknown_session_error(&serde_json::json!({
+            "error": { "code": -32603, "message": "Internal error", "data": { "details": "SomethingElse" } }
+        })));
+        // Must NOT match: NotFoundError under a non--32603 code (different failure).
+        assert!(!is_unknown_session_error(&serde_json::json!({
+            "error": { "code": -32000, "data": { "details": "NotFoundError" } }
+        })));
+        // Must NOT match: a successful response or a bare transport error.
+        assert!(!is_unknown_session_error(
+            &serde_json::json!({ "result": {} })
+        ));
+        assert!(!is_unknown_session_error(&serde_json::json!({
+            "error": { "code": -32603, "message": "Internal error" }
+        })));
     }
 
     #[test]

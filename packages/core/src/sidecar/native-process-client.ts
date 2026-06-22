@@ -1,6 +1,6 @@
 export {
 	NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
-	Sidecar as NativeSidecarProcessClient,
+	NativeSidecarProcessClient as SidecarProcess,
 	SidecarEventBufferOverflow,
 	SidecarProcessError,
 	SidecarProcessExited,
@@ -11,9 +11,9 @@ export type {
 	CreatedVm,
 	ExtEnvelope,
 	GuestFilesystemStat,
+	NativeSidecarSpawnOptions as SidecarSpawnOptions,
 	RootFilesystemEntry,
 	RootFilesystemLowerDescriptor,
-	SidecarSpawnOptions as NativeSidecarSpawnOptions,
 	SidecarEventSelector,
 	SidecarFsPermissionRule,
 	SidecarMountDescriptor,

@@ -58,6 +58,7 @@ const CRATES = {
 	"secure-exec-client": "crates/secure-exec-client",
 	"secure-exec-sidecar": "crates/sidecar",
 	"secure-exec-sidecar-browser": "crates/sidecar-browser",
+	"secure-exec-vm-config": "crates/vm-config",
 };
 
 // Seed versions (heterogeneous today; `set-version` unifies them after a publish).
@@ -184,19 +185,33 @@ function versionFor(name, pinned) {
 	if (name.startsWith("@agentos-software/")) return SEED_SOFTWARE_VERSION;
 	return SEED_VERSIONS[name] ?? SEED_SOFTWARE_VERSION;
 }
-function writeCatalog(setVersion) {
+// Which managed group a catalog package belongs to. secure-exec (the runtime)
+// and the @agentos-software/* software packages publish on independent cadences, so
+// versions are set per scope.
+//   "secure-exec"   -> @secure-exec/* swappable scope (core, s3, google-drive, sandbox)
+//   "agentos-pkgs" -> @agentos-software/* renamed third-party software packages
+//   "registry-only" -> published-only deps pinned independently (e.g. @secure-exec/nodejs)
+function catalogScope(name) {
+	if (REGISTRY_ONLY.has(name)) return "registry-only";
+	if (name.startsWith("@agentos-software/")) return "agentos-pkgs";
+	return "secure-exec";
+}
+
+// scope: undefined => every managed group except registry-only; "secure-exec" or
+// "agentos-pkgs" => only that group is bumped, the others keep their existing pins.
+function writeCatalog(setVersion, scope) {
 	const wsPath = path.join(ROOT, "pnpm-workspace.yaml");
 	let text = readFileSync(wsPath, "utf8");
 	const existing = readVersions();
 	const names = collectManagedNames();
 	const lines = [CATALOG_BEGIN, "catalog:"];
 	for (const name of names) {
-		// REGISTRY_ONLY packages (e.g. @secure-exec/nodejs) are not part of the
-		// secure-exec split/preview; keep them at their existing released version.
-		const v =
-			setVersion && !REGISTRY_ONLY.has(name)
-				? setVersion
-				: versionFor(name, existing);
+		const group = catalogScope(name);
+		// registry-only packages are never version-managed here; everything else is
+		// bumped only when it falls in the targeted scope (no scope = all groups).
+		const inScope =
+			group !== "registry-only" && (scope === undefined || group === scope);
+		const v = setVersion && inScope ? setVersion : versionFor(name, existing);
 		lines.push(`  '${name}': ${v}`);
 	}
 	lines.push(CATALOG_END);
@@ -286,12 +301,35 @@ switch (cmd) {
 			console.error("usage: set-version <version>");
 			process.exit(1);
 		}
-		// version-only: update the npm catalog (the published npm version).
-		// The cargo crate version is independent (it tracks the secure-exec crate
-		// workspace version, which a preview does NOT bump), so it is NOT touched
-		// here — manage it with `set-crate-version` when the sibling crates rebase.
+		// Bump EVERY managed npm package (both scopes) to one version. Only correct
+		// when secure-exec and the software packages publish at the same version;
+		// otherwise use the scoped commands below.
 		writeCatalog(arg);
-		console.log(`secure-exec npm version pinned to ${arg} (catalog).`);
+		console.log(`all secure-exec + agentos-pkgs npm versions pinned to ${arg} (catalog).`);
+		console.log("Run: pnpm install to refresh the lockfile.");
+		break;
+	}
+	case "set-secure-exec-version": {
+		if (!arg) {
+			console.error("usage: set-secure-exec-version <version>");
+			process.exit(1);
+		}
+		// Bump only the @secure-exec/* runtime scope (core, s3, google-drive,
+		// sandbox). The cargo crate version is independent — manage it with
+		// `set-crate-version` when the sibling crates rebase.
+		writeCatalog(arg, "secure-exec");
+		console.log(`@secure-exec/* npm versions pinned to ${arg} (catalog).`);
+		console.log("Run: pnpm install to refresh the lockfile.");
+		break;
+	}
+	case "set-agentos-pkgs-version": {
+		if (!arg) {
+			console.error("usage: set-agentos-pkgs-version <version>");
+			process.exit(1);
+		}
+		// Bump only the @agentos-software/* software packages.
+		writeCatalog(arg, "agentos-pkgs");
+		console.log(`@agentos-software/* npm versions pinned to ${arg} (catalog).`);
 		console.log("Run: pnpm install to refresh the lockfile.");
 		break;
 	}
@@ -312,6 +350,8 @@ switch (cmd) {
 		break;
 	}
 	default:
-		console.error("usage: secure-exec-dep.mjs <pinned|local|set-version <v>|status>");
+		console.error(
+			"usage: secure-exec-dep.mjs <pinned|local|status|set-version <v>|set-secure-exec-version <v>|set-agentos-pkgs-version <v>|set-crate-version <v>>",
+		);
 		process.exit(1);
 }

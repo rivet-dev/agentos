@@ -19,7 +19,7 @@ const vm = await AgentOs.create({
 });
 
 // Change the agent here: "claude", "opencode", or "pi"
-const agent = "claude";
+const agent = "pi";
 
 const env: Record<string, string> = {};
 if (ANTHROPIC_API_KEY) env.ANTHROPIC_API_KEY = ANTHROPIC_API_KEY;

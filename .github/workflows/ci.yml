@@ -10,23 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Check out the secure-exec sibling repo that packages/core links to via
-      # `"@secure-exec/core": "link:../../../secure-exec/packages/core"`. That
-      # link resolves to `<agentos-root>/../secure-exec/packages/core`, i.e.
-      # `$GITHUB_WORKSPACE/../secure-exec/packages/core`. actions/checkout can
-      # only write inside the workspace, so we check out into a subdir and then
-      # symlink it to the sibling path the link expects.
-      - uses: actions/checkout@v4
-        with:
-          repository: rivet-dev/secure-exec
-          ref: main
-          path: _secure-exec-sibling
-      - name: Place secure-exec at the sibling path the link expects
-        run: ln -s "$GITHUB_WORKSPACE/_secure-exec-sibling" "$GITHUB_WORKSPACE/../secure-exec"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -34,18 +23,9 @@ jobs:
         with:
           workspaces: |
             . -> target
-      # Build the link target so its dist/ exists. The `@secure-exec/core`
-      # subpath exports (./descriptors, ./vm-config, ./sidecar-client) resolve
-      # to dist/*.{js,d.ts}; without these the agent-os tsc build cannot find
-      # the module. The core build = protocol compile (Node) + a lightweight
-      # `cargo test -p secure-exec-vm-config` (pure serde/ts-rs crate, no V8
-      # bridge / native build) + tsc, so this stays cheap in CI.
-      - name: Install + build @secure-exec/core (link target)
-        run: |
-          find "$GITHUB_WORKSPACE/_secure-exec-sibling" -name node_modules -prune -exec rm -rf {} +
-          pnpm -C "$GITHUB_WORKSPACE/_secure-exec-sibling" install --frozen-lockfile
-          pnpm -C "$GITHUB_WORKSPACE/_secure-exec-sibling" --filter @secure-exec/core build
-      - run: find . -path ./_secure-exec-sibling -prune -o -name node_modules -prune -exec rm -rf {} +
+      # `@secure-exec/core` now resolves from the npm catalog (published 0.3.0),
+      # so a plain frozen install pulls it from the registry — no sibling
+      # checkout/symlink/build is needed.
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm --dir scripts/publish run check-types
@@ -68,7 +48,9 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test -p agentos-protocol -- --test-threads=1
       - run: cargo test -p agentos-sidecar -- --test-threads=1
-      - run: cargo test -p agentos-sidecar-browser -- --test-threads=1
+      # NOTE: agentos-sidecar-browser is intentionally excluded from the
+      # workspace (it depends on secure-exec-sidecar-browser, unpublished on
+      # crates.io), so it is not tested here. Re-add once that crate publishes.
       - run: cargo test -p agentos-client -- --test-threads=1
         env:
           AGENT_OS_CLIENT_ALLOW_E2E_SKIPS: '1'

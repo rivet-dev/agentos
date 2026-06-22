@@ -60,7 +60,6 @@ const vm = await AgentOs.create({
 				loopbackExemptPorts: [Number(new URL(ANTHROPIC_BASE_URL).port)],
 			}
 		: {}),
-	moduleAccessCwd: MODULE_ACCESS_CWD,
 	software: [common, pi],
 });
 

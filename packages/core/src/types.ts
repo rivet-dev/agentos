@@ -30,6 +30,8 @@ export type {
 	ProcessTreeNode,
 	PromptResult,
 	ReaddirRecursiveOptions,
+	ResumeSessionOptions,
+	ResumeSessionResult,
 	RootFilesystemConfig,
 	RootLowerInput,
 	SessionConfigOption,
@@ -65,6 +67,7 @@ export type {
 	JsonRpcNotification,
 	JsonRpcRequest,
 	JsonRpcResponse,
+	UnknownSessionErrorData,
 } from "./json-rpc.js";
 export type {
 	FilesystemSnapshotExport,

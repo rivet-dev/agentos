@@ -18,7 +18,7 @@ import {
 	type LocalCompatMount,
 	NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
 	NativeSidecarKernelProxy,
-	NativeSidecarProcessClient,
+	SidecarProcess,
 	type RootFilesystemEntry,
 	serializeMountConfigForSidecar,
 } from "./sidecar/rpc-client.js";
@@ -1819,9 +1819,9 @@ function sidecarBinaryNeedsBuild(): boolean {
 
 function ensureNativeSidecarBinary(): string {
 	// A published install has no in-repo Cargo workspace to build from: resolve
-	// the prebuilt platform binary (or the AGENT_OS_SIDECAR_BIN override).
+	// the prebuilt platform binary (or the AGENTOS_SIDECAR_BIN override).
 	if (
-		process.env.AGENT_OS_SIDECAR_BIN ||
+		process.env.AGENTOS_SIDECAR_BIN ||
 		!fsSync.existsSync(path.join(REPO_ROOT, "Cargo.toml"))
 	) {
 		return resolvePublishedSidecarBinary();
@@ -1998,7 +1998,7 @@ async function snapshotFilesystemEntries(
 }
 
 async function materializeSnapshotEntriesIntoVm(
-	client: NativeSidecarProcessClient,
+	client: SidecarProcess,
 	session: AuthenticatedSession,
 	vm: CreatedVm,
 	entries: RootFilesystemEntry[],
@@ -2426,7 +2426,7 @@ class NativeKernel implements Kernel {
 	readonly timerTable = {};
 	readonly vfs: VirtualFileSystem;
 
-	private client: NativeSidecarProcessClient | null = null;
+	private client: SidecarProcess | null = null;
 	private session: AuthenticatedSession | null = null;
 	private vm: CreatedVm | null = null;
 	private proxy: NativeSidecarKernelProxy | null = null;
@@ -2822,7 +2822,7 @@ class NativeKernel implements Kernel {
 			bootstrapEntries: [],
 		};
 
-		const client = NativeSidecarProcessClient.spawn({
+		const client = SidecarProcess.spawn({
 			cwd: REPO_ROOT,
 			command: ensureNativeSidecarBinary(),
 			args: [],

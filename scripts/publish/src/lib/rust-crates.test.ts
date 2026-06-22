@@ -41,9 +41,8 @@ function assertBefore(crate: string, dependent: string) {
 test("Rust crate publish order satisfies internal dependencies", () => {
 	assert.equal(new Set(RUST_CRATES).size, RUST_CRATES.length);
 
-	// Only a6-owned crates; secure-exec runtime crates are published by secure-exec.
+	// Only agentOS-owned crates; secure-exec runtime crates are published by secure-exec.
 	assertBefore("agentos-protocol", "agentos-sidecar");
-	assertBefore("agentos-protocol", "agentos-sidecar-browser");
 	assertBefore("agentos-protocol", "agentos-client");
 });
 

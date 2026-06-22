@@ -57,7 +57,7 @@
 		"@aws-sdk/client-s3": "^3.1019.0",
 		"@rivet-dev/agentos-sidecar": "workspace:*",
 		"@rivetkit/bare-ts": "^0.6.2",
-		"@secure-exec/core": "link:../../../secure-exec/packages/core",
+		"@secure-exec/core": "catalog:",
 		"@xterm/headless": "^6.0.0",
 		"better-sqlite3": "^12.8.0",
 		"croner": "^10.0.1",

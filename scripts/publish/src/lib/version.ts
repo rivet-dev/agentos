@@ -192,7 +192,7 @@ export async function bumpCargoVersions(
 	// crate deps (path = "../secure-exec/...") are intentionally NOT bumped — they
 	// track the sibling crate version.
 	next = next.replace(
-		/((?:agent-os|secure-exec)-[a-z0-9-]+ = \{ path = "crates\/[^"]+", version = ")[^"]+(" \})/g,
+		/((?:agentos|agent-os|secure-exec)-[a-z0-9-]+ = \{ path = "crates\/[^"]+", version = ")[^"]+(" \})/g,
 		`$1${version}$2`,
 	);
 

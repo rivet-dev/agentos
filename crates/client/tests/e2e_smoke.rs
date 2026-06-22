@@ -4,7 +4,7 @@
 //! Filesystem ops are used (not `exec`) because they go straight through the kernel VFS and do not
 //! require WASM command packages, which are not checked into git.
 //!
-//! Requires the sidecar binary. Resolve order: `AGENT_OS_SIDECAR_BIN`, else
+//! Requires the sidecar binary. Resolve order: `AGENTOS_SIDECAR_BIN`, else
 //! `<workspace>/target/debug/agentos-sidecar`. Build it first: `cargo build -p agentos-sidecar`.
 
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ use agentos_client::fs::FileContent;
 use agentos_client::AgentOs;
 
 fn sidecar_bin() -> PathBuf {
-    if let Ok(path) = std::env::var("AGENT_OS_SIDECAR_BIN") {
+    if let Ok(path) = std::env::var("AGENTOS_SIDECAR_BIN") {
         return PathBuf::from(path);
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/agentos-sidecar")
@@ -28,7 +28,7 @@ async fn smoke_connect_and_filesystem_round_trip() {
         "sidecar binary not found at {} (run: cargo build -p agentos-sidecar)",
         bin.display()
     );
-    std::env::set_var("AGENT_OS_SIDECAR_BIN", &bin);
+    std::env::set_var("AGENTOS_SIDECAR_BIN", &bin);
 
     let os = AgentOs::create(AgentOsConfig::default())
         .await

@@ -8,7 +8,7 @@ const vm = await AgentOs.create({ software: [common] });
 // Schedule a command to run every second (for demo purposes)
 const job = vm.scheduleCron({
 	schedule: "* * * * * *",
-	action: { type: "exec", command: "echo", args: ["cron tick", "$(id)"] },
+	action: { type: "exec", command: "echo", args: ["cron tick"] },
 });
 console.log("Scheduled cron job:", job.id);
 

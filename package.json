@@ -24,7 +24,7 @@
 		"@rivet-dev/agentos-claude": "workspace:*",
 		"@rivet-dev/agentos-codex-agent": "workspace:*",
 		"@agentos-software/common": "catalog:",
-		"@secure-exec/core": "link:../secure-exec/packages/core",
+		"@secure-exec/core": "catalog:",
 		"@rivet-dev/agentos-pi": "workspace:*",
 		"@types/node": "^22.19.15",
 		"jszip": "^3.10.1",
@@ -34,5 +34,10 @@
 	},
 	"resolutions": {
 		"@rivet-dev/agentos-core": "workspace:*"
+	},
+	"pnpm": {
+		"overrides": {
+			"@rivetkit/rivetkit-wasm": "2.3.2"
+		}
 	}
 }

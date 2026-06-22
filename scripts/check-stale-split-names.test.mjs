@@ -25,7 +25,7 @@ test("accepts current split names", () => {
 		write(
 			root,
 			"packages/core/src/example.ts",
-			'process.env.SECURE_EXEC_KEEP_STDIN_OPEN = "1";\nprocess.env.AGENT_OS_SIDECAR_BIN = "/tmp/agentos-sidecar";\n',
+			'process.env.SECURE_EXEC_KEEP_STDIN_OPEN = "1";\nprocess.env.AGENTOS_SIDECAR_BIN = "/tmp/agentos-sidecar";\n',
 		);
 		write(root, "Cargo.toml", '# secure exec lives at "../secure-exec"\n');
 
@@ -38,14 +38,14 @@ test("rejects stale env vars and legacy repo paths", () => {
 		write(
 			root,
 			"packages/core/src/example.ts",
-			'process.env.AGENT_OS_KEEP_STDIN_OPEN = "1";\nprocess.env.AGENT_OS_SIDECAR_BINARY = "/tmp/agentos-sidecar";\n',
+			'process.env.AGENT_OS_KEEP_STDIN_OPEN = "1";\nprocess.env.AGENTOS_SIDECAR_BINARY = "/tmp/agentos-sidecar";\n',
 		);
 		write(root, "Cargo.toml", '# legacy path: "../se1"\n');
 
 		assert.deepEqual(checkStaleSplitNames({ root }), [
 			"Cargo.toml:1:17 uses legacy secure-exec repo path ../se1; use ../secure-exec or ~/secure-exec",
 			"packages/core/src/example.ts:1:13 uses legacy stdin env var AGENT_OS_KEEP_STDIN_OPEN; use SECURE_EXEC_KEEP_STDIN_OPEN",
-			"packages/core/src/example.ts:2:13 uses legacy sidecar binary env var AGENT_OS_SIDECAR_BINARY; use AGENT_OS_SIDECAR_BIN",
+			"packages/core/src/example.ts:2:13 uses legacy sidecar binary env var AGENTOS_SIDECAR_BINARY; use AGENTOS_SIDECAR_BIN",
 		]);
 	});
 });
