@@ -1208,11 +1208,11 @@ const bentoFeatures: BentoFeature[] = [
 // Each tile idles with a gentle bob and drifts with the cursor (parallax) while
 // the card is hovered. `depth` varies per tile so nearer logos move further.
 const FLOATING_AGENTS = [
-	{ src: '/images/registry/claude-code.svg', label: 'Claude Code', left: '71%', top: '11%', size: 62, depth: 13, float: 10, dur: 6.6, delay: 0 },
-	{ src: '/images/registry/codex.svg', label: 'Codex', left: '85%', top: '38%', size: 50, depth: 17, float: 8, dur: 7.8, delay: 0.6 },
-	{ src: '/images/registry/opencode.svg', label: 'OpenCode', left: '67%', top: '60%', size: 54, depth: 20, float: 12, dur: 7.1, delay: 1.2 },
-	{ src: '/images/registry/amp.svg', label: 'Amp', left: '44%', top: '73%', size: 48, depth: 15, float: 9, dur: 6.9, delay: 0.4 },
-	{ src: '/images/registry/pi.svg', label: 'PI', left: '19%', top: '67%', size: 46, depth: 23, float: 8, dur: 8.2, delay: 1.6 },
+	{ src: '/images/registry/claude-code.svg', label: 'Claude Code', left: '75%', top: '9%', size: 84, depth: 13, float: 11, dur: 6.6, delay: 0 },
+	{ src: '/images/registry/codex.svg', label: 'Codex', left: '83%', top: '43%', size: 64, depth: 17, float: 9, dur: 7.8, delay: 0.6 },
+	{ src: '/images/registry/opencode.svg', label: 'OpenCode', left: '64%', top: '65%', size: 80, depth: 20, float: 13, dur: 7.1, delay: 1.2 },
+	{ src: '/images/registry/amp.svg', label: 'Amp', left: '40%', top: '68%', size: 68, depth: 15, float: 10, dur: 6.9, delay: 0.4 },
+	{ src: '/images/registry/pi.svg', label: 'PI', left: '16%', top: '59%', size: 74, depth: 23, float: 9, dur: 8.2, delay: 1.6 },
 ] as const;
 
 type FloatingAgent = (typeof FLOATING_AGENTS)[number];
