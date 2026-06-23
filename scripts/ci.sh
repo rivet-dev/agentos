@@ -45,9 +45,8 @@ run_step node --test scripts/check-secure-exec-package-boundary.test.mjs
 run_step node scripts/check-secure-exec-package-boundary.mjs
 run_step cargo fmt --check
 run_step cargo clippy --workspace --all-targets -- -D warnings
-# Agent OS owns only the wrapper crates; the generic runtime crates
-# (v8-runtime/execution/kernel/bridge/sidecar/client) live in ../secure-exec and
-# are tested by secure-exec's own CI.
+# Agent OS owns only the wrapper crates; the generic runtime crates are
+# consumed from secure-exec releases and tested by secure-exec's own CI.
 run_step cargo test -p agentos-protocol -- --test-threads=1
 run_step cargo test -p agentos-sidecar -- --test-threads=1
 run_step cargo test -p agentos-sidecar-browser -- --test-threads=1

@@ -65,7 +65,7 @@ function seedReadyFixture(root) {
 	writeJson(agentOsRoot, "packages/core/package.json", {
 		name: "@rivet-dev/agentos-core",
 		dependencies: {
-			"@secure-exec/core": "link:../../../secure-exec/packages/core",
+			"@secure-exec/core": "catalog:",
 		},
 	});
 	write(

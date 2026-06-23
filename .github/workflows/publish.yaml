@@ -111,14 +111,6 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
-      # Preview sidecar builds use the matching secure-exec branch through
-      # Cargo path deps. pnpm install is needed in both workspaces because the
-      # secure-exec V8 bridge build.rs invokes the TS bridge bundler.
-      - name: Checkout secure-exec sibling
-        run: |
-          git clone --depth 1 --branch main \
-            https://github.com/rivet-dev/secure-exec.git ../secure-exec
-          (cd ../secure-exec && pnpm install --frozen-lockfile --filter='!@secure-exec/website')
       - run: pnpm install --frozen-lockfile
       - name: Build sidecar binary
         id: build
@@ -145,10 +137,7 @@ jobs:
   # build-plugin — agent-os actor plugin cdylib (debug preview / release)
   # ---------------------------------------------------------------------------
   # Ships inside the @rivet-dev/agentos-plugin-<platform> npm packages, declared
-  # as optionalDependencies of @rivet-dev/agentos. The cdylib path-depends on the
-  # secure-exec crates (sibling repo) AND the RivetKit native-plugin ABI crate
-  # (r6 sibling, not on crates.io yet), so both siblings are cloned for cargo to
-  # resolve the workspace path deps.
+  # as optionalDependencies of @rivet-dev/agentos.
   build-plugin:
     needs: [context]
     name: "Build plugin (${{ matrix.platform }})"
@@ -184,13 +173,6 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
-      # Preview plugin builds use the matching secure-exec branch through Cargo
-      # path deps, mirroring the sidecar build.
-      - name: Checkout secure-exec sibling
-        run: |
-          git clone --depth 1 --branch main \
-            https://github.com/rivet-dev/secure-exec.git ../secure-exec
-          (cd ../secure-exec && pnpm install --frozen-lockfile --filter='!@secure-exec/website')
       - run: pnpm install --frozen-lockfile
       - name: Build plugin cdylib
         id: build
@@ -469,11 +451,6 @@ jobs:
           key: ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-
-      - name: Checkout secure-exec sibling
-        run: |
-          git clone --depth 1 --branch main \
-            https://github.com/rivet-dev/secure-exec.git ../secure-exec
-          (cd ../secure-exec && pnpm install --frozen-lockfile --filter='!@secure-exec/website')
       - run: pnpm install --frozen-lockfile
       - name: Bump Cargo versions
         run: |

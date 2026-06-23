@@ -221,10 +221,10 @@ export function auditTsSplitBoundary(options = {}) {
 	const secureExecDependency = dependencySpec(agentOsCoreManifest, "@secure-exec/core");
 	checks.push(
 		check(
-			"@rivet-dev/agentos-core depends on sibling @secure-exec/core",
+			"@rivet-dev/agentos-core depends on published @secure-exec/core",
 			agentOsCoreManifest.name === "@rivet-dev/agentos-core" &&
 				typeof secureExecDependency === "string" &&
-				secureExecDependency.includes("secure-exec/packages/core"),
+				secureExecDependency === "catalog:",
 			secureExecDependency ?? "missing",
 		),
 		check(

@@ -21,8 +21,8 @@ version = "0.2.0"
 
 [workspace.dependencies]
 agentos-protocol = { path = "crates/agentos-protocol", version = "0.2.0-rc.3" }
-secure-exec-sidecar = { path = "../secure-exec/crates/sidecar", version = "0.2.0-rc.3" }
-secure-exec-client = { path = "../secure-exec/crates/secure-exec-client", version = "0.2.0-rc.3" }
+secure-exec-sidecar = { version = "0.3.1-rc.2" }
+secure-exec-client = { version = "0.3.1-rc.2" }
 serde = "1"
 `,
 		);
@@ -37,14 +37,14 @@ serde = "1"
 			cargoToml,
 			/agentos-protocol = \{ path = "crates\/agentos-protocol", version = "0\.3\.0" \}/,
 		);
-		// ...but secure-exec crate dep requirements stay at the sibling version.
+		// ...but secure-exec crate dep requirements stay at their registry version.
 		assert.match(
 			cargoToml,
-			/secure-exec-sidecar = \{ path = "\.\.\/secure-exec\/crates\/sidecar", version = "0\.2\.0-rc\.3" \}/,
+			/secure-exec-sidecar = \{ version = "0\.3\.1-rc\.2" \}/,
 		);
 		assert.match(
 			cargoToml,
-			/secure-exec-client = \{ path = "\.\.\/secure-exec\/crates\/secure-exec-client", version = "0\.2\.0-rc\.3" \}/,
+			/secure-exec-client = \{ version = "0\.3\.1-rc\.2" \}/,
 		);
 		assert.match(cargoToml, /serde = "1"/);
 	} finally {

@@ -34,6 +34,8 @@ onlyBuiltDependencies:
 
 # >>> secure-exec catalog (managed by scripts/secure-exec-dep.mjs) >>>
 catalog:
+  '@agentos-software/claude-code': 0.0.0-nathan-binding-workspace.9be0a88
+  '@agentos-software/codex': 0.3.0-rc.2
   '@agentos-software/codex-cli': 0.3.0-rc.2
   '@agentos-software/common': 0.3.0-rc.2
   '@agentos-software/coreutils': 0.3.0-rc.2
@@ -47,6 +49,9 @@ catalog:
   '@agentos-software/grep': 0.3.0-rc.2
   '@agentos-software/gzip': 0.3.0-rc.2
   '@agentos-software/jq': 0.3.0-rc.2
+  '@agentos-software/opencode': 0.0.0-nathan-binding-workspace.9be0a88
+  '@agentos-software/pi': 0.0.0-nathan-binding-workspace.9be0a88
+  '@agentos-software/pi-cli': 0.0.0-nathan-binding-workspace.9be0a88
   '@agentos-software/ripgrep': 0.3.0-rc.2
   '@agentos-software/sed': 0.3.0-rc.2
   '@agentos-software/tar': 0.3.0-rc.2

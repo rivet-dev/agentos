@@ -10,7 +10,6 @@ FROM ghcr.io/rivet-dev/rivet/builder-base-osxcross:0e33ceb98
 ARG TARGET=aarch64-apple-darwin
 ARG CLANG=aarch64-apple-darwin20.4
 ARG TRIGGER=branch
-ARG SECURE_EXEC_REF=main
 
 ENV SDK=/root/osxcross/target/SDK/MacOSX11.3.sdk \
     RUSTC_WRAPPER=
@@ -18,15 +17,11 @@ ENV SDK=/root/osxcross/target/SDK/MacOSX11.3.sdk \
 WORKDIR /build
 COPY . .
 
-RUN git clone --depth 1 --branch "$SECURE_EXEC_REF" \
-        https://github.com/rivet-dev/secure-exec.git /secure-exec && \
-    channel=$(awk -F'"' '/channel/ {print $2; exit}' /secure-exec/rust-toolchain.toml) && \
-    rustup toolchain install "$channel" --profile minimal && \
-    rustup default "$channel" && \
+RUN rustup toolchain install stable --profile minimal && \
+    rustup default stable && \
     rustup target add "$TARGET"
 
 RUN corepack enable && \
-    (cd /secure-exec && pnpm install --frozen-lockfile --filter='!@secure-exec/website') && \
     pnpm install --frozen-lockfile
 
 RUN tu=$(echo "$TARGET" | tr 'a-z-' 'A-Z_') && \

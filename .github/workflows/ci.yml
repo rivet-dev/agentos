@@ -23,13 +23,6 @@ jobs:
         with:
           workspaces: |
             . -> target
-      # Rust workspace dependencies still resolve through ../secure-exec on this
-      # branch, matching the publish workflow.
-      - name: Checkout secure-exec sibling
-        run: |
-          git clone --depth 1 --branch main \
-            https://github.com/rivet-dev/secure-exec.git ../secure-exec
-          (cd ../secure-exec && pnpm install --frozen-lockfile --filter='!@secure-exec/website')
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm --dir scripts/publish run check-types

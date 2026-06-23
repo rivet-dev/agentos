@@ -20,7 +20,7 @@ function writeJson(root, rel, value) {
 	writeFileSync(path, `${JSON.stringify(value, null, "\t")}\n`);
 }
 
-test("accepts agentos-pkgs registry software package metadata", () => {
+test("accepts agentos-software registry software package metadata", () => {
 	withFixture((root) => {
 		writeJson(root, "registry/software/coreutils/package.json", {
 			name: "@agentos-software/coreutils",
@@ -39,14 +39,14 @@ test("accepts agentos-pkgs registry software package metadata", () => {
 test("rejects stale Agent OS package names and metadata files", () => {
 	withFixture((root) => {
 		writeJson(root, "registry/software/grep/package.json", {
-			name: "@agentos-software/grep",
+			name: "@rivet-dev/agent-os-pkg-grep",
 		});
 		writeJson(root, "registry/software/grep/agentos-package.json", {
-			name: "@agentos-software/grep",
+			name: "@rivet-dev/agent-os-pkg-grep",
 		});
 
 		assert.deepEqual(checkRegistrySoftwareSplit({ root }), [
-			"registry/software/grep/package.json must be named @agentos-software/grep, found @agentos-software/grep",
+			"registry/software/grep/package.json must be named @agentos-software/grep, found @rivet-dev/agent-os-pkg-grep",
 			"registry/software/grep/agentos-package.json must be renamed to secure-exec-package.json",
 			"registry/software/grep/secure-exec-package.json is required",
 		]);
@@ -73,7 +73,7 @@ test("rejects Agent OS dependencies inside software manifests", () => {
 		writeJson(root, "registry/software/common/package.json", {
 			name: "@agentos-software/common",
 			dependencies: {
-				"@agentos-software/coreutils": "workspace:*",
+				"@rivet-dev/agent-os-core": "workspace:*",
 			},
 		});
 		writeJson(root, "registry/software/common/secure-exec-package.json", {
@@ -81,7 +81,7 @@ test("rejects Agent OS dependencies inside software manifests", () => {
 		});
 
 		assert.deepEqual(checkRegistrySoftwareSplit({ root }), [
-			"@agentos-software/common must not depend on Agent OS package @agentos-software/coreutils in registry software dependencies",
+			"@agentos-software/common must not depend on Agent OS package @rivet-dev/agent-os-core in registry software dependencies",
 		]);
 	});
 });

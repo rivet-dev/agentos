@@ -6,6 +6,12 @@ settings:
 
 catalogs:
   default:
+    '@agentos-software/claude-code':
+      specifier: 0.0.0-nathan-binding-workspace.9be0a88
+      version: 0.0.0-nathan-binding-workspace.9be0a88
+    '@agentos-software/codex':
+      specifier: 0.3.0-rc.2
+      version: 0.3.0-rc.2
     '@agentos-software/codex-cli':
       specifier: 0.3.0-rc.2
       version: 0.3.0-rc.2
@@ -45,6 +51,15 @@ catalogs:
     '@agentos-software/jq':
       specifier: 0.3.0-rc.2
       version: 0.3.0-rc.2
+    '@agentos-software/opencode':
+      specifier: 0.0.0-nathan-binding-workspace.9be0a88
+      version: 0.0.0-nathan-binding-workspace.9be0a88
+    '@agentos-software/pi':
+      specifier: 0.0.0-nathan-binding-workspace.9be0a88
+      version: 0.0.0-nathan-binding-workspace.9be0a88
+    '@agentos-software/pi-cli':
+      specifier: 0.0.0-nathan-binding-workspace.9be0a88
+      version: 0.0.0-nathan-binding-workspace.9be0a88
     '@agentos-software/ripgrep':
       specifier: 0.3.0-rc.2
       version: 0.3.0-rc.2
@@ -90,27 +105,27 @@ importers:
 
   .:
     devDependencies:
+      '@agentos-software/claude-code':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-binding-workspace.9be0a88(@cfworker/json-schema@4.1.1)
+      '@agentos-software/codex':
+        specifier: 'catalog:'
+        version: 0.3.0-rc.2
       '@agentos-software/common':
         specifier: 'catalog:'
         version: 0.3.0-rc.2
+      '@agentos-software/pi':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
       '@copilotkit/llmock':
         specifier: ^1.6.0
         version: 1.6.0
-      '@agentos-software/claude-code':
-        specifier: workspace:*
-        version: link:registry/agent/claude
-      '@agentos-software/codex':
-        specifier: workspace:*
-        version: link:registry/agent/codex
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:packages/core
-      '@agentos-software/pi':
-        specifier: workspace:*
-        version: link:registry/agent/pi
       '@secure-exec/core':
         specifier: 'catalog:'
         version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
@@ -173,21 +188,21 @@ importers:
 
   examples/quickstart:
     dependencies:
+      '@agentos-software/claude-code':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-binding-workspace.9be0a88(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
         version: 0.3.0-rc.2
-      '@agentos-software/claude-code':
-        specifier: workspace:*
-        version: link:../../registry/agent/claude
+      '@agentos-software/opencode':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-binding-workspace.9be0a88
+      '@agentos-software/pi':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@agentos-software/opencode':
-        specifier: workspace:*
-        version: link:../../registry/agent/opencode
-      '@agentos-software/pi':
-        specifier: workspace:*
-        version: link:../../registry/agent/pi
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
@@ -343,6 +358,12 @@ importers:
         specifier: ^10.2.4
         version: 10.2.5
     devDependencies:
+      '@agentos-software/claude-code':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-binding-workspace.9be0a88(@cfworker/json-schema@4.1.1)
+      '@agentos-software/codex':
+        specifier: 'catalog:'
+        version: 0.3.0-rc.2
       '@agentos-software/codex-cli':
         specifier: 'catalog:'
         version: 0.3.0-rc.2
@@ -379,6 +400,15 @@ importers:
       '@agentos-software/jq':
         specifier: 'catalog:'
         version: 0.3.0-rc.2
+      '@agentos-software/opencode':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-binding-workspace.9be0a88
+      '@agentos-software/pi':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+      '@agentos-software/pi-cli':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@agentos-software/ripgrep':
         specifier: 'catalog:'
         version: 0.3.0-rc.2
@@ -418,21 +448,6 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.60.0
         version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@agentos-software/claude-code':
-        specifier: link:../../registry/agent/claude
-        version: link:../../registry/agent/claude
-      '@agentos-software/codex':
-        specifier: link:../../registry/agent/codex
-        version: link:../../registry/agent/codex
-      '@agentos-software/opencode':
-        specifier: link:../../registry/agent/opencode
-        version: link:../../registry/agent/opencode
-      '@agentos-software/pi':
-        specifier: link:../../registry/agent/pi
-        version: link:../../registry/agent/pi
-      '@agentos-software/pi-cli':
-        specifier: link:../../registry/agent/pi-cli
-        version: link:../../registry/agent/pi-cli
       '@rivet-dev/agentos-sandbox':
         specifier: link:../agentos-sandbox
         version: link:../agentos-sandbox
@@ -749,7 +764,7 @@ importers:
     dependencies:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.60.0
-        version: 0.60.0
+        version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../../packages/core
@@ -859,8 +874,15 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
+  '@agentos-software/claude-code@0.0.0-nathan-binding-workspace.9be0a88':
+    resolution: {integrity: sha512-lSrWgqisbNFV3kkUpcyjH67UZsI/BWAWqlzr/B5SrHN0FcQU/1xVqYp+ooz24HdUuLlpp4Otx5sJHfb1NLRvDQ==}
+    hasBin: true
+
   '@agentos-software/codex-cli@0.3.0-rc.2':
     resolution: {integrity: sha512-n0iDKXJOKZrQuJvPbrJpCU8kLC15lj7ueMgUHVHi1uX5U+x6TPrezG8FNnEKZX49eMHtL8SBsYZIaDwNdjjjHw==}
+
+  '@agentos-software/codex@0.3.0-rc.2':
+    resolution: {integrity: sha512-DKAb9Qs1+zV1sgtMEqVo7K60R4IryKMY24jZdH5NX5cKhIi5ED1o+AufINtNSMJxdrByz+MuX+2HkvWXCvHYgw==}
 
   '@agentos-software/common@0.3.0-rc.2':
     resolution: {integrity: sha512-LWMGMFwjBbJDjbIAE8+hMDbbrOptxgXcgwJ6Ve5eFn0ncI6+T0fH5Fr3uTLZyxh0AUhSejbKDVjHwdQczFKnGQ==}
@@ -897,6 +919,17 @@ packages:
 
   '@agentos-software/jq@0.3.0-rc.2':
     resolution: {integrity: sha512-xNLHt7m7OaCPOQDX5OlocxqG0dPoCv2JCKkGld2W3uD3oOsO70WZl9sbfNBf8n3doHKgN2Xs04DGVhA/Ynabiw==}
+
+  '@agentos-software/opencode@0.0.0-nathan-binding-workspace.9be0a88':
+    resolution: {integrity: sha512-CW4rrRKVLpnWY5pLM+JCLTROries+TMMLMIlr0XMwh07fcEJI0Asq8Z93mSmVR1uCFNcWJbB6NM7CRxcaxTq4w==}
+    hasBin: true
+
+  '@agentos-software/pi-cli@0.0.0-nathan-binding-workspace.9be0a88':
+    resolution: {integrity: sha512-ga8fnQNr8pmkWS+MfCqPAMa97aFd/xkoL56Fowb5IGZ878vYkhlUMPagO4LBwNcTDpfmJVX16VSqBP76tLiHmw==}
+
+  '@agentos-software/pi@0.0.0-nathan-binding-workspace.9be0a88':
+    resolution: {integrity: sha512-An4QkRI3K4uPonsjh6V85o0J/qUC7qJuVPaoSVP2KYT7DhDuQ2IYjrgrV6ggcBbDOKlMUIMY/m8GlPa4Skbatw==}
+    hasBin: true
 
   '@agentos-software/ripgrep@0.3.0-rc.2':
     resolution: {integrity: sha512-OsT641m1kXkGON6D8HZaqlOPnqBN2O3MI1Uvqn+//s9n0MuQDmZ5ojg/jIaaSCTjadXOeFcrJzSASP/lajrxzA==}
@@ -7244,7 +7277,19 @@ snapshots:
     dependencies:
       zod: 4.3.6
 
+  '@agentos-software/claude-code@0.0.0-nathan-binding-workspace.9be0a88(@cfworker/json-schema@4.1.1)':
+    dependencies:
+      '@agentclientprotocol/sdk': 0.16.1(zod@4.3.6)
+      '@anthropic-ai/claude-agent-sdk': 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
+      '@rivet-dev/agentos-core': link:packages/core
+      zod: 4.3.6
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - supports-color
+
   '@agentos-software/codex-cli@0.3.0-rc.2': {}
+
+  '@agentos-software/codex@0.3.0-rc.2': {}
 
   '@agentos-software/common@0.3.0-rc.2':
     dependencies:
@@ -7278,6 +7323,39 @@ snapshots:
   '@agentos-software/gzip@0.3.0-rc.2': {}
 
   '@agentos-software/jq@0.3.0-rc.2': {}
+
+  '@agentos-software/opencode@0.0.0-nathan-binding-workspace.9be0a88':
+    dependencies:
+      '@rivet-dev/agentos-core': link:packages/core
+
+  '@agentos-software/pi-cli@0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)':
+    dependencies:
+      '@mariozechner/pi-coding-agent': 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+      '@rivet-dev/agentos-core': link:packages/core
+      pi-acp: 0.0.23
+    transitivePeerDependencies:
+      - '@modelcontextprotocol/sdk'
+      - aws-crt
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+      - ws
+      - zod
+
+  '@agentos-software/pi@0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)':
+    dependencies:
+      '@agentclientprotocol/sdk': 0.16.1(zod@4.3.6)
+      '@mariozechner/pi-ai': 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+      '@mariozechner/pi-coding-agent': 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+      '@rivet-dev/agentos-core': link:packages/core
+    transitivePeerDependencies:
+      - '@modelcontextprotocol/sdk'
+      - aws-crt
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+      - ws
+      - zod
 
   '@agentos-software/ripgrep@0.3.0-rc.2': {}
 
@@ -9069,45 +9147,9 @@ snapshots:
       std-env: 3.10.0
       yoctocolors: 2.1.2
 
-  '@mariozechner/pi-agent-core@0.60.0':
-    dependencies:
-      '@mariozechner/pi-ai': 0.60.0
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - aws-crt
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
   '@mariozechner/pi-agent-core@0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)':
     dependencies:
       '@mariozechner/pi-ai': 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - aws-crt
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
-  '@mariozechner/pi-ai@0.60.0':
-    dependencies:
-      '@anthropic-ai/sdk': 0.73.0(zod@4.3.6)
-      '@aws-sdk/client-bedrock-runtime': 3.1020.0
-      '@google/genai': 1.47.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)
-      '@mistralai/mistralai': 1.14.1(bufferutil@4.1.0)
-      '@sinclair/typebox': 0.34.49
-      ajv: 8.18.0
-      ajv-formats: 3.0.1(ajv@8.18.0)
-      chalk: 5.6.2
-      openai: 6.26.0(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      partial-json: 0.1.7
-      proxy-agent: 6.5.0
-      undici: 7.24.6
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - aws-crt
@@ -9132,38 +9174,6 @@ snapshots:
       proxy-agent: 6.5.0
       undici: 7.24.6
       zod-to-json-schema: 3.25.2(zod@4.3.6)
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - aws-crt
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
-  '@mariozechner/pi-coding-agent@0.60.0':
-    dependencies:
-      '@mariozechner/jiti': 2.6.5
-      '@mariozechner/pi-agent-core': 0.60.0
-      '@mariozechner/pi-ai': 0.60.0
-      '@mariozechner/pi-tui': 0.60.0
-      '@silvia-odwyer/photon-node': 0.3.4
-      chalk: 5.6.2
-      cli-highlight: 2.1.11
-      diff: 8.0.4
-      extract-zip: 2.0.1
-      file-type: 21.3.4
-      glob: 13.0.6
-      hosted-git-info: 9.0.2
-      ignore: 7.0.5
-      marked: 15.0.12
-      minimatch: 10.2.5
-      proper-lockfile: 4.1.2
-      strip-ansi: 7.2.0
-      undici: 7.24.6
-      yaml: 2.8.3
-    optionalDependencies:
-      '@mariozechner/clipboard': 0.3.2
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - aws-crt

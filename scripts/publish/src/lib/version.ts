@@ -173,9 +173,9 @@ export async function bumpPackageJsons(
  * inherit it via `version.workspace = true`.
  *
  * NOTE: the secure-exec crate dependencies in `[workspace.dependencies]` are
- * deliberately NOT rewritten — their `version` requirement tracks the sibling
- * secure-exec crate workspace version (e.g. `0.2.0-rc.3`), which a preview does
- * not bump. Rewriting them to a6's version breaks the cargo path-dep check.
+ * deliberately NOT rewritten. They are crates.io deps managed separately by
+ * `scripts/secure-exec-dep.mjs`; AgentOS preview/release versions must not
+ * overwrite those registry requirements.
  */
 export async function bumpCargoVersions(
 	repoRoot: string,
@@ -189,8 +189,8 @@ export async function bumpCargoVersions(
 		`$1"${version}"`,
 	);
 	// Bump a6-OWNED crate dep requirements (path = "crates/..."). The secure-exec
-	// crate deps (path = "../secure-exec/...") are intentionally NOT bumped — they
-	// track the sibling crate version.
+	// crate deps are intentionally NOT bumped because they are registry-pinned by
+	// the secure-exec dependency manager.
 	next = next.replace(
 		/((?:agentos|agent-os|secure-exec)-[a-z0-9-]+ = \{ path = "crates\/[^"]+", version = ")[^"]+(" \})/g,
 		`$1${version}$2`,

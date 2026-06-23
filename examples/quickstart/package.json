@@ -28,9 +28,9 @@
 		"dockerode": "^4.0.9",
 		"get-port": "^7.1.0",
 		"@agentos-software/git": "catalog:",
-		"@agentos-software/claude-code": "workspace:*",
-		"@agentos-software/opencode": "workspace:*",
-		"@agentos-software/pi": "workspace:*",
+		"@agentos-software/claude-code": "catalog:",
+		"@agentos-software/opencode": "catalog:",
+		"@agentos-software/pi": "catalog:",
 		"@secure-exec/s3": "catalog:",
 		"zod": "^4.1.11"
 	},
