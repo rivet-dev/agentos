@@ -1,115 +1,115 @@
 ---
 title: "Agent-to-Agent Communication"
-description: "Use host tools to let agents communicate with each other."
+description: "Use bindings to let agents communicate with each other."
 skill: true
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
-Agents communicate through [host tools](/docs/tools). You define a toolkit that lets one agent send work to another, and the agent calls it like any other CLI command.
+Agents communicate through [bindings](/docs/bindings). You define a bindings group that lets one agent send work to another, and the agent calls it like any other CLI command.
 
 ## Example: code writer + reviewer
 
-This example creates a writer agent with a `review` tool. When the writer calls the tool, it reads the file from the writer's VM, writes it to a separate reviewer VM, and sends a review prompt.
+This example gives the writer agent a `review` binding. The writer sends the file's full contents (the VMs share no filesystem), and the binding writes them into a separate reviewer VM and sends a review prompt back through the reviewer.
 
-<Tabs>
-<TabItem label="server.ts">
+<CodeGroup>
 ```ts title="server.ts"
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
-import { toolKit, hostTool } from "@rivet-dev/agentos-core";
-import { createClient } from "rivetkit/client";
+import { agentOS, setup } from "@rivet-dev/agentos";
+import { createClient } from "@rivet-dev/agentos/client";
 import { z } from "zod";
 
-// Tool that bridges the writer to the reviewer
-const reviewToolkit = toolKit({
-  name: "review",
-  description: "Send code to the reviewer agent",
-  tools: {
-    submit: hostTool({
-      description: "Submit a file for code review",
-      inputSchema: z.object({
-        path: z.string().describe("Path to the file to review"),
-      }),
-      execute: async (input) => {
-        const client = createClient<typeof registry>("http://localhost:6420");
-        const writerHandle = client.writer.getOrCreate(["my-project"]);
-        const reviewerHandle = client.reviewer.getOrCreate(["my-project"]);
+// The reviewer is its own isolated agent VM.
+const reviewer = agentOS({});
 
-        // Read file from writer, write to reviewer
-        const content = await writerHandle.readFile(input.path);
-        await reviewerHandle.writeFile(input.path, content);
+// Bridge the writer to the reviewer. The VMs share no filesystem, so the writer
+// sends the full file contents; the bridge writes them into the reviewer's VM
+// and asks the reviewer to review. Runs on the host.
+async function reviewCode(code: string): Promise<string> {
+  const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+  const reviewerHandle = client.reviewer.getOrCreate("my-project");
 
-        // Ask the reviewer to review
-        const session = await reviewerHandle.createSession("pi", {
-          env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-        });
-        const response = await reviewerHandle.sendPrompt(
-          session.sessionId,
-          `Review the code at ${input.path} and list any issues.`,
-        );
-        await reviewerHandle.closeSession(session.sessionId);
+  // Write the submitted contents into the reviewer's VM.
+  await reviewerHandle.writeFile("/home/user/review.ts", code);
 
-        return { review: response };
+  // Ask the reviewer to review.
+  const session = await reviewerHandle.createSession("claude", {
+    env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+  });
+  const result = await reviewerHandle.sendPrompt(
+    session.sessionId,
+    "Review the code at /home/user/review.ts and list any issues.",
+  );
+  await reviewerHandle.closeSession(session.sessionId);
+
+  return result.text;
+}
+
+// The writer agent gets a `review` binding. When the writer runs
+// `agentos-review submit`, the bridge above executes on the host.
+const writer = agentOS({
+  bindings: [
+    {
+      name: "review",
+      description: "Send code to the reviewer agent and get back a review.",
+      bindings: {
+        submit: {
+          description:
+            "Submit the full contents of a file to the reviewer agent for review. Returns the reviewer's feedback as text.",
+          inputSchema: z.object({
+            code: z.string().describe("The full source code to review."),
+          }),
+          execute: async (input: { code: string }) => ({
+            review: await reviewCode(input.code),
+          }),
+        },
       },
-    }),
-  },
-});
-
-// Writer has the review toolkit, reviewer is plain
-const writer = agentOs({
-  options: { software: [common, pi], toolKits: [reviewToolkit] },
-});
-const reviewer = agentOs({
-  options: { software: [common, pi] },
+    },
+  ],
 });
 
 export const registry = setup({ use: { writer, reviewer } });
+
 registry.start();
 ```
-</TabItem>
-<TabItem label="client.ts">
+
 ```ts title="client.ts"
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const writerAgent = client.writer.getOrCreate(["my-project"]);
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const writerAgent = client.writer.getOrCreate("my-project");
 
-const session = await writerAgent.createSession("pi", {
+const session = await writerAgent.createSession("claude", {
   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
 
-// The writer will call `agentos-review submit --path /home/user/api.ts`
-// when it's ready for a review
+// The writer calls the `review` binding, which bridges to the reviewer VM.
 await writerAgent.sendPrompt(
   session.sessionId,
-  "Write a REST API at /home/user/api.ts, then submit it for review.",
+  "Write a small REST API, then send it to the review agent for review.",
 );
 ```
-</TabItem>
-</Tabs>
+</CodeGroup>
 
-The writer agent sees the review tool as a CLI command:
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/agent-to-agent)*
+
+The writer agent sees the review binding as a CLI command. Because the VMs share no filesystem, it sends the full file contents, not a path:
 
 ```bash
-agentos-review submit --path /home/user/api.ts
+agentos-review submit --code "$(cat api.ts)"
 ```
 
-When the writer calls this, the host tool reads the file from the writer's VM, writes it to the reviewer's VM, and sends a prompt to the reviewer. The review result is returned to the writer as JSON.
+The binding writes the contents into the reviewer's VM, prompts the reviewer, and returns the review to the writer as JSON.
 
-## Why host tools?
+## Why bindings?
 
-Host tools are the natural communication layer between agents because:
+Bindings are the natural communication layer between agents because:
 
-- **The agent doesn't need to know about other agents.** It just calls a tool. You can swap the implementation without changing the agent's behavior.
-- **No credentials in the VM.** The host tool executes on the server, so it can access other agents directly without exposing connection details.
-- **Composable.** Chain any number of agents by adding more tools. Each tool is a self-contained bridge to another agent.
+- **The agent doesn't need to know about other agents.** It just calls a binding. You can swap the implementation without changing the agent's behavior.
+- **No credentials in the VM.** The binding executes on the server, so it can access other agents directly without exposing connection details.
+- **Composable.** Chain any number of agents by adding more bindings. Each binding is a self-contained bridge to another agent.
 
 ## Recommendations
 
-- Each agent has its own isolated VM and filesystem. Use `readFile`/`writeFile` in host tools to pass files between them.
-- Use [Queues](/docs/queues) when agents need to process work asynchronously.
+- Each agent has its own isolated VM and filesystem (they share no filesystem). Pass file contents through the binding input, then use `writeFile` in the binding to land them in the other VM.
 - Use [Workflows](/docs/workflows) to make multi-agent pipelines durable across restarts.

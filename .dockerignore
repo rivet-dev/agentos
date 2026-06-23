@@ -2,8 +2,19 @@
 # (Railway default). Narrow that context to website/ so the monorepo isn't sent
 # to the builder. scripts/ralph/Dockerfile is a codex dev image that COPYs
 # nothing from the repo, so this doesn't affect it.
+#
+# The website build's docs:gen:ts (typedoc) step also needs the agentos SDK
+# source, which lives outside website/. Include just that package's src + config
+# (not node_modules/dist) so the API reference can be generated in the image.
 *
 !website
+!packages
+packages/*
+!packages/agentos
+packages/agentos/*
+!packages/agentos/src
+!packages/agentos/package.json
+!packages/agentos/tsconfig.json
 website/node_modules
 website/dist
 website/.astro

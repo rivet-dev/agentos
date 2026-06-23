@@ -6,13 +6,20 @@
 // plugin (`crates/agentos-actor-plugin`), loaded by RivetKit via the generic
 // native-plugin ABI.
 
-export {
-	agentOs,
+import {
+	agentOs as createAgentOs,
 	type AgentOsActorDefinition,
+} from "./actor.js";
+import type { AgentOsActorConfigInput } from "./config.js";
+
+export { setup } from "rivetkit";
+
+export {
 	buildConfigJson,
 	nodeModulesMount,
 	type NodeModulesMountConfig,
 } from "./actor.js";
+export { createAgentOs as agentOs };
 
 export {
 	type AgentOsActorConfig,
@@ -43,3 +50,14 @@ export type {
 	VmBootedPayload,
 	VmShutdownPayload,
 } from "./types.js";
+
+export type AgentOSActorConfigInput<TConnParams = undefined> =
+	AgentOsActorConfigInput<TConnParams>["options"];
+
+export function agentOS<TConnParams = undefined>(
+	config: AgentOSActorConfigInput<TConnParams> = {},
+): AgentOsActorDefinition<TConnParams> {
+	return createAgentOs({
+		options: config,
+	} as AgentOsActorConfigInput<TConnParams>);
+}

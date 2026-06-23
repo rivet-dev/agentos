@@ -1,9 +1,8 @@
 // Run shell commands inside the VM.
 
-import common from "@agentos-software/common";
 import { AgentOs } from "@rivet-dev/agentos-core";
 
-const vm = await AgentOs.create({ software: [common] });
+const vm = await AgentOs.create();
 
 // Simple commands
 const echo = await vm.exec("echo 'Hello from the shell!'");

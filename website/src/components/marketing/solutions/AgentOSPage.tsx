@@ -36,6 +36,8 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { InkPanel } from '../editorial/InkPanel';
 import { GLOW_PILL_CLASS, handleGlowPillMouseMove } from '../glowPill';
 import { registry } from '../../../data/registry';
+import { HarnessArchitecture } from '../diagrams/HarnessArchitecture';
+import { ColdStartRace } from '../diagrams/ColdStartRace';
 
 interface HeroTabCode {
 	key: string;
@@ -546,7 +548,7 @@ const terminalLines: TermLine[] = [
 	{ text: '  v0.1.0  |  runtime ready', color: 'text-cream/45', delay: 1400 },
 	{ text: '', delay: 1600 },
 	{ text: '✓ V8 isolate pool initialized (12 workers)', color: 'text-cream/70', delay: 1800 },
-	{ text: '✓ File system mounted → /workspace', color: 'text-cream/70', delay: 2100 },
+	{ text: '✓ File system mounted → /home/user', color: 'text-cream/70', delay: 2100 },
 	{ text: '✓ Tool registry loaded (git, curl, python, node)', color: 'text-cream/70', delay: 2400 },
 	{ text: '✓ Network policy applied → allowlist mode', color: 'text-cream/70', delay: 2700 },
 	{ text: '', delay: 3000 },
@@ -554,7 +556,7 @@ const terminalLines: TermLine[] = [
 	{ text: '  → Claude Code connected', color: 'text-cream/55', delay: 3500 },
 	{ text: '  → Prompt: "Set up a Next.js app with auth"', color: 'text-cream/55', delay: 3800 },
 	{ text: '', delay: 4100 },
-	{ text: '  ▸ agent  npm create next-app@latest /workspace/app', color: 'text-cream/70', delay: 4400 },
+	{ text: '  ▸ agent  npm create next-app@latest /home/user/app', color: 'text-cream/70', delay: 4400 },
 	{ text: '  ▸ agent  npm install next-auth@5 prisma @prisma/client', color: 'text-cream/70', delay: 5000 },
 	{ text: '  ▸ agent  Writing 7 files...', color: 'text-cream/70', delay: 5600 },
 	{ text: '  ▸ agent  npx prisma db push', color: 'text-cream/70', delay: 6200 },
@@ -768,7 +770,7 @@ const agents = [
 ];
 const heroTabMeta: Array<{ key: string; icon?: typeof Bot; label: string; docsHref: string }> = [
 	{ key: 'agents', icon: Bot, label: 'Agents', docsHref: '/docs/sessions' },
-	{ key: 'tools', icon: Wrench, label: 'Tools', docsHref: '/docs/tools' },
+	{ key: 'tools', icon: Wrench, label: 'Bindings', docsHref: '/docs/bindings' },
 	{ key: 's3-filesystem', icon: HardDrive, label: 'S3 File System', docsHref: '/docs/filesystem' },
 	{ key: 'cron', icon: CalendarClock, label: 'Cron', docsHref: '/docs/cron' },
 	{ key: 'agent-agent', icon: Layers, label: 'Agent-Agent', docsHref: '/docs/agent-to-agent' },
@@ -1078,10 +1080,10 @@ const themedSections: ThemedSection[] = [
 			{ icon: Shield, title: 'Authentication', description: 'Authenticate agent connections with your existing auth model. Validate credentials and attach user state on connect.', docsHref: '/docs/authentication' },
 			{ icon: Globe, title: 'Webhooks', description: 'Receive external events and route them into agents with lightweight HTTP handlers and durable queues.', docsHref: '/docs/webhooks' },
 			{ icon: Bot, title: 'Multiplayer & Realtime', description: 'Multiple clients can observe and collaborate with the same agent environment in real time.', docsHref: '/docs/multiplayer' },
-			{ icon: Layers, title: 'Agent-to-Agent', description: 'Let agents delegate work to other agents through host-defined tools and shared orchestration flows.', docsHref: '/docs/agent-to-agent' },
+			{ icon: Layers, title: 'Agent-to-Agent', description: 'Let agents delegate work to other agents through bindings and shared orchestration flows.', docsHref: '/docs/agent-to-agent' },
 			{ icon: Wrench, title: 'Workflows', description: 'Chain agent tasks into durable workflows with retries, branching, and resumable execution built in.', docsHref: '/docs/workflows' },
 			{ icon: HardDrive, title: 'Queues', description: 'Serialize agent work with durable queues for backpressure, async processing, and ordered execution.', docsHref: '/docs/queues' },
-			{ icon: Code, title: 'SQLite', description: 'Give agents access to a persistent SQLite database through host tools for structured state and queryable memory.', docsHref: '/docs/sqlite' },
+			{ icon: Code, title: 'SQLite', description: 'Give agents access to a persistent SQLite database through bindings for structured state and queryable memory.', docsHref: '/docs/sqlite' },
 		],
 	},
 	{
@@ -1952,9 +1954,51 @@ const TechnologyAndBenchmarks = () => (
 				</div>
 			</motion.div>
 
+			{/* Containers vs Isolate density comparison */}
+			<motion.div
+				initial={{ opacity: 0, y: 20 }}
+				whileInView={{ opacity: 1, y: 0 }}
+				viewport={{ once: true }}
+				transition={{ duration: 0.5 }}
+				className='mb-16'
+			>
+				<p className='mb-8 max-w-3xl text-base leading-relaxed text-ink-soft md:text-lg'>
+					Booting an agent in a container takes a full process and hundreds of milliseconds. Agent OS starts one in a lightweight isolate in about {Math.round(benchColdStart[0].agentOS)} ms &mdash; and packs far more into the same memory.
+				</p>
+				<ColdStartRace />
+			</motion.div>
+
 			{/* Benchmarks */}
 			<BenchmarkSection />
 
+		</div>
+	</section>
+);
+
+const HarnessSection = () => (
+	<section className='border-t border-ink/10 py-16 md:py-32'>
+		<div className='mx-auto grid max-w-5xl items-center gap-12 px-6 lg:grid-cols-2'>
+			<motion.div
+				initial={{ opacity: 0, y: 20 }}
+				whileInView={{ opacity: 1, y: 0 }}
+				viewport={{ once: true }}
+				transition={{ duration: 0.5 }}
+			>
+				<h2 className='mb-4 text-3xl font-medium tracking-[-0.015em] text-ink md:text-5xl'>
+					Everything routes through the harness.
+				</h2>
+				<p className='max-w-xl text-base leading-relaxed text-ink-soft md:text-lg'>
+					The harness is the kernel of every agent session &mdash; brokering requests and responses between your tools and MCP resources, session state, the sandbox where code runs, and the orchestration layer that ties agents together. Each piece stays isolated, yet composable.
+				</p>
+			</motion.div>
+			<motion.div
+				initial={{ opacity: 0, y: 20 }}
+				whileInView={{ opacity: 1, y: 0 }}
+				viewport={{ once: true }}
+				transition={{ duration: 0.5, delay: 0.1 }}
+			>
+				<HarnessArchitecture />
+			</motion.div>
 		</div>
 	</section>
 );
@@ -2030,6 +2074,18 @@ const SisterProducts = () => {
 			href: 'https://sandboxagent.dev/',
 			cta: 'sandboxagent.dev',
 		},
+		{
+			name: 'Rivet Actors',
+			tagline: 'Durable, stateful serverless for agents and realtime apps.',
+			bullets: [
+				'Long-lived, in-memory state — no external database',
+				'Built-in persistence, realtime, and workflow orchestration',
+				'Deploy Agent OS sessions as durable actors',
+				'Geo-distributed at the edge; scale to zero',
+			],
+			href: 'https://rivet.dev/',
+			cta: 'rivet.dev',
+		},
 	];
 
 	return (
@@ -2052,11 +2108,11 @@ const SisterProducts = () => {
 						transition={{ duration: 0.5, delay: 0.1 }}
 						className='text-base leading-relaxed text-ink-soft md:text-lg'
 					>
-						Agent OS is where agents live. Secure Exec is how you safely run the code they generate. Sandbox Agent SDK is how you control coding agents over HTTP.
+						Agent OS is where agents live. Secure Exec is how you safely run the code they generate. Sandbox Agent SDK is how you control coding agents over HTTP. Rivet Actors is how you deploy and scale them as durable, stateful services.
 					</motion.p>
 				</div>
 
-				<div className='grid grid-cols-1 gap-6 md:grid-cols-2'>
+				<div className='grid grid-cols-1 gap-6 md:grid-cols-3'>
 					{products.map((product, idx) => (
 						<motion.a
 							key={product.name}
@@ -2143,6 +2199,7 @@ export default function AgentOSPage({ heroTabs }: AgentOSPageProps) {
 			<main>
 				<Hero heroTabs={heroTabs} />
 				<TechnologyAndBenchmarks />
+				<HarnessSection />
 				<AgentOSFeatures />
 				<SisterProducts />
 				<FromUnixToAgents />

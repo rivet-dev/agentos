@@ -1,47 +1,79 @@
 {
 	"name": "@rivet-dev/agentos",
 	"version": "0.2.0-rc.3",
-	"description": "Agent OS actor for RivetKit — thin TS forwarder that loads the native actor plugin (cdylib) via RivetKit's generic native-plugin ABI.",
+	"description": "Agent OS actor for RivetKit - thin TS forwarder that loads the native actor plugin via RivetKit's native-plugin ABI.",
 	"license": "Apache-2.0",
-	"type": "module",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/rivet-dev/agentos.git",
-		"directory": "packages/agentos"
-	},
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
+	"keywords": [
+		"rivetkit",
+		"agent-os",
+		"agentos",
+		"agents",
+		"actors",
+		"ai"
+	],
+	"sideEffects": false,
 	"files": [
 		"dist",
+		"package.json",
 		"README.md"
 	],
+	"type": "module",
 	"exports": {
 		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js",
-			"default": "./dist/index.js"
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			}
+		},
+		"./client": {
+			"import": {
+				"browser": {
+					"types": "./dist/client.d.ts",
+					"default": "./dist/client.js"
+				},
+				"types": "./dist/client.d.ts",
+				"default": "./dist/client.js"
+			}
+		},
+		"./react": {
+			"import": {
+				"types": "./dist/react.d.ts",
+				"default": "./dist/react.js"
+			}
 		}
 	},
+	"engines": {
+		"node": ">=22.0.0"
+	},
 	"scripts": {
+		"build": "tsup src/index.ts src/client.ts src/react.ts",
 		"check-types": "tsc --noEmit",
-		"build": "tsc",
 		"test": "vitest run"
 	},
 	"dependencies": {
 		"@agentos-software/common": "catalog:",
 		"@rivet-dev/agentos-core": "workspace:*",
 		"@rivet-dev/agentos-sidecar": "workspace:*",
+		"@rivetkit/react": "0.0.0-feat-dylib-actor-plugin.c44621f",
+		"rivetkit": "0.0.0-feat-dylib-actor-plugin.c44621f",
 		"zod": "^4.1.11"
 	},
 	"peerDependencies": {
-		"rivetkit": ">=0.0.0"
+		"react": "^18 || ^19",
+		"react-dom": "^18 || ^19"
+	},
+	"peerDependenciesMeta": {
+		"react": {
+			"optional": true
+		},
+		"react-dom": {
+			"optional": true
+		}
 	},
 	"devDependencies": {
 		"@types/node": "^22.19.15",
-		"rivetkit": "0.0.0-feat-dylib-actor-plugin.c44621f",
+		"tsup": "^8.4.0",
+		"typescript": "^5.7.3",
 		"vitest": "^2.1.8"
-	},
-	"engines": {
-		"node": ">=20"
 	}
 }

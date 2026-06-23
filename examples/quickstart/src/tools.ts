@@ -1,17 +1,17 @@
-// Host toolkits: define tools that execute on the host and are callable
+// Bindings: define functions that execute on the host and are callable
 // from inside the VM via the tools RPC server.
 //
-// Each toolkit becomes a set of tools accessible at AGENTOS_TOOLS_PORT.
+// Each binding group becomes a set of bindings accessible at AGENTOS_TOOLS_PORT.
 // Node scripts inside the VM can call the server directly with fetch.
 
-import { AgentOs, hostTool, toolKit } from "@rivet-dev/agentos-core";
+import { AgentOs, binding, bindings } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
-const weatherToolkit = toolKit({
+const weatherBindings = bindings({
 	name: "weather",
 	description: "Look up weather information for cities.",
-	tools: {
-		get: hostTool({
+	bindings: {
+		get: binding({
 			description: "Get the current weather for a city.",
 			inputSchema: z.object({
 				city: z.string().describe("City name (e.g. 'London')."),
@@ -29,11 +29,11 @@ const weatherToolkit = toolKit({
 	},
 });
 
-const calcToolkit = toolKit({
+const calcBindings = bindings({
 	name: "calc",
 	description: "Simple calculator operations.",
-	tools: {
-		add: hostTool({
+	bindings: {
+		add: binding({
 			description: "Add two numbers.",
 			inputSchema: z.object({ a: z.number(), b: z.number() }),
 			execute: ({ a, b }) => ({ result: a + b }),
@@ -42,13 +42,13 @@ const calcToolkit = toolKit({
 });
 
 const vm = await AgentOs.create({
-	toolKits: [weatherToolkit, calcToolkit],
+	bindings: [weatherBindings, calcBindings],
 	permissions: {
 		fs: "allow",
 		network: "allow",
 		childProcess: "allow",
 		env: "allow",
-		tool: "allow",
+		binding: "allow",
 	},
 });
 

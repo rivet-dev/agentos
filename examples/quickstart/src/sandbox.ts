@@ -1,13 +1,12 @@
 // Sandbox extension: mount a Docker sandbox filesystem and run commands.
 //
 // Requires Docker. Starts a sandbox-agent container, mounts its filesystem
-// at /sandbox, and registers the sandbox toolkit for running commands.
+// at /sandbox, and registers the sandbox bindings for running commands.
 
-import common from "@agentos-software/common";
 import { AgentOs } from "@rivet-dev/agentos-core";
 import {
 	createSandboxFs,
-	createSandboxToolkit,
+	createSandboxBindings,
 } from "@rivet-dev/agentos-sandbox";
 
 const SANDBOX_QUICKSTART_PERMISSIONS = {
@@ -15,7 +14,7 @@ const SANDBOX_QUICKSTART_PERMISSIONS = {
 	network: "allow",
 	childProcess: "allow",
 	env: "allow",
-	tool: "allow",
+	binding: "allow",
 } as const;
 const skipDocker = process.env.SKIP_DOCKER === "1";
 
@@ -91,17 +90,16 @@ const sandbox = await SandboxAgent.start({
 	sandbox: docker(),
 });
 
-// Mount the sandbox filesystem at /sandbox and register the toolkit.
+// Mount the sandbox filesystem at /sandbox and register the bindings.
 const vm = await AgentOs.create({
 	permissions: SANDBOX_QUICKSTART_PERMISSIONS,
-	software: [common],
 	mounts: [
 		{
 			path: "/sandbox",
 			plugin: createSandboxFs({ client: sandbox }),
 		},
 	],
-	toolKits: [createSandboxToolkit({ client: sandbox })],
+	bindings: [createSandboxBindings({ client: sandbox })],
 });
 
 // Write and read a file through the mounted sandbox filesystem.

@@ -1,0 +1,19 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"noEmit": true,
+		"types": ["node"],
+		"baseUrl": ".",
+		"paths": {
+			"@rivet-dev/agentos": ["../../packages/agentos/src/mod.ts"],
+			"@rivet-dev/agentos/client": [
+				"../../packages/agentos/src/client.ts"
+			],
+			"@rivet-dev/agentos/react": ["../../packages/agentos/src/react.ts"]
+		}
+	},
+	"include": ["src/**/*"],
+	"exclude": ["node_modules", "dist"]
+}

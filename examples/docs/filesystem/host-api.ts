@@ -1,0 +1,12 @@
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
+
+// Write into the VFS (creates parent dirs). Accepts string | Uint8Array.
+await agent.writeFile("/home/user/out.txt", "hi");
+
+// Read back to the host as raw bytes.
+const bytes = await agent.readFile("/home/user/out.txt");
+console.log(new TextDecoder().decode(bytes));

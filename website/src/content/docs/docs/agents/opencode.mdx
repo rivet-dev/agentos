@@ -11,9 +11,9 @@ OpenCode agent documentation is coming soon.
 </Aside>
 
 ```ts
-import opencode from "@rivet-dev/agentos-opencode";
+import opencode from "@agentos-software/opencode";
 
-const vm = await AgentOs.create({ software: [common, opencode] });
+const vm = await AgentOs.create({ software: [opencode] });
 const { sessionId } = await vm.createSession("opencode", {
   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY },
 });

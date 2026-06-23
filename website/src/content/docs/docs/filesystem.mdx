@@ -1,139 +1,155 @@
 ---
 title: "Filesystem"
-description: "Read, write, mount, and manage files inside agentOS."
+description: "Read, write, mount, and manage files inside agentOS, all backed by a virtual filesystem isolated from the host disk."
 skill: true
 ---
 
-Every VM comes with a persistent filesystem out of the box. Files written anywhere in the VM are automatically saved to the Rivet Actor's built-in storage and restored on wake. No configuration needed.
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-- **Persistent by default** backed by Rivet Actor storage, up to 10 GB
-- **Full POSIX filesystem** with read, write, mkdir, stat, move, delete
-- **Batch operations** for reading and writing multiple files at once
-- **Mount backends** for additional storage like S3, host directories, and overlays
+Each VM has its own filesystem that the agent works in. Guest `fs` calls never touch the host disk, and it persists automatically across sleep/wake with no setup. See [Persistence](/docs/persistence) for the details.
 
-## Mounting filesystems
+## Mounts
 
-The default filesystem persists automatically across sleep/wake cycles with no setup required (up to 10 GB). For larger storage or external data, mount additional filesystem drivers via the `options.mounts` config.
+Back a guest path with external storage by adding it to the `mounts` config. Each mount takes a `path` and an optional `readOnly` flag, and the guest only ever sees the mounted subtree, never the wider host.
 
-Each mount takes a `path` (where to mount inside the VM) and an optional `readOnly` flag. JavaScript filesystem backends like `createInMemoryFileSystem()` are passed as `driver`, while native plugin backends like `createHostDirBackend()`, `createS3Backend()`, and `createGoogleDriveBackend()` are passed as `plugin`.
+<Tabs>
 
-### In-memory
+<TabItem label="Host directory">
+
+Project a real host directory into the filesystem, Docker-style. The guest sees only the mounted subtree, never the wider host filesystem. Path-escape attempts (symlinks, `..`, path aliasing) are confined to the mount root.
 
 ```ts
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import { createInMemoryFileSystem } from "@rivet-dev/agentos-core";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
 
-const vm = agentOs({
-  options: {
-    software: [common, pi],
-    mounts: [
-      { path: "/mnt/scratch", driver: createInMemoryFileSystem() },
-    ],
-  },
+const vm = agentOS({
+  software: [pi],
+  mounts: [
+    {
+      path: "/home/user/repo",
+      plugin: { id: "host_dir", config: { hostPath: "/path/to/repo" } },
+      readOnly: true,
+    },
+  ],
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
 
-### Host directory
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
+
+</TabItem>
+
+<TabItem label="S3">
+
+Mount an S3 bucket with the built-in `s3` plugin. Pass an optional `prefix` to scope storage to a key path within the bucket, useful for sharing one bucket across multiple agents.
+
+The backend is a block store, not a one-object-per-file mapping: file contents are split into fixed-size chunks (4 MB by default) stored as individual S3 objects, with a separate metadata layer mapping each file to its chunks. This keeps large files, partial reads and writes, and snapshots efficient without rewriting whole objects.
 
 ```ts
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import { createHostDirBackend } from "@rivet-dev/agentos-core";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
 
-const vm = agentOs({
-  options: {
-    software: [common, pi],
-    mounts: [
-      { path: "/mnt/code", plugin: createHostDirBackend({ hostPath: "/path/to/repo" }), readOnly: true },
-    ],
-  },
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
-### S3
-
-Install `@rivet-dev/agentos-s3` for S3-compatible storage.
-
-Use `createS3Backend` to mount a bucket. Pass an optional `prefix` to scope storage to a key path within the bucket — useful for sharing one bucket across multiple agents.
-
-```ts
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import { createS3Backend } from "@rivet-dev/agentos-s3";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
-
-const vm = agentOs({
-  options: {
-    software: [common, pi],
-    mounts: [
-      {
-        path: "/mnt/data",
-        plugin: createS3Backend({
+const vm = agentOS({
+  software: [pi],
+  mounts: [
+    {
+      path: "/home/user/data",
+      plugin: {
+        id: "s3",
+        config: {
           bucket: "my-bucket",
           prefix: "agent-data/",
           region: "us-east-1",
-        }),
+        },
       },
-    ],
-  },
+    },
+  ],
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
 
-`createS3Backend` also accepts `credentials` (`{ accessKeyId, secretAccessKey }`) and a custom `endpoint` for S3-compatible providers.
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
 
-### Google Drive
+The `s3` plugin config also accepts `credentials` (`{ accessKeyId, secretAccessKey }`) and a custom `endpoint` for S3-compatible providers.
 
-Install `@rivet-dev/agentos-google-drive` for Google Drive storage.
+</TabItem>
+
+<TabItem label="Google Drive">
+
+Mount a Google Drive folder with the built-in `google_drive` plugin.
 
 ```ts
-import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import { createGoogleDriveBackend } from "@rivet-dev/agentos-google-drive";
-import common from "@rivet-dev/agentos-common";
-import pi from "@rivet-dev/agentos-pi";
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
 
-const vm = agentOs({
-  options: {
-    software: [common, pi],
-    mounts: [
-      {
-        path: "/mnt/drive",
-        plugin: createGoogleDriveBackend({
+const vm = agentOS({
+  software: [pi],
+  mounts: [
+    {
+      path: "/home/user/drive",
+      plugin: {
+        id: "google_drive",
+        config: {
           credentials: {
             clientEmail: process.env.GOOGLE_DRIVE_CLIENT_EMAIL!,
             privateKey: process.env.GOOGLE_DRIVE_PRIVATE_KEY!,
           },
           folderId: process.env.GOOGLE_DRIVE_FOLDER_ID!,
-        }),
+        },
       },
-    ],
-  },
+    },
+  ],
 });
 
 export const registry = setup({ use: { vm } });
 registry.start();
 ```
 
-## Filesystem operations
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
+
+</TabItem>
+
+<TabItem label="In-memory">
+
+```ts
+import { agentOS, setup } from "@rivet-dev/agentos";
+import { createInMemoryFileSystem } from "@rivet-dev/agent-os-core";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+  mounts: [
+    { path: "/home/user/scratch", driver: createInMemoryFileSystem() },
+  ],
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
+
+</TabItem>
+
+</Tabs>
+
+## File operations
+
+These operations are primarily what the agent uses inside the VM, and are also available from the client to seed inputs and read results. For large or read-only inputs (a repo, a dataset), a read-only [host mount](#mounts) is faster than copying files in. Programs that need stdin or live output use exec instead (see [Core](/docs/core)).
 
 ### Read and write
 
 ```ts
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
+
 // Write a file (string or Uint8Array)
 await agent.writeFile("/home/user/hello.txt", "Hello, world!");
 
@@ -141,6 +157,8 @@ await agent.writeFile("/home/user/hello.txt", "Hello, world!");
 const content = await agent.readFile("/home/user/hello.txt");
 console.log(new TextDecoder().decode(content));
 ```
+
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
 
 ### Batch read and write
 
@@ -157,7 +175,7 @@ const readResults = await agent.readFiles([
   "/home/user/src/utils.ts",
 ]);
 for (const result of readResults) {
-  console.log(result.path, new TextDecoder().decode(result.content));
+  console.log(result.path, new TextDecoder().decode(result.content ?? new Uint8Array()));
 }
 ```
 
@@ -203,3 +221,38 @@ await agent.delete("/home/user/new.txt");
 // Delete a directory recursively
 await agent.delete("/home/user/temp", { recursive: true });
 ```
+
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
+
+
+## Permissions
+
+Filesystem access is governed by the VM permission policy. The filesystem scope is granted by default; restrict it by path, for example to deny a sensitive directory:
+
+```ts
+const vm = agentOS({
+  permissions: {
+    fs: {
+      default: "allow",
+      rules: [{ mode: "deny", operations: ["*"], paths: ["/home/user/secrets/**"] }],
+    },
+  },
+});
+```
+
+See [Permissions](/docs/permissions) for the full configuration.
+
+## Sandboxes
+
+For heavier or untrusted workloads, run a full Linux [sandbox](/docs/sandbox) alongside the VM and mount its filesystem into agentOS. The agent then reads and writes the sandbox's files through the same `fs` APIs while the sandbox handles execution. See [Sandbox Mounting](/docs/sandbox) for setup.
+
+## Default layout
+
+With no `mounts` configured, every VM boots an Alpine-based root filesystem with the standard POSIX directories:
+
+- `/home/user`: the agent's home directory (`$HOME`) and default working directory (`pwd`) when spawned, where it reads and writes (mounts land under it, e.g. `/home/user/data`).
+- `/bin`, `/sbin`, `/usr`: installed commands (common POSIX utilities by default, plus any [software](/docs/software) you add).
+- `/etc`, `/lib`, `/opt`, `/root`, `/run`, `/srv`, `/tmp`, `/var`, `/mnt`: standard system paths.
+
+It is backed by the VM's own filesystem and persisted across sleep/wake. Nothing comes from or touches the host disk.
+

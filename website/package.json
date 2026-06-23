@@ -7,16 +7,17 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "build": "astro build",
+    "docs:gen:ts": "typedoc",
+    "build": "pnpm run docs:gen:ts && astro build",
     "preview": "astro preview",
     "astro": "astro"
   },
   "dependencies": {
-    "@rivet-dev/docs-theme": "github:rivet-dev/docs-theme#v0.2.0",
     "@astrojs/react": "^4.2.0",
     "@astrojs/sitemap": "^3.2.0",
     "@astrojs/starlight": "^0.36.0",
     "@astrojs/tailwind": "^6.0.0",
+    "@rivet-dev/docs-theme": "github:rivet-dev/docs-theme#v0.2.2",
     "astro": "^5.18.2",
     "framer-motion": "^12.0.0",
     "lucide-react": "^0.469.0",
@@ -28,6 +29,7 @@
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "typedoc": "^0.28.19",
     "typescript": "^5.7.0",
     "vite": "^6.4.1"
   }
