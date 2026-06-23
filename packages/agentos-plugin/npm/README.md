@@ -14,3 +14,5 @@ The binary is built in CI (`.github/workflows/publish.yaml`, `build-plugin`
 job: `cargo build -p agentos-actor-plugin`) and copied into the matching
 platform directory before publish. The committed directories contain only the
 `package.json` describing the platform.
+
+Supported platforms: `linux-x64-gnu`, `linux-arm64-gnu`, `darwin-arm64`, `darwin-x64`.

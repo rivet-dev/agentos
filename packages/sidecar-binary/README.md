@@ -13,7 +13,7 @@ const { getSidecarPath } = require("@rivet-dev/agentos-sidecar");
 const binaryPath = getSidecarPath();
 ```
 
-Set `AGENT_OS_SIDECAR_BIN` to an absolute path to override resolution (useful
+Set `AGENTOS_SIDECAR_BIN` to an absolute path to override resolution (useful
 for development or custom builds).
 
-Supported platforms: `linux-x64-gnu`, `linux-arm64-gnu`.
+Supported platforms: `linux-x64-gnu`, `linux-arm64-gnu`, `darwin-arm64`, `darwin-x64`.

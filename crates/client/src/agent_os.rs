@@ -1120,7 +1120,7 @@ fn permissions_policy_config(config: &AgentOsConfig) -> vm_config::PermissionsPo
 }
 
 /// Default permission policy when the client supplies no `permissions`:
-/// allow-all for fs/childProcess/process/env/tool (the VM is itself the
+/// allow-all for fs/childProcess/process/env/binding (the VM is itself the
 /// isolation boundary), with network egress restricted to the default LLM
 /// allowlist (see [`default_network_egress_scope_config`]).
 fn default_permissions_policy_config() -> vm_config::PermissionsPolicy {
@@ -3572,7 +3572,7 @@ fn permissions_policy(config: &AgentOsConfig) -> wire::PermissionsPolicy {
 }
 
 /// Default permission policy (wire form) when the client supplies no
-/// `permissions`: allow-all for fs/childProcess/process/env/tool, with network
+/// `permissions`: allow-all for fs/childProcess/process/env/binding, with network
 /// egress restricted to the default LLM allowlist
 /// (see [`default_network_egress_scope`]).
 fn default_permissions_policy() -> wire::PermissionsPolicy {

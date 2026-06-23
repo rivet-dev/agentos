@@ -8,3 +8,5 @@ are not built by Turborepo.
 
 The meta package `@rivet-dev/agentos-sidecar` (one directory up) resolves the
 correct platform package at runtime via npm `os`/`cpu`/`libc` selection.
+
+Supported platforms: `linux-x64-gnu`, `linux-arm64-gnu`, `darwin-arm64`, `darwin-x64`.
