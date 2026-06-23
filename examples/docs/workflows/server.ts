@@ -59,7 +59,7 @@ async function cloneRepo(
   repo: string,
 ): Promise<void> {
   const agentHandle = ctx.client<typeof registry>().vm.getOrCreate("bug-fixer");
-  await agentHandle.exec(`git clone ${repo} /home/user/repo`);
+  await agentHandle.exec(`git clone ${repo} /home/agentos/repo`);
 }
 
 async function fixBugWithAgent(
@@ -81,7 +81,7 @@ async function runTests(
   ctx: WorkflowLoopContextOf<typeof bugFixer>,
 ): Promise<number> {
   const agentHandle = ctx.client<typeof registry>().vm.getOrCreate("bug-fixer");
-  const tests = await agentHandle.exec("cd /home/user/repo && npm test");
+  const tests = await agentHandle.exec("cd /home/agentos/repo && npm test");
   return tests.exitCode;
 }
 
@@ -130,7 +130,7 @@ async function reviewCode(
   });
   await agentHandle.sendPrompt(
     session.sessionId,
-    `Review the code at ${filePath} and write your findings to /home/user/review.md`,
+    `Review the code at ${filePath} and write your findings to /home/agentos/review.md`,
   );
   await agentHandle.closeSession(session.sessionId);
 }
@@ -139,7 +139,7 @@ async function readReview(
   ctx: WorkflowLoopContextOf<typeof codeReviewer>,
 ): Promise<string> {
   const agentHandle = ctx.client<typeof registry>().vm.getOrCreate("reviewer");
-  const content = await agentHandle.readFile("/home/user/review.md");
+  const content = await agentHandle.readFile("/home/agentos/review.md");
   return new TextDecoder().decode(content);
 }
 

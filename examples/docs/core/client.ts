@@ -12,17 +12,17 @@ async function bootAndExec() {
 
 // ── Filesystem ────────────────────────────────────────────────────
 async function filesystem() {
-  await handle.writeFile("/home/user/hello.txt", "Hello, world!");
-  const content = await handle.readFile("/home/user/hello.txt");
+  await handle.writeFile("/home/agentos/hello.txt", "Hello, world!");
+  const content = await handle.readFile("/home/agentos/hello.txt");
   console.log(new TextDecoder().decode(content));
 
-  await handle.mkdir("/home/user/src");
+  await handle.mkdir("/home/agentos/src");
   await handle.writeFiles([
-    { path: "/home/user/src/index.ts", content: "console.log('hi');" },
-    { path: "/home/user/src/utils.ts", content: "export const add = (a: number, b: number) => a + b;" },
+    { path: "/home/agentos/src/index.ts", content: "console.log('hi');" },
+    { path: "/home/agentos/src/utils.ts", content: "export const add = (a: number, b: number) => a + b;" },
   ]);
 
-  const entries = await handle.readdirRecursive("/home/user");
+  const entries = await handle.readdirRecursive("/home/agentos");
   for (const entry of entries) {
     console.log(entry.type, entry.path);
   }
@@ -31,7 +31,7 @@ async function filesystem() {
 // ── Processes ─────────────────────────────────────────────────────
 async function processes() {
   // One-shot execution
-  const result = await handle.exec("ls -la /home/user");
+  const result = await handle.exec("ls -la /home/agentos");
   console.log(result.stdout);
 
   // Long-running process with streaming output

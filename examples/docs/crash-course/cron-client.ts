@@ -16,6 +16,6 @@ await agent.scheduleCron({
   action: {
     type: "session",
     agentType: "pi",
-    prompt: "Review the codebase for security issues and write a report to /home/user/audit.md",
+    prompt: "Review the codebase for security issues and write a report to /home/agentos/audit.md",
   },
 });

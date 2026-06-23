@@ -26,7 +26,7 @@ const vm = agentOS({
   software: [pi],
   mounts: [
     {
-      path: "/home/user/repo",
+      path: "/home/agentos/repo",
       plugin: { id: "host_dir", config: { hostPath: "/path/to/repo" } },
       readOnly: true,
     },
@@ -55,7 +55,7 @@ const vm = agentOS({
   software: [pi],
   mounts: [
     {
-      path: "/home/user/data",
+      path: "/home/agentos/data",
       plugin: {
         id: "s3",
         config: {
@@ -90,7 +90,7 @@ const vm = agentOS({
   software: [pi],
   mounts: [
     {
-      path: "/home/user/drive",
+      path: "/home/agentos/drive",
       plugin: {
         id: "google_drive",
         config: {
@@ -123,7 +123,7 @@ import pi from "@agentos-software/pi";
 const vm = agentOS({
   software: [pi],
   mounts: [
-    { path: "/home/user/scratch", driver: createInMemoryFileSystem() },
+    { path: "/home/agentos/scratch", driver: createInMemoryFileSystem() },
   ],
 });
 
@@ -151,10 +151,10 @@ const client = createClient<typeof registry>({ endpoint: "http://localhost:6420"
 const agent = client.vm.getOrCreate("my-agent");
 
 // Write a file (string or Uint8Array)
-await agent.writeFile("/home/user/hello.txt", "Hello, world!");
+await agent.writeFile("/home/agentos/hello.txt", "Hello, world!");
 
 // Read a file (returns Uint8Array)
-const content = await agent.readFile("/home/user/hello.txt");
+const content = await agent.readFile("/home/agentos/hello.txt");
 console.log(new TextDecoder().decode(content));
 ```
 
@@ -165,14 +165,14 @@ console.log(new TextDecoder().decode(content));
 ```ts
 // Batch write (creates parent directories automatically)
 const writeResults = await agent.writeFiles([
-  { path: "/home/user/src/index.ts", content: "console.log('hello');" },
-  { path: "/home/user/src/utils.ts", content: "export function add(a: number, b: number) { return a + b; }" },
+  { path: "/home/agentos/src/index.ts", content: "console.log('hello');" },
+  { path: "/home/agentos/src/utils.ts", content: "export function add(a: number, b: number) { return a + b; }" },
 ]);
 
 // Batch read
 const readResults = await agent.readFiles([
-  "/home/user/src/index.ts",
-  "/home/user/src/utils.ts",
+  "/home/agentos/src/index.ts",
+  "/home/agentos/src/utils.ts",
 ]);
 for (const result of readResults) {
   console.log(result.path, new TextDecoder().decode(result.content ?? new Uint8Array()));
@@ -183,13 +183,13 @@ for (const result of readResults) {
 
 ```ts
 // Create a directory
-await agent.mkdir("/home/user/projects");
+await agent.mkdir("/home/agentos/projects");
 
 // List directory contents
-const entries = await agent.readdir("/home/user/projects");
+const entries = await agent.readdir("/home/agentos/projects");
 
 // Recursive listing with metadata
-const tree = await agent.readdirRecursive("/home/user", {
+const tree = await agent.readdirRecursive("/home/agentos", {
   maxDepth: 3,
   exclude: ["node_modules"],
 });
@@ -202,10 +202,10 @@ for (const entry of tree) {
 
 ```ts
 // Check if a path exists
-const fileExists = await agent.exists("/home/user/hello.txt");
+const fileExists = await agent.exists("/home/agentos/hello.txt");
 
 // Get file metadata
-const info = await agent.stat("/home/user/hello.txt");
+const info = await agent.stat("/home/agentos/hello.txt");
 console.log(info.size, info.isDirectory, info.mtimeMs);
 ```
 
@@ -213,13 +213,13 @@ console.log(info.size, info.isDirectory, info.mtimeMs);
 
 ```ts
 // Move/rename
-await agent.move("/home/user/old.txt", "/home/user/new.txt");
+await agent.move("/home/agentos/old.txt", "/home/agentos/new.txt");
 
 // Delete a file
-await agent.delete("/home/user/new.txt");
+await agent.delete("/home/agentos/new.txt");
 
 // Delete a directory recursively
-await agent.delete("/home/user/temp", { recursive: true });
+await agent.delete("/home/agentos/temp", { recursive: true });
 ```
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
@@ -234,7 +234,7 @@ const vm = agentOS({
   permissions: {
     fs: {
       default: "allow",
-      rules: [{ mode: "deny", operations: ["*"], paths: ["/home/user/secrets/**"] }],
+      rules: [{ mode: "deny", operations: ["*"], paths: ["/home/agentos/secrets/**"] }],
     },
   },
 });
@@ -250,7 +250,7 @@ For heavier or untrusted workloads, run a full Linux [sandbox](/docs/sandbox) al
 
 With no `mounts` configured, every VM boots an Alpine-based root filesystem with the standard POSIX directories:
 
-- `/home/user`: the agent's home directory (`$HOME`) and default working directory (`pwd`) when spawned, where it reads and writes (mounts land under it, e.g. `/home/user/data`).
+- `/home/agentos`: the agent's home directory (`$HOME`) and default working directory (`pwd`) when spawned, where it reads and writes (mounts land under it, e.g. `/home/agentos/data`).
 - `/bin`, `/sbin`, `/usr`: installed commands (common POSIX utilities by default, plus any [software](/docs/software) you add).
 - `/etc`, `/lib`, `/opt`, `/root`, `/run`, `/srv`, `/tmp`, `/var`, `/mnt`: standard system paths.
 

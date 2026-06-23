@@ -34,7 +34,7 @@ Because every byte is mediated here, two properties fall out for free: the guest
 
 The per-VM filesystem is not a single flat store. It is a tree of **engines**, each responsible for a subtree of the namespace. A path is resolved by walking from the root engine down to whichever engine owns the deepest matching prefix, then handing the remainder of the path to that engine.
 
-- **Root engine.** Owns `/` and the base namespace. Every VM boots with a root filesystem bootstrapped from a snapshot, so the guest starts against a populated POSIX tree (the default working directory is `/home/user`).
+- **Root engine.** Owns `/` and the base namespace. Every VM boots with a root filesystem bootstrapped from a snapshot, so the guest starts against a populated POSIX tree (the default working directory is `/home/agentos`).
 - **Overlay engine.** Composes layers so writes land in a writable upper layer while reads fall through to a lower layer. This is how a read-mostly base can be presented as writable to the guest without mutating the shared lower layer.
 - **Mount engine.** Grafts a distinct backing store onto a guest path (a mount point). Below the mount point, operations are routed to that mount's backend instead of the parent engine. This is the mechanism behind in-memory, host-directory, S3, and Google Drive mounts.
 

@@ -11,5 +11,5 @@ const session = await coderAgent.createSession("pi", {
 // reviewer agent reviews the code. This is true agent-to-agent: the coder drives it.
 await coderAgent.sendPrompt(
   session.sessionId,
-  "Implement the login feature in /home/user/src/auth.ts, then run `agentos-review submit --path /home/user/src/auth.ts` to have it reviewed.",
+  "Implement the login feature in /home/agentos/src/auth.ts, then run `agentos-review submit --path /home/agentos/src/auth.ts` to have it reviewed.",
 );

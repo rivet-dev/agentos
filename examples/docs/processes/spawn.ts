@@ -16,5 +16,5 @@ conn.on("processExit", (data) => {
 });
 
 // Spawn a dev server
-const { pid } = await agent.spawn("node", ["/home/user/server.js"]);
+const { pid } = await agent.spawn("node", ["/home/agentos/server.js"]);
 console.log("Started process:", pid);

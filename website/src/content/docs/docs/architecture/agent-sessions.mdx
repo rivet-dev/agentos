@@ -27,7 +27,7 @@ A session is always created against an existing VM. The client resolves a VM han
 
 1. **The request crosses the wire** (client to sidecar) carrying the agent type and the session options: `env`, `cwd`, `mcpServers`, `additionalInstructions`, and `skipOsInstructions`.
 2. **The kernel boots the VM** if it is not already running, with its bootstrapped virtual filesystem.
-3. **The sidecar selects the agent adapter** for the requested type and spawns the agent as a kernel-managed process inside that VM. Because the VM does not inherit the host `process.env`, the agent only sees the `env` passed in the options (this is why API keys must be supplied explicitly). The process starts in `cwd` (default `/home/user`).
+3. **The sidecar selects the agent adapter** for the requested type and spawns the agent as a kernel-managed process inside that VM. Because the VM does not inherit the host `process.env`, the agent only sees the `env` passed in the options (this is why API keys must be supplied explicitly). The process starts in `cwd` (default `/home/agentos`).
 4. **The session is registered** in the VM with a `sessionId`, and the adapter performs its handshake with the agent to discover `capabilities` and `agentInfo`.
 5. **The handle returns** that metadata to the client.
 

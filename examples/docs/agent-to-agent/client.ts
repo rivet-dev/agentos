@@ -11,5 +11,5 @@ const session = await writerAgent.createSession("claude", {
 // The writer calls the `review` binding, which bridges to the reviewer VM.
 await writerAgent.sendPrompt(
   session.sessionId,
-  "Write a REST API at /home/user/api.ts, then run `agentos-review submit --path /home/user/api.ts` to have it reviewed.",
+  "Write a REST API at /home/agentos/api.ts, then run `agentos-review submit --path /home/agentos/api.ts` to have it reviewed.",
 );

@@ -4,7 +4,7 @@ import type { registry } from "./server";
 const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 const agent = client.vm.getOrCreate("my-agent");
 
-const { pid } = await agent.spawn("node", ["/home/user/server.js"]);
+const { pid } = await agent.spawn("node", ["/home/agentos/server.js"]);
 
 // List all spawned processes
 const processes = await agent.listProcesses();

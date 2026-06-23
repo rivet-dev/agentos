@@ -87,7 +87,7 @@ const reviewBindings = bindings({
 });
 
 // Writer gets the review binding; reviewer is plain
-// The writer calls: agentos-review submit --path /home/user/api.ts
+// The writer calls: agentos-review submit --path /home/agentos/api.ts
 const writer = agentOs({ options: { bindings: [reviewBindings] } });
 const reviewer = agentOs();
 
@@ -248,7 +248,7 @@ const automator = actor({
       const vm = c.actors.vm.getOrCreate([\`fix-\${issue}\`]);
 
       await c.step("clone-repo", async () => {
-        return vm.exec(\`git clone \${repo} /home/user/repo\`);
+        return vm.exec(\`git clone \${repo} /home/agentos/repo\`);
       });
 
       await c.step("fix-bug", async () => {
@@ -258,7 +258,7 @@ const automator = actor({
       });
 
       await c.step("run-tests", async () => {
-        return vm.exec("cd /home/user/repo && npm test");
+        return vm.exec("cd /home/agentos/repo && npm test");
       });
 
       await message.complete();

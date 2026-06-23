@@ -286,7 +286,7 @@ const session = await coderAgent.createSession("pi", {
 // reviewer agent reviews the code. This is true agent-to-agent: the coder drives it.
 await coderAgent.sendPrompt(
   session.sessionId,
-  "Implement the login feature in /home/user/src/auth.ts, then run `agentos-review submit --path /home/user/src/auth.ts` to have it reviewed.",
+  "Implement the login feature in /home/agentos/src/auth.ts, then run `agentos-review submit --path /home/agentos/src/auth.ts` to have it reviewed.",
 );
 ```
 </CodeGroup>
@@ -366,7 +366,7 @@ const bugFixer = actor({
       const agent = loopCtx.client<typeof registry>().vm.getOrCreate("bug-fixer");
 
       await loopCtx.step("clone-repo", () =>
-        agent.exec(`git clone ${repo} /home/user/repo`),
+        agent.exec(`git clone ${repo} /home/agentos/repo`),
       );
 
       await loopCtx.step("fix-bug", async () => {
@@ -378,7 +378,7 @@ const bugFixer = actor({
       });
 
       await loopCtx.step("run-tests", () =>
-        agent.exec("cd /home/user/repo && npm test"),
+        agent.exec("cd /home/agentos/repo && npm test"),
       );
     });
   }),
@@ -394,7 +394,7 @@ registry.start();
 
 ### Filesystem
 
-Read, write, and manage files inside the VM. The `/home/user` directory is persisted automatically across sleep/wake cycles.
+Read, write, and manage files inside the VM. The `/home/agentos` directory is persisted automatically across sleep/wake cycles.
 
 <CodeGroup>
 ```ts title="client.ts"
@@ -405,14 +405,14 @@ const client = createClient<typeof registry>({ endpoint: "http://localhost:6420"
 const agent = client.vm.getOrCreate("my-agent");
 
 // Write a file
-await agent.writeFile("/home/user/config.json", JSON.stringify({ key: "value" }));
+await agent.writeFile("/home/agentos/config.json", JSON.stringify({ key: "value" }));
 
 // Read a file
-const content = await agent.readFile("/home/user/config.json");
+const content = await agent.readFile("/home/agentos/config.json");
 console.log(new TextDecoder().decode(content));
 
 // List directory contents recursively
-const files = await agent.readdirRecursive("/home/user", { maxDepth: 2 });
+const files = await agent.readdirRecursive("/home/agentos", { maxDepth: 2 });
 console.log(files);
 ```
 
@@ -444,7 +444,7 @@ const client = createClient<typeof registry>({ endpoint: "http://localhost:6420"
 const agent = client.vm.getOrCreate("my-agent");
 
 // One-shot execution
-const result = await agent.exec("echo hello && ls /home/user");
+const result = await agent.exec("echo hello && ls /home/agentos");
 console.log("stdout:", result.stdout);
 console.log("exit code:", result.exitCode);
 
@@ -454,7 +454,7 @@ conn.on("processOutput", (data) => {
   console.log(`[pid ${data.pid}]`, new TextDecoder().decode(data.data));
 });
 
-const { pid } = await agent.spawn("node", ["/home/user/server.js"]);
+const { pid } = await agent.spawn("node", ["/home/agentos/server.js"]);
 console.log("Process ID:", pid);
 ```
 
@@ -534,7 +534,7 @@ await agent.scheduleCron({
   action: {
     type: "session",
     agentType: "pi",
-    prompt: "Review the codebase for security issues and write a report to /home/user/audit.md",
+    prompt: "Review the codebase for security issues and write a report to /home/agentos/audit.md",
   },
 });
 ```
@@ -571,7 +571,7 @@ const vm = agentOS({
   bindings: [createSandboxBindings({ client: sandbox })],
   // Mounts let the agent read the sandbox filesystem (optional)
   mounts: [
-    { path: "/home/user/sandbox", plugin: createSandboxFs({ client: sandbox }) },
+    { path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) },
   ],
 });
 

@@ -225,7 +225,7 @@ The executor is the untrusted half of the VM. It runs the guest code and reaches
 
 - **Layered engines.** The VFS is a tree of engines: a root layer bootstrapped from a snapshot, an overlay for writes, and mount points that graft other backends onto guest paths.
 - **Host-backed mounts.** A guest path can be backed by a host directory, S3, or a cloud store. The kernel confines all guest I/O to the mount root, even against symlink and `..` tricks.
-- **Persisted.** The `/home/user` filesystem survives sleep/wake.
+- **Persisted.** The `/home/agentos` filesystem survives sleep/wake.
 - See [Filesystem](/docs/architecture/filesystem) for the internals.
 
 ### Networking
@@ -349,7 +349,7 @@ The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the raw VM in a [Rivet A
 
 - **Sleeps when idle.** After a grace period (15 minutes by default) with no activity, the VM sleeps to free resources.
 - **Wakes on demand.** It wakes automatically when a client connects or a cron job fires.
-- **What survives.** The `/home/user` filesystem, session records, transcripts, preview tokens, and cron definitions all persist. In-memory kernel state (running processes, open shells) does not. See [Persistence & Sleep](/docs/persistence).
+- **What survives.** The `/home/agentos` filesystem, session records, transcripts, preview tokens, and cron definitions all persist. In-memory kernel state (running processes, open shells) does not. See [Persistence & Sleep](/docs/persistence).
 
 ## Going deeper
 

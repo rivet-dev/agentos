@@ -6,13 +6,13 @@ skill: true
 
 import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
-agentOS automatically persists the `/home/user` filesystem and session transcripts (with sequence numbers for replay) across sleep/wake, sleeping after a configurable grace period (15 minutes by default) and waking automatically when a client connects or a cron job triggers.
+agentOS automatically persists the `/home/agentos` filesystem and session transcripts (with sequence numbers for replay) across sleep/wake, sleeping after a configurable grace period (15 minutes by default) and waking automatically when a client connects or a cron job triggers.
 
 ## What persists across sleep
 
 | Data | Storage | Persists? |
 |------|---------|-----------|
-| Files in `/home/user` | Persistent filesystem | Yes |
+| Files in `/home/agentos` | Persistent filesystem | Yes |
 | Session records | SQLite (`agent_os_sessions`) | Yes |
 | Session event history | SQLite (`agent_os_session_events`) | Yes |
 | Preview URL tokens | SQLite (`agent_os_preview_tokens`) | Yes |

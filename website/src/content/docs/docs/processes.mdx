@@ -19,7 +19,7 @@ import type { registry } from "./server";
 
 const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 
-const result = await client.vm.getOrCreate("my-agent").exec("echo hello && ls /home/user");
+const result = await client.vm.getOrCreate("my-agent").exec("echo hello && ls /home/agentos");
 console.log("stdout:", result.stdout);
 console.log("stderr:", result.stderr);
 console.log("exit code:", result.exitCode);
@@ -64,7 +64,7 @@ conn.on("processExit", (data) => {
 });
 
 // Spawn a dev server
-const { pid } = await agent.spawn("node", ["/home/user/server.js"]);
+const { pid } = await agent.spawn("node", ["/home/agentos/server.js"]);
 console.log("Started process:", pid);
 ```
 
@@ -133,7 +133,7 @@ import type { registry } from "./server";
 const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 const agent = client.vm.getOrCreate("my-agent");
 
-const { pid } = await agent.spawn("node", ["/home/user/server.js"]);
+const { pid } = await agent.spawn("node", ["/home/agentos/server.js"]);
 
 // List all processes tracked by the VM
 const processes = await agent.listProcesses();
@@ -190,7 +190,7 @@ conn.on("shellData", (data) => {
 const { shellId } = await agent.openShell();
 
 // Write commands to the shell
-await agent.writeShell(shellId, "ls -la /home/user\n");
+await agent.writeShell(shellId, "ls -la /home/agentos\n");
 
 // Resize the terminal
 await agent.resizeShell(shellId, 120, 40);

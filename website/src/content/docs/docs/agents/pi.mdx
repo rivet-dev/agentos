@@ -68,8 +68,8 @@ export default function(pi) {
 `;
 
 // Write the extension before creating the session
-await agent.mkdir("/home/user/.pi/agent/extensions", { recursive: true });
-await agent.writeFile("/home/user/.pi/agent/extensions/formal.js", extensionCode);
+await agent.mkdir("/home/agentos/.pi/agent/extensions", { recursive: true });
+await agent.writeFile("/home/agentos/.pi/agent/extensions/formal.js", extensionCode);
 
 // Pi discovers the extension automatically
 const { sessionId } = await agent.createSession("pi", {

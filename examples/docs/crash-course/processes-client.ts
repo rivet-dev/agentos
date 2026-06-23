@@ -5,7 +5,7 @@ const client = createClient<typeof registry>({ endpoint: "http://localhost:6420"
 const agent = client.vm.getOrCreate("my-agent");
 
 // One-shot execution
-const result = await agent.exec("echo hello && ls /home/user");
+const result = await agent.exec("echo hello && ls /home/agentos");
 console.log("stdout:", result.stdout);
 console.log("exit code:", result.exitCode);
 

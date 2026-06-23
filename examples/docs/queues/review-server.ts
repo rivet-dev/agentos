@@ -18,10 +18,10 @@ const reviewer = actor({
 
       await agentHandle.sendPrompt(
         session.sessionId,
-        `Review this code and write a summary to /home/user/review.txt:\n\n${text}`,
+        `Review this code and write a summary to /home/agentos/review.txt:\n\n${text}`,
       );
 
-      const review = await agentHandle.readFile("/home/user/review.txt");
+      const review = await agentHandle.readFile("/home/agentos/review.txt");
       await message.complete({
         summary: new TextDecoder().decode(review),
       });

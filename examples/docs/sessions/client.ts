@@ -26,7 +26,7 @@ async function withEnv() {
 async function withCwd() {
   const session = await agent.createSession("pi", {
     env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-    cwd: "/home/user/project",
+    cwd: "/home/agentos/project",
   });
   console.log(session.sessionId);
 }
@@ -39,7 +39,7 @@ async function withLocalMcp() {
       {
         type: "local",
         command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user"],
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/agentos"],
         env: {},
       },
     ],
@@ -243,10 +243,10 @@ async function multipleSessions() {
   });
 
   // Coder writes code
-  await agent.sendPrompt(coder.sessionId, "Write a REST API at /home/user/api.ts");
+  await agent.sendPrompt(coder.sessionId, "Write a REST API at /home/agentos/api.ts");
 
   // Reviewer reads and reviews the same file
-  await agent.sendPrompt(reviewer.sessionId, "Review /home/user/api.ts for issues");
+  await agent.sendPrompt(reviewer.sessionId, "Review /home/agentos/api.ts for issues");
 
   // Close each session independently
   await agent.closeSession(coder.sessionId);

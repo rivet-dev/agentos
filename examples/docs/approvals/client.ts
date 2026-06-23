@@ -21,4 +21,4 @@ conn.on("permissionRequest", async (data) => {
 const session = await agent.createSession("claude", {
   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
-await agent.sendPrompt(session.sessionId, "Create a new file at /home/user/output.txt");
+await agent.sendPrompt(session.sessionId, "Create a new file at /home/agentos/output.txt");

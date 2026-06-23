@@ -47,10 +47,10 @@ vm.onSessionEvent(sessionId, (event) => {
   console.log(event);
 });
 
-await vm.prompt(sessionId, "Write a hello world script to /home/user/hello.js");
+await vm.prompt(sessionId, "Write a hello world script to /home/agentos/hello.js");
 
 // Read the file the agent created
-const content = await vm.readFile("/home/user/hello.js");
+const content = await vm.readFile("/home/agentos/hello.js");
 console.log(new TextDecoder().decode(content));
 
 vm.closeSession(sessionId);

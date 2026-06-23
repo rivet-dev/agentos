@@ -5,7 +5,7 @@ const client = createClient<typeof registry>({ endpoint: "http://localhost:6420"
 const agent = client.vm.getOrCreate("my-agent");
 
 // Start a web app in the VM
-await agent.spawn("node", ["/home/user/app.js"]);
+await agent.spawn("node", ["/home/agentos/app.js"]);
 
 // Create a preview URL (default 1 hour expiration)
 const preview = await agent.createSignedPreviewUrl(3000);

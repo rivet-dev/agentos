@@ -5,8 +5,8 @@ const client = createClient<typeof registry>({ endpoint: "http://localhost:6420"
 const agent = client.vm.getOrCreate("my-agent");
 
 // Write into the VFS (creates parent dirs). Accepts string | Uint8Array.
-await agent.writeFile("/home/user/out.txt", "hi");
+await agent.writeFile("/home/agentos/out.txt", "hi");
 
 // Read back to the host as raw bytes.
-const bytes = await agent.readFile("/home/user/out.txt");
+const bytes = await agent.readFile("/home/agentos/out.txt");
 console.log(new TextDecoder().decode(bytes));

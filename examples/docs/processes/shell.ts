@@ -15,7 +15,7 @@ conn.on("shellData", (data) => {
 const { shellId } = await agent.openShell();
 
 // Write commands to the shell
-await agent.writeShell(shellId, "ls -la /home/user\n");
+await agent.writeShell(shellId, "ls -la /home/agentos\n");
 
 // Resize the terminal
 await agent.resizeShell(shellId, 120, 40);
