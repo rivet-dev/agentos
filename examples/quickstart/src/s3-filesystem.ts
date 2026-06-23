@@ -50,6 +50,7 @@ if (endpoint) {
 const s3Fs = createS3Backend({
 	bucket,
 	prefix,
+	metadataPath: `${prefix}/.metadata`,
 	region,
 	credentials: {
 		accessKeyId,

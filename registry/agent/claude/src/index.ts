@@ -12,7 +12,7 @@ const claude = defineSoftware({
 	requires: ["@anthropic-ai/claude-agent-sdk"],
 	agent: {
 		id: "claude",
-		acpAdapter: "@rivet-dev/agentos-claude",
+		acpAdapter: "@agentos-software/claude-code",
 		agentPackage: "@anthropic-ai/claude-agent-sdk",
 		staticEnv: {
 			CLAUDE_AGENT_SDK_CLIENT_APP: "@rivet-dev/agentos",

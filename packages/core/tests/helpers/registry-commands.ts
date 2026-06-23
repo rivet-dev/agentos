@@ -14,7 +14,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import codex from "@agentos-software/codex";
+import codex from "@agentos-software/codex-cli";
 import coreutils from "@agentos-software/coreutils";
 import curl from "@agentos-software/curl";
 import diffutils from "@agentos-software/diffutils";

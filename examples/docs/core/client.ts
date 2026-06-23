@@ -139,7 +139,7 @@ async function cronJobs() {
       type: "session",
       agentType: "pi",
       prompt: "Review the logs and summarize any errors",
-      options: { cwd: "/home/user" },
+      options: { cwd: "/workspace" },
     },
   });
 

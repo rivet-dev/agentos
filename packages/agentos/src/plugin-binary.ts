@@ -36,6 +36,10 @@ function getPlatformPackageName(): string | null {
 			if (arch === "x64") return "@rivet-dev/agentos-plugin-linux-x64-gnu";
 			if (arch === "arm64") return "@rivet-dev/agentos-plugin-linux-arm64-gnu";
 			break;
+		case "darwin":
+			if (arch === "x64") return "@rivet-dev/agentos-plugin-darwin-x64";
+			if (arch === "arm64") return "@rivet-dev/agentos-plugin-darwin-arm64";
+			break;
 		default:
 			break;
 	}
@@ -74,7 +78,7 @@ export function getPluginPath(): string {
 	if (!platformPkg) {
 		throw new Error(
 			`@rivet-dev/agentos: unsupported platform ${process.platform}/${process.arch}. ` +
-				"The Agent OS actor plugin currently supports linux x64 and arm64. " +
+				"The Agent OS actor plugin currently supports linux and darwin on x64 and arm64. " +
 				`Set ${PLUGIN_BIN_ENV} to a local cdylib to override.`,
 		);
 	}

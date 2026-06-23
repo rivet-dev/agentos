@@ -22,7 +22,7 @@
     "@agentos-software/zip": "catalog:",
     "@agentos-software/unzip": "catalog:",
     "@agentos-software/yq": "catalog:",
-    "@agentos-software/codex": "catalog:"
+    "@agentos-software/codex-cli": "catalog:"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",

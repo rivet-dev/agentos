@@ -31,7 +31,7 @@ describe("AgentOs base filesystem", () => {
 	test("default environment matches the base environment", () => {
 		const kernel = getAgentOsKernel(vm);
 		expect(kernel.env).toEqual(getBaseEnvironment());
-		expect((kernel as unknown as { cwd: string }).cwd).toBe("/home/user");
+		expect((kernel as unknown as { cwd: string }).cwd).toBe("/workspace");
 	});
 
 	test("default filesystem matches the base layer", async () => {

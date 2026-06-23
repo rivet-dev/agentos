@@ -1,3 +1,3 @@
-import codexSoftware from "@agentos-software/codex";
+import codexSoftware from "@agentos-software/codex-cli";
 
 export default codexSoftware;

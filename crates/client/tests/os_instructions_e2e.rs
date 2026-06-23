@@ -72,13 +72,13 @@ fn allow_all_permissions() -> Permissions {
         child_process: Some(PatternPermissions::Mode(PermissionMode::Allow)),
         process: Some(PatternPermissions::Mode(PermissionMode::Allow)),
         env: Some(PatternPermissions::Mode(PermissionMode::Allow)),
-        tool: Some(PatternPermissions::Mode(PermissionMode::Allow)),
+        binding: Some(PatternPermissions::Mode(PermissionMode::Allow)),
     }
 }
 
-/// Lay out a fake `node_modules/@rivet-dev/agentos-pi` whose `bin` resolves to the mock adapter,
+/// Lay out a fake `node_modules/@agentos-software/pi` whose `bin` resolves to the mock adapter,
 /// so the client's `resolve_package_bin("pi")` path projects it into the guest at
-/// `/root/node_modules/@rivet-dev/agentos-pi/adapter.mjs` and the sidecar launches it.
+/// `/root/node_modules/@agentos-software/pi/adapter.mjs` and the sidecar launches it.
 fn write_mock_pi_adapter(module_access_cwd: &std::path::Path) {
     let package_dir = module_access_cwd
         .join("node_modules")
@@ -87,7 +87,7 @@ fn write_mock_pi_adapter(module_access_cwd: &std::path::Path) {
     std::fs::create_dir_all(&package_dir).expect("create mock adapter package dir");
     std::fs::write(
         package_dir.join("package.json"),
-        r#"{ "name": "@rivet-dev/agentos-pi", "version": "0.0.0", "bin": "./adapter.mjs" }"#,
+        r#"{ "name": "@agentos-software/pi", "version": "0.0.0", "bin": "./adapter.mjs" }"#,
     )
     .expect("write mock adapter package.json");
     let adapter = MOCK_ACP_ADAPTER.replace(
@@ -106,10 +106,8 @@ async fn launch_pi_session_with_tools_and_read_argv(
     options: CreateSessionOptions,
     tool_kits: Vec<ToolKit>,
 ) -> Vec<String> {
-    let module_access_dir = std::env::temp_dir().join(format!(
-        "agentos-client-os-instructions-{}",
-        Uuid::new_v4()
-    ));
+    let module_access_dir =
+        std::env::temp_dir().join(format!("agentos-client-os-instructions-{}", Uuid::new_v4()));
     write_mock_pi_adapter(&module_access_dir);
 
     let argv = run_session(&module_access_dir, options, tool_kits).await;

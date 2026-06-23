@@ -7,9 +7,7 @@
 
 mod common;
 
-use agentos_client::fs::{
-    BatchWriteEntry, DeleteOptions, DirEntryType, FileContent, MkdirOptions,
-};
+use agentos_client::fs::{BatchWriteEntry, DeleteOptions, DirEntryType, FileContent, MkdirOptions};
 use agentos_client::ClientError;
 
 #[tokio::test]

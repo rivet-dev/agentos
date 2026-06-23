@@ -355,7 +355,10 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 				defaultSoftware: false,
 				software: [
 					{ commandDir: "/abs/wasm-command" },
-					{ packageDir: "/abs/agent-package", agent: {} },
+					{
+						packageDir: "/abs/project/node_modules/@agentos-software/pi",
+						agent: {},
+					},
 					{ packageDir: "/abs/tool-package", hostTool: {} },
 				],
 			},
@@ -367,7 +370,10 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 
 		expect(JSON.parse(configJson).software).toEqual([
 			{ package: "/abs/wasm-command" },
-			{ package: "/abs/agent-package", kind: "agent" },
+			{
+				package: "/abs/project/node_modules/@agentos-software/pi",
+				kind: "agent",
+			},
 			{ package: "/abs/tool-package", kind: "tool" },
 		]);
 	});
@@ -410,9 +416,9 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 					software: [
 						{ commandDir: "/proj/node_modules/@agentos-software/coreutils/wasm" },
 						{
-							packageDir: "/proj/node_modules/@rivet-dev/agentos-pi",
+							packageDir: "/proj/node_modules/@agentos-software/pi",
 							requires: [
-								"@rivet-dev/agentos-pi",
+								"@agentos-software/pi",
 								"@mariozechner/pi-coding-agent",
 							],
 							agent: { id: "pi" },
@@ -440,7 +446,7 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 				options: {
 					software: [
 						{
-							packageDir: "/proj/node_modules/@rivet-dev/agentos-pi",
+							packageDir: "/proj/node_modules/@agentos-software/pi",
 							agent: { id: "pi" },
 						},
 					],
@@ -455,16 +461,22 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		);
 	});
 
-	test("does not auto-mount when an agent package is not inside node_modules", () => {
-		const config = JSON.parse(
+	test("throws a clear error when an agent package is not inside node_modules", () => {
+		expect(() =>
 			buildConfigJson({
 				options: {
-					software: [{ packageDir: "/abs/agent-package", agent: { id: "x" } }],
+					software: [
+						{
+							packageDir: "/abs/agent-package",
+							requires: ["@agentos-software/pi"],
+							agent: { id: "x" },
+						},
+					],
 				},
 			} as never),
+		).toThrow(
+			"agentOs() could not auto-mount agent node_modules: agent packageDir /abs/agent-package is not inside a node_modules install",
 		);
-
-		expect(config.mounts).toBeUndefined();
 	});
 
 	test("boots a VM through the dylib actor and handles filesystem actions", async () => {

@@ -126,7 +126,7 @@ async fn session_surface_create_prompt_events_close() {
     assert!(
         agents
             .iter()
-            .any(|a| a.id == "pi" && a.acp_adapter == "@rivet-dev/agentos-pi"),
+            .any(|a| a.id == "pi" && a.acp_adapter == "@agentos-software/pi"),
         "list_agents must include the pi agent config"
     );
     assert!(

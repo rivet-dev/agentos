@@ -16,9 +16,9 @@ const session = await handle.createSession("pi", {
 });
 await handle.sendPrompt(
   session.sessionId,
-  "Write a hello world script to /home/user/hello.js",
+  "Write a hello world script to /workspace/hello.js",
 );
 
 // Read the file the agent created
-const content = await handle.readFile("/home/user/hello.js");
+const content = await handle.readFile("/workspace/hello.js");
 console.log(new TextDecoder().decode(content));

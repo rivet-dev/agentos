@@ -1,27 +1,30 @@
-// Bindings: define functions that execute on the host and are callable
+// Tools: define functions that execute on the host and are callable
 // from inside the VM via the tools RPC server.
 //
-// Each binding group becomes a set of bindings accessible at AGENTOS_TOOLS_PORT.
+// Each toolkit becomes a set of tools accessible at AGENTOS_TOOLS_PORT.
 // Node scripts inside the VM can call the server directly with fetch.
 
-import { AgentOs, binding, bindings } from "@rivet-dev/agentos-core";
+import { AgentOs, hostTool, toolKit } from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
-const weatherBindings = bindings({
+const weatherToolKit = toolKit({
 	name: "weather",
 	description: "Look up weather information for cities.",
-	bindings: {
-		get: binding({
+	tools: {
+		get: hostTool({
 			description: "Get the current weather for a city.",
 			inputSchema: z.object({
 				city: z.string().describe("City name (e.g. 'London')."),
 			}),
-			execute: async ({ city }) => ({
-				city,
-				temperature: 18,
-				conditions: "partly cloudy",
-				humidity: 65,
-			}),
+			execute: async (input) => {
+				const { city } = input;
+				return {
+					city,
+					temperature: 18,
+					conditions: "partly cloudy",
+					humidity: 65,
+				};
+			},
 			examples: [
 				{ description: "Get London weather", input: { city: "London" } },
 			],
@@ -29,26 +32,26 @@ const weatherBindings = bindings({
 	},
 });
 
-const calcBindings = bindings({
+const calcToolKit = toolKit({
 	name: "calc",
 	description: "Simple calculator operations.",
-	bindings: {
-		add: binding({
+	tools: {
+		add: hostTool({
 			description: "Add two numbers.",
 			inputSchema: z.object({ a: z.number(), b: z.number() }),
-			execute: ({ a, b }) => ({ result: a + b }),
+			execute: (input) => ({ result: input.a + input.b }),
 		}),
 	},
 });
 
 const vm = await AgentOs.create({
-	bindings: [weatherBindings, calcBindings],
+	toolKits: [weatherToolKit, calcToolKit],
 	permissions: {
 		fs: "allow",
 		network: "allow",
 		childProcess: "allow",
 		env: "allow",
-		binding: "allow",
+		tool: "allow",
 	},
 });
 

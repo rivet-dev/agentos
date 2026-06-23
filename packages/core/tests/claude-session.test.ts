@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { Fixture, LLMock, ToolCall } from "@copilotkit/llmock";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
-import claude from "@rivet-dev/agentos-claude";
+import claude from "@agentos-software/claude-code";
 import {
 	afterAll,
 	afterEach,

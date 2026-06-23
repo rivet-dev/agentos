@@ -21,7 +21,7 @@ export function Agent() {
     if (!session) return;
     await agent.connection?.sendPrompt(
       session.sessionId,
-      "Write a hello world script to /home/user/hello.js",
+      "Write a hello world script to /workspace/hello.js",
     );
   }
 

@@ -7,10 +7,10 @@ import {
 import { readlink, readdir } from "node:fs/promises";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { resolve } from "node:path";
-import claude from "@rivet-dev/agentos-claude";
-import opencode from "@rivet-dev/agentos-opencode";
-import pi from "@rivet-dev/agentos-pi";
-import piCli from "@rivet-dev/agentos-pi-cli";
+import claude from "@agentos-software/claude-code";
+import opencode from "@agentos-software/opencode";
+import pi from "@agentos-software/pi";
+import piCli from "@agentos-software/pi-cli";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import {

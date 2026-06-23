@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import piCli from "@rivet-dev/agentos-pi-cli";
+import piCli from "@agentos-software/pi-cli";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";

@@ -15,7 +15,7 @@
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { AgentOs } from "@rivet-dev/agentos-core";
-import pi from "@rivet-dev/agentos-pi";
+import pi from "@agentos-software/pi";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;

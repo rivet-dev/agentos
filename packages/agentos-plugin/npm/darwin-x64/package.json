@@ -1,0 +1,23 @@
+{
+	"name": "@rivet-dev/agentos-plugin-darwin-x64",
+	"version": "0.2.0-rc.3",
+	"description": "Agent OS actor plugin cdylib for macOS x64",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/rivet-dev/agentos.git",
+		"directory": "packages/agentos-plugin/npm/darwin-x64"
+	},
+	"os": [
+		"darwin"
+	],
+	"cpu": [
+		"x64"
+	],
+	"files": [
+		"libagentos_actor_plugin.dylib"
+	],
+	"engines": {
+		"node": ">=20"
+	}
+}

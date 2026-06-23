@@ -1088,7 +1088,7 @@ fn permissions_policy_config(config: &AgentOsConfig) -> vm_config::PermissionsPo
                     vm_config::PermissionMode::Allow,
                 )),
         ),
-        tool: Some(
+        binding: Some(
             permissions
                 .tool
                 .as_ref()
@@ -1119,7 +1119,7 @@ fn default_permissions_policy_config() -> vm_config::PermissionsPolicy {
         env: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
-        tool: Some(vm_config::PatternPermissionScope::Mode(
+        binding: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
     }
@@ -3540,7 +3540,7 @@ fn permissions_policy(config: &AgentOsConfig) -> wire::PermissionsPolicy {
                     wire::PermissionMode::Allow,
                 )),
         ),
-        tool: Some(
+        binding: Some(
             permissions
                 .tool
                 .as_ref()
@@ -3571,7 +3571,7 @@ fn default_permissions_policy() -> wire::PermissionsPolicy {
         env: Some(wire::PatternPermissionScope::PermissionMode(
             wire::PermissionMode::Allow,
         )),
-        tool: Some(wire::PatternPermissionScope::PermissionMode(
+        binding: Some(wire::PatternPermissionScope::PermissionMode(
             wire::PermissionMode::Allow,
         )),
     }

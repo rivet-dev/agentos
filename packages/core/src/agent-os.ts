@@ -23,6 +23,7 @@ import type {
 	NativeMountPluginDescriptor,
 } from "@secure-exec/core/descriptors";
 import type { CreateVmConfig } from "@secure-exec/core/vm-config";
+import commonSoftware from "@agentos-software/common";
 import type {
 	AgentCapabilities,
 	AgentInfo,
@@ -578,7 +579,7 @@ export interface ResumeSessionOptions {
 	 * fallback tier arms a continuation preamble pointing the agent at it.
 	 */
 	transcriptPath?: string;
-	/** Working directory for the resumed agent session (default `/home/user`). */
+	/** Working directory for the resumed agent session (default `/workspace`). */
 	cwd?: string;
 	/** Environment variables to pass to the resumed agent process. */
 	env?: Record<string, string>;
@@ -1075,6 +1076,7 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 	"/media",
 	"/home",
 	"/home/user",
+	"/workspace",
 	"/usr",
 	"/usr/bin",
 	"/usr/games",
@@ -2509,7 +2511,11 @@ export class AgentOs {
 	}
 
 	static async create(options?: AgentOsOptions): Promise<AgentOs> {
-		const processed = processSoftware(options?.software ?? []);
+		const software =
+			options?.defaultSoftware === false
+				? (options.software ?? [])
+				: [commonSoftware, ...(options?.software ?? [])];
+		const processed = processSoftware(software);
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
 		const toolKits = options?.toolKits;
 		if (toolKits && toolKits.length > 0) {
@@ -2651,7 +2657,7 @@ export class AgentOs {
 					session,
 					vm: nativeVm,
 					env,
-					cwd: "/home/user",
+					cwd: "/workspace",
 					localMounts,
 					commandGuestPaths,
 					onDispose: cleanup,
@@ -3896,7 +3902,7 @@ export class AgentOs {
 		// skipOsInstructions plus the agent's static launch args and env.
 		const launchArgs = [...(config.launchArgs ?? [])];
 		let launchEnv = { ...config.defaultEnv, ...options?.env };
-		const sessionCwd = options?.cwd ?? "/home/user";
+		const sessionCwd = options?.cwd ?? "/workspace";
 		const adapterEntrypoint = this._resolveAdapterBin(config.acpAdapter);
 		if (
 			(agentType === "pi" || agentType === "pi-cli") &&
@@ -3993,7 +3999,7 @@ export class AgentOs {
 
 		const adapterEntrypoint = this._resolveAdapterBin(config.acpAdapter);
 		let launchEnv = { ...config.defaultEnv, ...options?.env };
-		const sessionCwd = options?.cwd ?? "/home/user";
+		const sessionCwd = options?.cwd ?? "/workspace";
 		if (
 			(agentType === "pi" || agentType === "pi-cli") &&
 			!launchEnv.PI_ACP_PI_COMMAND

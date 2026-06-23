@@ -41,10 +41,10 @@ describe("WASM command packages", () => {
 	describe("sh (coreutils)", () => {
 		useDescribeVm();
 
-		test("starts in the default home cwd", async () => {
+		test("starts in the default workspace cwd", async () => {
 			const r = await vm.exec("pwd");
 			expect(r.exitCode).toBe(0);
-			expect(r.stdout.trim()).toBe("/home/user");
+			expect(r.stdout.trim()).toBe("/workspace");
 		});
 
 		test("variables and arithmetic", async () => {

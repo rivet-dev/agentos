@@ -9,13 +9,13 @@ const opencode = defineSoftware({
 	name: "opencode",
 	type: "agent" as const,
 	packageDir,
-	requires: ["@rivet-dev/agentos-opencode"],
+	requires: ["@agentos-software/opencode"],
 	agent: {
 		id: "opencode",
 		// OpenCode still speaks ACP natively, but Agent OS runs a source-built
 		// Node ACP bundle entirely inside the VM rather than a host binary wrapper.
-		acpAdapter: "@rivet-dev/agentos-opencode",
-		agentPackage: "@rivet-dev/agentos-opencode",
+		acpAdapter: "@agentos-software/opencode",
+		agentPackage: "@agentos-software/opencode",
 		staticEnv: {
 			OPENCODE_DISABLE_CONFIG_DEP_INSTALL: "1",
 			OPENCODE_DISABLE_EMBEDDED_WEB_UI: "1",

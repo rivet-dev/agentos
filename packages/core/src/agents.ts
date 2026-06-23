@@ -24,7 +24,7 @@ export interface AgentConfig {
 
 export const AGENT_CONFIGS = {
 	pi: {
-		acpAdapter: "@rivet-dev/agentos-pi",
+		acpAdapter: "@agentos-software/pi",
 		agentPackage: "@mariozechner/pi-coding-agent",
 	},
 	"pi-cli": {
@@ -32,15 +32,15 @@ export const AGENT_CONFIGS = {
 		agentPackage: "@mariozechner/pi-coding-agent",
 	},
 	opencode: {
-		acpAdapter: "@rivet-dev/agentos-opencode",
-		agentPackage: "@rivet-dev/agentos-opencode",
+		acpAdapter: "@agentos-software/opencode",
+		agentPackage: "@agentos-software/opencode",
 		defaultEnv: {
 			OPENCODE_DISABLE_CONFIG_DEP_INSTALL: "1",
 			OPENCODE_DISABLE_EMBEDDED_WEB_UI: "1",
 		},
 	},
 	claude: {
-		acpAdapter: "@rivet-dev/agentos-claude",
+		acpAdapter: "@agentos-software/claude-code",
 		agentPackage: "@anthropic-ai/claude-agent-sdk",
 		defaultEnv: {
 			CLAUDE_AGENT_SDK_CLIENT_APP: "@rivet-dev/agentos",

@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import pi from "@rivet-dev/agentos-pi";
+import pi from "@agentos-software/pi";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
@@ -26,7 +26,7 @@ describe("pi-sdk software projection", () => {
 	test("projects the SDK adapter package and PI agent package into the VM", async () => {
 		const script = `
 const fs = require("fs");
-console.log("adapter:" + fs.existsSync("/root/node_modules/@rivet-dev/agentos-pi/package.json"));
+console.log("adapter:" + fs.existsSync("/root/node_modules/@agentos-software/pi/package.json"));
 console.log("agent:" + fs.existsSync("/root/node_modules/@mariozechner/pi-coding-agent/package.json"));
 `;
 		await vm.writeFile("/tmp/pi-sdk-projection.mjs", script);

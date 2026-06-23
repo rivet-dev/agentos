@@ -21,7 +21,7 @@ Agents run inside isolated VMs with their own filesystem, process table, and net
 ```bash
 npm install @rivet-dev/agentos-core
 # Install an agent adapter + its underlying agent
-npm install @rivet-dev/agentos-pi @mariozechner/pi-coding-agent
+npm install @agentos-software/pi @mariozechner/pi-coding-agent
 ```
 
 ```typescript

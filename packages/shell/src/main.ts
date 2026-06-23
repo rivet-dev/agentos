@@ -3,7 +3,7 @@
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import codex from "@agentos-software/codex";
+import codex from "@agentos-software/codex-cli";
 import common from "@agentos-software/common";
 import { AgentOs } from "@rivet-dev/agentos-core";
 import type { SoftwareInput } from "@rivet-dev/agentos-core";

@@ -9,7 +9,7 @@ await client.vm.getOrCreate("my-agent").scheduleCron({
   action: {
     type: "session",
     agentType: "pi",
-    prompt: "Review the logs in /home/user/logs/ and summarize any errors",
-    options: { cwd: "/home/user" },
+    prompt: "Review the logs in /workspace/logs/ and summarize any errors",
+    options: { cwd: "/workspace" },
   },
 });

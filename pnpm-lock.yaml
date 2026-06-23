@@ -6,7 +6,7 @@ settings:
 
 catalogs:
   default:
-    '@agentos-software/codex':
+    '@agentos-software/codex-cli':
       specifier: 0.3.0-rc.2
       version: 0.3.0-rc.2
     '@agentos-software/common':
@@ -67,20 +67,20 @@ catalogs:
       specifier: 0.3.0-rc.2
       version: 0.3.0-rc.2
     '@secure-exec/core':
-      specifier: 0.3.0
-      version: 0.3.0
+      specifier: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
     '@secure-exec/google-drive':
-      specifier: 0.3.0
-      version: 0.3.0
+      specifier: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
     '@secure-exec/nodejs':
       specifier: 0.2.1
       version: 0.2.1
     '@secure-exec/s3':
-      specifier: 0.3.0
-      version: 0.3.0
+      specifier: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
     '@secure-exec/sandbox':
-      specifier: 0.3.0
-      version: 0.3.0
+      specifier: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
 
 overrides:
   '@rivet-dev/agentos-core': workspace:*
@@ -99,21 +99,21 @@ importers:
       '@copilotkit/llmock':
         specifier: ^1.6.0
         version: 1.6.0
-      '@rivet-dev/agentos-claude':
+      '@agentos-software/claude-code':
         specifier: workspace:*
         version: link:registry/agent/claude
-      '@rivet-dev/agentos-codex-agent':
+      '@agentos-software/codex':
         specifier: workspace:*
         version: link:registry/agent/codex
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:packages/core
-      '@rivet-dev/agentos-pi':
+      '@agentos-software/pi':
         specifier: workspace:*
         version: link:registry/agent/pi
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -176,16 +176,16 @@ importers:
       '@agentos-software/git':
         specifier: 'catalog:'
         version: 0.3.0-rc.2
-      '@rivet-dev/agentos-claude':
+      '@agentos-software/claude-code':
         specifier: workspace:*
         version: link:../../registry/agent/claude
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@rivet-dev/agentos-opencode':
+      '@agentos-software/opencode':
         specifier: workspace:*
         version: link:../../registry/agent/opencode
-      '@rivet-dev/agentos-pi':
+      '@agentos-software/pi':
         specifier: workspace:*
         version: link:../../registry/agent/pi
       '@rivet-dev/agentos-sandbox':
@@ -193,7 +193,7 @@ importers:
         version: link:../../packages/agentos-sandbox
       '@secure-exec/s3':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
       dockerode:
         specifier: ^4.0.9
         version: 4.0.10
@@ -264,7 +264,7 @@ importers:
         version: link:../core
       '@secure-exec/sandbox':
         specifier: 'catalog:'
-        version: 0.3.0(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -306,6 +306,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@agentos-software/common':
+        specifier: 'catalog:'
+        version: 0.3.0-rc.2
       '@aws-sdk/client-s3':
         specifier: ^3.1019.0
         version: 3.1020.0
@@ -317,7 +320,7 @@ importers:
         version: 0.6.2
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -340,7 +343,7 @@ importers:
         specifier: ^10.2.4
         version: 10.2.5
     devDependencies:
-      '@agentos-software/codex':
+      '@agentos-software/codex-cli':
         specifier: 'catalog:'
         version: 0.3.0-rc.2
       '@agentos-software/coreutils':
@@ -415,19 +418,19 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.60.0
         version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@rivet-dev/agentos-claude':
+      '@agentos-software/claude-code':
         specifier: link:../../registry/agent/claude
         version: link:../../registry/agent/claude
-      '@rivet-dev/agentos-codex-agent':
+      '@agentos-software/codex':
         specifier: link:../../registry/agent/codex
         version: link:../../registry/agent/codex
-      '@rivet-dev/agentos-opencode':
+      '@agentos-software/opencode':
         specifier: link:../../registry/agent/opencode
         version: link:../../registry/agent/opencode
-      '@rivet-dev/agentos-pi':
+      '@agentos-software/pi':
         specifier: link:../../registry/agent/pi
         version: link:../../registry/agent/pi
-      '@rivet-dev/agentos-pi-cli':
+      '@agentos-software/pi-cli':
         specifier: link:../../registry/agent/pi-cli
         version: link:../../registry/agent/pi-cli
       '@rivet-dev/agentos-sandbox':
@@ -435,10 +438,10 @@ importers:
         version: link:../agentos-sandbox
       '@secure-exec/google-drive':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
       '@secure-exec/s3':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -518,7 +521,7 @@ importers:
     dependencies:
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -540,7 +543,7 @@ importers:
     dependencies:
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
       pyodide:
         specifier: ^0.28.3
         version: 0.28.3(bufferutil@4.1.0)
@@ -620,7 +623,7 @@ importers:
 
   packages/shell:
     dependencies:
-      '@agentos-software/codex':
+      '@agentos-software/codex-cli':
         specifier: 'catalog:'
         version: 0.3.0-rc.2
       '@agentos-software/common':
@@ -693,7 +696,7 @@ importers:
 
   registry/agent/codex:
     dependencies:
-      '@agentos-software/codex':
+      '@agentos-software/codex-cli':
         specifier: 'catalog:'
         version: 0.3.0-rc.2
     devDependencies:
@@ -856,8 +859,8 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  '@agentos-software/codex@0.3.0-rc.2':
-    resolution: {integrity: sha512-DKAb9Qs1+zV1sgtMEqVo7K60R4IryKMY24jZdH5NX5cKhIi5ED1o+AufINtNSMJxdrByz+MuX+2HkvWXCvHYgw==}
+  '@agentos-software/codex-cli@0.3.0-rc.2':
+    resolution: {integrity: sha512-n0iDKXJOKZrQuJvPbrJpCU8kLC15lj7ueMgUHVHi1uX5U+x6TPrezG8FNnEKZX49eMHtL8SBsYZIaDwNdjjjHw==}
 
   '@agentos-software/common@0.3.0-rc.2':
     resolution: {integrity: sha512-LWMGMFwjBbJDjbIAE8+hMDbbrOptxgXcgwJ6Ve5eFn0ncI6+T0fH5Fr3uTLZyxh0AUhSejbKDVjHwdQczFKnGQ==}
@@ -2881,32 +2884,50 @@ packages:
     resolution: {integrity: sha512-trO//ypJBSt5xkewuol9LOykvDgHwUXq8R+yQVS+0CmpN3lYUtewHkb+At9RVGRhDMmJZY2oasaXDnhfurQ33w==}
     hasBin: true
 
+  '@secure-exec/core@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    resolution: {integrity: sha512-GKGY8U1wI/R/Rl8WTqQ+xLqu2FALZL0XzfIxolZVhfR/iy7mwkSN5phO6cimM5qjxwSTkTCEEvoVrBoakedRBQ==}
+
   '@secure-exec/core@0.2.1':
     resolution: {integrity: sha512-HsnUv6gClpMA1BBRmX86j30TKTZtgJC/fO1tVavr7IpM2zNKbHU8LgSlBd7mv2SNy02ImTmU/GnQ3aYB4NSbEg==}
 
-  '@secure-exec/core@0.3.0':
-    resolution: {integrity: sha512-/mk8OIyibjVxOrs8r2qu40aE58Vm2pCy2A6+DPiJYY3Ch1MJ3AeVcPtd0AUrLinTHQJM5Ps8K8iLWvLLSI5VbQ==}
-
-  '@secure-exec/google-drive@0.3.0':
-    resolution: {integrity: sha512-10FTqMZuZ1k19nGBYFSqcf574YUFrgPB3G/ZFCUm9h8G+LPGSBhMZfzS17gTDwUCGm02WgYMWVSx9d6h7JWzQA==}
+  '@secure-exec/google-drive@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    resolution: {integrity: sha512-zhd2O7jit5rghIQN8n+GZtpiiwYni8IhNHZOEgWcK0/UlYL5FecdEhGLeCo0rWTXV7WFPGfGPhX3aJOQKgnwOA==}
 
   '@secure-exec/nodejs@0.2.1':
     resolution: {integrity: sha512-UJMJqVFxexlHJV0Q9nWURvrz6GElj8673DDOOFln6FHR6JS+9SaSU3eISrN158DuNC3SFi4rgjb/scKnK4YOYQ==}
 
-  '@secure-exec/s3@0.3.0':
-    resolution: {integrity: sha512-yrAt3qiuvT3GNxnGcyKEhrbA9uC4Hj13wVNL6ZbHZ12fjmENyaxhSRdoeKB1kD36iqWtOp6qOE2mTrcdohZaQQ==}
+  '@secure-exec/s3@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    resolution: {integrity: sha512-/4w480tR0UZh0ohUTyjDipkEVchJsflEFPTeeYYBEkDphEoDWz1PlshpAQWBGTkC3sRd9QyhzEsEXVSNMvrmQA==}
 
-  '@secure-exec/sandbox@0.3.0':
-    resolution: {integrity: sha512-sOXqjLbxAs/dsccIy27eFlgKZZM9iY16/IILahFbxlrxZ8J1gmzHOxKn4ixmE0Nv8JUkm6+bxQ/YnJWcApN5cA==}
+  '@secure-exec/sandbox@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    resolution: {integrity: sha512-yVninZkFt4BHtgNX2d3bGKqlORdlrIXvQLpOnqpaeMIHbP0IJSbGd7jRbk4HAFYRo8JKcEHo/dr8dOUBUF9lPQ==}
 
-  '@secure-exec/sidecar-linux-x64-gnu@0.3.0':
-    resolution: {integrity: sha512-s/fWwtnngpV29y9v1x/KpiUUYPVL6cof+EESaYaVkahUyqHYGN/OfGTSMuKsJqlm0WwyYwjnBDu6gGCUdo84cQ==}
+  '@secure-exec/sidecar-darwin-arm64@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    resolution: {integrity: sha512-3YRc7fe9tt7HRpeWXN6UXaiswLOfRmuUrLJkKPL03Bbxw+sOOiHNBzcmVRkoR4nMOfrv11sAwudIlydSylxW1Q==}
+    engines: {node: '>=20'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@secure-exec/sidecar-darwin-x64@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    resolution: {integrity: sha512-oGN8HWR6VnL22BjZeoJ/MVQTqGWzfLhpx4x4Pjw11cX6FU7/7sEP54zHfp8q+8f7zOHI0+plDOHXYEQ+mIi15g==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    resolution: {integrity: sha512-+V75dmjpM87mjqW0oJZqbwCAqirKFeP6hRRIb+Ujrqy4rBuWCDC8QZdLZacF0S7gn8sWW7GcbBScTY2mgb2Q4A==}
+    engines: {node: '>=20'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    resolution: {integrity: sha512-OS+dS3WnX5HeBI0deeL/0weLeSUGGLofYM4pklemjH19V1TynGs2eZw4Wrkeh2IRmsK+DtNGwZ730yra4AVW8g==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [linux]
 
-  '@secure-exec/sidecar@0.3.0':
-    resolution: {integrity: sha512-v/vVM+y2GtTtzJ3Q+G0NRp/WpGDmCrgQgu4nYW+423QrzXFMgSmkTE8akNQcksDaVL/vxLipp3HIJ2/X44aAKg==}
+  '@secure-exec/sidecar@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    resolution: {integrity: sha512-TsRIzKQfBH6CBRBdY17pHwZudMieuMar2xoLssbOGKnb3C5BvKMt/3yaANerPxVxH3LYs8KLjyLaCujSaRErSA==}
     engines: {node: '>=20'}
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
@@ -7223,7 +7244,7 @@ snapshots:
     dependencies:
       zod: 4.3.6
 
-  '@agentos-software/codex@0.3.0-rc.2': {}
+  '@agentos-software/codex-cli@0.3.0-rc.2': {}
 
   '@agentos-software/common@0.3.0-rc.2':
     dependencies:
@@ -9666,18 +9687,18 @@ snapshots:
       '@sandbox-agent/cli-win32-x64': 0.4.2
     optional: true
 
+  '@secure-exec/core@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    dependencies:
+      '@rivetkit/bare-ts': 0.6.2
+      '@secure-exec/sidecar': 0.0.0-nathan-workspace-binding-agentos.83db3e3
+
   '@secure-exec/core@0.2.1':
     dependencies:
       better-sqlite3: 12.8.0
 
-  '@secure-exec/core@0.3.0':
+  '@secure-exec/google-drive@0.0.0-nathan-workspace-binding-agentos.83db3e3':
     dependencies:
-      '@rivetkit/bare-ts': 0.6.2
-      '@secure-exec/sidecar': 0.3.0
-
-  '@secure-exec/google-drive@0.3.0':
-    dependencies:
-      '@secure-exec/core': 0.3.0
+      '@secure-exec/core': 0.0.0-nathan-workspace-binding-agentos.83db3e3
 
   '@secure-exec/nodejs@0.2.1':
     dependencies:
@@ -9690,13 +9711,13 @@ snapshots:
       node-stdlib-browser: 1.3.1
       web-streams-polyfill: 4.2.0
 
-  '@secure-exec/s3@0.3.0':
+  '@secure-exec/s3@0.0.0-nathan-workspace-binding-agentos.83db3e3':
     dependencies:
-      '@secure-exec/core': 0.3.0
+      '@secure-exec/core': 0.0.0-nathan-workspace-binding-agentos.83db3e3
 
-  '@secure-exec/sandbox@0.3.0(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
+  '@secure-exec/sandbox@0.0.0-nathan-workspace-binding-agentos.83db3e3(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
     dependencies:
-      '@secure-exec/core': 0.3.0
+      '@secure-exec/core': 0.0.0-nathan-workspace-binding-agentos.83db3e3
       sandbox-agent: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
     transitivePeerDependencies:
       - '@cloudflare/sandbox'
@@ -9710,12 +9731,24 @@ snapshots:
       - modal
       - zod
 
-  '@secure-exec/sidecar-linux-x64-gnu@0.3.0':
+  '@secure-exec/sidecar-darwin-arm64@0.0.0-nathan-workspace-binding-agentos.83db3e3':
     optional: true
 
-  '@secure-exec/sidecar@0.3.0':
+  '@secure-exec/sidecar-darwin-x64@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    optional: true
+
+  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    optional: true
+
+  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+    optional: true
+
+  '@secure-exec/sidecar@0.0.0-nathan-workspace-binding-agentos.83db3e3':
     optionalDependencies:
-      '@secure-exec/sidecar-linux-x64-gnu': 0.3.0
+      '@secure-exec/sidecar-darwin-arm64': 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      '@secure-exec/sidecar-darwin-x64': 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      '@secure-exec/sidecar-linux-arm64-gnu': 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      '@secure-exec/sidecar-linux-x64-gnu': 0.0.0-nathan-workspace-binding-agentos.83db3e3
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     optional: true

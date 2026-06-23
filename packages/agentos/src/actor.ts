@@ -136,7 +136,20 @@ function withAutoAgentNodeModulesMount(
 	for (const d of descriptors) {
 		if (!d.agent || typeof d.packageDir !== "string") continue;
 		const root = nodeModulesRootOf(d.packageDir);
-		if (root) roots.add(root);
+		if (root) {
+			roots.add(root);
+			continue;
+		}
+		const requires = d.requires?.length
+			? ` Required packages: ${d.requires.join(", ")}.`
+			: "";
+		throw new Error(
+			"agentOs() could not auto-mount agent node_modules: agent " +
+				`packageDir ${d.packageDir} is not inside a node_modules install. ` +
+				"Run from an npm-installed package tree, or pass an explicit " +
+				"nodeModulesMount(<absolute node_modules path>) in options.mounts." +
+				requires,
+		);
 	}
 
 	if (roots.size === 0) return mounts;

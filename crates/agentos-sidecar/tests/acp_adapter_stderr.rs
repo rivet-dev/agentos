@@ -322,7 +322,7 @@ fn allow_all_permissions() -> vm_config::PermissionsPolicy {
         env: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
-        tool: Some(vm_config::PatternPermissionScope::Mode(
+        binding: Some(vm_config::PatternPermissionScope::Mode(
             vm_config::PermissionMode::Allow,
         )),
     }

@@ -109,7 +109,16 @@ test("builds platform map for the agent-os sidecar meta package", () => {
 
 	if (names.includes("@rivet-dev/agentos-sidecar")) {
 		assert.deepEqual(metaMap.get("@rivet-dev/agentos-sidecar"), [
+			"@rivet-dev/agentos-sidecar-darwin-arm64",
+			"@rivet-dev/agentos-sidecar-darwin-x64",
+			"@rivet-dev/agentos-sidecar-linux-arm64-gnu",
 			"@rivet-dev/agentos-sidecar-linux-x64-gnu",
+		]);
+		assert.deepEqual(metaMap.get("@rivet-dev/agentos"), [
+			"@rivet-dev/agentos-plugin-darwin-arm64",
+			"@rivet-dev/agentos-plugin-darwin-x64",
+			"@rivet-dev/agentos-plugin-linux-arm64-gnu",
+			"@rivet-dev/agentos-plugin-linux-x64-gnu",
 		]);
 	}
 	// a6 no longer publishes the secure-exec sidecar meta package.

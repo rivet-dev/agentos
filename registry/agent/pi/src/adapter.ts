@@ -704,7 +704,7 @@ class PiSdkAgent implements Agent {
 	private conn: AgentSideConnection;
 	private session: PiSessionLike | null = null;
 	private sessionId = "";
-	private cwd = "/home/user";
+	private cwd = "/workspace";
 	private cancelRequested = false;
 	private currentToolCalls = new Map<string, string>();
 	private emittedAssistantText = false;

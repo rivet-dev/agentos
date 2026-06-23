@@ -42,8 +42,7 @@ env:
   R2_ENDPOINT: https://2a94c6a0ced8d35ea63cddc86c2681e7.r2.cloudflarestorage.com
   # Platform list kept in sync with packages/*sidecar*/npm/* and the build
   # matrix below. Also consumed by scripts/publish discovery via SIDECAR_PLATFORMS.
-  # arm64 is deferred until its portability fix is verified end-to-end.
-  SIDECAR_PLATFORMS: "linux-x64-gnu"
+  SIDECAR_PLATFORMS: "linux-x64-gnu linux-arm64-gnu darwin-x64 darwin-arm64"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -87,6 +86,9 @@ jobs:
           - platform: linux-x64-gnu
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+          - platform: linux-arm64-gnu
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -109,11 +111,14 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
-      # All Rust dependencies resolve from published registries — no sibling
-      # checkouts: the secure-exec runtime crates from crates.io (0.3.0, which
-      # vendor the prebuilt V8 bridge) and the RivetKit native-plugin ABI crate
-      # from crates.io (rivet-actor-plugin-abi). pnpm install is still needed for
-      # the workspace tooling consumed by the build.
+      # Preview sidecar builds use the matching secure-exec branch through
+      # Cargo path deps. pnpm install is needed in both workspaces because the
+      # secure-exec V8 bridge build.rs invokes the TS bridge bundler.
+      - name: Checkout secure-exec sibling
+        run: |
+          git clone --depth 1 --branch main \
+            https://github.com/rivet-dev/secure-exec.git ../secure-exec
+          (cd ../secure-exec && pnpm install --frozen-lockfile --filter='!@secure-exec/website')
       - run: pnpm install --frozen-lockfile
       - name: Build sidecar binary
         id: build
@@ -154,6 +159,9 @@ jobs:
           - platform: linux-x64-gnu
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+          - platform: linux-arm64-gnu
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -176,8 +184,13 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
-      # All Rust deps resolve from crates.io (secure-exec 0.3.0 + the
-      # rivet-actor-plugin-abi ABI crate) — no sibling checkouts required.
+      # Preview plugin builds use the matching secure-exec branch through Cargo
+      # path deps, mirroring the sidecar build.
+      - name: Checkout secure-exec sibling
+        run: |
+          git clone --depth 1 --branch main \
+            https://github.com/rivet-dev/secure-exec.git ../secure-exec
+          (cd ../secure-exec && pnpm install --frozen-lockfile --filter='!@secure-exec/website')
       - run: pnpm install --frozen-lockfile
       - name: Build plugin cdylib
         id: build
@@ -201,13 +214,63 @@ jobs:
           path: ${{ steps.build.outputs.dir }}
           if-no-files-found: error
 
+  # darwin via osxcross in a Linux container (rivet's approach) — no macOS
+  # runners. The image builds both the sidecar binary and actor plugin cdylib.
+  build-sidecar-darwin:
+    needs: [context]
+    name: "Build darwin binaries (${{ matrix.platform }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-x64
+            target: x86_64-apple-darwin
+            clang: x86_64-apple-darwin20.4
+          - platform: darwin-arm64
+            target: aarch64-apple-darwin
+            clang: aarch64-apple-darwin20.4
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to ghcr.io (pull the osxcross base image)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Cross-compile via osxcross
+        run: |
+          set -euo pipefail
+          DOCKER_BUILDKIT=1 docker build \
+            -f docker/build/darwin.Dockerfile \
+            --build-arg TARGET=${{ matrix.target }} \
+            --build-arg CLANG=${{ matrix.clang }} \
+            --build-arg TRIGGER=${{ needs.context.outputs.trigger }} \
+            -t agentos-darwin-${{ matrix.platform }} .
+
+          sidecar_out="target/sidecar-artifacts/${{ matrix.platform }}"
+          plugin_out="target/plugin-artifacts/${{ matrix.platform }}"
+          mkdir -p "$sidecar_out" "$plugin_out"
+          cid=$(docker create agentos-darwin-${{ matrix.platform }})
+          docker cp "$cid:/artifacts/agentos-sidecar" "$sidecar_out/agentos-sidecar"
+          docker cp "$cid:/artifacts/libagentos_actor_plugin.dylib" "$plugin_out/libagentos_actor_plugin.dylib"
+          docker rm "$cid"
+          test -f "$sidecar_out/agentos-sidecar"
+          test -f "$plugin_out/libagentos_actor_plugin.dylib"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidecar-${{ matrix.platform }}
+          path: target/sidecar-artifacts/${{ matrix.platform }}
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.platform }}
+          path: target/plugin-artifacts/${{ matrix.platform }}
+          if-no-files-found: error
+
   # ---------------------------------------------------------------------------
   # publish-npm — place binaries, build TS, publish all packages (all triggers)
   # ---------------------------------------------------------------------------
   publish-npm:
-    needs: [context, build-sidecar, build-plugin]
+    needs: [context, build-sidecar, build-plugin, build-sidecar-darwin]
     name: "Publish npm"
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-plugin.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-plugin.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -249,7 +312,11 @@ jobs:
         run: |
           set -euo pipefail
           for p in $SIDECAR_PLATFORMS; do
-            lib="artifacts/plugin-${p}/libagentos_actor_plugin.so"
+            case "$p" in
+              darwin-*) lib_name="libagentos_actor_plugin.dylib" ;;
+              *) lib_name="libagentos_actor_plugin.so" ;;
+            esac
+            lib="artifacts/plugin-${p}/${lib_name}"
             dest="packages/agentos-plugin/npm/${p}"
             if [ ! -f "$lib" ]; then
               echo "::error::missing plugin cdylib artifact for ${p}"
@@ -259,7 +326,7 @@ jobs:
               echo "::error::missing plugin platform package dir $dest"
               exit 1
             fi
-            cp "$lib" "${dest}/libagentos_actor_plugin.so"
+            cp "$lib" "${dest}/${lib_name}"
             echo "Placed plugin cdylib for ${p}"
           done
       - name: Bump package versions for build (version-only)
@@ -291,9 +358,9 @@ jobs:
   # release-assets — GitHub release + sidecar/pyodide assets + R2 (release only)
   # ---------------------------------------------------------------------------
   release-assets:
-    needs: [context, build-sidecar]
+    needs: [context, build-sidecar, build-sidecar-darwin]
     name: "Release assets"
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.context.outputs.trigger == 'release' }}
+    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && needs.context.outputs.trigger == 'release' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -320,6 +387,8 @@ jobs:
           declare -A PLATFORM_TARGET=(
             [linux-x64-gnu]=x86_64-unknown-linux-gnu
             [linux-arm64-gnu]=aarch64-unknown-linux-gnu
+            [darwin-x64]=x86_64-apple-darwin
+            [darwin-arm64]=aarch64-apple-darwin
           )
           # Stage release assets: platform binaries + externalized pyodide assets
           # (downloaded by the published execution crate's build.rs).
@@ -400,8 +469,11 @@ jobs:
           key: ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-
-      # All Rust deps resolve from crates.io (secure-exec 0.3.0 + the
-      # rivet-actor-plugin-abi ABI crate) — no sibling checkouts required.
+      - name: Checkout secure-exec sibling
+        run: |
+          git clone --depth 1 --branch main \
+            https://github.com/rivet-dev/secure-exec.git ../secure-exec
+          (cd ../secure-exec && pnpm install --frozen-lockfile --filter='!@secure-exec/website')
       - run: pnpm install --frozen-lockfile
       - name: Bump Cargo versions
         run: |

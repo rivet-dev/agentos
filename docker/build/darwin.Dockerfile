@@ -1,0 +1,48 @@
+# syntax=docker/dockerfile:1.10.0
+#
+# Cross-compile AgentOS darwin binaries via osxcross on a Linux runner. The
+# base image carries osxcross, the macOS SDK, Node, and pnpm.
+#
+#   TARGET = aarch64-apple-darwin | x86_64-apple-darwin
+#   CLANG  = aarch64-apple-darwin20.4 | x86_64-apple-darwin20.4
+FROM ghcr.io/rivet-dev/rivet/builder-base-osxcross:0e33ceb98
+
+ARG TARGET=aarch64-apple-darwin
+ARG CLANG=aarch64-apple-darwin20.4
+ARG TRIGGER=branch
+ARG SECURE_EXEC_REF=main
+
+ENV SDK=/root/osxcross/target/SDK/MacOSX11.3.sdk \
+    RUSTC_WRAPPER=
+
+WORKDIR /build
+COPY . .
+
+RUN git clone --depth 1 --branch "$SECURE_EXEC_REF" \
+        https://github.com/rivet-dev/secure-exec.git /secure-exec && \
+    channel=$(awk -F'"' '/channel/ {print $2; exit}' /secure-exec/rust-toolchain.toml) && \
+    rustup toolchain install "$channel" --profile minimal && \
+    rustup default "$channel" && \
+    rustup target add "$TARGET"
+
+RUN corepack enable && \
+    (cd /secure-exec && pnpm install --frozen-lockfile --filter='!@secure-exec/website') && \
+    pnpm install --frozen-lockfile
+
+RUN tu=$(echo "$TARGET" | tr 'a-z-' 'A-Z_') && \
+    tl=$(echo "$TARGET" | tr - _) && \
+    export BINDGEN_EXTRA_CLANG_ARGS_${tl}="--sysroot=$SDK -isystem $SDK/usr/include" && \
+    export CFLAGS_${tl}="-B/root/osxcross/target/bin" && \
+    export CXXFLAGS_${tl}="-B/root/osxcross/target/bin" && \
+    export CC_${tl}=${CLANG}-clang && \
+    export CXX_${tl}=${CLANG}-clang++ && \
+    export AR_${tl}=${CLANG}-ar && \
+    export RANLIB_${tl}=${CLANG}-ranlib && \
+    export CARGO_TARGET_${tu}_LINKER=${CLANG}-clang && \
+    if [ "$TRIGGER" = "release" ]; then FLAG="--release"; PROF=release; else FLAG=""; PROF=debug; fi && \
+    cargo build $FLAG -p agentos-sidecar -p agentos-actor-plugin --target "$TARGET" && \
+    mkdir -p /artifacts && \
+    cp "target/$TARGET/$PROF/agentos-sidecar" /artifacts/agentos-sidecar && \
+    cp "target/$TARGET/$PROF/libagentos_actor_plugin.dylib" /artifacts/libagentos_actor_plugin.dylib
+
+CMD ["ls", "-la", "/artifacts"]

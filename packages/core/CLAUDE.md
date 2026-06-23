@@ -40,7 +40,7 @@
 - Reference `~/sandbox-agent` for ACP integration patterns. Do not copy code from it.
 - ACP docs: https://agentclientprotocol.com/get-started/introduction
 - Session design is **agent-agnostic**: each agent type has a config specifying its ACP adapter package and main agent package name
-- Currently configured agents: PI (`@rivet-dev/agentos-pi`), PI CLI (`@rivet-dev/agentos-pi-cli`), OpenCode (`@rivet-dev/agentos-opencode`), Claude (`@rivet-dev/agentos-claude`), and Codex (`@rivet-dev/agentos-codex-agent` + `@agentos-software/codex`).
+- Currently configured agents: PI (`@agentos-software/pi`), PI CLI (`@agentos-software/pi-cli`), OpenCode (`@agentos-software/opencode`), Claude (`@agentos-software/claude-code`), and Codex (`@agentos-software/codex` + `@agentos-software/codex-cli`).
 - **No host agent exceptions.** Host-native wrappers and host binary launch paths are not allowed. OpenCode support must use the real upstream OpenCode implementation rebuilt into the VM adapter package and executed inside the VM.
 - `createSession("pi")` spawns the ACP adapter inside the VM, which calls the Pi SDK directly
 - Keep `src/agents.ts` aligned with the shipped registry agent packages. Derive the built-in `AgentType` union from `AGENT_CONFIGS` instead of maintaining a separate manual list, and verify launch args/env with the mock-adapter session tests when adding or changing an agent.
@@ -54,13 +54,13 @@
 ### Agent Adapter Approaches
 
 Each agent type can have two adapter approaches:
-- **SDK adapter** (default) -- Embeds the agent SDK directly via library import (`createAgentSession()`). Lower memory footprint (~100MB less for Pi). Binary: `pi-sdk-acp`. Package: `@rivet-dev/agentos-pi`. Agent ID: `pi`.
-- **CLI adapter** -- Spawns the full agent CLI as a headless subprocess via its ACP adapter (`pi-acp` spawns `pi --mode rpc`). Higher memory overhead but provides full CLI feature set. Binary: `pi-acp`. Package: `@rivet-dev/agentos-pi-cli`. Agent ID: `pi-cli`.
+- **SDK adapter** (default) -- Embeds the agent SDK directly via library import (`createAgentSession()`). Lower memory footprint (~100MB less for Pi). Binary: `pi-sdk-acp`. Package: `@agentos-software/pi`. Agent ID: `pi`.
+- **CLI adapter** -- Spawns the full agent CLI as a headless subprocess via its ACP adapter (`pi-acp` spawns `pi --mode rpc`). Higher memory overhead but provides full CLI feature set. Binary: `pi-acp`. Package: `@agentos-software/pi-cli`. Agent ID: `pi-cli`.
 
 ### Agent Configs
 
 Each agent type needs:
-- `acpAdapter`: npm package name for the ACP adapter (e.g., `@rivet-dev/agentos-pi`)
+- `acpAdapter`: npm package name for the ACP adapter (e.g., `@agentos-software/pi`)
 - `agentPackage`: npm package name for the underlying agent (e.g., `@mariozechner/pi-coding-agent`)
 - Any environment variables or flags needed
 - Package-provided agent descriptors registered through `processSoftware()` override the hardcoded `AGENT_CONFIGS` entries at session launch time. If a default shell/env tweak matters for both built-in and packaged flows, keep the two config surfaces in sync.

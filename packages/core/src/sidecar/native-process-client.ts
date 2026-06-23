@@ -1,6 +1,13 @@
+// Register the native sidecar spawn factory (side effect). After the
+// @secure-exec/core SidecarProcess refactor, native spawn is provided by a
+// separately-registered factory; importing native-client wires it up so
+// SidecarProcess.spawn works in this native runtime.
+import "@secure-exec/core/native-client";
+
 export {
 	NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
-	NativeSidecarProcessClient as SidecarProcess,
+	SidecarProcess,
+	SidecarProcess as NativeSidecarProcessClient,
 	SidecarEventBufferOverflow,
 	SidecarProcessError,
 	SidecarProcessExited,
@@ -11,7 +18,6 @@ export type {
 	CreatedVm,
 	ExtEnvelope,
 	GuestFilesystemStat,
-	NativeSidecarSpawnOptions as SidecarSpawnOptions,
 	RootFilesystemEntry,
 	RootFilesystemLowerDescriptor,
 	SidecarEventSelector,
@@ -37,5 +43,7 @@ export type {
 	SidecarSignalState,
 	SidecarSocketStateEntry,
 	SidecarSoftwareDescriptor,
+	SidecarSpawnOptions,
+	SidecarSpawnOptions as NativeSidecarSpawnOptions,
 	SidecarZombieTimerCount,
 } from "@secure-exec/core/sidecar-client";

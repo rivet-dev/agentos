@@ -43,12 +43,12 @@ const session = await agent.createSession("pi", {
 });
 const response = await agent.sendPrompt(
   session.sessionId,
-  "Write a hello world script to /home/user/hello.js",
+  "Write a hello world script to /workspace/hello.js",
 );
 console.log(response.text);
 
 // Read the file the agent created
-const content = await agent.readFile("/home/user/hello.js");
+const content = await agent.readFile("/workspace/hello.js");
 console.log(new TextDecoder().decode(content));
 ```
 

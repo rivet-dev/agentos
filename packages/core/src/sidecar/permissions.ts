@@ -47,7 +47,7 @@ export function serializePermissionsForSidecar(
 			childProcess: "deny",
 			process: "deny",
 			env: "deny",
-			tool: "deny",
+			binding: "deny",
 		};
 	}
 
@@ -72,7 +72,7 @@ export function serializePermissionsForSidecar(
 			typeof permissions.env === "string" || !permissions.env
 				? permissions.env
 				: serializePatternScope(permissions.env),
-		tool:
+		binding:
 			typeof permissions.tool === "string" || !permissions.tool
 				? permissions.tool
 				: serializePatternScope(permissions.tool),

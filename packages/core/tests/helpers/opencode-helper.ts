@@ -34,7 +34,7 @@ async function mkdirpVm(vm: AgentOs, targetPath: string): Promise<void> {
 export function resolveOpenCodeAdapterBinPath(hostProjectDir: string): string {
 	const hostPkgJson = join(
 		hostProjectDir,
-		"node_modules/@rivet-dev/agentos-opencode/package.json",
+		"node_modules/@agentos-software/opencode/package.json",
 	);
 	const pkg = JSON.parse(readFileSync(hostPkgJson, "utf-8"));
 
@@ -45,11 +45,11 @@ export function resolveOpenCodeAdapterBinPath(hostProjectDir: string): string {
 		binEntry = Object.values(pkg.bin)[0] as string;
 	} else {
 		throw new Error(
-			"No bin entry in @rivet-dev/agentos-opencode package.json",
+			"No bin entry in @agentos-software/opencode package.json",
 		);
 	}
 
-	return `/root/node_modules/@rivet-dev/agentos-opencode/${binEntry}`;
+	return `/root/node_modules/@agentos-software/opencode/${binEntry}`;
 }
 
 export async function createVmOpenCodeHome(

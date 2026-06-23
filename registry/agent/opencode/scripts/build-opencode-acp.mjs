@@ -3544,7 +3544,7 @@ async function assertBundleClean(bundlePath) {
 async function main() {
 	if (!existsSync(bunBin)) {
 		throw new Error(
-			`bun is not installed for @rivet-dev/agentos-opencode (expected ${bunBin}). Run pnpm install first.`,
+			`bun is not installed for @agentos-software/opencode (expected ${bunBin}). Run pnpm install first.`,
 		);
 	}
 

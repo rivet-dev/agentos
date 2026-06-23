@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import common from "@agentos-software/common";
-import piCli from "@rivet-dev/agentos-pi-cli";
+import piCli from "@agentos-software/pi-cli";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 import { hasRegistryCommands } from "./helpers/registry-commands.js";

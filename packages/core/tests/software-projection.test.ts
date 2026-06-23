@@ -1,5 +1,5 @@
 import common, { coreutils } from "@agentos-software/common";
-import pi from "@rivet-dev/agentos-pi";
+import pi from "@agentos-software/pi";
 import { afterEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 
@@ -43,8 +43,8 @@ describe("software projection on the sidecar path", () => {
 					"const fs = require('node:fs');",
 					"console.log('node_modules', fs.existsSync('/root/node_modules'));",
 					"console.log('scope', fs.readdirSync('/root/node_modules/@rivet-dev').includes('agentos-pi'));",
-					"console.log('adapter', fs.existsSync('/root/node_modules/@rivet-dev/agentos-pi/package.json'));",
-					"console.log('adapterResolved', Boolean(require.resolve('@rivet-dev/agentos-pi')));",
+					"console.log('adapter', fs.existsSync('/root/node_modules/@agentos-software/pi/package.json'));",
+					"console.log('adapterResolved', Boolean(require.resolve('@agentos-software/pi')));",
 					"console.log('agent', fs.existsSync('/root/node_modules/@mariozechner/pi-coding-agent/package.json'));",
 				].join(" "),
 			],
@@ -81,7 +81,7 @@ describe("software projection on the sidecar path", () => {
 				[
 					"const fs = require('node:fs');",
 					"try {",
-					"  fs.appendFileSync('/root/node_modules/@rivet-dev/agentos-pi/package.json', '\\nblocked');",
+					"  fs.appendFileSync('/root/node_modules/@agentos-software/pi/package.json', '\\nblocked');",
 					"  console.log('write:unexpected-success');",
 					"} catch (error) {",
 					"  console.log('writeError', error && error.code);",

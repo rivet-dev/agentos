@@ -1,5 +1,5 @@
 {
-	"name": "@rivet-dev/agentos-pi-cli",
+	"name": "@agentos-software/pi-cli",
 	"version": "0.2.0-rc.3",
 	"type": "module",
 	"license": "Apache-2.0",

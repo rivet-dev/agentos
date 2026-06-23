@@ -9,10 +9,10 @@ const pi = defineSoftware({
 	name: "pi",
 	type: "agent" as const,
 	packageDir,
-	requires: ["@rivet-dev/agentos-pi", "@mariozechner/pi-coding-agent"],
+	requires: ["@agentos-software/pi", "@mariozechner/pi-coding-agent"],
 	agent: {
 		id: "pi",
-		acpAdapter: "@rivet-dev/agentos-pi",
+		acpAdapter: "@agentos-software/pi",
 		agentPackage: "@mariozechner/pi-coding-agent",
 	},
 });

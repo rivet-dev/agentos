@@ -28,13 +28,13 @@ You don't have to choose: agentOS works with sandboxes through the [sandbox exte
 ## Quick start
 
 ```bash
-npm install @rivet-dev/agentos-core @agentos-software/common @rivet-dev/agentos-pi
+npm install @rivet-dev/agentos-core @agentos-software/common @agentos-software/pi
 ```
 
 ```ts
 import { AgentOs } from "@rivet-dev/agentos-core";
 import common from "@agentos-software/common";
-import pi from "@rivet-dev/agentos-pi";
+import pi from "@agentos-software/pi";
 
 const vm = await AgentOs.create({ software: [common, pi] });
 
@@ -145,7 +145,7 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 
 | Package | apt Equivalent | Description | Source | Combined Size | Gzipped |
 |---------|---------------|-------------|--------|---------------|---------|
-| `@agentos-software/codex` | codex | OpenAI Codex command package (codex, codex-exec) | rust | - | - |
+| `@agentos-software/codex-cli` | codex | OpenAI Codex command package (codex, codex-exec) | rust | - | - |
 | `@agentos-software/coreutils` | coreutils | GNU coreutils: sh, cat, ls, cp, sort, and 80+ commands | rust | - | - |
 | `@agentos-software/curl` | curl | curl HTTP client | c | - | - |
 | `@agentos-software/diffutils` | diffutils | GNU diffutils (diff) | rust | - | - |
@@ -176,7 +176,7 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 |---------|-------------|----------|
 | `@agentos-software/build-essential` | Build-essential WASM command set (standard + make + git + curl) | standard, make, git, curl |
 | `@agentos-software/common` | Common WASM command set (coreutils + sed + grep + gawk + findutils + diffutils + tar + gzip) | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip |
-| `@agentos-software/everything` | All available WASM command packages in a single bundle | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip, curl, zip, unzip, jq, ripgrep, fd, tree, file, yq, codex |
+| `@agentos-software/everything` | All available WASM command packages in a single bundle | coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip, curl, zip, unzip, jq, ripgrep, fd, tree, file, yq, codex-cli |
 <!-- END PACKAGE TABLE -->
 
 ## License

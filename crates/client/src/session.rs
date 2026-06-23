@@ -124,7 +124,7 @@ struct AgentConfigDef {
 fn agent_config(agent_type: &str) -> Option<AgentConfigDef> {
     Some(match agent_type {
         "pi" => AgentConfigDef {
-            acp_adapter: "@rivet-dev/agentos-pi",
+            acp_adapter: "@agentos-software/pi",
             agent_package: "@mariozechner/pi-coding-agent",
             default_env: &[],
         },
@@ -134,15 +134,15 @@ fn agent_config(agent_type: &str) -> Option<AgentConfigDef> {
             default_env: &[],
         },
         "opencode" => AgentConfigDef {
-            acp_adapter: "@rivet-dev/agentos-opencode",
-            agent_package: "@rivet-dev/agentos-opencode",
+            acp_adapter: "@agentos-software/opencode",
+            agent_package: "@agentos-software/opencode",
             default_env: &[
                 ("OPENCODE_DISABLE_CONFIG_DEP_INSTALL", "1"),
                 ("OPENCODE_DISABLE_EMBEDDED_WEB_UI", "1"),
             ],
         },
         "claude" => AgentConfigDef {
-            acp_adapter: "@rivet-dev/agentos-claude",
+            acp_adapter: "@agentos-software/claude-code",
             agent_package: "@anthropic-ai/claude-agent-sdk",
             default_env: &[
                 ("CLAUDE_AGENT_SDK_CLIENT_APP", "@rivet-dev/agentos"),
@@ -274,7 +274,7 @@ pub enum McpServerConfig {
 /// Options for `create_session`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CreateSessionOptions {
-    /// Default `"/home/user"`.
+    /// Default `"/workspace"`.
     pub cwd: Option<String>,
     pub env: BTreeMap<String, String>,
     /// Default `[]`.
@@ -310,7 +310,7 @@ pub struct ResumeSessionOptions {
     /// Guest-readable path to the reconstructed transcript. When present, the
     /// fallback tier arms a continuation preamble pointing the agent at it.
     pub transcript_path: Option<String>,
-    /// Default `"/home/user"`.
+    /// Default `"/workspace"`.
     pub cwd: Option<String>,
     pub env: BTreeMap<String, String>,
 }
@@ -1314,7 +1314,7 @@ impl AgentOs {
         let cwd = options
             .cwd
             .clone()
-            .unwrap_or_else(|| "/home/user".to_string());
+            .unwrap_or_else(|| "/workspace".to_string());
         let mcp_servers: Vec<Value> = options
             .mcp_servers
             .iter()
@@ -1465,7 +1465,7 @@ impl AgentOs {
         let cwd = options
             .cwd
             .clone()
-            .unwrap_or_else(|| "/home/user".to_string());
+            .unwrap_or_else(|| "/workspace".to_string());
 
         let response = self
             .send_acp_request(AcpRequest::AcpResumeSessionRequest(

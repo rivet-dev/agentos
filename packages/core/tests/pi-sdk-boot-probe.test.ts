@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import pi from "@rivet-dev/agentos-pi";
+import pi from "@agentos-software/pi";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
