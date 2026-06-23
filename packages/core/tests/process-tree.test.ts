@@ -21,7 +21,7 @@ describe("processTree()", () => {
 	test("spawned process appears as a root in the tree", async () => {
 		await vm.writeFile("/tmp/stay.mjs", "setTimeout(() => {}, 30000);");
 		const { pid } = vm.spawn("node", ["/tmp/stay.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 		});
 
 		const tree = vm.processTree();
@@ -49,7 +49,7 @@ setTimeout(() => {}, 30000);
 		await vm.writeFile("/tmp/child.mjs", "setTimeout(() => {}, 30000);");
 
 		const { pid } = vm.spawn("node", ["/tmp/parent.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 			onStdout: (data) => {
 				const text = new TextDecoder().decode(data);
 				const match = text.match(/CHILD_PID:(\d+)/);

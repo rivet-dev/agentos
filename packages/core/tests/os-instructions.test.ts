@@ -101,7 +101,7 @@ describe("createSession OS instructions integration", () => {
 			mounts: [
 				...moduleAccessMounts(MODULE_ACCESS_CWD),
 				{
-					path: "/home/user",
+					path: "/home/agentos",
 					plugin: createHostDirBackend({
 						hostPath: hostWorkspaceDir,
 						readOnly: false,
@@ -188,7 +188,7 @@ describe("createSession OS instructions integration", () => {
 			expect(promptText).toContain("# agentOS");
 
 			// No .agent-os/ directory created in cwd
-			const agentOsDirExists = await vm.exists("/home/user/.agent-os");
+			const agentOsDirExists = await vm.exists("/home/agentos/.agent-os");
 			expect(agentOsDirExists).toBe(false);
 
 			vm.closeSession(sessionId);

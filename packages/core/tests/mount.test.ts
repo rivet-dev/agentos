@@ -50,10 +50,10 @@ describe("mount integration", () => {
 		vm = await AgentOs.create({
 			mounts: [{ path: "/data", driver: createInMemoryFileSystem() }],
 		});
-		await vm.writeFile("/home/user/foo.txt", "root content");
+		await vm.writeFile("/home/agentos/foo.txt", "root content");
 		await vm.writeFile("/data/foo.txt", "mount content");
 
-		const rootData = await vm.readFile("/home/user/foo.txt");
+		const rootData = await vm.readFile("/home/agentos/foo.txt");
 		const mountData = await vm.readFile("/data/foo.txt");
 		expect(new TextDecoder().decode(rootData)).toBe("root content");
 		expect(new TextDecoder().decode(mountData)).toBe("mount content");
@@ -88,7 +88,7 @@ describe("mount integration", () => {
 		});
 		await vm.writeFile("/data/cross.txt", "cross-mount");
 		await expect(
-			vm.move("/data/cross.txt", "/home/user/cross.txt"),
+			vm.move("/data/cross.txt", "/home/agentos/cross.txt"),
 		).rejects.toThrow("EXDEV");
 	});
 

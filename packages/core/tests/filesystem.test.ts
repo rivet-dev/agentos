@@ -110,7 +110,7 @@ describe("filesystem operations", () => {
 		try {
 			sessionId = (
 				await vm.createSession("claude", {
-					cwd: "/home/user",
+					cwd: "/home/agentos",
 					env: {
 						ANTHROPIC_API_KEY: "mock-key",
 						ANTHROPIC_BASE_URL: url,

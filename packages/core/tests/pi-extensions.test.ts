@@ -10,7 +10,7 @@ import {
 } from "./helpers/llmock-helper.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
-const HOME_DIR = "/home/user";
+const HOME_DIR = "/home/agentos";
 const WORKSPACE_DIR = `${HOME_DIR}/workspace`;
 const PI_AGENT_DIR = `${HOME_DIR}/.pi/agent`;
 const EXTENSIONS_DIR = `${PI_AGENT_DIR}/extensions`;

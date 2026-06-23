@@ -52,7 +52,7 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 	"/mnt",
 	"/media",
 	"/home",
-	"/home/user",
+	"/home/agentos",
 	"/workspace",
 	"/usr",
 	"/usr/bin",

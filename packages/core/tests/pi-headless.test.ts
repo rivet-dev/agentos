@@ -56,7 +56,7 @@ async function createPiVm(mockUrl: string): Promise<AgentOs> {
 }
 
 async function createVmPiHome(vm: AgentOs, mockUrl: string): Promise<string> {
-	const homeDir = "/home/user";
+	const homeDir = "/home/agentos";
 	await vm.mkdir(`${homeDir}/.pi/agent`, { recursive: true });
 	await vm.writeFile(
 		`${homeDir}/.pi/agent/models.json`,
@@ -77,7 +77,7 @@ async function createVmPiHome(vm: AgentOs, mockUrl: string): Promise<string> {
 }
 
 async function createVmWorkspace(vm: AgentOs): Promise<string> {
-	const workspaceDir = "/home/user/workspace";
+	const workspaceDir = "/home/agentos/workspace";
 	await vm.mkdir(workspaceDir, { recursive: true });
 	return workspaceDir;
 }

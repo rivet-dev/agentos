@@ -146,16 +146,16 @@ async fn session_surface_create_prompt_events_close() {
         "prompt(unknown) must return SessionNotFound"
     );
 
-    let home_dir = "/home/user";
-    let workspace_dir = "/home/user/workspace";
-    os.mkdir("/home/user/.pi/agent", Default::default())
+    let home_dir = "/home/agentos";
+    let workspace_dir = "/home/agentos/workspace";
+    os.mkdir("/home/agentos/.pi/agent", Default::default())
         .await
         .expect("create pi config directory");
     os.mkdir(workspace_dir, Default::default())
         .await
         .expect("create workspace");
     os.write_file(
-        "/home/user/.pi/agent/models.json",
+        "/home/agentos/.pi/agent/models.json",
         FileContent::Text(format!(
             r#"{{
   "providers": {{

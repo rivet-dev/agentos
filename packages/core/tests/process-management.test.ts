@@ -20,7 +20,7 @@ describe("process management", () => {
 		// Write a script that stays alive for a few seconds
 		await vm.writeFile("/tmp/long-running.mjs", "setTimeout(() => {}, 30000);");
 		const { pid } = vm.spawn("node", ["/tmp/long-running.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 		});
 
 		const list = vm.listProcesses();
@@ -37,7 +37,7 @@ describe("process management", () => {
 	test("getProcess(pid) returns correct ProcessInfo for a running process", async () => {
 		await vm.writeFile("/tmp/alive.mjs", "setTimeout(() => {}, 30000);");
 		const { pid } = vm.spawn("node", ["/tmp/alive.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 		});
 
 		const info = vm.getProcess(pid);
@@ -57,7 +57,7 @@ describe("process management", () => {
 	test("stopProcess(pid) terminates the process gracefully", async () => {
 		await vm.writeFile("/tmp/stop-me.mjs", "setTimeout(() => {}, 30000);");
 		const { pid } = vm.spawn("node", ["/tmp/stop-me.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 		});
 
 		expect(vm.getProcess(pid).running).toBe(true);
@@ -73,7 +73,7 @@ describe("process management", () => {
 	test("killProcess(pid) force-kills the process", async () => {
 		await vm.writeFile("/tmp/kill-me.mjs", "setTimeout(() => {}, 30000);");
 		const { pid } = vm.spawn("node", ["/tmp/kill-me.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 		});
 
 		expect(vm.getProcess(pid).running).toBe(true);
@@ -89,7 +89,7 @@ describe("process management", () => {
 		// Write a script that exits immediately with code 0
 		await vm.writeFile("/tmp/quick-exit.mjs", "process.exit(0);");
 		const { pid } = vm.spawn("node", ["/tmp/quick-exit.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 		});
 
 		// Wait for it to exit
@@ -104,7 +104,7 @@ describe("process management", () => {
 	test("stopProcess on already-exited process is a no-op", async () => {
 		await vm.writeFile("/tmp/already-done.mjs", "process.exit(0);");
 		const { pid } = vm.spawn("node", ["/tmp/already-done.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 		});
 
 		await vm.waitProcess(pid);
@@ -150,7 +150,7 @@ describe("process management", () => {
 		let stdout = "";
 		let stderr = "";
 		const { pid } = vm.spawn("node", ["/tmp/parent.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 			onStdout: (chunk) => {
 				stdout += Buffer.from(chunk).toString("utf8");
 			},

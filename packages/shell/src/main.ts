@@ -60,7 +60,7 @@ function printUsage(): void {
 			"  agentos-shell [--work-dir <path>] [--] [command] [args...]",
 			"",
 			"Options:",
-			"  --work-dir <path>   Set the working directory inside the VM (default: /home/user)",
+			"  --work-dir <path>   Set the working directory inside the VM (default: /home/agentos)",
 			"  --help, -h          Show this help",
 			"",
 			"Examples:",
@@ -166,7 +166,7 @@ const vm = await AgentOs.create({
 	software,
 });
 
-const cwd = cli.workDir ?? "/home/user";
+const cwd = cli.workDir ?? "/home/agentos";
 
 console.error("agent-os shell");
 console.error(`cwd: ${cwd}`);

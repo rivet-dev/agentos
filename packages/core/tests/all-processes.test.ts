@@ -23,7 +23,7 @@ describe("allProcesses()", () => {
 		const before = vm.allProcesses();
 		await vm.writeFile("/tmp/stay.mjs", "setTimeout(() => {}, 30000);");
 		const { pid } = vm.spawn("node", ["/tmp/stay.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 		});
 
 		const after = vm.allProcesses();
@@ -39,7 +39,7 @@ describe("allProcesses()", () => {
 	test("ppid relationships are correct", async () => {
 		await vm.writeFile("/tmp/child.mjs", "setTimeout(() => {}, 30000);");
 		const { pid } = vm.spawn("node", ["/tmp/child.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 		});
 
 		const all = vm.allProcesses();
@@ -70,7 +70,7 @@ setTimeout(() => {}, 30000);
 		await vm.writeFile("/tmp/child.mjs", "setTimeout(() => {}, 30000);");
 
 		const { pid } = vm.spawn("node", ["/tmp/parent.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 			onStdout: (data) => {
 				const text = new TextDecoder().decode(data);
 				const match = text.match(/CHILD_PID:(\d+)/);

@@ -128,7 +128,7 @@ describe("AgentOs base filesystem", () => {
 			"PATH",
 		);
 		await expect(
-			vm.writeFile("/home/user/blocked.txt", "blocked"),
+			vm.writeFile("/home/agentos/blocked.txt", "blocked"),
 		).rejects.toThrow("EROFS");
 	});
 
@@ -238,7 +238,7 @@ describe("AgentOs base filesystem", () => {
 	});
 
 	test("snapshotRootFilesystem exports a reusable lower snapshot", async () => {
-		await vm.writeFile("/home/user/snap.txt", "snapshotted");
+		await vm.writeFile("/home/agentos/snap.txt", "snapshotted");
 		const snapshot = await vm.snapshotRootFilesystem();
 
 		const secondVm = await AgentOs.create({
@@ -249,7 +249,7 @@ describe("AgentOs base filesystem", () => {
 		});
 		try {
 			expect(
-				textDecoder.decode(await secondVm.readFile("/home/user/snap.txt")),
+				textDecoder.decode(await secondVm.readFile("/home/agentos/snap.txt")),
 			).toBe("snapshotted");
 			expect(textDecoder.decode(await secondVm.readFile("/etc/profile"))).toBe(
 				textDecoder.decode(await vm.readFile("/etc/profile")),

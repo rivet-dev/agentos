@@ -14,7 +14,7 @@ describe("agent-os ACP protocol", () => {
 				agentType: "codex",
 				runtime: AcpRuntimeKind.JavaScript,
 				adapterEntrypoint: "/root/node_modules/agent/adapter.mjs",
-				cwd: "/home/user",
+				cwd: "/home/agentos",
 				args: ["--model", "gpt-5"],
 				env: new Map([["SECURE_EXEC_KEEP_STDIN_OPEN", "1"]]),
 				protocolVersion: 1,

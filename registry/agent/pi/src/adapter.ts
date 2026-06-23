@@ -661,7 +661,7 @@ async function createAgentSession(options: {
 		await loadPiSdkRuntime();
 
 	const cwd = options.cwd;
-	const homeDir = process.env.HOME || "/home/user";
+	const homeDir = process.env.HOME || "/home/agentos";
 	const agentDir = join(homeDir, ".pi", "agent");
 	const settingsManager = SettingsManager.create(cwd, agentDir);
 	const result = await createPiAgentSession({
@@ -746,7 +746,7 @@ class PiSdkAgent implements Agent {
 	): Promise<NewSessionResponse> {
 		this.cwd = params.cwd;
 		process.chdir(params.cwd);
-		const agentDir = join(process.env.HOME || "/home/user", ".pi", "agent");
+		const agentDir = join(process.env.HOME || "/home/agentos", ".pi", "agent");
 		const {
 			DefaultResourceLoader,
 			SessionManager,

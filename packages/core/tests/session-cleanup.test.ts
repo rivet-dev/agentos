@@ -122,7 +122,7 @@ const REGISTRY_AGENTS: SessionCleanupAgent[] = [
 			}),
 		createSession: async (vm, mockUrl) =>
 			vm.createSession("claude", {
-				cwd: "/home/user",
+				cwd: "/home/agentos",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: mockUrl,
@@ -156,7 +156,7 @@ const REGISTRY_AGENTS: SessionCleanupAgent[] = [
 ];
 
 async function createVmPiHome(vm: AgentOs, mockUrl: string): Promise<string> {
-	const homeDir = "/home/user";
+	const homeDir = "/home/agentos";
 	await vm.mkdir(`${homeDir}/.pi/agent`, { recursive: true });
 	await vm.writeFile(
 		`${homeDir}/.pi/agent/models.json`,
@@ -177,7 +177,7 @@ async function createVmPiHome(vm: AgentOs, mockUrl: string): Promise<string> {
 }
 
 async function createVmPiWorkspace(vm: AgentOs): Promise<string> {
-	const workspaceDir = "/home/user/workspace";
+	const workspaceDir = "/home/agentos/workspace";
 	await vm.mkdir(workspaceDir, { recursive: true });
 	return workspaceDir;
 }

@@ -19,7 +19,7 @@ describe("flat spawn API", () => {
 		);
 
 		const { pid } = vm.spawn("node", ["/tmp/stderr-exit.mjs"], {
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 		});
 
 		const stderrChunks: string[] = [];
@@ -44,7 +44,7 @@ describe("flat spawn API", () => {
 
 		const { pid } = vm.spawn("node", ["/tmp/echo-stdin.mjs"], {
 			streamStdin: true,
-			env: { HOME: "/home/user" },
+			env: { HOME: "/home/agentos" },
 		});
 
 		const chunks: string[] = [];

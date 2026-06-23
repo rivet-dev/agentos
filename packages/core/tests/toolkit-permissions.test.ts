@@ -86,7 +86,7 @@ function commandHostCallbackFrame(command: string, args: string[]) {
 				type: "command",
 				command,
 				args,
-				cwd: "/home/user",
+				cwd: "/home/agentos",
 			},
 			timeout_ms: 30_000,
 		},

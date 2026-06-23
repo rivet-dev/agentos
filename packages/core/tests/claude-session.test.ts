@@ -179,7 +179,7 @@ describe("full createSession('claude')", () => {
 
 		try {
 			const session = await vm.createSession("claude", {
-				cwd: "/home/user",
+				cwd: "/home/agentos",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: mockUrl,
@@ -247,7 +247,7 @@ describe("full createSession('claude')", () => {
 		try {
 			await writeExecSyncScript(promptVm);
 			const session = await promptVm.createSession("claude", {
-				cwd: "/home/user",
+				cwd: "/home/agentos",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: promptMockUrl,
@@ -315,7 +315,7 @@ describe("full createSession('claude')", () => {
 		let sessionId: string | undefined;
 		try {
 			const session = await promptVm.createSession("claude", {
-				cwd: "/home/user",
+				cwd: "/home/agentos",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: promptMockUrl,
@@ -393,7 +393,7 @@ describe("full createSession('claude')", () => {
 		try {
 			await writeAsyncSpawnScript(promptVm);
 			const session = await promptVm.createSession("claude", {
-				cwd: "/home/user",
+				cwd: "/home/agentos",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: promptMockUrl,
@@ -456,7 +456,7 @@ describe("full createSession('claude')", () => {
 
 		try {
 			const session = await vm.createSession("claude", {
-				cwd: "/home/user",
+				cwd: "/home/agentos",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: mockUrl,
@@ -509,7 +509,7 @@ describe("full createSession('claude')", () => {
 
 	test("createSession('claude') supports cancelSession() and destroySession()", async () => {
 		const session = await vm.createSession("claude", {
-			cwd: "/home/user",
+			cwd: "/home/agentos",
 			env: {
 				ANTHROPIC_API_KEY: "mock-key",
 				ANTHROPIC_BASE_URL: mockUrl,
@@ -537,7 +537,7 @@ describe("full createSession('claude')", () => {
 
 		try {
 			const session = await vm.createSession("claude", {
-				cwd: "/home/user",
+				cwd: "/home/agentos",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: mockUrl,
@@ -574,7 +574,7 @@ describe("full createSession('claude')", () => {
 
 		try {
 			const session = await vm.createSession("claude", {
-				cwd: "/home/user",
+				cwd: "/home/agentos",
 				env: {
 					ANTHROPIC_API_KEY: "mock-key",
 					ANTHROPIC_BASE_URL: mockUrl,

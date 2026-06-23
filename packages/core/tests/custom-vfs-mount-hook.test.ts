@@ -3,7 +3,7 @@
  *
  * Original bug: there was no supported hook to inject a custom VFS mount at VM
  * creation, forcing callers to monkeypatch `ensureVm`/`createVm` to add a
- * host-synced session VFS (e.g. `/home/user/.pi/agent/sessions`).
+ * host-synced session VFS (e.g. `/home/agentos/.pi/agent/sessions`).
  *
  * Fix: `AgentOs.create({ mounts: [...] })` is a documented public option that
  * accepts `MountConfig[]`. A host-synced directory is injected via the public
@@ -26,7 +26,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs, createHostDirBackend } from "../src/index.js";
 
-const SESSION_MOUNT_PATH = "/home/user/.pi/agent/sessions";
+const SESSION_MOUNT_PATH = "/home/agentos/.pi/agent/sessions";
 
 describe("custom VFS mount injection hook on VM creation", () => {
 	let vm: AgentOs | undefined;

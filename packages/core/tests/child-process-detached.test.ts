@@ -371,7 +371,7 @@ function registerPiShapedShellBackendTests(): void {
 						"console.log('shell-resolved:' + shell);",
 						"const env = {",
 						"  ...process.env,",
-						"  PATH: '/home/user/.pi/agent/bin:' + (process.env.PATH || ''),",
+						"  PATH: '/home/agentos/.pi/agent/bin:' + (process.env.PATH || ''),",
 						"};",
 						"const pwdResult = spawnSync(shell, ['-c', 'pwd'], { cwd: '/tmp', env, encoding: 'utf8' });",
 						"console.log('pwd-status:' + pwdResult.status);",

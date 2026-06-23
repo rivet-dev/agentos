@@ -11,7 +11,7 @@ const MODULE_ACCESS_CWD = resolve(
 const SDK_PATH = "/root/node_modules/@mariozechner/pi-coding-agent/dist/index.js";
 const PROBE_TIMEOUT_MS = 5_000;
 const PROBE_ENV = {
-	HOME: "/home/user",
+	HOME: "/home/agentos",
 	PI_OFFLINE: "1",
 	PI_SKIP_VERSION_CHECK: "1",
 };
@@ -180,7 +180,7 @@ console.log(JSON.stringify({ exportCount: Object.keys(mod).length }));
 			target: "createCodingTools()",
 			script: `
 const sdk = await import(${JSON.stringify(SDK_PATH)});
-const tools = sdk.createCodingTools("/home/user/workspace");
+const tools = sdk.createCodingTools("/home/agentos/workspace");
 console.log(JSON.stringify({ toolCount: tools.length }));
 `,
 		},
@@ -191,7 +191,7 @@ console.log(JSON.stringify({ toolCount: tools.length }));
 			script: `
 ${MINIMAL_RESOURCE_LOADER_SOURCE}
 const sdk = await import(${JSON.stringify(SDK_PATH)});
-const cwd = "/home/user/workspace";
+const cwd = "/home/agentos/workspace";
 const created = await sdk.createAgentSession({
 	cwd,
 	sessionManager: sdk.SessionManager.inMemory(cwd),
@@ -313,7 +313,7 @@ async function runProbeCase(
 	let stdout = "";
 	let stderr = "";
 	try {
-		await vm.mkdir("/home/user/workspace", { recursive: true });
+		await vm.mkdir("/home/agentos/workspace", { recursive: true });
 		const probePath = `/tmp/pi-sdk-boot-probe-${index}.mjs`;
 		await vm.writeFile(probePath, probe.script);
 

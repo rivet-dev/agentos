@@ -29,7 +29,7 @@ const MODULE_ACCESS_CWD = resolve(
 	dirname(require.resolve("@rivet-dev/agentos-core")),
 	"..",
 );
-const HOME_DIR = "/home/user";
+const HOME_DIR = "/home/agentos";
 const WORKSPACE_DIR = `${HOME_DIR}/workspace`;
 
 // ── Extension source code ──────────────────────────────────────────
@@ -64,8 +64,8 @@ const vm = await AgentOs.create({
 });
 
 // Write the extension into Pi's global extensions directory.
-// In the VM, HOME is /home/user, so ~/.pi/agent/extensions/ resolves there.
-const extensionsDir = "/home/user/.pi/agent/extensions";
+// In the VM, HOME is /home/agentos, so ~/.pi/agent/extensions/ resolves there.
+const extensionsDir = "/home/agentos/.pi/agent/extensions";
 await vm.mkdir(extensionsDir, { recursive: true });
 await vm.mkdir(WORKSPACE_DIR, { recursive: true });
 await vm.writeFile(`${extensionsDir}/custom-greeting.js`, extensionSource);

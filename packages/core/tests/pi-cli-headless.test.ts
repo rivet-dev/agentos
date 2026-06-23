@@ -55,7 +55,7 @@ async function createPiCliVm(mockUrl: string): Promise<AgentOs> {
 }
 
 async function createVmPiHome(vm: AgentOs, mockUrl: string): Promise<string> {
-	const homeDir = "/home/user";
+	const homeDir = "/home/agentos";
 	await vm.mkdir(`${homeDir}/.pi/agent`, { recursive: true });
 	await vm.writeFile(
 		`${homeDir}/.pi/agent/models.json`,
@@ -76,14 +76,14 @@ async function createVmPiHome(vm: AgentOs, mockUrl: string): Promise<string> {
 }
 
 async function createVmWorkspace(vm: AgentOs): Promise<string> {
-	const workspaceDir = "/home/user/workspace";
+	const workspaceDir = "/home/agentos/workspace";
 	await vm.mkdir(workspaceDir, { recursive: true });
 	return workspaceDir;
 }
 
 describe("full createSession('pi-cli') inside the VM", () => {
 	test("runs the unmodified Pi CLI ACP flow end-to-end for write tool calls", async () => {
-		const workspacePath = "/home/user/workspace/notes.txt";
+		const workspacePath = "/home/agentos/workspace/notes.txt";
 		const fixtures = createToolFixtures(
 			{
 				name: "write",
@@ -161,7 +161,7 @@ describe("full createSession('pi-cli') inside the VM", () => {
 	// read path yet. Tracked in ~/.agents/todo/agentos-runtime-fixes.md
 	// (shell-exec redirect visibility).
 	test.skip("runs the unmodified Pi CLI ACP flow end-to-end for bash tool calls", async () => {
-		const workspacePath = "/home/user/workspace/bash-output.txt";
+		const workspacePath = "/home/agentos/workspace/bash-output.txt";
 		const fixtures = createToolFixtures(
 			{
 				name: "bash",

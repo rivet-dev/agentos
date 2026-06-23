@@ -135,22 +135,22 @@ async fn pi_session_create_prompt_close() {
     .expect("create VM for pi prompt");
 
     // Pi reads its provider endpoint from ~/.pi/agent/models.json (not just env). Point it at llmock.
-    os.mkdir("/home/user/.pi/agent", MkdirOptions { recursive: true })
+    os.mkdir("/home/agentos/.pi/agent", MkdirOptions { recursive: true })
         .await
         .expect("mkdir .pi/agent");
     let models = serde_json::json!({
         "providers": { "anthropic": { "baseUrl": url, "apiKey": "mock-key" } }
     })
     .to_string();
-    os.write_file("/home/user/.pi/agent/models.json", models.as_str())
+    os.write_file("/home/agentos/.pi/agent/models.json", models.as_str())
         .await
         .expect("write models.json");
-    os.mkdir("/home/user/workspace", MkdirOptions { recursive: true })
+    os.mkdir("/home/agentos/workspace", MkdirOptions { recursive: true })
         .await
         .expect("mkdir workspace");
 
     let mut env = BTreeMap::new();
-    env.insert("HOME".to_string(), "/home/user".to_string());
+    env.insert("HOME".to_string(), "/home/agentos".to_string());
     env.insert("ANTHROPIC_API_KEY".to_string(), "mock-key".to_string());
     env.insert("ANTHROPIC_BASE_URL".to_string(), url.clone());
     env.insert("PI_SKIP_VERSION_CHECK".to_string(), "1".to_string());
@@ -158,7 +158,7 @@ async fn pi_session_create_prompt_close() {
         .create_session(
             "pi",
             CreateSessionOptions {
-                cwd: Some("/home/user/workspace".to_string()),
+                cwd: Some("/home/agentos/workspace".to_string()),
                 env,
                 skip_os_instructions: true,
                 ..Default::default()

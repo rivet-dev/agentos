@@ -8,7 +8,7 @@ fn acp_protocol_round_trips_create_session() {
         agent_type: String::from("codex"),
         runtime: AcpRuntimeKind::JavaScript,
         adapter_entrypoint: String::from("/root/node_modules/agent/adapter.mjs"),
-        cwd: String::from("/home/user"),
+        cwd: String::from("/home/agentos"),
         args: vec![String::from("--model"), String::from("gpt-5")],
         env: [(
             String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),

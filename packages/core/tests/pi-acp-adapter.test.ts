@@ -105,7 +105,7 @@ console.log("agent:" + fs.existsSync("/root/node_modules/@mariozechner/pi-coding
 import { spawn } from "node:child_process";
 
 const child = spawn("node", ["/tmp/child-hello.mjs"], {
-	cwd: "/home/user",
+	cwd: "/home/agentos",
 	env: process.env,
 	stdio: "pipe",
 });
@@ -137,7 +137,7 @@ console.log(stdout.trim());
 		let stdout = "";
 		let stderr = "";
 		const { pid } = vm.spawn("node", ["/tmp/parent-hello.mjs"], {
-			cwd: "/home/user",
+			cwd: "/home/agentos",
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},
@@ -162,7 +162,7 @@ console.log(stdout.trim());
 import { spawn } from "node:child_process";
 
 const child = spawn("node", ["/tmp/child-undici.mjs"], {
-	cwd: "/home/user",
+	cwd: "/home/agentos",
 	env: process.env,
 	stdio: "pipe",
 });
@@ -194,7 +194,7 @@ console.log(stdout.trim());
 		let stdout = "";
 		let stderr = "";
 		const { pid } = vm.spawn("node", ["/tmp/parent-undici.mjs"], {
-			cwd: "/home/user",
+			cwd: "/home/agentos",
 			onStdout: (data: Uint8Array) => {
 				stdout += new TextDecoder().decode(data);
 			},

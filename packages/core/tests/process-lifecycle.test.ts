@@ -38,7 +38,7 @@ describe("process lifecycle teardown races", () => {
 			await vm.writeFile("/tmp/seed.txt", "seed");
 
 			vm.spawn("node", ["/tmp/hold-open.mjs"], {
-				env: { HOME: "/home/user" },
+				env: { HOME: "/home/agentos" },
 			});
 
 			const operations = Array.from({ length: 12 }, (_, index) =>
