@@ -19,17 +19,35 @@ holding an `AgentOs` core instance (`c.vars.agentOs`) and drive it directly (the
 extension → HTTP to host), and server-side `onSessionEvent`.
 
 ## Reproduction status (key finding)
-Reproduced their exact pattern on **native linux-x64** with their pinned versions, including a
-faithful replay of their actor sequence (create → seed writes → their three
-`createInMemoryFileSystem` JS-driver mounts → `createSession("pi")` with `cwd:"/workspace"` and
-`cwd:"/"`). **Q1–Q4 do NOT reproduce; `createSession("pi")` succeeds end-to-end.** Therefore
-their blockers are **environment-specific** — prime suspects: their **custom bundled adapter**
-(swapped over the stock `agentos-pi` adapter; the stock adapter works) and **Rosetta
-x86-emulation**. Decisive next test for them: run with the **stock adapter** and/or on **native
-linux-x64** (e.g. Railway prod), not OrbStack/Rosetta.
+Reproduced on **native linux-x64** with their pinned versions, escalating to **their actual code**:
+1. Faithful replay of their actor sequence (create → seed writes → their three
+   `createInMemoryFileSystem` JS-driver mounts → `createSession("pi")` with `cwd:"/workspace"`
+   and `cwd:"/"`) — **all pass.**
+2. **Their actual custom adapter, bundled with their actual `build-adapter.mjs`** (Proxy-stubbing
+   8 packages + `eval(require())` + minify), swapped over the stock `agentos-pi` adapter →
+   `createSession("pi")` reaches `session/new` and returns a sessionId in ~1.4s. **No chdir ENOENT.**
+3. **Their adapter UNBUNDLED** (runtime `import "@agentclientprotocol/sdk"`) → also resolves and
+   `createSession` succeeds. (The *stock* dylib adapter likewise imports `@agentclientprotocol/sdk`
+   at runtime and resolves.)
+
+**So Q1–Q4 do NOT reproduce on native, even with their exact adapter + flow + mounts.** Their
+blockers are **environment-specific**. Two root causes:
+- **Q1 (resolution)** = **node_modules hoist layout.** Core mounts the agent package's hoisted
+  `node_modules` tree at `/root/node_modules`; the adapter resolves `@agentclientprotocol/sdk` by
+  walking up from `/root/node_modules/@rivet-dev/agentos-pi`. In a **flat npm install** the dep is
+  hoisted top-level → resolves. In their monorepo install it isn't on that chain → "not found."
+  Bundling (their workaround) is correct; alternatively mount/hoist the dep onto the chain.
+- **Q2/Q3/Q4 (empty guest FS / no sh / writes invisible)** = **no native reproduction and no code
+  explanation** → the remaining uncontrolled variable is **OrbStack + Rosetta x86-emulation** of
+  the linux-x64 prebuilt (guest VFS/mount/exec syscalls misbehaving under emulation). Could be a
+  single shared cause (the sidecar's mount/VFS layer failing under emulation, which would explain
+  all three at once). **Not directly reproduced** (this host is native x64, can't run Rosetta).
+
+**Decisive test for them:** run on **native linux-x64** (their Railway prod is native
+linux-x64-glibc). If it works there but fails in OrbStack/Rosetta → emulation confirmed.
 
 Their own repro scripts (`scripts/diag-adapter.mjs`, `scripts/smoke-agentos.mjs`) drive their
-rivetkit server; the VM flow they wrap is what was replayed here.
+rivetkit server + swapped adapter; the VM flow + adapter they wrap is what was reproduced here.
 
 ---
 
@@ -38,10 +56,10 @@ rivetkit server; the VM flow they wrap is what was replayed here.
 | # | Issue | Finding | Status |
 |---|---|---|---|
 | 1 | **Q0** — native `agentOs()` actor can't host their custom actions / host toolkit / `onSessionEvent`; is wrapping the core class supported? | Yes — core-direct is the documented pattern (all 13 quickstarts). All 4 of their native-actor claims verified TRUE (`actions:{}`, no JS callbacks, callbacks parsed-and-dropped, `toolKits` not serialized). | ✅ Answered |
-| 2 | **Q1** — adapter `import @agentclientprotocol/sdk` → `_resolveModule returned non-string` | Not a resolver bug — means "not found in node_modules"; it's their **custom bundled adapter's** node_modules layout. Bundling is a valid fix; else mount the adapter's `node_modules`. | ◐ Diagnosed; error-message fix in **secure-exec PR #114** (diagnostics only) |
-| 3 | **Q2** — `chdir` ENOENT for every path incl `/` | Base rootfs **is** provisioned (proven on their version + full flow). Root cause is their custom adapter and/or Rosetta emulation, **not** the SDK. | ✅ Diagnosed (not our bug) |
-| 4 | **Q3** — `command not found: sh` | `sh`/`bash` **do** ship (in `@agentos-software/coreutils`, inside `common`); works in repro. Their "common dropped sh" belief is wrong (only the package *description* omits "sh"). | ✅ Diagnosed (not our bug) |
-| 5 | **Q4** — host `writeFile`/`mkdir` not visible to guest | Visible core-direct, **no mount required** (proven). Likely write-after-`createSession` ordering / a shadowing mount / env. | ✅ Diagnosed (not our bug) |
+| 2 | **Q1** — adapter `import @agentclientprotocol/sdk` → `_resolveModule returned non-string` | **Root cause: node_modules hoist layout.** Reproduced both stock & their adapter resolving the dep when hoisted flat; "not found" means it isn't on the `/root/node_modules` chain core mounts. Bundling (their workaround) is correct; else hoist/mount the dep. | ◐ Root-caused; error-message fix in **secure-exec PR #114** (diagnostics only) |
+| 3 | **Q2** — `chdir` ENOENT for every path incl `/` | Base rootfs **is** provisioned — proven on their version with **their actual bundled adapter** + full flow; `createSession` reaches `session/new`. Not reproducible on native → **Rosetta x86-emulation** is the leading cause. | ✅ Diagnosed (not an SDK bug) |
+| 4 | **Q3** — `command not found: sh` | `sh`/`bash` **do** ship (in `@agentos-software/coreutils`, inside `common`); works in repro. Their "common dropped sh" belief is wrong (only the package *description* omits "sh"). Likely same env (mount layer under emulation). | ✅ Diagnosed (not an SDK bug) |
+| 5 | **Q4** — host `writeFile`/`mkdir` not visible to guest | Visible core-direct, **no mount required** (proven w/ their flow). Likely write-after-`createSession` ordering, a shadowing mount, or the same emulation env. | ✅ Diagnosed (not an SDK bug) |
 | 6 | **Q5** — inherent to the VM model or core-class-specific? | **Neither** — full core-direct path (incl. `createSession("pi")`) reproduced working. | ✅ Answered |
 
 ---
