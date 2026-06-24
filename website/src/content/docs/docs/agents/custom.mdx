@@ -150,3 +150,7 @@ All built-in agents are defined exactly this way. Browse them for reference on [
 
 - [Defining software packages](/docs/custom-software/definition): the full descriptor reference, including every `agent` field (`staticEnv`, `env`, `launchArgs`), the `SoftwareContext` helpers, and the tool and WASM-command software types.
 - [Building binaries](/docs/custom-software/building-wasm): compile WASM command binaries and use the registry.
+
+## Debugging
+
+When a custom agent exits mid-turn or a tool call fails, capture the agent's stderr with the `onAgentStderr` hook on `AgentOs.create()`. The agent uses stdout for ACP, so stderr carries its logs and crash output. See [Debugging](/docs/debugging) for that hook and the runtime (sidecar) logs.

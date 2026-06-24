@@ -6,33 +6,21 @@ release *args:
 preview-publish REF:
 	gh workflow run .github/workflows/publish.yaml --ref "{{ REF }}"
 
-# Point the workspace at PUBLISHED secure-exec versions (CI/release default).
-secure-exec-pinned:
-	node scripts/secure-exec-dep.mjs pinned
-
-# Point the workspace at the sibling ../secure-exec checkout for local hacking.
+# Point deps at the sibling ../secure-exec checkout for local hacking.
 secure-exec-local:
 	node scripts/secure-exec-dep.mjs local
 
-# Bump the pinned @secure-exec/* npm version (core/s3/google-drive/sandbox).
+# Pin secure-exec to a published version. The @secure-exec/* npm packages and the
+# secure-exec-* crates are always the same version, so this sets both and switches
+# to pinned mode.
 secure-exec-set-version VERSION:
+	node scripts/secure-exec-dep.mjs pinned
 	node scripts/secure-exec-dep.mjs set-secure-exec-version "{{ VERSION }}"
-
-# Bump the pinned @agentos-software/* software-package npm version.
-agentos-pkgs-set-version VERSION:
-	node scripts/secure-exec-dep.mjs set-agentos-pkgs-version "{{ VERSION }}"
-
-# Bump BOTH scopes at once (only when secure-exec + software publish in lockstep).
-secure-exec-set-all-versions VERSION:
-	node scripts/secure-exec-dep.mjs set-version "{{ VERSION }}"
-
-# Bump the @secure-exec/* crate version requirement (must match the sibling crate version).
-secure-exec-set-crate-version VERSION:
 	node scripts/secure-exec-dep.mjs set-crate-version "{{ VERSION }}"
 
-# Show the current secure-exec dependency mode + pinned versions.
-secure-exec-status:
-	node scripts/secure-exec-dep.mjs status
+# Pin the @agentos-software/* software packages (separate version track).
+agentos-pkgs-set-version VERSION:
+	node scripts/secure-exec-dep.mjs set-agentos-pkgs-version "{{ VERSION }}"
 
 dev-shell *args:
 	pnpm --filter @rivet-dev/agentos-dev-shell dev-shell -- "$@"

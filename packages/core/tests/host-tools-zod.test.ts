@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
+import { z as z3 } from "zod3";
 import {
 	HostToolSchemaConversionError,
 	zodToJsonSchema,
@@ -84,6 +85,60 @@ describe("zodToJsonSchema", () => {
 				},
 			},
 			required: ["tags", "options"],
+		});
+	});
+
+	test("converts equivalent Zod v3 schemas", () => {
+		const schema = z3.object({
+			url: z3
+				.string()
+				.min(1)
+				.max(128)
+				.regex(/^https?:\/\//)
+				.describe("Target URL"),
+			fullPage: z3.boolean().optional(),
+			format: z3.enum(["png", "jpg"]).describe("Image format"),
+			width: z3.number().min(320).max(1920).optional(),
+			tags: z3.array(z3.string()),
+			mode: z3.union([z3.literal("fast"), z3.literal("safe")]),
+			env: z3.record(z3.string(), z3.string()).optional(),
+		});
+
+		expect(zodToJsonSchema(schema)).toEqual({
+			type: "object",
+			properties: {
+				url: {
+					type: "string",
+					minLength: 1,
+					maxLength: 128,
+					pattern: "^https?:\\/\\/",
+					description: "Target URL",
+				},
+				fullPage: { type: "boolean" },
+				format: {
+					type: "string",
+					enum: ["png", "jpg"],
+					description: "Image format",
+				},
+				width: {
+					type: "number",
+					minimum: 320,
+					maximum: 1920,
+				},
+				tags: {
+					type: "array",
+					items: { type: "string" },
+				},
+				mode: {
+					type: "string",
+					enum: ["fast", "safe"],
+				},
+				env: {
+					type: "object",
+					additionalProperties: { type: "string" },
+				},
+			},
+			required: ["url", "format", "tags", "mode"],
 		});
 	});
 

@@ -1,4 +1,5 @@
 import type { ZodType } from "zod";
+import { zodToJsonSchema as zodV3ToJsonSchema } from "zod-to-json-schema";
 
 const OPTIONAL_WRAPPER_TYPES = new Set(["default", "optional"]);
 const TRANSPARENT_WRAPPER_TYPES = new Set([
@@ -40,6 +41,9 @@ export class HostToolSchemaConversionError extends Error {
 }
 
 function getSchemaDef(schema: unknown): JsonObject {
+	if (!schema || typeof schema !== "object") {
+		return {};
+	}
 	return ((
 		schema as {
 			_def?: JsonObject;
@@ -195,7 +199,8 @@ function validateSchema(schema: ZodType, path: string) {
 	}
 
 	if (typeName === "array") {
-		const itemSchema = getSchemaDef(schema).element as ZodType | undefined;
+		const def = getSchemaDef(schema);
+		const itemSchema = (def.element ?? def.type) as ZodType | undefined;
 		if (!itemSchema) {
 			throw new HostToolSchemaConversionError(
 				path,
@@ -246,8 +251,12 @@ function validateSchema(schema: ZodType, path: string) {
 	}
 
 	if (typeName === "literal") {
-		const values = getSchemaDef(schema).values;
-		const literalValues = Array.isArray(values) ? values : [];
+		const def = getSchemaDef(schema);
+		const literalValues = Array.isArray(def.values)
+			? def.values
+			: "value" in def
+				? [def.value]
+				: [];
 		const [literalValue] = literalValues;
 		if (
 			literalValues.length !== 1 ||
@@ -331,19 +340,32 @@ function findUnsupportedGeneratedKeyword(
 	return null;
 }
 
-export function zodToJsonSchema(schema: ZodType): unknown {
-	validateSchema(schema, "$");
-
-	const jsonSchema = (
+function generateJsonSchema(schema: ZodType): unknown {
+	const nativeJsonSchema = (
 		schema as ZodType & { toJSONSchema?: () => unknown }
 	).toJSONSchema?.();
-	if (!jsonSchema) {
+	if (nativeJsonSchema) {
+		return nativeJsonSchema;
+	}
+
+	const generated = zodV3ToJsonSchema(schema as never, {
+		$refStrategy: "none",
+		target: "jsonSchema7",
+	});
+	if (!generated || (typeof generated === "object" && Object.keys(generated).length === 0)) {
 		throw new HostToolSchemaConversionError(
 			"$",
 			displayTypeName(normalizeTypeName(schema)),
-			"schema does not expose toJSONSchema()",
+			"schema cannot be converted to JSON Schema",
 		);
 	}
+	return generated;
+}
+
+export function zodToJsonSchema(schema: ZodType): unknown {
+	validateSchema(schema, "$");
+
+	const jsonSchema = generateJsonSchema(schema);
 
 	const unsupportedKeyword = findUnsupportedGeneratedKeyword(jsonSchema, "$");
 	if (unsupportedKeyword) {

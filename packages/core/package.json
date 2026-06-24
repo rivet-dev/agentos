@@ -66,7 +66,8 @@
 		"isolated-vm": "^6.0.0",
 		"long-timeout": "^0.1.1",
 		"minimatch": "^10.2.4",
-		"zod": "^4.1.11"
+		"zod": "^4.1.11",
+		"zod-to-json-schema": "^3.25.2"
 	},
 	"devDependencies": {
 		"@anthropic-ai/claude-agent-sdk": "^0.2.87",
@@ -107,6 +108,7 @@
 		"sandbox-agent": "^0.4.2",
 		"typescript": "^5.7.2",
 		"vitest": "^2.1.8",
-		"ws": "^8.18.0"
+		"ws": "^8.18.0",
+		"zod3": "npm:zod@^3.25.76"
 	}
 }

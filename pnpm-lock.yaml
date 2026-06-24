@@ -82,20 +82,20 @@ catalogs:
       specifier: 0.3.0-rc.2
       version: 0.3.0-rc.2
     '@secure-exec/core':
-      specifier: 0.0.0-nathan-workspace-binding-agentos.83db3e3
-      version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      specifier: 0.0.0-codex-native-sidecar-platform-ci.117d645
+      version: 0.0.0-codex-native-sidecar-platform-ci.117d645
     '@secure-exec/google-drive':
-      specifier: 0.0.0-nathan-workspace-binding-agentos.83db3e3
-      version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      specifier: 0.0.0-codex-native-sidecar-platform-ci.117d645
+      version: 0.0.0-codex-native-sidecar-platform-ci.117d645
     '@secure-exec/nodejs':
       specifier: 0.2.1
       version: 0.2.1
     '@secure-exec/s3':
-      specifier: 0.0.0-nathan-workspace-binding-agentos.83db3e3
-      version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      specifier: 0.0.0-codex-native-sidecar-platform-ci.117d645
+      version: 0.0.0-codex-native-sidecar-platform-ci.117d645
     '@secure-exec/sandbox':
-      specifier: 0.0.0-nathan-workspace-binding-agentos.83db3e3
-      version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      specifier: 0.0.0-codex-native-sidecar-platform-ci.117d645
+      version: 0.0.0-codex-native-sidecar-platform-ci.117d645
 
 overrides:
   '@rivet-dev/agentos-core': workspace:*
@@ -128,7 +128,7 @@ importers:
         version: link:packages/core
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -208,7 +208,7 @@ importers:
         version: link:../../packages/agentos-sandbox
       '@secure-exec/s3':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
       dockerode:
         specifier: ^4.0.9
         version: 4.0.10
@@ -279,7 +279,7 @@ importers:
         version: link:../core
       '@secure-exec/sandbox':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.0.0-codex-native-sidecar-platform-ci.117d645(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -335,7 +335,7 @@ importers:
         version: 0.6.2
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -360,6 +360,9 @@ importers:
       zod:
         specifier: ^4.1.11
         version: 4.3.6
+      zod-to-json-schema:
+        specifier: ^3.25.2
+        version: 3.25.2(zod@4.3.6)
     devDependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
@@ -456,10 +459,10 @@ importers:
         version: link:../agentos-sandbox
       '@secure-exec/google-drive':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
       '@secure-exec/s3':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -478,6 +481,9 @@ importers:
       ws:
         specifier: ^8.18.0
         version: 8.20.0(bufferutil@4.1.0)
+      zod3:
+        specifier: npm:zod@^3.25.76
+        version: zod@3.25.76
 
   packages/dev-shell:
     dependencies:
@@ -536,7 +542,7 @@ importers:
     dependencies:
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -558,7 +564,7 @@ importers:
     dependencies:
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-workspace-binding-agentos.83db3e3
+        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
       pyodide:
         specifier: ^0.28.3
         version: 0.28.3(bufferutil@4.1.0)
@@ -2917,50 +2923,50 @@ packages:
     resolution: {integrity: sha512-trO//ypJBSt5xkewuol9LOykvDgHwUXq8R+yQVS+0CmpN3lYUtewHkb+At9RVGRhDMmJZY2oasaXDnhfurQ33w==}
     hasBin: true
 
-  '@secure-exec/core@0.0.0-nathan-workspace-binding-agentos.83db3e3':
-    resolution: {integrity: sha512-GKGY8U1wI/R/Rl8WTqQ+xLqu2FALZL0XzfIxolZVhfR/iy7mwkSN5phO6cimM5qjxwSTkTCEEvoVrBoakedRBQ==}
+  '@secure-exec/core@0.0.0-codex-native-sidecar-platform-ci.117d645':
+    resolution: {integrity: sha512-bomEzynHLrGIF+k1S6zIQHJwdQw8V/WfEGKL9nj+iMC8OlfDnaJ26SwV8Yk3M7KwjKpznQsMNmPeIK5iFZ0s8A==}
 
   '@secure-exec/core@0.2.1':
     resolution: {integrity: sha512-HsnUv6gClpMA1BBRmX86j30TKTZtgJC/fO1tVavr7IpM2zNKbHU8LgSlBd7mv2SNy02ImTmU/GnQ3aYB4NSbEg==}
 
-  '@secure-exec/google-drive@0.0.0-nathan-workspace-binding-agentos.83db3e3':
-    resolution: {integrity: sha512-zhd2O7jit5rghIQN8n+GZtpiiwYni8IhNHZOEgWcK0/UlYL5FecdEhGLeCo0rWTXV7WFPGfGPhX3aJOQKgnwOA==}
+  '@secure-exec/google-drive@0.0.0-codex-native-sidecar-platform-ci.117d645':
+    resolution: {integrity: sha512-3s7entAvaBHOYDHpg4g5dbaC91FsbZaHProA0B75kk6+EV2VLb7s0pAgRips9J1slh4RdDOolw6TRd8CrHXHsg==}
 
   '@secure-exec/nodejs@0.2.1':
     resolution: {integrity: sha512-UJMJqVFxexlHJV0Q9nWURvrz6GElj8673DDOOFln6FHR6JS+9SaSU3eISrN158DuNC3SFi4rgjb/scKnK4YOYQ==}
 
-  '@secure-exec/s3@0.0.0-nathan-workspace-binding-agentos.83db3e3':
-    resolution: {integrity: sha512-/4w480tR0UZh0ohUTyjDipkEVchJsflEFPTeeYYBEkDphEoDWz1PlshpAQWBGTkC3sRd9QyhzEsEXVSNMvrmQA==}
+  '@secure-exec/s3@0.0.0-codex-native-sidecar-platform-ci.117d645':
+    resolution: {integrity: sha512-Q5ESnaQkPc1PxDXO//Yysk3MxJOE9xKA2EVvZjKmdqyKyiesgnV1/oik4LKb8JGBYO63mokOqprxk7MO9R7g5w==}
 
-  '@secure-exec/sandbox@0.0.0-nathan-workspace-binding-agentos.83db3e3':
-    resolution: {integrity: sha512-yVninZkFt4BHtgNX2d3bGKqlORdlrIXvQLpOnqpaeMIHbP0IJSbGd7jRbk4HAFYRo8JKcEHo/dr8dOUBUF9lPQ==}
+  '@secure-exec/sandbox@0.0.0-codex-native-sidecar-platform-ci.117d645':
+    resolution: {integrity: sha512-zjwLoKGIJhSggKfEdcRrXv6AXJUiFvjCCPWy/v3R2uGr5EZTUp6KsECmzggzcT/6OxN54A46Eb/8ysZgEiyfbA==}
 
-  '@secure-exec/sidecar-darwin-arm64@0.0.0-nathan-workspace-binding-agentos.83db3e3':
-    resolution: {integrity: sha512-3YRc7fe9tt7HRpeWXN6UXaiswLOfRmuUrLJkKPL03Bbxw+sOOiHNBzcmVRkoR4nMOfrv11sAwudIlydSylxW1Q==}
+  '@secure-exec/sidecar-darwin-arm64@0.0.0-codex-native-sidecar-platform-ci.117d645':
+    resolution: {integrity: sha512-cQe2UnN7lj4htBSablaPCv6kmzybUADXyWCfRRQKKzV5UD204+Hh63wtZ/wyzs4N7kQaoGqtVSNfskR0c4/Z+A==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [darwin]
 
-  '@secure-exec/sidecar-darwin-x64@0.0.0-nathan-workspace-binding-agentos.83db3e3':
-    resolution: {integrity: sha512-oGN8HWR6VnL22BjZeoJ/MVQTqGWzfLhpx4x4Pjw11cX6FU7/7sEP54zHfp8q+8f7zOHI0+plDOHXYEQ+mIi15g==}
+  '@secure-exec/sidecar-darwin-x64@0.0.0-codex-native-sidecar-platform-ci.117d645':
+    resolution: {integrity: sha512-KfDXmf65TDgD9fKA/fuIpqgsSmy6mGWfvKNGOELNii9aAj19aw5DKt0Sh9AjL4BVTkKxlkQRfhctTuYTF+LyzQ==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [darwin]
 
-  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-nathan-workspace-binding-agentos.83db3e3':
-    resolution: {integrity: sha512-+V75dmjpM87mjqW0oJZqbwCAqirKFeP6hRRIb+Ujrqy4rBuWCDC8QZdLZacF0S7gn8sWW7GcbBScTY2mgb2Q4A==}
+  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-codex-native-sidecar-platform-ci.117d645':
+    resolution: {integrity: sha512-antjZRycgVuCcnQRoZV+By0isj6d1d0s/MbZs8t6Ssz4NNJKHeiRZUMEZ8H70Irywh1iFLcilP7hfau1nA4z5w==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [linux]
 
-  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-nathan-workspace-binding-agentos.83db3e3':
-    resolution: {integrity: sha512-OS+dS3WnX5HeBI0deeL/0weLeSUGGLofYM4pklemjH19V1TynGs2eZw4Wrkeh2IRmsK+DtNGwZ730yra4AVW8g==}
+  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-codex-native-sidecar-platform-ci.117d645':
+    resolution: {integrity: sha512-sXlgTa7r9x0Y8g35RJbUqwk3V7J/Rz/U6p4kMQ77tD+j7tj4L0sxDZn8n02z40iA7+OFD58BImoKOUNHOzEMkg==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [linux]
 
-  '@secure-exec/sidecar@0.0.0-nathan-workspace-binding-agentos.83db3e3':
-    resolution: {integrity: sha512-TsRIzKQfBH6CBRBdY17pHwZudMieuMar2xoLssbOGKnb3C5BvKMt/3yaANerPxVxH3LYs8KLjyLaCujSaRErSA==}
+  '@secure-exec/sidecar@0.0.0-codex-native-sidecar-platform-ci.117d645':
+    resolution: {integrity: sha512-kij9InI4RXl2ZLPZKhtcNMYiq/wQQjejq5yOuJnXULeH9iNG7IrGeQ6bMh346ef7mxUL1XnT7Ptv57gB8cWukg==}
     engines: {node: '>=20'}
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
@@ -9697,18 +9703,19 @@ snapshots:
       '@sandbox-agent/cli-win32-x64': 0.4.2
     optional: true
 
-  '@secure-exec/core@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+  '@secure-exec/core@0.0.0-codex-native-sidecar-platform-ci.117d645':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
-      '@secure-exec/sidecar': 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      '@secure-exec/sidecar': 0.0.0-codex-native-sidecar-platform-ci.117d645
+      zod: 4.3.6
 
   '@secure-exec/core@0.2.1':
     dependencies:
       better-sqlite3: 12.8.0
 
-  '@secure-exec/google-drive@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+  '@secure-exec/google-drive@0.0.0-codex-native-sidecar-platform-ci.117d645':
     dependencies:
-      '@secure-exec/core': 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      '@secure-exec/core': 0.0.0-codex-native-sidecar-platform-ci.117d645
 
   '@secure-exec/nodejs@0.2.1':
     dependencies:
@@ -9721,13 +9728,13 @@ snapshots:
       node-stdlib-browser: 1.3.1
       web-streams-polyfill: 4.2.0
 
-  '@secure-exec/s3@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+  '@secure-exec/s3@0.0.0-codex-native-sidecar-platform-ci.117d645':
     dependencies:
-      '@secure-exec/core': 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      '@secure-exec/core': 0.0.0-codex-native-sidecar-platform-ci.117d645
 
-  '@secure-exec/sandbox@0.0.0-nathan-workspace-binding-agentos.83db3e3(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
+  '@secure-exec/sandbox@0.0.0-codex-native-sidecar-platform-ci.117d645(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
     dependencies:
-      '@secure-exec/core': 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      '@secure-exec/core': 0.0.0-codex-native-sidecar-platform-ci.117d645
       sandbox-agent: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
     transitivePeerDependencies:
       - '@cloudflare/sandbox'
@@ -9741,24 +9748,24 @@ snapshots:
       - modal
       - zod
 
-  '@secure-exec/sidecar-darwin-arm64@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+  '@secure-exec/sidecar-darwin-arm64@0.0.0-codex-native-sidecar-platform-ci.117d645':
     optional: true
 
-  '@secure-exec/sidecar-darwin-x64@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+  '@secure-exec/sidecar-darwin-x64@0.0.0-codex-native-sidecar-platform-ci.117d645':
     optional: true
 
-  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-codex-native-sidecar-platform-ci.117d645':
     optional: true
 
-  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-codex-native-sidecar-platform-ci.117d645':
     optional: true
 
-  '@secure-exec/sidecar@0.0.0-nathan-workspace-binding-agentos.83db3e3':
+  '@secure-exec/sidecar@0.0.0-codex-native-sidecar-platform-ci.117d645':
     optionalDependencies:
-      '@secure-exec/sidecar-darwin-arm64': 0.0.0-nathan-workspace-binding-agentos.83db3e3
-      '@secure-exec/sidecar-darwin-x64': 0.0.0-nathan-workspace-binding-agentos.83db3e3
-      '@secure-exec/sidecar-linux-arm64-gnu': 0.0.0-nathan-workspace-binding-agentos.83db3e3
-      '@secure-exec/sidecar-linux-x64-gnu': 0.0.0-nathan-workspace-binding-agentos.83db3e3
+      '@secure-exec/sidecar-darwin-arm64': 0.0.0-codex-native-sidecar-platform-ci.117d645
+      '@secure-exec/sidecar-darwin-x64': 0.0.0-codex-native-sidecar-platform-ci.117d645
+      '@secure-exec/sidecar-linux-arm64-gnu': 0.0.0-codex-native-sidecar-platform-ci.117d645
+      '@secure-exec/sidecar-linux-x64-gnu': 0.0.0-codex-native-sidecar-platform-ci.117d645
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     optional: true

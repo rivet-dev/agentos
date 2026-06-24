@@ -136,6 +136,7 @@ export const siteConfig = {
 					label: "More",
 					items: [
 						{ slug: "docs/core", label: "Core SDK" },
+						{ slug: "docs/debugging", label: "Debugging", attrs: { "data-icon": "bug" } },
 						{ slug: "docs/benchmarks" },
 						{ slug: "docs/cost-evaluation", label: "Cost Evaluation" },
 					],

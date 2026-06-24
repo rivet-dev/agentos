@@ -5,12 +5,39 @@ Agent OS is the agent-facing wrapper around secure-exec. It provides ACP session
 ## Boundaries
 
 - secure-exec dependency workflow. Manage the secure-exec dependency ONLY through `scripts/secure-exec-dep.mjs` (the `just secure-exec-*` recipes); never hand-edit the `path` / `version` / `catalog:` pins.
-  - Testing against local secure-exec changes: run `just secure-exec-local` to repoint npm (`link:`) and crates (`path = "../secure-exec/..."`) at the sibling checkout, then `node scripts/secure-exec-dep.mjs set-crate-version <sibling-version>` so the Cargo version requirement matches the sibling crate version (otherwise cargo cannot resolve the path deps). Use `just secure-exec-status` to inspect. This mode is for local builds/tests ONLY.
+  - Testing against local secure-exec changes: run `just secure-exec-local` to repoint npm (`link:`) and crates (`path = "../secure-exec/..."`) at the sibling checkout, then `node scripts/secure-exec-dep.mjs set-crate-version <sibling-version>` so the Cargo version requirement matches the sibling crate version (otherwise cargo cannot resolve the path deps). Also run `pnpm install` in `../secure-exec` first, or cargo panics in `v8-runtime/build.rs` with "missing Node dependencies at .../packages/build-tools/node_modules" (the V8 bridge assets are built from there). Use `just secure-exec-status` to inspect. This mode is for local builds/tests ONLY.
   - Pushing changes that depend on secure-exec changes: NEVER push with local (`path:` / `link:`) dependencies. First preview-publish the secure-exec changes to their own secure-exec branch (the `preview-publish-secure-exec` flow), then point agent-os back at that exact published version with `just secure-exec-pinned` + `just secure-exec-set-version <version>` (and `set-crate-version <version>` for the crates). Only commit/push the pinned-to-remote state.
 - Keep generic runtime, kernel, VFS, language execution, and registry software behavior in secure-exec.
 - Agent OS owns ACP, sessions, agent adapters, toolkit semantics, quickstarts, and the AgentOs facade.
 - Call OS instances VMs, never sandboxes.
 - The protocol has no backwards compatibility. Clients and the sidecar ship in same-version lockstep, so never add protocol or config versioning, runtime negotiation, fallbacks, or converters. Configs such as `CreateVmConfig` carry no `version` field; the single same-version wire handshake is the only version check. Change the protocol freely and update both sides together.
+
+## Development
+
+### secure-exec dependency versions (`just`)
+
+Two independent version tracks:
+- **secure-exec** — the `@secure-exec/*` npm packages and the `secure-exec-*` Cargo crates always share **one** version (npm and crates are kept in sync; pin both to the same `<v>`).
+- **`@agentos-software/*`** software packages (registry agents / WASM commands) are on a **separate** track and version independently of secure-exec.
+
+Manage them ONLY via these recipes (never hand-edit `path`/`version`/`catalog:` pins):
+- `just secure-exec-local` — point deps at the sibling `../secure-exec` checkout for local hacking.
+- `just secure-exec-set-version <v>` — pin secure-exec to a published version: sets the `@secure-exec/*` npm packages **and** the `secure-exec-*` crates (same `<v>`, they're in sync) and switches to pinned mode.
+- `just agentos-pkgs-set-version <v>` — pin the `@agentos-software/*` software packages (separate version track).
+
+### Depending on unreleased secure-exec changes
+
+agent-os builds against secure-exec crates + npm packages, so a secure-exec change must reach agent-os before it can be pushed. NEVER push with local (`path:`/`link:`) deps. Flow: preview-publish the secure-exec branch (the `preview-publish-secure-exec` skill), then `just secure-exec-set-version <published-version>` (pins npm + crates + switches to pinned mode), and push only that pinned state. Caveat: a preview publishes npm but the crates.io job is dry-run/skipped — a secure-exec *crate* change only flows locally (`secure-exec-local`) or via a real crates.io release.
+
+### Preview-publishing agent-os
+
+`just preview-publish <branch>` dispatches `.github/workflows/publish.yaml` to cut a **preview** (debug build, npm-only, dist-tag = sanitized branch name) — for handing a build to an external project. **Preview-publish is for previews ONLY; never cut a release with it.** Releases go through `just release` (the `scripts/publish` flow).
+
+### Testing a local build from an external project (same machine)
+
+To consume an unpublished agent-os build in another project on this machine:
+- **npm:** `pnpm -r build`, then either `pnpm pack` the package(s) and `npm install ./rivet-dev-agentos-*.tgz` in the external project, or add a `link:`/`file:` override (e.g. `"@rivet-dev/agentos": "link:/abs/path/agent-os/packages/agentos"`). The sidecar binary ships as `@rivet-dev/agentos-sidecar`.
+- **cargo:** point the external Cargo project at the local crate via a path dep or `[patch.crates-io]` override (e.g. `[patch.crates-io] agentos-sidecar = { path = "/abs/path/agent-os/crates/agentos-sidecar" }`).
 
 ## Security Model
 
@@ -41,6 +68,7 @@ Trust model (decide which side of the boundary something is on before judging wh
 
 ## Website And Docs
 
+- External/consumer usage (installing `@rivet-dev/agentos` and using it in your own project) is documented in the website quickstart + Agents/Custom Software pages under `website/`, not in this file. This `CLAUDE.md` is contributor/maintainer-only.
 - The Agent OS website and docs live in `website/` (Astro + Starlight) and deploy to `agentos-sdk.dev` (docs at `agentos-sdk.dev/docs`). The marketing pages and docs were migrated out of `rivet.dev/agent-os` and `rivet.dev/docs/agent-os`, which now 301-redirect to this domain.
 - Docs styling is owned by the shared **`@rivet-dev/docs-theme`** repo (`github.com/rivet-dev/docs-theme`), consumed via `github:rivet-dev/docs-theme#<tag>` and wired in via `...docsTheme(starlight, siteConfig)`. To change any docs styling (palette, header, sidebar, code blocks, fonts), edit that repo and follow its CLAUDE.md release workflow — never restyle docs in `website/src`. This site owns only content + `website/docs.config.mjs` (sidebar icons via each item's `attrs['data-icon']`).
 - Architecture reference docs live in `website/src/content/docs/docs/architecture/` and are surfaced in `website/docs.config.mjs` under Reference → Advanced → Architecture. Treat these pages as the canonical human-facing architecture reference. When architecture behavior changes or new architecture is added, recommend the corresponding docs update to the user; do not proactively edit the docs unless the user asks for docs work or the task explicitly includes it.
