@@ -126,6 +126,7 @@ export const siteConfig = {
 								{ slug: "docs/architecture/networking", label: "Networking" },
 								{ slug: "docs/architecture/posix-syscalls", label: "POSIX Syscalls" },
 								{ slug: "docs/architecture/compiler-toolchain", label: "Compiler Toolchain" },
+								{ slug: "docs/architecture/limits-and-observability", label: "Limits & Observability" },
 								{ slug: "docs/system-prompt", label: "System Prompt" },
 								{ slug: "docs/persistence", label: "Persistence & Sleep" },
 							],
