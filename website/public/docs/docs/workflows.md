@@ -22,4 +22,4 @@ Output of one agent session feeds into the next. Each session is created and com
 - Pass data between steps via the filesystem or step return values, not session state.
 - Keep `state` changes and other actor-local side effects inside `ctx.step()` callbacks; use non-step workflow code (queue waits, loops, sleeps) only for orchestration.
 - Reach the agentOS VM, a separate actor, from inside a step with `ctx.client()`.
-- See [Workflows](/docs/actors/workflows) for the full workflow API reference including timers, joins, and races.
+- See [Workflows](https://rivet.dev/docs/actors/workflows) for the full workflow API reference including timers, joins, and races.

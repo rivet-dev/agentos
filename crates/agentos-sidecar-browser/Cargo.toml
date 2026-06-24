@@ -6,8 +6,24 @@ license.workspace = true
 repository.workspace = true
 description = "Browser Agent OS sidecar wrapper"
 
+# cdylib for the wasm32 browser build (wasm-pack); rlib so native tests + the
+# workspace can still link it as a library.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
+# Host-free deps ONLY (this crate compiles to wasm32). Do NOT add agentos-sidecar
+# (native: tokio/mio + native secure-exec-sidecar). Real ACP logic comes from a
+# future host-free agentos-sidecar-core.
 agentos-protocol = { workspace = true }
-agentos-sidecar = { workspace = true }
+agentos-sidecar-core = { workspace = true }
 secure-exec-bridge = { workspace = true }
 secure-exec-sidecar-browser = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+serde_bare = "0.5"

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Secure Exec — browser agent with Chrome on-device inference</title>
+		<style>
+			body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; }
+			h1 { font-size: 1.3rem; }
+			.row { display: flex; gap: 0.5rem; margin: 1rem 0; }
+			#prompt { flex: 1; padding: 0.5rem; font-size: 1rem; }
+			button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
+			#answer { white-space: pre-wrap; padding: 1rem; background: #f4f4f5; border-radius: 0.5rem; min-height: 2rem; }
+			#tier, #status { color: #71717a; font-size: 0.85rem; }
+		</style>
+	</head>
+	<body>
+		<h1>Browser agent · Chrome on-device inference</h1>
+		<p>
+			An ACP agent runs entirely in this tab (kernel + executor in workers) and answers via
+			Chrome's built-in <code>LanguageModel</code>, reached through an in-sandbox OpenAI proxy
+			over loopback. Falls back to an offline reply if Gemini Nano is unavailable.
+		</p>
+		<div class="row">
+			<input id="prompt" value="Say hello in three words." />
+			<button id="run">Ask</button>
+		</div>
+		<div id="tier"></div>
+		<div id="answer"></div>
+		<div id="status">loading</div>
+		<!-- Sets window.__agentDemo.run(prompt) and flips #status to "ready". -->
+		<script type="module" src="/agent-demo.bundle.js"></script>
+	</body>
+</html>

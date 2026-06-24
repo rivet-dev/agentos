@@ -1,0 +1,35 @@
+{
+  "name": "@rivet-dev/agentos-posix",
+  "version": "0.2.0-rc.3",
+  "description": "POSIX runtime driver — WASI-based Unix userland for Agent OS",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit -p ./tsconfig.json",
+    "build": "tsc -p ./tsconfig.json",
+    "test": "pnpm build && vitest run --passWithNoTests"
+  },
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@secure-exec/core": "link:../../../secure-exec-convwasi/packages/core"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@xterm/headless": "^6.0.0",
+    "minimatch": "^10.2.4",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "name": "@rivet-dev/agentos-python",
+  "version": "0.2.0-rc.3",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./internal/driver": {
+      "types": "./dist/driver.d.ts",
+      "import": "./dist/driver.js",
+      "default": "./dist/driver.js"
+    },
+    "./internal/kernel-runtime": {
+      "types": "./dist/kernel-runtime.d.ts",
+      "import": "./dist/kernel-runtime.js",
+      "default": "./dist/kernel-runtime.js"
+    }
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit -p ./tsconfig.json",
+    "build": "tsc -p ./tsconfig.json",
+    "test": "pnpm build && vitest run --fileParallelism=false"
+  },
+  "dependencies": {
+    "@secure-exec/core": "link:../../../secure-exec-convwasi/packages/core",
+    "pyodide": "^0.28.3"
+  },
+  "peerDependencies": {
+    "pyodide": ">=0.28.0"
+  },
+  "peerDependenciesMeta": {
+    "pyodide": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@secure-exec/nodejs": "catalog:",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

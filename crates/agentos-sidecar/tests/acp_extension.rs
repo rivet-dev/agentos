@@ -181,7 +181,7 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
     assert_eq!(envelope.namespace, ACP_EXTENSION_NAMESPACE);
     let event: AcpEvent = serde_bare::from_slice(&envelope.payload).expect("decode ACP event");
     let AcpEvent::AcpSessionEvent(event) = event else {
-        panic!("unexpected ACP event: {event:?}");
+        panic!("expected an AcpSessionEvent, got {event:?}");
     };
     assert_eq!(event.session_id, "adapter-session");
     let notification: Value = serde_json::from_str(&event.notification).expect("notification json");
@@ -772,7 +772,7 @@ fn decode_single_acp_session_event(events: &[EventFrame]) -> Value {
     assert_eq!(envelope.namespace, ACP_EXTENSION_NAMESPACE);
     let event: AcpEvent = serde_bare::from_slice(&envelope.payload).expect("decode ACP event");
     let AcpEvent::AcpSessionEvent(event) = event else {
-        panic!("unexpected ACP event: {event:?}");
+        panic!("expected an AcpSessionEvent, got {event:?}");
     };
     serde_json::from_str(&event.notification).expect("synthetic notification json")
 }

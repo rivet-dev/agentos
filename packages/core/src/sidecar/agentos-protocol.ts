@@ -246,12 +246,39 @@ export function writeAcpResumeSessionRequest(bc: bare.ByteCursor, x: AcpResumeSe
     write1(bc, x.env)
 }
 
+/**
+ * Browser RESUMABLE path only (AGENTOS-WEB-ASYNC-AGENTS.md §3.2.1): the kernel
+ * worker feeds a chunk of the agent's stdout into the in-flight create_session /
+ * session/prompt handshake. The synchronous sidecar would block inside one
+ * pushFrame; the resumable browser path returns between steps so the worker can
+ * service the agent's own syscalls (incl. pi's net call for inference) on fresh,
+ * non-nested pushFrames. `processId` is the handshake handle returned in the
+ * AcpPendingResponse for the originating create/prompt request.
+ */
+export type AcpDeliverAgentOutputRequest = {
+    readonly processId: string
+    readonly chunk: ArrayBuffer
+}
+
+export function readAcpDeliverAgentOutputRequest(bc: bare.ByteCursor): AcpDeliverAgentOutputRequest {
+    return {
+        processId: bare.readString(bc),
+        chunk: bare.readData(bc),
+    }
+}
+
+export function writeAcpDeliverAgentOutputRequest(bc: bare.ByteCursor, x: AcpDeliverAgentOutputRequest): void {
+    bare.writeString(bc, x.processId)
+    bare.writeData(bc, x.chunk)
+}
+
 export type AcpRequest =
     | { readonly tag: "AcpCreateSessionRequest"; readonly val: AcpCreateSessionRequest }
     | { readonly tag: "AcpSessionRequest"; readonly val: AcpSessionRequest }
     | { readonly tag: "AcpGetSessionStateRequest"; readonly val: AcpGetSessionStateRequest }
     | { readonly tag: "AcpCloseSessionRequest"; readonly val: AcpCloseSessionRequest }
     | { readonly tag: "AcpResumeSessionRequest"; readonly val: AcpResumeSessionRequest }
+    | { readonly tag: "AcpDeliverAgentOutputRequest"; readonly val: AcpDeliverAgentOutputRequest }
 
 export function readAcpRequest(bc: bare.ByteCursor): AcpRequest {
     const offset = bc.offset
@@ -267,6 +294,8 @@ export function readAcpRequest(bc: bare.ByteCursor): AcpRequest {
             return { tag: "AcpCloseSessionRequest", val: readAcpCloseSessionRequest(bc) }
         case 4:
             return { tag: "AcpResumeSessionRequest", val: readAcpResumeSessionRequest(bc) }
+        case 5:
+            return { tag: "AcpDeliverAgentOutputRequest", val: readAcpDeliverAgentOutputRequest(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -299,6 +328,11 @@ export function writeAcpRequest(bc: bare.ByteCursor, x: AcpRequest): void {
         case "AcpResumeSessionRequest": {
             bare.writeU8(bc, 4)
             writeAcpResumeSessionRequest(bc, x.val)
+            break
+        }
+        case "AcpDeliverAgentOutputRequest": {
+            bare.writeU8(bc, 5)
+            writeAcpDeliverAgentOutputRequest(bc, x.val)
             break
         }
     }
@@ -506,6 +540,27 @@ export function writeAcpErrorResponse(bc: bare.ByteCursor, x: AcpErrorResponse):
     bare.writeString(bc, x.message)
 }
 
+/**
+ * Browser RESUMABLE path: the create_session / session/prompt request (and each
+ * AcpDeliverAgentOutputRequest that has not yet completed the handshake) returns
+ * this, carrying the `processId` handle the kernel worker drives the interaction
+ * with. The real result (AcpSessionCreatedResponse / AcpSessionRpcResponse) is
+ * delivered as the response to the AcpDeliverAgentOutputRequest that completes it.
+ */
+export type AcpPendingResponse = {
+    readonly processId: string
+}
+
+export function readAcpPendingResponse(bc: bare.ByteCursor): AcpPendingResponse {
+    return {
+        processId: bare.readString(bc),
+    }
+}
+
+export function writeAcpPendingResponse(bc: bare.ByteCursor, x: AcpPendingResponse): void {
+    bare.writeString(bc, x.processId)
+}
+
 export type AcpResponse =
     | { readonly tag: "AcpSessionCreatedResponse"; readonly val: AcpSessionCreatedResponse }
     | { readonly tag: "AcpSessionRpcResponse"; readonly val: AcpSessionRpcResponse }
@@ -513,6 +568,7 @@ export type AcpResponse =
     | { readonly tag: "AcpSessionClosedResponse"; readonly val: AcpSessionClosedResponse }
     | { readonly tag: "AcpSessionResumedResponse"; readonly val: AcpSessionResumedResponse }
     | { readonly tag: "AcpErrorResponse"; readonly val: AcpErrorResponse }
+    | { readonly tag: "AcpPendingResponse"; readonly val: AcpPendingResponse }
 
 export function readAcpResponse(bc: bare.ByteCursor): AcpResponse {
     const offset = bc.offset
@@ -530,6 +586,8 @@ export function readAcpResponse(bc: bare.ByteCursor): AcpResponse {
             return { tag: "AcpSessionResumedResponse", val: readAcpSessionResumedResponse(bc) }
         case 5:
             return { tag: "AcpErrorResponse", val: readAcpErrorResponse(bc) }
+        case 6:
+            return { tag: "AcpPendingResponse", val: readAcpPendingResponse(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -567,6 +625,11 @@ export function writeAcpResponse(bc: bare.ByteCursor, x: AcpResponse): void {
         case "AcpErrorResponse": {
             bare.writeU8(bc, 5)
             writeAcpErrorResponse(bc, x.val)
+            break
+        }
+        case "AcpPendingResponse": {
+            bare.writeU8(bc, 6)
+            writeAcpPendingResponse(bc, x.val)
             break
         }
     }

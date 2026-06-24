@@ -1,11 +1,22 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
+const require = createRequire(import.meta.url);
 const playgroundDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const workerSourcePath = resolve(playgroundDir, "../browser/src/worker.ts");
-const workerSourceDir = dirname(workerSourcePath);
+// Converged: the worker is @secure-exec/browser's, bundled as-is (no source
+// patching — the converged driver wires the bridge via the convergedSidecar
+// option, not by injecting it into the worker source). Resolve it through the
+// @rivet-dev/agentos-browser package (which depends on @secure-exec/browser);
+// the playground itself does not depend on @secure-exec/browser directly.
+const requireFromBrowserPkg = createRequire(
+	require.resolve("@rivet-dev/agentos-browser"),
+);
+const workerSourcePath = requireFromBrowserPkg.resolve(
+	"@secure-exec/browser/internal/worker",
+);
 const workerOutputPath = resolve(playgroundDir, "agentos-worker.js");
 const appSourcePath = resolve(playgroundDir, "frontend/app.ts");
 const appOutputPath = resolve(playgroundDir, "dist/app.js");
@@ -53,14 +64,6 @@ const playgroundAlias = {
 	...nodeBuiltinAlias,
 } as const;
 
-const BRIDGE_IMPORT_BLOCK = `\tlet bridgeModule: Record<string, unknown>;
-\ttry {
-\t\tbridgeModule = await dynamicImportModule("../bridge/index.js");
-\t} catch {
-\t\t// Vite browser tests execute source files directly, so \`.ts\` fallback is required.
-\t\tbridgeModule = await dynamicImportModule("../bridge/index.ts");
-\t}`;
-
 async function writeGeneratedBundle(
 	outputPath: string,
 	sourcePath: string,
@@ -70,31 +73,15 @@ async function writeGeneratedBundle(
 }
 
 async function buildWorkerBundle(): Promise<void> {
-	const originalSource = await readFile(workerSourcePath, "utf8");
-	const patchedSource = originalSource
-		.replace(
-			'import { mkdir } from "../fs-helpers.js";',
-			'import { mkdir } from "../fs-helpers.js";\nimport * as browserWorkerBridgeModule from "../bridge/index.ts";',
-		)
-		.replace(
-			BRIDGE_IMPORT_BLOCK,
-			"\tconst bridgeModule = browserWorkerBridgeModule;",
-		);
-
 	await build({
 		bundle: true,
 		alias: nodeBuiltinAlias,
+		entryPoints: [workerSourcePath],
 		format: "esm",
 		legalComments: "none",
 		minify: true,
 		outfile: workerOutputPath,
 		platform: "browser",
-		stdin: {
-			contents: patchedSource,
-			loader: "ts",
-			resolveDir: workerSourceDir,
-			sourcefile: workerSourcePath,
-		},
 		target: "es2022",
 	});
 

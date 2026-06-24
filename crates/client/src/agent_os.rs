@@ -279,6 +279,7 @@ impl AgentOs {
             | wire::ResponsePayload::RootFilesystemSnapshotResponse(_)
             | wire::ResponsePayload::ProcessStartedResponse(_)
             | wire::ResponsePayload::StdinWrittenResponse(_)
+            | wire::ResponsePayload::PtyResizedResponse(_)
             | wire::ResponsePayload::StdinClosedResponse(_)
             | wire::ResponsePayload::ProcessKilledResponse(_)
             | wire::ResponsePayload::ProcessSnapshotResponse(_)
@@ -292,8 +293,8 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_)
-            | wire::ResponsePayload::PackageLinkedResponse(_)
-            | wire::ResponsePayload::PtyResizedResponse(_) => {
+            | wire::ResponsePayload::GuestKernelResultResponse(_)
+            | wire::ResponsePayload::PackageLinkedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected open_session response".to_string(),
                 ));
@@ -345,6 +346,7 @@ impl AgentOs {
             | wire::ResponsePayload::RootFilesystemSnapshotResponse(_)
             | wire::ResponsePayload::ProcessStartedResponse(_)
             | wire::ResponsePayload::StdinWrittenResponse(_)
+            | wire::ResponsePayload::PtyResizedResponse(_)
             | wire::ResponsePayload::StdinClosedResponse(_)
             | wire::ResponsePayload::ProcessKilledResponse(_)
             | wire::ResponsePayload::ProcessSnapshotResponse(_)
@@ -358,8 +360,8 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_)
-            | wire::ResponsePayload::PackageLinkedResponse(_)
-            | wire::ResponsePayload::PtyResizedResponse(_) => {
+            | wire::ResponsePayload::GuestKernelResultResponse(_)
+            | wire::ResponsePayload::PackageLinkedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected create_vm response".to_string(),
                 ));
@@ -428,6 +430,7 @@ impl AgentOs {
             | wire::ResponsePayload::RootFilesystemSnapshotResponse(_)
             | wire::ResponsePayload::ProcessStartedResponse(_)
             | wire::ResponsePayload::StdinWrittenResponse(_)
+            | wire::ResponsePayload::PtyResizedResponse(_)
             | wire::ResponsePayload::StdinClosedResponse(_)
             | wire::ResponsePayload::ProcessKilledResponse(_)
             | wire::ResponsePayload::ProcessSnapshotResponse(_)
@@ -441,8 +444,8 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_)
-            | wire::ResponsePayload::PackageLinkedResponse(_)
-            | wire::ResponsePayload::PtyResizedResponse(_) => {
+            | wire::ResponsePayload::GuestKernelResultResponse(_)
+            | wire::ResponsePayload::PackageLinkedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected configure_vm response".to_string(),
                 ));
@@ -505,6 +508,7 @@ impl AgentOs {
                     | wire::ResponsePayload::RootFilesystemSnapshotResponse(_)
                     | wire::ResponsePayload::ProcessStartedResponse(_)
                     | wire::ResponsePayload::StdinWrittenResponse(_)
+            | wire::ResponsePayload::PtyResizedResponse(_)
                     | wire::ResponsePayload::StdinClosedResponse(_)
                     | wire::ResponsePayload::ProcessKilledResponse(_)
                     | wire::ResponsePayload::ProcessSnapshotResponse(_)
@@ -518,8 +522,8 @@ impl AgentOs {
                     | wire::ResponsePayload::PersistenceFlushedResponse(_)
                     | wire::ResponsePayload::VmFetchResponse(_)
                     | wire::ResponsePayload::ExtEnvelope(_)
-                    | wire::ResponsePayload::PackageLinkedResponse(_)
-                    | wire::ResponsePayload::PtyResizedResponse(_) => {
+                    | wire::ResponsePayload::GuestKernelResultResponse(_)
+                    | wire::ResponsePayload::PackageLinkedResponse(_) => {
                         return Err(ClientError::Sidecar(
                             "unexpected register_host_callbacks response".to_string(),
                         ));

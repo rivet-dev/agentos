@@ -80,6 +80,10 @@
       "title": "Networking & Previews",
       "description": "Proxy HTTP requests into agentOS VMs and create shareable preview URLs."
     },
+    "/docs/docs/nodejs-runtime": {
+      "title": "Node.js Runtime",
+      "description": "Run Node.js in agentOS: native V8 acceleration, the node CLI, installing packages, and Node.js compatibility."
+    },
     "/docs/docs/permissions": {
       "title": "Permissions",
       "description": "The per-scope kernel permission policy that gates every guest syscall in the sandbox."
@@ -91,6 +95,10 @@
     "/docs/docs/processes": {
       "title": "Processes & Shell",
       "description": "Execute commands, spawn long-running processes, and open interactive shells in agentOS VMs."
+    },
+    "/docs/docs/python-runtime": {
+      "title": "Python Runtime",
+      "description": "Run Python in agentOS: the python CLI, installing packages ahead of time or at runtime, and what's supported."
     },
     "/docs/docs/quickstart": {
       "title": "Quickstart",
@@ -176,6 +184,10 @@
       "title": "Networking",
       "description": "How the kernel socket table works: a single VM-local transport that carries host, JavaScript, and WASM traffic, where fetch / net / dns route through it, how egress policy and loopback confinement are enforced, and how preview URLs are served."
     },
+    "/docs/docs/architecture/packages-and-command-resolution": {
+      "title": "Packages & Command Resolution",
+      "description": "How software is packaged, linked, resolved, and executed in an agentOS VM: a package is a directory, resolution is a $PATH walk, and a file's header picks its runtime."
+    },
     "/docs/docs/architecture/posix-syscalls": {
       "title": "POSIX Syscalls",
       "description": "How agentOS extends WASI in two layers so WebAssembly guests behave like normal POSIX programs on top of the kernel."
@@ -194,7 +206,7 @@
     },
     "/docs/docs/custom-software/definition": {
       "title": "Software Definition",
-      "description": "The full software-package definition for custom agents, command packages, and WASM commands in an agentOS VM."
+      "description": "The software-package definition for custom commands and agents in an agentOS VM: a package is a directory, declared with defineSoftware({ packageDir })."
     }
   }
 }

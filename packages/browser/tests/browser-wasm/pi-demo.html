@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>pi — running entirely in your browser</title>
+		<style>
+			:root { color-scheme: light; --bg:#0b0f17; --panel:#121826; --fg:#e6edf3; --muted:#8b98a9; --accent:#4f8cff; --ok:#3fb950; --border:#1f2937; }
+			* { box-sizing: border-box; }
+			body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Manrope", sans-serif; background: radial-gradient(1200px 600px at 50% -10%, #16203a, var(--bg)); color: var(--fg); min-height:100vh; }
+			main { max-width: 760px; margin: 0 auto; padding: 56px 24px 80px; }
+			h1 { font-size: 30px; margin: 0 0 6px; letter-spacing:-0.02em; }
+			.sub { color: var(--muted); margin: 0 0 28px; line-height:1.5; }
+			.pill { display:inline-block; font-size:12px; font-weight:600; padding:4px 10px; border-radius:999px; background:#16233f; color:var(--accent); border:1px solid var(--border); }
+			.card { background: var(--panel); border:1px solid var(--border); border-radius:14px; padding:22px; margin:18px 0; }
+			label { display:block; font-size:13px; color:var(--muted); margin-bottom:8px; }
+			.row { display:flex; gap:10px; }
+			#prompt { flex:1; padding:12px 14px; font-size:15px; background:#0d1422; color:var(--fg); border:1px solid var(--border); border-radius:10px; }
+			button { font:inherit; font-weight:600; background: var(--accent); color:#fff; border:0; border-radius:10px; padding:12px 20px; cursor:pointer; }
+			button:disabled { opacity:.5; cursor:default; }
+			#status { margin-top:14px; font-size:13px; color:var(--muted); min-height:18px; }
+			#answer { margin-top:14px; white-space:pre-wrap; font-size:16px; line-height:1.6; padding:16px; background:#0d1422; border:1px solid var(--border); border-radius:10px; min-height:28px; }
+			#answer:empty { display:none; }
+			.tier { margin-top:10px; font-size:12px; color:var(--ok); }
+			.steps { margin-top:16px; padding-left:18px; color:var(--muted); font-size:13px; }
+			.steps li { margin:4px 0; }
+			.steps li.done { color: var(--ok); }
+			code { font-family:"JetBrains Mono", ui-monospace, monospace; font-size:.9em; color:#9ecbff; }
+		</style>
+	</head>
+	<body>
+		<main>
+			<span class="pill">secure-exec · Agent OS</span>
+			<h1 style="margin-top:14px">pi, running entirely in your browser</h1>
+			<p class="sub">
+				The real <code>pi</code> coding agent (its full SDK) runs as a sandboxed guest inside a
+				WebAssembly kernel in this tab. It speaks ACP, and reaches its model through the browser
+				to answer your prompt. No server-side agent.
+			</p>
+			<div class="card">
+				<label for="prompt">Ask pi</label>
+				<div class="row">
+					<input id="prompt" value="What is 2+2?" />
+					<button id="run">Ask</button>
+				</div>
+				<ol class="steps" id="steps">
+					<li id="s-boot">Boot kernel + node-stdlib executor</li>
+					<li id="s-init">pi: <code>initialize</code></li>
+					<li id="s-new">pi: <code>session/new</code></li>
+					<li id="s-prompt">pi: <code>session/prompt</code> → model</li>
+				</ol>
+				<div id="status"></div>
+				<div id="answer"></div>
+				<div class="tier" id="tier"></div>
+			</div>
+		</main>
+		<!-- Sets window.__piDemo and flips #status. -->
+		<script type="module" src="/pi-demo.bundle.js"></script>
+	</body>
+</html>

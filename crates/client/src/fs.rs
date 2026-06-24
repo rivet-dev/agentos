@@ -527,7 +527,15 @@ impl AgentOs {
         let result = self
             .guest_fs_call(Self::fs_request(GuestFilesystemOperation::ReadDir, path))
             .await?;
-        Ok(result.entries.unwrap_or_default())
+        // The converged protocol returns rich dir entries (name + is_directory +
+        // is_symbolic_link); this name-only accessor projects the names. The
+        // richer fields back the Docker-style readdir-with-types path.
+        Ok(result
+            .entries
+            .unwrap_or_default()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect())
     }
 
     async fn kernel_stat(&self, path: &str) -> Result<VirtualStat> {

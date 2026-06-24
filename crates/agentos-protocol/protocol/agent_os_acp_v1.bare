@@ -51,12 +51,25 @@ type AcpResumeSessionRequest struct {
   env: map<str><str>
 }
 
+# Browser RESUMABLE path only (AGENTOS-WEB-ASYNC-AGENTS.md §3.2.1): the kernel
+# worker feeds a chunk of the agent's stdout into the in-flight create_session /
+# session/prompt handshake. The synchronous sidecar would block inside one
+# pushFrame; the resumable browser path returns between steps so the worker can
+# service the agent's own syscalls (incl. pi's net call for inference) on fresh,
+# non-nested pushFrames. `processId` is the handshake handle returned in the
+# AcpPendingResponse for the originating create/prompt request.
+type AcpDeliverAgentOutputRequest struct {
+  processId: str
+  chunk: data
+}
+
 type AcpRequest union {
   AcpCreateSessionRequest |
   AcpSessionRequest |
   AcpGetSessionStateRequest |
   AcpCloseSessionRequest |
-  AcpResumeSessionRequest
+  AcpResumeSessionRequest |
+  AcpDeliverAgentOutputRequest
 }
 
 type AcpSessionCreatedResponse struct {
@@ -105,13 +118,23 @@ type AcpErrorResponse struct {
   message: str
 }
 
+# Browser RESUMABLE path: the create_session / session/prompt request (and each
+# AcpDeliverAgentOutputRequest that has not yet completed the handshake) returns
+# this, carrying the `processId` handle the kernel worker drives the interaction
+# with. The real result (AcpSessionCreatedResponse / AcpSessionRpcResponse) is
+# delivered as the response to the AcpDeliverAgentOutputRequest that completes it.
+type AcpPendingResponse struct {
+  processId: str
+}
+
 type AcpResponse union {
   AcpSessionCreatedResponse |
   AcpSessionRpcResponse |
   AcpSessionStateResponse |
   AcpSessionClosedResponse |
   AcpSessionResumedResponse |
-  AcpErrorResponse
+  AcpErrorResponse |
+  AcpPendingResponse
 }
 
 type AcpSessionEvent struct {

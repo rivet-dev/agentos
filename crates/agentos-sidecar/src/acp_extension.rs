@@ -148,6 +148,11 @@ impl AcpExtension {
                 AcpRequest::AcpResumeSessionRequest(request) => {
                     self.resume_session(ctx, request).await
                 }
+                AcpRequest::AcpDeliverAgentOutputRequest(_) => AcpHandlerOutput::response(Err(
+                    SidecarError::InvalidState(
+                        "AcpDeliverAgentOutputRequest is dispatched by the engine/browser resumable path, not the native ACP extension".to_string(),
+                    ),
+                )),
             }
         }
         .instrument(tracing::info_span!(
@@ -192,6 +197,7 @@ impl AcpExtension {
             AcpRequest::AcpCloseSessionRequest(_) => "close_session",
             AcpRequest::AcpSessionRequest(_) => "session_request",
             AcpRequest::AcpResumeSessionRequest(_) => "resume_session",
+            AcpRequest::AcpDeliverAgentOutputRequest(_) => "deliver_agent_output",
         }
     }
 
@@ -1157,7 +1163,8 @@ impl Extension for AcpExtension {
                     | AcpRequest::AcpGetSessionStateRequest(_)
                     | AcpRequest::AcpCloseSessionRequest(_)
                     | AcpRequest::AcpResumeSessionRequest(_)
-                    | AcpRequest::AcpSessionRequest(_) => None,
+                    | AcpRequest::AcpSessionRequest(_)
+                    | AcpRequest::AcpDeliverAgentOutputRequest(_) => None,
                 }
             }
         }

@@ -76,7 +76,7 @@ agentOS supports two ways to give agents access to external functionality: **bin
 | **Latency** | Near-zero. Bound directly to the host process. | Extra network hop to reach the MCP server |
 | **Setup** | Define bindings in your actor code with Zod schemas | Configure any standard MCP server |
 
-Use bindings when you want to expose your own JavaScript functions to agents. Use MCP servers when you want to connect to existing third-party services. See [Sessions](/docs/sessions#mcpservers) for MCP server configuration.
+Use bindings when you want to expose your own JavaScript functions to agents. Use MCP servers when you want to connect to existing third-party services. See [Sessions](/docs/sessions#createsession-options) for MCP server configuration.
 
 ## Security
 

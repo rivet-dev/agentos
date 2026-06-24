@@ -50,11 +50,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SECURE_EXEC_REL = process.env.SECURE_EXEC_REL || "../secure-exec"; // sibling checkout by default, per CLAUDE.md
+// Sibling checkout, per CLAUDE.md. Overridable via SECURE_EXEC_LOCAL_PATH (a path
+// relative to the repo root) for local-only dev against a non-default secure-exec
+// working copy — e.g. the converged browser/wasm branch in ../secure-exec-convwasi.
+// NEVER push the resulting local path:/link: deps; this only affects `local` mode.
+const SECURE_EXEC_REL = process.env.SECURE_EXEC_LOCAL_PATH ?? "../secure-exec";
 
 // Swappable @secure-exec/* packages -> their path under the secure-exec repo.
 const SWAPPABLE_SCOPED = {
 	"@secure-exec/core": "packages/core",
+	"@secure-exec/browser": "packages/browser",
+	"@secure-exec/s3": "registry/file-system/s3",
+	"@secure-exec/google-drive": "registry/file-system/google-drive",
 	"@secure-exec/sandbox": "registry/tool/sandbox",
 };
 // Agent packages are owned by secure-exec under registry/agent/*; generic VM
@@ -89,6 +96,7 @@ const CRATES = {
 // Seed versions (heterogeneous today; `set-version` unifies them after a publish).
 const SEED_VERSIONS = {
 	"@secure-exec/core": "0.2.1",
+	"@secure-exec/browser": "0.2.1",
 	"@secure-exec/nodejs": "0.2.1",
 	"@secure-exec/sandbox": "0.2.0-rc.3",
 };
@@ -383,7 +391,10 @@ function npmMode() {
 }
 function cargoMode() {
 	const cargo = readFileSync(path.join(ROOT, "Cargo.toml"), "utf8");
-	return /path\s*=\s*"[^"]*secure-exec[^"]*\/crates\//.test(cargo) ? "local" : "pinned";
+	// Honor the configured (possibly env-overridden) local path so status reports
+	// honestly when pointed at e.g. ../secure-exec-convwasi.
+	const rel = SECURE_EXEC_REL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(`path\\s*=\\s*"${rel}/crates/`).test(cargo) ? "local" : "pinned";
 }
 function currentMode() {
 	return npmMode() === cargoMode() ? npmMode() : `hybrid(npm=${npmMode()},cargo=${cargoMode()})`;
