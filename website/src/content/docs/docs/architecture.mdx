@@ -297,7 +297,7 @@ An agent (such as [Pi](https://github.com/mariozechner/pi-coding-agent)) is just
 - **Long-lived.** Where a bare `exec()` runs once and exits, a session keeps an agent alive across many prompts.
 - **Streamed.** The agent's output flows back to your app in real time as `sessionEvent`s.
 - **Replayable.** Each session persists a transcript (with sequence numbers) that survives sleep/wake, so you can replay the conversation later.
-- **Context injected.** agentOS adds a system prompt describing the VM environment and available tools, layered on top of the agent's own instructions. See [System Prompt](/docs/system-prompt).
+- **Context injected.** agentOS adds a system prompt describing the VM environment and available commands and bindings, layered on top of the agent's own instructions. See [System Prompt](/docs/system-prompt).
 - See [Agent Sessions](/docs/architecture/agent-sessions) for the internals.
 
 ### Permissions & approvals

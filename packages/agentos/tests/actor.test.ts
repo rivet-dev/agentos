@@ -14,6 +14,7 @@ import type {
 import { createClient } from "rivetkit/client";
 import common from "@agentos-software/common";
 import {
+	agentOS,
 	agentOs,
 	buildConfigJson,
 	getPluginPath,
@@ -306,7 +307,7 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 	test("serializes config and hands plugin paths to the NAPI runtime", () => {
 		const definition = agentOs({
 			options: {
-				additionalInstructions: ["stay deterministic"],
+				additionalInstructions: "stay deterministic",
 				loopbackExemptPorts: [4020],
 				mounts: [nodeModulesMount("/host/project/node_modules")],
 				sidecar: { kind: "shared", pool: "agentos-smoke" },
@@ -329,7 +330,7 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		expect(calls[0].pluginPath).toBe(getPluginPath());
 		expect(calls[0].sidecarPath).toBe(process.env.AGENTOS_SIDECAR_BIN);
 		expect(JSON.parse(calls[0].configJson)).toMatchObject({
-			additionalInstructions: ["stay deterministic"],
+			additionalInstructions: "stay deterministic",
 			loopbackExemptPorts: [4020],
 			sidecar: { pool: "agentos-smoke" },
 			mounts: [
@@ -346,6 +347,72 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 				},
 			],
 		});
+	});
+
+	test("agentOS flat config keeps callbacks outside native VM options", () => {
+		const definition = agentOS({
+			defaultSoftware: false,
+			software: [],
+			onSessionEvent: () => {},
+		});
+		const expectedHandle = Symbol("native-factory") as unknown as ActorFactoryHandle;
+		const calls: NapiNativePluginOptions[] = [];
+		const runtime = {
+			kind: "napi",
+			createNativePluginFactory(options: NapiNativePluginOptions) {
+				calls.push(options);
+				return expectedHandle;
+			},
+		} as CoreRuntime;
+
+		const handle = definition.nativeFactoryBuilder?.(runtime);
+
+		expect(handle).toBe(expectedHandle);
+		expect(calls).toHaveLength(1);
+		expect(JSON.parse(calls[0].configJson)).toEqual({ software: [] });
+		expect(calls[0].configJson).not.toContain("onSessionEvent");
+	});
+
+	test("rejects native actor options that cannot cross the NAPI config boundary", () => {
+		expect(() =>
+			agentOs({
+				options: {
+					toolKits: [],
+				} as never,
+			}),
+		).toThrow(/toolKits/);
+
+		expect(() =>
+			agentOS({
+				toolKits: [],
+			} as never),
+		).toThrow(/toolKits/);
+
+		expect(() =>
+			agentOs({
+				options: {
+					mounts: [{ path: "/data", driver: {} }],
+				} as never,
+			}),
+		).toThrow(/driver/);
+
+		expect(() =>
+			agentOs({
+				options: {
+					sidecar: { kind: "explicit", handle: {} },
+				} as never,
+			}),
+		).toThrow(/sidecar/);
+	});
+
+	test("buildConfigJson rejects unknown options instead of dropping them", () => {
+		expect(() =>
+			buildConfigJson({
+				options: {
+					notARealOption: true,
+				},
+			} as never),
+		).toThrow(/notARealOption/);
 	});
 
 	test("buildConfigJson keeps software descriptors pointed at package roots", () => {

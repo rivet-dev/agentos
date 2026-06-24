@@ -65,7 +65,8 @@
 		"googleapis": "^144.0.0",
 		"isolated-vm": "^6.0.0",
 		"long-timeout": "^0.1.1",
-		"minimatch": "^10.2.4"
+		"minimatch": "^10.2.4",
+		"zod": "^4.1.11"
 	},
 	"devDependencies": {
 		"@anthropic-ai/claude-agent-sdk": "^0.2.87",
@@ -106,7 +107,6 @@
 		"sandbox-agent": "^0.4.2",
 		"typescript": "^5.7.2",
 		"vitest": "^2.1.8",
-		"ws": "^8.18.0",
-		"zod": "^4.1.11"
+		"ws": "^8.18.0"
 	}
 }

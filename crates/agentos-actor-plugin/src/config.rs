@@ -17,6 +17,11 @@ use anyhow::{Context, Result};
 /// Serializable mirror of [`AgentOsConfig`]. `deny_unknown_fields` enforces
 /// fail-loud behavior when callers pass fields outside this allow-list
 /// (including non-serializable fields like `schedule_driver`).
+///
+/// Keep this struct in sync with
+/// `packages/agentos/src/config.ts::nativeAgentOsOptionsSchema` and
+/// `packages/agentos/src/actor.ts::buildConfigJson`; TS preflight validation
+/// should reject the same native-boundary fields before this serde guard runs.
 #[derive(serde::Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub(crate) struct AgentOsConfigJson {

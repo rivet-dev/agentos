@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 use crate::fs::VirtualFileSystem;
 
 /// Resolved client options (= TS `AgentOsOptions`). All fields optional with documented defaults.
+///
+/// Keep this Rust mirror in sync with `packages/core/src/agent-os.ts::AgentOsOptions`
+/// and `packages/core/src/options-schema.ts::agentOsOptionsSchema`.
 #[derive(Default)]
 pub struct AgentOsConfig {
     /// Software packages to install (flattened). Default `[]`.

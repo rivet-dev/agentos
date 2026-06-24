@@ -4,21 +4,21 @@ description: "How agentOS injects context into agent sessions."
 skill: true
 ---
 
-agentOS automatically injects a system prompt into every agent session that describes the VM environment and available tools. The prompt is additive and never replaces the agent's own instructions (CLAUDE.md, AGENTS.md, etc.).
+agentOS automatically injects a system prompt into every agent session that describes the VM environment and available commands and bindings. The prompt is additive and never replaces the agent's own instructions (CLAUDE.md, AGENTS.md, etc.).
 
-The base prompt is embedded in the sidecar (not written to a file inside the VM). At session start the sidecar assembles the base prompt with your additional instructions and generated tool docs, then injects the result into the agent adapter's launch arguments (for example, `--append-system-prompt` for Pi).
+The base prompt is embedded in the sidecar (not written to a file inside the VM). At session start the sidecar assembles the base prompt with your additional instructions and generated binding docs, then injects the result into the agent adapter's launch arguments (for example, `--append-system-prompt` for Pi).
 
 ## Customization
 
-- `additionalInstructions` appends extra instructions to the agent's system prompt. They are added after the base OS prompt and the generated tool docs, so they layer on top of (rather than replace) the agent's own instructions.
-- `skipOsInstructions` suppresses the base OS prompt while still injecting the generated tool docs.
+- `additionalInstructions` appends extra instructions to the agent's system prompt. They are added after the base OS prompt and the generated binding docs, so they layer on top of (rather than replace) the agent's own instructions.
+- `skipOsInstructions` suppresses the base OS prompt while still injecting the generated binding docs.
 
 ```ts
 const session = await vm.createSession("pi", {
   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
   // Extra instructions appended to the agent system prompt
   additionalInstructions: "Always write tests before implementation.",
-  // Suppress the base OS prompt (tool docs are still injected)
+  // Suppress the base OS prompt (binding docs are still injected)
   skipOsInstructions: true,
 });
 ```

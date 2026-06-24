@@ -14,14 +14,14 @@
 ## Why agentOS
 
 - **Runs inside your process**: No VMs to boot, no containers to pull. Agents start in milliseconds with minimal memory overhead.
-- **Embeds in your backend**: Agents call your functions directly via [host tools](https://rivet.dev/docs/agent-os/tools). No network hops, no complex auth between services.
+- **Embeds in your backend**: Agents call your functions directly via [bindings](https://agentos-sdk.dev/docs/bindings). No network hops, no complex auth between services.
 - **Granular security**: Deny-by-default permissions for filesystem, network, and process access. The same isolation technology trusted by browsers worldwide.
 - **Deploy anywhere**: Just an npm package. Works on your laptop, Rivet Cloud, Railway, Vercel, Kubernetes, or any container platform.
 - **Open source**: Apache 2.0 licensed. Self-host or use [Rivet Cloud](https://rivet.dev/docs/agent-os/deployment) for managed infrastructure.
 
 ### agentOS vs Sandbox
 
-agentOS is a lightweight VM that runs inside your process. Sandboxes are full Linux environments. agentOS integrates agents into your backend with [host tools](https://rivet.dev/docs/agent-os/tools) and granular permissions. Sandboxes give you a full OS for browsers, native binaries, and dev servers.
+agentOS is a lightweight VM that runs inside your process. Sandboxes are full Linux environments. agentOS integrates agents into your backend with [bindings](https://agentos-sdk.dev/docs/bindings) and granular permissions. Sandboxes give you a full OS for browsers, native binaries, and dev servers.
 
 You don't have to choose: agentOS works with sandboxes through the [sandbox extension](https://rivet.dev/docs/agent-os/sandbox), spinning up a full sandbox on demand and mounting the sandbox's file system when the workload needs it.
 
@@ -114,13 +114,13 @@ All benchmarks compare agentOS against the fastest/cheapest mainstream sandbox p
 
 ### Infrastructure
 - **[Mount external storage as a filesystem](https://rivet.dev/docs/agent-os/filesystem)**: S3-compatible storage, Google Drive, host directories, overlay filesystems, or custom backends
-- **[Host tools](https://rivet.dev/docs/agent-os/tools)**: Define JavaScript functions that agents call as CLI commands inside the VM
+- **[Bindings](https://agentos-sdk.dev/docs/bindings)**: Define JavaScript functions that agents call as CLI commands inside the VM
 - **[Cron](https://rivet.dev/docs/agent-os/cron), [webhooks](https://rivet.dev/docs/agent-os/webhooks), and [queues](https://rivet.dev/docs/agent-os/queues)**: Schedule tasks, receive external events, and serialize work with built-in primitives
 - **[Sandbox extension](https://rivet.dev/docs/agent-os/sandbox)**: Pair with full sandboxes (E2B, Daytona, etc.) for heavy workloads like browsers or native compilation
 
 ### Orchestration
 - **[Multiplayer](https://rivet.dev/docs/agent-os/multiplayer)**: Multiple clients observe and collaborate with the same agent in real time
-- **[Agent-to-agent](https://rivet.dev/docs/agent-os/agent-to-agent)**: Agents delegate work to other agents through host-defined tools
+- **[Agent-to-agent](https://rivet.dev/docs/agent-os/agent-to-agent)**: Agents delegate work to other agents through host-defined bindings
 - **[Workflows](https://rivet.dev/docs/agent-os/workflows)**: Chain agent tasks into durable workflows with retries, branching, and resumable execution
 - **[Authentication](https://rivet.dev/docs/agent-os/authentication)**: Integrate with your existing auth model (API keys, OAuth, JWTs)
 

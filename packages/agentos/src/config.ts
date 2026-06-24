@@ -1,7 +1,13 @@
 import type {
 	AgentOsOptions,
 	JsonRpcNotification,
+	NativeMountConfig,
 	PermissionRequest,
+} from "@rivet-dev/agentos-core";
+import {
+	agentOsOptionFieldSchemas,
+	nativeMountConfigSchema,
+	sharedSidecarConfigSchema,
 } from "@rivet-dev/agentos-core";
 import type { ActorContext, BeforeConnectContext } from "rivetkit";
 import { z } from "zod/v4";
@@ -11,13 +17,28 @@ const zFunction = <
 	T extends (...args: any[]) => any = (...args: unknown[]) => unknown,
 >() => z.custom<T>((val) => typeof val === "function");
 
-const AgentOsOptionsSchema = z.custom<AgentOsOptions>(
-	(val) => typeof val === "object" && val !== null,
-);
+export const nativeAgentOsOptionsSchema = z
+	// Native actor options are a JSON-serializable subset of AgentOsOptions.
+	// Keep this allow-list in sync with buildConfigJson() and
+	// crates/agentos-actor-plugin/src/config.rs::AgentOsConfigJson.
+	.object({
+		software: agentOsOptionFieldSchemas.software,
+		defaultSoftware: agentOsOptionFieldSchemas.defaultSoftware,
+		loopbackExemptPorts: agentOsOptionFieldSchemas.loopbackExemptPorts,
+		allowedNodeBuiltins: agentOsOptionFieldSchemas.allowedNodeBuiltins,
+		rootFilesystem: agentOsOptionFieldSchemas.rootFilesystem,
+		mounts: z.array(nativeMountConfigSchema).optional(),
+		moduleAccessCwd: agentOsOptionFieldSchemas.moduleAccessCwd,
+		additionalInstructions: agentOsOptionFieldSchemas.additionalInstructions,
+		permissions: agentOsOptionFieldSchemas.permissions,
+		sidecar: sharedSidecarConfigSchema.optional(),
+		limits: agentOsOptionFieldSchemas.limits,
+	})
+	.strict();
 
 export const agentOsActorConfigSchema = z
 	.object({
-		options: AgentOsOptionsSchema.optional(),
+		options: nativeAgentOsOptionsSchema.optional(),
 		preview: z
 			.object({
 				defaultExpiresInSeconds: z.number().positive().default(3600),
@@ -32,6 +53,28 @@ export const agentOsActorConfigSchema = z
 	.strict();
 
 // --- Typed config types (generic callbacks overlaid on the Zod schema) ---
+
+/**
+ * Type mirror of `nativeAgentOsOptionsSchema`.
+ *
+ * Keep this in sync with the schema above and the Rust serde mirror at
+ * `crates/agentos-actor-plugin/src/config.rs::AgentOsConfigJson`.
+ */
+export type NativeAgentOsOptions = Pick<
+	AgentOsOptions,
+	| "software"
+	| "defaultSoftware"
+	| "loopbackExemptPorts"
+	| "allowedNodeBuiltins"
+	| "rootFilesystem"
+	| "moduleAccessCwd"
+	| "additionalInstructions"
+	| "permissions"
+	| "limits"
+> & {
+	mounts?: NativeMountConfig[];
+	sidecar?: { kind: "shared"; pool?: string };
+};
 
 type AgentOsActorContext<TConnParams> = ActorContext<
 	AgentOsActorState,
@@ -67,13 +110,15 @@ interface AgentOsActorConfigCallbacks<TConnParams> {
 // Parsed config (after Zod defaults/transforms applied).
 export type AgentOsActorConfig<TConnParams = undefined> = Omit<
 	z.infer<typeof agentOsActorConfigSchema>,
-	"onBeforeConnect" | "onSessionEvent" | "onPermissionRequest"
+	"options" | "onBeforeConnect" | "onSessionEvent" | "onPermissionRequest"
 > &
+	{ options?: NativeAgentOsOptions } &
 	AgentOsActorConfigCallbacks<TConnParams>;
 
 // Input config (what users pass in before Zod transforms).
 export type AgentOsActorConfigInput<TConnParams = undefined> = Omit<
 	z.input<typeof agentOsActorConfigSchema>,
-	"onBeforeConnect" | "onSessionEvent" | "onPermissionRequest"
+	"options" | "onBeforeConnect" | "onSessionEvent" | "onPermissionRequest"
 > &
+	{ options?: NativeAgentOsOptions } &
 	AgentOsActorConfigCallbacks<TConnParams>;
