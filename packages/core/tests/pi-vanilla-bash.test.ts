@@ -166,7 +166,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 
 	test("inherits session env in the spawned shell", async () => {
 		const fixtures = createBashFixtures(
-			bashToolCall({ command: "echo $AGENTOS_TEST_FLAG", timeout: 10 }),
+			bashToolCall({ command: "echo $APP_TEST_FLAG", timeout: 10 }),
 			"reported the flag.",
 		);
 		const { mock, url } = await startLlmock(fixtures);
@@ -183,7 +183,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 						HOME: homeDir,
 						ANTHROPIC_API_KEY: "mock-key",
 						ANTHROPIC_BASE_URL: url,
-						AGENTOS_TEST_FLAG: "vanilla",
+						APP_TEST_FLAG: "vanilla",
 					},
 				})
 			).sessionId;
@@ -191,7 +191,7 @@ describe("vanilla Pi bash tool inside the VM", () => {
 			const eventText = captureSessionEventText(vm, sessionId);
 			const { response } = await vm.prompt(
 				sessionId,
-				"Echo the AGENTOS_TEST_FLAG variable.",
+				"Echo the APP_TEST_FLAG variable.",
 			);
 			eventText.unsubscribe();
 			expect(response.error).toBeUndefined();

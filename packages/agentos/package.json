@@ -51,7 +51,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@agentos-software/common": "link:../../../secure-exec/registry/software/common",
+		"@agentos-software/common": "catalog:",
 		"@rivet-dev/agentos-core": "workspace:*",
 		"@rivet-dev/agentos-sidecar": "workspace:*",
 		"@rivetkit/react": "0.0.0-feat-dylib-actor-plugin.c44621f",

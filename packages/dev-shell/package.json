@@ -12,7 +12,7 @@
 		"test": "NODE_OPTIONS=--max-old-space-size=256 pnpm exec vitest run --fileParallelism=false --reporter=verbose"
 	},
   "dependencies": {
-    "@agentos-software/common": "link:../../../secure-exec/registry/software/common",
+    "@agentos-software/common": "catalog:",
     "@rivet-dev/agentos-core": "workspace:*",
     "pino": "^10.3.1"
   },

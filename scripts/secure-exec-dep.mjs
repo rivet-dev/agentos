@@ -135,6 +135,23 @@ function localSubpath(name) {
 	}
 	return SWAPPABLE_SCOPED[name];
 }
+// A package is only locally swappable if the sibling checkout actually provides
+// it: the mapped dir must exist AND its package.json name must match. This skips
+// agent-os-owned adapters (@agentos-software/pi, pi-cli, claude-code, codex,
+// opencode) that live in registry/agent here and are absent from secure-exec,
+// and avoids the registry/software/codex dir (named @agentos-software/codex-cli)
+// being mis-linked for the @agentos-software/codex adapter.
+function siblingProvides(name) {
+	const sub = localSubpath(name);
+	if (!sub) return false;
+	const pkgPath = path.join(ROOT, SECURE_EXEC_REL, sub, "package.json");
+	if (!existsSync(pkgPath)) return false;
+	try {
+		return JSON.parse(readFileSync(pkgPath, "utf8")).name === name;
+	} catch {
+		return false;
+	}
+}
 
 // Relative `link:` path from a consuming package dir to the secure-exec subdir.
 function linkValue(manifestPath, name) {
@@ -169,7 +186,7 @@ function rewriteConsumers(mode) {
 		const before = text;
 		for (const name of collectNamesIn(text)) {
 			const value =
-				mode === "local" && isSwappable(name)
+				mode === "local" && isSwappable(name) && siblingProvides(name)
 					? linkValue(m, name)
 					: "catalog:";
 			const re = new RegExp(`("${escapeRe(name)}"\\s*:\\s*)"[^"]*"`, "g");

@@ -20,7 +20,28 @@ import type {
 	NativeAgentOsOptions,
 } from "./config.js";
 
-export { setup } from "rivetkit";
+import { setup as rivetkitSetup } from "rivetkit";
+
+// 512 MiB — large agent prompts/results cross the actor websocket transport as
+// single messages; RivetKit's registry-level defaults (maxIncomingMessageSize
+// 64 KiB, maxOutgoingMessageSize 1 MiB) truncate real payloads. Still a finite
+// bound per the limits-and-observability policy.
+const AGENTOS_REGISTRY_MESSAGE_SIZE_DEFAULT = 512 * 1024 * 1024;
+
+/**
+ * `setup()` wrapper that defaults the registry transport message-size caps to
+ * never-hit-by-normal-use values for AgentOS apps, mirroring the per-actor crank
+ * in `DEFAULT_AGENTOS_ACTOR_OPTIONS`. Any caller-supplied value wins, so an app
+ * can still tighten the bound when it wants one.
+ */
+export const setup: typeof rivetkitSetup = ((
+	input: Parameters<typeof rivetkitSetup>[0],
+) =>
+	rivetkitSetup({
+		maxIncomingMessageSize: AGENTOS_REGISTRY_MESSAGE_SIZE_DEFAULT,
+		maxOutgoingMessageSize: AGENTOS_REGISTRY_MESSAGE_SIZE_DEFAULT,
+		...input,
+	})) as typeof rivetkitSetup;
 
 export {
 	buildConfigJson,

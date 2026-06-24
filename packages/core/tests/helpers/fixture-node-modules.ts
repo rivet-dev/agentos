@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+	cpSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -89,7 +90,18 @@ function stripEscapingSymlinks(root: string): string[] {
 				}
 				if (target === null || !isInside(root, target)) {
 					unlinkSync(full);
-					stripped.push(full);
+					// A hoisted deploy has no `.pnpm` store-escape symlinks, so an
+					// escaping link here is a workspace `link:` dep pnpm didn't copy
+					// — e.g. an agent package that now lives in the sibling
+					// secure-exec repo (registry/agent/*). Materialize a dereferenced
+					// copy so it's still present in the flat tree the VM mounts; a
+					// published install would have it as a real dir. Dangling or
+					// non-package escapes are dropped as before.
+					if (target !== null && existsSync(join(target, "package.json"))) {
+						cpSync(target, full, { recursive: true, dereference: true });
+					} else {
+						stripped.push(full);
+					}
 				}
 			} else if (link.isDirectory()) {
 				walk(full);

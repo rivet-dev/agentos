@@ -1391,6 +1391,7 @@ async fn send_json_rpc_request(
         .unwrap_or("unknown")
         .to_string();
     let mut recent_activity = Vec::new();
+    let mut adapter_stderr = String::new();
     record_recent_activity(
         &mut recent_activity,
         format!("sent request {method} id={response_id}"),
@@ -1509,6 +1510,10 @@ async fn send_json_rpc_request(
             EventPayload::ProcessOutputEvent(output)
                 if output.process_id == process_id && output.channel == StreamChannel::Stderr =>
             {
+                // Accumulate stderr (borrow before the chunk is moved into the
+                // frame) so a non-zero adapter exit can fold the tail into its
+                // error for diagnostics.
+                adapter_stderr.push_str(&String::from_utf8_lossy(&output.chunk));
                 let frame = ctx.ext_event_wire(encode_event(AcpEvent::AcpAgentStderrEvent(
                     AcpAgentStderrEvent {
                         session_id: event_session_id.unwrap_or_default().to_string(),
@@ -1531,9 +1536,10 @@ async fn send_json_rpc_request(
                 // Embed ADAPTER_EXITED_ERROR_MARKER directly so is_adapter_exited_error()
                 // stays coupled to this producer: changing the wording can't silently
                 // disable session eviction (the H4 leak fix) without touching the const.
+                let stderr_tail: String = adapter_stderr.chars().rev().take(4000).collect::<String>().chars().rev().collect();
                 return Err(SidecarError::InvalidState(format!(
-                    "ACP adapter process {process_id} {ADAPTER_EXITED_ERROR_MARKER} {} before response id={response_id}",
-                    exited.exit_code
+                    "ACP adapter process {process_id} {ADAPTER_EXITED_ERROR_MARKER} {} before response id={response_id}; recent_activity={:?}; adapter_stderr={:?}",
+                    exited.exit_code, recent_activity, stderr_tail
                 )));
             }
             EventPayload::ProcessOutputEvent(_)

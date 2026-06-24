@@ -358,6 +358,47 @@ export type AgentOsActorDefinition<TConnParams> = ActorDefinition<
 	any
 >;
 
+// One hour — far past any normal agent turn, connection setup, or idle gap, but
+// still a finite bound (never `0`/Infinity) per the limits-and-observability
+// policy. Agent turns routinely run minutes; the stock RivetKit defaults
+// (actionTimeout 60s, on{Before,}ConnectTimeout 5s, sleepTimeout 30s) cut them
+// off mid-flight and broke live `sessionEvent` streaming with
+// "actor websocket connection setup timed out after 5000 ms".
+const ACTOR_NEVER_HIT_MS = 60 * 60 * 1000;
+// 512 MiB — large prompts/results stream as single actor messages; the stock
+// 64 KiB incoming / 1 MiB outgoing caps truncate real agent payloads.
+const ACTOR_NEVER_HIT_MESSAGE_BYTES = 512 * 1024 * 1024;
+
+/**
+ * Never-hit-by-normal-use defaults for the AgentOS actor. Every value is a high
+ * but finite bound so a long multi-step agent turn, a slow connection setup, a
+ * large prompt/result, and live `sessionEvent` streaming all complete without
+ * tripping a RivetKit actor default. Callers can still override any single knob
+ * via `actorOptions` (their value wins over these defaults).
+ */
+export const DEFAULT_AGENTOS_ACTOR_OPTIONS = {
+	// Connection/setup lifecycle (stock 5s each) — the websocket setup path that
+	// was timing out at 5000ms and dropping all streamed events.
+	onBeforeConnectTimeout: ACTOR_NEVER_HIT_MS,
+	onConnectTimeout: ACTOR_NEVER_HIT_MS,
+	createVarsTimeout: ACTOR_NEVER_HIT_MS,
+	createConnStateTimeout: ACTOR_NEVER_HIT_MS,
+	onMigrateTimeout: ACTOR_NEVER_HIT_MS,
+	// Action/RPC lifecycle (stock 60s) — long multi-step prompt turns.
+	actionTimeout: ACTOR_NEVER_HIT_MS,
+	// Idle/keepalive — don't reap a live session or sleep mid-turn (stock
+	// connectionLivenessTimeout 2.5s, sleepTimeout 30s). The liveness *interval*
+	// (ping cadence) is intentionally left at its small default.
+	connectionLivenessTimeout: ACTOR_NEVER_HIT_MS,
+	sleepTimeout: ACTOR_NEVER_HIT_MS,
+	// Payload sizes — large prompts/results. `maxQueueMessageSize` is the
+	// per-actor message cap (stock 64 KiB); the transport-level
+	// max{Incoming,Outgoing}MessageSize live on the registry/setup config (see
+	// AGENTOS_REGISTRY_MESSAGE_SIZE_DEFAULTS), not on per-actor options.
+	maxQueueSize: 1_000_000,
+	maxQueueMessageSize: ACTOR_NEVER_HIT_MESSAGE_BYTES,
+} as const;
+
 export function agentOs<TConnParams = undefined>(
 	config: AgentOsActorConfigInput<TConnParams>,
 ): AgentOsActorDefinition<TConnParams> {
@@ -369,11 +410,17 @@ export function agentOs<TConnParams = undefined>(
 	// attach the Rust factory builder marker. The actions block stays empty
 	// because no JS-side action ever runs: the engine driver branches on
 	// `nativeFactoryBuilder` before reaching the JS dispatch path.
-	const actorOptions = (parsed as { actorOptions?: Record<string, unknown> })
-		.actorOptions;
+	const userActorOptions = (
+		parsed as { actorOptions?: Record<string, unknown> }
+	).actorOptions;
+	// High never-hit defaults, with any caller-supplied option winning.
+	const actorOptions = {
+		...DEFAULT_AGENTOS_ACTOR_OPTIONS,
+		...(userActorOptions ?? {}),
+	};
 	const definition = actor({
 		actions: {},
-		...(actorOptions ? { options: actorOptions } : {}),
+		options: actorOptions,
 	} as Parameters<
 		typeof actor
 	>[0]) as unknown as AgentOsActorDefinition<TConnParams>;

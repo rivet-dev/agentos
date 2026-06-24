@@ -36,9 +36,22 @@ export const nativeAgentOsOptionsSchema = z
 	})
 	.strict();
 
+/**
+ * RivetKit actor lifecycle/transport options forwarded to `actor({ options })`.
+ *
+ * Validated downstream by RivetKit's own actor config schema, so this stays a
+ * permissive pass-through allow-list. `agentOs()` overlays the never-hit
+ * defaults in `DEFAULT_AGENTOS_ACTOR_OPTIONS` (see actor.ts) and lets any value
+ * here win, so callers can still tighten a bound when they want one.
+ */
+export const agentOsActorOptionsSchema = z
+	.record(z.string(), z.unknown())
+	.optional();
+
 export const agentOsActorConfigSchema = z
 	.object({
 		options: nativeAgentOsOptionsSchema.optional(),
+		actorOptions: agentOsActorOptionsSchema,
 		preview: z
 			.object({
 				defaultExpiresInSeconds: z.number().positive().default(3600),

@@ -13,16 +13,16 @@
   },
   "dependencies": {
     "@rivet-dev/agentos-core": "workspace:*",
-    "@agentos-software/common": "link:../../../secure-exec/registry/software/common",
-    "@agentos-software/jq": "link:../../../secure-exec/registry/software/jq",
-    "@agentos-software/ripgrep": "link:../../../secure-exec/registry/software/ripgrep",
-    "@agentos-software/fd": "link:../../../secure-exec/registry/software/fd",
-    "@agentos-software/tree": "link:../../../secure-exec/registry/software/tree",
-    "@agentos-software/file": "link:../../../secure-exec/registry/software/file",
-    "@agentos-software/zip": "link:../../../secure-exec/registry/software/zip",
-    "@agentos-software/unzip": "link:../../../secure-exec/registry/software/unzip",
-    "@agentos-software/yq": "link:../../../secure-exec/registry/software/yq",
-    "@agentos-software/codex-cli": "link:../../../secure-exec/registry/software/codex"
+    "@agentos-software/common": "catalog:",
+    "@agentos-software/jq": "catalog:",
+    "@agentos-software/ripgrep": "catalog:",
+    "@agentos-software/fd": "catalog:",
+    "@agentos-software/tree": "catalog:",
+    "@agentos-software/file": "catalog:",
+    "@agentos-software/zip": "catalog:",
+    "@agentos-software/unzip": "catalog:",
+    "@agentos-software/yq": "catalog:",
+    "@agentos-software/codex-cli": "catalog:"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",

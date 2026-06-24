@@ -11,7 +11,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { copyFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import codex from "@agentos-software/codex-cli";
@@ -192,6 +192,39 @@ export function commandPackageSkipReason(
 
 	return `Registry command artifacts not available for: ${unavailable.join(", ")}`;
 }
+
+/**
+ * Test-only commands that ship in no software package — they live only in the
+ * native build output (`FALLBACK_COMMAND_DIR`). When per-package wasm dirs are
+ * populated by `make copy-wasm`, the packages stop falling back to that dir, so
+ * a bare test command like `xu` (a registry VM-test binary) becomes unreachable.
+ * Provision it into a mounted command dir (coreutils, always present in
+ * REGISTRY_SOFTWARE) so the claude/wasm-command PATH-resolution suites can run it
+ * regardless of whether the fallback path is active.
+ */
+const TEST_ONLY_COMMANDS = ["xu"];
+function ensureTestOnlyCommands(): void {
+	if (!existsSync(coreutils.commandDir)) {
+		return;
+	}
+	for (const command of TEST_ONLY_COMMANDS) {
+		const dest = resolve(coreutils.commandDir, command);
+		if (existsSync(dest)) {
+			continue;
+		}
+		const src = resolve(FALLBACK_COMMAND_DIR, command);
+		if (!existsSync(src)) {
+			continue;
+		}
+		try {
+			copyFileSync(src, dest);
+		} catch {
+			// best-effort: a read-only or missing artifact dir just leaves the
+			// command unresolved, and the gated test skips/fails as before.
+		}
+	}
+}
+ensureTestOnlyCommands();
 
 /** All standard registry software packages. */
 export const REGISTRY_SOFTWARE = [
