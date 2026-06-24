@@ -59,9 +59,9 @@ catalog:
   '@agentos-software/unzip': 0.3.0-rc.2
   '@agentos-software/yq': 0.3.0-rc.2
   '@agentos-software/zip': 0.3.0-rc.2
-  '@secure-exec/core': 0.0.0-codex-native-sidecar-platform-ci.117d645
-  '@secure-exec/google-drive': 0.0.0-codex-native-sidecar-platform-ci.117d645
+  '@secure-exec/core': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
+  '@secure-exec/google-drive': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
   '@secure-exec/nodejs': 0.2.1
-  '@secure-exec/s3': 0.0.0-codex-native-sidecar-platform-ci.117d645
-  '@secure-exec/sandbox': 0.0.0-codex-native-sidecar-platform-ci.117d645
+  '@secure-exec/s3': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
+  '@secure-exec/sandbox': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
 # <<< secure-exec catalog <<<

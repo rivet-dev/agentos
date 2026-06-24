@@ -482,6 +482,27 @@ function defaultAgentStderrHandler(event: AgentStderrEvent): void {
 }
 
 /**
+ * A near-capacity warning for one bounded limit (a queue/buffer, a saturating
+ * resource cap, or a memory envelope) inside the VM runtime. Delivered the moment
+ * usage crosses the runtime's warning threshold (~80%), once per crossing — the
+ * runtime applies edge-triggering + hysteresis, so this never spams.
+ */
+export interface LimitWarning {
+	/** Stable limit name, e.g. `"javascript_event_channel"` or `"vm_open_fds"`. */
+	limit: string;
+	/** Limit class: `"queue"`, `"resource"`, or `"memory"`. */
+	category: string;
+	/** Current observed usage. */
+	observed: number;
+	/** Configured capacity. */
+	capacity: number;
+	/** Observed fill as a percentage of capacity (0–100). */
+	fillPercent: number;
+}
+
+export type LimitWarningHandler = (warning: LimitWarning) => void;
+
+/**
  * Public core VM options.
  *
  * Keep this interface in sync with
@@ -550,6 +571,12 @@ export interface AgentOsOptions {
 	 * `process.stderr`.
 	 */
 	onAgentStderr?: AgentStderrHandler;
+	/**
+	 * Called when a bounded limit inside the VM runtime approaches capacity
+	 * (~80%, edge-triggered with hysteresis so it does not spam). Use it to alert
+	 * on a slow consumer or a runaway guest before the limit is actually hit.
+	 */
+	onLimitWarning?: LimitWarningHandler;
 }
 
 /** Configuration for a local MCP server (spawned as a child process). */
@@ -2495,6 +2522,7 @@ export class AgentOs {
 	private readonly _sidecarVm: CreatedVm;
 	private readonly _disposeSidecarEventListener: () => void;
 	private readonly _agentStderrHandler?: AgentStderrHandler;
+	private readonly _limitWarningHandler?: LimitWarningHandler;
 
 	private constructor(
 		kernel: Kernel,
@@ -2508,6 +2536,7 @@ export class AgentOs {
 		sidecarSession: AuthenticatedSession,
 		sidecarVm: CreatedVm,
 		agentStderrHandler?: AgentStderrHandler,
+		limitWarningHandler?: LimitWarningHandler,
 	) {
 		this.#kernel = kernel;
 		this.sidecar = sidecar;
@@ -2520,6 +2549,7 @@ export class AgentOs {
 		this._sidecarSession = sidecarSession;
 		this._sidecarVm = sidecarVm;
 		this._agentStderrHandler = agentStderrHandler;
+		this._limitWarningHandler = limitWarningHandler;
 		this._disposeSidecarEventListener = this._sidecarClient.onEvent((event) => {
 			this._handleSidecarEvent(event);
 		});
@@ -2773,6 +2803,7 @@ export class AgentOs {
 				vmAdmin.sidecarSession,
 				vmAdmin.sidecarVm,
 				options?.onAgentStderr ?? defaultAgentStderrHandler,
+				options?.onLimitWarning,
 			);
 			vm._sidecarLease = sidecarLease;
 			vm._toolKits = vmAdmin.toolKits;
@@ -3627,6 +3658,10 @@ export class AgentOs {
 		if (event.payload.type !== "structured") {
 			return;
 		}
+		if (event.payload.name === "limit_warning") {
+			this._handleLimitWarning(event.payload.detail);
+			return;
+		}
 		if (event.payload.name !== "acp.session_event") {
 			return;
 		}
@@ -3649,6 +3684,27 @@ export class AgentOs {
 			);
 		} catch {
 			// Ignore malformed event payloads from the sidecar.
+		}
+	}
+
+	private _handleLimitWarning(detail: Record<string, string>): void {
+		if (!this._limitWarningHandler) {
+			return;
+		}
+		const toNumber = (value: string | undefined): number => {
+			const parsed = Number(value);
+			return Number.isFinite(parsed) ? parsed : 0;
+		};
+		try {
+			this._limitWarningHandler({
+				limit: detail.limit ?? "",
+				category: detail.category ?? "",
+				observed: toNumber(detail.observed),
+				capacity: toNumber(detail.capacity),
+				fillPercent: toNumber(detail.fillPercent),
+			});
+		} catch {
+			// A throwing handler must never break the sidecar event loop.
 		}
 	}
 

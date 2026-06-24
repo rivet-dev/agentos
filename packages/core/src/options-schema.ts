@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import type {
 	AgentOsOptions,
 	AgentStderrHandler,
+	LimitWarningHandler,
 	NativeMountConfig,
 } from "./agent-os.js";
 import type { HostTool, ToolKit } from "./host-tools.js";
@@ -282,6 +283,10 @@ export const agentOsOptionFieldSchemas = {
 	sidecar: sidecarConfigSchema.optional(),
 	limits: agentOsLimitsSchema.optional(),
 	onAgentStderr: z.custom<AgentStderrHandler>(
+		(value) => typeof value === "function",
+		{ message: "Expected function" },
+	).optional(),
+	onLimitWarning: z.custom<LimitWarningHandler>(
 		(value) => typeof value === "function",
 		{ message: "Expected function" },
 	).optional(),

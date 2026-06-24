@@ -82,20 +82,20 @@ catalogs:
       specifier: 0.3.0-rc.2
       version: 0.3.0-rc.2
     '@secure-exec/core':
-      specifier: 0.0.0-codex-native-sidecar-platform-ci.117d645
-      version: 0.0.0-codex-native-sidecar-platform-ci.117d645
+      specifier: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
+      version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
     '@secure-exec/google-drive':
-      specifier: 0.0.0-codex-native-sidecar-platform-ci.117d645
-      version: 0.0.0-codex-native-sidecar-platform-ci.117d645
+      specifier: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
+      version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
     '@secure-exec/nodejs':
       specifier: 0.2.1
       version: 0.2.1
     '@secure-exec/s3':
-      specifier: 0.0.0-codex-native-sidecar-platform-ci.117d645
-      version: 0.0.0-codex-native-sidecar-platform-ci.117d645
+      specifier: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
+      version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
     '@secure-exec/sandbox':
-      specifier: 0.0.0-codex-native-sidecar-platform-ci.117d645
-      version: 0.0.0-codex-native-sidecar-platform-ci.117d645
+      specifier: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
+      version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
 
 overrides:
   '@rivet-dev/agentos-core': workspace:*
@@ -128,7 +128,7 @@ importers:
         version: link:packages/core
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
+        version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -208,7 +208,7 @@ importers:
         version: link:../../packages/agentos-sandbox
       '@secure-exec/s3':
         specifier: 'catalog:'
-        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
+        version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
       dockerode:
         specifier: ^4.0.9
         version: 4.0.10
@@ -279,7 +279,7 @@ importers:
         version: link:../core
       '@secure-exec/sandbox':
         specifier: 'catalog:'
-        version: 0.0.0-codex-native-sidecar-platform-ci.117d645(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -335,7 +335,7 @@ importers:
         version: 0.6.2
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
+        version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -459,10 +459,10 @@ importers:
         version: link:../agentos-sandbox
       '@secure-exec/google-drive':
         specifier: 'catalog:'
-        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
+        version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
       '@secure-exec/s3':
         specifier: 'catalog:'
-        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
+        version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -542,7 +542,7 @@ importers:
     dependencies:
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
+        version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -564,7 +564,7 @@ importers:
     dependencies:
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-codex-native-sidecar-platform-ci.117d645
+        version: 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
       pyodide:
         specifier: ^0.28.3
         version: 0.28.3(bufferutil@4.1.0)
@@ -2923,50 +2923,50 @@ packages:
     resolution: {integrity: sha512-trO//ypJBSt5xkewuol9LOykvDgHwUXq8R+yQVS+0CmpN3lYUtewHkb+At9RVGRhDMmJZY2oasaXDnhfurQ33w==}
     hasBin: true
 
-  '@secure-exec/core@0.0.0-codex-native-sidecar-platform-ci.117d645':
-    resolution: {integrity: sha512-bomEzynHLrGIF+k1S6zIQHJwdQw8V/WfEGKL9nj+iMC8OlfDnaJ26SwV8Yk3M7KwjKpznQsMNmPeIK5iFZ0s8A==}
+  '@secure-exec/core@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
+    resolution: {integrity: sha512-T1MChF4xTEPurQgmXLoo9520T+UN3z/eEHugdgOgI8A3e2xbOpGyFGsWiAQ6yvAzfyc1L9NW7oweayJqop3gRA==}
 
   '@secure-exec/core@0.2.1':
     resolution: {integrity: sha512-HsnUv6gClpMA1BBRmX86j30TKTZtgJC/fO1tVavr7IpM2zNKbHU8LgSlBd7mv2SNy02ImTmU/GnQ3aYB4NSbEg==}
 
-  '@secure-exec/google-drive@0.0.0-codex-native-sidecar-platform-ci.117d645':
-    resolution: {integrity: sha512-3s7entAvaBHOYDHpg4g5dbaC91FsbZaHProA0B75kk6+EV2VLb7s0pAgRips9J1slh4RdDOolw6TRd8CrHXHsg==}
+  '@secure-exec/google-drive@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
+    resolution: {integrity: sha512-9qOdgDhqee9nLVf97q2sUVEty7r93WXe8fYpDby9b1G37tXhFrqUfN96rOdfHgMViTnbs6P+is6btDnEH8SBkA==}
 
   '@secure-exec/nodejs@0.2.1':
     resolution: {integrity: sha512-UJMJqVFxexlHJV0Q9nWURvrz6GElj8673DDOOFln6FHR6JS+9SaSU3eISrN158DuNC3SFi4rgjb/scKnK4YOYQ==}
 
-  '@secure-exec/s3@0.0.0-codex-native-sidecar-platform-ci.117d645':
-    resolution: {integrity: sha512-Q5ESnaQkPc1PxDXO//Yysk3MxJOE9xKA2EVvZjKmdqyKyiesgnV1/oik4LKb8JGBYO63mokOqprxk7MO9R7g5w==}
+  '@secure-exec/s3@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
+    resolution: {integrity: sha512-JF4xK6TJEwBdcM7KDgo9XVM93yEHkLCcN5vOYPsUgfcE9xsA7EZ/aourJ4aVPMa9tclrPhAFT1ddPRrHZq8rTA==}
 
-  '@secure-exec/sandbox@0.0.0-codex-native-sidecar-platform-ci.117d645':
-    resolution: {integrity: sha512-zjwLoKGIJhSggKfEdcRrXv6AXJUiFvjCCPWy/v3R2uGr5EZTUp6KsECmzggzcT/6OxN54A46Eb/8ysZgEiyfbA==}
+  '@secure-exec/sandbox@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
+    resolution: {integrity: sha512-PUnR477YmcQSbV7lSdawjFUovAtQZ/cSs8t3xNmboj6nwFpaEMwuyk2sHQHnEX2/Pee6W0OvY8OJk6EQW0zfuQ==}
 
-  '@secure-exec/sidecar-darwin-arm64@0.0.0-codex-native-sidecar-platform-ci.117d645':
-    resolution: {integrity: sha512-cQe2UnN7lj4htBSablaPCv6kmzybUADXyWCfRRQKKzV5UD204+Hh63wtZ/wyzs4N7kQaoGqtVSNfskR0c4/Z+A==}
+  '@secure-exec/sidecar-darwin-arm64@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
+    resolution: {integrity: sha512-PQ6KgSSDqeoIKH1Y/QDBrmP53g7NlHsG+/bgSDmnKuXPYFL7UBBC3eFpk0Z2c/i1oYZCTAAN2cXz4AC7RDHjrQ==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [darwin]
 
-  '@secure-exec/sidecar-darwin-x64@0.0.0-codex-native-sidecar-platform-ci.117d645':
-    resolution: {integrity: sha512-KfDXmf65TDgD9fKA/fuIpqgsSmy6mGWfvKNGOELNii9aAj19aw5DKt0Sh9AjL4BVTkKxlkQRfhctTuYTF+LyzQ==}
+  '@secure-exec/sidecar-darwin-x64@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
+    resolution: {integrity: sha512-e53LaA0ODnyJJqpm4S8naKQPsCERyA8Z/XOrL61lN0KMEkPHEMDRprbDXPIiXRThCLXNqkzf+Wt+9IRj8vh8qA==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [darwin]
 
-  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-codex-native-sidecar-platform-ci.117d645':
-    resolution: {integrity: sha512-antjZRycgVuCcnQRoZV+By0isj6d1d0s/MbZs8t6Ssz4NNJKHeiRZUMEZ8H70Irywh1iFLcilP7hfau1nA4z5w==}
+  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
+    resolution: {integrity: sha512-DUUSJVUgLxBBVA5m8vwVG6WAjiFFnv3rEAfvkHNz8eXgkJvXf24LwYD9B1gocEh7gkog4LVP3ReuZ6hDPZ90HQ==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [linux]
 
-  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-codex-native-sidecar-platform-ci.117d645':
-    resolution: {integrity: sha512-sXlgTa7r9x0Y8g35RJbUqwk3V7J/Rz/U6p4kMQ77tD+j7tj4L0sxDZn8n02z40iA7+OFD58BImoKOUNHOzEMkg==}
+  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
+    resolution: {integrity: sha512-/sfHU2a4zVCL+VjgkQBmpJSQjGstkCCtASBDqjgS+q6obGWKkjOe6rVgX+aGr6tfqU87ytD1MxpvFbf9yShVTg==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [linux]
 
-  '@secure-exec/sidecar@0.0.0-codex-native-sidecar-platform-ci.117d645':
-    resolution: {integrity: sha512-kij9InI4RXl2ZLPZKhtcNMYiq/wQQjejq5yOuJnXULeH9iNG7IrGeQ6bMh346ef7mxUL1XnT7Ptv57gB8cWukg==}
+  '@secure-exec/sidecar@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
+    resolution: {integrity: sha512-ypg4Od5sMyEaLOVHO2538sfVPYzO7EznxTAquyEmVQclNYCwxCcMKNtf6rvmo1Odce47+wu2zyBe1P2VF2SIow==}
     engines: {node: '>=20'}
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
@@ -9703,19 +9703,19 @@ snapshots:
       '@sandbox-agent/cli-win32-x64': 0.4.2
     optional: true
 
-  '@secure-exec/core@0.0.0-codex-native-sidecar-platform-ci.117d645':
+  '@secure-exec/core@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
-      '@secure-exec/sidecar': 0.0.0-codex-native-sidecar-platform-ci.117d645
+      '@secure-exec/sidecar': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
       zod: 4.3.6
 
   '@secure-exec/core@0.2.1':
     dependencies:
       better-sqlite3: 12.8.0
 
-  '@secure-exec/google-drive@0.0.0-codex-native-sidecar-platform-ci.117d645':
+  '@secure-exec/google-drive@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
     dependencies:
-      '@secure-exec/core': 0.0.0-codex-native-sidecar-platform-ci.117d645
+      '@secure-exec/core': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
 
   '@secure-exec/nodejs@0.2.1':
     dependencies:
@@ -9728,13 +9728,13 @@ snapshots:
       node-stdlib-browser: 1.3.1
       web-streams-polyfill: 4.2.0
 
-  '@secure-exec/s3@0.0.0-codex-native-sidecar-platform-ci.117d645':
+  '@secure-exec/s3@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
     dependencies:
-      '@secure-exec/core': 0.0.0-codex-native-sidecar-platform-ci.117d645
+      '@secure-exec/core': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
 
-  '@secure-exec/sandbox@0.0.0-codex-native-sidecar-platform-ci.117d645(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
+  '@secure-exec/sandbox@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
     dependencies:
-      '@secure-exec/core': 0.0.0-codex-native-sidecar-platform-ci.117d645
+      '@secure-exec/core': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
       sandbox-agent: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
     transitivePeerDependencies:
       - '@cloudflare/sandbox'
@@ -9748,24 +9748,24 @@ snapshots:
       - modal
       - zod
 
-  '@secure-exec/sidecar-darwin-arm64@0.0.0-codex-native-sidecar-platform-ci.117d645':
+  '@secure-exec/sidecar-darwin-arm64@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
     optional: true
 
-  '@secure-exec/sidecar-darwin-x64@0.0.0-codex-native-sidecar-platform-ci.117d645':
+  '@secure-exec/sidecar-darwin-x64@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
     optional: true
 
-  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-codex-native-sidecar-platform-ci.117d645':
+  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
     optional: true
 
-  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-codex-native-sidecar-platform-ci.117d645':
+  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
     optional: true
 
-  '@secure-exec/sidecar@0.0.0-codex-native-sidecar-platform-ci.117d645':
+  '@secure-exec/sidecar@0.0.0-fix-queue-backpressure-and-tracker.f7cc68e':
     optionalDependencies:
-      '@secure-exec/sidecar-darwin-arm64': 0.0.0-codex-native-sidecar-platform-ci.117d645
-      '@secure-exec/sidecar-darwin-x64': 0.0.0-codex-native-sidecar-platform-ci.117d645
-      '@secure-exec/sidecar-linux-arm64-gnu': 0.0.0-codex-native-sidecar-platform-ci.117d645
-      '@secure-exec/sidecar-linux-x64-gnu': 0.0.0-codex-native-sidecar-platform-ci.117d645
+      '@secure-exec/sidecar-darwin-arm64': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
+      '@secure-exec/sidecar-darwin-x64': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
+      '@secure-exec/sidecar-linux-arm64-gnu': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
+      '@secure-exec/sidecar-linux-x64-gnu': 0.0.0-fix-queue-backpressure-and-tracker.f7cc68e
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     optional: true

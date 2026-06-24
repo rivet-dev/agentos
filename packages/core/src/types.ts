@@ -15,6 +15,8 @@ export type {
 	BatchWriteResult,
 	CreateSessionOptions,
 	DirEntry,
+	LimitWarning,
+	LimitWarningHandler,
 	McpServerConfig,
 	McpServerConfigLocal,
 	McpServerConfigRemote,
