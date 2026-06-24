@@ -371,3 +371,28 @@ registry.start();
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/sessions)*
 
+## Agent logs
+
+The agent (ACP adapter) runs as a process inside the VM. It uses **stdout** for ACP protocol traffic, so its **stderr** is the channel for logs, warnings, and crash diagnostics. Pass `onAgentStderr` to the VM to capture it, and route it to your own logger to see exactly what the agent is doing (or why it exited).
+
+<Aside type="note">
+`onAgentStderr` is a VM-level option, so it covers every session's agent process. It's the fastest way to diagnose an agent that exits unexpectedly mid-turn; the crash reason surfaces here. If you omit it, chunks are written to the host `process.stderr` by default.
+</Aside>
+
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+  onAgentStderr(event) {
+    // event: { sessionId, agentType, processId, pid, chunk: Uint8Array }
+    const line = new TextDecoder().decode(event.chunk);
+    logger.info(`[agent:${event.agentType} session:${event.sessionId}] ${line}`);
+  },
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+

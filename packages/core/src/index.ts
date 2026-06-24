@@ -16,6 +16,20 @@ export {
 	validateToolkits,
 } from "./host-tools.js";
 export {
+	agentOsLimitsSchema,
+	agentOsOptionFieldSchemas,
+	agentOsOptionsSchema,
+	hostToolSchema,
+	mountConfigSchema,
+	nativeMountConfigSchema,
+	parseAgentOsOptions,
+	permissionsSchema,
+	rootFilesystemConfigSchema,
+	sharedSidecarConfigSchema,
+	sidecarConfigSchema,
+	toolKitSchema,
+} from "./options-schema.js";
+export {
 	createInMemoryLayerStore,
 	createSnapshotExport,
 } from "./layers.js";

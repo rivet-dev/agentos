@@ -37,6 +37,7 @@ import type {
 } from "./agent-session-types.js";
 import { type HostTool, type ToolKit, validateToolkits } from "./host-tools.js";
 import { zodToJsonSchema } from "./host-tools-zod.js";
+import { parseAgentOsOptions } from "./options-schema.js";
 import type {
 	JsonRpcNotification,
 	JsonRpcRequest,
@@ -480,6 +481,14 @@ function defaultAgentStderrHandler(event: AgentStderrEvent): void {
 	process.stderr.write(event.chunk);
 }
 
+/**
+ * Public core VM options.
+ *
+ * Keep this interface in sync with
+ * `packages/core/src/options-schema.ts::agentOsOptionsSchema`. The Rivet
+ * native actor intentionally accepts only a subset via
+ * `packages/agentos/src/config.ts::nativeAgentOsOptionsSchema`.
+ */
 export interface AgentOsOptions {
 	/**
 	 * Software to install in the VM. Each entry provides agents, tools,
@@ -2535,6 +2544,7 @@ export class AgentOs {
 	}
 
 	static async create(options?: AgentOsOptions): Promise<AgentOs> {
+		options = parseAgentOsOptions(options);
 		const software =
 			options?.defaultSoftware === false
 				? (options.software ?? [])

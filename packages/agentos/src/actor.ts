@@ -26,6 +26,7 @@ import {
 	type AgentOsActorConfig,
 	type AgentOsActorConfigInput,
 	agentOsActorConfigSchema,
+	nativeAgentOsOptionsSchema,
 } from "./config.js";
 import { getPluginPath } from "./plugin-binary.js";
 import type { AgentOsActorState, AgentOsActorVars } from "./types.js";
@@ -191,19 +192,18 @@ function flattenSoftware(input: unknown, out: SoftwareDescriptorLike[]): void {
 export function buildConfigJson<TConnParams>(
 	parsed: AgentOsActorConfig<TConnParams>,
 ): string {
+	const options = nativeAgentOsOptionsSchema.parse(
+		parsed.options ?? {},
+	) as Record<string, unknown>;
 	const descriptors: SoftwareDescriptorLike[] = [];
-	flattenSoftware(
-		(parsed.options as { software?: unknown })?.software,
-		descriptors,
-	);
+	flattenSoftware(options.software, descriptors);
 
 	// Auto-include the default software bundle (`@agentos-software/common`: `sh` +
 	// coreutils + the standard CLI tools agents rely on) unless the caller opted
 	// out with `defaultSoftware: false`. Anything already listed in `software`
 	// (e.g. an explicit `common`) is not duplicated. Prepended so the baseline
 	// tools come first, matching the previous explicit `[common, ...]` ordering.
-	const defaultSoftwareEnabled =
-		(parsed.options as { defaultSoftware?: unknown })?.defaultSoftware !== false;
+	const defaultSoftwareEnabled = options.defaultSoftware !== false;
 	if (defaultSoftwareEnabled) {
 		const defaults: SoftwareDescriptorLike[] = [];
 		flattenSoftware(common, defaults);
@@ -233,7 +233,6 @@ export function buildConfigJson<TConnParams>(
 	// no manual `nodeModulesMount(...)`: see `withAutoAgentNodeModulesMount`. An
 	// explicit `/root/node_modules` mount in `options.mounts` always wins. The VM
 	// module resolver reads the mounted tree through the kernel VFS.
-	const options = (parsed.options ?? {}) as Record<string, unknown>;
 	const mounts = withAutoAgentNodeModulesMount(
 		serializeNativeMounts(options.mounts),
 		descriptors,
@@ -242,6 +241,7 @@ export function buildConfigJson<TConnParams>(
 	return JSON.stringify({
 		software,
 		additionalInstructions: options.additionalInstructions,
+		moduleAccessCwd: options.moduleAccessCwd,
 		loopbackExemptPorts: options.loopbackExemptPorts,
 		allowedNodeBuiltins: options.allowedNodeBuiltins,
 		permissions: options.permissions,

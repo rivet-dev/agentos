@@ -10,7 +10,10 @@ import {
 	agentOs as createAgentOs,
 	type AgentOsActorDefinition,
 } from "./actor.js";
-import type { AgentOsActorConfigInput } from "./config.js";
+import type {
+	AgentOsActorConfigInput,
+	NativeAgentOsOptions,
+} from "./config.js";
 
 export { setup } from "rivetkit";
 
@@ -24,10 +27,16 @@ export { createAgentOs as agentOs };
 export {
 	type AgentOsActorConfig,
 	type AgentOsActorConfigInput,
+	type NativeAgentOsOptions,
 	agentOsActorConfigSchema,
+	nativeAgentOsOptionsSchema,
 } from "./config.js";
 
 export { getPluginPath } from "./plugin-binary.js";
+
+// Re-export the software-definition helper so custom agents/tools/commands can
+// be defined without importing @rivet-dev/agentos-core directly.
+export { defineSoftware } from "@rivet-dev/agentos-core";
 
 export type {
 	AgentOsActionContext,
@@ -52,12 +61,24 @@ export type {
 } from "./types.js";
 
 export type AgentOSActorConfigInput<TConnParams = undefined> =
-	AgentOsActorConfigInput<TConnParams>["options"];
+	NativeAgentOsOptions &
+		Omit<AgentOsActorConfigInput<TConnParams>, "options">;
 
 export function agentOS<TConnParams = undefined>(
 	config: AgentOSActorConfigInput<TConnParams> = {},
 ): AgentOsActorDefinition<TConnParams> {
+	const {
+		onBeforeConnect,
+		onSessionEvent,
+		onPermissionRequest,
+		preview,
+		...options
+	} = config;
 	return createAgentOs({
-		options: config,
+		options,
+		preview,
+		onBeforeConnect,
+		onSessionEvent,
+		onPermissionRequest,
 	} as AgentOsActorConfigInput<TConnParams>);
 }
