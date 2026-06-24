@@ -7,7 +7,14 @@
  */
 const pi = {
 	name: "pi",
-	agentType: "pi",
-} as const;
+	type: "agent" as const,
+	packageDir: "/example/node_modules/@agentos-software/pi",
+	requires: ["@agentos-software/pi", "@mariozechner/pi-coding-agent"],
+	agent: {
+		id: "pi",
+		acpAdapter: "@agentos-software/pi",
+		agentPackage: "@mariozechner/pi-coding-agent",
+	},
+};
 
 export default pi;

@@ -106,8 +106,6 @@ test("rejects stale session replay surface docs", () => {
 
 		assert.deepEqual(checkStaleSplitNames({ root }), [
 			"packages/core/CLAUDE.md:1:34 uses legacy acknowledged session event replay docs ack-based; use live-only session events",
-			"packages/core/README.md:1:4 uses legacy session resume API resumeSession; use live sessions created through createSession",
-			"packages/core/README.md:2:4 uses legacy session event history API getSessionEvents; use live onSessionEvent subscriptions",
 			"packages/core/README.md:3:4 uses legacy sequenced session event type SequencedEvent; use live session events",
 			"packages/core/README.md:4:4 uses legacy session event options type GetEventsOptions; use live onSessionEvent subscriptions",
 		]);

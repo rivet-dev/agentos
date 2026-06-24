@@ -275,7 +275,7 @@ describe("native sidecar migration parity gate", () => {
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				tool: "allow",
+				binding: "allow",
 			},
 		});
 		cleanups.add(async () => {

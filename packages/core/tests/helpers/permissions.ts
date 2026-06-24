@@ -6,5 +6,5 @@ export const ALLOW_ALL_VM_PERMISSIONS: Permissions = {
 	childProcess: "allow",
 	process: "allow",
 	env: "allow",
-	tool: "allow",
+	binding: "allow",
 };

@@ -13,7 +13,7 @@ const SANDBOX_QUICKSTART_PERMISSIONS = {
 	network: "allow",
 	childProcess: "allow",
 	env: "allow",
-	tool: "allow",
+	binding: "allow",
 } as const;
 
 const SANDBOX_MOUNT_PATH = "/sandbox";

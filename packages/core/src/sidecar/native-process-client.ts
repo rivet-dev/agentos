@@ -3,15 +3,17 @@
 // separately-registered factory; importing native-client wires it up so
 // SidecarProcess.spawn works in this native runtime.
 import "@secure-exec/core/native-client";
+import { SidecarProcess } from "@secure-exec/core/sidecar-client";
 
 export {
 	NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
-	SidecarProcess,
-	SidecarProcess as NativeSidecarProcessClient,
 	SidecarEventBufferOverflow,
+	SidecarProcess,
 	SidecarProcessError,
 	SidecarProcessExited,
 } from "@secure-exec/core/sidecar-client";
+
+export const NativeSidecarProcessClient = SidecarProcess;
 
 export type {
 	AuthenticatedSession,

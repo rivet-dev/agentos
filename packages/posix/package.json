@@ -19,7 +19,7 @@
   "scripts": {
     "check-types": "tsc --noEmit -p ./tsconfig.json",
     "build": "tsc -p ./tsconfig.json",
-    "test": "vitest run --passWithNoTests"
+    "test": "pnpm build && vitest run --passWithNoTests"
   },
   "license": "Apache-2.0",
   "dependencies": {

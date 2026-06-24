@@ -71,7 +71,7 @@ function hostCallbackFrame(callbackKey: string, input: unknown) {
 // input that parses as `{type:'command',command,args,cwd}` through the SECOND
 // branch (`handleHostCommandCallback` -> `handleAgentOsToolkitCommand` ->
 // `invokeHostTool`), bypassing the `callback_key`/Zod path entirely. We forge a
-// CLI-style command frame to confirm THAT branch also enforces tool.invoke.
+// CLI-style command frame to confirm THAT branch also enforces binding.invoke.
 function commandHostCallbackFrame(command: string, args: string[]) {
 	return {
 		frame_type: "sidecar_request" as const,
@@ -197,7 +197,7 @@ describe("toolkit permissions", () => {
 		]);
 		expect(result.exitCode).toBe(1);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("tool.invoke");
+		expect(result.stderr).toContain("binding.invoke");
 		expect(result.stderr).toContain("math:add");
 	});
 
@@ -208,7 +208,7 @@ describe("toolkit permissions", () => {
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				tool: {
+				binding: {
 					default: "deny",
 					rules: [
 						{
@@ -244,8 +244,8 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		vm = null;
 	});
 
-	// N-001 (J.1/J.2): host_callback RPC must honor tool.invoke deny.
-	test("denies host_callback RPC tool invocation when tool.invoke policy is deny (not just the CLI path)", async () => {
+	// N-001 (J.1/J.2): host_callback RPC must honor binding.invoke deny.
+	test("denies host_callback RPC tool invocation when binding.invoke policy is deny (not just the CLI path)", async () => {
 		const executed: unknown[] = [];
 		const spyKit = toolKit({
 			name: "math",
@@ -270,8 +270,8 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				// Deny-by-default: no tool.invoke grant for math:add.
-				tool: { default: "deny", rules: [] },
+				// Deny-by-default: no binding.invoke grant for math:add.
+				binding: { default: "deny", rules: [] },
 			},
 		});
 		vm = created.vm;
@@ -289,8 +289,8 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 		expect(response.error).toMatch(/tool\.invoke|EACCES|denied|permission/i);
 	});
 
-	// N-002 (J.2): host_callback RPC must respect tool.invoke pattern scope.
-	test("host_callback RPC respects tool.invoke pattern scope and denies a non-matching tool", async () => {
+	// N-002 (J.2): host_callback RPC must respect binding.invoke pattern scope.
+	test("host_callback RPC respects binding.invoke pattern scope and denies a non-matching tool", async () => {
 		const executed: string[] = [];
 		const dangerKit = toolKit({
 			name: "math",
@@ -321,7 +321,7 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 				fs: "allow",
 				childProcess: "allow",
 				// Only math:safe is allowed; math:danger is out of scope -> deny.
-				tool: {
+				binding: {
 					default: "deny",
 					rules: [
 						{ mode: "allow", operations: ["invoke"], patterns: ["math:safe"] },
@@ -374,7 +374,7 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				tool: {
+				binding: {
 					default: "deny",
 					rules: [
 						{ mode: "allow", operations: ["invoke"], patterns: ["math:add"] },
@@ -443,7 +443,7 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				tool: {
+				binding: {
 					default: "deny",
 					rules: [
 						{ mode: "allow", operations: ["invoke"], patterns: ["math:add"] },
@@ -468,10 +468,10 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 
 	// AOS-SESS-4 (N-014, P2, J.1/J.2): the *command-shaped* host_callback dispatch
 	// branch (handleHostCommandCallback -> invokeHostTool) must ALSO honor
-	// tool.invoke deny — defense-in-depth on the second dispatch path that the
+	// binding.invoke deny — defense-in-depth on the second dispatch path that the
 	// callback_key/Zod branch does not cover. (Hold-as-regression; not a
 	// re-discovery — assert the gate holds on this branch.)
-	test("forged {type:'command'} host_callback is denied by tool.invoke on the command dispatch branch", async () => {
+	test("forged {type:'command'} host_callback is denied by binding.invoke on the command dispatch branch", async () => {
 		const executed: unknown[] = [];
 		const spyKit = toolKit({
 			name: "math",
@@ -493,8 +493,8 @@ describe("toolkit permissions — raw host_callback RPC path", () => {
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
-				// Deny-by-default: no tool.invoke grant for math:add.
-				tool: { default: "deny", rules: [] },
+				// Deny-by-default: no binding.invoke grant for math:add.
+				binding: { default: "deny", rules: [] },
 			},
 		});
 		vm = created.vm;

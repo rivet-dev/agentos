@@ -105,16 +105,6 @@ const stalePatterns = [
 			"document secure_exec_client::wire as the generated schema surface",
 	},
 	{
-		name: "legacy session resume API",
-		pattern: /\bresumeSession\b/g,
-		replacement: "live sessions created through createSession",
-	},
-	{
-		name: "legacy session event history API",
-		pattern: /\bgetSessionEvents\b/g,
-		replacement: "live onSessionEvent subscriptions",
-	},
-	{
 		name: "legacy sequenced session event type",
 		pattern: /\bSequencedEvent\b/g,
 		replacement: "live session events",

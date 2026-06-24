@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import commonSoftware from "@agentos-software/common";
 
 export interface WorkspacePaths {
 	workspaceRoot: string;
@@ -8,6 +9,31 @@ export interface WorkspacePaths {
 	wasmCommandsDir: string;
 	wasmCommandDirs: string[];
 	realProviderEnvFile: string;
+}
+
+interface WasmCommandDescriptor {
+	commandDir?: unknown;
+}
+
+function collectCommandDirs(
+	input: unknown,
+	commandDirs: string[] = [],
+): string[] {
+	if (Array.isArray(input)) {
+		for (const item of input) {
+			collectCommandDirs(item, commandDirs);
+		}
+		return commandDirs;
+	}
+
+	if (input && typeof input === "object") {
+		const commandDir = (input as WasmCommandDescriptor).commandDir;
+		if (typeof commandDir === "string") {
+			commandDirs.push(commandDir);
+		}
+	}
+
+	return commandDirs;
 }
 
 export function findWorkspaceRoot(startDir: string): string {
@@ -44,7 +70,9 @@ export function resolveWorkspacePaths(startDir: string): WorkspacePaths {
 		"coreutils",
 		"wasm",
 	);
+	const packagedCommonCommandDirs = collectCommandDirs(commonSoftware);
 	const wasmCommandDirs = [
+		...packagedCommonCommandDirs,
 		builtWasmCommandsDir,
 		packagedCoreutilsWasmDir,
 	].filter((commandDir, index, allDirs) => {

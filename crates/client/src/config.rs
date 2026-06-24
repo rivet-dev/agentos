@@ -553,7 +553,7 @@ pub struct Permissions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<PatternPermissions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool: Option<PatternPermissions>,
+    pub binding: Option<PatternPermissions>,
 }
 
 /// `"allow"` or `"deny"`.
@@ -572,7 +572,7 @@ pub enum FsPermissions {
     Rules(RulePermissions<FsPermissionRule>),
 }
 
-/// `PermissionMode | RulePermissions<PatternPermissionRule>` (network/childProcess/process/env/tool).
+/// `PermissionMode | RulePermissions<PatternPermissionRule>` (network/childProcess/process/env/binding).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PatternPermissions {

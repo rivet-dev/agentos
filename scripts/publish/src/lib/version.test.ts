@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { DEFAULT_SIDECAR_PLATFORMS } from "./packages.js";
 import { bumpCargoVersions, bumpPackageJsons } from "./version.js";
 
 async function writeJson(root: string, rel: string, value: unknown) {
@@ -52,7 +53,7 @@ serde = "1"
 	}
 });
 
-test("bumpPackageJsons injects agent-os sidecar platform optional dependency", async () => {
+test("bumpPackageJsons injects agent-os sidecar and plugin platform optional dependencies", async () => {
 	const repoRoot = await mkdtemp(join(tmpdir(), "agentos-version-test-"));
 	try {
 		await writeJson(repoRoot, "package.json", {
@@ -66,16 +67,22 @@ test("bumpPackageJsons injects agent-os sidecar platform optional dependency", a
 				"packages:",
 				"  - packages/*",
 				"  - packages/sidecar-binary/npm/*",
+				"  - packages/agentos-plugin/npm/*",
 				"",
 			].join("\n"),
 		);
 		for (const [rel, name] of [
+			["packages/agentos", "@rivet-dev/agentos"],
 			["packages/core", "@rivet-dev/agentos-core"],
 			["packages/sidecar-binary", "@rivet-dev/agentos-sidecar"],
-			[
-				"packages/sidecar-binary/npm/linux-x64-gnu",
-				"@rivet-dev/agentos-sidecar-linux-x64-gnu",
-			],
+			...DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
+				`packages/sidecar-binary/npm/${platform}`,
+				`@rivet-dev/agentos-sidecar-${platform}`,
+			]),
+			...DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
+				`packages/agentos-plugin/npm/${platform}`,
+				`@rivet-dev/agentos-plugin-${platform}`,
+			]),
 		]) {
 			await writeJson(repoRoot, join(rel, "package.json"), {
 				name,
@@ -91,9 +98,28 @@ test("bumpPackageJsons injects agent-os sidecar platform optional dependency", a
 				"utf8",
 			),
 		);
-		assert.deepEqual(sidecarManifest.optionalDependencies, {
-			"@rivet-dev/agentos-sidecar-linux-x64-gnu": "0.3.0",
-		});
+		assert.deepEqual(
+			sidecarManifest.optionalDependencies,
+			Object.fromEntries(
+				DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
+					`@rivet-dev/agentos-sidecar-${platform}`,
+					"0.3.0",
+				]).sort(),
+			),
+		);
+
+		const agentosManifest = JSON.parse(
+			await readFile(join(repoRoot, "packages/agentos/package.json"), "utf8"),
+		);
+		assert.deepEqual(
+			agentosManifest.optionalDependencies,
+			Object.fromEntries(
+				DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
+					`@rivet-dev/agentos-plugin-${platform}`,
+					"0.3.0",
+				]).sort(),
+			),
+		);
 	} finally {
 		await rm(repoRoot, { recursive: true, force: true });
 	}

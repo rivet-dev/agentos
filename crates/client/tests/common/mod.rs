@@ -8,7 +8,9 @@
 use std::path::PathBuf;
 use std::sync::Once;
 
-use agentos_client::config::{AgentOsConfig, AgentOsSidecarConfig, MountConfig, MountPlugin};
+use agentos_client::config::{
+    AgentOsConfig, AgentOsSidecarConfig, MountConfig, MountPlugin, Permissions,
+};
 use agentos_client::AgentOs;
 
 static INIT: Once = Once::new();
@@ -82,7 +84,7 @@ pub async fn new_vm_with_sidecar_pool(pool: impl Into<String>) -> AgentOs {
 }
 
 pub async fn new_vm_with_loopback_ports(loopback_exempt_ports: Vec<u16>) -> AgentOs {
-    new_vm_with_config(loopback_exempt_ports, Vec::new()).await
+    new_vm_with_config(loopback_exempt_ports, Vec::new(), None).await
 }
 
 pub async fn new_vm_with_wasm_commands() -> AgentOs {
@@ -92,10 +94,18 @@ pub async fn new_vm_with_wasm_commands() -> AgentOs {
 pub async fn new_vm_with_wasm_commands_and_loopback_ports(
     loopback_exempt_ports: Vec<u16>,
 ) -> AgentOs {
-    new_vm_with_config(loopback_exempt_ports, wasm_command_mounts()).await
+    new_vm_with_config(loopback_exempt_ports, wasm_command_mounts(), None).await
 }
 
-async fn new_vm_with_config(loopback_exempt_ports: Vec<u16>, mounts: Vec<MountConfig>) -> AgentOs {
+pub async fn new_vm_with_wasm_commands_and_permissions(permissions: Permissions) -> AgentOs {
+    new_vm_with_config(Vec::new(), wasm_command_mounts(), Some(permissions)).await
+}
+
+async fn new_vm_with_config(
+    loopback_exempt_ports: Vec<u16>,
+    mounts: Vec<MountConfig>,
+    permissions: Option<Permissions>,
+) -> AgentOs {
     ensure_sidecar_env();
     AgentOs::create(AgentOsConfig {
         loopback_exempt_ports,
@@ -106,6 +116,7 @@ async fn new_vm_with_config(loopback_exempt_ports: Vec<u16>, mounts: Vec<MountCo
                 .into_owned(),
         ),
         mounts,
+        permissions,
         ..Default::default()
     })
     .await

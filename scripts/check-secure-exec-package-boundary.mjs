@@ -8,7 +8,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const agentOsPackagePattern = /^@rivet-dev\/agent-os(?:-|$)/;
+const agentOsPackagePattern = /^@rivet-dev\/agentos(?:-|$)/;
 const compatibilityPackages = new Set([
 	"secure-exec",
 	"@secure-exec/typescript",
@@ -63,7 +63,7 @@ const agentOsFacadeSymbolPatterns = [
 const agentOsDocumentationPatterns = [
 	{ label: "Agent OS", pattern: /\bAgent OS\b/g },
 	{ label: "AgentOs", pattern: /\bAgentOs\b/g },
-	{ label: "@rivet-dev/agentos", pattern: /@rivet-dev\/agent-os(?:-|$)/g },
+	{ label: "@rivet-dev/agentos", pattern: /@rivet-dev\/agentos(?:-|$)/g },
 ];
 
 function readJson(path) {

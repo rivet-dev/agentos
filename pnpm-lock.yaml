@@ -487,6 +487,9 @@ importers:
 
   packages/dev-shell:
     dependencies:
+      '@agentos-software/common':
+        specifier: 'catalog:'
+        version: 0.3.0-rc.2
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core

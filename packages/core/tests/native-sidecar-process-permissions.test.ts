@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { CreateVmConfig } from "@secure-exec/core/vm-config";
 import { afterEach, describe, expect, test } from "vitest";
 import {
 	NativeSidecarProcessClient,
@@ -18,6 +19,38 @@ import { findCargoBinary, resolveCargoBinary } from "../src/sidecar/cargo.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
+
+type JavaScriptVmConfigOptions = Partial<
+	Pick<
+		CreateVmConfig,
+		"cwd" | "env" | "jsRuntime" | "loopbackExemptPorts" | "permissions"
+	>
+> & {
+	rootFilesystem?: CreateVmConfig["rootFilesystem"];
+};
+
+function createJavaScriptVmOptions(options: JavaScriptVmConfigOptions = {}) {
+	return {
+		runtime: "java_script" as const,
+		config: {
+			env: options.env ?? {},
+			rootFilesystem:
+				options.rootFilesystem ?? serializeRootFilesystemForSidecar(),
+			permissions: options.permissions,
+			cwd: options.cwd,
+			loopbackExemptPorts: options.loopbackExemptPorts ?? [],
+			...(options.jsRuntime ? { jsRuntime: options.jsRuntime } : {}),
+		} satisfies CreateVmConfig,
+	};
+}
+
+function nodeBuiltinsConfig(...allowedBuiltins: string[]) {
+	return {
+		platform: "node" as const,
+		moduleResolution: "node" as const,
+		allowedBuiltins,
+	};
+}
 
 function ensureSidecarBinaryReady(): void {
 	const cargoBinary = findCargoBinary();
@@ -73,7 +106,7 @@ describe("native sidecar process client permissions", () => {
 		}
 	});
 
-	test("writes declarative permissions policies with child_process wire keys", async () => {
+	test("writes create-VM config and configure permissions policies", async () => {
 		const fixtureRoot = mkdtempSync(
 			join(tmpdir(), "agentos-sidecar-permissions-"),
 		);
@@ -118,7 +151,10 @@ describe("native sidecar process client permissions", () => {
 				"      });",
 				"      break;",
 				"    case 'create_vm':",
-				"      captures.push({ type: frame.payload.type, permissions: frame.payload.permissions });",
+				"      {",
+				"        const config = typeof frame.payload.config === 'string' ? JSON.parse(frame.payload.config) : frame.payload.config;",
+				"        captures.push({ type: frame.payload.type, permissions: config.permissions });",
+				"      }",
 				"      respond(frame.request_id, frame.ownership, { type: 'vm_created', vm_id: 'vm-1' });",
 				"      flushCapture();",
 				"      break;",
@@ -204,10 +240,12 @@ describe("native sidecar process client permissions", () => {
 					],
 				},
 			};
-			const vm = await client.createVm(session, {
-				runtime: "java_script",
-				permissions,
-			});
+			const vm = await client.createVm(
+				session,
+				createJavaScriptVmOptions({
+					permissions,
+				}),
+			);
 			await client.configureVm(session, vm, {
 				permissions,
 			});
@@ -238,7 +276,7 @@ describe("native sidecar process client permissions", () => {
 					permissions: {
 						fs: permissions.fs,
 						network: permissions.network,
-						child_process: "deny",
+						childProcess: "deny",
 						process: permissions.process,
 						env: permissions.env,
 					},
@@ -254,9 +292,8 @@ describe("native sidecar process client permissions", () => {
 					},
 				},
 			]);
-			expect(
-				captured.every((entry) => !("childProcess" in entry.permissions)),
-			).toBe(true);
+			expect("child_process" in captured[0]?.permissions).toBe(false);
+			expect("childProcess" in captured[1]?.permissions).toBe(false);
 		} finally {
 			await client.dispose();
 		}
@@ -276,41 +313,45 @@ describe("native sidecar process client permissions", () => {
 			const session = await client.authenticateAndOpenSession();
 
 			await expect(
-				client.createVm(session, {
-					runtime: "java_script",
-					permissions: {
-						fs: {
-							default: "deny",
-							rules: [
-								{
-									mode: "allow",
-									operations: [],
-									paths: ["*"],
-								},
-							],
+				client.createVm(
+					session,
+					createJavaScriptVmOptions({
+						permissions: {
+							fs: {
+								default: "deny",
+								rules: [
+									{
+										mode: "allow",
+										operations: [],
+										paths: ["*"],
+									},
+								],
+							},
 						},
-					},
-				}),
+					}),
+				),
 			).rejects.toThrow(
 				/invalid_state: .*fs\.rules\[0\]\.operations must not be empty/,
 			);
 
 			await expect(
-				client.createVm(session, {
-					runtime: "java_script",
-					permissions: {
-						fs: {
-							default: "deny",
-							rules: [
-								{
-									mode: "allow",
-									operations: ["read"],
-									paths: [],
-								},
-							],
+				client.createVm(
+					session,
+					createJavaScriptVmOptions({
+						permissions: {
+							fs: {
+								default: "deny",
+								rules: [
+									{
+										mode: "allow",
+										operations: ["read"],
+										paths: [],
+									},
+								],
+							},
 						},
-					},
-				}),
+					}),
+				),
 			).rejects.toThrow(
 				/invalid_state: .*fs\.rules\[0\]\.paths must not be empty/,
 			);
@@ -359,31 +400,29 @@ describe("native sidecar process client permissions", () => {
 		try {
 			const session = await client.authenticateAndOpenSession();
 
-			const deniedVm = await client.createVm(session, {
-				runtime: "java_script",
-				metadata: {
+			const deniedVm = await client.createVm(
+				session,
+				createJavaScriptVmOptions({
 					cwd: fixtureRoot,
-					"env.AGENT_OS_ALLOWED_NODE_BUILTINS": JSON.stringify([
-						"net",
-						"dgram",
-					]),
-				},
-				rootFilesystem: serializeRootFilesystemForSidecar(),
-				permissions: {
-					network: {
-						default: "deny",
-						rules: [
-							{
-								mode: "allow",
-								operations: ["listen"],
-								patterns: ["**"],
-							},
-						],
+					jsRuntime: nodeBuiltinsConfig("net", "dgram"),
+					permissions: {
+						fs: "allow",
+						network: {
+							default: "deny",
+							rules: [
+								{
+									mode: "allow",
+									operations: ["listen"],
+									patterns: ["**"],
+								},
+							],
+						},
+						childProcess: "allow",
+						process: "deny",
+						env: "allow",
 					},
-					childProcess: "allow",
-					process: "deny",
-				},
-			});
+				}),
+			);
 
 			await client.waitForEvent(
 				(event) =>
@@ -457,45 +496,43 @@ describe("native sidecar process client permissions", () => {
 				client.getProcessSnapshot(session, deniedVm),
 			).rejects.toThrow(/process\.inspect/);
 
-			const allowedVm = await client.createVm(session, {
-				runtime: "java_script",
-				metadata: {
+			const allowedVm = await client.createVm(
+				session,
+				createJavaScriptVmOptions({
 					cwd: fixtureRoot,
-					"env.AGENT_OS_ALLOWED_NODE_BUILTINS": JSON.stringify([
-						"net",
-						"dgram",
-					]),
-				},
-				rootFilesystem: serializeRootFilesystemForSidecar(),
-				permissions: {
-					network: {
-						default: "deny",
-						rules: [
-							{
-								mode: "allow",
-								operations: ["listen"],
-								patterns: ["**"],
-							},
-							{
-								mode: "allow",
-								operations: ["inspect"],
-								patterns: ["**"],
-							},
-						],
+					jsRuntime: nodeBuiltinsConfig("net", "dgram"),
+					permissions: {
+						fs: "allow",
+						network: {
+							default: "deny",
+							rules: [
+								{
+									mode: "allow",
+									operations: ["listen"],
+									patterns: ["**"],
+								},
+								{
+									mode: "allow",
+									operations: ["inspect"],
+									patterns: ["**"],
+								},
+							],
+						},
+						childProcess: "allow",
+						process: {
+							default: "deny",
+							rules: [
+								{
+									mode: "allow",
+									operations: ["inspect"],
+									patterns: ["**"],
+								},
+							],
+						},
+						env: "allow",
 					},
-					childProcess: "allow",
-					process: {
-						default: "deny",
-						rules: [
-							{
-								mode: "allow",
-								operations: ["inspect"],
-								patterns: ["**"],
-							},
-						],
-					},
-				},
-			});
+				}),
+			);
 
 			await client.waitForEvent(
 				(event) =>
@@ -599,16 +636,15 @@ describe("native sidecar process client permissions", () => {
 
 		try {
 			const session = await client.authenticateAndOpenSession();
-			const vm = await client.createVm(session, {
-				runtime: "java_script",
-				metadata: {
+			const vm = await client.createVm(
+				session,
+				createJavaScriptVmOptions({
 					cwd: fixtureRoot,
-				},
-				rootFilesystem: serializeRootFilesystemForSidecar(),
-				permissions: {
-					fs: "allow",
-				},
-			});
+					permissions: {
+						fs: "allow",
+					},
+				}),
+			);
 
 			await client.waitForEvent(
 				(event) =>

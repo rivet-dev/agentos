@@ -1109,7 +1109,7 @@ fn permissions_policy_config(config: &AgentOsConfig) -> vm_config::PermissionsPo
         ),
         binding: Some(
             permissions
-                .tool
+                .binding
                 .as_ref()
                 .map(serialize_pattern_permissions_config)
                 .unwrap_or(vm_config::PatternPermissionScope::Mode(
@@ -2514,7 +2514,7 @@ async fn invoke_host_tool(
 
     if tool_permission_mode(registry.permissions.as_ref(), &callback_key) != PermissionMode::Allow {
         return Err(format!(
-            "EACCES: blocked by tool.invoke policy for {callback_key}"
+            "EACCES: blocked by binding.invoke policy for {callback_key}"
         ));
     }
 
@@ -3245,7 +3245,7 @@ fn tool_permission_mode(permissions: Option<&Permissions>, callback_key: &str) -
     let Some(permissions) = permissions else {
         return PermissionMode::Allow;
     };
-    let Some(scope) = permissions.tool.as_ref() else {
+    let Some(scope) = permissions.binding.as_ref() else {
         return PermissionMode::Allow;
     };
     match scope {
@@ -3561,7 +3561,7 @@ fn permissions_policy(config: &AgentOsConfig) -> wire::PermissionsPolicy {
         ),
         binding: Some(
             permissions
-                .tool
+                .binding
                 .as_ref()
                 .map(serialize_pattern_permissions)
                 .unwrap_or(wire::PatternPermissionScope::PermissionMode(

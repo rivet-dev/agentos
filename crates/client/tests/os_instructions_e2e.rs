@@ -82,8 +82,8 @@ fn allow_all_permissions() -> Permissions {
 fn write_mock_pi_adapter(module_access_cwd: &std::path::Path) {
     let package_dir = module_access_cwd
         .join("node_modules")
-        .join("@rivet-dev")
-        .join("agentos-pi");
+        .join("@agentos-software")
+        .join("pi");
     std::fs::create_dir_all(&package_dir).expect("create mock adapter package dir");
     std::fs::write(
         package_dir.join("package.json"),

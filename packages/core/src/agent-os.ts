@@ -1985,7 +1985,7 @@ async function handleHostCallback(
 		return {
 			type: "host_callback_result",
 			invocation_id: payload.invocation_id,
-			error: `EACCES: blocked by tool.invoke policy for ${payload.callback_key}`,
+			error: `EACCES: blocked by binding.invoke policy for ${payload.callback_key}`,
 		};
 	}
 
@@ -2158,7 +2158,7 @@ async function invokeHostTool({
 	const callbackKey = `${toolKit.name}:${toolName}`;
 	const permissionMode = toolPermissionMode(context.permissions, callbackKey);
 	if (permissionMode !== "allow") {
-		throw new Error(`EACCES: blocked by tool.invoke policy for ${callbackKey}`);
+		throw new Error(`EACCES: blocked by binding.invoke policy for ${callbackKey}`);
 	}
 	const input = await parseHostToolInput(tool, args, cwd, context.readFile);
 	return executeHostTool(tool, callbackKey, input);
@@ -2363,7 +2363,7 @@ function toolPermissionMode(
 	permissions: Permissions,
 	callbackKey: string,
 ): "allow" | "deny" {
-	const scope = permissions.tool;
+	const scope = permissions.binding;
 	if (!scope) {
 		return "deny";
 	}
@@ -2625,7 +2625,7 @@ export class AgentOs {
 				const session = await client.authenticateAndOpenSession();
 				const hostPermissions = options?.permissions ?? {
 					...allowAll,
-					tool: "allow",
+					binding: "allow",
 				};
 				const sidecarPermissions =
 					serializePermissionsForSidecar(hostPermissions);

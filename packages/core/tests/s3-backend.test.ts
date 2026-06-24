@@ -17,6 +17,10 @@ function createMount(server: MockS3ServerHandle, prefix: string) {
 	return createS3Backend({
 		bucket: server.bucket,
 		prefix,
+		// chunked_s3's sqlite metadata backend now requires an explicit path for
+		// its metadata DB (a guest VM path); keep one per prefix so concurrent
+		// mounts in a test don't share a metadata store.
+		metadataPath: `/tmp/agentos-s3-${prefix.replace(/[^a-z0-9]+/gi, "_") || "root"}.sqlite`,
 		region: "us-east-1",
 		endpoint: server.endpoint,
 		credentials: {

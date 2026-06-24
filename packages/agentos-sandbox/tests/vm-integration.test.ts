@@ -20,7 +20,7 @@ const SANDBOX_TEST_PERMISSIONS = {
 	network: "allow",
 	childProcess: "allow",
 	env: "allow",
-	tool: "allow",
+	binding: "allow",
 } as const;
 
 beforeAll(async () => {

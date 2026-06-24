@@ -6,9 +6,14 @@
 // plugin (`crates/agentos-actor-plugin`), loaded by RivetKit via the generic
 // native-plugin ABI.
 
+import type {
+	AgentOsOptions,
+	JsonRpcNotification,
+	PermissionRequest,
+} from "@rivet-dev/agentos-core";
 import {
-	agentOs as createAgentOs,
 	type AgentOsActorDefinition,
+	agentOs as createAgentOs,
 } from "./actor.js";
 import type {
 	AgentOsActorConfigInput,
@@ -19,11 +24,9 @@ export { setup } from "rivetkit";
 
 export {
 	buildConfigJson,
-	nodeModulesMount,
 	type NodeModulesMountConfig,
+	nodeModulesMount,
 } from "./actor.js";
-export { createAgentOs as agentOs };
-
 export {
 	type AgentOsActorConfig,
 	type AgentOsActorConfigInput,
@@ -31,7 +34,6 @@ export {
 	agentOsActorConfigSchema,
 	nativeAgentOsOptionsSchema,
 } from "./config.js";
-
 export { getPluginPath } from "./plugin-binary.js";
 
 // Re-export the software-definition helper so custom agents/tools/commands can
@@ -59,26 +61,45 @@ export type {
 	VmBootedPayload,
 	VmShutdownPayload,
 } from "./types.js";
+export { createAgentOs as agentOs };
 
 export type AgentOSActorConfigInput<TConnParams = undefined> =
 	NativeAgentOsOptions &
 		Omit<AgentOsActorConfigInput<TConnParams>, "options">;
 
+export type AgentOSConfigInput<TConnParams = undefined> = AgentOsOptions & {
+	preview?: AgentOsActorConfigInput<TConnParams>["preview"];
+	onBeforeConnect?: AgentOsActorConfigInput<TConnParams>["onBeforeConnect"];
+	onSessionEvent?: (
+		sessionId: string,
+		event: JsonRpcNotification,
+	) => void | Promise<void>;
+	onPermissionRequest?: (
+		sessionId: string,
+		request: PermissionRequest,
+	) => void | Promise<void>;
+};
+
 export function agentOS<TConnParams = undefined>(
-	config: AgentOSActorConfigInput<TConnParams> = {},
+	config: AgentOSConfigInput<TConnParams> = {},
 ): AgentOsActorDefinition<TConnParams> {
 	const {
+		preview,
 		onBeforeConnect,
 		onSessionEvent,
 		onPermissionRequest,
-		preview,
 		...options
 	} = config;
+
 	return createAgentOs({
 		options,
 		preview,
 		onBeforeConnect,
-		onSessionEvent,
-		onPermissionRequest,
+		onSessionEvent: onSessionEvent
+			? (_ctx, sessionId, event) => onSessionEvent(sessionId, event)
+			: undefined,
+		onPermissionRequest: onPermissionRequest
+			? (_ctx, sessionId, request) => onPermissionRequest(sessionId, request)
+			: undefined,
 	} as AgentOsActorConfigInput<TConnParams>);
 }

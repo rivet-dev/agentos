@@ -51,7 +51,7 @@ const vm = await AgentOs.create({
 		network: "allow",
 		childProcess: "allow",
 		env: "allow",
-		tool: "allow",
+		binding: "allow",
 	},
 });
 

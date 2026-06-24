@@ -176,10 +176,11 @@ pub async fn send_prompt(
     // Canonical resume state-machine documentation lives on the sidecar handler
     // in `crates/agentos-sidecar/src/acp_extension.rs` (spec §6); this is just
     // the actor-side trigger that drives it.
-    if !vars.live_sessions.contains_key(session_id) && !is_session_live(vm, session_id) {
-        if session_is_persisted(ctx, session_id).await? {
-            resume_session(ctx, vm, vars, session_id).await?;
-        }
+    if !vars.live_sessions.contains_key(session_id)
+        && !is_session_live(vm, session_id)
+        && session_is_persisted(ctx, session_id).await?
+    {
+        resume_session(ctx, vm, vars, session_id).await?;
     }
 
     // Record the outbound prompt text as a synthetic `user_prompt` event BEFORE

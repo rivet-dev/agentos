@@ -464,13 +464,21 @@ export async function createOpfsFileSystem(
 	return new OpfsFileSystem(namespace);
 }
 
+export interface BrowserNetworkAdapterOptions {
+	fetch?: typeof fetch;
+}
+
 /** Network adapter that delegates to the browser's native `fetch`. DNS and http2 are unsupported. */
-export function createBrowserNetworkAdapter(): NetworkAdapter {
+export function createBrowserNetworkAdapter(
+	options: BrowserNetworkAdapterOptions = {},
+): NetworkAdapter {
 	// Use the reference captured at module load (platformFetch) so the gated
 	// adapter keeps working after worker.ts shadows the guest-visible `fetch`
 	// global (F-012). Fall back to the current global only if none was captured.
 	const fetchImpl: typeof fetch =
-		platformFetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
+		options.fetch ??
+		platformFetch ??
+		((...args: Parameters<typeof fetch>) => fetch(...args));
 	return {
 		async fetch(url, options) {
 			const response = await fetchImpl(url, {

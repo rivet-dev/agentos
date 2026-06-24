@@ -23,7 +23,7 @@ function serializePatternScope(
 		| Permissions["childProcess"]
 		| Permissions["process"]
 		| Permissions["env"]
-		| Permissions["tool"],
+		| Permissions["binding"],
 		string | undefined
 	>,
 ) {
@@ -73,8 +73,8 @@ export function serializePermissionsForSidecar(
 				? permissions.env
 				: serializePatternScope(permissions.env),
 		binding:
-			typeof permissions.tool === "string" || !permissions.tool
-				? permissions.tool
-				: serializePatternScope(permissions.tool),
+			typeof permissions.binding === "string" || !permissions.binding
+				? permissions.binding
+				: serializePatternScope(permissions.binding),
 	};
 }

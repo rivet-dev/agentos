@@ -59,7 +59,7 @@ export const permissionsSchema = z
 		childProcess: patternPermissionsSchema.optional(),
 		process: patternPermissionsSchema.optional(),
 		env: patternPermissionsSchema.optional(),
-		tool: patternPermissionsSchema.optional(),
+		binding: patternPermissionsSchema.optional(),
 	})
 	.strict();
 

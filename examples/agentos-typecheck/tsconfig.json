@@ -7,7 +7,8 @@
 		"types": ["node"],
 		"baseUrl": ".",
 		"paths": {
-			"@rivet-dev/agentos": ["../../packages/agentos/src/mod.ts"],
+			"@agentos-software/common": ["./src/software/common.ts"],
+			"@rivet-dev/agentos": ["../../packages/agentos/src/index.ts"],
 			"@rivet-dev/agentos/client": [
 				"../../packages/agentos/src/client.ts"
 			],

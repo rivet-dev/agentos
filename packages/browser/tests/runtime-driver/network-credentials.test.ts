@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createBrowserNetworkAdapter } from "../../src/driver.js";
 
 // F-008 (sec-ts T1): the browser network adapter forwards guest requests to the
@@ -26,19 +26,15 @@ function makeResponse(): Response {
 
 describe("browser fetch adapter omits ambient credentials and does not leak host-origin cookies", () => {
 	let fetchSpy: ReturnType<typeof vi.fn>;
-	const originalFetch = globalThis.fetch;
 
 	beforeEach(() => {
 		fetchSpy = vi.fn(async () => makeResponse());
-		globalThis.fetch = fetchSpy as unknown as typeof fetch;
-	});
-
-	afterEach(() => {
-		globalThis.fetch = originalFetch;
 	});
 
 	it("fetch() forwards credentials: 'omit' to the host fetch", async () => {
-		const adapter = createBrowserNetworkAdapter();
+		const adapter = createBrowserNetworkAdapter({
+			fetch: fetchSpy as unknown as typeof fetch,
+		});
 		await adapter.fetch("https://example.com/", { method: "GET" });
 
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -47,7 +43,9 @@ describe("browser fetch adapter omits ambient credentials and does not leak host
 	});
 
 	it("httpRequest() forwards credentials: 'omit' to the host fetch", async () => {
-		const adapter = createBrowserNetworkAdapter();
+		const adapter = createBrowserNetworkAdapter({
+			fetch: fetchSpy as unknown as typeof fetch,
+		});
 		await adapter.httpRequest("https://example.com/", { method: "GET" });
 
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -56,7 +54,9 @@ describe("browser fetch adapter omits ambient credentials and does not leak host
 	});
 
 	it("credentials policy is omit regardless of guest-supplied headers", async () => {
-		const adapter = createBrowserNetworkAdapter();
+		const adapter = createBrowserNetworkAdapter({
+			fetch: fetchSpy as unknown as typeof fetch,
+		});
 		await adapter.fetch("https://example.com/", {
 			method: "POST",
 			headers: { cookie: "session=guest-set" },

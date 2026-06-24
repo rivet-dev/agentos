@@ -2290,7 +2290,6 @@ export type {
 	AuthenticatedSession,
 	CreatedVm,
 	GuestFilesystemStat,
-	SidecarSpawnOptions,
 	RootFilesystemEntry,
 	SidecarEventSelector,
 	SidecarPermissionsPolicy,
@@ -2300,11 +2299,13 @@ export type {
 	SidecarSessionState,
 	SidecarSignalHandlerRegistration,
 	SidecarSocketStateEntry,
+	SidecarSpawnOptions,
 } from "./native-process-client.js";
 export {
 	NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
-	SidecarProcess,
+	NativeSidecarProcessClient,
 	SidecarEventBufferOverflow,
+	SidecarProcess,
 	SidecarProcessError,
 	SidecarProcessExited,
 } from "./native-process-client.js";

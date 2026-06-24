@@ -13,7 +13,7 @@ fn main() {
 
 /// `1` => true, anything else => false. Mirrors rivet's `env_flag`.
 fn env_flag(name: &str) -> bool {
-    std::env::var(name).map_or(false, |v| v == "1")
+    std::env::var(name).is_ok_and(|v| v == "1")
 }
 
 /// Initialize tracing for the sidecar.

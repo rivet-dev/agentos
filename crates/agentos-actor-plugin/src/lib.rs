@@ -157,6 +157,7 @@ impl Drop for RunGuard {
 /// event stream closes (host cancel). The VM-dispatch layer (decode actions +
 /// drive the sidecar via `agentos-client`) slots into `actor_loop` next.
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn rivet_actor_run(
     factory: *mut c_void,
     host: *const abi::HostVtable,

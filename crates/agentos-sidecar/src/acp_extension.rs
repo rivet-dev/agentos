@@ -392,35 +392,33 @@ impl AcpExtension {
                 args.push(String::from("--append-developer-instructions"));
                 args.push(prompt);
             }
-            "opencode" => {
-                if !env.contains_key("OPENCODE_CONTEXTPATHS") {
-                    ctx.guest_filesystem_call_wire(GuestFilesystemCallRequest {
-                        operation: GuestFilesystemOperation::WriteFile,
-                        path: String::from(OPENCODE_SYSTEM_PROMPT_PATH),
-                        destination_path: None,
-                        target: None,
-                        content: Some(prompt),
-                        encoding: None,
-                        recursive: false,
-                        mode: None,
-                        uid: None,
-                        gid: None,
-                        atime_ms: None,
-                        mtime_ms: None,
-                        len: None,
-                        offset: None,
-                    })
-                    .await?;
-                    let mut context_paths = OPENCODE_DEFAULT_CONTEXT_PATHS
-                        .iter()
-                        .map(|path| path.to_string())
-                        .collect::<Vec<_>>();
-                    context_paths.push(OPENCODE_SYSTEM_PROMPT_PATH.to_string());
-                    env.insert(
-                        String::from("OPENCODE_CONTEXTPATHS"),
-                        serde_json::to_string(&context_paths).expect("serialize context paths"),
-                    );
-                }
+            "opencode" if !env.contains_key("OPENCODE_CONTEXTPATHS") => {
+                ctx.guest_filesystem_call_wire(GuestFilesystemCallRequest {
+                    operation: GuestFilesystemOperation::WriteFile,
+                    path: String::from(OPENCODE_SYSTEM_PROMPT_PATH),
+                    destination_path: None,
+                    target: None,
+                    content: Some(prompt),
+                    encoding: None,
+                    recursive: false,
+                    mode: None,
+                    uid: None,
+                    gid: None,
+                    atime_ms: None,
+                    mtime_ms: None,
+                    len: None,
+                    offset: None,
+                })
+                .await?;
+                let mut context_paths = OPENCODE_DEFAULT_CONTEXT_PATHS
+                    .iter()
+                    .map(|path| path.to_string())
+                    .collect::<Vec<_>>();
+                context_paths.push(OPENCODE_SYSTEM_PROMPT_PATH.to_string());
+                env.insert(
+                    String::from("OPENCODE_CONTEXTPATHS"),
+                    serde_json::to_string(&context_paths).expect("serialize context paths"),
+                );
             }
             _ => {}
         }
@@ -1267,6 +1265,7 @@ impl AcpSessionRecord {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_json_rpc_request(
     ctx: &mut ExtensionContext<'_>,
     process_id: &str,
@@ -1994,9 +1993,7 @@ async fn kill_process_best_effort(ctx: &mut ExtensionContext<'_>, process_id: &s
 /// `agentCapabilities`. Prefer ACP `loadSession`/`session/load`; fall back to the
 /// non-standard `resume`/`session/resume` capability some adapters expose.
 fn native_resume_method(agent_capabilities: Option<&Value>) -> Option<&'static str> {
-    let Some(caps) = agent_capabilities.and_then(Value::as_object) else {
-        return None;
-    };
+    let caps = agent_capabilities.and_then(Value::as_object)?;
     if caps
         .get("loadSession")
         .and_then(Value::as_bool)

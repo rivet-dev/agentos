@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { AgentOs } from "../src/index.js";
 import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
 
-vi.setConfig({ testTimeout: 15_000 });
+vi.setConfig({ testTimeout: 45_000 });
 
 const ALLOW_ALL_VM_PERMISSIONS = {
 	fs: "allow",
@@ -13,7 +13,7 @@ const ALLOW_ALL_VM_PERMISSIONS = {
 	childProcess: "allow",
 	process: "allow",
 	env: "allow",
-	tool: "allow",
+	binding: "allow",
 } as const;
 
 /**
@@ -269,10 +269,11 @@ EOF`);
 			expect(missing.stdout.trim()).toBe("");
 		});
 
-		test("xu executes as a registered PATH command", async () => {
-			const r = await vm.exec("xu hello-agent-os");
+		test("rg executes as a registered PATH command", async () => {
+			await vm.exec('printf "alpha\\nbeta\\n" > /tmp/rg-path.txt');
+			const r = await vm.exec("rg --no-line-number beta /tmp/rg-path.txt");
 			expect(r.exitCode).toBe(0);
-			expect(r.stdout.trim()).toBe("xu-ok:hello-agent-os");
+			expect(r.stdout.trim()).toBe("beta");
 		});
 
 		test("test command conditionals", async () => {

@@ -12,7 +12,7 @@ const ALLOW_ALL_VM_PERMISSIONS = {
 	childProcess: "allow",
 	process: "allow",
 	env: "allow",
-	tool: "allow",
+	binding: "allow",
 } as const;
 
 function itIf(condition: boolean, ...args: Parameters<typeof it>): void {

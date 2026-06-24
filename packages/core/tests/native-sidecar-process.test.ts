@@ -6,13 +6,15 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	realpathSync,
 	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { CreateVmConfig } from "@secure-exec/core/vm-config";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createHostDirBackend } from "../src/host-dir-mount.js";
 import {
@@ -54,11 +56,43 @@ const ALLOW_ALL_VM_PERMISSIONS = {
 	childProcess: "allow",
 	process: "allow",
 	env: "allow",
-	tool: "allow",
+	binding: "allow",
 } as const;
 const ALLOW_ALL_SIDECAR_PERMISSIONS = serializePermissionsForSidecar(
 	ALLOW_ALL_VM_PERMISSIONS,
 );
+
+type JavaScriptVmConfigOptions = Partial<
+	Pick<
+		CreateVmConfig,
+		"cwd" | "env" | "jsRuntime" | "loopbackExemptPorts" | "permissions"
+	>
+> & {
+	rootFilesystem?: CreateVmConfig["rootFilesystem"];
+};
+
+function createJavaScriptVmOptions(options: JavaScriptVmConfigOptions = {}) {
+	return {
+		runtime: "java_script" as const,
+		config: {
+			env: options.env ?? {},
+			rootFilesystem:
+				options.rootFilesystem ?? serializeRootFilesystemForSidecar(),
+			permissions: options.permissions,
+			cwd: options.cwd,
+			loopbackExemptPorts: options.loopbackExemptPorts ?? [],
+			...(options.jsRuntime ? { jsRuntime: options.jsRuntime } : {}),
+		} satisfies CreateVmConfig,
+	};
+}
+
+function nodeBuiltinsConfig(...allowedBuiltins: string[]) {
+	return {
+		platform: "node" as const,
+		moduleResolution: "node" as const,
+		allowedBuiltins,
+	};
+}
 
 function ensureSidecarBinaryReady(): void {
 	const cargoBinary = findCargoBinary();
@@ -370,9 +404,7 @@ describe("native sidecar process client", () => {
 	});
 
 	test("dispatches BARE sidecar_request frames to the registered handler", async () => {
-		const fixtureRoot = mkdtempSync(
-			join(tmpdir(), "agentos-sidecar-request-"),
-		);
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-sidecar-request-"));
 		cleanupPaths.push(fixtureRoot);
 		const capturePath = join(fixtureRoot, "captured-response.json");
 		const driverPath = join(fixtureRoot, "fake-sidecar.mjs");
@@ -480,9 +512,7 @@ describe("native sidecar process client", () => {
 	});
 
 	test("dispose forcibly terminates a sidecar that ignores stdin closure", async () => {
-		const fixtureRoot = mkdtempSync(
-			join(tmpdir(), "agentos-sidecar-dispose-"),
-		);
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-sidecar-dispose-"));
 		cleanupPaths.push(fixtureRoot);
 		const driverPath = join(fixtureRoot, "stuck-sidecar.mjs");
 		writeFileSync(
@@ -705,9 +735,10 @@ describe("native sidecar process client", () => {
 		try {
 			const session = await client.authenticateAndOpenSession();
 			const startedAt = Date.now();
-			const inFlightRequest = client.createVm(session, {
-				runtime: "java_script",
-			});
+			const inFlightRequest = client.createVm(
+				session,
+				createJavaScriptVmOptions(),
+			);
 			const result = await Promise.race([
 				inFlightRequest
 					.then((value) => ({ type: "resolved" as const, value }))
@@ -744,9 +775,10 @@ describe("native sidecar process client", () => {
 			);
 
 			const secondStartedAt = Date.now();
-			const secondRequest = client.createVm(session, {
-				runtime: "java_script",
-			});
+			const secondRequest = client.createVm(
+				session,
+				createJavaScriptVmOptions(),
+			);
 			await expect(secondRequest).rejects.toMatchObject({
 				exitCode: 17,
 			});
@@ -1027,14 +1059,13 @@ describe("native sidecar process client", () => {
 
 		try {
 			const session = await client.authenticateAndOpenSession();
-			const vm = await client.createVm(session, {
-				runtime: "java_script",
-				metadata: {
+			const vm = await client.createVm(
+				session,
+				createJavaScriptVmOptions({
 					cwd: fixtureRoot,
-				},
-				rootFilesystem: serializeRootFilesystemForSidecar(),
-				permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
-			});
+					permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
+				}),
+			);
 
 			const creating = await client.waitForEvent(
 				(event) =>
@@ -1146,6 +1177,16 @@ describe("native sidecar process client", () => {
 	test("exercises a /root/node_modules host_dir mount and layer RPCs against the real sidecar binary", async () => {
 		const fixtureRoot = mkdtempSync(join(tmpdir(), "agentos-native-sidecar-"));
 		cleanupPaths.push(fixtureRoot);
+		const hostNodeModulesRoot = join(REPO_ROOT, "node_modules");
+		const vitestPackageJsonGuestPath = `/root/node_modules/${relative(
+			hostNodeModulesRoot,
+			join(
+				realpathSync(join(REPO_ROOT, "packages/core/node_modules/vitest")),
+				"package.json",
+			),
+		)
+			.split(sep)
+			.join("/")}`;
 		ensureSidecarBinaryReady();
 
 		const client = NativeSidecarProcessClient.spawn({
@@ -1157,14 +1198,13 @@ describe("native sidecar process client", () => {
 
 		try {
 			const session = await client.authenticateAndOpenSession();
-			const vm = await client.createVm(session, {
-				runtime: "java_script",
-				metadata: {
+			const vm = await client.createVm(
+				session,
+				createJavaScriptVmOptions({
 					cwd: fixtureRoot,
-				},
-				rootFilesystem: serializeRootFilesystemForSidecar(),
-				permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
-			});
+					permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
+				}),
+			);
 
 			await client.waitForEvent(
 				(event) =>
@@ -1180,10 +1220,10 @@ describe("native sidecar process client", () => {
 						readOnly: true,
 						plugin: {
 							id: "host_dir",
-							config: JSON.stringify({
-								hostPath: join(REPO_ROOT, "packages/core", "node_modules"),
+							config: {
+								hostPath: hostNodeModulesRoot,
 								readOnly: true,
-							}),
+							},
 						},
 					},
 				],
@@ -1191,11 +1231,7 @@ describe("native sidecar process client", () => {
 
 			const modulePackage = JSON.parse(
 				new TextDecoder().decode(
-					await client.readFile(
-						session,
-						vm,
-						"/root/node_modules/vitest/package.json",
-					),
+					await client.readFile(session, vm, vitestPackageJsonGuestPath),
 				),
 			) as { name: string };
 			expect(modulePackage.name).toBe("vitest");
@@ -1280,14 +1316,13 @@ describe("native sidecar process client", () => {
 
 		try {
 			const session = await client.authenticateAndOpenSession();
-			const vm = await client.createVm(session, {
-				runtime: "java_script",
-				metadata: {
+			const vm = await client.createVm(
+				session,
+				createJavaScriptVmOptions({
 					cwd: fixtureRoot,
-				},
-				rootFilesystem: serializeRootFilesystemForSidecar(),
-				permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
-			});
+					permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
+				}),
+			);
 
 			await client.waitForEvent(
 				(event) =>
@@ -1416,18 +1451,14 @@ describe("native sidecar process client", () => {
 
 		try {
 			const session = await client.authenticateAndOpenSession();
-			const vm = await client.createVm(session, {
-				runtime: "java_script",
-				metadata: {
+			const vm = await client.createVm(
+				session,
+				createJavaScriptVmOptions({
 					cwd: fixtureRoot,
-					"env.AGENT_OS_ALLOWED_NODE_BUILTINS": JSON.stringify([
-						"net",
-						"dgram",
-					]),
-				},
-				rootFilesystem: serializeRootFilesystemForSidecar(),
-				permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
-			});
+					jsRuntime: nodeBuiltinsConfig("net", "dgram"),
+					permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
+				}),
+			);
 
 			await client.waitForEvent(
 				(event) =>
@@ -1614,14 +1645,13 @@ describe("native sidecar process client", () => {
 
 		try {
 			const session = await client.authenticateAndOpenSession();
-			const vm = await client.createVm(session, {
-				runtime: "java_script",
-				metadata: {
+			const vm = await client.createVm(
+				session,
+				createJavaScriptVmOptions({
 					cwd: fixtureRoot,
-				},
-				rootFilesystem: serializeRootFilesystemForSidecar(),
-				permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
-			});
+					permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
+				}),
+			);
 
 			await client.waitForEvent(
 				(event) =>
@@ -1690,11 +1720,12 @@ describe("native sidecar process client", () => {
 
 		try {
 			const session = await client.authenticateAndOpenSession();
-			const vm = await client.createVm(session, {
-				runtime: "java_script",
-				rootFilesystem: serializeRootFilesystemForSidecar(),
-				permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
-			});
+			const vm = await client.createVm(
+				session,
+				createJavaScriptVmOptions({
+					permissions: ALLOW_ALL_SIDECAR_PERMISSIONS,
+				}),
+			);
 
 			await client.waitForEvent(
 				(event) =>

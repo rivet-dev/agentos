@@ -10,7 +10,7 @@ describe("serializePermissionsForSidecar", () => {
 			childProcess: "deny",
 			process: "deny",
 			env: "deny",
-			tool: "deny",
+			binding: "deny",
 		});
 	});
 
@@ -47,7 +47,7 @@ describe("serializePermissionsForSidecar", () => {
 					},
 				],
 			},
-			tool: {
+			binding: {
 				default: "deny",
 				rules: [
 					{
@@ -92,7 +92,7 @@ describe("serializePermissionsForSidecar", () => {
 				],
 			},
 			env: undefined,
-			tool: {
+			binding: {
 				default: "deny",
 				rules: [
 					{
@@ -132,7 +132,7 @@ describe("serializePermissionsForSidecar", () => {
 					},
 				],
 			},
-			tool: undefined,
+			binding: undefined,
 		});
 	});
 
@@ -182,7 +182,7 @@ describe("serializePermissionsForSidecar", () => {
 			childProcess: undefined,
 			process: undefined,
 			env: undefined,
-			tool: undefined,
+			binding: undefined,
 		});
 	});
 });

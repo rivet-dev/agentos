@@ -14,7 +14,7 @@ const SANDBOX_QUICKSTART_PERMISSIONS = {
 	network: "allow",
 	childProcess: "allow",
 	env: "allow",
-	tool: "allow",
+	binding: "allow",
 } as const;
 const skipDocker = process.env.SKIP_DOCKER === "1";
 

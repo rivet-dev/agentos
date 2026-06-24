@@ -90,7 +90,7 @@ export type ProcessPermissions =
 export type EnvPermissions =
 	| PermissionMode
 	| RulePermissions<PatternPermissionRule>;
-export type ToolPermissions =
+export type BindingPermissions =
 	| PermissionMode
 	| RulePermissions<PatternPermissionRule>;
 
@@ -187,7 +187,7 @@ export interface Permissions {
 	childProcess?: ChildProcessPermissions;
 	process?: ProcessPermissions;
 	env?: EnvPermissions;
-	tool?: ToolPermissions;
+	binding?: BindingPermissions;
 }
 
 export interface ResourceBudgets {

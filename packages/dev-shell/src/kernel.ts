@@ -196,7 +196,6 @@ function prepareKernelInvocation(
 			command,
 			args,
 			driver: `${command}:exec`,
-			execCommand: args[1],
 		};
 	}
 
