@@ -608,8 +608,32 @@ export function writeAcpSessionEvent(bc: bare.ByteCursor, x: AcpSessionEvent): v
     writeJsonUtf8(bc, x.notification)
 }
 
+export type AcpAgentStderrEvent = {
+    readonly sessionId: string
+    readonly agentType: string
+    readonly processId: string
+    readonly chunk: ArrayBuffer
+}
+
+export function readAcpAgentStderrEvent(bc: bare.ByteCursor): AcpAgentStderrEvent {
+    return {
+        sessionId: bare.readString(bc),
+        agentType: bare.readString(bc),
+        processId: bare.readString(bc),
+        chunk: bare.readData(bc),
+    }
+}
+
+export function writeAcpAgentStderrEvent(bc: bare.ByteCursor, x: AcpAgentStderrEvent): void {
+    bare.writeString(bc, x.sessionId)
+    bare.writeString(bc, x.agentType)
+    bare.writeString(bc, x.processId)
+    bare.writeData(bc, x.chunk)
+}
+
 export type AcpEvent =
     | { readonly tag: "AcpSessionEvent"; readonly val: AcpSessionEvent }
+    | { readonly tag: "AcpAgentStderrEvent"; readonly val: AcpAgentStderrEvent }
 
 export function readAcpEvent(bc: bare.ByteCursor): AcpEvent {
     const offset = bc.offset
@@ -617,6 +641,8 @@ export function readAcpEvent(bc: bare.ByteCursor): AcpEvent {
     switch (tag) {
         case 0:
             return { tag: "AcpSessionEvent", val: readAcpSessionEvent(bc) }
+        case 1:
+            return { tag: "AcpAgentStderrEvent", val: readAcpAgentStderrEvent(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -629,6 +655,11 @@ export function writeAcpEvent(bc: bare.ByteCursor, x: AcpEvent): void {
         case "AcpSessionEvent": {
             bare.writeU8(bc, 0)
             writeAcpSessionEvent(bc, x.val)
+            break
+        }
+        case "AcpAgentStderrEvent": {
+            bare.writeU8(bc, 1)
+            writeAcpAgentStderrEvent(bc, x.val)
             break
         }
     }

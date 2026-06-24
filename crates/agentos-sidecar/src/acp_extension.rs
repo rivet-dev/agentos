@@ -5,11 +5,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use agentos_protocol::generated::v1::{
-    AcpCallback, AcpCallbackResponse, AcpCloseSessionRequest, AcpCreateSessionRequest,
-    AcpErrorResponse, AcpEvent, AcpGetSessionStateRequest, AcpHostRequestCallback,
-    AcpPermissionCallback, AcpRequest, AcpResponse, AcpResumeSessionRequest, AcpRuntimeKind,
-    AcpSessionClosedResponse, AcpSessionCreatedResponse, AcpSessionEvent, AcpSessionRequest,
-    AcpSessionResumedResponse, AcpSessionStateResponse,
+    AcpAgentStderrEvent, AcpCallback, AcpCallbackResponse, AcpCloseSessionRequest,
+    AcpCreateSessionRequest, AcpErrorResponse, AcpEvent, AcpGetSessionStateRequest,
+    AcpHostRequestCallback, AcpPermissionCallback, AcpRequest, AcpResponse,
+    AcpResumeSessionRequest, AcpRuntimeKind, AcpSessionClosedResponse, AcpSessionCreatedResponse,
+    AcpSessionEvent, AcpSessionRequest, AcpSessionResumedResponse, AcpSessionStateResponse,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_sidecar::limits::DEFAULT_ACP_MAX_READ_LINE_BYTES;
@@ -254,6 +254,7 @@ impl AcpExtension {
         let initialize_response = send_json_rpc_request(
             ctx,
             process_id,
+            &request.agent_type,
             initialize,
             1,
             INITIALIZE_TIMEOUT,
@@ -277,6 +278,7 @@ impl AcpExtension {
         let session_response = send_json_rpc_request(
             ctx,
             process_id,
+            &request.agent_type,
             session_new,
             2,
             SESSION_NEW_TIMEOUT,
@@ -479,7 +481,7 @@ impl AcpExtension {
         );
 
         let caller_connection_id = ownership_connection_id(ctx.ownership());
-        let (process_id, rpc_id, mut stdout_buffer, pending_preamble) = {
+        let (process_id, agent_type, rpc_id, mut stdout_buffer, pending_preamble) = {
             let mut sessions = self.sessions.lock().await;
             let Some(session) = sessions.get_mut(&request.session_id) else {
                 return AcpHandlerOutput::response(Err(SidecarError::InvalidState(format!(
@@ -511,6 +513,7 @@ impl AcpExtension {
             };
             (
                 session.process_id.clone(),
+                session.agent_type.clone(),
                 rpc_id,
                 std::mem::take(&mut session.stdout_buffer),
                 pending_preamble,
@@ -530,6 +533,7 @@ impl AcpExtension {
         let mut exchange = match send_json_rpc_request(
             &mut ctx,
             &process_id,
+            &agent_type,
             outbound,
             rpc_id,
             timeout,
@@ -824,6 +828,7 @@ impl AcpExtension {
         let initialize_response = send_json_rpc_request(
             ctx,
             process_id,
+            &create_like.agent_type,
             initialize,
             1,
             INITIALIZE_TIMEOUT,
@@ -852,6 +857,7 @@ impl AcpExtension {
             let mut load_response = send_json_rpc_request(
                 ctx,
                 process_id,
+                &create_like.agent_type,
                 load,
                 2,
                 SESSION_NEW_TIMEOUT,
@@ -911,6 +917,7 @@ impl AcpExtension {
         let session_response = send_json_rpc_request(
             ctx,
             process_id,
+            &create_like.agent_type,
             session_new,
             2,
             SESSION_NEW_TIMEOUT,
@@ -1211,6 +1218,7 @@ impl AcpSessionRecord {
 async fn send_json_rpc_request(
     ctx: &mut ExtensionContext<'_>,
     process_id: &str,
+    agent_type: &str,
     request: Value,
     response_id: i64,
     timeout: Duration,
@@ -1353,10 +1361,15 @@ async fn send_json_rpc_request(
             EventPayload::ProcessOutputEvent(output)
                 if output.process_id == process_id && output.channel == StreamChannel::Stderr =>
             {
-                tracing::error!(
-                    process_id,
-                    stderr = %String::from_utf8_lossy(&output.chunk),
-                    "ACP adapter stderr"
+                events.push(
+                    ctx.ext_event_wire(encode_event(AcpEvent::AcpAgentStderrEvent(
+                        AcpAgentStderrEvent {
+                            session_id: event_session_id.unwrap_or_default().to_string(),
+                            agent_type: agent_type.to_string(),
+                            process_id: process_id.to_string(),
+                            chunk: output.chunk,
+                        },
+                    ))?)?,
                 );
             }
             EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {

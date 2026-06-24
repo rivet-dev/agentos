@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
+import { encodeAcpEvent } from "../src/sidecar/agentos-protocol.js";
 
 const SESSION_ID = "session-1";
+const ACP_EXTENSION_NAMESPACE = "dev.rivet.agent-os.acp";
 
 function createSessionUpdateNotification(text: string) {
 	return {
@@ -21,6 +23,14 @@ function createSessionUpdateNotification(text: string) {
 function createTrackedAgent(initialTexts: string[] = []) {
 	const agent = Object.create(AgentOs.prototype) as AgentOs & {
 		_sessions: Map<string, unknown>;
+		_agentStderrHandler?: (event: {
+			sessionId: string;
+			agentType: string;
+			processId: string;
+			pid: number | null;
+			chunk: Uint8Array;
+		}) => void;
+		_handleAcpExtEvent(env: { namespace: string; payload: Uint8Array }): void;
 		_recordSessionNotification: (
 			session: Record<string, unknown>,
 			notification: ReturnType<typeof createSessionUpdateNotification>,
@@ -110,5 +120,49 @@ describe("AgentOs session event ordering", () => {
 		await flushSessionEventDispatch();
 
 		expect(seen).toEqual(["second", "first"]);
+	});
+
+	it("routes ACP agent stderr events to the agent stderr handler", () => {
+		const { agent } = createTrackedAgent();
+		const chunks: string[] = [];
+		const metadata: Array<{
+			sessionId: string;
+			agentType: string;
+			processId: string;
+			pid: number | null;
+		}> = [];
+
+		agent._agentStderrHandler = (event) => {
+			metadata.push({
+				sessionId: event.sessionId,
+				agentType: event.agentType,
+				processId: event.processId,
+				pid: event.pid,
+			});
+			chunks.push(new TextDecoder().decode(event.chunk));
+		};
+
+		agent._handleAcpExtEvent({
+			namespace: ACP_EXTENSION_NAMESPACE,
+			payload: encodeAcpEvent({
+				tag: "AcpAgentStderrEvent",
+				val: {
+					sessionId: SESSION_ID,
+					agentType: "codex",
+					processId: "proc-1",
+					chunk: new TextEncoder().encode("agent log\n").buffer,
+				},
+			}),
+		});
+
+		expect(chunks).toEqual(["agent log\n"]);
+		expect(metadata).toEqual([
+			{
+				sessionId: SESSION_ID,
+				agentType: "codex",
+				processId: "proc-1",
+				pid: null,
+			},
+		]);
 	});
 });

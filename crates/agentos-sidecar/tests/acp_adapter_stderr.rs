@@ -7,9 +7,9 @@
 //!
 //! In the current source the adapter runs inside the VM and the shared exchange
 //! loop `send_json_rpc_request()` in
-//! `crates/agentos-sidecar/src/acp_extension.rs` now (a) forwards adapter
-//! stderr to `tracing::error!(... "ACP adapter stderr")` and (b) observes the
-//! adapter `ProcessExitedEvent` and returns
+//! `crates/agentos-sidecar/src/acp_extension.rs` now (a) forwards agent
+//! stderr as an Agent OS ACP extension event and (b) observes the adapter
+//! `ProcessExitedEvent` and returns
 //! `SidecarError::InvalidState("ACP adapter process {id} exited with code {} ...")`.
 //!
 //! This test drives the exit-code-observation half of the fix through the
@@ -154,9 +154,9 @@ for await (const line of lines) {
       }
     }));
   } else if (message.method === "session/prompt") {
-    // Emit a diagnostic on stderr (the half of the fix that forwards stderr to
-    // tracing), then crash WITHOUT sending a JSON-RPC response so the caller
-    // must rely on exit-code observation to avoid hanging.
+    // Emit a diagnostic on stderr (the stream Agent OS forwards as agent stderr),
+    // then crash WITHOUT sending a JSON-RPC response so the caller must rely on
+    // exit-code observation to avoid hanging.
     process.stderr.write("fatal: adapter blew up handling session/prompt\n");
     process.exit(1);
   } else {

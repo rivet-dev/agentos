@@ -466,6 +466,20 @@ export interface AgentOsLimits {
 	};
 }
 
+export interface AgentStderrEvent {
+	sessionId: string;
+	agentType: string;
+	processId: string;
+	pid: number | null;
+	chunk: Uint8Array;
+}
+
+export type AgentStderrHandler = (event: AgentStderrEvent) => void;
+
+function defaultAgentStderrHandler(event: AgentStderrEvent): void {
+	process.stderr.write(event.chunk);
+}
+
 export interface AgentOsOptions {
 	/**
 	 * Software to install in the VM. Each entry provides agents, tools,
@@ -520,6 +534,13 @@ export interface AgentOsOptions {
 	 * runtime's historical constants, so omitting this leaves behavior unchanged.
 	 */
 	limits?: AgentOsLimits;
+	/**
+	 * Called with stderr chunks from the top-level ACP-speaking agent process.
+	 * The agent process uses stdout for ACP JSON-RPC protocol traffic, so only
+	 * stderr is forwarded through this hook. Defaults to writing chunks to
+	 * `process.stderr`.
+	 */
+	onAgentStderr?: AgentStderrHandler;
 }
 
 /** Configuration for a local MCP server (spawned as a child process). */
@@ -2464,6 +2485,7 @@ export class AgentOs {
 	private readonly _sidecarSession: AuthenticatedSession;
 	private readonly _sidecarVm: CreatedVm;
 	private readonly _disposeSidecarEventListener: () => void;
+	private readonly _agentStderrHandler?: AgentStderrHandler;
 
 	private constructor(
 		kernel: Kernel,
@@ -2476,6 +2498,7 @@ export class AgentOs {
 		sidecarClient: SidecarProcess,
 		sidecarSession: AuthenticatedSession,
 		sidecarVm: CreatedVm,
+		agentStderrHandler?: AgentStderrHandler,
 	) {
 		this.#kernel = kernel;
 		this.sidecar = sidecar;
@@ -2487,6 +2510,7 @@ export class AgentOs {
 		this._sidecarClient = sidecarClient;
 		this._sidecarSession = sidecarSession;
 		this._sidecarVm = sidecarVm;
+		this._agentStderrHandler = agentStderrHandler;
 		this._disposeSidecarEventListener = this._sidecarClient.onEvent((event) => {
 			this._handleSidecarEvent(event);
 		});
@@ -2738,6 +2762,7 @@ export class AgentOs {
 				vmAdmin.sidecarClient,
 				vmAdmin.sidecarSession,
 				vmAdmin.sidecarVm,
+				options?.onAgentStderr ?? defaultAgentStderrHandler,
 			);
 			vm._sidecarLease = sidecarLease;
 			vm._toolKits = vmAdmin.toolKits;
@@ -3529,6 +3554,38 @@ export class AgentOs {
 		};
 	}
 
+	private _recordAgentStderr(event: {
+		sessionId: string;
+		agentType: string;
+		processId: string;
+		chunk: ArrayBuffer;
+	}): void {
+		const session =
+			(event.sessionId ? this._sessions.get(event.sessionId) : undefined) ??
+			[...this._sessions.values()].find(
+				(candidate) => candidate.processId === event.processId,
+			);
+		const sessionId = event.sessionId || session?.sessionId;
+		if (!sessionId) {
+			return;
+		}
+		const handler = this._agentStderrHandler;
+		if (!handler) {
+			return;
+		}
+		try {
+			handler({
+				sessionId,
+				agentType: event.agentType || session?.agentType || "",
+				processId: event.processId,
+				pid: session?.pid ?? null,
+				chunk: new Uint8Array(event.chunk),
+			});
+		} catch {
+			// Ignore subscriber callback failures and keep event delivery moving.
+		}
+	}
+
 	private _applySyntheticConfigOverrides(session: AgentSessionEntry): void {
 		if (session.configOverrides.size === 0) {
 			return;
@@ -3604,6 +3661,10 @@ export class AgentOs {
 						session,
 						toJsonRpcNotification(JSON.parse(event.val.notification)),
 					);
+					return;
+				}
+				case "AcpAgentStderrEvent": {
+					this._recordAgentStderr(event.val);
 					return;
 				}
 			}

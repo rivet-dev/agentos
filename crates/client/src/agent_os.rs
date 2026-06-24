@@ -6,6 +6,7 @@
 //! and never introduce new struct fields.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -783,6 +784,24 @@ fn deliver_acp_ext_event(
                     session_id = event.session_id,
                     "received acp event for unknown session"
                 );
+            }
+            Ok(())
+        }
+        AcpEvent::AcpAgentStderrEvent(event) => {
+            if !event.session_id.is_empty()
+                && inner.sessions.read(&event.session_id, |_, _| ()).is_none()
+            {
+                tracing::warn!(
+                    session_id = event.session_id,
+                    agent_type = event.agent_type,
+                    process_id = event.process_id,
+                    "received acp stderr event for unknown session"
+                );
+            }
+
+            let mut stderr = std::io::stderr().lock();
+            if let Err(error) = stderr.write_all(&event.chunk).and_then(|_| stderr.flush()) {
+                tracing::warn!(?error, "failed to write acp stderr event");
             }
             Ok(())
         }

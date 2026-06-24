@@ -119,8 +119,16 @@ type AcpSessionEvent struct {
   notification: JsonUtf8
 }
 
+type AcpAgentStderrEvent struct {
+  sessionId: str
+  agentType: str
+  processId: str
+  chunk: data
+}
+
 type AcpEvent union {
-  AcpSessionEvent
+  AcpSessionEvent |
+  AcpAgentStderrEvent
 }
 
 type AcpPermissionCallback struct {

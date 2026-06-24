@@ -7,6 +7,8 @@ export type {
 	AgentOsSharedSidecarOptions,
 	AgentOsSidecarConfig,
 	AgentOsSidecarDescription,
+	AgentStderrEvent,
+	AgentStderrHandler,
 	AgentRegistryEntry,
 	BatchReadResult,
 	BatchWriteEntry,
