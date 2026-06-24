@@ -12,17 +12,18 @@ import {
 	Database,
 	Workflow,
 	Check,
-	Terminal,
+	Copy,
 } from 'lucide-react';
 import { HERO_H1_CLASS, SECTION_H2_CLASS } from '../typography';
+import { AGENT_PROMPT } from '../agentPrompt';
 
-// --- Copy Install Button ---
-const CopyInstallButton = () => {
+// --- Copy Agent Prompt Button ---
+const CopyAgentPromptButton = () => {
 	const [copied, setCopied] = useState(false);
 
 	const handleCopy = async () => {
 		try {
-			await navigator.clipboard.writeText('npm install @agent-os/core');
+			await navigator.clipboard.writeText(AGENT_PROMPT);
 			setCopied(true);
 			setTimeout(() => setCopied(false), 2000);
 		} catch (err) {
@@ -33,10 +34,10 @@ const CopyInstallButton = () => {
 	return (
 		<button
 			onClick={handleCopy}
-			className='inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border border-ink/20 px-6 py-3 font-mono text-sm text-ink-soft transition-colors hover:border-ink/40 hover:text-ink'
+			className='inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border border-ink/20 px-6 py-3 text-sm font-medium text-ink-soft transition-colors hover:border-ink/40 hover:text-ink'
 		>
-			{copied ? <Check className='h-4 w-4 text-ink' /> : <Terminal className='h-4 w-4' />}
-			npm install @agent-os/core
+			{copied ? <Check className='h-4 w-4 text-ink' /> : <Copy className='h-4 w-4' />}
+			{copied ? 'Copied' : 'Copy Agent Prompt'}
 		</button>
 	);
 };
@@ -239,7 +240,7 @@ export default function AgentOSUseCasesPage() {
 								Read the Docs
 								<ArrowRight className='h-4 w-4' />
 							</a>
-							<CopyInstallButton />
+							<CopyAgentPromptButton />
 						</motion.div>
 					</div>
 				</section>

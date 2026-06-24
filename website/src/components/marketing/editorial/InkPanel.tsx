@@ -17,6 +17,10 @@ interface InkPanelProps {
 	textureSrc?: string;
 	texturePosition?: string;
 	className?: string;
+	// Panels clip to their rounded corners by default. Opt into `visible` only
+	// when a child (e.g. a hover tooltip) must escape the panel's bounds. Safe
+	// only when content is inset from the corners; not for textured panels.
+	overflow?: 'hidden' | 'visible';
 }
 
 export const InkPanel = ({
@@ -27,11 +31,12 @@ export const InkPanel = ({
 	textureSrc,
 	texturePosition = 'center',
 	className,
+	overflow = 'hidden',
 }: InkPanelProps) => (
 	<div
-		className={`selection-paper relative overflow-hidden bg-ink text-cream ${
-			bleed ? '' : 'rounded-xl border border-ink/20'
-		} ${className ?? ''}`}
+		className={`selection-paper relative ${
+			overflow === 'visible' ? 'overflow-visible' : 'overflow-hidden'
+		} bg-ink text-cream ${bleed ? '' : 'rounded-xl border border-ink/20'} ${className ?? ''}`}
 	>
 		{textureSrc ? (
 			<>
