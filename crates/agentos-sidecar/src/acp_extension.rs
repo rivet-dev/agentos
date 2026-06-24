@@ -109,20 +109,72 @@ impl AcpExtension {
         ctx: ExtensionContext<'_>,
         payload: &[u8],
     ) -> Result<ExtensionResponse, SidecarError> {
+        use tracing::Instrument as _;
         let request = decode_request(payload)?;
-        let response = match request {
-            AcpRequest::AcpCreateSessionRequest(request) => self.create_session(ctx, request).await,
-            AcpRequest::AcpGetSessionStateRequest(request) => {
-                AcpHandlerOutput::response(self.get_session_state(ctx, request).await)
+        let kind = Self::acp_request_kind(&request);
+        let start = std::time::Instant::now();
+        tracing::info!(target: "agentos_sidecar::acp_extension", kind, "ext request received");
+
+        let work = async move {
+            match request {
+                AcpRequest::AcpCreateSessionRequest(request) => {
+                    self.create_session(ctx, request).await
+                }
+                AcpRequest::AcpGetSessionStateRequest(request) => {
+                    AcpHandlerOutput::response(self.get_session_state(ctx, request).await)
+                }
+                AcpRequest::AcpCloseSessionRequest(request) => {
+                    AcpHandlerOutput::response(self.close_session(ctx, request).await)
+                }
+                AcpRequest::AcpSessionRequest(request) => self.session_request(ctx, request).await,
+                AcpRequest::AcpResumeSessionRequest(request) => {
+                    self.resume_session(ctx, request).await
+                }
             }
-            AcpRequest::AcpCloseSessionRequest(request) => {
-                AcpHandlerOutput::response(self.close_session(ctx, request).await)
+        }
+        .instrument(tracing::info_span!(
+            target: "agentos_sidecar::acp_extension",
+            "ext.request",
+            kind
+        ));
+
+        // Stall watchdog: while the request is in flight, warn periodically so a
+        // hang surfaces as a breadcrumb long before the host's 120s frame
+        // timeout. This never interrupts the work itself.
+        tokio::pin!(work);
+        let response = loop {
+            tokio::select! {
+                result = &mut work => break result,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                    tracing::warn!(
+                        target: "agentos_sidecar::acp_extension",
+                        kind,
+                        elapsed_ms = start.elapsed().as_millis() as u64,
+                        "ext request still pending — possible stall before response frame",
+                    );
+                }
             }
-            AcpRequest::AcpSessionRequest(request) => self.session_request(ctx, request).await,
-            AcpRequest::AcpResumeSessionRequest(request) => self.resume_session(ctx, request).await,
         };
+
+        tracing::info!(
+            target: "agentos_sidecar::acp_extension",
+            kind,
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "ext request handled",
+        );
         let payload = encode_response(response.response.unwrap_or_else(error_response))?;
         ExtensionResponse::with_wire_events(payload, response.events)
+    }
+
+    /// Stable label for an ACP request kind, used as a tracing field.
+    fn acp_request_kind(request: &AcpRequest) -> &'static str {
+        match request {
+            AcpRequest::AcpCreateSessionRequest(_) => "create_session",
+            AcpRequest::AcpGetSessionStateRequest(_) => "get_session_state",
+            AcpRequest::AcpCloseSessionRequest(_) => "close_session",
+            AcpRequest::AcpSessionRequest(_) => "session_request",
+            AcpRequest::AcpResumeSessionRequest(_) => "resume_session",
+        }
     }
 
     async fn create_session(
