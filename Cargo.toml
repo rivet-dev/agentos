@@ -22,16 +22,16 @@ repository = "https://github.com/rivet-dev/agent-os"
 # normal crates.io dependencies so CI/publish builds do not need a sibling
 # checkout.
 [workspace.dependencies]
-agentos-bridge = { package = "secure-exec-bridge", version = "0.3.1-rc.3" }
+agentos-bridge = { package = "secure-exec-bridge", version = "0.3.1-rc.4" }
 agentos-protocol = { path = "crates/agentos-protocol", version = "0.2.0-rc.3" }
 agentos-sidecar = { path = "crates/agentos-sidecar", version = "0.2.0-rc.3" }
 agentos-sidecar-browser = { path = "crates/agentos-sidecar-browser", version = "0.2.0-rc.3" }
-agentos-kernel = { package = "secure-exec-kernel", version = "0.3.1-rc.3" }
-agentos-execution = { package = "secure-exec-execution", version = "0.3.1-rc.3" }
-agentos-v8-runtime = { package = "secure-exec-v8-runtime", version = "0.3.1-rc.3" }
-secure-exec-client = { version = "0.3.1-rc.3" }
-secure-exec-bridge = { version = "0.3.1-rc.3" }
-secure-exec-sidecar = { version = "0.3.1-rc.3" }
-secure-exec-vm-config = { version = "0.3.1-rc.3" }
+agentos-kernel = { package = "secure-exec-kernel", version = "0.3.1-rc.4" }
+agentos-execution = { package = "secure-exec-execution", version = "0.3.1-rc.4" }
+agentos-v8-runtime = { package = "secure-exec-v8-runtime", version = "0.3.1-rc.4" }
+secure-exec-client = { version = "0.3.1-rc.4" }
+secure-exec-bridge = { version = "0.3.1-rc.4" }
+secure-exec-sidecar = { version = "0.3.1-rc.4" }
+secure-exec-vm-config = { version = "0.3.1-rc.4" }
 vbare = "0.0.4"
 vbare-compiler = { package = "rivet-vbare-compiler", version = "0.0.5" }

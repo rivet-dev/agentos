@@ -36,7 +36,7 @@ onlyBuiltDependencies:
 catalog:
   '@agentos-software/claude-code': 0.0.0-nathan-binding-workspace.9be0a88
   '@agentos-software/codex': 0.3.0-rc.2
-  '@agentos-software/codex-cli': 0.3.0-rc.2
+  '@agentos-software/codex-cli': 0.0.0-codex-claude-runtime-fixes.9cbef3a
   '@agentos-software/common': 0.3.0-rc.2
   '@agentos-software/coreutils': 0.3.0-rc.2
   '@agentos-software/curl': 0.3.0-rc.2
@@ -59,9 +59,9 @@ catalog:
   '@agentos-software/unzip': 0.3.0-rc.2
   '@agentos-software/yq': 0.3.0-rc.2
   '@agentos-software/zip': 0.3.0-rc.2
-  '@secure-exec/core': 0.0.0-perf-regression.7264885
-  '@secure-exec/google-drive': 0.0.0-perf-regression.7264885
+  '@secure-exec/core': 0.3.1-rc.4
+  '@secure-exec/google-drive': 0.3.1-rc.4
   '@secure-exec/nodejs': 0.2.1
-  '@secure-exec/s3': 0.0.0-perf-regression.7264885
-  '@secure-exec/sandbox': 0.0.0-perf-regression.7264885
+  '@secure-exec/s3': 0.3.1-rc.4
+  '@secure-exec/sandbox': 0.3.1-rc.4
 # <<< secure-exec catalog <<<
