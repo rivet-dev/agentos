@@ -402,10 +402,49 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		expect(() =>
 			agentOs({
 				options: {
+					mounts: [
+						{
+							path: "/data",
+							driver: {
+								readFile: async () => new Uint8Array(),
+							},
+						},
+					],
+				} as never,
+			}),
+		).toThrow(/driver/);
+
+		expect(() =>
+			agentOs({
+				options: {
 					sidecar: { kind: "explicit", handle: {} },
 				} as never,
 			}),
 		).toThrow(/sidecar/);
+	});
+
+	test("serializes native memory mounts across the Rivet native plugin boundary", () => {
+		const config = JSON.parse(
+			buildConfigJson({
+				options: {
+					defaultSoftware: false,
+					software: [],
+					mounts: [
+						{
+							path: "/data",
+							plugin: { id: "memory", config: {} },
+						},
+					],
+				},
+			} as never),
+		);
+
+		expect(config.mounts).toEqual([
+			{
+				path: "/data",
+				plugin: { id: "memory", config: {} },
+			},
+		]);
 	});
 
 	test("buildConfigJson rejects unknown options instead of dropping them", () => {
@@ -488,8 +527,8 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 			(s: { package: string }) => s.package,
 		);
 		expect(pkgs).toContain("/x/wasm");
-		// common (sh + coreutils + tools) is injected from @agentos-software/*.
-		expect(pkgs.some((p: string) => p.includes("@agentos-software"))).toBe(
+		// common (sh + coreutils + tools) is injected from the software registry.
+		expect(pkgs.some((p: string) => p.includes("coreutils"))).toBe(
 			true,
 		);
 		expect(withDefault.software.length).toBeGreaterThan(1);
