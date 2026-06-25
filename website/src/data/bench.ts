@@ -46,10 +46,10 @@ export const SANDBOX_MIN_MEMORY_MB = SANDBOX_MIN_MEMORY_GIB * 1024;
 // ── Self-hosted hardware pricing ──
 
 export const HARDWARE = [
-	{ label: 'AWS ARM',     costPerHour: 0.0084,                      memoryMb: 1024 },
-	{ label: 'AWS x86',     costPerHour: 0.0104,                      memoryMb: 1024 },
 	{ label: 'Hetzner ARM', costPerHour: 3.29 * 1.09 / (30 * 24),    memoryMb: 4096 }, // €3.29/mo
 	{ label: 'Hetzner x86', costPerHour: 5.39 * 1.09 / (30 * 24),    memoryMb: 4096 }, // €5.39/mo
+	{ label: 'AWS ARM',     costPerHour: 0.0084,                      memoryMb: 1024 },
+	{ label: 'AWS x86',     costPerHour: 0.0104,                      memoryMb: 1024 },
 ] as const;
 
 export const UTILIZATION = 0.7;
