@@ -36,7 +36,7 @@ export const siteConfig = {
 		cards: [
 			{ title: "Quickstart", href: "/docs/quickstart", icon: "rocket", description: "Boot a VM and run your first coding agent." },
 			{ title: "Crash Course", href: "/docs/crash-course", icon: "lightbulb", description: "Learn the core agentOS concepts." },
-			{ title: "Agents", href: "/docs/agents/pi", icon: "bot", description: "Run Pi, Claude Code, Codex, Amp, and OpenCode." },
+			{ title: "Agents", href: "/docs/agents/pi", icon: "bot", description: "Run Pi, Claude Code, Codex, and OpenCode." },
 		],
 	},
 
@@ -59,10 +59,9 @@ export const siteConfig = {
 					label: "Agents",
 					items: [
 						{ slug: "docs/agents/pi", label: "Pi", attrs: { "data-icon-src": "/images/registry/pi.svg" } },
-						{ slug: "docs/agents/claude", label: "ClaudeCode", attrs: { "data-icon-src": "/images/registry/claude-code.svg" }, badge: { text: "Coming Soon", variant: "caution" } },
-						{ slug: "docs/agents/codex", label: "Codex", attrs: { "data-icon-src": "/images/registry/codex.svg" }, badge: { text: "Coming Soon", variant: "caution" } },
-						{ slug: "docs/agents/amp", label: "Amp", attrs: { "data-icon-src": "/images/registry/amp.svg" }, badge: { text: "Coming Soon", variant: "caution" } },
-						{ slug: "docs/agents/opencode", label: "OpenCode", attrs: { "data-icon-src": "/images/registry/opencode.svg" }, badge: { text: "Coming Soon", variant: "caution" } },
+						{ slug: "docs/agents/claude", label: "ClaudeCode", attrs: { "data-icon-src": "/images/registry/claude-code.svg" } },
+						{ slug: "docs/agents/codex", label: "Codex", attrs: { "data-icon-src": "/images/registry/codex.svg" } },
+						{ slug: "docs/agents/opencode", label: "OpenCode", attrs: { "data-icon-src": "/images/registry/opencode.svg" } },
 						{ slug: "docs/agents/custom", label: "Custom Agents", attrs: { "data-icon": "wrench" } },
 					],
 				},

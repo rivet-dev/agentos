@@ -5,7 +5,6 @@ import { motion } from "framer-motion";
 const footer = {
   product: [
     { name: "Use Cases", href: "/use-cases" },
-    { name: "Pricing", href: "/pricing" },
     { name: "Registry", href: "/registry" },
   ],
   developers: [
@@ -57,7 +56,7 @@ export function Footer() {
             className="space-y-6 xl:col-span-4"
           >
             <a href="/" className="inline-block">
-              <img src="/images/agent-os/agentos-hero-logo.svg" alt="Agent OS" className="h-7 w-auto" />
+              <img src="/images/agent-os/agentos-hero-logo.svg" alt="agentOS" className="h-7 w-auto" />
             </a>
             <p className="text-sm leading-6 text-ink-soft">A portable open-source operating system for agents.</p>
             <div className="flex space-x-4">
@@ -112,7 +111,7 @@ export function Footer() {
           transition={{ duration: 0.5, delay: 0.3 }}
           className="mt-12 border-t border-ink/10 pt-8"
         >
-          <p className="text-center text-xs text-ink-faint">&copy; {new Date().getFullYear()} Agent OS. Apache 2.0 licensed.</p>
+          <p className="text-center text-xs text-ink-faint">&copy; {new Date().getFullYear()} agentOS. Apache 2.0 licensed.</p>
         </motion.div>
       </div>
     </footer>

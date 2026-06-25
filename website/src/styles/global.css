@@ -135,6 +135,17 @@
 }
 
 @layer components {
+  /* The Tailwind config maps `font-mono` to Manrope (a sans) by design, so
+     Preflight's `code, kbd, samp, pre { font-family: <mono> }` reset forces every
+     <code>/<pre> to Manrope. That overrides the `font-code` class on the inner
+     <code> of highlighted blocks, rendering code in a sans font. Force the
+     syntax-highlighter output back to a real monospace font. */
+  .shiki,
+  .shiki code,
+  .shiki span {
+    font-family: "JetBrains Mono", SFMono-Regular, monospace;
+  }
+
   .glass {
     @apply bg-white/[0.02] backdrop-blur-md border border-white/10;
   }
@@ -465,7 +476,7 @@
   animation: none;
 }
 
-/* ── Porcelain editorial marketing surfaces (Agent OS) ─────────────────── */
+/* ── Porcelain editorial marketing surfaces (agentOS) ─────────────────── */
 
 @layer utilities {
   /* Porcelain editorial surface. The page field is a cool porcelain gray with a

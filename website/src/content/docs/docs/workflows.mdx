@@ -12,7 +12,7 @@ Orchestrate multi-step agent tasks with durable workflows that survive crashes a
 
 A workflow is the durable `run` handler of an actor. Wrap it in `workflow()` and drive a multi-step agent task as an ordered series of steps: clone the repo, let an agent fix the bug, then run the tests. Trigger work by sending to a queue; the workflow loops and waits durably for the next message.
 
-Session creation and prompting happen within the step that uses them, so a session never has to outlive the work it backs (sessions are ephemeral and would not survive a replay). Steps reach the Agent OS VM, a separate actor, through `ctx.client()`.
+Session creation and prompting happen within the step that uses them, so a session never has to outlive the work it backs (sessions are ephemeral and would not survive a replay). Steps reach the agentOS VM, a separate actor, through `ctx.client()`.
 
 <CodeGroup>
 ```ts title="server.ts"
@@ -24,7 +24,7 @@ import {
 } from "rivetkit/workflow";
 import pi from "./software/pi";
 
-// The Agent OS VM that each workflow step drives. It is its own actor, kept
+// The agentOS VM that each workflow step drives. It is its own actor, kept
 // separate from the workflow orchestrator so steps can reach it over the client.
 const vm = agentOS({ software: [pi] });
 
@@ -231,5 +231,5 @@ await handle.send("codeReview", { filePath: "/home/agentos/src/auth.ts" });
 - Create and close sessions within the step that uses them. Sessions are ephemeral, so keep their lifetime scoped to one unit of work.
 - Pass data between steps via the filesystem or step return values, not session state.
 - Keep `state` changes and other actor-local side effects inside `ctx.step()` callbacks; use non-step workflow code (queue waits, loops, sleeps) only for orchestration.
-- Reach the Agent OS VM, a separate actor, from inside a step with `ctx.client()`.
+- Reach the agentOS VM, a separate actor, from inside a step with `ctx.client()`.
 - See [Workflows](/docs/actors/workflows) for the full workflow API reference including timers, joins, and races.

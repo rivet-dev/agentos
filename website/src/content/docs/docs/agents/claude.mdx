@@ -1,20 +1,99 @@
 ---
-title: "Claude"
-description: "Run the Claude coding agent inside a VM."
+title: "Claude Code"
+description: "Run the Claude Code agent inside a VM with skills, MCP servers, and custom configuration."
 skill: false
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-<Aside type="note">
-Claude agent documentation is coming soon.
-</Aside>
+import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
+
+## Quick start
+
+<CodeGroup>
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import claude from "@agentos-software/claude-code";
+
+const vm = agentOS({ software: [claude] });
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
+
+```ts title="client.ts"
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
+const agent = client.vm.getOrCreate("my-agent");
+
+const session = await agent.createSession("claude", {
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+});
+
+const { text } = await agent.sendPrompt(
+  session.sessionId,
+  "What files are in the current directory?",
+);
+console.log(text);
+```
+</CodeGroup>
+
+Read [Sessions](/docs/sessions) first for session options, streaming events, prompts, and lifecycle management.
+
+*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/agents/claude)*
+
+## Skills
+
+Claude Code discovers [agent skills](https://docs.claude.com/en/docs/claude-code/skills) from `SKILL.md` files under its skills directory. Write the skill into the VM before creating a session and Claude Code loads it automatically.
 
 ```ts
-import claude from "@agentos-software/claude";
+const skill = `---
+name: commit-style
+description: How to write commit messages in this project.
+---
 
-const vm = await AgentOs.create({ software: [claude] });
-const { sessionId } = await vm.createSession("claude", {
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY },
+Write commit messages in the imperative mood and keep the subject under 50 characters.
+`;
+
+// Write the skill before creating the session
+await agent.mkdir("/home/agentos/.claude/skills/commit-style", { recursive: true });
+await agent.writeFile("/home/agentos/.claude/skills/commit-style/SKILL.md", skill);
+
+// Claude Code discovers the skill automatically
+const session = await agent.createSession("claude", {
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
 ```
+
+## MCP servers
+
+Expose extra tools to the agent by passing `mcpServers` to `createSession`. Both local child-process servers and remote URLs are supported.
+
+```ts
+const session = await agent.createSession("claude", {
+  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+  mcpServers: [
+    {
+      type: "local",
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/agentos"],
+      env: {},
+    },
+    {
+      type: "remote",
+      url: "https://mcp.example.com/sse",
+      headers: { Authorization: "Bearer my-token" },
+    },
+  ],
+});
+```
+
+<Aside type="note">
+**Pre-install `npx`-launched servers.** A local server started with `npx -y …` writes install progress to **stdout** on its first run, which corrupts the MCP stdio handshake (you'll see `Connection closed`). Pre-install it in the VM so `npx` is silent — `await agent.exec("npm install -g @modelcontextprotocol/server-filesystem")` before the session — or pin the package and point `command` at the installed binary.
+</Aside>
+
+## Customizing the agent
+
+Claude Code is a built-in agent, but it's just a software package under the hood. To ship your own ACP adapter, swap the underlying agent SDK, or register a tweaked build as a new agent, see [Custom Agents](/docs/agents/custom).

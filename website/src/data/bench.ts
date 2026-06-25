@@ -71,6 +71,14 @@ export interface CostTier {
 	multiplier: string;
 	ratio: number;
 	bar: number;
+	/** Concurrent executions packed onto one server at UTILIZATION (the cost denominator). */
+	execs: number;
+	/** Server RAM in MB for this hardware tier. */
+	serverMemMb: number;
+	/** Per-execution memory footprint in MB (the workload's memoryMb). */
+	workloadMemMb: number;
+	/** Raw server price per hour, for "$X/hr server / N execs" copy. */
+	costPerHour: number;
 }
 
 export interface MemoryData {
@@ -105,6 +113,10 @@ export function computeWorkload(label: string, description: string, memoryMb: nu
 			multiplier: `${Math.round(ratio)}x cheaper`,
 			ratio: Math.round(ratio),
 			bar,
+			execs: effectiveExecs,
+			serverMemMb: hw.memoryMb,
+			workloadMemMb: memoryMb,
+			costPerHour: hw.costPerHour,
 		};
 	});
 
@@ -132,12 +144,12 @@ export const benchColdStart = [
 
 export const benchWorkloads = {
 	agent: computeWorkload(
-		'Full coding agent',
+		'Coding agent',
 		'Pi coding agent session with MCP servers and mounted file systems',
 		MEMORY_AGENT_MB,
 	),
 	shell: computeWorkload(
-		'Simple shell command',
+		'Execution',
 		'Minimal shell workload running simple commands',
 		MEMORY_SHELL_MB,
 	),

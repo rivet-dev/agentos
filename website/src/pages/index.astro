@@ -6,185 +6,184 @@ import AgentOSPage from "../components/marketing/solutions/AgentOSPage";
 import { highlightCodeHtml } from "../lib/highlight-code";
 
 const heroTabSnippets = [
-	{ key: 'agents', fileName: 'agents.ts', code: `import { AgentOs } from "@agent-os/core";
+	{ key: 'agents', fileName: 'agents.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
 
-const vm = await AgentOs.create();
-
-// Create an agent session
-const { sessionId } = await vm.createSession("pi");
+const client = createClient<typeof registry>("http://localhost:6420");
+const agent = client.vm.getOrCreate("my-agent").connect();
 
 // Stream events (tool calls, text output, etc.)
-vm.onSessionEvent(sessionId, (event) => console.log(event));
+agent.on("sessionEvent", (data) => console.log(data.event));
 
-// Send a prompt and wait for the response
-await vm.prompt(sessionId, "Write a Python script that calculates pi");` },
+// Create a session and send a prompt
+const session = await agent.createSession("pi", { env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! } });
+await agent.sendPrompt(session.sessionId, "Write a Python script that calculates pi");` },
 
-	{ key: 'tools', fileName: 'bindings.ts', code: `import { z } from "zod";
-import { AgentOs, binding, bindings } from "@agent-os/core";
-import common from "@agent-os/common";
-
-// Agents call bindings as CLI commands inside the VM:
-// $ agentos-weather get --city London
-const weatherBindings = bindings({
-	name: "weather",
-	description: "Look up weather information for cities.",
-	bindings: {
-		get: binding({
-			description: "Get the current weather for a city.",
-			inputSchema: z.object({
-				city: z.string().describe("City name (e.g. 'London')."),
-			}),
-			execute: async ({ city }) => ({
-				city,
-				temperature: 18,
-				conditions: "partly cloudy",
-				humidity: 65,
-			}),
-		}),
-	},
-});
-
-const vm = await AgentOs.create({
-	software: [common],
-	bindings: [weatherBindings],
-});
-
-// Bindings are injected into the agent's system prompt automatically
-await vm.prompt(sessionId, "What's the weather in London?");
-// The agent will call: agentos-weather get --city London` },
-
-	{ key: 'agent-agent', fileName: 'agent-agent.ts', code: `import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
-import { bindings, binding } from "@agent-os/core";
-import { createClient } from "rivetkit/client";
+	{ key: 'tools', fileName: 'tools.ts', code: `// server.ts
+import { agentOS, setup } from "@rivet-dev/agentos";
+import common from "@agentos-software/common";
 import { z } from "zod";
 
-// Binding that lets the writer request a code review from the reviewer
-const reviewBindings = bindings({
-  name: "review",
-  description: "Send code to the reviewer agent",
+// A bindings group becomes CLI commands inside the VM:
+// $ agentos-weather get --city London
+const weather = {
+  name: "weather",
+  description: "Look up weather information for cities.",
   bindings: {
-    submit: binding({
-      description: "Submit a file for code review",
-      inputSchema: z.object({
-        path: z.string().describe("Path to the file"),
+    get: {
+      description: "Get the current weather for a city.",
+      inputSchema: z.object({ city: z.string().describe("City name (e.g. 'London').") }),
+      execute: async ({ city }: { city: string }) => ({
+        city,
+        temperature: 18,
+        conditions: "partly cloudy",
       }),
-      execute: async ({ path }) => {
-        const client = createClient<typeof registry>("http://localhost:6420");
-        const writer = client.writer.getOrCreate(["my-project"]);
-        const reviewer = client.reviewer.getOrCreate(["my-project"]);
-
-        // Copy the file from the writer's VM to the reviewer's VM
-        const code = await writer.readFile(path);
-        await reviewer.writeFile(path, code);
-
-        // Ask the reviewer agent to review it
-        const { sessionId } = await reviewer.createSession("pi");
-        return reviewer.sendPrompt(sessionId, \`Review \${path}\`);
-      },
-    }),
+    },
   },
-});
+};
 
-// Writer gets the review binding; reviewer is plain
-// The writer calls: agentos-review submit --path /home/agentos/api.ts
-const writer = agentOs({ options: { bindings: [reviewBindings] } });
-const reviewer = agentOs();
+const vm = agentOS({ software: [common], bindings: [weather] });
+export const registry = setup({ use: { vm } });
+registry.start();
+
+// client.ts
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>("http://localhost:6420");
+const agent = client.vm.getOrCreate("my-agent");
+
+// Bindings are injected into the agent's system prompt automatically
+const session = await agent.createSession("pi");
+await agent.sendPrompt(session.sessionId, "What's the weather in London?");
+// The agent will call: agentos-weather get --city London` },
+
+	{ key: 'agent-agent', fileName: 'agent-agent.ts', code: `// server.ts
+import { agentOS, setup } from "@rivet-dev/agentos";
+import { createClient } from "@rivet-dev/agentos/client";
+import { z } from "zod";
+
+// The reviewer is its own isolated agent VM
+const reviewer = agentOS({});
+
+// Bridge: copy a file from the writer's VM to the reviewer's, then review it
+async function reviewFile(path: string) {
+  const client = createClient<typeof registry>("http://localhost:6420");
+  const writer = client.writer.getOrCreate("my-project");
+  const reviewerHandle = client.reviewer.getOrCreate("my-project");
+
+  const code = await writer.readFile(path);
+  await reviewerHandle.writeFile(path, code);
+
+  const session = await reviewerHandle.createSession("pi");
+  const { text } = await reviewerHandle.sendPrompt(session.sessionId, \`Review \${path}\`);
+  return text;
+}
+
+// The writer gets a "review" binding -> agentos-review submit --path ...
+const writer = agentOS({
+  bindings: [{
+    name: "review",
+    description: "Send code to the reviewer agent",
+    bindings: {
+      submit: {
+        description: "Submit a file for code review",
+        inputSchema: z.object({ path: z.string().describe("Path to the file") }),
+        execute: async ({ path }: { path: string }) => ({ review: await reviewFile(path) }),
+      },
+    },
+  }],
+});
 
 export const registry = setup({ use: { writer, reviewer } });
-registry.start();` },
+registry.start();
 
-	{ key: 'nodejs', fileName: 'nodejs.ts', code: `import { AgentOs } from "@agent-os/core";
-import common from "@agent-os/common";
+// client.ts
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
 
-const vm = await AgentOs.create({ software: [common] });
+const client = createClient<typeof registry>("http://localhost:6420");
+const writer = client.writer.getOrCreate("my-project");
 
-await vm.writeFile("/tmp/demo.mjs", \`
+const session = await writer.createSession("pi");
+await writer.sendPrompt(
+  session.sessionId,
+  "Write a REST API at /home/agentos/api.ts, then run agentos-review submit --path /home/agentos/api.ts",
+);` },
+
+	{ key: 'nodejs', fileName: 'nodejs.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>("http://localhost:6420");
+const agent = client.vm.getOrCreate("my-agent");
+
+await agent.writeFile("/home/agentos/demo.mjs", \`
 import fs from "fs";
 
-// Create a directory and write files
-fs.mkdirSync("/project/src", { recursive: true });
-fs.writeFileSync("/project/src/index.js", 'console.log("hello");');
-fs.writeFileSync("/project/README.md", "# My Project");
+fs.mkdirSync("/home/agentos/project/src", { recursive: true });
+fs.writeFileSync("/home/agentos/project/src/index.js", 'console.log("hello");');
 
-// Read them back
-const files = fs.readdirSync("/project", { recursive: true });
+const files = fs.readdirSync("/home/agentos/project", { recursive: true });
 console.log("Files:", files);
-
-const content = fs.readFileSync("/project/src/index.js", "utf8");
-console.log("index.js:", content);
 \`);
 
-const result = await vm.exec("node /tmp/demo.mjs");
+const result = await agent.exec("node /home/agentos/demo.mjs");
 console.log(result.stdout);` },
 
-	{ key: 'python', fileName: 'python.ts', code: `import { AgentOs } from "@agent-os/core";
-import common from "@agent-os/common";
+	{ key: 'bash', fileName: 'bash.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
 
-const vm = await AgentOs.create({ software: [common] });
+const client = createClient<typeof registry>("http://localhost:6420");
+const agent = client.vm.getOrCreate("my-agent");
 
-await vm.writeFile("/tmp/demo.py", \`
-import os
-import json
-
-# Create a directory and write files
-os.makedirs("/project/src", exist_ok=True)
-
-with open("/project/src/main.py", "w") as f:
-    f.write("print('hello')")
-
-with open("/project/README.md", "w") as f:
-    f.write("# My Project")
-
-# Read them back
-files = os.listdir("/project")
-print("Files:", files)
-
-with open("/project/src/main.py") as f:
-    print("main.py:", f.read())
-\`);
-
-const result = await vm.exec("python /tmp/demo.py");
-console.log(result.stdout);` },
-
-	{ key: 'bash', fileName: 'bash.ts', code: `import { AgentOs } from "@agent-os/core";
-import common from "@agent-os/common";
-
-const vm = await AgentOs.create({ software: [common] });
-
-// Write a script to back up /app/data
-await vm.writeFile("/tmp/backup.sh", \`#!/bin/bash
+// Write a script to back up the working directory
+await agent.writeFile("/home/agentos/backup.sh", \`#!/bin/bash
 set -e
-mkdir -p /backups
-tar -czf /backups/backup_\$(date +%s).tar.gz -C /app/data .
-sha256sum /backups/*.tar.gz
-echo "Done:" && ls -lh /backups/
+mkdir -p /home/agentos/backups
+tar -czf /home/agentos/backups/backup_$(date +%s).tar.gz -C /home/agentos/project .
+echo "Done:" && ls -lh /home/agentos/backups/
 \`);
 
-const result = await vm.exec("bash /tmp/backup.sh");
+const result = await agent.exec("bash /home/agentos/backup.sh");
 console.log(result.stdout);` },
 
-	{ key: 's3-filesystem', fileName: 's3-filesystem.ts', code: `import { AgentOs } from "@agent-os/core";
-import { createS3Backend } from "@agent-os/s3";
+	{ key: 's3-filesystem', fileName: 's3-filesystem.ts', code: `// server.ts
+import { agentOS, setup } from "@rivet-dev/agentos";
 
-// Mount an S3 bucket as a local filesystem inside the VM
-const s3 = createS3Backend({ bucket: process.env.S3_BUCKET! });
-
-const vm = await AgentOs.create({
-  mounts: [{ path: "/mnt/data", driver: s3 }],
+// Mount an S3 bucket as a filesystem with the built-in "s3" plugin
+const vm = agentOS({
+  mounts: [
+    {
+      path: "/home/agentos/data",
+      plugin: {
+        id: "s3",
+        config: { bucket: process.env.S3_BUCKET!, region: "us-east-1" },
+      },
+    },
+  ],
 });
+export const registry = setup({ use: { vm } });
+registry.start();
 
-await vm.writeFile("/mnt/data/notes.txt", "Hello from Agent OS!");
-const content = await vm.readFile("/mnt/data/notes.txt");
-console.log(content);` },
+// client.ts
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
 
-	{ key: 'cron', fileName: 'cron.ts', code: `import { AgentOs } from "@agent-os/core";
-import common from "@agent-os/common";
+const client = createClient<typeof registry>("http://localhost:6420");
+const agent = client.vm.getOrCreate("my-agent");
 
-const vm = await AgentOs.create({ software: [common] });
+await agent.writeFile("/home/agentos/data/notes.txt", "Hello from agentOS!");
+const content = await agent.readFile("/home/agentos/data/notes.txt");
+console.log(new TextDecoder().decode(content));` },
 
-// Heartbeat: agent wakes up every 30 minutes to check on issues
-vm.scheduleCron({
+	{ key: 'cron', fileName: 'cron.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>("http://localhost:6420");
+const agent = client.vm.getOrCreate("my-agent");
+
+// Heartbeat: wake the agent every 30 minutes to check on issues
+await agent.scheduleCron({
   schedule: "*/30 * * * *",
   action: {
     type: "session",
@@ -194,158 +193,162 @@ vm.scheduleCron({
 });` },
 
 	{ key: 'webhooks', fileName: 'webhooks.ts', code: `import { Hono } from "hono";
-import { createClient } from "rivetkit/client";
+import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
 const app = new Hono();
 const client = createClient<typeof registry>("http://localhost:6420");
 
 app.post("/slack/events", async (c) => {
-  const body = await c.req.json();
-  const { team_id, text, user } = body.event;
+  const { team_id, text, user } = (await c.req.json()).event;
 
   // Each workspace gets its own persistent agent
   const agent = client.vm.getOrCreate([team_id]);
-  const { sessionId } = await agent.createSession("pi");
-  await agent.sendPrompt(sessionId, \`Message from \${user}: \${text}\`);
+  const session = await agent.createSession("pi");
+  await agent.sendPrompt(session.sessionId, \`Message from \${user}: \${text}\`);
 
   return c.json({ ok: true });
 });` },
 
-	{ key: 'multiplayer', fileName: 'multiplayer.ts', code: `import { createClient } from "rivetkit/client";
+	{ key: 'multiplayer', fileName: 'multiplayer.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
+const client = createClient<typeof registry>("http://localhost:6420");
+
 // Both clients connect to the same agent by key
-const clientA = createClient<typeof registry>("http://localhost:6420").vm.getOrCreate(["shared-agent"]);
-const clientB = createClient<typeof registry>("http://localhost:6420").vm.getOrCreate(["shared-agent"]);
+const a = client.vm.getOrCreate("shared-agent").connect();
+const b = client.vm.getOrCreate("shared-agent").connect();
 
 // Both receive the same session events
-clientA.on("sessionEvent", (e) => console.log("[A]", e.event.method));
-clientB.on("sessionEvent", (e) => console.log("[B]", e.event.method));
+a.on("sessionEvent", (e) => console.log("[A]", e.event.method));
+b.on("sessionEvent", (e) => console.log("[B]", e.event.method));
 
 // Either client can send prompts to the shared session
-const { sessionId } = await clientA.createSession("pi");
-await clientA.sendPrompt(sessionId, "Build a REST API");
-await clientB.sendPrompt(sessionId, "Add authentication to it");` },
+const session = await a.createSession("pi");
+await a.sendPrompt(session.sessionId, "Build a REST API");` },
 
-	{ key: 'workflows', fileName: 'workflows.ts', code: `import { agentOs } from "rivetkit/agent-os";
-import common from "@agent-os/common";
-import pi from "@agent-os/pi";
-import { actor, setup, workflow } from "rivetkit";
+	{ key: 'workflows', fileName: 'workflows.ts', code: `// server.ts
+import { agentOS, setup } from "@rivet-dev/agentos";
+import { actor, queue } from "rivetkit";
+import { workflow } from "rivetkit/workflow";
+import pi from "@agentos-software/pi";
 
-const vm = agentOs({
-  options: { software: [common, pi] },
+const vm = agentOS({ software: [pi] });
+
+// Durable workflow: every ctx.step is recorded, retried, and resumed after a crash
+const bugFixer = actor({
+  queues: { fixBug: queue<{ repo: string; issue: string }>() },
+  run: workflow(async (ctx) => {
+    await ctx.loop("fix-bug-loop", async (loop) => {
+      const { repo, issue } = (await loop.queue.next("wait-fix-bug")).body;
+      const agent = loop.client<typeof registry>().vm.getOrCreate("bug-fixer");
+
+      await loop.step("clone-repo", () => agent.exec(\`git clone \${repo} /home/agentos/repo\`));
+      await loop.step("fix-bug", async () => {
+        const session = await agent.createSession("pi");
+        await agent.sendPrompt(session.sessionId, \`Fix: \${issue}\`);
+        await agent.closeSession(session.sessionId);
+      });
+      await loop.step("run-tests", () => agent.exec("cd /home/agentos/repo && npm test"));
+    });
+  }),
 });
 
-// Durable workflow: each step survives crashes and replays from where it left off
-const automator = actor({
-  workflows: {
-    fixBug: workflow<{ repo: string; issue: string }>(),
-  },
-  run: async (c) => {
-    for await (const message of c.workflow.iter("fixBug")) {
-      const { repo, issue } = message.body;
-      const vm = c.actors.vm.getOrCreate([\`fix-\${issue}\`]);
+export const registry = setup({ use: { bugFixer, vm } });
+registry.start();
 
-      await c.step("clone-repo", async () => {
-        return vm.exec(\`git clone \${repo} /home/agentos/repo\`);
-      });
+// client.ts
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
 
-      await c.step("fix-bug", async () => {
-        const { sessionId } = await vm.createSession("pi");
-        await vm.sendPrompt(sessionId, \`Fix: \${issue}\`);
-        await vm.closeSession(sessionId);
-      });
+const client = createClient<typeof registry>("http://localhost:6420");
+const handle = client.bugFixer.getOrCreate("main");
 
-      await c.step("run-tests", async () => {
-        return vm.exec("cd /home/agentos/repo && npm test");
-      });
+// Trigger the durable workflow; it survives restarts and resumes mid-run
+await handle.send("fixBug", {
+  repo: "https://github.com/example/repo.git",
+  issue: "Fix the login redirect bug",
+});` },
 
-      await message.complete();
-    }
-  },
-});
+	{ key: 'git', fileName: 'git.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
 
-export const registry = setup({ use: { automator, vm } });
-registry.start();` },
-
-	{ key: 'git', fileName: 'git.ts', code: `import { AgentOs } from "@agent-os/core";
-import common from "@agent-os/common";
-import git from "@agent-os/git";
-
-const vm = await AgentOs.create({ software: [common, git] });
+const client = createClient<typeof registry>("http://localhost:6420");
+const agent = client.vm.getOrCreate("my-agent");
 
 // Initialize a repo, commit, and branch
-await vm.exec("git init /tmp/repo");
-await vm.writeFile("/tmp/repo/README.md", "# My Project");
-await vm.exec("git -C /tmp/repo add README.md");
-await vm.exec("git -C /tmp/repo commit -m 'initial commit'");
+await agent.exec("git init /home/agentos/repo");
+await agent.writeFile("/home/agentos/repo/README.md", "# My Project");
+await agent.exec("git -C /home/agentos/repo add README.md");
+await agent.exec("git -C /home/agentos/repo commit -m 'initial commit'");
 
 // Create a feature branch
-await vm.exec("git -C /tmp/repo checkout -b feature");
-await vm.writeFile("/tmp/repo/feature.txt", "new feature");
-await vm.exec("git -C /tmp/repo add feature.txt");
-await vm.exec("git -C /tmp/repo commit -m 'add feature'");
+await agent.exec("git -C /home/agentos/repo checkout -b feature");
+await agent.writeFile("/home/agentos/repo/feature.txt", "new feature");
+await agent.exec("git -C /home/agentos/repo add feature.txt");
+await agent.exec("git -C /home/agentos/repo commit -m 'add feature'");
 
-// Clone and check out the feature branch
-await vm.exec("git clone /tmp/repo /tmp/clone");
-await vm.exec("git -C /tmp/clone checkout feature");
-
-const content = await vm.readFile("/tmp/clone/feature.txt");
+const content = await agent.readFile("/home/agentos/repo/feature.txt");
 console.log(new TextDecoder().decode(content));` },
 
-	{ key: 'sandbox', fileName: 'sandbox.ts', code: `import { AgentOs } from "@agent-os/core";
-import common from "@agent-os/common";
+	{ key: 'sandbox', fileName: 'sandbox.ts', code: `// server.ts
+import { agentOS, setup } from "@rivet-dev/agentos";
+import { createSandboxFs, createSandboxBindings } from "@rivet-dev/agentos-sandbox";
 import { SandboxAgent } from "sandbox-agent";
 import { docker } from "sandbox-agent/docker";
-import { createSandboxFs, createSandboxBindings } from "@agent-os/sandbox";
 
 // Start a Docker-backed sandbox
 const sandbox = await SandboxAgent.start({ sandbox: docker() });
 
-// Mount its filesystem and register the bindings
-const vm = await AgentOs.create({
-  software: [common],
-  mounts: [{ path: "/sandbox", driver: createSandboxFs({ client: sandbox }) }],
+// Mount its filesystem and register the sandbox bindings
+const vm = agentOS({
+  mounts: [{ path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) }],
   bindings: [createSandboxBindings({ client: sandbox })],
 });
+export const registry = setup({ use: { vm } });
+registry.start();
+
+// client.ts
+import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>("http://localhost:6420");
+const agent = client.vm.getOrCreate("my-agent");
 
 // Write a file through the mounted sandbox filesystem
-await vm.writeFile("/sandbox/hello.txt", "Hello from Agent OS!");
-const content = await vm.readFile("/sandbox/hello.txt");
+await agent.writeFile("/home/agentos/sandbox/hello.txt", "Hello from agentOS!");
+const content = await agent.readFile("/home/agentos/sandbox/hello.txt");
 console.log(new TextDecoder().decode(content));
 
-// Run a command inside the Docker sandbox
-const result = await vm.exec("agentos-sandbox run-command --command echo --json '{\\"args\\": [\\"hello from Docker\\"]}'");
+// Run a command inside the Docker sandbox via the mounted toolkit
+const result = await agent.exec("agentos-sandbox run-command --command echo --json '{\\"args\\": [\\"hello from Docker\\"]}'");
 console.log(result.stdout);` },
 
-	{ key: 'permissions', fileName: 'permissions.ts', code: `import { agentOs } from "rivetkit/agent-os";
-import { setup } from "rivetkit";
+	{ key: 'permissions', fileName: 'permissions.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
 
-const vm = agentOs({
-  options: {
-    // Auto-approve permissions server-side
-    onPermissionRequest: async (c, sessionId, request) => {
-      // Allow read-only operations automatically
-      if (request.type === "read") {
-        await c.respondPermission(sessionId, request.permissionId, "always");
-        return;
-      }
+const client = createClient<typeof registry>("http://localhost:6420");
+const agent = client.vm.getOrCreate("my-agent").connect();
 
-      // Deny dangerous operations
-      if (request.description?.includes("rm -rf")) {
-        await c.respondPermission(sessionId, request.permissionId, "reject");
-        return;
-      }
+// Human-in-the-loop: respond to permission requests as they arrive
+agent.on("permissionRequest", async ({ sessionId, request }) => {
+  const description = (request.description ?? "").toLowerCase();
 
-      // Approve everything else once
-      await c.respondPermission(sessionId, request.permissionId, "once");
-    },
-  },
-});
+  // Allow read-only operations automatically
+  if (description.includes("read")) {
+    await agent.respondPermission(sessionId, request.permissionId, "always");
+    return;
+  }
 
-export const registry = setup({ use: { vm } });
-registry.start();` },
+  // Deny dangerous operations
+  if (description.includes("rm -rf")) {
+    await agent.respondPermission(sessionId, request.permissionId, "reject");
+    return;
+  }
+
+  // Approve everything else once — "once" | "always" | "reject"
+  await agent.respondPermission(sessionId, request.permissionId, "once");
+});` },
 ];
 
 const heroTabs = await Promise.all(
@@ -357,11 +360,11 @@ const heroTabs = await Promise.all(
 ---
 
 <Layout
-  title="Agent OS — Everything Agents Need to Run and Operate"
+  title="agentOS — A faster, lighter, cheaper alternative to sandboxes"
   description="A portable open-source operating system for agents. Stateful runtime, universal agent interface, and secure code execution. One SDK, deploy anywhere."
   ogImage="https://agentos-sdk.dev/og.png"
 >
-  <Navigation client:load />
+  <Navigation revealLogoOnScroll client:load />
   <AgentOSPage heroTabs={heroTabs} client:load />
   <Footer client:visible />
 </Layout>

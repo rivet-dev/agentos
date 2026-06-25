@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Menu, X } from "lucide-react";
 import { GitHubStars } from "./GitHubStars";
+import { registry } from "../data/registry";
 
 function DiscordIcon({ className }: { className?: string }) {
   return (
@@ -18,27 +19,38 @@ function DiscordIcon({ className }: { className?: string }) {
   );
 }
 
-const NAV_LINKS = [
+const NAV_LINKS: { href: string; label: string; badge?: number }[] = [
   { href: "/use-cases", label: "Use Cases" },
-  { href: "/pricing", label: "Pricing" },
-  { href: "/registry", label: "Registry" },
+  { href: "/registry", label: "Registry", badge: registry.length },
   { href: "/docs", label: "Docs" },
 ];
 
-function NavItem({ href, children }: { href: string; children: React.ReactNode }) {
+function NavBadge({ count }: { count: number }) {
+  return (
+    <span className="inline-flex items-center rounded-full bg-ink/[0.06] px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-ink-faint">
+      {count}
+    </span>
+  );
+}
+
+function NavItem({ href, children, badge }: { href: string; children: React.ReactNode; badge?: number }) {
   return (
     <a
       href={href}
-      className="px-3 py-2 text-sm font-medium text-ink-soft transition-colors duration-200 hover:text-ink"
+      className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-ink-soft transition-colors duration-200 hover:text-ink"
     >
       {children}
+      {badge != null && <NavBadge count={badge} />}
     </a>
   );
 }
 
-export function Navigation() {
+export function Navigation({ revealLogoOnScroll = false }: { revealLogoOnScroll?: boolean }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  // On pages with a hero logo, keep the nav logo hidden until the hero logo
+  // scrolls up behind the nav. Elsewhere it's always visible.
+  const [logoVisible, setLogoVisible] = useState(!revealLogoOnScroll);
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 20);
@@ -46,6 +58,23 @@ export function Navigation() {
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
+
+  useEffect(() => {
+    if (!revealLogoOnScroll) return;
+    const heroLogo = document.getElementById("hero-logo");
+    if (!heroLogo) {
+      setLogoVisible(true); // fail open: no hero logo on this page → always show
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setLogoVisible(!entry.isIntersecting),
+      // Negative top margin (~nav height) so the crossover lands at the nav
+      // rather than the very top edge of the viewport.
+      { rootMargin: "-80px 0px 0px 0px" },
+    );
+    observer.observe(heroLogo);
+    return () => observer.disconnect();
+  }, [revealLogoOnScroll]);
 
   return (
     <div className="fixed top-0 z-50 w-full md:left-1/2 md:top-4 md:w-full md:max-w-[1200px] md:-translate-x-1/2 md:px-8">
@@ -64,18 +93,37 @@ export function Navigation() {
           }`}
         >
           <div className="flex w-full items-center justify-between px-3">
-            <div className="flex items-center gap-4">
-              <a href="/" className="flex items-center gap-2">
-                <img
-                  src="/images/agent-os/agentos-hero-logo.svg"
-                  alt="Agent OS"
-                  className="h-7 w-auto"
-                />
-              </a>
+            <div className="flex items-center">
+              {/* Collapsing logo cell — the nav links slide right as it expands
+                  in and left as it collapses out, so the row stays balanced. */}
+              <div
+                className={`grid transition-all duration-300 ease-out ${
+                  logoVisible ? "grid-cols-[1fr]" : "grid-cols-[0fr]"
+                }`}
+              >
+                <div className="overflow-hidden">
+                  <a
+                    href="/"
+                    aria-hidden={!logoVisible}
+                    tabIndex={logoVisible ? undefined : -1}
+                    className={`flex items-center pr-6 transition-all duration-300 ease-out ${
+                      logoVisible
+                        ? "opacity-100 blur-0"
+                        : "pointer-events-none opacity-0 blur-sm"
+                    }`}
+                  >
+                    <img
+                      src="/images/agent-os/agentos-hero-logo.svg"
+                      alt="agentOS"
+                      className="h-7 w-auto max-w-none"
+                    />
+                  </a>
+                </div>
+              </div>
 
-              <div className="ml-2 hidden items-center md:flex">
+              <div className="hidden items-center md:flex">
                 {NAV_LINKS.map((link) => (
-                  <NavItem key={link.href} href={link.href}>
+                  <NavItem key={link.href} href={link.href} badge={link.badge}>
                     {link.label}
                   </NavItem>
                 ))}
@@ -114,10 +162,11 @@ export function Navigation() {
               <a
                 key={link.href}
                 href={link.href}
-                className="block rounded-lg px-3 py-2.5 font-medium text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
+                className="flex items-center gap-2 rounded-lg px-3 py-2.5 font-medium text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 {link.label}
+                {link.badge != null && <NavBadge count={link.badge} />}
               </a>
             ))}
             <div className="mt-3 space-y-1 border-t border-ink/10 pt-3">

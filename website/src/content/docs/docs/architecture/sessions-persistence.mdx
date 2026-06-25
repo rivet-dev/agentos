@@ -1,22 +1,22 @@
 ---
 title: "Sessions & Persistence"
-description: "How Agent OS, ACP, RivetKit actors, and durable session persistence fit together."
+description: "How agentOS, ACP, RivetKit actors, and durable session persistence fit together."
 ---
 
-Agent OS runs coding agents inside VMs and talks to them through the Agent
+agentOS runs coding agents inside VMs and talks to them through the Agent
 Communication Protocol (ACP). RivetKit wraps those VMs in durable actors, so a
 session can survive actor sleep/wake even though the live VM and agent process
 do not.
 
 ## Layers
 
-Agent OS session architecture has four layers:
+agentOS session architecture has four layers:
 
 | Layer | Responsibility |
 | --- | --- |
 | RivetKit actor | Owns the public API and durable actor-local SQLite state. |
-| Agent OS client | Thin facade used by the actor to create sessions, prompt agents, and call the sidecar. |
-| Agent OS sidecar ACP extension | Launches ACP adapters inside the VM, speaks JSON-RPC, handles permissions, and owns resume orchestration. |
+| agentOS client | Thin facade used by the actor to create sessions, prompt agents, and call the sidecar. |
+| agentOS sidecar ACP extension | Launches ACP adapters inside the VM, speaks JSON-RPC, handles permissions, and owns resume orchestration. |
 | ACP adapter / agent | Runs inside the VM and speaks ACP over stdio. |
 
 The actor is durable. The VM is disposable. The ACP agent process is live state
@@ -39,7 +39,7 @@ live ACP session id after wake, the actor keeps an internal
 
 ## Create Flow
 
-1. The actor calls Agent OS `createSession`.
+1. The actor calls agentOS `createSession`.
 2. The sidecar starts the ACP adapter process inside the VM.
 3. The sidecar sends ACP `initialize`.
 4. The sidecar sends ACP `session/new`.
@@ -181,7 +181,7 @@ The transcript file is not canonical state. It is a disposable render of
 
 - Sidecar ACP orchestration:
   `crates/agentos-sidecar/src/acp_extension.rs`
-- Agent OS TypeScript client surface:
+- agentOS TypeScript client surface:
   `packages/core/src/agent-os.ts`
 - RivetKit actor session actions:
   `rivetkit-rust/packages/rivetkit-agent-os/src/actions/session.rs`

@@ -13,7 +13,7 @@ export default {
         "text-secondary": "#a1a1aa",
         "text-tertiary": "#71717a",
         border: "rgba(255, 255, 255, 0.10)",
-        // Porcelain editorial palette (Agent OS marketing surfaces).
+        // Porcelain editorial palette (agentOS marketing surfaces).
         paper: "#EFEFEF",
         "paper-deep": "#DCDCDE",
         "paper-mid": "#E3E3E5",
@@ -33,7 +33,11 @@ export default {
       fontFamily: {
         sans: ["Manrope", "Segoe UI", "system-ui", "sans-serif"],
         heading: ["Manrope", "Segoe UI", "system-ui", "sans-serif"],
-        mono: ['"JetBrains Mono"', "SFMono-Regular", "monospace"],
+        // Monospace dropped from UI labels: `font-mono` renders the sans stack so
+        // existing label usages (tabs, eyebrows, badges, diagram text) stay sans.
+        // Real code/terminal blocks use `font-code` (JetBrains Mono) instead.
+        mono: ["Manrope", "Segoe UI", "system-ui", "sans-serif"],
+        code: ['"JetBrains Mono"', "SFMono-Regular", "monospace"],
       },
       animation: {
         "fade-in-up": "fade-in-up 0.8s ease-out forwards",

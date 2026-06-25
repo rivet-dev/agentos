@@ -6,10 +6,11 @@ skill: true
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
+import { AGENT_PROMPT } from '../../../components/marketing/agentPrompt';
 
 <div style="border-radius:0.75rem;border:1px solid rgba(27,25,22,0.12);background:rgba(27,25,22,0.035);padding:0.875rem 1.125rem;margin:1.5rem 0;color:#56524a;display:flex;align-items:center;justify-content:space-between;gap:1.25rem;">
 <span>Use this pre-built prompt to get started faster.</span>
-<button type="button" onclick="var b=this;navigator.clipboard.writeText(b.getAttribute('data-prompt')||'').then(function(){b.textContent='Copied!';setTimeout(function(){b.textContent='Copy prompt';},1500);});" data-prompt="Set up a new agentOS project from scratch. agentOS runs each AI coding agent inside its own isolated VM. Do the following:&#10;&#10;1. Initialize a Node + TypeScript project and install the dependencies: `npm install @rivet-dev/agentos @agentos-software/pi`.&#10;&#10;2. Create `server.ts` that defines a VM actor with the Pi coding agent installed and starts the registry:&#10;&#10;import &lbrace; agentOS, setup &rbrace; from &quot;@rivet-dev/agentos&quot;;&#10;import pi from &quot;@agentos-software/pi&quot;;&#10;&#10;const vm = agentOS(&lbrace; software: [pi] &rbrace;);&#10;export const registry = setup(&lbrace; use: &lbrace; vm &rbrace; &rbrace;);&#10;registry.start();&#10;&#10;3. Create `client.ts` that connects to the server, gets or creates a VM, opens a Pi session with the ANTHROPIC_API_KEY from the environment, sends a prompt, and reads back the file the agent wrote:&#10;&#10;import &lbrace; createClient &rbrace; from &quot;@rivet-dev/agentos/client&quot;;&#10;import type &lbrace; registry &rbrace; from &quot;./server&quot;;&#10;&#10;const client = createClient&lt;typeof registry&gt;(&lbrace; endpoint: &quot;http://localhost:6420&quot; &rbrace;);&#10;const handle = client.vm.getOrCreate(&quot;my-agent&quot;);&#10;const session = await handle.createSession(&quot;pi&quot;, &lbrace; env: &lbrace; ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! &rbrace; &rbrace;);&#10;await handle.sendPrompt(session.sessionId, &quot;Write a hello world script to /workspace/hello.js&quot;);&#10;const content = await handle.readFile(&quot;/workspace/hello.js&quot;);&#10;console.log(new TextDecoder().decode(content));&#10;&#10;4. Explain how to run both: `npx tsx server.ts` in one terminal, then `npx tsx client.ts` in another, with ANTHROPIC_API_KEY set in the environment." style="appearance:none;border:1px solid rgba(27,25,22,0.18);background:#1b1916;color:#f4f1e7;font-family:var(--sl-font);font-size:0.8rem;font-weight:600;display:inline-flex;align-items:center;justify-content:center;height:2rem;padding:0 0.85rem;border-radius:6px;cursor:pointer;white-space:nowrap;margin-top:0;flex:none;box-sizing:border-box;">Copy prompt</button>
+<button type="button" onclick="var b=this;navigator.clipboard.writeText(b.getAttribute('data-prompt')||'').then(function(){b.textContent='Copied!';setTimeout(function(){b.textContent='Copy prompt';},1500);});" data-prompt={AGENT_PROMPT} style="appearance:none;border:1px solid rgba(27,25,22,0.18);background:#1b1916;color:#f4f1e7;font-family:var(--sl-font);font-size:0.8rem;font-weight:600;display:inline-flex;align-items:center;justify-content:center;height:2rem;padding:0 0.85rem;border-radius:6px;cursor:pointer;white-space:nowrap;margin-top:0;flex:none;box-sizing:border-box;">Copy prompt</button>
 </div>
 
 <div style="border-radius:0.75rem;border:1px solid rgba(27,25,22,0.12);background:rgba(27,25,22,0.035);padding:0.875rem 1.125rem;margin:1.5rem 0;color:#56524a;display:flex;align-items:center;justify-content:space-between;gap:1.25rem;">
@@ -65,7 +66,7 @@ import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 1. **Install**
 
    - **@rivet-dev/agentos** — Actor framework with built-in persistence and orchestration
-   - **@agentos-software/pi** — [Pi](https://github.com/mariozechner/pi-coding-agent) coding agent (Claude Code, Amp, and OpenCode coming soon)
+   - **@agentos-software/pi** — [Pi](https://github.com/mariozechner/pi-coding-agent) coding agent (Claude Code, Codex, and OpenCode coming soon)
 
    ```bash
    npm install @rivet-dev/agentos @agentos-software/pi

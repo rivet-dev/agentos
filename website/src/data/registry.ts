@@ -22,7 +22,33 @@ export interface RegistryEntryComingSoon extends RegistryEntryBase {
 	status: "coming-soon";
 }
 
-export type RegistryEntry = RegistryEntryAvailable | RegistryEntryComingSoon;
+// An entry that isn't a separately installable package — e.g. a built-in agent
+// adapter. The registry page links straight to its documentation instead of
+// rendering an install command.
+export interface RegistryEntryDocs extends RegistryEntryBase {
+	status: "docs";
+	// Link to the docs page documenting this entry.
+	docsHref: string;
+}
+
+// A built-in capability configured inline (e.g. a filesystem mount plugin),
+// not a separately installable package. Renders a configuration snippet and a
+// link to the relevant docs instead of an `npm install` command.
+export interface RegistryEntryConfig extends RegistryEntryBase {
+	status: "config";
+	// Short label for how it's enabled, e.g. `mounts: [{ plugin: { id: "s3" } }]`.
+	configId: string;
+	// TypeScript snippet showing how to configure it.
+	configExample: string;
+	// Link to the docs page that documents this configuration.
+	docsHref: string;
+}
+
+export type RegistryEntry =
+	| RegistryEntryAvailable
+	| RegistryEntryComingSoon
+	| RegistryEntryDocs
+	| RegistryEntryConfig;
 
 export const registry: RegistryEntry[] = [
 	// Agents
@@ -30,7 +56,7 @@ export const registry: RegistryEntry[] = [
 		slug: "pi",
 		title: "PI",
 		status: "available",
-		package: "@agent-os/pi",
+		package: "@agentos-software/pi",
 		description:
 			"Run the PI coding agent with lightweight, fast execution.",
 		types: ["agent"],
@@ -40,36 +66,30 @@ export const registry: RegistryEntry[] = [
 	{
 		slug: "claude-code",
 		title: "Claude Code",
-		status: "coming-soon",
+		status: "docs",
+		docsHref: "/docs/agents/claude",
 		description:
-			"Run Claude Code as an Agent OS agent with full tool access, file editing, and shell execution.",
+			"Run Claude Code as an agentOS agent with full tool access, file editing, and shell execution.",
 		types: ["agent"],
 		image: "/images/registry/claude-code.svg",
 	},
 	{
 		slug: "codex",
 		title: "Codex",
-		status: "coming-soon",
+		status: "docs",
+		docsHref: "/docs/agents/codex",
 		description:
-			"Run OpenAI's Codex coding agent inside Agent OS with programmatic API access.",
+			"Run OpenAI's Codex coding agent inside agentOS with programmatic API access.",
 		types: ["agent"],
 		image: "/images/registry/codex.svg",
 	},
 	{
-		slug: "amp",
-		title: "Amp",
-		status: "coming-soon",
-		description:
-			"Run Sourcegraph's Amp coding agent inside Agent OS.",
-		types: ["agent"],
-		image: "/images/registry/amp.svg",
-	},
-	{
 		slug: "opencode",
 		title: "OpenCode",
-		status: "coming-soon",
+		status: "docs",
+		docsHref: "/docs/agents/opencode",
 		description:
-			"Run OpenCode, an open-source coding agent, inside Agent OS.",
+			"Run OpenCode, an open-source coding agent, inside agentOS.",
 		types: ["agent"],
 		image: "/images/registry/opencode.svg",
 	},
@@ -79,7 +99,7 @@ export const registry: RegistryEntry[] = [
 		slug: "common",
 		title: "Common",
 		status: "available",
-		package: "@agent-os/common",
+		package: "@agentos-software/common",
 		description:
 			"Meta-package: coreutils + sed + grep + gawk + findutils + diffutils + tar + gzip.",
 		types: ["software"],
@@ -88,7 +108,7 @@ export const registry: RegistryEntry[] = [
 		slug: "build-essential",
 		title: "Build Essential",
 		status: "available",
-		package: "@agent-os/build-essential",
+		package: "@agentos-software/build-essential",
 		description:
 			"Meta-package: common + make + git + curl.",
 		types: ["software"],
@@ -97,7 +117,7 @@ export const registry: RegistryEntry[] = [
 		slug: "coreutils",
 		title: "Coreutils",
 		status: "available",
-		package: "@agent-os/coreutils",
+		package: "@agentos-software/coreutils",
 		description:
 			"sh, cat, ls, cp, mv, rm, sort, and 80+ essential POSIX commands.",
 		types: ["software"],
@@ -106,7 +126,7 @@ export const registry: RegistryEntry[] = [
 		slug: "sed",
 		title: "sed",
 		status: "available",
-		package: "@agent-os/sed",
+		package: "@agentos-software/sed",
 		description: "GNU stream editor for text transformation.",
 		types: ["software"],
 	},
@@ -114,7 +134,7 @@ export const registry: RegistryEntry[] = [
 		slug: "grep",
 		title: "grep",
 		status: "available",
-		package: "@agent-os/grep",
+		package: "@agentos-software/grep",
 		description: "GNU grep pattern matching (grep, egrep, fgrep).",
 		types: ["software"],
 	},
@@ -122,7 +142,7 @@ export const registry: RegistryEntry[] = [
 		slug: "gawk",
 		title: "gawk",
 		status: "available",
-		package: "@agent-os/gawk",
+		package: "@agentos-software/gawk",
 		description: "GNU awk text processing and data extraction.",
 		types: ["software"],
 	},
@@ -130,7 +150,7 @@ export const registry: RegistryEntry[] = [
 		slug: "findutils",
 		title: "findutils",
 		status: "available",
-		package: "@agent-os/findutils",
+		package: "@agentos-software/findutils",
 		description: "GNU find and xargs for file searching and batch execution.",
 		types: ["software"],
 	},
@@ -138,7 +158,7 @@ export const registry: RegistryEntry[] = [
 		slug: "diffutils",
 		title: "diffutils",
 		status: "available",
-		package: "@agent-os/diffutils",
+		package: "@agentos-software/diffutils",
 		description: "GNU diff for comparing files.",
 		types: ["software"],
 	},
@@ -146,7 +166,7 @@ export const registry: RegistryEntry[] = [
 		slug: "tar",
 		title: "tar",
 		status: "available",
-		package: "@agent-os/tar",
+		package: "@agentos-software/tar",
 		description: "GNU tar archiver.",
 		types: ["software"],
 	},
@@ -154,7 +174,7 @@ export const registry: RegistryEntry[] = [
 		slug: "gzip",
 		title: "gzip",
 		status: "available",
-		package: "@agent-os/gzip",
+		package: "@agentos-software/gzip",
 		description: "GNU gzip compression (gzip, gunzip, zcat).",
 		types: ["software"],
 	},
@@ -162,7 +182,7 @@ export const registry: RegistryEntry[] = [
 		slug: "zip",
 		title: "zip",
 		status: "available",
-		package: "@agent-os/zip",
+		package: "@agentos-software/zip",
 		description: "Create zip archives.",
 		types: ["software"],
 	},
@@ -170,7 +190,7 @@ export const registry: RegistryEntry[] = [
 		slug: "unzip",
 		title: "unzip",
 		status: "available",
-		package: "@agent-os/unzip",
+		package: "@agentos-software/unzip",
 		description: "Extract zip archives.",
 		types: ["software"],
 	},
@@ -178,7 +198,7 @@ export const registry: RegistryEntry[] = [
 		slug: "jq",
 		title: "jq",
 		status: "available",
-		package: "@agent-os/jq",
+		package: "@agentos-software/jq",
 		description: "Lightweight JSON processor.",
 		types: ["software"],
 	},
@@ -186,7 +206,7 @@ export const registry: RegistryEntry[] = [
 		slug: "yq",
 		title: "yq",
 		status: "available",
-		package: "@agent-os/yq",
+		package: "@agentos-software/yq",
 		description: "YAML/JSON processor.",
 		types: ["software"],
 	},
@@ -194,7 +214,7 @@ export const registry: RegistryEntry[] = [
 		slug: "ripgrep",
 		title: "ripgrep",
 		status: "available",
-		package: "@agent-os/ripgrep",
+		package: "@agentos-software/ripgrep",
 		description: "Fast recursive search (rg).",
 		types: ["software"],
 		featured: true,
@@ -203,7 +223,7 @@ export const registry: RegistryEntry[] = [
 		slug: "fd",
 		title: "fd",
 		status: "available",
-		package: "@agent-os/fd",
+		package: "@agentos-software/fd",
 		description: "Fast file finder.",
 		types: ["software"],
 	},
@@ -211,7 +231,7 @@ export const registry: RegistryEntry[] = [
 		slug: "tree",
 		title: "tree",
 		status: "available",
-		package: "@agent-os/tree",
+		package: "@agentos-software/tree",
 		description: "Display directory structure as a tree.",
 		types: ["software"],
 	},
@@ -219,7 +239,7 @@ export const registry: RegistryEntry[] = [
 		slug: "file",
 		title: "file",
 		status: "available",
-		package: "@agent-os/file",
+		package: "@agentos-software/file",
 		description: "Detect file types.",
 		types: ["software"],
 	},
@@ -227,47 +247,130 @@ export const registry: RegistryEntry[] = [
 		slug: "codex-wasm",
 		title: "Codex CLI",
 		status: "available",
-		package: "@agent-os/codex",
+		package: "@agentos-software/codex",
 		description: "OpenAI Codex CLI integration.",
 		types: ["software"],
 	},
 
 	// File Systems
 	{
-		slug: "filesystem",
-		title: "Filesystem",
-		status: "available",
-		package: "@agent-os/core",
+		slug: "host-dir",
+		title: "Host Directory",
+		status: "config",
+		configId: 'plugin: { id: "host_dir" }',
+		docsHref: "/docs/filesystem",
 		description:
-			"Mount and manage virtual filesystems with support for S3, local, and overlay drivers.",
+			"Project a real host directory into the VM, Docker-style. The guest sees only the mounted subtree, never the wider host filesystem.",
 		types: ["file-system"],
 		icon: "HardDrive",
-	},
-	{
-		slug: "sqlite",
-		title: "SQLite",
-		status: "coming-soon",
-		description:
-			"Mount a SQLite-backed virtual filesystem for persistent, queryable storage.",
-		types: ["file-system"],
-		icon: "Database",
-	},
-	{
-		slug: "postgres",
-		title: "Postgres",
-		status: "coming-soon",
-		description:
-			"Mount a Postgres-backed filesystem for shared, durable storage across agents.",
-		types: ["file-system"],
-		icon: "Database",
-	},
+		configExample: `import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
 
+const vm = agentOS({
+  software: [pi],
+  mounts: [
+    {
+      path: "/home/agentos/repo",
+      plugin: { id: "host_dir", config: { hostPath: "/path/to/repo" } },
+      readOnly: true,
+    },
+  ],
+});
+
+export const registry = setup({ use: { vm } });`,
+	},
+	{
+		slug: "s3",
+		title: "S3",
+		status: "config",
+		configId: 'plugin: { id: "s3" }',
+		docsHref: "/docs/filesystem",
+		description:
+			"Mount an S3-compatible bucket as a filesystem. File contents are chunked into S3 objects, keeping large files, partial reads/writes, and snapshots efficient.",
+		types: ["file-system"],
+		featured: true,
+		image: "/images/registry/s3.svg",
+		configExample: `import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+  mounts: [
+    {
+      path: "/home/agentos/data",
+      plugin: {
+        id: "s3",
+        config: { bucket: "my-bucket", prefix: "agent-data/", region: "us-east-1" },
+      },
+    },
+  ],
+});
+
+export const registry = setup({ use: { vm } });`,
+	},
+	{
+		slug: "google-drive",
+		title: "Google Drive",
+		status: "config",
+		configId: 'plugin: { id: "google_drive" }',
+		docsHref: "/docs/filesystem",
+		description:
+			"Mount a Google Drive folder as a filesystem for reading and writing documents and files.",
+		types: ["file-system"],
+		featured: true,
+		image: "/images/registry/google-drive.svg",
+		configExample: `import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+  mounts: [
+    {
+      path: "/home/agentos/drive",
+      plugin: {
+        id: "google_drive",
+        config: {
+          credentials: {
+            clientEmail: process.env.GOOGLE_DRIVE_CLIENT_EMAIL!,
+            privateKey: process.env.GOOGLE_DRIVE_PRIVATE_KEY!,
+          },
+          folderId: process.env.GOOGLE_DRIVE_FOLDER_ID!,
+        },
+      },
+    },
+  ],
+});
+
+export const registry = setup({ use: { vm } });`,
+	},
+	{
+		slug: "memory",
+		title: "In-Memory",
+		status: "config",
+		configId: 'plugin: { id: "memory" }',
+		docsHref: "/docs/filesystem",
+		description:
+			"Mount an ephemeral in-memory directory. Fast scratch space that is discarded when the VM is destroyed.",
+		types: ["file-system"],
+		icon: "HardDrive",
+		configExample: `import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+  mounts: [
+    { path: "/home/agentos/scratch", plugin: { id: "memory", config: {} } },
+  ],
+});
+
+export const registry = setup({ use: { vm } });`,
+	},
 	// Tools
 	{
 		slug: "sandbox",
 		title: "Sandbox",
 		status: "available",
-		package: "@agent-os/sandbox",
+		package: "@rivet-dev/agentos-sandbox",
 		description:
 			"Mount a sandbox filesystem and expose process management tools. Works with any Sandbox Agent provider.",
 		types: ["tool", "file-system"],

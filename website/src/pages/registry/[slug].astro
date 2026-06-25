@@ -4,7 +4,8 @@ import { Navigation } from "../../components/Navigation";
 import { Footer } from "../../components/Footer";
 import { registry } from "../../data/registry";
 import { REGISTRY_ICONS } from "../../data/registry-icons";
-import { InkChip } from "../../components/marketing/editorial/InkPanel";
+import { InkChip, InkPanel } from "../../components/marketing/editorial/InkPanel";
+import { highlightCodeHtml } from "../../lib/highlight-code";
 
 export function getStaticPaths() {
 	return registry.map((entry) => ({
@@ -23,8 +24,77 @@ const TYPE_LABELS: Record<string, string> = {
 	software: "Software",
 };
 
+// Turn a package's last path segment into a JS identifier, e.g.
+// `@agentos-software/build-essential` -> `buildEssential`.
+const toIdent = (s: string) =>
+	s.replace(/^.*\//, "").replace(/-([a-z0-9])/g, (_, c) => c.toUpperCase());
+
 const isComingSoon = entry.status === "coming-soon";
-const installCmd = !isComingSoon ? `npm install ${entry.package}` : null;
+const isConfig = entry.status === "config";
+const isDocs = entry.status === "docs";
+const isSoftware = entry.status === "available" && entry.types.includes("software");
+const isSandboxExt =
+	entry.status === "available" && entry.types.includes("sandbox-extension");
+
+const npmHref =
+	entry.status === "available"
+		? `https://www.npmjs.com/package/${entry.package}`
+		: null;
+
+// Docs link: config entries, built-in docs entries, software, and sandbox
+// mounting providers each point at the relevant documentation page.
+const docsHref =
+	entry.status === "config" || entry.status === "docs"
+		? entry.docsHref
+		: isSoftware
+			? "/docs/software"
+			: isSandboxExt
+				? "/docs/sandbox"
+				: null;
+
+const configId = entry.status === "config" ? entry.configId : null;
+
+// The code example shown on the page. Config entries carry their own; software
+// and sandbox-mounting entries get an auto-generated registration example.
+let exampleSource: string | null = null;
+if (entry.status === "config") {
+	exampleSource = entry.configExample;
+} else if (isSoftware && entry.status === "available") {
+	const ident = toIdent(entry.package);
+	exampleSource = `import { agentOS, setup } from "@rivet-dev/agentos";
+import ${ident} from "${entry.package}";
+
+// Add the package to your VM's software so its commands are available inside the VM
+const vm = agentOS({ software: [${ident}] });
+
+export const registry = setup({ use: { vm } });`;
+} else if (isSandboxExt) {
+	exampleSource = `import { agentOS, setup } from "@rivet-dev/agentos";
+import { createSandboxFs, createSandboxBindings } from "@rivet-dev/agentos-sandbox";
+import { SandboxAgent } from "sandbox-agent";
+import { ${entry.slug} } from "sandbox-agent/${entry.slug}";
+
+// Start a ${entry.title}-backed sandbox and mount it into the VM
+const sandbox = await SandboxAgent.start({ sandbox: ${entry.slug}() });
+
+const vm = agentOS({
+  mounts: [{ path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) }],
+  bindings: [createSandboxBindings({ client: sandbox })],
+});
+
+export const registry = setup({ use: { vm } });`;
+}
+const exampleHtml = exampleSource
+	? await highlightCodeHtml(exampleSource, "ts")
+	: null;
+
+// Plain npm install is only shown for entries that aren't software or
+// sandbox-mounting (those show a registration example instead).
+const installCmd =
+	entry.status === "available" && !isSoftware && !isSandboxExt
+		? `npm install ${entry.package}`
+		: null;
+
 const EntryIcon = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
 ---
 
@@ -87,6 +157,104 @@ const EntryIcon = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
 				<div class="border border-ink/10 bg-white/55 p-8 text-center">
 					<p class="text-lg text-ink-faint">This integration is coming soon.</p>
 				</div>
+			) : isDocs ? (
+				<>
+					<section>
+						<h2 class="mb-3 text-xl font-medium text-ink">Documentation</h2>
+						<p class="mb-6 text-sm text-ink-soft">
+							Built into agentOS — no separate install. See the docs for setup and usage.
+						</p>
+					</section>
+
+					<a
+						href={docsHref!}
+						class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
+					>
+						View documentation
+					</a>
+				</>
+			) : isConfig ? (
+				<>
+					<section>
+						<h2 class="mb-3 text-xl font-medium text-ink">Configuration</h2>
+						<p class="mb-4 text-sm text-ink-soft">
+							Built into the SDK — no separate install. Enable it with{" "}
+							<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">{configId}</code>{" "}
+							in your VM config.
+						</p>
+						<InkPanel className="mb-6">
+							<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
+						</InkPanel>
+					</section>
+
+					<a
+						href={docsHref!}
+						class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
+					>
+						View documentation
+					</a>
+				</>
+			) : isSoftware ? (
+				<>
+					<section>
+						<h2 class="mb-3 text-xl font-medium text-ink">Add to agentOS</h2>
+						<p class="mb-4 text-sm text-ink-soft">
+							Register it with your VM's{" "}
+							<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">software: []</code>{" "}
+							so its commands are available inside the VM.
+						</p>
+						<InkPanel className="mb-6">
+							<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
+						</InkPanel>
+					</section>
+
+					<div class="flex flex-wrap gap-3">
+						<a
+							href={docsHref!}
+							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
+						>
+							View documentation
+						</a>
+						<a
+							href={npmHref!}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
+						>
+							View on npm
+						</a>
+					</div>
+				</>
+			) : isSandboxExt ? (
+				<>
+					<section>
+						<h2 class="mb-3 text-xl font-medium text-ink">Mount the sandbox</h2>
+						<p class="mb-4 text-sm text-ink-soft">
+							Mount a {entry.title} sandbox into the VM with{" "}
+							<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">@rivet-dev/agentos-sandbox</code>.
+						</p>
+						<InkPanel className="mb-6">
+							<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
+						</InkPanel>
+					</section>
+
+					<div class="flex flex-wrap gap-3">
+						<a
+							href={docsHref!}
+							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
+						>
+							View documentation
+						</a>
+						<a
+							href={npmHref!}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
+						>
+							View on npm
+						</a>
+					</div>
+				</>
 			) : (
 				<>
 					<section>
@@ -95,7 +263,7 @@ const EntryIcon = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
 					</section>
 
 					<a
-						href={`https://www.npmjs.com/package/${entry.package}`}
+						href={npmHref!}
 						target="_blank"
 						rel="noopener noreferrer"
 						class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"

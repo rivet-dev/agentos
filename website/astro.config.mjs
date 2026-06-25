@@ -18,7 +18,7 @@ export default defineConfig({
 		tailwind({ applyBaseStyles: false }),
 		// The shared Rivet docs theme — wraps Starlight entirely. All docs
 		// branding/chrome lives in @rivet-dev/docs-theme; docs.config.mjs maps
-		// Agent OS's identity, nav, and pages onto it.
+		// agentOS's identity, nav, and pages onto it.
 		...docsTheme(starlight, siteConfig),
 		sitemap(),
 	],
