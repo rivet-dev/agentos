@@ -3,24 +3,18 @@
 import { useId, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
 	ArrowRight,
-	Shield,
 	Terminal,
 	FolderOpen,
-	Clock,
 	Layers,
 	Globe,
 	Bot,
-	Briefcase,
 	ListChecks,
-	SquareTerminal,
 	Wrench,
 	CalendarClock,
 	ExternalLink,
 	Activity,
 	HardDrive,
-	Code,
 	Cpu,
-	Package,
 	Users,
 	Webhook,
 	Workflow,
@@ -35,12 +29,10 @@ import {
 	Hexagon,
 	FileCode,
 } from 'lucide-react';
-import { AnimatePresence, motion, useMotionTemplate, useMotionValue, useReducedMotion, useSpring, useTransform, type MotionValue } from 'framer-motion';
+import { AnimatePresence, motion, useMotionTemplate, useMotionValue, useReducedMotion, useScroll, useSpring, useTransform, type MotionValue } from 'framer-motion';
 import { InkPanel } from '../editorial/InkPanel';
-import { GLOW_PILL_CLASS, handleGlowPillMouseMove } from '../glowPill';
 import { registry } from '../../../data/registry';
 import { REGISTRY_ICONS } from '../../../data/registry-icons';
-import { HarnessArchitecture } from '../diagrams/HarnessArchitecture';
 import { AGENT_PROMPT } from '../agentPrompt';
 
 // Premium porcelain card surface, shared by the architecture cards and the
@@ -462,8 +454,8 @@ const ImageCycler = ({ images }: { images: HeroImage[] }) => {
 	);
 };
 
-// --- Copy Agent Prompt ---
-const CopyAgentPrompt = () => {
+// --- Set up with your agent (copies the agent prompt) ---
+const SetupWithAgent = () => {
 	const [copied, setCopied] = useState(false);
 
 	const handleCopy = async () => {
@@ -478,7 +470,11 @@ const CopyAgentPrompt = () => {
 			className='selection-dark inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-md bg-accent-deep px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent sm:w-auto'
 		>
 			{copied ? <Check className='h-4 w-4' /> : <Copy className='h-4 w-4' />}
-			{copied ? 'Copied' : 'Copy Agent Prompt'}
+			{/* Reserve the width of the longest label so the button doesn't shrink on copy */}
+			<span className='grid place-items-center'>
+				<span className='invisible col-start-1 row-start-1' aria-hidden='true'>Set up with your agent</span>
+				<span className='col-start-1 row-start-1'>{copied ? 'Copied' : 'Set up with your agent'}</span>
+			</span>
 		</button>
 	);
 };
@@ -533,126 +529,6 @@ const HandwrittenText = ({ text, className }: { text: string; className?: string
 				{text}
 			</text>
 		</svg>
-	);
-};
-
-// --- Fake Terminal ---
-const AGENTOS_ASCII = `      db                                  mm     .g8""8q.    .M"""bgd
-     ;MM:                                 MM   .dP'    \`YM. ,MI    "Y
-    ,V^MM.    .P"Ybmmm .gP"Ya \`7MMpMMMb.mmMMmm dM'      \`MM \`MMb.
-   ,M  \`MM   :MI  I8  ,M'   Yb  MM    MM  MM   MM        MM   \`YMMNq.
-   AbmmmqMA   WmmmP"  8M""""""  MM    MM  MM   MM.      ,MP .     \`MM
-  A'     VML 8M       YM.    ,  MM    MM  MM   \`Mb.    ,dP' Mb     dM
-.AMA.   .AMMA.YMMMMMb  \`Mbmmd'.JMML  JMML.\`Mbmo  \`"bmmd"'   P"Ybmmd"
-             6'     dP
-             Ybmmmd'`;
-
-interface TermLine {
-	text: string;
-	color?: string;
-	delay: number;
-	typing?: boolean;
-}
-
-const terminalLines: TermLine[] = [
-	{ text: '$ npx agentos start', color: 'text-cream', delay: 0, typing: true },
-	{ text: '', delay: 600 },
-	{ text: AGENTOS_ASCII, color: 'text-cream', delay: 800 },
-	{ text: '', delay: 1200 },
-	{ text: '  v0.1.0  |  runtime ready', color: 'text-cream/45', delay: 1400 },
-	{ text: '', delay: 1600 },
-	{ text: '✓ V8 isolate pool initialized (12 workers)', color: 'text-cream/70', delay: 1800 },
-	{ text: '✓ File system mounted → /workspace', color: 'text-cream/70', delay: 2100 },
-	{ text: '✓ Tool registry loaded (git, curl, python, node)', color: 'text-cream/70', delay: 2400 },
-	{ text: '✓ Network policy applied → allowlist mode', color: 'text-cream/70', delay: 2700 },
-	{ text: '', delay: 3000 },
-	{ text: '● Agent session created  sid=a8f3c2e1', color: 'text-cream/85', delay: 3200 },
-	{ text: '  → Claude Code connected', color: 'text-cream/55', delay: 3500 },
-	{ text: '  → Prompt: "Set up a Next.js app with auth"', color: 'text-cream/55', delay: 3800 },
-	{ text: '', delay: 4100 },
-	{ text: '  ▸ agent  npm create next-app@latest /workspace/app', color: 'text-cream/70', delay: 4400 },
-	{ text: '  ▸ agent  npm install next-auth@5 prisma @prisma/client', color: 'text-cream/70', delay: 5000 },
-	{ text: '  ▸ agent  Writing 7 files...', color: 'text-cream/70', delay: 5600 },
-	{ text: '  ▸ agent  npx prisma db push', color: 'text-cream/70', delay: 6200 },
-	{ text: '', delay: 6800 },
-	{ text: '✓ Task complete  duration=14.2s  tokens=3,847  cost=$0.012', color: 'text-cream/70', delay: 7000 },
-	{ text: '  → Preview: http://localhost:3000', color: 'text-cream/55', delay: 7300 },
-	{ text: '', delay: 7600 },
-	{ text: '● Listening for new sessions...', color: 'text-cream/85', delay: 7800 },
-];
-
-const FakeTerminal = () => {
-	const [visibleCount, setVisibleCount] = useState(0);
-	const [typedText, setTypedText] = useState('');
-	const [isTyping, setIsTyping] = useState(false);
-	const scrollRef = useRef<HTMLDivElement>(null);
-
-	useEffect(() => {
-		if (visibleCount >= terminalLines.length) return;
-
-		const line = terminalLines[visibleCount];
-		const prevDelay = visibleCount > 0 ? terminalLines[visibleCount - 1].delay : 0;
-		const wait = line.delay - prevDelay;
-
-		const timer = setTimeout(() => {
-			if (line.typing) {
-				setIsTyping(true);
-				setTypedText('');
-				let charIdx = 0;
-				const typeInterval = setInterval(() => {
-					charIdx++;
-					setTypedText(line.text.slice(0, charIdx));
-					if (charIdx >= line.text.length) {
-						clearInterval(typeInterval);
-						setIsTyping(false);
-						setVisibleCount((c) => c + 1);
-					}
-				}, 40);
-				return () => clearInterval(typeInterval);
-			} else {
-				setVisibleCount((c) => c + 1);
-			}
-		}, wait);
-
-		return () => clearTimeout(timer);
-	}, [visibleCount]);
-
-	useEffect(() => {
-		if (scrollRef.current) {
-			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-		}
-	}, [visibleCount, typedText]);
-
-	return (
-		<InkPanel>
-			<div className='flex items-center gap-2 border-b border-cream/10 px-4 py-3'>
-				<div className='h-3 w-3 rounded-full bg-cream/15' />
-				<div className='h-3 w-3 rounded-full bg-cream/15' />
-				<div className='h-3 w-3 rounded-full bg-cream/15' />
-				<span className='ml-2 font-code text-xs text-cream/45'>terminal</span>
-			</div>
-			<div
-				ref={scrollRef}
-				className='h-[360px] overflow-y-auto p-4 font-code text-[11px] leading-relaxed md:h-[420px] md:text-xs'
-			>
-				{terminalLines.slice(0, visibleCount).map((line, i) => (
-					<div key={i} className={`${line.color || 'text-cream/45'} whitespace-pre-wrap`}>
-						{line.text || ' '}
-					</div>
-				))}
-				{isTyping && (
-					<div className={`${terminalLines[visibleCount]?.color || 'text-cream/45'} whitespace-pre-wrap`}>
-						{typedText}
-						<span className='animate-pulse'>▌</span>
-					</div>
-				)}
-				{visibleCount >= terminalLines.length && (
-					<div className='text-cream/45'>
-						<span className='animate-pulse'>▌</span>
-					</div>
-				)}
-			</div>
-		</InkPanel>
 	);
 };
 
@@ -844,12 +720,13 @@ const Hero = () => {
 	const displayedAgent = autoPlayComplete ? hoveredAgent : autoPlayAgent;
 
 	return (
-		<section className='relative flex min-h-[100svh] flex-col justify-center px-6 pt-28 pb-16 md:pt-32'>
-			<div className='mx-auto grid w-full max-w-7xl items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-16'>
-				{/* Left column — brand, value prop, proof, and calls to action */}
-				<div className='flex flex-col items-center text-center lg:items-start lg:text-left'>
+		<section className='relative flex min-h-[100svh] flex-col justify-center px-6 pt-28 pb-8 md:pt-32'>
+			<div className='mx-auto flex w-full max-w-3xl flex-col items-center text-center'>
+				{/* Centered single-column hero */}
+				<div className='flex w-full flex-col items-center text-center'>
 					{/* Title */}
 					<motion.div
+						id='hero-logo'
 						initial={{ opacity: 0, y: 20 }}
 						animate={{ opacity: 1, y: 0 }}
 						transition={{ duration: 0.5, delay: 0.05 }}
@@ -875,7 +752,7 @@ const Hero = () => {
 						transition={{ duration: 0.5, delay: 0.13 }}
 						className='mb-7 max-w-md text-base leading-relaxed text-ink-soft md:text-lg'
 					>
-						Run any coding agent inside an isolated VM, with agent orchestration built in.
+						Run any coding agent inside an isolated Linux VM, with agent orchestration built in.
 					</motion.p>
 
 					{/* Benchmark highlights — proof for "faster, lighter, cheaper", linked to the benchmarks below */}
@@ -883,7 +760,7 @@ const Hero = () => {
 						initial={{ opacity: 0, y: 10 }}
 						animate={{ opacity: 1, y: 0 }}
 						transition={{ duration: 0.5, delay: 0.16 }}
-						className='mb-8 flex flex-wrap items-baseline justify-center gap-x-6 gap-y-2 lg:justify-start'
+						className='mb-8 flex flex-wrap items-baseline justify-center gap-x-6 gap-y-2'
 					>
 						{heroStats.map((stat) => (
 							<a
@@ -903,9 +780,9 @@ const Hero = () => {
 						initial={{ opacity: 0, y: 20 }}
 						animate={{ opacity: 1, y: 0 }}
 						transition={{ duration: 0.5, delay: 0.19 }}
-						className='flex w-full flex-col flex-wrap items-center gap-x-4 gap-y-3 sm:flex-row sm:justify-center lg:justify-start'
+						className='flex w-full flex-col flex-wrap items-center gap-x-4 gap-y-3 sm:flex-row sm:justify-center'
 					>
-						<CopyAgentPrompt />
+						<SetupWithAgent />
 						<a
 							href='/docs'
 							className='inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-md border border-ink/20 bg-white px-4 py-2 text-sm font-medium text-ink transition-colors hover:border-ink/40 hover:bg-ink/[0.02] sm:w-auto'
@@ -920,11 +797,10 @@ const Hero = () => {
 						initial={{ opacity: 0, y: 20 }}
 						animate={{ opacity: 1, y: 0 }}
 						transition={{ duration: 0.5, delay: 0.22 }}
-						className='mt-7 flex flex-wrap items-center justify-center gap-3 lg:justify-start'
+						className='mt-7 flex flex-wrap items-center justify-center gap-3'
 					>
 						<span className='inline-flex items-center gap-2 font-mono text-sm uppercase tracking-[0.16em] text-ink-faint'>
-							<img src='/images/agent-os/agentos-logo-ink.svg' alt='' aria-hidden='true' className='h-5 w-5' />
-							Works with
+							agentOS runs
 						</span>
 						{/* Overlapping logo stack: a casually rotated pile (~30° fan) that
 						    spreads out and straightens on hover. Hovering a chip still drives
@@ -961,21 +837,6 @@ const Hero = () => {
 						</motion.div>
 					</motion.div>
 				</div>
-
-				{/* Right column — a live agent session, booting and running in the VM */}
-				<motion.div
-					initial={{ opacity: 0, y: 24, scale: 0.98 }}
-					animate={{ opacity: 1, y: 0, scale: 1 }}
-					transition={{ duration: 0.6, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
-					className='relative w-full'
-				>
-					{/* Soft ambient glow grounds the dark plate on the porcelain page */}
-					<div
-						aria-hidden='true'
-						className='pointer-events-none absolute -inset-6 -z-10 rounded-[2rem] bg-[radial-gradient(60%_60%_at_70%_30%,rgba(203,90,51,0.12),transparent_75%)] blur-2xl'
-					/>
-					<FakeTerminal />
-				</motion.div>
 			</div>
 		</section>
 	);
@@ -983,14 +844,45 @@ const Hero = () => {
 
 
 // --- Agent Orchestration (the API surface, led by orchestration) ---
-const orchestrationHighlights = [
-	{ icon: Bot, label: 'Durable sessions' },
-	{ icon: Layers, label: 'Agent-to-agent' },
-	{ icon: Workflow, label: 'Multi-step workflows' },
-	{ icon: CalendarClock, label: 'Scheduled jobs' },
+// Bento layout under the code: Multiplayer is the headline 2×2 tile, the rest
+// pack around it. The span pattern (one 2×2 + two col-span-2 + four 1×1) tiles a
+// 4-column grid exactly with `grid-flow-row-dense`.
+const orchestrationFeatures = [
+	{ icon: Users, title: 'Multiplayer', description: 'Multiple humans and agents in one live session, collaborating in realtime.', docsHref: '/docs/multiplayer', featured: true, span: 'lg:col-span-2 lg:row-span-2' },
+	{ icon: ListChecks, title: 'Durable sessions', description: 'Every run is a managed session with its own state, history, and lifecycle. Pause, resume, and replay.', docsHref: '/docs/sessions' },
+	{ icon: Workflow, title: 'Workflows', description: 'Chain durable, multi-step workflows that survive restarts and pick up exactly where they left off.', docsHref: '/docs/workflows' },
+	{ icon: Layers, title: 'Agent-to-agent', description: 'Let agents delegate to other agents through host-brokered calls, under the same limits and permissions.', docsHref: '/docs/agent-to-agent' },
+	{ icon: Wrench, title: 'Tools, MCP & skills', description: 'Write tools as JavaScript functions on the host, connect any MCP server, and add skills the agent can call.', docsHref: '/docs/tools' },
+	{ icon: ShieldCheck, title: 'Approvals & queue-in-loop', description: 'Gate sensitive actions behind human approval and queue work for review in the loop.', docsHref: '/docs/queues', span: 'lg:col-span-2' },
+	{ icon: Activity, title: 'Observability', description: 'Stream every event, tool call, and state change for full visibility into what your agents are doing.', docsHref: '/docs/events', span: 'lg:col-span-2' },
 ];
 
-const AgentOrchestration = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
+// "Orchestrate fleets…" title that scrubs in (fade + blur + rise) as you scroll
+// past the hero, sitting just above the code box that demonstrates it.
+const OrchestrateTitle = () => {
+	const ref = useRef<HTMLDivElement>(null);
+	const reduce = useReducedMotion();
+	const { scrollYProgress } = useScroll({ target: ref, offset: ['start end', 'start center'] });
+	const opacity = useTransform(scrollYProgress, [0, 1], [0, 1]);
+	const blurPx = useTransform(scrollYProgress, [0, 1], [10, 0]);
+	const y = useTransform(scrollYProgress, [0, 1], [16, 0]);
+	const filter = useMotionTemplate`blur(${blurPx}px)`;
+	return (
+		<div ref={ref} className='border-t border-ink/10 px-6 pt-16 pb-6 md:pt-20 md:pb-8'>
+			<div className='mx-auto max-w-7xl'>
+				<motion.h2
+					style={reduce ? undefined : { opacity, filter, y }}
+					className='max-w-3xl text-2xl font-medium tracking-[-0.015em] text-ink md:text-3xl'
+				>
+					Orchestrate fleets of agents in a few lines of code.
+				</motion.h2>
+			</div>
+		</div>
+	);
+};
+
+// --- Code Showcase (tabs + syntax-highlighted code, sits right under the hero) ---
+const CodeShowcase = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 	const [activeTab, setActiveTab] = useState(0);
 
 	const orchestrationTabs = heroTabMeta.map((tab) => ({
@@ -999,44 +891,15 @@ const AgentOrchestration = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 	}));
 
 	return (
-		<section className='border-t border-ink/10 px-6 py-24 md:py-32'>
-			<div className='mx-auto max-w-5xl'>
-				{/* Section header — frames the API surface around orchestration */}
+		// No top border/padding: the card sits flush under the shortened hero so its
+		// top peeks above the fold, inviting the scroll into the code.
+		<section className='px-6 pb-4 md:pb-6'>
+			<div className='mx-auto max-w-7xl'>
 				<motion.div
 					initial={{ opacity: 0, y: 20 }}
 					whileInView={{ opacity: 1, y: 0 }}
 					viewport={{ once: true }}
 					transition={{ duration: 0.5 }}
-					className='mb-10 max-w-2xl md:mb-12'
-				>
-					<h2 className='mb-4 text-3xl font-medium tracking-[-0.015em] text-ink md:text-4xl'>
-						Orchestrate fleets of agents in a few lines of code.
-					</h2>
-					<p className='text-base leading-relaxed text-ink-soft md:text-lg'>
-						Spin up durable sessions, let agents delegate to other agents, chain multi-step workflows, and
-						schedule recurring jobs &mdash; every call brokered by the host through one typed API.
-					</p>
-
-					{/* Capability chips — the orchestration primitives this code shows off */}
-					<div className='mt-6 flex flex-wrap gap-2'>
-						{orchestrationHighlights.map(({ icon: Icon, label }) => (
-							<span
-								key={label}
-								className='inline-flex items-center gap-2 rounded-full border border-ink/10 bg-white/55 px-3.5 py-1.5 text-sm text-ink-soft'
-							>
-								<Icon className='h-4 w-4 text-ink-faint' />
-								{label}
-							</span>
-						))}
-					</div>
-				</motion.div>
-
-				{/* Tabs + code (moved out of the hero) */}
-				<motion.div
-					initial={{ opacity: 0, y: 20 }}
-					whileInView={{ opacity: 1, y: 0 }}
-					viewport={{ once: true }}
-					transition={{ duration: 0.5, delay: 0.1 }}
 				>
 					<HeroTabs tabs={orchestrationTabs} activeTab={activeTab} onTabChange={setActiveTab} />
 
@@ -1066,70 +929,25 @@ const AgentOrchestration = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => {
 							</AnimatePresence>
 						</div>
 					</div>
-
-					{/* Docs link for the active tab */}
-					<div className='mt-5 flex justify-end'>
-						<DocsLink href={orchestrationTabs[activeTab]?.docsHref ?? '/docs'} />
-					</div>
 				</motion.div>
 			</div>
 		</section>
 	);
 };
 
-
-// --- Feature Card ---
-const FeatureCard = ({
-	icon: IconComponent,
-	title,
-	description,
-	tags,
-	metric,
-	delay = 0,
-}: {
-	icon: React.ComponentType<{ className?: string }>;
-	title: string;
-	description: string;
-	tags?: string[];
-	metric?: { value: string; label: string };
-	delay?: number;
-}) => (
-	<motion.div
-		initial={{ opacity: 0, y: 20 }}
-		whileInView={{ opacity: 1, y: 0 }}
-		viewport={{ once: true }}
-		transition={{ duration: 0.5, delay }}
-		className='border-t border-ink/10 pt-6'
-	>
-		<div className='mb-3 text-ink-soft'>
-			<IconComponent className='h-4 w-4' />
-		</div>
-		<h3 className='mb-2 text-base font-medium text-ink'>
-			{title}
-		</h3>
-		<p className='mb-4 text-sm leading-relaxed text-ink-soft'>{description}</p>
-		{tags && (
-			<div className='flex flex-wrap gap-2'>
-				{tags.map((tag) => (
-					<span
-						key={tag}
-						className='rounded bg-ink/5 px-2.5 py-1 font-mono text-xs text-ink-soft'
-					>
-						{tag}
-					</span>
+// --- Agent Orchestration (capability bento under the code) ---
+const AgentOrchestration = () => (
+	<section className='px-6 pt-2 pb-24 md:pt-4 md:pb-32'>
+		<div className='mx-auto max-w-7xl'>
+			<div className='grid grid-flow-row-dense grid-cols-1 gap-4 sm:grid-cols-2 lg:auto-rows-fr lg:grid-cols-4'>
+				{orchestrationFeatures.map((feature) => (
+					<CapabilityCard key={feature.title} {...feature} />
 				))}
 			</div>
-		)}
-		{metric && (
-			<div className='flex items-baseline gap-2'>
-				<span className='font-mono text-3xl font-medium text-ink'>
-					{metric.value}
-				</span>
-				<span className='text-sm text-ink-soft'>{metric.label}</span>
-			</div>
-		)}
-	</motion.div>
+		</div>
+	</section>
 );
+
 
 const DocsLink = ({ href }: { href: string }) => (
 	<a
@@ -1140,190 +958,65 @@ const DocsLink = ({ href }: { href: string }) => (
 	</a>
 );
 
-// --- Icon Box (rounded square outline like agentOS logo) ---
-const IconBox = ({ children }: { children: React.ReactNode }) => (
-	<div className='relative mb-6 flex h-10 w-10 items-center justify-center text-ink-soft md:h-12 md:w-12'>
-		<svg
-			className='absolute inset-0 h-full w-full'
-			viewBox='0 0 172 172'
-			fill='none'
-		>
-			<rect
-				x='8'
-				y='8'
-				width='156'
-				height='156'
-				rx='40'
-				ry='40'
-				stroke='currentColor'
-				strokeWidth='10'
-				fill='none'
-			/>
-		</svg>
-		{children}
-	</div>
-);
-
-// --- Meet your agent's new operating system (value-prop cards + harness) ---
-const StackingFeatureCards = () => {
-	const sectionRef = useRef<HTMLElement>(null);
-	const lastCardRef = useRef<HTMLDivElement>(null);
-	const [isInView, setIsInView] = useState(false);
-
-	// Title fade/blur — driven imperatively from the last card's position (below),
-	// so it triggers exactly when that card reaches its sticky slot.
-	const titleOpacity = useMotionValue(1);
-	const titleBlurPx = useMotionValue(0);
-	const titleFilter = useMotionTemplate`blur(${titleBlurPx}px)`;
-
-	// Show the bottom fade only while this section is on screen, so the stacking
-	// deck dissolves into the page background (matches the original main design).
-	useEffect(() => {
-		const section = sectionRef.current;
-		if (!section) return;
-		const observer = new IntersectionObserver(
-			([entry]) => setIsInView(entry.isIntersecting),
-			{ threshold: 0.1 }
-		);
-		observer.observe(section);
-		return () => observer.disconnect();
-	}, []);
-
-	// Fade + blur the title out exactly as the LAST card settles into its sticky
-	// position — measured from the card itself, so it triggers on arrival no matter
-	// the card heights or viewport. The card's sticky top is 340 + idx*14px (see the
-	// card style); the title fades over the final FADE_PX of the card's approach and
-	// is fully gone the moment it locks in.
-	useEffect(() => {
-		const FADE_PX = 160;
-		const stickTop = 340 + (stackFeatures.length - 1) * 14;
-		const update = () => {
-			const el = lastCardRef.current;
-			if (!el) return;
-			const top = el.getBoundingClientRect().top;
-			const p = Math.min(1, Math.max(0, (stickTop + FADE_PX - top) / FADE_PX));
-			titleOpacity.set(1 - p);
-			titleBlurPx.set(p * 8);
-		};
-		update();
-		window.addEventListener('scroll', update, { passive: true });
-		window.addEventListener('resize', update);
-		return () => {
-			window.removeEventListener('scroll', update);
-			window.removeEventListener('resize', update);
-		};
-	}, [titleOpacity, titleBlurPx]);
-
-	const stackFeatures = [
-		{ icon: Bot, title: 'Any agent.', description: 'Any supported harness, including Claude Code, Codex, and Pi, runs inside the OS instead of beside it.', detail: 'The agent speaks ACP. agentOS brokers every tool call, file read, and network request it makes, then streams every response back. The host stays in control of what the agent can see and do.' },
-		{ icon: Briefcase, title: 'Bring your own tools.', description: 'Expose any API, toolchain, or data source as a tool the agent can call.', detail: 'Write tools as JavaScript functions on the host, or connect any standard MCP server. Host tools run on your backend and the agent calls them as CLI commands inside the VM, so credentials stay on the server and it never holds a raw API key.' },
-		{ icon: ListChecks, title: 'Durable agent sessions.', description: 'Every run is a managed session with its own state, history, and lifecycle.', detail: 'Start, pause, resume, and replay. Session state lives in the host, so you can attach lifecycle hooks, persist transcripts, and pick a conversation back up exactly where it left off.' },
-		{ icon: SquareTerminal, title: 'Extend with a sandbox.', description: 'agentOS runs most work in-process and reaches for a full sandbox when a job needs more.', detail: 'Hand heavier or untrusted workloads, like a real kernel, native binaries, or a GPU, to a sandbox without leaving the session. agentOS handles the fast path while sandboxes cover the long tail.' },
-		{ icon: Workflow, title: 'Orchestrate agents and work.', description: 'Let agents delegate to other agents through host-defined tools, workflows, and cron.', detail: 'Fan work out to sub-agents, coordinate multi-step flows, and schedule recurring jobs. The host brokers every delegated call so it runs under the same limits and permissions.' },
-	];
-
-	return (
-		<section ref={sectionRef} className='border-t border-ink/10 px-6 py-24 md:py-32'>
-			{/* Bottom fade — only while this section is on screen — so the deck
-			    dissolves into the page background instead of hard-clipping. */}
-			{isInView && (
-				<div
-					className='pointer-events-none fixed bottom-0 left-0 right-0 z-20 h-64'
-					style={{ background: 'linear-gradient(to top, #EFEFEF 0%, #EFEFEF 20%, transparent 100%)' }}
-				/>
-			)}
-			<div className='mx-auto max-w-7xl'>
-				{/* Sticky title — pinned while the deck stacks, then fades + blurs out the
-				    instant the last card reaches its sticky slot (driven from that card's
-				    measured position). Opacity/filter are safe on a sticky element. */}
-				<motion.h2
-					style={{ opacity: titleOpacity, filter: titleFilter }}
-					className='sticky top-48 z-0 mb-16 max-w-3xl text-3xl font-medium tracking-[-0.015em] text-ink md:mb-24 md:top-56 md:text-5xl'
-				>
-					Meet your agent&apos;s new operating system.
-				</motion.h2>
-
-				<div className='grid items-start gap-10 lg:grid-cols-2 lg:gap-14'>
-					{/* Left: cards that stack into a deck as you scroll. Plain divs
-					    (not motion) — transforms would break position: sticky. They pin
-					    below the sticky title (340px) so the two never overlap. */}
-					<div className='relative'>
-						{stackFeatures.map((feature, idx) => {
-							const Icon = feature.icon;
-							return (
-								<div
-									key={feature.title}
-									ref={idx === stackFeatures.length - 1 ? lastCardRef : undefined}
-									className='sticky'
-									style={{ top: `${340 + idx * 14}px`, zIndex: idx + 1 }}
-								>
-									<div className='mb-5 flex min-h-[18rem] flex-col rounded-2xl border border-ink/15 bg-paper-mid p-6 md:p-8'>
-										<IconBox>
-											<Icon className='h-4 w-4 text-ink-soft md:h-5 md:w-5' />
-										</IconBox>
-										<h3 className='mb-3 text-xl font-medium tracking-[-0.015em] text-ink md:text-2xl'>
-											{feature.title}
-										</h3>
-										{feature.description && (
-											<p className='mb-3 text-base leading-relaxed text-ink-soft'>
-												{feature.description}
-											</p>
-										)}
-										{feature.detail && (
-											<p className='text-sm leading-relaxed text-ink-soft md:text-base'>
-												{feature.detail}
-											</p>
-										)}
-										{feature.tags && (
-											<div className='mt-4 flex flex-wrap gap-2'>
-												{feature.tags.map((tag) => (
-													<span
-														key={tag}
-														onMouseMove={handleGlowPillMouseMove}
-														className={`${GLOW_PILL_CLASS} rounded-full border border-ink/10 bg-white/55 px-3.5 py-1 font-mono text-xs text-ink-soft`}
-													>
-														{tag}
-													</span>
-												))}
-											</div>
-										)}
-									</div>
-								</div>
-							);
-						})}
-					</div>
-
-					{/* Right: harness diagram, pinned beside the deck (aligns with the first card) */}
-					<div className='lg:sticky lg:top-[340px]'>
-						<HarnessArchitecture />
-					</div>
-				</div>
-			</div>
-		</section>
-	);
-};
-
-// --- Feature Bento (the most important capabilities, condensed) ---
-interface BentoFeature {
+// --- Capability Card (shared by the OS grid and the orchestration bento) ---
+// `span` drives bento placement (e.g. 'lg:col-span-2 lg:row-span-2'); `featured`
+// scales up the icon, title, and copy so the larger tile reads as the headline.
+const CapabilityCard = ({
+	icon: Icon,
+	title,
+	description,
+	docsHref,
+	span,
+	featured,
+	noIcon,
+}: {
 	icon: React.ComponentType<{ className?: string }>;
 	title: string;
 	description: string;
 	docsHref?: string;
-	featured?: boolean;
 	span?: string;
-}
+	featured?: boolean;
+	noIcon?: boolean;
+}) => (
+	<motion.div
+		initial={{ opacity: 0, y: 20 }}
+		whileInView={{ opacity: 1, y: 0 }}
+		viewport={{ once: true }}
+		transition={{ duration: 0.5 }}
+		className={`group flex flex-col p-6 ${CARD_SURFACE} ${span ?? ''}`}
+	>
+		{!noIcon && (
+			<div className={`mb-4 flex items-center justify-center rounded-xl bg-ink/5 ${featured ? 'h-14 w-14' : 'h-12 w-12'}`}>
+				<Icon className={featured ? 'h-6 w-6 text-ink-soft' : 'h-5 w-5 text-ink-soft'} />
+			</div>
+		)}
+		<h3 className={`mb-2 font-medium tracking-[-0.015em] text-ink ${featured ? 'text-2xl md:text-3xl' : 'text-base'}`}>{title}</h3>
+		<p className={`leading-relaxed text-ink-soft ${featured ? 'max-w-md text-base md:text-lg' : 'text-sm'}`}>{description}</p>
+		{docsHref && (
+			<div className='mt-auto pt-4'>
+				<DocsLink href={docsHref} />
+			</div>
+		)}
+	</motion.div>
+);
 
-const bentoFeatures: BentoFeature[] = [
-	{ icon: Bot, title: 'Run any agent harness', description: 'Claude Code, Codex, OpenCode, Amp, and Pi all run behind one unified API. Swap or add agents without touching your infrastructure.', docsHref: '/docs/sessions', featured: true, span: 'lg:col-span-2 lg:row-span-2' },
-	{ icon: Shield, title: "One agent can't crash the rest", description: 'Each agent runs in its own V8 isolate with a bounded heap, stack, and CPU slice. A memory bomb or infinite loop ends that isolate while the host and every other agent keep running.', docsHref: '/docs/architecture' },
-	{ icon: Activity, title: 'Restrict CPU & memory granularly', description: 'Set precise resource limits per agent. No runaway processes, no noisy neighbors.', docsHref: '/docs/security' },
-	{ icon: Globe, title: 'Programmatic network control', description: 'Allow, deny, or proxy any outbound connection. Full control over what your agents can reach.', docsHref: '/docs/security' },
-	{ icon: FolderOpen, title: 'Mount anything as a file system', description: 'S3, GitHub, databases. No per-agent credentials needed, since the host handles access scoping.', docsHref: '/docs/filesystem' },
-	{ icon: Code, title: 'Embed in your backend', description: 'agentOS is a library, not a service. Drop it into your existing API and toolchain, and agents call your code as plain JavaScript functions or hooks with no separate agent auth to wire up.', docsHref: '/docs/sessions', span: 'lg:col-span-2' },
-	{ icon: Package, title: 'Deploy anywhere', description: 'Just an npm package, with no vendor lock-in and no special infrastructure. Run agents on your laptop, Railway, Vercel, Kubernetes, ECS, Lambda, or on-prem. Wherever your code runs, agents run.', docsHref: '/docs/architecture', span: 'lg:col-span-2' },
+// --- Operating System section (inspector layout: visual + feature cards) ---
+// Six OS capabilities, distinct from the performance/architecture section below
+// (which already conveys the speed/memory/cost story). Each links to an existing
+// docs page.
+// Bento layout: "Any agent harness" leads as the headline tile. The span
+// pattern (one 2×2 + three col-span-2 + two 1×1) tiles a 4-column grid exactly
+// with `grid-flow-row-dense`.
+const osFeatures = [
+	{ icon: Bot, title: 'Any agent harness', description: 'Claude Code, Codex, OpenCode, Amp, and Pi all run behind one unified API. Swap or add agents without touching your infrastructure.', docsHref: '/docs/sessions', featured: true, span: 'lg:col-span-2 lg:row-span-2' },
+	{ icon: FolderOpen, title: 'File system', description: 'Mount S3, GitHub, or a database as the agent’s file system. The host scopes access, so there are no per-agent credentials.', docsHref: '/docs/filesystem' },
+	{ icon: Globe, title: 'Preview deployments', description: 'Every app the agent runs gets its own unique preview URL, served straight from the VM.', docsHref: '/docs/networking' },
+	{ icon: Container, title: 'Sandbox mounting', description: 'agentOS handles most workloads — dev servers, CLIs, builds — in-process, and mounts a full sandbox when a job needs a real kernel, native binaries, or a GPU.', docsHref: '/docs/sandbox', span: 'lg:col-span-2' },
+	{ icon: CalendarClock, title: 'Cron jobs', description: 'Schedule recurring agent runs and background jobs inside the VM.', docsHref: '/docs/cron', span: 'lg:col-span-2' },
+	{ icon: Cpu, title: 'Resource limits', description: 'Per-agent CPU, memory, and network limits. One isolate can’t crash or starve the rest.', docsHref: '/docs/security', span: 'lg:col-span-2' },
 ];
 
-// --- Floating agent logos for the featured "Run any agent harness" card ---
+// --- Floating agent logos for the featured "Any agent harness" tile ---
 // Each tile idles with a gentle bob and drifts with the cursor (parallax) while
 // the card is hovered. `depth` varies per tile so nearer logos move further.
 const FLOATING_AGENTS = [
@@ -1354,8 +1047,9 @@ const FloatingAgentTile = ({ agent, mx, my, reduce }: { agent: FloatingAgent; mx
 	);
 };
 
-const FeaturedHarnessCard = ({ feature }: { feature: BentoFeature }) => {
-	const Icon = feature.icon;
+// Featured bento tile: the floating agent logos drift behind the copy, with a
+// cursor-driven parallax. Used for the OS section's "Any agent harness" card.
+const FeaturedHarnessCard = ({ feature }: { feature: { title: string; description: string; docsHref?: string; span?: string } }) => {
 	const reduce = useReducedMotion() ?? false;
 	const mxRaw = useMotionValue(0);
 	const myRaw = useMotionValue(0);
@@ -1393,9 +1087,6 @@ const FeaturedHarnessCard = ({ feature }: { feature: BentoFeature }) => {
 			</div>
 
 			<div className='relative z-10 flex h-full flex-col'>
-				<div className='mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-ink/5'>
-					<Icon className='h-6 w-6 text-ink-soft' />
-				</div>
 				<h3 className='mb-2 text-2xl font-medium tracking-[-0.015em] text-ink md:text-3xl'>{feature.title}</h3>
 				<p className='max-w-sm text-base leading-relaxed text-ink-soft md:text-lg'>{feature.description}</p>
 				{feature.docsHref && (
@@ -1408,56 +1099,33 @@ const FeaturedHarnessCard = ({ feature }: { feature: BentoFeature }) => {
 	);
 };
 
-const FeatureBento = () => (
+const OperatingSystemSection = () => (
 	<section className='border-t border-ink/10 px-6 py-24 md:py-32'>
 		<div className='mx-auto max-w-7xl'>
 			<motion.div
-				initial={{ opacity: 0, y: 30 }}
+				initial={{ opacity: 0, y: 20 }}
 				whileInView={{ opacity: 1, y: 0 }}
 				viewport={{ once: true }}
-				transition={{ duration: 0.6 }}
-				className='mb-12 max-w-2xl'
+				transition={{ duration: 0.5 }}
+				className='mb-10 max-w-2xl md:mb-12'
 			>
 				<h2 className='mb-4 text-3xl font-medium tracking-[-0.015em] text-ink md:text-5xl'>
-					Everything agents need, built in.
+					An operating system for your agents.
 				</h2>
-				<p className='text-base text-ink-soft md:text-lg'>
-					Isolation, resource limits, networking, and storage in one npm package, no glue code.
+				<p className='text-base leading-relaxed text-ink-soft md:text-lg'>
+					A full file system, networking, scheduling, and resource control &mdash; everything the agent
+					needs to do real work, built into one npm package.
 				</p>
 			</motion.div>
 
 			<div className='grid grid-flow-row-dense grid-cols-1 gap-4 sm:grid-cols-2 lg:auto-rows-fr lg:grid-cols-4'>
-				{bentoFeatures.map((feature) => {
-					if (feature.featured) {
-						return <FeaturedHarnessCard key={feature.title} feature={feature} />;
-					}
-					const Icon = feature.icon;
-					return (
-						<motion.div
-							key={feature.title}
-							initial={{ opacity: 0, y: 20 }}
-							whileInView={{ opacity: 1, y: 0 }}
-							viewport={{ once: true }}
-							transition={{ duration: 0.5 }}
-							className={`group flex flex-col p-6 ${CARD_SURFACE} ${feature.span ?? ''}`}
-						>
-							<div className='mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-ink/5'>
-								<Icon className='h-5 w-5 text-ink-soft' />
-							</div>
-							<h3 className='mb-2 text-base font-medium tracking-[-0.015em] text-ink'>
-								{feature.title}
-							</h3>
-							<p className='text-sm leading-relaxed text-ink-soft'>
-								{feature.description}
-							</p>
-							{feature.docsHref && (
-								<div className='mt-auto pt-4'>
-									<DocsLink href={feature.docsHref} />
-								</div>
-							)}
-						</motion.div>
-					);
-				})}
+				{osFeatures.map((feature) =>
+					feature.featured ? (
+						<FeaturedHarnessCard key={feature.title} feature={feature} />
+					) : (
+						<CapabilityCard key={feature.title} {...feature} noIcon />
+					),
+				)}
 			</div>
 		</div>
 	</section>
@@ -1579,14 +1247,6 @@ const RegistryCallout = () => (
       </motion.div>
     </div>
   </section>
-);
-
-const AgentOSFeatures = () => (
-	<div id='agentos'>
-		<StackingFeatureCards />
-		<FeatureBento />
-		<RegistryCallout />
-	</div>
 );
 
 // --- Benchmarks ---
@@ -2001,7 +1661,7 @@ function BenchmarkSection() {
 
 const TechnologyAndBenchmarks = () => (
 	<section className='border-t border-ink/10 py-16 md:py-32'>
-		<div className='mx-auto max-w-5xl px-6'>
+		<div className='mx-auto max-w-7xl px-6'>
 			{/* Technology intro */}
 			<motion.div
 				initial={{ opacity: 0, y: 20 }}
@@ -2025,7 +1685,7 @@ const TechnologyAndBenchmarks = () => (
 							<h3 className='text-lg font-medium text-ink'>WebAssembly + V8 Isolates</h3>
 						</div>
 						<p className='text-sm leading-relaxed text-ink-soft'>
-							High-performance virtualization without specialized infrastructure. The same battle-hardened isolation technology that powers Google Chrome.
+							High-performance virtualization without specialized infrastructure. The same battle-hardened isolation technology that powers Google Chrome and Cloudflare Workers.
 						</p>
 					</div>
 					<div className={`group relative overflow-hidden p-6 ${CARD_SURFACE}`}>
@@ -2055,9 +1715,12 @@ export default function AgentOSPage({ heroTabs }: AgentOSPageProps) {
 		<div className='paper-grain min-h-screen font-sans text-ink-soft' style={{ overflowX: 'clip' }}>
 			<main>
 				<Hero />
-				<AgentOrchestration heroTabs={heroTabs} />
 				<TechnologyAndBenchmarks />
-				<AgentOSFeatures />
+				<OperatingSystemSection />
+				<OrchestrateTitle />
+				<CodeShowcase heroTabs={heroTabs} />
+				<AgentOrchestration />
+				<RegistryCallout />
 			</main>
 		</div>
 	);

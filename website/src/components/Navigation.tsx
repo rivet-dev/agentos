@@ -45,9 +45,12 @@ function NavItem({ href, children, badge }: { href: string; children: React.Reac
   );
 }
 
-export function Navigation() {
+export function Navigation({ revealLogoOnScroll = false }: { revealLogoOnScroll?: boolean }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  // On pages with a hero logo, keep the nav logo hidden until the hero logo
+  // scrolls up behind the nav. Elsewhere it's always visible.
+  const [logoVisible, setLogoVisible] = useState(!revealLogoOnScroll);
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 20);
@@ -55,6 +58,23 @@ export function Navigation() {
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
+
+  useEffect(() => {
+    if (!revealLogoOnScroll) return;
+    const heroLogo = document.getElementById("hero-logo");
+    if (!heroLogo) {
+      setLogoVisible(true); // fail open: no hero logo on this page → always show
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setLogoVisible(!entry.isIntersecting),
+      // Negative top margin (~nav height) so the crossover lands at the nav
+      // rather than the very top edge of the viewport.
+      { rootMargin: "-80px 0px 0px 0px" },
+    );
+    observer.observe(heroLogo);
+    return () => observer.disconnect();
+  }, [revealLogoOnScroll]);
 
   return (
     <div className="fixed top-0 z-50 w-full md:left-1/2 md:top-4 md:w-full md:max-w-[1200px] md:-translate-x-1/2 md:px-8">
@@ -73,16 +93,35 @@ export function Navigation() {
           }`}
         >
           <div className="flex w-full items-center justify-between px-3">
-            <div className="flex items-center gap-4">
-              <a href="/" className="flex items-center gap-2">
-                <img
-                  src="/images/agent-os/agentos-hero-logo.svg"
-                  alt="agentOS"
-                  className="h-7 w-auto"
-                />
-              </a>
+            <div className="flex items-center">
+              {/* Collapsing logo cell — the nav links slide right as it expands
+                  in and left as it collapses out, so the row stays balanced. */}
+              <div
+                className={`grid transition-all duration-300 ease-out ${
+                  logoVisible ? "grid-cols-[1fr]" : "grid-cols-[0fr]"
+                }`}
+              >
+                <div className="overflow-hidden">
+                  <a
+                    href="/"
+                    aria-hidden={!logoVisible}
+                    tabIndex={logoVisible ? undefined : -1}
+                    className={`flex items-center pr-6 transition-all duration-300 ease-out ${
+                      logoVisible
+                        ? "opacity-100 blur-0"
+                        : "pointer-events-none opacity-0 blur-sm"
+                    }`}
+                  >
+                    <img
+                      src="/images/agent-os/agentos-hero-logo.svg"
+                      alt="agentOS"
+                      className="h-7 w-auto max-w-none"
+                    />
+                  </a>
+                </div>
+              </div>
 
-              <div className="ml-2 hidden items-center md:flex">
+              <div className="hidden items-center md:flex">
                 {NAV_LINKS.map((link) => (
                   <NavItem key={link.href} href={link.href} badge={link.badge}>
                     {link.label}

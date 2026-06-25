@@ -37,7 +37,7 @@ const CopyAgentPromptButton = () => {
 			className='inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border border-ink/20 px-6 py-3 text-sm font-medium text-ink-soft transition-colors hover:border-ink/40 hover:text-ink'
 		>
 			{copied ? <Check className='h-4 w-4 text-ink' /> : <Copy className='h-4 w-4' />}
-			{copied ? 'Copied' : 'Copy Agent Prompt'}
+			{copied ? 'Copied' : 'Set up with your agent'}
 		</button>
 	);
 };
