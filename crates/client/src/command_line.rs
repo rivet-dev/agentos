@@ -47,7 +47,7 @@ fn command_requires_shell(command: &str) -> bool {
     })
 }
 
-/// Whether a token is a POSIX shell builtin that cannot be spawned as a standalone command.
+/// Whether a token should run under the shell even when it has no metacharacters.
 fn is_posix_shell_builtin(command: &str) -> bool {
     matches!(
         command,
@@ -67,6 +67,9 @@ fn is_posix_shell_builtin(command: &str) -> bool {
             | "trap"
             | "umask"
             | "unset"
+            // Mirrors the TS sidecar client: direct wasm `pwd` reports the root
+            // preopen on Darwin, while `sh -c pwd` observes the process cwd.
+            | "pwd"
     )
 }
 
@@ -139,9 +142,11 @@ mod tests {
     /// A POSIX shell builtin head runs under `sh -c` even with no metacharacters.
     #[test]
     fn builtin_head_wraps_in_sh_c() {
-        let (command, args) = resolve_exec_command("cd /tmp").unwrap();
-        assert_eq!(command, "sh");
-        assert_eq!(args, vec!["-c".to_string(), "cd /tmp".to_string()]);
+        for line in ["cd /tmp", "pwd"] {
+            let (command, args) = resolve_exec_command(line).unwrap();
+            assert_eq!(command, "sh");
+            assert_eq!(args, vec!["-c".to_string(), line.to_string()]);
+        }
     }
 
     /// An empty or whitespace-only command line is an explicit error.

@@ -34,6 +34,9 @@ const OBSERVED_PROCESS_TIME_LIMIT: usize = 4096;
 /// Maximum bytes captured by `exec` across stdout and stderr.
 const EXEC_OUTPUT_CAPTURE_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 
+/// Default guest working directory for `exec`/`spawn`, matching the TS sidecar client.
+pub(crate) const DEFAULT_EXEC_CWD: &str = "/workspace";
+
 /// Base value for the synthetic display-pid sequence used by `spawn` (TS `SYNTHETIC_PID_BASE`). The
 /// first spawned process is assigned exactly this value.
 pub(crate) const SYNTHETIC_PID_BASE: u64 = 1_000_000;
@@ -67,7 +70,6 @@ pub type OutputCallback = Box<dyn FnMut(&[u8]) + Send>;
 /// `on_stdout`/`on_stderr` mirror the TS `ExecOptions.onStdout`/`onStderr` raw-byte streaming
 /// callbacks. For `exec` they fire for the duration of the call; for `spawn` they are seeded into the
 /// stdout/stderr fan-out at spawn time (matching the TS initial-handler-set behavior).
-#[derive(Default)]
 pub struct ExecOptions {
     pub env: BTreeMap<String, String>,
     pub cwd: Option<String>,
@@ -79,6 +81,23 @@ pub struct ExecOptions {
     pub file_path: Option<String>,
     pub cpu_time_limit_ms: Option<f64>,
     pub timing_mitigation: Option<TimingMitigation>,
+}
+
+impl Default for ExecOptions {
+    fn default() -> Self {
+        Self {
+            env: BTreeMap::new(),
+            cwd: Some(DEFAULT_EXEC_CWD.to_string()),
+            stdin: None,
+            timeout: None,
+            on_stdout: None,
+            on_stderr: None,
+            capture_stdio: None,
+            file_path: None,
+            cpu_time_limit_ms: None,
+            timing_mitigation: None,
+        }
+    }
 }
 
 /// Result of `exec`.
@@ -1212,10 +1231,18 @@ fn epoch_ms_now() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_exec_output, exited_pids_to_prune, prune_string_f64_map,
-        EXEC_OUTPUT_CAPTURE_LIMIT_BYTES,
+        append_exec_output, exited_pids_to_prune, prune_string_f64_map, ExecOptions,
+        DEFAULT_EXEC_CWD, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES,
     };
     use scc::HashMap as SccHashMap;
+
+    #[test]
+    fn exec_options_default_uses_workspace_cwd() {
+        assert_eq!(
+            ExecOptions::default().cwd.as_deref(),
+            Some(DEFAULT_EXEC_CWD)
+        );
+    }
 
     #[test]
     fn append_exec_output_rejects_capture_over_limit() {

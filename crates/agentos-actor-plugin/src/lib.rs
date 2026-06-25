@@ -267,6 +267,11 @@ async fn actor_loop(
             Some(abi::AbiEventTag::ConnOpen) => {
                 let _ = host.reply_ok(token, Vec::new());
             }
+            Some(abi::AbiEventTag::SerializeState) => {
+                // Agent OS persists durable data through SQLite and rebuilds VM/process
+                // state after wake, so there is no opaque actor state payload to return.
+                let _ = host.reply_ok(token, Vec::new());
+            }
             Some(abi::AbiEventTag::Sleep) => {
                 vars.clear();
                 vm::shutdown_vm(&host, &mut vm, "sleep").await;
