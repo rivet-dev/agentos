@@ -1172,7 +1172,16 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 	"/etc/agentos",
 ] as const;
 
-const NODE_RUNTIME_BOOTSTRAP_COMMANDS = ["node", "npm", "npx"] as const;
+// Runtime commands that get a `/bin/<cmd>` stub at bootstrap so the guest shell
+// resolves them on PATH (e.g. `sh -c "python ..."`, pipelines). The sidecar
+// intercepts these by name and routes them to the embedded V8 / Pyodide runtime.
+const RUNTIME_BOOTSTRAP_COMMANDS = [
+	"node",
+	"npm",
+	"npx",
+	"python",
+	"python3",
+] as const;
 const KERNEL_COMMAND_STUB = "#!/bin/sh\n# kernel command stub\n";
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
@@ -2806,7 +2815,7 @@ export class AgentOs {
 				options?.rootFilesystem,
 				[
 					...collectBootstrapWasmCommands(preparedCommandDirs.commandDirs),
-					...NODE_RUNTIME_BOOTSTRAP_COMMANDS,
+					...RUNTIME_BOOTSTRAP_COMMANDS,
 					...toolBootstrapCommands,
 				],
 			);

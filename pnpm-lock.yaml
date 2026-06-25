@@ -674,8 +674,8 @@ importers:
         specifier: ^6.0.0
         version: 6.0.2(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))
       '@rivet-dev/docs-theme':
-        specifier: github:rivet-dev/docs-theme#v0.2.2
-        version: https://codeload.github.com/rivet-dev/docs-theme/tar.gz/086e29994f5d85c2fcd55232dede611750fb82c2(@astrojs/starlight@0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)))(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))
+        specifier: github:rivet-dev/docs-theme#v0.2.3
+        version: https://codeload.github.com/rivet-dev/docs-theme/tar.gz/ce69ec9955f666bc3622a31666927dcebbc9a4d9(@astrojs/starlight@0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)))(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))
       astro:
         specifier: ^5.18.2
         version: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
@@ -2353,9 +2353,9 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@rivet-dev/docs-theme@https://codeload.github.com/rivet-dev/docs-theme/tar.gz/086e29994f5d85c2fcd55232dede611750fb82c2':
-    resolution: {tarball: https://codeload.github.com/rivet-dev/docs-theme/tar.gz/086e29994f5d85c2fcd55232dede611750fb82c2}
-    version: 0.2.2
+  '@rivet-dev/docs-theme@https://codeload.github.com/rivet-dev/docs-theme/tar.gz/ce69ec9955f666bc3622a31666927dcebbc9a4d9':
+    resolution: {tarball: https://codeload.github.com/rivet-dev/docs-theme/tar.gz/ce69ec9955f666bc3622a31666927dcebbc9a4d9}
+    version: 0.2.3
     peerDependencies:
       '@astrojs/starlight': '>=0.36.0'
       astro: '>=5.0.0'
@@ -8952,7 +8952,7 @@ snapshots:
       - supports-color
     optional: true
 
-  '@rivet-dev/docs-theme@https://codeload.github.com/rivet-dev/docs-theme/tar.gz/086e29994f5d85c2fcd55232dede611750fb82c2(@astrojs/starlight@0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)))(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))':
+  '@rivet-dev/docs-theme@https://codeload.github.com/rivet-dev/docs-theme/tar.gz/ce69ec9955f666bc3622a31666927dcebbc9a4d9(@astrojs/starlight@0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)))(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))':
     dependencies:
       '@astrojs/starlight': 0.36.3(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))
       '@fortawesome/free-solid-svg-icons': 6.7.2

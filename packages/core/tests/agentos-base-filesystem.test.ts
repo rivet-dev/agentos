@@ -144,7 +144,8 @@ describe("AgentOs base filesystem", () => {
 		expect(await vm.exists("/boot")).toBe(true);
 		expect(await vm.exists("/usr/bin/env")).toBe(true);
 		expect(await vm.exists("/bin/node")).toBe(true);
-		expect(await vm.exists("/bin/python")).toBe(false);
+		expect(await vm.exists("/bin/python")).toBe(true);
+		expect(await vm.exists("/bin/python3")).toBe(true);
 		await expect(vm.writeFile("/tmp/blocked.txt", "blocked")).rejects.toThrow(
 			"EROFS",
 		);

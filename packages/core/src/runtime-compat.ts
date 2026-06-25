@@ -35,7 +35,13 @@ const S_IFDIR = 0o040000;
 const S_IFLNK = 0o120000;
 const MAX_SYMLINK_DEPTH = 40;
 const KERNEL_COMMAND_STUB = "#!/bin/sh\n# kernel command stub\n";
-const NODE_RUNTIME_BOOTSTRAP_COMMANDS = ["node", "npm", "npx"] as const;
+const NODE_RUNTIME_BOOTSTRAP_COMMANDS = [
+	"node",
+	"npm",
+	"npx",
+	"python",
+	"python3",
+] as const;
 const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 	"/dev",
 	"/proc",

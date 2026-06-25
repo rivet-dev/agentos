@@ -227,7 +227,12 @@ function canUseDirectExec(
 	driver: string | undefined,
 	commandName: string | undefined,
 ): boolean {
-	return driver === "wasmvm" || (driver === "node" && commandName === "node");
+	return (
+		driver === "wasmvm" ||
+		(driver === "node" && commandName === "node") ||
+		(driver === "python" &&
+			(commandName === "python" || commandName === "python3"))
+	);
 }
 
 function shellSingleQuote(value: string): string {
@@ -777,7 +782,12 @@ export class NativeSidecarKernelProxy {
 			processId,
 			command: spawnCommand,
 			args: spawnArgs,
-			driver: spawnCommand === "node" ? "node" : "wasmvm",
+			driver:
+				spawnCommand === "node"
+					? "node"
+					: spawnCommand === "python" || spawnCommand === "python3"
+						? "python"
+						: "wasmvm",
 			cwd: options?.cwd ?? this.cwd,
 			env: {
 				...(options?.env ?? {}),
@@ -2427,6 +2437,10 @@ function buildCommandMap(
 		["node", "node"],
 		["npm", "node"],
 		["npx", "node"],
+		// `python` / `python3` are served by the embedded Pyodide runtime,
+		// mirroring how `node` is served by the embedded V8 runtime.
+		["python", "python"],
+		["python3", "python"],
 	]);
 	for (const name of commandGuestPaths.keys()) {
 		commands.set(name, "wasmvm");
