@@ -44,6 +44,19 @@ Read [Sessions](/docs/sessions) first for session options, streaming events, pro
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/agents/opencode)*
 
+## LLM Credentials
+
+OpenCode auto-detects a provider when its key is present on the session's `env`, sourced from your server's environment. Common variables:
+
+- `ANTHROPIC_API_KEY` — Anthropic (Claude), the default.
+- `OPENAI_API_KEY` — OpenAI.
+- `OPENROUTER_API_KEY` — OpenRouter.
+- `GEMINI_API_KEY` — Google Gemini.
+- `GROQ_API_KEY` — Groq.
+- …plus Amazon Bedrock, Azure, Google Vertex, and 70+ providers via [models.dev](https://models.dev).
+
+See [LLM Credentials](/docs/llm-credentials), and OpenCode's [providers docs](https://opencode.ai/docs/providers/) for the full list.
+
 ## Skills
 
 OpenCode discovers `SKILL.md` files from its skills directory. Write the skill into the VM before creating a session and OpenCode loads it automatically.

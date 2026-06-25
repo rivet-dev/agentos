@@ -6,6 +6,9 @@ export interface RegistryEntryBase {
 	description: string;
 	types: ("file-system" | "tool" | "agent" | "sandbox-extension" | "software")[];
 	featured?: boolean;
+	// Marks an entry as in beta — renders a "Beta" pill on the registry card
+	// and detail page.
+	beta?: boolean;
 	// Lucide icon name, resolved via REGISTRY_ICONS. Used when no `image` is
 	// provided. Must be a serializable string so it survives the Astro island
 	// prop boundary.
@@ -72,6 +75,7 @@ export const registry: RegistryEntry[] = [
 		slug: "claude-code",
 		title: "Claude Code",
 		status: "docs",
+		beta: true,
 		docsHref: "/docs/agents/claude",
 		package: "@agentos-software/claude-code",
 		agentId: "claude",
@@ -84,6 +88,7 @@ export const registry: RegistryEntry[] = [
 		slug: "codex",
 		title: "Codex",
 		status: "docs",
+		beta: true,
 		docsHref: "/docs/agents/codex",
 		package: "@agentos-software/codex",
 		agentId: "codex",
@@ -405,6 +410,7 @@ export const registry = setup({ use: { vm } });`,
 		package: "sandbox-agent",
 		description:
 			"Run sandboxes directly on the local machine for development and testing.",
+		beta: true,
 		types: ["sandbox-extension"],
 		icon: "Monitor",
 	},
@@ -415,6 +421,7 @@ export const registry = setup({ use: { vm } });`,
 		package: "sandbox-agent",
 		description:
 			"Run sandboxes in Docker containers for isolated local execution.",
+		beta: true,
 		types: ["sandbox-extension"],
 		image: "/images/registry/docker.svg",
 	},
@@ -425,6 +432,7 @@ export const registry = setup({ use: { vm } });`,
 		package: "sandbox-agent",
 		description:
 			"Run sandboxes on E2B's cloud infrastructure for secure, ephemeral environments.",
+		beta: true,
 		types: ["sandbox-extension"],
 		featured: true,
 		image: "/images/registry/e2b.svg",
@@ -436,6 +444,7 @@ export const registry = setup({ use: { vm } });`,
 		package: "sandbox-agent",
 		description:
 			"Run sandboxes on Daytona's managed development environments.",
+		beta: true,
 		types: ["sandbox-extension"],
 		image: "/images/registry/daytona.svg",
 	},
@@ -446,6 +455,7 @@ export const registry = setup({ use: { vm } });`,
 		package: "sandbox-agent",
 		description:
 			"Run sandboxes on Modal's serverless cloud infrastructure.",
+		beta: true,
 		types: ["sandbox-extension"],
 		featured: true,
 		image: "/images/registry/modal.svg",
@@ -457,6 +467,7 @@ export const registry = setup({ use: { vm } });`,
 		package: "sandbox-agent",
 		description:
 			"Run sandboxes on Vercel's edge and serverless platform.",
+		beta: true,
 		types: ["sandbox-extension"],
 		image: "/images/registry/vercel.svg",
 	},
@@ -467,6 +478,7 @@ export const registry = setup({ use: { vm } });`,
 		package: "sandbox-agent",
 		description:
 			"Run sandboxes using the ComputeSDK compute provider.",
+		beta: true,
 		types: ["sandbox-extension"],
 		image: "/images/registry/computesdk.svg",
 	},
@@ -477,6 +489,7 @@ export const registry = setup({ use: { vm } });`,
 		package: "sandbox-agent",
 		description:
 			"Run sandboxes on Sprites' cloud sandbox infrastructure.",
+		beta: true,
 		types: ["sandbox-extension"],
 		image: "/images/registry/sprites.svg",
 	},

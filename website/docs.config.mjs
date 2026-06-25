@@ -20,7 +20,6 @@ export const siteConfig = {
 
 	topNav: [
 		{ label: "Use Cases", href: "/use-cases" },
-		{ label: "Pricing", href: "/pricing" },
 		{ label: "Registry", href: "/registry" },
 		{ label: "Docs", href: "/docs", match: "/docs" },
 	],
@@ -59,8 +58,8 @@ export const siteConfig = {
 					label: "Agents",
 					items: [
 						{ slug: "docs/agents/pi", label: "Pi", attrs: { "data-icon-src": "/images/registry/pi.svg" } },
-						{ slug: "docs/agents/claude", label: "ClaudeCode", attrs: { "data-icon-src": "/images/registry/claude-code.svg" } },
-						{ slug: "docs/agents/codex", label: "Codex", attrs: { "data-icon-src": "/images/registry/codex.svg" } },
+						{ slug: "docs/agents/claude", label: "ClaudeCode", badge: { text: "Beta", variant: "caution" }, attrs: { "data-icon-src": "/images/registry/claude-code.svg" } },
+						{ slug: "docs/agents/codex", label: "Codex", badge: { text: "Beta", variant: "caution" }, attrs: { "data-icon-src": "/images/registry/codex.svg" } },
 						{ slug: "docs/agents/opencode", label: "OpenCode", attrs: { "data-icon-src": "/images/registry/opencode.svg" } },
 						{ slug: "docs/agents/custom", label: "Custom Agents", attrs: { "data-icon": "wrench" } },
 					],
@@ -80,7 +79,7 @@ export const siteConfig = {
 				{ slug: "docs/processes", label: "Processes & Shell", attrs: { "data-icon": "terminal" } },
 				{ slug: "docs/networking", label: "Networking & Previews", attrs: { "data-icon": "globe" } },
 				{ slug: "docs/cron", label: "Cron Jobs", attrs: { "data-icon": "clock" } },
-				{ slug: "docs/sandbox", label: "Sandbox Mounting", attrs: { "data-icon": "hardDrive" } },
+				{ slug: "docs/sandbox", label: "Sandbox Mounting", badge: { text: "Beta", variant: "caution" }, attrs: { "data-icon": "hardDrive" } },
 				{ slug: "docs/js-runtime", label: "JavaScript Runtime", attrs: { "data-icon": "nodejs" } },
 				{ slug: "docs/permissions", attrs: { "data-icon": "key" } },
 				{ slug: "docs/resource-limits", label: "Resource Limits", attrs: { "data-icon": "gauge" } },

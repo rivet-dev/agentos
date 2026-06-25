@@ -44,6 +44,15 @@ Read [Sessions](/docs/sessions) first for session options, streaming events, pro
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/agents/pi)*
 
+## LLM Credentials
+
+Set the relevant variable on the session's `env`, sourced from your server's environment:
+
+- `ANTHROPIC_API_KEY` — Anthropic (Claude), the default.
+- Other providers — use the provider-named key (e.g. `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`).
+
+See [LLM Credentials](/docs/llm-credentials), and Pi's [providers docs](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/providers.md) for the full list.
+
 ## Skills
 
 Pi discovers `SKILL.md` files from its skills directory. Write the skill into the VM before creating a session and Pi loads it automatically.
