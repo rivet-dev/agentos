@@ -3,25 +3,40 @@
 # (the site lives in website/). The root .dockerignore narrows the context to
 # website/ plus the agentos SDK source (needed by the typedoc API-gen step), so
 # the multi-GB monorepo is never uploaded. The shared docs theme
-# (@rivet-dev/docs-theme) is fetched from GitHub during install.
+# (@rivet-dev/docs-theme) is git-cloned + built from GitHub at a pinned sha
+# (the committed website deps are workspace:*/local for dev — we rewrite them
+# to the clone here).
 FROM node:22-alpine AS build
 WORKDIR /app
-# git is required for pnpm to resolve the github: docs-theme dependency.
 RUN apk add --no-cache git && npm install -g pnpm@9
 
-# Install deps first (cache layer) — from the website package, not the monorepo root.
-COPY website/package.json ./
-RUN pnpm install
+# Clone + build the shared docs theme at a pinned sha. The theme's dist/ is
+# gitignored so we build it; its vendored @rivet-gg/components+icons come along.
+ARG DOCS_THEME_SHA=450c498555135098c6a927adfdf13458be9be22a
+# FA Pro token to generate the vendored @rivet-gg/icons dist. Set it as a Railway
+# build variable (passed via --build-arg locally). It is only referenced in this
+# discarded build stage — the final caddy image never contains it.
+ARG FONTAWESOME_PACKAGE_TOKEN
+RUN export FONTAWESOME_PACKAGE_TOKEN="$FONTAWESOME_PACKAGE_TOKEN" \
+ && git clone https://github.com/rivet-dev/docs-theme.git /theme \
+ && git -C /theme checkout "$DOCS_THEME_SHA" \
+ && pnpm -C /theme install \
+ && pnpm -C /theme/packages/theme/vendor/icons run gen:manifest \
+ && pnpm -C /theme/packages/theme/vendor/icons run gen:vendor \
+ && pnpm -C /theme/packages/theme build
 
-# Copy the site source.
+# Copy the site source + the SDK source the typedoc step reads from ../packages.
 COPY website/ ./
-
-# The docs:gen:ts (typedoc) step in the build reads the SDK source from
-# ../packages, which lives outside website/. Bring just that package's source
-# into the image at the path typedoc.json points at (../packages/agentos).
 COPY packages/agentos /packages/agentos
+# The <CodeSnippet> docs embeds read example files from the embed root (/),
+# resolved as /examples/<topic>/<file>.
+COPY examples /examples
 
-RUN pnpm build
+# Point the theme deps at the clone (committed deps are workspace:* for local
+# dev) and drop the injected meta, then install + build.
+RUN node -e "const fs=require('fs'),p=require('./package.json'),d=p.dependencies;d['@rivet-dev/docs-theme']='file:/theme/packages/theme';d['@rivet-gg/components']='file:/theme/packages/theme/vendor/components';d['@rivet-gg/icons']='file:/theme/packages/theme/vendor/icons';delete p.dependenciesMeta;fs.writeFileSync('./package.json',JSON.stringify(p,null,2))" \
+ && pnpm install \
+ && pnpm build
 
 # Serve the static output. This is a static multi-page site (Astro/Starlight
 # emits <path>/index.html), NOT an SPA — so resolve each page's index.html and

@@ -1,0 +1,49 @@
+# Approvals
+
+Approve or deny agent tool use with human-in-the-loop or auto-approve patterns.
+
+When an agent wants to use a tool (write a file, run a command, etc.), it asks for permission. You approve or deny that request, either interactively or with a server-side hook.
+
+- **Human-in-the-loop**: subscribe to `permissionRequest` on the client and respond per-request.
+- **Auto-approve**: use the `onPermissionRequest` server hook to decide without a client round-trip.
+- **Selective approval**: inspect the request and approve some, forward others to the client.
+
+## Permission request flow
+
+When an agent wants to use a tool, it emits a `permissionRequest`. Every request is delivered to two places at once, and you respond from whichever fits your app:
+
+- **On the client**: subscribe to the `permissionRequest` event and call `respondPermission(sessionId, permissionId, reply)`.
+- **On the server**: the `onPermissionRequest` hook on the actor runs for every request, with no client round-trip.
+- If neither responds, the request blocks until a reply arrives, then rejects after 120 seconds.
+
+The `permissionRequest` event payload:
+
+- **`data.sessionId`**: the session the request belongs to.
+- **`data.request.permissionId`**: the id to pass back to `respondPermission`.
+- **`data.request.description`**: human-readable summary of the requested action.
+- **`data.request.params`**: raw ACP permission details (requested tool, paths, etc.).
+
+Reply options for `respondPermission`:
+
+| Reply | Behavior |
+|-------|----------|
+| `"once"` | Approve this single request |
+| `"always"` | Approve this and all future requests of the same type |
+| `"reject"` | Deny the request |
+
+## Patterns
+
+### Auto-approve
+
+The `onPermissionRequest` hook runs server-side for every permission request before it reaches any client. Useful for fully automated pipelines.
+
+- **Signature**: `onPermissionRequest: async (sessionId, request) => { ... }`.
+- **Inspect**: `request.permissionId`, `request.description`, and `request.params`.
+- **Anything not handled** in the hook is forwarded to the client via the `permissionRequest` event.
+
+### Selective approval
+
+Inspect the permission request to make approval decisions based on the tool or path. Approve some server-side, forward the rest to the client for human review.
+
+- For interactive applications, subscribe to `permissionRequest` on the client and build an approval UI.
+- If neither the server hook nor the client responds, the agent blocks until a response is given or the action times out.

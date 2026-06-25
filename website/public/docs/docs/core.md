@@ -1,0 +1,86 @@
+# Core Package
+
+Use @rivet-dev/agentos-core standalone for direct VM control without the Rivet Actor runtime.
+
+## agentOS vs agentOS Core
+
+The `agentOS()` actor (from `@rivet-dev/agentos`) wraps the core package and adds:
+
+| | Core (`@rivet-dev/agentos-core`) | Actor (`@rivet-dev/agentos`) |
+|-|---|---|
+| Persistence | In-memory by default (pluggable via [mounts](#mounts)) | Persistent filesystem and sessions |
+| Distributed state | Manage yourself | Built-in distributed statefulness |
+| Stateful VMs | Complex to run yourself | Built into Rivet |
+| Sleep/wake | Manual `dispose()` / `create()` | Automatic |
+| Events | Direct callbacks | Broadcasted to all connected clients |
+| Preview URLs | None | Built-in signed URL server |
+| Multiplayer | N/A | Multiple clients on same actor |
+| Orchestration | N/A | Workflows, queues, cron |
+| Agent-to-agent communication | Custom | Built into [Rivet Actors](/docs/agent-to-agent) |
+| Authentication | Set up yourself | [Documentation](/docs/authentication) |
+
+We recommend using [Rivet Actors](/docs/actors) because they provide a portable way to run `agentOS()` on any infrastructure with built-in persistence, networking, and orchestration. Use the core package if you need the most bare-bones implementation possible.
+
+## Install
+
+```bash
+npm install @rivet-dev/agentos-core
+```
+
+## Boot a VM
+
+Define the actor on the server:
+
+Then drive it from a typed client:
+
+## Sidecar process
+
+Every VM runs inside a **shared sidecar process** rather than a process of its own. By default all VMs are tenants of a single, process-global sidecar (the `default` pool), so each additional VM only adds its marginal cost — a V8 isolate plus its kernel state — instead of a whole OS process. This is what keeps per-VM memory in the tens of MB and warm VM creation in the single-digit milliseconds (see [Benchmarks](/docs/benchmarks)).
+
+This is automatic — `agentOS()` and `AgentOs.create()` use the shared default sidecar with no configuration, and the same applies to Rivet Actors (each actor's VM is a tenant of the shared process). Disposing a VM tears down only that VM; the shared sidecar process is reused across VMs and stays alive for the lifetime of the host process.
+
+For advanced cases the core package exposes explicit sidecar handles so you can isolate a group of VMs in their own process:
+
+## Filesystem
+
+## Processes
+
+Long-running process output is delivered over the live `processOutput` / `processExit` events on a connection rather than per-pid callbacks:
+
+## Agent sessions
+
+`createSession` returns a session record. All session operations take its `sessionId`. Session events and permission requests are delivered over the live connection (`sessionEvent` / `permissionRequest`):
+
+Subscribe to `sessionEvent` before sending a prompt so you do not miss the live stream. Persisted history can be read back later with `getSessionEvents()`.
+
+## Networking
+
+## Cron jobs
+
+Cron jobs run an `"exec"` command or a `"session"` prompt on a schedule. Fired jobs are surfaced over the live `cronEvent` connection:
+
+## Mounts
+
+Configure filesystem backends at boot time.
+
+Native mount plugins (host directories, S3, etc.) are passed via `plugin`, each
+identified by an `id` and a `config` object.
+
+## `agentOS()` configuration reference
+
+When you use the [`agentOS()` actor](/docs/quickstart), all VM configuration is passed to the factory as a single flat object. This is the consolidated config block to copy and adapt:
+
+The top-level fields are documented inline above. See [Mounts](#mounts), [Software](/docs/software), and (for the hooks) [Approvals](/docs/approvals).
+
+### Lifecycle hooks
+
+`onPermissionRequest(sessionId, request)` fires when an agent requests permission. `onSessionEvent(sessionId, event)` is a server-side hook called once for every session event: unlike the client-side `sessionEvent` connection subscription, it runs in the actor for every event regardless of connected clients, making it the place for server-side logging, persistence, or side effects.
+
+### Timeouts
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Action timeout | 15 minutes | Maximum time for any single action |
+| Sleep grace period | 15 minutes | Time before sleeping after all activity stops |
+
+These are set internally by the `agentOS()` factory and cannot be overridden per-call. See [Persistence & Sleep](/docs/persistence) for details on the sleep lifecycle.

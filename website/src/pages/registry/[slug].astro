@@ -5,7 +5,9 @@ import { Footer } from "../../components/Footer";
 import { registry } from "../../data/registry";
 import { REGISTRY_ICONS } from "../../data/registry-icons";
 import { InkChip, InkPanel } from "../../components/marketing/editorial/InkPanel";
-import { highlightCodeHtml } from "../../lib/highlight-code";
+// Use the docs theme's Shiki highlighter so registry code matches the docs
+// code blocks exactly (ayu-dark), instead of the old custom light palette.
+import { highlightCode as highlightCodeHtml } from "@rivet-dev/docs-theme/lib/highlight";
 
 export function getStaticPaths() {
 	return registry.map((entry) => ({

@@ -1,6 +1,15 @@
+import docsThemePreset from "@rivet-dev/docs-theme/tailwind-preset";
+
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ["./src/**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}"],
+  // The docs-theme preset brings rivet's components base (semantic tokens like
+  // `foreground`/`card`/`muted`) that the theme's CSS @applies.
+  presets: [docsThemePreset],
+  content: [
+    "./src/**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}",
+    "./node_modules/@rivet-dev/docs-theme/src/**/*.{astro,ts,tsx,jsx,js,mdx,md}",
+    "./node_modules/@rivet-gg/components/src/**/*.{ts,tsx}",
+  ],
   theme: {
     extend: {
       colors: {
@@ -33,10 +42,9 @@ export default {
       fontFamily: {
         sans: ["Manrope", "Segoe UI", "system-ui", "sans-serif"],
         heading: ["Manrope", "Segoe UI", "system-ui", "sans-serif"],
-        // Monospace dropped from UI labels: `font-mono` renders the sans stack so
-        // existing label usages (tabs, eyebrows, badges, diagram text) stay sans.
-        // Real code/terminal blocks use `font-code` (JetBrains Mono) instead.
-        mono: ["Manrope", "Segoe UI", "system-ui", "sans-serif"],
+        // Match rivet: `mono` is JetBrains Mono everywhere (code blocks, inline
+        // `code`, and any font-mono labels), not the sans stack.
+        mono: ['"JetBrains Mono"', "SFMono-Regular", "monospace"],
         code: ['"JetBrains Mono"', "SFMono-Regular", "monospace"],
       },
       animation: {

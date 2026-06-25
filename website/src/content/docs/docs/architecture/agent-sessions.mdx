@@ -4,8 +4,6 @@ description: "Internals of agent sessions: how a session is created and bound to
 skill: true
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 This page is an internals deep-dive on how agent sessions work under the hood. For the usage API (creating sessions, sending prompts, streaming responses, replaying events), see [Sessions](/docs/sessions).
 
 A session is a long-lived conversation with an agent (such as [Pi](https://github.com/mariozechner/pi-coding-agent)) running inside a VM. Where a bare `exec()` / `run()` starts a fresh guest process and returns when it exits, a session keeps an agent process alive across many prompts, streams its output back as events, and persists a transcript that survives sleep/wake cycles. Everything below describes the machinery that makes that possible while keeping the agent inside the same isolation boundary as any other guest.
@@ -33,7 +31,7 @@ A session is always created against an existing VM. The client resolves a VM han
 
 The session is bound to that VM for its lifetime. The agent process, its working directory, and its persisted transcript all live inside the VM's isolation domain. A VM can host several sessions at once: each gets its own agent process, but they share the one VM's filesystem (see [Multiple sessions](/docs/sessions#multiple-sessions)). Two sessions in two different VMs share nothing, exactly as described in the [isolation model](/docs/architecture).
 
-<Aside type="note">MCP servers configured on a session follow the same boundary. A `local` MCP server runs as a child process inside the VM (kernel-managed, gated by the permission policy); a `remote` MCP server is reached over the network, so its traffic flows through the kernel socket table and is subject to the network allowlist.</Aside>
+<Note>MCP servers configured on a session follow the same boundary. A `local` MCP server runs as a child process inside the VM (kernel-managed, gated by the permission policy); a `remote` MCP server is reached over the network, so its traffic flows through the kernel socket table and is subject to the network allowlist.</Note>
 
 ## How a prompt flows: client to agent and back
 

@@ -6,7 +6,7 @@ import { AgentOs } from "../src/agent-os.js";
 
 const MODULE_ACCESS_CWD = resolve(
 	import.meta.dirname,
-	"../../../examples/quickstart",
+	"../../../examples/quickstart/hello-world",
 );
 
 describe("pi-sdk software projection", () => {

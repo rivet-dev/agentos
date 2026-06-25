@@ -1,0 +1,14 @@
+# System Prompt
+
+How agentOS injects context into agent sessions.
+
+agentOS automatically injects a system prompt into every agent session that describes the VM environment and available commands and bindings. The prompt is additive and never replaces the agent's own instructions (CLAUDE.md, AGENTS.md, etc.).
+
+The base prompt is embedded in the sidecar (not written to a file inside the VM). At session start the sidecar assembles the base prompt with your additional instructions and generated binding docs, then injects the result into the agent adapter's launch arguments (for example, `--append-system-prompt` for Pi).
+
+## Customization
+
+- `additionalInstructions` appends extra instructions to the agent's system prompt. They are added after the base OS prompt and the generated binding docs, so they layer on top of (rather than replace) the agent's own instructions.
+- `skipOsInstructions` suppresses the base OS prompt while still injecting the generated binding docs.
+
+`additionalInstructions` can also be set globally in `agentOs({ options: { additionalInstructions } })` so it applies to every session.

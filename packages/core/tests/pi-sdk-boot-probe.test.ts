@@ -6,7 +6,7 @@ import { AgentOs } from "../src/agent-os.js";
 
 const MODULE_ACCESS_CWD = resolve(
 	import.meta.dirname,
-	"../../../examples/quickstart",
+	"../../../examples/quickstart/hello-world",
 );
 const SDK_PATH = "/root/node_modules/@mariozechner/pi-coding-agent/dist/index.js";
 const PROBE_TIMEOUT_MS = 5_000;

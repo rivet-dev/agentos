@@ -23,8 +23,19 @@ jobs:
         with:
           workspaces: |
             . -> target
+      # The website consumes the shared docs theme as a workspace member at
+      # website/vendor/theme (a gitignored local symlink for dev). Materialize it
+      # from the published theme at the pinned sha so the root workspace resolves
+      # and the lockfile validates. The website itself is NOT built in CI — it
+      # deploys via website/Dockerfile (which clones + builds the theme and
+      # generates the FA Pro icons); CI only needs the member present to install.
+      - run: |
+          git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
+          git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
+          rm -rf website/vendor/theme && mkdir -p website/vendor
+          cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      - run: npx turbo build --filter='!@agentos/website'
       - run: pnpm --dir scripts/publish run check-types
       - run: pnpm --dir scripts/publish test
       - run: bash scripts/check-secure-exec-rust-boundary.test.sh

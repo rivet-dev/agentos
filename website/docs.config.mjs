@@ -1,148 +1,253 @@
 /**
- * agentOS docs configuration — the only non-content surface consumed by
- * @rivet-dev/docs-theme. Everything visual (theme, header chrome, sidebar
- * icons, code blocks) lives in the package; this file maps agentOS's product
- * identity, navigation, and pages onto it.
+ * agentOS docs configuration for @rivet-dev/docs-theme (the de-Starlighted,
+ * rivet-1:1 framework). Maps agentOS identity/nav onto the theme's SiteConfig.
  *
- * Sidebar structure + icons mirror the Rivet sitemap (rivet.dev) agentOS
- * section: a static "Agent" group containing a collapsible "Agents" sub-group.
- * Icons attach via each item's attrs.data-icon (shared theme catalog).
+ * `sitemap` is the docs navigation tree: SiteTab[] where each tab carries a
+ * sidebar tree (pages + collapsible sections). Routes are /docs/* (file paths
+ * under src/content/docs). Top-level sections are non-collapsible labels (rivet
+ * style); only nested page-groups collapse. Page items carry FontAwesome
+ * `IconDefinition`s for the sidebar icons.
  *
  * @type {import('@rivet-dev/docs-theme').SiteConfig}
  */
+import {
+	faCircleInfo,
+	faForwardFast,
+	faLightbulb,
+	faScaleBalanced,
+	faRobot,
+	faWrench,
+	faMessages,
+	faCheck,
+	faKey,
+	faCloud,
+	faDownload,
+	faFloppyDisk,
+	faTerminal,
+	faGlobe,
+	faClock,
+	faHardDrive,
+	faNodeJs,
+	faGauge,
+	faLink,
+	faTowerBroadcast,
+	faArrowsLeftRight,
+	faDiagramNext,
+	faBug,
+} from "@rivet-gg/icons";
+
 export const siteConfig = {
 	product: "agentOS",
 	productLogo: "/images/agent-os/agentos-hero-logo.svg",
 	productHome: "/",
-	favicon: "/favicon.svg",
-	repo: "rivet-dev/agent-os",
+	siteUrl: "https://agentos-sdk.dev",
+	favicon: { svg: "/favicon.svg" },
+	repo: "rivet-dev/agentos",
 	editPath: "website/",
 
 	// Keep in sync with the marketing nav (src/components/Navigation.tsx):
 	// same links in the same order across docs + marketing.
 	topNav: [
 		{ label: "Documentation", href: "/docs", match: "/docs" },
+		{ label: "Cookbooks", href: "/cookbooks", match: "/cookbooks" },
 		{ label: "Use Cases", href: "/use-cases" },
 		{ label: "Registry", href: "/registry" },
 		{ label: "Deploy", href: "/docs/deployment", match: "/docs/deployment" },
 	],
-	cta: { label: "Get Started", href: "/docs/quickstart" },
+	tabs: [
+		{ label: "Documentation", href: "/docs", match: "/docs" },
+		{ label: "Cookbooks", href: "/cookbooks", match: "/cookbooks" },
+	],
 	social: { discord: "https://rivet.dev/discord" },
-
 	analytics: { posthogKey: "phc_6kfTNEAVw7rn1LA51cO3D69FefbKupSWFaM7OUgEpEo" },
 
-	landing: {
-		title: "Documentation",
-		subtitle:
-			"agentOS runs coding agents inside isolated VMs with full filesystem, process, and network control — a lightweight VM in your own process with bindings, permissions, and orchestration built in.",
-		cards: [
-			{ title: "Quickstart", href: "/docs/quickstart", icon: "rocket", description: "Boot a VM and run your first coding agent." },
-			{ title: "Crash Course", href: "/docs/crash-course", icon: "lightbulb", description: "Learn the core agentOS concepts." },
-			{ title: "Agents", href: "/docs/agents/pi", icon: "bot", description: "Run Pi, Claude Code, Codex, and OpenCode." },
-		],
+	// Hosted Typesense docs search (same cluster as rivet). The search-only key
+	// is safe to ship client-side; indexing uses the admin key (see scripts).
+	search: {
+		typesense: {
+			host: "3lsug6t152oxcjndp-1.a1.typesense.net",
+			searchApiKey: "o4qaOyinaSrfIVcxHwSjk0tby0pE14ry",
+			collectionName: "agentos-docs",
+		},
 	},
 
-	sidebarGroupIcons: { Agents: "bot" },
-
-	sidebar: [
-		{ slug: "docs", label: "Introduction", attrs: { "data-icon": "info" } },
+	sitemap: [
 		{
-			label: "General",
-			items: [
-				{ slug: "docs/quickstart", attrs: { "data-icon": "fastForward" } },
-				{ slug: "docs/crash-course", label: "Crash Course", attrs: { "data-icon": "lightbulb" } },
-				{ slug: "docs/versus-sandbox", label: "agentOS vs Sandbox", attrs: { "data-icon": "scaleBalanced" } },
-			],
-		},
-		{
-			label: "Agent",
-			items: [
+			title: "Documentation",
+			href: "/docs",
+			sidebar: [
+				{ title: "Introduction", href: "/docs", icon: faCircleInfo },
 				{
-					label: "Agents",
-					items: [
-						{ slug: "docs/agents/pi", label: "Pi", attrs: { "data-icon-src": "/images/registry/pi.svg" } },
-						{ slug: "docs/agents/claude", label: "ClaudeCode", badge: { text: "Beta", variant: "caution" }, attrs: { "data-icon-src": "/images/registry/claude-code.svg" } },
-						{ slug: "docs/agents/codex", label: "Codex", badge: { text: "Beta", variant: "caution" }, attrs: { "data-icon-src": "/images/registry/codex.svg" } },
-						{ slug: "docs/agents/opencode", label: "OpenCode", attrs: { "data-icon-src": "/images/registry/opencode.svg" } },
-						{ slug: "docs/agents/custom", label: "Custom Agents", attrs: { "data-icon": "wrench" } },
-					],
-				},
-				{ slug: "docs/sessions", label: "Sessions & Transcripts", attrs: { "data-icon": "messages" } },
-				{ slug: "docs/approvals", label: "Approvals", attrs: { "data-icon": "check" } },
-				{ slug: "docs/llm-credentials", label: "LLM Credentials", attrs: { "data-icon": "key" } },
-				{ slug: "docs/llm-gateway", label: "LLM Gateway", badge: { text: "Coming Soon", variant: "caution" }, attrs: { "data-icon": "cloud" } },
-			],
-		},
-		{
-			label: "Operating System",
-			items: [
-				{ slug: "docs/software", attrs: { "data-icon": "download" } },
-				{ slug: "docs/filesystem", attrs: { "data-icon": "floppyDisk" } },
-				{ slug: "docs/bindings", label: "Bindings", attrs: { "data-icon": "wrench" } },
-				{ slug: "docs/processes", label: "Processes & Shell", attrs: { "data-icon": "terminal" } },
-				{ slug: "docs/networking", label: "Networking & Previews", attrs: { "data-icon": "globe" } },
-				{ slug: "docs/cron", label: "Cron Jobs", attrs: { "data-icon": "clock" } },
-				{ slug: "docs/sandbox", label: "Sandbox Mounting", badge: { text: "Beta", variant: "caution" }, attrs: { "data-icon": "hardDrive" } },
-				{ slug: "docs/nodejs-runtime", label: "Node.js Runtime", attrs: { "data-icon": "nodejs" } },
-				{ slug: "docs/python-runtime", label: "Python Runtime", attrs: { "data-icon": "python" } },
-				{ slug: "docs/permissions", attrs: { "data-icon": "key" } },
-				{ slug: "docs/resource-limits", label: "Resource Limits", attrs: { "data-icon": "gauge" } },
-			],
-		},
-		{
-			label: "Orchestration",
-			items: [
-				{ slug: "docs/authentication", attrs: { "data-icon": "key" } },
-				{ slug: "docs/webhooks", attrs: { "data-icon": "link" } },
-				{ slug: "docs/multiplayer", label: "Multiplayer & Realtime", attrs: { "data-icon": "towerBroadcast" } },
-				{ slug: "docs/agent-to-agent", label: "Agent-to-Agent", attrs: { "data-icon": "arrowsLeftRight" } },
-				{ slug: "docs/workflows", attrs: { "data-icon": "diagramNext" } },
-			],
-		},
-		{
-			label: "Reference",
-			items: [
-				{ label: "API Reference", link: "/api", attrs: { target: "_blank" } },
-				{ slug: "docs/deployment", label: "Deploy" },
-				{
-					label: "Custom Software",
-					items: [
-						{ slug: "docs/custom-software/definition", label: "Definition" },
-						{ slug: "docs/custom-software/building-wasm", label: "Building Binaries" },
-						{ label: "Request Software", link: "https://github.com/rivet-dev/agent-os/issues/new/choose", attrs: { target: "_blank" } },
+					title: "General",
+					pages: [
+						{ title: "Quickstart", href: "/docs/quickstart", icon: faForwardFast },
+						{ title: "Crash Course", href: "/docs/crash-course", icon: faLightbulb },
+						{ title: "agentOS vs Sandbox", href: "/docs/versus-sandbox", icon: faScaleBalanced },
 					],
 				},
 				{
-					label: "Architecture",
-					items: [
-						{ slug: "docs/architecture", label: "Overview" },
-						{ slug: "docs/security-model", label: "Security Model" },
-						{ slug: "docs/limitations" },
+					title: "Agent",
+					pages: [
 						{
-							label: "Advanced",
-							items: [
-								{ slug: "docs/architecture/agent-sessions", label: "Agent Sessions" },
-								{ slug: "docs/architecture/agent-sdk-snapshots", label: "Agent SDK Snapshots" },
-								{ slug: "docs/architecture/sessions-persistence", label: "Sessions & Persistence" },
-								{ slug: "docs/architecture/processes", label: "Processes" },
-								{ slug: "docs/architecture/filesystem", label: "Filesystem" },
-								{ slug: "docs/architecture/networking", label: "Networking" },
-								{ slug: "docs/architecture/posix-syscalls", label: "POSIX Syscalls" },
-								{ slug: "docs/architecture/compiler-toolchain", label: "Compiler Toolchain" },
-								{ slug: "docs/architecture/limits-and-observability", label: "Limits & Observability" },
-								{ slug: "docs/system-prompt", label: "System Prompt" },
-								{ slug: "docs/persistence", label: "Persistence & Sleep" },
+							title: "Agents",
+							collapsible: true,
+							icon: faRobot,
+							pages: [
+								{ title: "Pi", href: "/docs/agents/pi", icon: { src: "/images/registry/pi.svg" } },
+								{ title: "ClaudeCode", href: "/docs/agents/claude", badge: "Beta", icon: { src: "/images/registry/claude-code.svg" } },
+								{ title: "Codex", href: "/docs/agents/codex", badge: "Beta", icon: { src: "/images/registry/codex.svg" } },
+								{ title: "OpenCode", href: "/docs/agents/opencode", icon: { src: "/images/registry/opencode.svg" } },
+								{ title: "Custom Agents", href: "/docs/agents/custom", icon: faWrench },
+							],
+						},
+						{ title: "Sessions & Transcripts", href: "/docs/sessions", icon: faMessages },
+						{ title: "Approvals", href: "/docs/approvals", icon: faCheck },
+						{ title: "LLM Credentials", href: "/docs/llm-credentials", icon: faKey },
+						{ title: "LLM Gateway", href: "/docs/llm-gateway", badge: "Coming Soon", icon: faCloud },
+					],
+				},
+				{
+					title: "Operating System",
+					pages: [
+						{ title: "Software", href: "/docs/software", icon: faDownload },
+						{ title: "Filesystem", href: "/docs/filesystem", icon: faFloppyDisk },
+						{ title: "Bindings", href: "/docs/bindings", icon: faWrench },
+						{ title: "Processes & Shell", href: "/docs/processes", icon: faTerminal },
+						{ title: "Networking & Previews", href: "/docs/networking", icon: faGlobe },
+						{ title: "Cron Jobs", href: "/docs/cron", icon: faClock },
+						{ title: "Sandbox Mounting", href: "/docs/sandbox", badge: "Beta", icon: faHardDrive },
+						{ title: "JavaScript Runtime", href: "/docs/js-runtime", icon: faNodeJs },
+						{ title: "Permissions", href: "/docs/permissions", icon: faKey },
+						{ title: "Resource Limits", href: "/docs/resource-limits", icon: faGauge },
+					],
+				},
+				{
+					title: "Orchestration",
+					pages: [
+						{ title: "Authentication", href: "/docs/authentication", icon: faKey },
+						{ title: "Webhooks", href: "/docs/webhooks", icon: faLink },
+						{ title: "Multiplayer & Realtime", href: "/docs/multiplayer", icon: faTowerBroadcast },
+						{ title: "Agent-to-Agent", href: "/docs/agent-to-agent", icon: faArrowsLeftRight },
+						{ title: "Workflows", href: "/docs/workflows", icon: faDiagramNext },
+					],
+				},
+				{
+					title: "Reference",
+					pages: [
+						{ title: "API Reference", href: "/api", external: true, target: "_blank" },
+						{ title: "Deploy", href: "/docs/deployment" },
+						{
+							title: "Custom Software",
+							collapsible: true,
+							pages: [
+								{ title: "Definition", href: "/docs/custom-software/definition" },
+								{ title: "Building Binaries", href: "/docs/custom-software/building-wasm" },
+								{ title: "Request Software", href: "https://github.com/rivet-dev/agentos/issues/new/choose", external: true, target: "_blank" },
+							],
+						},
+						{
+							title: "Architecture",
+							collapsible: true,
+							pages: [
+								{ title: "Overview", href: "/docs/architecture" },
+								{ title: "Security Model", href: "/docs/security-model" },
+								{ title: "Limitations", href: "/docs/limitations" },
+								{
+									title: "Advanced",
+									collapsible: true,
+									pages: [
+										{ title: "Agent Sessions", href: "/docs/architecture/agent-sessions" },
+										{ title: "Agent SDK Snapshots", href: "/docs/architecture/agent-sdk-snapshots" },
+										{ title: "Sessions & Persistence", href: "/docs/architecture/sessions-persistence" },
+										{ title: "Processes", href: "/docs/architecture/processes" },
+										{ title: "Filesystem", href: "/docs/architecture/filesystem" },
+										{ title: "Networking", href: "/docs/architecture/networking" },
+										{ title: "POSIX Syscalls", href: "/docs/architecture/posix-syscalls" },
+										{ title: "Compiler Toolchain", href: "/docs/architecture/compiler-toolchain" },
+										{ title: "Limits & Observability", href: "/docs/architecture/limits-and-observability" },
+										{ title: "System Prompt", href: "/docs/system-prompt" },
+										{ title: "Persistence & Sleep", href: "/docs/persistence" },
+									],
+								},
+							],
+						},
+						{
+							title: "More",
+							collapsible: true,
+							pages: [
+								{ title: "Core SDK", href: "/docs/core" },
+								{ title: "Debugging", href: "/docs/debugging", icon: faBug },
+								{ title: "Benchmarks", href: "/docs/benchmarks" },
+								{ title: "Cost Evaluation", href: "/docs/cost-evaluation" },
 							],
 						},
 					],
 				},
+			],
+		},
+		{
+			title: "Cookbooks",
+			href: "/cookbooks",
+			sidebar: [
+				{ title: "Overview", href: "/cookbooks", icon: faCircleInfo },
 				{
-					label: "More",
-					items: [
-						{ slug: "docs/core", label: "Core SDK" },
-						{ slug: "docs/debugging", label: "Debugging", attrs: { "data-icon": "bug" } },
-						{ slug: "docs/benchmarks" },
-						{ slug: "docs/cost-evaluation", label: "Cost Evaluation" },
+					title: "Quickstart",
+					pages: [
+						{ title: "Quickstart App", href: "/cookbooks/quickstart-app" },
+						{ title: "Crash Course", href: "/cookbooks/crash-course" },
+					],
+				},
+				{
+					title: "Agents",
+					pages: [
+						{ title: "Pi Agent", href: "/cookbooks/pi" },
+						{ title: "Claude Agent", href: "/cookbooks/claude" },
+						{ title: "Codex Agent", href: "/cookbooks/codex" },
+						{ title: "OpenCode Agent", href: "/cookbooks/opencode" },
+						{ title: "Agent to Agent", href: "/cookbooks/agent-to-agent" },
+					],
+				},
+				{
+					title: "Filesystem",
+					pages: [{ title: "Filesystem", href: "/cookbooks/filesystem" }],
+				},
+				{
+					title: "Processes & Shell",
+					pages: [{ title: "Processes", href: "/cookbooks/processes" }],
+				},
+				{
+					title: "Networking",
+					pages: [{ title: "Networking", href: "/cookbooks/networking" }],
+				},
+				{
+					title: "Sessions & Permissions",
+					pages: [
+						{ title: "Sessions", href: "/cookbooks/sessions" },
+						{ title: "Permissions", href: "/cookbooks/permissions" },
+						{ title: "Approvals", href: "/cookbooks/approvals" },
+						{ title: "Authentication", href: "/cookbooks/authentication" },
+						{ title: "LLM Credentials", href: "/cookbooks/llm-credentials" },
+						{ title: "Multiplayer", href: "/cookbooks/multiplayer" },
+						{ title: "Persistence", href: "/cookbooks/persistence" },
+					],
+				},
+				{
+					title: "Orchestration",
+					pages: [
+						{ title: "Cron", href: "/cookbooks/cron" },
+						{ title: "Queues", href: "/cookbooks/queues" },
+						{ title: "Workflows", href: "/cookbooks/workflows" },
+						{ title: "Webhooks", href: "/cookbooks/webhooks" },
+					],
+				},
+				{
+					title: "Reference",
+					pages: [
+						{ title: "Core", href: "/cookbooks/core" },
+						{ title: "Software", href: "/cookbooks/software" },
+						{ title: "Bindings", href: "/cookbooks/bindings" },
+						{ title: "Resource Limits", href: "/cookbooks/resource-limits" },
+						{ title: "Sandbox", href: "/cookbooks/sandbox" },
 					],
 				},
 			],

@@ -4,11 +4,9 @@ description: "Trust boundaries, isolation guarantees, and the agentOS threat mod
 skill: true
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
-<Aside type="caution">
+<Warning>
 agentOS is in beta and still undergoing security review. The security model described here is subject to change.
-</Aside>
+</Warning>
 
 agentOS is a sandbox: it runs **untrusted code safely on behalf of a trusted caller**. Every actor boots its own fully virtualized VM with a virtual filesystem, process table, socket table, pipes, PTYs, a permission policy, and managed language runtimes. Guest JavaScript executes in a V8 isolate, and every guest syscall is serviced by the kernel rather than the host. There are no host escapes: guest code cannot spawn a real host process, touch the real host filesystem, or open a real host network socket.
 
@@ -178,7 +176,7 @@ The boundary protects the host from the guest. It does **not** harden your host 
 - Configuring [resource limits and network controls](/docs/security-model) to match your threat model.
 - Choosing your blast radius: prefer a fresh VM per untrusted or high-risk task so an escape attempt cannot outlive a single VM.
 
-<Aside type="caution">The boundary contains guest code, but you still own the host. Treat the host process as trusted infrastructure and harden it.</Aside>
+<Warning>The boundary contains guest code, but you still own the host. Treat the host process as trusted infrastructure and harden it.</Warning>
 
 ## Further reading
 

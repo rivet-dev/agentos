@@ -82,6 +82,18 @@ export type {
 	VmBootedPayload,
 	VmShutdownPayload,
 } from "./types.js";
+export type {
+	AgentOsActions,
+	CreateSessionOptions,
+	DirEntry,
+	ReadFileResult,
+	ScheduledCronJob,
+	SignedPreviewUrl,
+	SpawnedProcess,
+	VmFetchOptions,
+	VmFetchResponse,
+	WriteFileResult,
+} from "./actor-actions.js";
 export { createAgentOs as agentOs };
 
 export type AgentOSActorConfigInput<TConnParams = undefined> =

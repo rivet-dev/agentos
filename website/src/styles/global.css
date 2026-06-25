@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The shared docs-theme Tailwind preset defines rounded-* via var(--radius)
+   (shadcn convention). That var ships in the components theme.css which only
+   loads on docs pages, so define it globally here too — otherwise marketing
+   `rounded-*` collapse to 0 (square buttons). */
+:root {
+  --radius: 0.5rem;
+}
+
 /* Register custom properties so they can be transitioned */
 @property --chrome-hover-offset {
   syntax: "<angle>";

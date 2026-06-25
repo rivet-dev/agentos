@@ -3,13 +3,11 @@ title: "Building Binaries"
 description: "Compile WASM command binaries for agentOS from source in the secure-exec registry."
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 WASM command packages (`type: "wasm-commands"`) ship **compiled `.wasm` binaries** that run inside the VM as guest commands. The binaries are build artifacts and are not checked into git, so to add or change a command you build it from source in the **secure-exec registry**.
 
-<Aside type="note">
+<Note>
 You only need this to author new commands. To use existing ones, install the published package (e.g. `@agentos-software/ripgrep`) and pass it to `software`. See [using the registry](#using-the-registry) below.
-</Aside>
+</Note>
 
 ## Where it lives
 
@@ -72,15 +70,6 @@ then run `make copy-wasm && make build && make test` and fix any failures.
 
 Install a published package and pass it to `software`. Registry WASM packages expose a `commandDir`, so you pass them directly (no `defineSoftware()` wrapper):
 
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import coreutils from "@agentos-software/coreutils";
-import ripgrep from "@agentos-software/ripgrep";
-
-const vm = agentOS({ software: [coreutils, ripgrep] });
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/software/registry-usage.ts" />
 
 Meta-packages bundle a full set, e.g. `@agentos-software/common` (coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip). Run the commands from the client; see [Processes & Shell](/docs/processes). Browse the full catalog on the [Registry](/registry), and see how packages map onto the `wasm-commands` descriptor in [Software Definition](/docs/custom-software/definition#wasm-command-software).

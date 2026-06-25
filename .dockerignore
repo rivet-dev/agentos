@@ -18,3 +18,12 @@ packages/agentos/*
 website/node_modules
 website/dist
 website/.astro
+
+# The docs <CodeSnippet> embeds read example source from /examples (the embed
+# root is the parent of the website). Include the example source only — never
+# their node_modules/dist/build output.
+!examples
+examples/**/node_modules
+examples/**/dist
+examples/**/.astro
+examples/**/.turbo

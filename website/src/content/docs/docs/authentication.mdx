@@ -4,9 +4,7 @@ description: "Authenticate connections to agentOS actors using Rivet Actor conne
 skill: true
 ---
 
-import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
-
-agentOS uses the same authentication system as [Rivet Actors](https://rivet.dev/docs/actors/authentication): clients send credentials as connection params, and you validate them server-side.
+agentOS uses the same authentication system as [Rivet Actors](/docs/actors/authentication): clients send credentials as connection params, and you validate them server-side.
 
 - Clients pass credentials in `params` when they connect.
 - Validate them on the server in `onBeforeConnect` (throw to reject the connection), or extract user data into connection state with `createConnState` (read it in actions via `c.conn.state`).
@@ -18,48 +16,9 @@ agentOS uses the same authentication system as [Rivet Actors](https://rivet.dev/
 The server declares the credential shape and validates it in `onBeforeConnect` (throw to reject); the client passes credentials as `params`.
 
 <CodeGroup>
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
+<CodeSnippet file="examples/authentication/server.ts" />
 
-interface ConnParams {
-  authToken: string;
-}
-
-// Validate credentials server-side. onBeforeConnect receives the connection
-// params and rejects the connection by throwing. Wired via the underlying Rivet
-// Actor; see Actor Authentication for the full hook signatures.
-export function onBeforeConnect(_c: unknown, params: ConnParams): void {
-  if (typeof params?.authToken !== "string" || params.authToken.length === 0) {
-    throw new Error("missing or invalid authToken");
-  }
-  // verify the token (JWT signature, lookup, ...) here
-}
-
-const vm = agentOS<ConnParams>({ software: [pi] });
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-
-// Pass credentials when connecting; the server hook validates them.
-const agent = client.vm.getOrCreate("my-agent", {
-  params: { authToken: "my-jwt-token" },
-});
-
-const session = await agent.createSession("claude", {
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-});
-await agent.sendPrompt(session.sessionId, "List the files in the working directory.");
-```
+<CodeSnippet file="examples/authentication/client.ts" />
 </CodeGroup>
 
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/authentication)*
-
-See [Actor Authentication](https://rivet.dev/docs/actors/authentication) for JWT validation, role-based access control, external auth providers, and token caching.
+See [Actor Authentication](/docs/actors/authentication) for JWT validation, role-based access control, external auth providers, and token caching.

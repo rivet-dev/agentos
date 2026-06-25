@@ -95,6 +95,13 @@ fn reply_err(host: &HostCtx, token: u64, error: anyhow::Error) {
 /// SQLite database (via `db_*`) for the persistence-backed arms (signed preview
 /// URLs + session metadata); `vm` is the live `AgentOs`; `vars` is the
 /// ephemeral session-resume state.
+///
+/// ⚠️ SOURCE OF TRUTH / KEEP IN SYNC ⚠️
+/// This match statement is mirrored one-to-one by the TypeScript
+/// `AgentOsActions` interface in `packages/agentos/src/actor-actions.ts`, which
+/// types the `createClient<typeof registry>()` handle. Every `"name" =>` arm
+/// below must have a corresponding method there with matching positional args
+/// and serialized return type. Update both in the same change.
 pub(crate) async fn dispatch(
     host: &HostCtx,
     vm: &AgentOs,

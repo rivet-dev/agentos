@@ -3,19 +3,9 @@ title: "Software Definition"
 description: "The full software-package definition for custom agents, command packages, and WASM commands in an agentOS VM."
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 **Software** is anything you install into a VM: an agent, a command package, or a set of WASM commands. Every package, including the built-ins, is declared with `defineSoftware()` and passed to the `software` option.
 
-```ts
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({ software: [pi /*, …more */] });
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/software/definition-server.ts" />
 
 `defineSoftware()` is a typed identity helper. It returns the descriptor unchanged but gives you full type-checking. The descriptor's `type` field discriminates between the three kinds of software.
 
@@ -54,25 +44,7 @@ A V8 heap snapshot freezes the JavaScript heap *after* the SDK's modules have be
 
 Snapshot-friendly SDKs keep module-init to pure, deterministic work and load anything native/lazy on first use. Set `agent.snapshot: false` (the default) for any SDK that doesn't meet these rules; the agent still runs, just without the shared-snapshot speedup.
 
-```ts title="pi.ts"
-import { defineSoftware } from "@rivet-dev/agentos";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
-export default defineSoftware({
-  name: "pi",
-  type: "agent",
-  packageDir,
-  requires: ["@agentos-software/pi", "@mariozechner/pi-coding-agent"],
-  agent: {
-    id: "pi",
-    acpAdapter: "@agentos-software/pi",
-    agentPackage: "@mariozechner/pi-coding-agent",
-  },
-});
-```
+<CodeSnippet file="examples/software/definition-pi.ts" />
 
 ### Command package software
 
@@ -82,21 +54,7 @@ Exposes one or more CLI commands inside the VM by mapping a command name to the 
 - **`requires`** (required). npm packages that must be available inside the VM.
 - **`bins`** (required). `Record<commandName, packageName>`, mapping the command name as invoked in the VM to the npm package providing it.
 
-```ts title="my-tool.ts"
-import { defineSoftware } from "@rivet-dev/agentos";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
-export default defineSoftware({
-  name: "my-tool",
-  type: "tool",
-  packageDir,
-  requires: ["@my-org/my-cli"],
-  bins: { "my-cli": "@my-org/my-cli" },
-});
-```
+<CodeSnippet file="examples/software/definition-my-tool.ts" />
 
 ### WASM command software
 
@@ -106,21 +64,11 @@ Registers compiled WebAssembly command binaries (coreutils, ripgrep, jq, …). S
 - **`aliases`** (optional). `Record<aliasName, targetCommandName>`; symlink-style aliases.
 - **`permissions`** (optional). Permission-tier assignments: `full`, `readWrite`, `readOnly` (`string[]` or `"*"`), `isolated`.
 
-```ts title="my-commands.ts"
-import { defineSoftware } from "@rivet-dev/agentos";
+<CodeSnippet file="examples/software/definition-my-commands.ts" />
 
-export default defineSoftware({
-  name: "my-commands",
-  type: "wasm-commands",
-  commandDir: "/abs/path/to/wasm",
-  aliases: { ll: "ls" },
-  permissions: { readOnly: "*" },
-});
-```
-
-<Aside type="note">
+<Note>
 Published registry packages (e.g. `@agentos-software/coreutils`) already expose a `commandDir`, so you can pass them to `software` directly without wrapping in `defineSoftware()`. Any object with a `commandDir` property is treated as a WASM command package.
-</Aside>
+</Note>
 
 ## `SoftwareContext`
 
@@ -164,4 +112,4 @@ const vm = agentOS({
 
 - [Custom Agents](/docs/agents/custom): the agent-focused guide.
 - [Building Binaries](/docs/custom-software/building-wasm): compile WASM commands and use the registry.
-- [Request Software](https://github.com/rivet-dev/agent-os/issues/new/choose): ask for a package you need.
+- [Request Software](https://github.com/rivet-dev/agentos/issues/new/choose): ask for a package you need.

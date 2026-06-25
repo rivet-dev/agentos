@@ -33,32 +33,11 @@ npm install @rivet-dev/agentos-core
 
 Define the actor on the server:
 
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/core/server.ts" title="server.ts" />
 
 Then drive it from a typed client:
 
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const handle = client.vm.getOrCreate("my-agent");
-
-const result = await handle.exec("echo hello");
-console.log(result.stdout); // "hello\n"
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
+<CodeSnippet file="examples/core/client.ts" region="boot" title="client.ts" />
 
 ## Sidecar process
 
@@ -68,185 +47,35 @@ This is automatic — `agentOS()` and `AgentOs.create()` use the shared default 
 
 For advanced cases the core package exposes explicit sidecar handles so you can isolate a group of VMs in their own process:
 
-```ts title="advanced.ts"
-import { AgentOs } from "@rivet-dev/agentos-core";
-
-// One dedicated sidecar process hosting multiple VMs.
-const sidecar = await AgentOs.createSidecar();
-const a = await AgentOs.create({ sidecar: { kind: "explicit", handle: sidecar } });
-const b = await AgentOs.create({ sidecar: { kind: "explicit", handle: sidecar } });
-
-await a.dispose(); // tears down VM a only
-await b.dispose();
-await sidecar.dispose(); // tears down the shared process
-```
+<CodeSnippet file="examples/core/advanced.ts" title="advanced.ts" />
 
 ## Filesystem
 
-```ts title="client.ts"
-await handle.writeFile("/home/agentos/hello.txt", "Hello, world!");
-const content = await handle.readFile("/home/agentos/hello.txt");
-console.log(new TextDecoder().decode(content));
-
-await handle.mkdir("/home/agentos/src");
-await handle.writeFiles([
-  { path: "/home/agentos/src/index.ts", content: "console.log('hi');" },
-  { path: "/home/agentos/src/utils.ts", content: "export const add = (a: number, b: number) => a + b;" },
-]);
-
-const entries = await handle.readdirRecursive("/home/agentos");
-for (const entry of entries) {
-  console.log(entry.type, entry.path);
-}
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
+<CodeSnippet file="examples/core/client.ts" region="filesystem" title="client.ts" />
 
 ## Processes
 
 Long-running process output is delivered over the live `processOutput` / `processExit` events on a connection rather than per-pid callbacks:
 
-```ts title="client.ts"
-// One-shot execution
-const result = await handle.exec("ls -la /home/agentos");
-console.log(result.stdout);
-
-// Long-running process with streaming output
-await handle.writeFile(
-  "/tmp/server.mjs",
-  'import http from "http"; http.createServer((req, res) => res.end("ok")).listen(3000); console.log("listening");',
-);
-const { pid } = await handle.spawn("node", ["/tmp/server.mjs"]);
-
-const conn = handle.connect();
-conn.on("processOutput", (data) => {
-  if (data.pid === pid && data.stream === "stdout") {
-    console.log("stdout:", new TextDecoder().decode(data.data));
-  }
-});
-conn.on("processExit", (data) => {
-  if (data.pid === pid) console.log("exited:", data.exitCode);
-});
-
-// Write to stdin
-await handle.writeProcessStdin(pid, "some input\n");
-
-// Stop or kill
-await handle.stopProcess(pid);
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
+<CodeSnippet file="examples/core/client.ts" region="processes" title="client.ts" />
 
 ## Agent sessions
 
 `createSession` returns a session record. All session operations take its `sessionId`. Session events and permission requests are delivered over the live connection (`sessionEvent` / `permissionRequest`):
 
-```ts title="client.ts"
-const conn = handle.connect();
-
-// Stream events (each event is a JSON-RPC notification)
-conn.on("sessionEvent", (data) => {
-  console.log(data.event.method, data.event.params);
-});
-
-// Handle permissions
-conn.on("permissionRequest", (data) => {
-  console.log("Permission:", data.request.description);
-  // Reply with "once", "always", or "reject"
-  void handle.respondPermission(data.sessionId, data.request.permissionId, "once");
-});
-
-const session = await handle.createSession("pi", {
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-});
-
-// Send a prompt. sendPrompt() resolves to { response, text }, where `text` is
-// the accumulated agent message text and `response` is the raw JSON-RPC response.
-const { text } = await handle.sendPrompt(session.sessionId, "Write a hello world script");
-console.log(text);
-
-// Configure the session
-await handle.setModel(session.sessionId, "claude-sonnet-4-6");
-await handle.setMode(session.sessionId, "plan");
-
-await handle.closeSession(session.sessionId);
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
+<CodeSnippet file="examples/core/client.ts" region="sessions" title="client.ts" />
 
 Subscribe to `sessionEvent` before sending a prompt so you do not miss the live stream. Persisted history can be read back later with `getSessionEvents()`.
 
-## Interactive shell
-
-```ts title="client.ts"
-const { shellId } = await handle.openShell();
-
-const conn = handle.connect();
-conn.on("shellData", (data) => {
-  if (data.shellId === shellId) {
-    process.stdout.write(new TextDecoder().decode(data.data));
-  }
-});
-
-await handle.writeShell(shellId, "echo hello from shell\n");
-
-// Resize terminal
-await handle.resizeShell(shellId, 120, 40);
-
-await handle.closeShell(shellId);
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
-
 ## Networking
 
-```ts title="client.ts"
-// Start a server inside the VM
-await handle.writeFile(
-  "/tmp/app.mjs",
-  'import http from "http"; http.createServer((req, res) => res.end("hello")).listen(3000);',
-);
-await handle.spawn("node", ["/tmp/app.mjs"]);
-
-// Fetch from it
-const response = await handle.vmFetch(3000, "/");
-console.log(new TextDecoder().decode(response.body));
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
+<CodeSnippet file="examples/core/client.ts" region="networking" title="client.ts" />
 
 ## Cron jobs
 
 Cron jobs run an `"exec"` command or a `"session"` prompt on a schedule. Fired jobs are surfaced over the live `cronEvent` connection:
 
-```ts title="client.ts"
-const { id } = await handle.scheduleCron({
-  id: "cleanup",
-  schedule: "0 * * * *",
-  action: { type: "exec", command: "rm", args: ["-rf", "/tmp/cache"] },
-});
-console.log("Scheduled:", id);
-
-// Run an agent session on a schedule
-await handle.scheduleCron({
-  schedule: "0 9 * * *",
-  action: {
-    type: "session",
-    agentType: "pi",
-    prompt: "Review the logs and summarize any errors",
-    options: { cwd: "/workspace" },
-  },
-});
-
-const conn = handle.connect();
-conn.on("cronEvent", (data) => {
-  console.log("Cron event:", data.event.id, data.event.schedule);
-});
-
-console.log(await handle.listCronJobs());
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
+<CodeSnippet file="examples/core/client.ts" region="cron" title="client.ts" />
 
 ## Mounts
 
@@ -255,70 +84,13 @@ Configure filesystem backends at boot time.
 Native mount plugins (host directories, S3, etc.) are passed via `plugin`, each
 identified by an `id` and a `config` object.
 
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-
-const vm = agentOS({
-  mounts: [
-    // Host directory (read-only)
-    {
-      path: "/mnt/code",
-      plugin: { id: "host_dir", config: { hostPath: "/path/to/repo" } },
-      readOnly: true,
-    },
-    // S3 bucket
-    {
-      path: "/mnt/data",
-      plugin: { id: "s3", config: { bucket: "my-bucket", prefix: "agent/" } },
-    },
-  ],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
+<CodeSnippet file="examples/core/mounts.ts" title="server.ts" />
 
 ## `agentOS()` configuration reference
 
 When you use the [`agentOS()` actor](/docs/quickstart), all VM configuration is passed to the factory as a single flat object. This is the consolidated config block to copy and adapt:
 
-```ts title="server.ts"
-import { agentOS, nodeModulesMount, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  // Filesystems to mount at boot. Use nodeModulesMount() to expose a host
-  // node_modules tree at /root/node_modules.
-  mounts: [nodeModulesMount("/path/to/project/node_modules")],
-  // Software packages to install in the VM (see /docs/software)
-  software: [pi],
-  // Ports exempt from SSRF checks
-  loopbackExemptPorts: [3000],
-  // Extra instructions appended to agent system prompts
-  additionalInstructions: "Always write tests first.",
-
-  // Preview URL token lifetimes
-  preview: {
-    defaultExpiresInSeconds: 3600, // 1 hour (default)
-    maxExpiresInSeconds: 86400, // 24 hours (default)
-  },
-
-  // Lifecycle hooks (see below)
-  onSessionEvent: async (sessionId, event) => {
-    console.log("Session event:", sessionId, event.method);
-  },
-  onPermissionRequest: async (sessionId, request) => {
-    console.log("Permission request:", sessionId, request.permissionId);
-  },
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
+<CodeSnippet file="examples/core/config-reference.ts" title="server.ts" />
 
 The top-level fields are documented inline above. See [Mounts](#mounts), [Software](/docs/software), and (for the hooks) [Approvals](/docs/approvals).
 
@@ -326,18 +98,7 @@ The top-level fields are documented inline above. See [Mounts](#mounts), [Softwa
 
 `onPermissionRequest(sessionId, request)` fires when an agent requests permission. `onSessionEvent(sessionId, event)` is a server-side hook called once for every session event: unlike the client-side `sessionEvent` connection subscription, it runs in the actor for every event regardless of connected clients, making it the place for server-side logging, persistence, or side effects.
 
-```ts title="server.ts"
-import { agentOS } from "@rivet-dev/agentos";
-
-export const vm = agentOS({
-  // Runs once per session event, server-side, for every session.
-  onSessionEvent: async (sessionId, event) => {
-    console.log("Session event:", sessionId, event.method);
-  },
-});
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
+<CodeSnippet file="examples/core/hooks.ts" title="server.ts" />
 
 ### Timeouts
 

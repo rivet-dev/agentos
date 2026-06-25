@@ -4,13 +4,11 @@ description: "Internals of the kernel VFS: the overlay/mount/root engines, how g
 skill: true
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 This page is an internals deep-dive on the **kernel virtual filesystem (VFS)**: how it is layered, how a guest `fs` syscall is routed through it, and how guest I/O is confined to the VM. For the user-facing API (reading, writing, mounting, persistence), see [Filesystem](/docs/filesystem).
 
 The invariant this whole subsystem exists to uphold: **every guest filesystem operation is serviced by the kernel-owned VFS, never by a real host capability.** There is no host disk reachable from the guest. The VFS presents normal Linux semantics to tools while keeping every byte inside the kernel.
 
-<Aside type="note">The security boundary is sidecar to executor. The VFS lives inside the trusted sidecar; the guest in the executor only ever *asks* for a filesystem operation. Confinement is the kernel's job, not the guest's. See the [Security Model](/docs/security-model) for the full threat model.</Aside>
+<Note>The security boundary is sidecar to executor. The VFS lives inside the trusted sidecar; the guest in the executor only ever *asks* for a filesystem operation. Confinement is the kernel's job, not the guest's. See the [Security Model](/docs/security-model) for the full threat model.</Note>
 
 ## Where the VFS sits
 
@@ -74,7 +72,7 @@ A host-backed mount (host directory, S3, ...) comes from trusted config, so its 
 
 Mounts for host and remote backends are **read-only by default**; a writable mount must be opted into explicitly. The `readOnly` flag is enforced at the engine, so a write syscall to a read-only mount fails inside the kernel rather than reaching the backend.
 
-<Aside type="note">"Trusted mount, untrusted traffic": the mount's target is trusted configuration, but the guest drives I/O through it, so confining guest operations to the mount root (`..`, symlink, TOCTOU, path-aliasing) is squarely in scope and enforced by the kernel.</Aside>
+<Note>"Trusted mount, untrusted traffic": the mount's target is trusted configuration, but the guest drives I/O through it, so confining guest operations to the mount root (`..`, symlink, TOCTOU, path-aliasing) is squarely in scope and enforced by the kernel.</Note>
 
 ## WASM preopens
 

@@ -3,24 +3,13 @@ title: "Debugging"
 description: "Capture agent logs and runtime (sidecar) logs to diagnose sessions, tool calls, and crashes."
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 Two log streams help diagnose what's happening inside a VM: the **agent's** own output and the **runtime (sidecar)** logs.
 
 ## Agent logs (`onAgentStderr`)
 
 The coding agent (ACP adapter) runs as a process inside the VM and uses **stdout for the ACP protocol**, so its **stderr** carries the agent's logs, warnings, and crash output — the first place to look when a tool call or session fails mid-turn. Capture it with `onAgentStderr` on the VM:
 
-```ts
-const agentOs = await AgentOs.create({
-  software: [pi],
-  onAgentStderr(event) {
-    // event: { sessionId, agentType, processId, pid, chunk: Uint8Array }
-    process.stderr.write(`[agent:${event.agentType}] `);
-    process.stderr.write(event.chunk);
-  },
-});
-```
+<CodeSnippet file="examples/debugging/agent-logs.ts" />
 
 It's a VM-level option covering every session's agent process; if omitted, chunks are written to the host `process.stderr` by default. See [Sessions → Agent logs](/docs/sessions#agent-logs).
 
@@ -47,8 +36,8 @@ ts=2026-… level=info  message="ext request handled"  kind=create_session elaps
 ts=2026-… level=debug message="querying: api.anthropic.com. A"
 ```
 
-<Aside type="note">
+<Note>
 Most sidecar log activity is on the session/ACP path. A bare `AgentOs.create()` or a single `exec()` emits almost nothing — create a session (and send a prompt) to see request-handling logs.
-</Aside>
+</Note>
 
 Use **agent logs** to see what the agent did (tool calls, model errors), and **runtime logs** to see what the sidecar did around it (request timing, DNS, lifecycle).

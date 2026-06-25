@@ -39,4 +39,13 @@ export {
 	isUnknownSessionErrorData,
 } from "./json-rpc.js";
 export { createInMemoryFileSystem, KernelError } from "./runtime-compat.js";
+export type {
+	ExecOptions,
+	ExecResult,
+	ManagedProcess,
+	ProcessInfo,
+	ShellHandle,
+	VirtualDirEntry,
+	VirtualStat,
+} from "./runtime.js";
 export type * from "./types.js";

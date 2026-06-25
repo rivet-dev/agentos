@@ -4,8 +4,6 @@ description: "How agentOS compiles its command suite to WebAssembly: Rust coreut
 skill: true
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 The commands a guest runs through [process execution](/docs/processes), the shell
 (`sh`) and the coreutils behind it, are not native host binaries. They are
 WebAssembly modules compiled ahead of time and mounted into the VM. This page
@@ -72,12 +70,12 @@ process / user / network extensions.
   then services through the kernel. See
   [Layer 1: custom host import modules](/docs/architecture/posix-syscalls) for the runtime half.
 
-<Aside type="note">
+<Note>
 The import declarations are compile-time only: linking `wasi-ext` tells the
 module *which* host imports to reference, but the calls are still routed through
 the kernel and gated by the VM's [permission policy](/docs/permissions) at
 runtime. Building against `host_net` does not grant network access.
-</Aside>
+</Note>
 
 ## From `.wasm` to a guest command
 

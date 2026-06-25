@@ -4,8 +4,6 @@ description: "Proxy HTTP requests into agentOS VMs and create shareable preview 
 skill: true
 ---
 
-import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
-
 Proxy HTTP requests into VM services with `vmFetch` and create time-limited, token-based preview URLs (with configurable expiration, revocation, and CORS), all carried over one transport (the kernel socket table) that is loopback-only by default under a three-layer confinement model.
 
 ## Run an HTTP server in the VM
@@ -13,78 +11,19 @@ Proxy HTTP requests into VM services with `vmFetch` and create time-limited, tok
 Guest code runs a normal Node HTTP server: it binds a loopback port inside the VM exactly like any Node process. Write the server file and spawn it.
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-
-// Write a simple Node HTTP server and run it inside the VM. It binds a loopback
-// port (3000) exactly like any normal Node process.
-await agent.writeFile(
-  "/home/agentos/server.js",
-  `const http = require("http");
-http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("Hello from inside the VM");
-}).listen(3000, () => console.log("listening on http://127.0.0.1:3000"));`,
-);
-const { pid } = await agent.spawn("node", ["/home/agentos/server.js"]);
-console.log("server pid:", pid);
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-
-const vm = agentOS();
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/networking/client-run-server.ts" />
+<CodeSnippet file="examples/networking/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/networking)*
 
 ## Fetch from a VM service
 
 With the HTTP server running in the VM (above), send requests to it with `vmFetch`, including custom methods, headers, and body.
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-
-// Simple GET from the VM service started above.
-const response = await agent.vmFetch(3000, "/");
-console.log("Status:", response.status);
-console.log("Body:", new TextDecoder().decode(response.body));
-
-// With a custom method, headers, and body.
-const posted = await agent.vmFetch(3000, "/api/data", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ key: "value" }),
-});
-console.log("Status:", posted.status, posted.statusText);
-console.log("Headers:", posted.headers);
-console.log("Body:", new TextDecoder().decode(posted.body));
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-
-const vm = agentOS({ software: [] });
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/networking/client-fetch.ts" />
+<CodeSnippet file="examples/networking/client-fetch-options.ts" />
+<CodeSnippet file="examples/networking/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/networking)*
 
 ## Preview URLs
 
@@ -95,73 +34,18 @@ Preview URLs are port forwarding for VM services: a time-limited, public URL tha
 Token lifetimes are configured under the `preview` key:
 
 <CodeGroup>
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-
-const vm = agentOS({
-  software: [],
-  preview: {
-    defaultExpiresInSeconds: 3600, // 1 hour default
-    maxExpiresInSeconds: 86400, // 24 hour maximum
-  },
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-
-// Start a web app in the VM
-await agent.spawn("node", ["/home/agentos/app.js"]);
-
-// Create a preview URL (default 1 hour expiration)
-const preview = await agent.createSignedPreviewUrl(3000);
-console.log("Preview path:", preview.path);
-console.log("Token:", preview.token);
-console.log("Expires at:", new Date(preview.expiresAt));
-
-// Create a preview URL with custom expiration
-const shortPreview = await agent.createSignedPreviewUrl(3000, 300); // 5 minutes
-console.log("Short-lived preview:", shortPreview.path);
-```
+<CodeSnippet file="examples/networking/server-preview.ts" />
+<CodeSnippet file="examples/networking/client-preview.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/networking)*
 
 ### Revoke a preview URL
 
 Mint short-lived preview tokens so access expires automatically; the lifetime is capped by `preview.maxExpiresInSeconds`.
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-
-// Mint a short-lived preview token so access expires automatically.
-const preview = await client.vm.getOrCreate("my-agent").createSignedPreviewUrl(3000, 300); // 5 minutes
-console.log("Preview path:", preview.path);
-console.log("Expires at:", new Date(preview.expiresAt));
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-
-const vm = agentOS({ software: [] });
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/networking/client-revoke.ts" />
+<CodeSnippet file="examples/networking/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/networking)*
 
 ## Permissions
 

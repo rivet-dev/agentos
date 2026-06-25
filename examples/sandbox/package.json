@@ -1,0 +1,29 @@
+{
+  "name": "@rivet-dev/agentos-example-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rivet-dev/agentos-core": "workspace:*",
+    "@rivet-dev/agentos-sandbox": "workspace:*",
+    "sandbox-agent": "^0.4.2",
+    "dockerode": "^4.0.9",
+    "get-port": "^7.1.0",
+    "@agentos-software/git": "catalog:",
+    "@agentos-software/claude-code": "catalog:",
+    "@agentos-software/opencode": "catalog:",
+    "@agentos-software/pi": "catalog:",
+    "@secure-exec/s3": "catalog:",
+    "zod": "^4.1.11",
+    "@rivet-dev/agentos": "workspace:*",
+    "rivetkit": "0.0.0-feat-dylib-actor-plugin.c44621f"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.2"
+  }
+}

@@ -4,8 +4,6 @@ description: "Schedule recurring commands and agent sessions in agentOS VMs."
 skill: true
 ---
 
-import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
-
 Schedule recurring work with cron expressions, running either a shell command (`exec`) or an agent session (`session`), with overlap modes (`allow`, `skip`, `queue`) and `cronEvent` streaming to monitor execution. Cron jobs keep the actor alive while a job runs; the actor can sleep between executions.
 
 ## Schedule a command
@@ -13,76 +11,18 @@ Schedule recurring work with cron expressions, running either a shell command (`
 Run a shell command on a recurring schedule. Pass a custom `id` to make a job easier to manage and cancel later.
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-
-// Schedule a cleanup script every hour
-const { id } = await client.vm.getOrCreate("my-agent").scheduleCron({
-  schedule: "0 * * * *",
-  action: {
-    type: "exec",
-    command: "rm",
-    args: ["-rf", "/tmp/cache/*"],
-  },
-});
-console.log("Cron job ID:", id);
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/cron/schedule-command.ts" />
+<CodeSnippet file="examples/cron/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/cron)*
 
 ## Schedule an agent session
 
 Create a recurring agent session that runs a prompt on a schedule.
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-
-// Run an agent every day at 9 AM to check for issues
-await client.vm.getOrCreate("my-agent").scheduleCron({
-  schedule: "0 9 * * *",
-  action: {
-    type: "session",
-    agentType: "pi",
-    prompt: "Review the logs in /workspace/logs/ and summarize any errors",
-    options: { cwd: "/workspace" },
-  },
-});
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/cron/schedule-session.ts" />
+<CodeSnippet file="examples/cron/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/cron)*
 
 ## Overlap modes
 
@@ -97,38 +37,9 @@ Control what happens when a cron job triggers while a previous execution is stil
 Prefer `"skip"` for most jobs to avoid unbounded concurrency if a run takes longer than the interval. Use `"queue"` when every trigger must eventually execute.
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-
-// Queue overlapping executions
-await client.vm.getOrCreate("my-agent").scheduleCron({
-  schedule: "*/5 * * * *",
-  overlap: "queue",
-  action: {
-    type: "session",
-    agentType: "pi",
-    prompt: "Process the next batch of tasks",
-  },
-});
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/cron/overlap.ts" />
+<CodeSnippet file="examples/cron/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/cron)*
 
 ## Monitor cron events
 
@@ -136,103 +47,27 @@ Subscribe to the `cronEvent` event to track job execution. It is emitted wheneve
 
 - **`data.event`**: A `CronEvent` describing the run.
 
-```ts
-const conn = handle.connect();
-conn.on("cronEvent", (data) => {
-  // data is inferred: { event: CronEvent }
-  console.log("Cron event:", data.event);
-});
-```
+<CodeSnippet file="examples/cron/monitor.ts" region="subscribe" />
 
 Subscribe before scheduling so you do not miss early runs.
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const handle = client.vm.getOrCreate("my-agent");
-
-const conn = handle.connect();
-conn.on("cronEvent", (data) => {
-  // data is inferred: { event: CronEvent }
-  console.log("Cron event:", data.event);
-});
-
-await handle.scheduleCron({
-  schedule: "*/1 * * * *",
-  action: { type: "exec", command: "echo", args: ["heartbeat"] },
-});
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/cron/monitor.ts" />
+<CodeSnippet file="examples/cron/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/cron)*
 
 ## List and cancel cron jobs
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const handle = client.vm.getOrCreate("my-agent");
-
-// List all cron jobs
-const jobs = await handle.listCronJobs();
-for (const job of jobs) {
-  console.log(job.id, job.schedule);
-}
-
-// Cancel a specific job
-await handle.cancelCronJob(jobs[0].id);
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/cron/list-cancel.ts" />
+<CodeSnippet file="examples/cron/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/cron)*
 
 ## Example: Heartbeat pattern
 
 Schedule a recurring agent session to periodically check on a task. This is the core pattern behind [OpenClaw](https://openclaw.org), where an agent wakes up on a schedule to review progress, take action, and go back to sleep.
 
-```ts
-await handle.scheduleCron({
-  schedule: "*/30 * * * *",
-  overlap: "skip",
-  action: {
-    type: "session",
-    agentType: "pi",
-    prompt: "Check the status of open issues and take any necessary action",
-  },
-});
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/cron)*
+<CodeSnippet file="examples/cron/heartbeat.ts" region="heartbeat" />
 
 The agent sleeps between executions and only consumes resources when the cron job fires.
 

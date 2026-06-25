@@ -3,8 +3,6 @@ title: "Custom Agents"
 description: "Bring your own coding agent to agentOS by speaking the Agent Client Protocol (ACP) inside the VM."
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 A custom agent is a program that runs **inside the VM** to drive a coding agent. agentOS spawns it when you call `createSession()` and talks to it over the Agent Client Protocol. You ship it as a software package, exactly like the built-in agents.
 
 ## Agent Client Protocol (ACP)
@@ -38,33 +36,7 @@ The ACP adapter **embeds the agent SDK** and runs it in the same process. One pr
 
 For example, an adapter to run **OpenCode**, which speaks ACP natively. One package is both the ACP process and the agent, so there's no separate adapter and nothing else is spawned.
 
-```ts title="opencode.ts"
-import { defineSoftware } from "@rivet-dev/agentos";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
-// Example: an adapter to run OpenCode.
-export default defineSoftware({
-  name: "opencode",
-  type: "agent",
-  packageDir,
-  // A single package provides everything that runs in the VM.
-  requires: ["@agentos-software/opencode"],
-  agent: {
-    id: "opencode",
-    // Same package for both: OpenCode *is* the ACP process. It speaks ACP
-    // on stdio itself, so there is no separate adapter to spawn the agent.
-    acpAdapter: "@agentos-software/opencode",
-    agentPackage: "@agentos-software/opencode",
-    staticEnv: {
-      OPENCODE_DISABLE_CONFIG_DEP_INSTALL: "1",
-      OPENCODE_DISABLE_EMBEDDED_WEB_UI: "1",
-    },
-  },
-});
-```
+<CodeSnippet file="examples/custom/opencode.ts" />
 
 ### ACP adapter (separate agent)
 
@@ -93,36 +65,7 @@ The ACP adapter is a thin **bridge** that spawns the real agent as its **own pro
 
 For example, an adapter to run **Pi**: the `pi` CLI doesn't speak ACP, so `pi-acp` speaks ACP and spawns the CLI as a separate process. The descriptor names two packages, the adapter and the agent.
 
-```ts title="pi-cli.ts"
-import { defineSoftware } from "@rivet-dev/agentos";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
-// Example: a pi-acp adapter that runs the Pi CLI.
-export default defineSoftware({
-  name: "pi-cli",
-  type: "agent",
-  packageDir,
-  // Two separate packages: the ACP adapter, and the agent it drives.
-  requires: ["pi-acp", "@mariozechner/pi-coding-agent"],
-  agent: {
-    id: "pi-cli",
-    // `pi-acp` is a thin ACP adapter. It does NOT run the agent itself:
-    // it speaks ACP on stdio and spawns the `pi` CLI as a separate child
-    // process, translating between ACP and the CLI.
-    acpAdapter: "pi-acp",
-    // The actual agent, launched by pi-acp as its own process.
-    agentPackage: "@mariozechner/pi-coding-agent",
-    // Tell the adapter where to find the `pi` CLI inside the VM
-    // (resolved at boot to a guest path under /root/node_modules).
-    env: (ctx) => ({
-      PI_ACP_PI_COMMAND: ctx.resolveBin("@mariozechner/pi-coding-agent", "pi"),
-    }),
-  },
-});
-```
+<CodeSnippet file="examples/custom/pi-cli.ts" />
 
 ## Use your agent
 
@@ -144,7 +87,7 @@ registry.start();
 
 See [Sessions](/docs/sessions) for creating and driving sessions. Ship your adapter as a package so its dependencies resolve from `node_modules/` (via `requires`) inside the VM, rather than as a loose file.
 
-All built-in agents are defined exactly this way. Browse them for reference on [GitHub](https://github.com/rivet-dev/agent-os/tree/main/registry/agent).
+All built-in agents are defined exactly this way. Browse them for reference on [GitHub](https://github.com/rivet-dev/agentos/tree/main/registry/agent).
 
 ## Read more
 

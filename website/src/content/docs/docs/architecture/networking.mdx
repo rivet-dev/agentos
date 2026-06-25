@@ -4,8 +4,6 @@ description: "How the kernel socket table works: a single VM-local transport tha
 skill: true
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 This is the internals view of agentOS networking: the kernel socket table, the layers a request crosses, and where policy is enforced. For the user-facing API (`vmFetch`, preview URLs, the confinement model from a caller's perspective), see [Networking & Previews](/docs/networking). For the trust boundary this all sits inside, see [Architecture](/docs/architecture).
 
 The governing rule is that there is exactly **one authoritative transport for everything VM-local**: the kernel socket table. No part of guest networking opens a real host socket on its own. Guest `fetch()`, `node:http`, `node:net`, WASM TCP clients and servers, and host-into-guest requests (`vmFetch` / `rt.fetch`) all target the same listener table.
@@ -21,7 +19,7 @@ The socket table is the floor of the stack and the only component that actually 
 
 Because every server is a kernel TCP listener, a client never needs to know whether the server it is talking to is JS, WASM, raw TCP, or HTTP. HTTP is layered on top of kernel TCP bytes, so every listener lives in the one table and is reachable identically.
 
-<Aside type="note">An earlier design carried two listener models at once: stream-mode listeners (`net.createServer`, WASM) on real kernel TCP sockets, and object-mode HTTP listeners (`http.createServer`) on a separate table that exchanged JSON request/response objects over stream events. A second guest process could not reach the object-mode table reliably, because the client expected byte-stream TCP semantics while the server only spoke object-mode dispatch. The current architecture removes the second model: everything is one socket table.</Aside>
+<Note>An earlier design carried two listener models at once: stream-mode listeners (`net.createServer`, WASM) on real kernel TCP sockets, and object-mode HTTP listeners (`http.createServer`) on a separate table that exchanged JSON request/response objects over stream events. A second guest process could not reach the object-mode table reliably, because the client expected byte-stream TCP semantics while the server only spoke object-mode dispatch. The current architecture removes the second model: everything is one socket table.</Note>
 
 ## The four layers
 
@@ -110,7 +108,7 @@ The per-port loopback exemption belongs to layer 2 only. It is a trusted, per-po
 
 Every guest connect, listen, read, and write passes through sidecar ownership and kernel owner checks. Guest-to-guest loopback is allowed only when the destination is a VM-owned listener and the applied network policy permits the connect. Host-loopback access from guest code is separate and still requires a loopback exemption plus the applied network policy. Long-lived waits must not block the sync-RPC path, so the stack uses stream events, bounded polling, and kernel socket waits with explicit timeouts.
 
-<Aside type="note">Host-to-guest requests bypass egress, not the table. `vmFetch` / `rt.fetch` terminate at the guest's loopback listener and never leave the VM, so they work even when guest egress (layer 3) or outbound `connect` (layer 1) is denied. They are host control-plane traffic, not guest egress, and only ever reach VM-owned listeners, while still going through the same kernel socket table as everything else.</Aside>
+<Note>Host-to-guest requests bypass egress, not the table. `vmFetch` / `rt.fetch` terminate at the guest's loopback listener and never leave the VM, so they work even when guest egress (layer 3) or outbound `connect` (layer 1) is denied. They are host control-plane traffic, not guest egress, and only ever reach VM-owned listeners, while still going through the same kernel socket table as everything else.</Note>
 
 ## Preview URLs
 

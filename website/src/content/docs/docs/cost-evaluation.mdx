@@ -3,11 +3,10 @@ title: "Cost Evaluation"
 description: "How agentOS compares on cost to per-second sandbox providers when you run coding-agent VMs on your own hardware."
 skill: true
 ---
-import { Aside } from '@astrojs/starlight/components';
 
 agentOS is a library you run on hardware you already control, not a metered service. That changes the cost model for running coding-agent VMs from "pay a provider per sandbox-second" to "pay for the compute you provision, then pack as much work onto it as it can hold." This page explains where the savings come from and how to reason about them honestly. It does not publish a single magic multiplier, because the real number depends on your workload, your hardware, and how you share VMs.
 
-<Aside type="note">For measured latency (cold start, warm execution, and reuse fast paths), see [Benchmarks](/docs/benchmarks). This page is about cost structure, not raw performance.</Aside>
+<Note>For measured latency (cold start, warm execution, and reuse fast paths), see [Benchmarks](/docs/benchmarks). This page is about cost structure, not raw performance.</Note>
 
 ## Where the savings come from
 
@@ -33,7 +32,7 @@ Because agentOS runs on hardware you provision, the honest way to compare is to 
 2. **Estimate how many concurrent VMs fit**: measure per-VM memory overhead on your target hardware under your isolation strategy, then divide your usable RAM by that figure. Leave headroom (the measurement and any orchestration layer will not bin-pack perfectly).
 3. **Divide instance cost by concurrent VMs**: that gives a cost-per-VM-second you can compare against a provider's per-sandbox-second rate.
 
-<Aside type="tip">Measure on the hardware and isolation strategy you will actually deploy. Per-VM overhead depends on whether you create a fresh VM per task or reuse one across runs, and on the work the agent does, so a number measured on one machine will not transfer cleanly to another.</Aside>
+<Tip>Measure on the hardware and isolation strategy you will actually deploy. Per-VM overhead depends on whether you create a fresh VM per task or reuse one across runs, and on the work the agent does, so a number measured on one machine will not transfer cleanly to another.</Tip>
 
 ## Comparing against sandbox providers
 
@@ -50,6 +49,6 @@ The advantage is largest for **many small, short executions**, where a per-sandb
 | Heavyweight, long-lived workloads | Hardware choice, flat instance pricing, no egress or lock-in |
 | High concurrency | Reuse a VM across runs to amortize VM boot cost |
 
-<Aside type="caution">Be careful generalizing cost ratios from a single benchmark. Provider pricing, instance pricing, and exchange rates change over time, and per-VM overhead varies by workload and isolation strategy. Re-measure on your own hardware before quoting a number.</Aside>
+<Warning>Be careful generalizing cost ratios from a single benchmark. Provider pricing, instance pricing, and exchange rates change over time, and per-VM overhead varies by workload and isolation strategy. Re-measure on your own hardware before quoting a number.</Warning>
 
 When you do need a full Linux sandbox for heavier agent workloads, see [agentOS vs Sandbox](/docs/versus-sandbox) for how the two models combine.

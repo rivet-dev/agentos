@@ -12,7 +12,7 @@
 		"test:migration-parity": "pnpm --dir packages/core exec vitest run tests/migration-parity.test.ts --reporter=verbose",
 		"test:post-python-parity": "pnpm --dir packages/core build && pnpm --dir packages/core exec vitest run tests/agentos-base-filesystem.test.ts",
 		"test:watch": "npx turbo watch test",
-		"check-types": "npx turbo check-types --concurrency=1",
+		"check-types": "node scripts/verify-check-types.mjs && npx turbo check-types --concurrency=1",
 		"lint": "pnpm biome check .",
 		"fmt": "pnpm biome check --write --diagnostic-level=error .",
 		"shell": "pnpm --filter @rivet-dev/agentos-shell shell",

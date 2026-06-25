@@ -333,7 +333,8 @@ jobs:
           npx turbo build \
             --filter='!@rivet-dev/agentos-playground' \
             --filter='!@agentos/website' \
-            --filter='!./examples/*'
+            --filter='!./examples/*' \
+            --filter='!./examples/quickstart/*'
       - name: Finalize package versions for publish (inject optionalDeps)
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \

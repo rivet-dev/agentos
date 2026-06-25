@@ -951,14 +951,53 @@ const AgentOrchestration = () => (
 );
 
 
-const DocsLink = ({ href }: { href: string }) => (
-	<a
-		href={href}
-		className='inline-flex items-center gap-1 text-sm text-ink-soft transition-colors hover:text-ink'
-	>
-		Docs <span aria-hidden='true'>→</span>
-	</a>
-);
+// Magnetic Docs link: on hover it grows slightly and drifts toward the cursor
+// (~0.3× the pointer's offset from the link's center), spring-eased back on leave.
+const DocsLink = ({ href }: { href: string }) => {
+	const reduce = useReducedMotion() ?? false;
+	const ref = useRef<HTMLAnchorElement>(null);
+	// Drive the CSS `translate`/`scale` transform properties directly so the
+	// browser compositor interpolates them (smooth, GPU). They're independent
+	// properties, so the drift can ease slowly while the zoom stays snappy.
+	const handleMove = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+		const el = ref.current;
+		if (!el) return;
+		const rect = el.getBoundingClientRect();
+		const x = (e.clientX - (rect.left + rect.width / 2)) * 0.15;
+		const y = (e.clientY - (rect.top + rect.height / 2)) * 0.15;
+		el.style.translate = `${x}px ${y}px`;
+		el.style.scale = '1.02';
+	}, []);
+	const handleLeave = useCallback(() => {
+		const el = ref.current;
+		if (!el) return;
+		el.style.translate = '0px 0px';
+		el.style.scale = '1';
+	}, []);
+	return (
+		// Padding + matching negative margin enlarge the hover/hit area without
+		// shifting layout, so the magnet engages well before the cursor reaches
+		// the text. Slow ease on translate, snappy on scale.
+		<a
+			ref={ref}
+			href={href}
+			onMouseMove={reduce ? undefined : handleMove}
+			onMouseLeave={reduce ? undefined : handleLeave}
+			style={
+				reduce
+					? undefined
+					: {
+							transition:
+								'translate 700ms cubic-bezier(0.22,1,0.36,1), scale 180ms ease-out, color 150ms ease',
+							willChange: 'translate, scale',
+						}
+			}
+			className='-mx-5 -my-4 inline-flex w-fit items-center gap-1 px-5 py-4 text-sm text-ink-soft hover:text-ink'
+		>
+			Docs <span aria-hidden='true'>→</span>
+		</a>
+	);
+};
 
 // --- Capability Card (shared by the OS grid and the orchestration bento) ---
 // `span` drives bento placement (e.g. 'lg:col-span-2 lg:row-span-2'); `featured`
@@ -1022,10 +1061,10 @@ const osFeatures = [
 // Each tile idles with a gentle bob and drifts with the cursor (parallax) while
 // the card is hovered. `depth` varies per tile so nearer logos move further.
 const FLOATING_AGENTS = [
-	{ src: '/images/registry/claude-code.svg', label: 'Claude Code', left: '75%', top: '9%', size: 84, depth: 13, float: 11, dur: 6.6, delay: 0 },
-	{ src: '/images/registry/codex.svg', label: 'Codex', left: '83%', top: '43%', size: 64, depth: 17, float: 9, dur: 7.8, delay: 0.6 },
-	{ src: '/images/registry/opencode.svg', label: 'OpenCode', left: '64%', top: '65%', size: 80, depth: 20, float: 13, dur: 7.1, delay: 1.2 },
-	{ src: '/images/registry/pi.svg', label: 'PI', left: '16%', top: '59%', size: 74, depth: 23, float: 9, dur: 8.2, delay: 1.6 },
+	{ src: '/images/registry/claude-code.svg', label: 'Claude Code', left: '75%', top: '9%', size: 84, depth: 13, float: 11, dur: 6.6, delay: 0, rot: -8 },
+	{ src: '/images/registry/codex.svg', label: 'Codex', left: '83%', top: '43%', size: 64, depth: 17, float: 9, dur: 7.8, delay: 0.6, rot: 6 },
+	{ src: '/images/registry/opencode.svg', label: 'OpenCode', left: '64%', top: '65%', size: 80, depth: 20, float: 13, dur: 7.1, delay: 1.2, rot: -5 },
+	{ src: '/images/registry/pi.svg', label: 'PI', left: '16%', top: '59%', size: 74, depth: 23, float: 9, dur: 8.2, delay: 1.6, rot: 9 },
 ] as const;
 
 type FloatingAgent = (typeof FLOATING_AGENTS)[number];
@@ -1040,7 +1079,7 @@ const FloatingAgentTile = ({ agent, mx, my, reduce }: { agent: FloatingAgent; mx
 				animate={reduce ? undefined : { y: [0, -agent.float, 0] }}
 				transition={reduce ? undefined : { duration: agent.dur, delay: agent.delay, repeat: Infinity, ease: 'easeInOut' }}
 				className='flex items-center justify-center rounded-2xl bg-gradient-to-b from-white to-[#f1f1f3] ring-1 ring-ink/10 shadow-[0_2px_6px_-1px_rgba(20,20,22,0.10),0_16px_34px_-12px_rgba(20,20,22,0.26)]'
-				style={{ width: agent.size, height: agent.size }}
+				style={{ width: agent.size, height: agent.size, rotate: agent.rot }}
 			>
 				<img src={agent.src} alt={agent.label} width={logo} height={logo} className='object-contain' style={{ width: logo, height: logo }} />
 			</motion.div>

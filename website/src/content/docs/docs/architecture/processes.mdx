@@ -4,8 +4,6 @@ description: "Internals of the kernel process model: the virtual process table, 
 skill: true
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 This page is an internals deep-dive on the kernel's **process model**: the data
 structures and syscall paths behind every guest process. For the client-facing
 API (`exec`, `spawn`, `openShell`, lifecycle, the process tree), see
@@ -27,7 +25,7 @@ inside that VM; nothing in it corresponds to a host PID.
 - **Tracks lifecycle and lineage.** Each entry carries its PID, the command and arguments, parent PID (so the tree can be reconstructed), running/exited status, exit code once collected, and its attached stdio endpoints.
 - **Records a driver.** An entry knows which execution backend services it (for example a V8 isolate versus a WASM runtime). This is the `driver` field surfaced on `allProcesses`. Drivers differ in *how* the code runs; they share the same table, the same kernel-owned stdio, and the same boundary.
 
-<Aside type="note">The process table is part of the kernel the sidecar owns. The executor never mutates it directly; it can only ask the kernel to create, wait on, or signal an entry. That request-only relationship is the sidecar-to-executor boundary applied to processes.</Aside>
+<Note>The process table is part of the kernel the sidecar owns. The executor never mutates it directly; it can only ask the kernel to create, wait on, or signal an entry. That request-only relationship is the sidecar-to-executor boundary applied to processes.</Note>
 
 ## How a spawn is serviced
 

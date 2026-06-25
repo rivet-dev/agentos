@@ -12,8 +12,18 @@ packages:
   - packages/shell
   - packages/sidecar-binary
   - examples/*
+  # Nested example packages (e.g. examples/quickstart/hello-world) so every
+  # embeddable example is a workspace member that `turbo check-types` covers.
+  - examples/*/*
   - scripts/publish
   - website
+  # Local docs theme consumed as a workspace member (symlinked from ~/docs-theme
+  # via vendor-theme/*) so React hoists to ONE copy across website + theme —
+  # otherwise the file:/link: cross-repo dep duplicates React and docs islands
+  # don't hydrate in `astro dev`. Source of truth stays ~/docs-theme.
+  - website/vendor/theme
+  - website/vendor/theme/vendor/components
+  - website/vendor/theme/vendor/icons
 
 ignoredBuiltDependencies:
   - '@clerk/shared'

@@ -4,8 +4,6 @@ description: "Read, write, mount, and manage files inside agentOS, all backed by
 skill: true
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
-
 Each VM has its own filesystem that the agent works in. Guest `fs` calls never touch the host disk, and it persists automatically across sleep/wake with no setup. See [Persistence](/docs/persistence) for the details.
 
 ## Mounts
@@ -14,148 +12,51 @@ Back a guest path with external storage by adding it to the `mounts` config. Eac
 
 <Tabs>
 
-<TabItem label="Host directory">
+<Tab title="Host directory">
 
 Project a real host directory into the filesystem, Docker-style. The guest sees only the mounted subtree, never the wider host filesystem. Path-escape attempts (symlinks, `..`, path aliasing) are confined to the mount root.
 
-```ts
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
+<CodeSnippet file="examples/filesystem/mount-host-dir.ts" />
 
-const vm = agentOS({
-  software: [pi],
-  mounts: [
-    {
-      path: "/home/agentos/repo",
-      plugin: { id: "host_dir", config: { hostPath: "/path/to/repo" } },
-      readOnly: true,
-    },
-  ],
-});
+</Tab>
 
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
-
-</TabItem>
-
-<TabItem label="S3">
+<Tab title="S3">
 
 Mount an S3 bucket with the built-in `s3` plugin. Pass an optional `prefix` to scope storage to a key path within the bucket, useful for sharing one bucket across multiple agents.
 
 The backend is a block store, not a one-object-per-file mapping: file contents are split into fixed-size chunks (4 MB by default) stored as individual S3 objects, with a separate metadata layer mapping each file to its chunks. This keeps large files, partial reads and writes, and snapshots efficient without rewriting whole objects.
 
-```ts
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-  mounts: [
-    {
-      path: "/home/agentos/data",
-      plugin: {
-        id: "s3",
-        config: {
-          bucket: "my-bucket",
-          prefix: "agent-data/",
-          region: "us-east-1",
-        },
-      },
-    },
-  ],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
+<CodeSnippet file="examples/filesystem/mount-s3.ts" />
 
 The `s3` plugin config also accepts `credentials` (`{ accessKeyId, secretAccessKey }`) and a custom `endpoint` for S3-compatible providers.
 
-</TabItem>
+</Tab>
 
-<TabItem label="Google Drive">
+<Tab title="Google Drive">
 
 Mount a Google Drive folder with the built-in `google_drive` plugin.
 
-```ts
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
+<CodeSnippet file="examples/filesystem/mount-google-drive.ts" />
 
-const vm = agentOS({
-  software: [pi],
-  mounts: [
-    {
-      path: "/home/agentos/drive",
-      plugin: {
-        id: "google_drive",
-        config: {
-          credentials: {
-            clientEmail: process.env.GOOGLE_DRIVE_CLIENT_EMAIL!,
-            privateKey: process.env.GOOGLE_DRIVE_PRIVATE_KEY!,
-          },
-          folderId: process.env.GOOGLE_DRIVE_FOLDER_ID!,
-        },
-      },
-    },
-  ],
-});
+</Tab>
 
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
-
-</TabItem>
-
-<TabItem label="In-memory">
+<Tab title="In-memory">
 
 Use the built-in `memory` plugin for an ephemeral mounted directory in the native RivetKit `agentOS()` actor.
 
-```ts
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
+<CodeSnippet file="examples/filesystem/server.ts" />
 
-const vm = agentOS({
-  software: [pi],
-  mounts: [
-    {
-      path: "/home/agentos/scratch",
-      plugin: { id: "memory", config: {} },
-    },
-  ],
-});
+</Tab>
 
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
-
-</TabItem>
-
-<TabItem label="Custom JS VFS">
+<Tab title="Custom JS VFS">
 
 Use `mountFs()` for a callback-backed JS filesystem driver. The driver must live in the same JS process as the `AgentOs` instance, such as direct core usage or a custom RivetKit actor that owns an `AgentOs` instance.
 
-```ts
-import { AgentOs, createInMemoryFileSystem } from "@rivet-dev/agentos-core";
-
-const vm = await AgentOs.create({ defaultSoftware: false });
-const driver = createInMemoryFileSystem();
-
-vm.mountFs("/home/agentos/scratch", driver);
-await vm.writeFile("/home/agentos/scratch/hello.txt", "hello");
-```
+<CodeSnippet file="examples/filesystem/mount-custom-vfs.ts" />
 
 The native `agentOS()` actor cannot accept `{ driver }` mounts in config because JS callback objects are not serializable across the native plugin boundary. Use `plugin` mounts there.
 
-</TabItem>
+</Tab>
 
 </Tabs>
 
@@ -165,87 +66,23 @@ These operations are primarily what the agent uses inside the VM, and are also a
 
 ### Read and write
 
-```ts
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-
-// Write a file (string or Uint8Array)
-await agent.writeFile("/home/agentos/hello.txt", "Hello, world!");
-
-// Read a file (returns Uint8Array)
-const content = await agent.readFile("/home/agentos/hello.txt");
-console.log(new TextDecoder().decode(content));
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
+<CodeSnippet file="examples/filesystem/operations.ts" region="read-write" />
 
 ### Batch read and write
 
-```ts
-// Batch write (creates parent directories automatically)
-const writeResults = await agent.writeFiles([
-  { path: "/home/agentos/src/index.ts", content: "console.log('hello');" },
-  { path: "/home/agentos/src/utils.ts", content: "export function add(a: number, b: number) { return a + b; }" },
-]);
-
-// Batch read
-const readResults = await agent.readFiles([
-  "/home/agentos/src/index.ts",
-  "/home/agentos/src/utils.ts",
-]);
-for (const result of readResults) {
-  console.log(result.path, new TextDecoder().decode(result.content ?? new Uint8Array()));
-}
-```
+<CodeSnippet file="examples/filesystem/operations.ts" region="batch" />
 
 ### Directories
 
-```ts
-// Create a directory
-await agent.mkdir("/home/agentos/projects");
-
-// List directory contents
-const entries = await agent.readdir("/home/agentos/projects");
-
-// Recursive listing with metadata
-const tree = await agent.readdirRecursive("/home/agentos", {
-  maxDepth: 3,
-  exclude: ["node_modules"],
-});
-for (const entry of tree) {
-  console.log(entry.type, entry.path, entry.size);
-}
-```
+<CodeSnippet file="examples/filesystem/operations.ts" region="directories" />
 
 ### File metadata
 
-```ts
-// Check if a path exists
-const fileExists = await agent.exists("/home/agentos/hello.txt");
-
-// Get file metadata
-const info = await agent.stat("/home/agentos/hello.txt");
-console.log(info.size, info.isDirectory, info.mtimeMs);
-```
+<CodeSnippet file="examples/filesystem/operations.ts" region="metadata" />
 
 ### Move and delete
 
-```ts
-// Move/rename
-await agent.move("/home/agentos/old.txt", "/home/agentos/new.txt");
-
-// Delete a file
-await agent.delete("/home/agentos/new.txt");
-
-// Delete a directory recursively
-await agent.delete("/home/agentos/temp", { recursive: true });
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
-
+<CodeSnippet file="examples/filesystem/operations.ts" region="move-delete" />
 
 ## Permissions
 

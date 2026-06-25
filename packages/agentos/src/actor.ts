@@ -29,6 +29,7 @@ import {
 	nativeAgentOsOptionsSchema,
 } from "./config.js";
 import { getPluginPath } from "./plugin-binary.js";
+import type { AgentOsActions } from "./actor-actions.js";
 import type { AgentOsActorState, AgentOsActorVars } from "./types.js";
 
 /**
@@ -342,9 +343,12 @@ function buildNativeFactoryBuilder<TConnParams>(
 }
 
 /**
- * Type alias for the `agentOs(...)` return type. Events are not typed at the
- * TS surface because the Rust plugin owns the broadcast set and the
- * test/client surface uses `any` for actions.
+ * Type alias for the `agentOs(...)` return type. Events are not typed at the TS
+ * surface because the Rust plugin owns the broadcast set, but the ACTIONS are
+ * typed via {@link AgentOsActions} — a TS mirror of the Rust dispatch in
+ * `crates/agentos-actor-plugin/src/actions/mod.rs`. That is what gives
+ * `createClient<typeof registry>()` a fully-typed handle (e.g. `handle.exec()`
+ * returns `ExecResult`, not `unknown`). Keep the two in sync.
  */
 export type AgentOsActorDefinition<TConnParams> = ActorDefinition<
 	AgentOsActorState,
@@ -355,7 +359,7 @@ export type AgentOsActorDefinition<TConnParams> = ActorDefinition<
 	DatabaseProvider<RawAccess>,
 	Record<never, never>,
 	Record<never, never>,
-	any
+	AgentOsActions
 >;
 
 // One hour — far past any normal agent turn, connection setup, or idle gap, but

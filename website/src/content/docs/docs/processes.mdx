@@ -4,8 +4,6 @@ description: "Execute commands, spawn long-running processes, and open interacti
 skill: true
 ---
 
-import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
-
 Run commands with one-shot `exec`, spawn long-running processes with streaming stdout/stderr and stdin, manage their lifecycle (stop, kill, wait, inspect), open interactive PTY-backed shells, and inspect the process tree across all VM runtimes.
 
 ## One-shot execution
@@ -13,203 +11,41 @@ Run commands with one-shot `exec`, spawn long-running processes with streaming s
 Use `exec` to run a command and wait for completion. Returns stdout, stderr, and exit code.
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-
-const result = await client.vm.getOrCreate("my-agent").exec("echo hello && ls /home/agentos");
-console.log("stdout:", result.stdout);
-console.log("stderr:", result.stderr);
-console.log("exit code:", result.exitCode);
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/processes/exec.ts" />
+<CodeSnippet file="examples/processes/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/processes)*
 
 ## Spawn a long-running process
 
 Use `spawn` for processes that run in the background. Output is streamed via `processOutput` and `processExit` events.
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-const conn = agent.connect();
-
-// Subscribe to process output
-conn.on("processOutput", (data) => {
-  const text = new TextDecoder().decode(data.data);
-  console.log(`[pid ${data.pid}] ${data.stream}: ${text}`);
-});
-
-conn.on("processExit", (data) => {
-  console.log(`[pid ${data.pid}] exited with code ${data.exitCode}`);
-});
-
-// Spawn a dev server
-const { pid } = await agent.spawn("node", ["/home/agentos/server.js"]);
-console.log("Started process:", pid);
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/processes/spawn.ts" />
+<CodeSnippet file="examples/processes/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/processes)*
 
 ## Write to stdin
 
 Send input to a running process.
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-
-const { pid } = await agent.spawn("cat", []);
-
-// Write to stdin
-await agent.writeProcessStdin(pid, "hello from stdin\n");
-
-// Close stdin when done
-await agent.closeProcessStdin(pid);
-
-// Wait for the process to exit
-const exitCode = await agent.waitProcess(pid);
-console.log("exit code:", exitCode);
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/processes/stdin.ts" />
+<CodeSnippet file="examples/processes/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/processes)*
 
 ## Process lifecycle
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-
-const { pid } = await agent.spawn("node", ["/home/agentos/server.js"]);
-
-// List all processes tracked by the VM
-const processes = await agent.listProcesses();
-for (const p of processes) {
-  console.log(p.pid, p.command, p.args.join(" "), p.running ? "running" : "exited");
-}
-
-// Inspect a specific process by pid
-const info = await agent.getProcess(pid);
-console.log(info.running, info.exitCode);
-
-// Graceful stop (SIGTERM)
-await agent.stopProcess(pid);
-
-// Force kill (SIGKILL)
-await agent.killProcess(pid);
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/processes/lifecycle.ts" />
+<CodeSnippet file="examples/processes/server.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/processes)*
 
 ## Interactive shells
 
 Open an interactive shell with PTY support. Shell data is streamed via `shellData` events.
 
 <CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-const conn = agent.connect();
-
-// Subscribe to shell output
-conn.on("shellData", (data) => {
-  const text = new TextDecoder().decode(data.data);
-  process.stdout.write(text);
-});
-
-// Open a shell
-const { shellId } = await agent.openShell();
-
-// Write commands to the shell
-await agent.writeShell(shellId, "ls -la /home/agentos\n");
-
-// Resize the terminal
-await agent.resizeShell(shellId, 120, 40);
-
-// Close the shell when done
-await agent.closeShell(shellId);
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
+<CodeSnippet file="examples/processes/shell.ts" />
+<CodeSnippet file="examples/processes/server.ts" />
 </CodeGroup>
 
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/processes)*

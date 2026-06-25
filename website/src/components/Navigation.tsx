@@ -21,6 +21,7 @@ function DiscordIcon({ className }: { className?: string }) {
 
 const NAV_LINKS: { href: string; label: string; badge?: number }[] = [
   { href: "/docs", label: "Documentation" },
+  { href: "/cookbooks", label: "Cookbooks" },
   { href: "/use-cases", label: "Use Cases" },
   { href: "/registry", label: "Registry", badge: registry.length },
   { href: "/docs/deployment", label: "Deploy" },
@@ -140,7 +141,7 @@ export function Navigation({ revealLogoOnScroll = false }: { revealLogoOnScroll?
                 <DiscordIcon className="h-5 w-5" />
               </a>
               <GitHubStars
-                repo="rivet-dev/agent-os"
+                repo="rivet-dev/agentos"
                 className="inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-ink/15 bg-white/55 px-4 py-2 text-sm text-ink shadow-sm transition-colors hover:border-ink/30"
               />
             </div>
@@ -181,7 +182,7 @@ export function Navigation({ revealLogoOnScroll = false }: { revealLogoOnScroll?
                 <span className="font-medium">Discord</span>
               </a>
               <GitHubStars
-                repo="rivet-dev/agent-os"
+                repo="rivet-dev/agentos"
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
                 onClick={() => setMobileMenuOpen(false)}
               />

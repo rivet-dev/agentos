@@ -4,8 +4,6 @@ description: "How an agent's SDK is evaluated once per sidecar into a V8 heap sn
 skill: true
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 This page is an internals deep-dive on **agent SDK snapshotting** — an optional optimization that loads an agent's SDK *once per sidecar* and reuses it for every session, instead of re-evaluating the whole SDK module graph on each `createSession`. For the agent-author view (how to opt in and the rules your SDK must follow), see [Software Definition → SDK snapshotting & snapshot-safety](/docs/custom-software/definition). For how sessions work in general, see [Agent Sessions](/docs/architecture/agent-sessions).
 
 ## The problem: per-session SDK re-evaluation
@@ -46,9 +44,10 @@ The blob is stored in a **sidecar-process-wide cache keyed by `sha256(bridge + b
 
 Building the snapshot is itself the expensive evaluation, just done once. To keep it off the session-create critical path, the sidecar **pre-warms** at VM creation: when a VM is configured with a snapshot bundle, the sidecar builds the blob into the cache *before* the first session is created. The first session then restores from a warm cache like every session after it.
 
-<Aside type="caution" title="Pre-warm and V8 initialization order">
+<Warning>
+**Pre-warm and V8 initialization order**
 The V8 platform must be initialized on a long-lived thread *before* any pre-warm runs. agentOS initializes the embedded runtime on the sidecar's main thread at startup. Initializing V8 lazily on a transient worker thread that then exits corrupts the platform and wedges later isolate creation — so the startup init is load-bearing, not incidental.
-</Aside>
+</Warning>
 
 ### 5. Restore a fresh isolate per session
 
@@ -72,6 +71,7 @@ Real-world SDKs frequently break these by accident. agentOS makes such an SDK sn
 
 Snapshotting is **opt-in per agent**, via `agent.snapshot: true` on the [agent software descriptor](/docs/custom-software/definition), and requires the agent package to ship a snapshot-safe `dist/sdk-snapshot.js`. Today only the Pi agent opts in; other agents run the normal per-session import path. An agent qualifies by (1) being snapshot-safe and (2) building the bundle — there is nothing Pi-specific in the runtime mechanism.
 
-<Aside type="note" title="Current trade-off">
+<Note>
+**Current trade-off**
 The bundle is currently delivered inline in the (trusted) VM config, which moves bytes onto VM creation. The intended refinement is to ship the bundle as a build-time blob the sidecar loads from the guest VFS by path, keeping the config small. Either way the snapshot is built once per sidecar and reused across sessions.
-</Aside>
+</Note>

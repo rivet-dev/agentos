@@ -4,8 +4,6 @@ description: "Install software packages and configure the commands available ins
 skill: true
 ---
 
-import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
-
 agentOS ships with a common set of POSIX utilities (coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip) out of the box. The `software` option installs additional packages, each providing one or more CLI commands.
 
 ## Install
@@ -21,46 +19,14 @@ Add packages like `@agentos-software/ripgrep` or `@agentos-software/jq` for anyt
 Import the software packages you want, list them in the `software` array on the actor, then run commands through the client handle.
 
 <CodeGroup>
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-import ripgrep from "@agentos-software/ripgrep";
-import jq from "@agentos-software/jq";
+<CodeSnippet file="examples/software/server.ts" />
 
-// Each entry adds its CLI commands to the VM. Common POSIX utilities ship by
-// default; `pi` is the agent, and `ripgrep`/`jq` add the `rg` and `jq`
-// commands. Browse the registry for more packages.
-const vm = agentOS({
-	software: [pi, ripgrep, jq],
-});
-
-export const registry = setup({ use: { vm } });
-
-registry.start();
-```
-
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({
-	endpoint: "http://localhost:6420",
-});
-const agent = client.vm.getOrCreate("my-agent");
-
-// `rg` (ripgrep) and `jq` are now available inside the VM. Find files containing
-// "TODO" and pretty-print the matching paths as JSON.
-const result = await agent.exec("rg --files-with-matches TODO /home/agentos | jq -R .");
-console.log(result.stdout);
-```
+<CodeSnippet file="examples/software/client.ts" />
 </CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/software)*
 
 ## Available Packages
 
 Browse all available software packages on the [Registry](/registry).
-
 
 ## Custom Software
 

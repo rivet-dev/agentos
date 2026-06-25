@@ -4,8 +4,6 @@ description: "A high-level tour of how agentOS works: the client / server / VM p
 skill: true
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 agentOS runs AI agents and untrusted code safely inside fully virtualized Linux VMs. Nothing the guest does touches your host directly: there is no real host filesystem, no real host network socket, and no real host process. Every guest operation is serviced by a kernel that agentOS owns.
 
 This page is a high-level tour. It walks through the overall shape, the parts that make up a VM, how agent sessions work, and the orchestration layer underneath. Each section links out to a detailed page when you want to go deeper.
@@ -259,7 +257,7 @@ The executor is the untrusted half of the VM. It runs the guest code and reaches
 - **Preview URLs.** Servers a guest starts can be exposed through signed preview URLs.
 - See [Networking](/docs/architecture/networking) for the internals.
 
-<Aside type="note">The security boundary that matters is between the trusted sidecar and the untrusted executor. Everything the guest tries to do crosses into the kernel, where the policy is checked before the operation runs. See the [Security Model](/docs/security-model) for the full threat model.</Aside>
+<Note>The security boundary that matters is between the trusted sidecar and the untrusted executor. Everything the guest tries to do crosses into the kernel, where the policy is checked before the operation runs. See the [Security Model](/docs/security-model) for the full threat model.</Note>
 
 ## Agents & sessions
 

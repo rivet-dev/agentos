@@ -4,8 +4,6 @@ description: "How agentOS extends WASI in two layers so WebAssembly guests behav
 skill: true
 ---
 
-import { Aside } from '@astrojs/starlight/components';
-
 Not everything inside an agentOS VM is JavaScript. The shell (`sh`) and the
 coreutils behind [process execution](/docs/processes) ship as WebAssembly
 binaries, and you can run your own WASM programs too. To make those programs
@@ -29,12 +27,12 @@ WASI is intentionally minimal:
 Real command-line programs expect all of those. agentOS closes the gap in two
 layers, and both route through the kernel rather than the host.
 
-<Aside type="note">
+<Note>
 Every WASM syscall, like every JS syscall, goes through the kernel-owned virtual
 filesystem, process table, and socket table. The extensions below add POSIX
 *shape*; they do not add host access. See the [Security Model](/docs/security-model)
 for the isolation boundary.
-</Aside>
+</Note>
 
 ## The two-layer model
 

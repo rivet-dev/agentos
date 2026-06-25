@@ -36,7 +36,6 @@ export const EXCLUDED = new Set<string>([
 	"@rivet-dev/agentos-dev-shell",
 	"@rivet-dev/agentos-playground",
 	"@rivet-dev/agentos-shell",
-	"@rivet-dev/agentos-quickstart",
 	"secure-exec",
 	"@secure-exec/typescript",
 	"publish",

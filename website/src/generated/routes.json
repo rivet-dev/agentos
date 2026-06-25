@@ -1,0 +1,200 @@
+{
+  "pages": {
+    "/docs/docs/agent-to-agent": {
+      "title": "Agent-to-Agent Communication",
+      "description": "Use bindings to let agents communicate with each other."
+    },
+    "/docs/docs/approvals": {
+      "title": "Approvals",
+      "description": "Approve or deny agent tool use with human-in-the-loop or auto-approve patterns."
+    },
+    "/docs/docs/architecture": {
+      "title": "Overview",
+      "description": "A high-level tour of how agentOS works: the client / server / VM picture, the anatomy of a Linux VM (kernel + executor), agents and sessions, and the Rivet Actor orchestration underneath."
+    },
+    "/docs/docs/authentication": {
+      "title": "Authentication",
+      "description": "Authenticate connections to agentOS actors using Rivet Actor connection params and hooks."
+    },
+    "/docs/docs/benchmarks": {
+      "title": "Benchmarks",
+      "description": "Performance benchmarks comparing agentOS to traditional sandbox providers."
+    },
+    "/docs/docs/bindings": {
+      "title": "Bindings",
+      "description": "Expose custom host functions to agents as CLI commands inside the VM."
+    },
+    "/docs/docs/core": {
+      "title": "Core Package",
+      "description": "Use @rivet-dev/agentos-core standalone for direct VM control without the Rivet Actor runtime."
+    },
+    "/docs/docs/cost-evaluation": {
+      "title": "Cost Evaluation",
+      "description": "How agentOS compares on cost to per-second sandbox providers when you run coding-agent VMs on your own hardware."
+    },
+    "/docs/docs/crash-course": {
+      "title": "Crash Course",
+      "description": "Run coding agents inside isolated VMs with full filesystem, process, and network control."
+    },
+    "/docs/docs/cron": {
+      "title": "Cron Jobs",
+      "description": "Schedule recurring commands and agent sessions in agentOS VMs."
+    },
+    "/docs/docs/debugging": {
+      "title": "Debugging",
+      "description": "Capture agent logs and runtime (sidecar) logs to diagnose sessions, tool calls, and crashes."
+    },
+    "/docs/docs/deployment": {
+      "title": "Deploy",
+      "description": "Choose the right deployment option for agentOS."
+    },
+    "/docs/docs/filesystem": {
+      "title": "Filesystem",
+      "description": "Read, write, mount, and manage files inside agentOS, all backed by a virtual filesystem isolated from the host disk."
+    },
+    "/docs/docs": {
+      "title": "Introduction",
+      "description": "Run coding agents inside isolated VMs with full filesystem, process, and network control."
+    },
+    "/docs/docs/js-runtime": {
+      "title": "JavaScript Runtime",
+      "description": "How agentOS runs guest JavaScript: native V8 acceleration, low memory overhead, and Node.js compatibility."
+    },
+    "/docs/docs/limitations": {
+      "title": "Limitations",
+      "description": "What the agentOS VM does not support, and how to work around it."
+    },
+    "/docs/docs/llm-credentials": {
+      "title": "LLM Credentials",
+      "description": "Pass LLM API keys to agent sessions securely."
+    },
+    "/docs/docs/llm-gateway": {
+      "title": "Embedded LLM Gateway",
+      "description": "Route, meter, and manage LLM API calls from agents."
+    },
+    "/docs/docs/multiplayer": {
+      "title": "Multiplayer",
+      "description": "Connect multiple clients to the same agentOS actor for collaborative agent workflows."
+    },
+    "/docs/docs/networking": {
+      "title": "Networking & Previews",
+      "description": "Proxy HTTP requests into agentOS VMs and create shareable preview URLs."
+    },
+    "/docs/docs/permissions": {
+      "title": "Permissions",
+      "description": "The per-scope kernel permission policy that gates every guest syscall in the sandbox."
+    },
+    "/docs/docs/persistence": {
+      "title": "Persistence & Sleep",
+      "description": "How agentOS persists data and manages sleep/wake cycles."
+    },
+    "/docs/docs/processes": {
+      "title": "Processes & Shell",
+      "description": "Execute commands, spawn long-running processes, and open interactive shells in agentOS VMs."
+    },
+    "/docs/docs/quickstart": {
+      "title": "Quickstart",
+      "description": "Set up an agentOS actor, create a session, and run your first coding agent."
+    },
+    "/docs/docs/resource-limits": {
+      "title": "Resource Limits",
+      "description": "Cap per-VM processes, file descriptors, sockets, and filesystem bytes so guest code can never exhaust the host."
+    },
+    "/docs/docs/sandbox": {
+      "title": "Sandbox Mounting",
+      "description": "Extend agentOS with full sandboxes for heavy workloads like browsers, desktop automation, and compilation."
+    },
+    "/docs/docs/security-model": {
+      "title": "Security Model",
+      "description": "Trust boundaries, isolation guarantees, and the agentOS threat model."
+    },
+    "/docs/docs/sessions": {
+      "title": "Sessions",
+      "description": "Create agent sessions, send prompts, stream responses, and subscribe to events."
+    },
+    "/docs/docs/software": {
+      "title": "Software",
+      "description": "Install software packages and configure the commands available inside agentOS."
+    },
+    "/docs/docs/system-prompt": {
+      "title": "System Prompt",
+      "description": "How agentOS injects context into agent sessions."
+    },
+    "/docs/docs/versus-sandbox": {
+      "title": "agentOS vs Sandbox",
+      "description": "When to use the lightweight agentOS VM, a full sandbox, or both together."
+    },
+    "/docs/docs/webhooks": {
+      "title": "Webhooks",
+      "description": "Trigger agent workflows from external webhooks using Hono and queues."
+    },
+    "/docs/docs/workflows": {
+      "title": "Workflow Automation",
+      "description": "Orchestrate multi-step agent tasks with durable workflows."
+    },
+    "/docs/docs/agents/claude": {
+      "title": "Claude Code",
+      "description": "Run the Claude Code agent inside a VM with skills, MCP servers, and custom configuration."
+    },
+    "/docs/docs/agents/codex": {
+      "title": "Codex",
+      "description": "Run the Codex coding agent inside a VM with skills, MCP servers, and custom configuration."
+    },
+    "/docs/docs/agents/custom": {
+      "title": "Custom Agents",
+      "description": "Bring your own coding agent to agentOS by speaking the Agent Client Protocol (ACP) inside the VM."
+    },
+    "/docs/docs/agents/opencode": {
+      "title": "OpenCode",
+      "description": "Run the OpenCode coding agent inside a VM with skills, MCP servers, and custom configuration."
+    },
+    "/docs/docs/agents/pi": {
+      "title": "Pi",
+      "description": "Run the Pi coding agent inside a VM with extensions and custom configuration."
+    },
+    "/docs/docs/architecture/agent-sdk-snapshots": {
+      "title": "Agent SDK Snapshots",
+      "description": "How an agent's SDK is evaluated once per sidecar into a V8 heap snapshot and reused across sessions instead of re-imported on every createSession: the bundle, the userland snapshot, the process-wide cache, pre-warm, per-session restore, isolation, and the snapshot-safety rules an SDK must follow."
+    },
+    "/docs/docs/architecture/agent-sessions": {
+      "title": "Agent Sessions",
+      "description": "Internals of agent sessions: how a session is created and bound to a VM, how prompts and events flow from client to sidecar to agent adapter and back, the session lifecycle, and where session state lives."
+    },
+    "/docs/docs/architecture/compiler-toolchain": {
+      "title": "Compiler Toolchain",
+      "description": "How agentOS compiles its command suite to WebAssembly: Rust coreutils via cargo and C programs via wasi-sdk, linked against a patched wasi-libc plus the wasi-ext bindings, and how the resulting .wasm files become the guest's commands."
+    },
+    "/docs/docs/architecture/filesystem": {
+      "title": "Filesystem",
+      "description": "Internals of the kernel VFS: the overlay/mount/root engines, how guest fs syscalls are routed and confined, WASM preopens, and mount confinement against symlink and .. escapes."
+    },
+    "/docs/docs/architecture/limits-and-observability": {
+      "title": "Limits & Observability",
+      "description": "How agentOS bounds resources, applies backpressure, warns before a limit is hit, and surfaces it all to the host."
+    },
+    "/docs/docs/architecture/networking": {
+      "title": "Networking",
+      "description": "How the kernel socket table works: a single VM-local transport that carries host, JavaScript, and WASM traffic, where fetch / net / dns route through it, how egress policy and loopback confinement are enforced, and how preview URLs are served."
+    },
+    "/docs/docs/architecture/posix-syscalls": {
+      "title": "POSIX Syscalls",
+      "description": "How agentOS extends WASI in two layers so WebAssembly guests behave like normal POSIX programs on top of the kernel."
+    },
+    "/docs/docs/architecture/processes": {
+      "title": "Processes",
+      "description": "Internals of the kernel process model: the virtual process table, how spawns are serviced, stdio bridging, PTYs, and how WASM sh and coreutils map onto it."
+    },
+    "/docs/docs/architecture/sessions-persistence": {
+      "title": "Sessions & Persistence",
+      "description": "How agentOS, ACP, RivetKit actors, and durable session persistence fit together."
+    },
+    "/docs/docs/custom-software/building-wasm": {
+      "title": "Building Binaries",
+      "description": "Compile WASM command binaries for agentOS from source in the secure-exec registry."
+    },
+    "/docs/docs/custom-software/definition": {
+      "title": "Software Definition",
+      "description": "The full software-package definition for custom agents, command packages, and WASM commands in an agentOS VM."
+    }
+  }
+}
