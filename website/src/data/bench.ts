@@ -4,8 +4,9 @@
  * All costs and multipliers are computed from the raw benchmark inputs below.
  * To update, change the input constants and everything recomputes.
  *
- * Source JSON files — copy from ~/a1/scripts/benchmarks/results/:
- *   coldstart-sleep.json     → COLDSTART_P50/P95/P99_MS  (result.p50Ms, p95Ms, p99Ms)
+ * Source JSON files — produced by scripts/benchmarks/run-benchmarks.sh into
+ * scripts/benchmarks/results/:
+ *   coldstart-sleep.json     → COLDSTART_P50/P95/P99_MS  (coldStart.p50, p95, p99)
  *   memory-sleep.json        → MEMORY_SHELL_MB           (result.avgPerVmRssBytes / 1024^2, rounded)
  *   memory-pi-session.json   → MEMORY_AGENT_MB           (result.avgPerVmRssBytes / 1024^2, rounded)
  */
@@ -18,7 +19,7 @@ export const COLDSTART_P95_MS = 5.6;
 export const COLDSTART_P99_MS = 6.1;
 
 // Memory per VM (MB, from avgPerVmRssBytes)
-// Copy from ~/a1/scripts/benchmarks/results/
+// Copy from scripts/benchmarks/results/
 export const MEMORY_AGENT_MB = 131;  // memory-pi-session.json  (137207808 / 1024^2)
 export const MEMORY_SHELL_MB = 22;   // memory-sleep.json       (23160422 / 1024^2)
 

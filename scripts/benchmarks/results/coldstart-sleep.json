@@ -7,14 +7,14 @@
     "os": "Linux 6.1.0-41-amd64",
     "arch": "x64"
   },
-  "workload": "echo",
-  "iterations": 5,
+  "workload": "sleep",
+  "iterations": 30,
   "coldStart": {
-    "mean": 38.05,
-    "p50": 37.35,
-    "p95": 41.06,
-    "p99": 41.06,
-    "min": 36.61,
-    "max": 41.06
+    "mean": 4.56,
+    "p50": 4.3,
+    "p95": 7.04,
+    "p99": 7.33,
+    "min": 3.83,
+    "max": 7.33
   }
 }

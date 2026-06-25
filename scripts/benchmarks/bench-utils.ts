@@ -1,10 +1,15 @@
-import { AgentOs, type SoftwareInput } from "@rivet-dev/agentos-core";
+import {
+	AgentOs,
+	type AgentOsOptions,
+	type AgentOsSidecar,
+	type RootSnapshotExport,
+	type SoftwareInput,
+} from "@rivet-dev/agentos-core";
 import { coreutils } from "@agentos-software/common";
 import claude from "@agentos-software/claude-code";
 import pi from "@agentos-software/pi";
 import { LLMock } from "@copilotkit/llmock";
 import os from "node:os";
-import { resolve } from "node:path";
 
 // Benchmark parameters. Keep batch sizes minimal for fast iteration.
 export const BATCH_SIZES = [1, 10];
@@ -19,10 +24,61 @@ export const PI_HEADLESS_BLOCKER_REFERENCE =
 	"packages/core/tests/pi-headless.test.ts";
 export const PI_HEADLESS_BLOCKER_REASON =
 	'Standalone `spawn("pi", ...)` is not exposed on the native sidecar PATH; use `createSession("pi-cli")` to benchmark the native PI CLI RPC path tracked in packages/core/tests/pi-headless.test.ts.';
-const BENCHMARK_MODULE_ACCESS_CWD = resolve(
-	import.meta.dirname,
-	"../../packages/core",
-);
+// ── Shared bench sidecar + cold-run snapshot ───────────────────────
+//
+// Benchmarks create the sidecar ONCE up front and lease every VM from it,
+// rather than letting each `AgentOs.create()` stand up its own sidecar. A
+// single cold-run VM is then created and its root filesystem snapshotted so
+// the subsequent measured VMs boot from a warm snapshot instead of paying the
+// bootstrap cost on every iteration. Both are wired through `benchCreateOptions`
+// so every VM-creation helper picks them up automatically.
+
+let _benchSidecar: AgentOsSidecar | undefined;
+let _benchSnapshot: RootSnapshotExport | undefined;
+
+/** Create the shared bench sidecar. Call once before creating any VM. */
+export async function startBenchSidecar(): Promise<AgentOsSidecar> {
+	if (!_benchSidecar) {
+		_benchSidecar = await AgentOs.createSidecar();
+	}
+	return _benchSidecar;
+}
+
+/** Dispose the shared bench sidecar and clear the cold-run snapshot. */
+export async function stopBenchSidecar(): Promise<void> {
+	_benchSnapshot = undefined;
+	if (_benchSidecar) {
+		const sidecar = _benchSidecar;
+		_benchSidecar = undefined;
+		await sidecar.dispose();
+	}
+}
+
+/** Record the cold-run root snapshot reused by subsequent measured VMs. */
+export function setBenchRootSnapshot(snapshot: RootSnapshotExport): void {
+	_benchSnapshot = snapshot;
+}
+
+/** Clear the cold-run root snapshot (e.g. when switching workloads). */
+export function clearBenchRootSnapshot(): void {
+	_benchSnapshot = undefined;
+}
+
+/**
+ * Overlay the shared bench sidecar (and cold-run snapshot, when set) onto a
+ * VM-creation options object. The snapshot only applies when the caller did
+ * not request its own `rootFilesystem`.
+ */
+export function benchCreateOptions(options: AgentOsOptions = {}): AgentOsOptions {
+	const overlay: AgentOsOptions = { ...options };
+	if (_benchSidecar) {
+		overlay.sidecar = { kind: "explicit", handle: _benchSidecar };
+	}
+	if (_benchSnapshot && overlay.rootFilesystem === undefined) {
+		overlay.rootFilesystem = { type: "overlay", lowers: [_benchSnapshot] };
+	}
+	return overlay;
+}
 
 // ── Shared mock LLM server ─────────────────────────────────────────
 
@@ -101,10 +157,12 @@ function makeAgentSessionWorkload(opts: {
 		description: opts.description,
 		createVm: async () => {
 			const { port } = await ensureLlmock();
-			return AgentOs.create({
-				software: opts.software,
-				loopbackExemptPorts: [port],
-			});
+			return AgentOs.create(
+				benchCreateOptions({
+					software: opts.software,
+					loopbackExemptPorts: [port],
+				}),
+			);
 		},
 		start: async (vm) => {
 			const { url } = await ensureLlmock();
@@ -158,11 +216,12 @@ function makeAgentPromptWorkload(opts: {
 		description: opts.description,
 		createVm: async () => {
 			const { port } = await ensureLlmock();
-			return AgentOs.create({
-				loopbackExemptPorts: [port],
-				moduleAccessCwd: BENCHMARK_MODULE_ACCESS_CWD,
-				software: opts.software,
-			});
+			return AgentOs.create(
+				benchCreateOptions({
+					loopbackExemptPorts: [port],
+					software: opts.software,
+				}),
+			);
 		},
 		start: async (vm) => {
 			const { url } = await ensureLlmock();
@@ -232,7 +291,7 @@ export const WORKLOADS: Record<string, Workload> = {
 	sleep: {
 		name: "sleep",
 		description: "Minimal VM with idle Node.js process (setTimeout keepalive)",
-		createVm: () => AgentOs.create(),
+		createVm: () => AgentOs.create(benchCreateOptions()),
 		start: (vm) => {
 			vm.spawn("node", ["-e", "setTimeout(() => {}, 999999999)"], {
 				streamStdin: true,
@@ -279,9 +338,11 @@ export const WORKLOADS: Record<string, Workload> = {
  * This is the minimal setup needed to run shell commands.
  */
 export async function createBenchVm(): Promise<AgentOs> {
-	return AgentOs.create({
-		software: [coreutils],
-	});
+	return AgentOs.create(
+		benchCreateOptions({
+			software: [coreutils],
+		}),
+	);
 }
 
 /**
@@ -298,10 +359,12 @@ export async function createAgentSessionVm(
 }> {
 	const { url, port } = await ensureLlmock();
 	const t0 = performance.now();
-	const vm = await AgentOs.create({
-		software,
-		loopbackExemptPorts: [port],
-	});
+	const vm = await AgentOs.create(
+		benchCreateOptions({
+			software,
+			loopbackExemptPorts: [port],
+		}),
+	);
 	await vm.createSession(agentId, {
 		env: {
 			ANTHROPIC_API_KEY: "bench-key",

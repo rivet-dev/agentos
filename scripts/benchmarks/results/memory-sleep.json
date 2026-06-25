@@ -13,32 +13,32 @@
     "steps": [
       {
         "stepIndex": 0,
-        "rssBytes": 42618880,
-        "heapBytes": 616752
+        "rssBytes": 25440256,
+        "heapBytes": 99552
       },
       {
         "stepIndex": 1,
-        "rssBytes": 18022400,
-        "heapBytes": 453424
+        "rssBytes": 21786624,
+        "heapBytes": 144912
       },
       {
         "stepIndex": 2,
-        "rssBytes": 17969152,
-        "heapBytes": 408568
+        "rssBytes": 21348352,
+        "heapBytes": 192264
       },
       {
         "stepIndex": 3,
-        "rssBytes": 18173952,
-        "heapBytes": 485264
+        "rssBytes": 20418560,
+        "heapBytes": 217088
       },
       {
         "stepIndex": 4,
-        "rssBytes": 19017728,
-        "heapBytes": 416440
+        "rssBytes": 22417408,
+        "heapBytes": 309528
       }
     ],
-    "avgPerVmRssBytes": 23160422,
-    "avgPerVmHeapBytes": 476090,
-    "reclaimedRssBytes": 113549312
+    "avgPerVmRssBytes": 22282240,
+    "avgPerVmHeapBytes": 192669,
+    "reclaimedRssBytes": 60403712
   }
 }

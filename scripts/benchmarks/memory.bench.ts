@@ -1,16 +1,19 @@
 /**
  * Memory overhead benchmark for AgentOS VMs.
  *
- * Staircase approach: warms up caches with a throwaway VM, then adds VMs
- * one at a time, measuring the incremental RSS and heap after each step.
- * The per-VM cost is the average step delta — free of one-time setup noise.
+ * Staircase approach: all VMs lease one shared sidecar process. A throwaway
+ * cold-run VM is created and disposed first (paying process spawn + bootstrap),
+ * then VMs are added one at a time, measuring the incremental RSS/heap after
+ * each step. The per-VM cost is the average step delta — the marginal cost of a
+ * VM on the shared process, free of one-time setup noise.
  *
  * Workloads:
  *   --workload=sleep             (default) Minimal VM with idle Node.js process
  *   --workload=pi-session        VM with PI agent session via createSession
  *   --workload=claude-session    VM with Claude agent session via createSession
  *
- * Pass --count=N to control how many VMs to add (default 5).
+ * Pass --count=N to control how many VMs to add (default 5; marketing run
+ * uses 20 for shell / 10 for agent).
  *
  * Usage:
  *   npx tsx --expose-gc benchmarks/memory.bench.ts
@@ -23,12 +26,15 @@ import { readFileSync, readdirSync } from "node:fs";
 import {
 	WORKLOADS,
 	type Workload,
+	clearBenchRootSnapshot,
 	forceGC,
 	formatBytes,
 	getHardware,
 	printTable,
 	round,
 	sleep,
+	startBenchSidecar,
+	stopBenchSidecar,
 	stopLlmock,
 } from "./bench-utils.js";
 
@@ -117,7 +123,11 @@ async function measure(
 	workload: Workload,
 	count: number,
 ): Promise<MemoryResult> {
-	// Warmup: create and destroy one VM to pay one-time costs (module cache, JIT, etc.)
+	// Cold run / warmup: create and destroy one VM to pay one-time costs (module
+	// cache, JIT, etc.) before measurement begins. This is the cold run; the
+	// staircase VMs below are the warm, steady-state per-VM measurements. (We do
+	// not reuse its filesystem snapshot here — agent-session workloads relaunch
+	// their adapter process per VM and must not inherit a prior VM's root.)
 	console.error("  warming up...");
 	const warmupVm = await workload.createVm();
 	await workload.start(warmupVm);
@@ -219,6 +229,10 @@ async function main() {
 	console.error(`RAM: ${hardware.ram} | Node: ${hardware.node}`);
 	console.error(`Count: ${count} VMs\n`);
 
+	// Create the sidecar once up front; every VM leases from it.
+	await startBenchSidecar();
+	clearBenchRootSnapshot();
+
 	const result = await measure(workload, count);
 
 	console.error(
@@ -239,6 +253,7 @@ async function main() {
 	// JSON to stdout.
 	console.log(JSON.stringify({ hardware, result }, null, 2));
 
+	await stopBenchSidecar();
 	await stopLlmock();
 }
 

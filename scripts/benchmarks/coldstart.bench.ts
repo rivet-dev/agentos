@@ -2,20 +2,26 @@
  * Cold-start latency benchmark.
  *
  * Measures time from AgentOs.create() through workload ready:
+ *   --workload=sleep            Minimal VM + idle Node.js process (marketing cold-start workload)
  *   --workload=echo             Minimal VM + first exec("echo hello") completing
  *   --workload=pi-session       VM + createSession("pi") completing (ACP handshake done)
  *   --workload=pi-prompt-turn   VM + createSession("pi-cli") + first prompt turn completing
  *   --workload=claude-session   VM + createSession("claude") completing (ACP handshake done)
  *
- * `pi-prompt-turn` now benchmarks the native PI CLI path through
+ * All VMs lease one shared sidecar process; a cold-run VM is created and
+ * snapshotted first so measured iterations reflect warm, incremental cost.
+ *
+ * `pi-prompt-turn` benchmarks the native PI CLI path through
  * `createSession("pi-cli")`, which uses `pi-acp` to drive the real PI CLI in
  * RPC mode. The same PI headless test file documents that raw `spawn("pi", ...)`
  * is still not exposed on the native sidecar PATH.
  *
- * Pass --iterations=N to override default (5).
+ * Pass --iterations=N to override default (5). The reported p95/p99 are only
+ * meaningful with enough samples (~200 for p95, ~1000 for p99); the marketing
+ * run uses --iterations=2000.
  *
  * Usage:
- *   pnpm exec tsx scripts/benchmarks/coldstart.bench.ts --workload=echo
+ *   pnpm exec tsx scripts/benchmarks/coldstart.bench.ts --workload=sleep --iterations=2000
  *   pnpm exec tsx scripts/benchmarks/coldstart.bench.ts --workload=pi-session --iterations=3
  *   pnpm exec tsx scripts/benchmarks/coldstart.bench.ts --workload=claude-session --iterations=3
  */
@@ -25,18 +31,24 @@ import {
 	type WorkloadObservation,
 	WARMUP_ITERATIONS,
 	WORKLOADS,
+	clearBenchRootSnapshot,
 	createBenchVm,
 	ECHO_COMMAND,
 	EXPECTED_OUTPUT,
 	getHardware,
 	printTable,
 	round,
+	setBenchRootSnapshot,
+	startBenchSidecar,
 	stats,
+	stopBenchSidecar,
 	stopLlmock,
 } from "./bench-utils.js";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
 const VALID_WORKLOADS = [
 	"echo",
+	"sleep",
 	...Object.keys(WORKLOADS).filter(
 		(k) => k.endsWith("-session") || k.endsWith("-turn"),
 	),
@@ -96,6 +108,28 @@ function parseArgs(): { workload: string; iterations: number } {
 	return { workload: name, iterations };
 }
 
+/**
+ * Cold run: create one VM up front, snapshot its root filesystem, and record
+ * the snapshot so subsequent measured VMs boot from it instead of paying the
+ * bootstrap cost on every iteration.
+ */
+async function coldRunSnapshot(workloadName: string): Promise<void> {
+	let vm: AgentOs;
+	if (workloadName === "echo") {
+		vm = await createBenchVm();
+		await vm.exec(ECHO_COMMAND);
+	} else {
+		const workload = WORKLOADS[workloadName];
+		vm = await workload.createVm();
+		await workload.start(vm);
+	}
+	try {
+		setBenchRootSnapshot(await vm.snapshotRootFilesystem());
+	} finally {
+		await vm.dispose();
+	}
+}
+
 async function main() {
 	const { workload, iterations } = parseArgs();
 	const measure = workload === "echo"
@@ -107,6 +141,13 @@ async function main() {
 	console.error(`CPU: ${hardware.cpu}`);
 	console.error(`RAM: ${hardware.ram} | Node: ${hardware.node}`);
 	console.error(`Iterations: ${iterations} (+ ${WARMUP_ITERATIONS} warmup)`);
+
+	// Create the sidecar once up front, then a single cold-run VM whose root
+	// filesystem snapshot warms every subsequent measured VM.
+	await startBenchSidecar();
+	clearBenchRootSnapshot();
+	console.error("cold run: snapshotting root filesystem...");
+	await coldRunSnapshot(workload);
 
 	const samples: number[] = [];
 	let lastObservation: WorkloadObservation | undefined;
@@ -154,6 +195,7 @@ async function main() {
 		),
 	);
 
+	await stopBenchSidecar();
 	await stopLlmock();
 }
 

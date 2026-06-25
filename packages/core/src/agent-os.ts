@@ -2751,6 +2751,10 @@ export class AgentOs {
 			validateToolkits(toolKits);
 		}
 
+		// Resolve the sidecar handle up front so every VM created here leases the
+		// one shared native sidecar process owned by that handle.
+		const sidecar = resolveAgentOsSidecar(options?.sidecar);
+
 		const createVmAdmin = async (): Promise<AgentOsVmAdmin> => {
 			const preparedCommandDirs = prepareCommandDirs(processed.commandPackages);
 			const toolBootstrapCommands = collectToolkitBootstrapCommands(
@@ -2768,6 +2772,8 @@ export class AgentOs {
 			let rootBridge: NativeSidecarKernelProxy | null = null;
 			let kernel: Kernel | null = null;
 			let client: SidecarProcess | null = null;
+			let createdNativeVm: CreatedVm | null = null;
+			let nativeSession: AuthenticatedSession | null = null;
 			let toolShimDir: string | null = null;
 			let cleanedUp = false;
 
@@ -2811,13 +2817,12 @@ export class AgentOs {
 						commandDirs: preparedCommandDirs.commandDirs,
 						shimDir: toolShimDir,
 					});
-				client = SidecarProcess.spawn({
-					cwd: REPO_ROOT,
-					command: ensureNativeSidecarBinary(),
-					args: [],
-					frameTimeoutMs: NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
-				});
-				const session = await client.authenticateAndOpenSession();
+				// Reuse the sidecar handle's single shared native process; this VM
+				// becomes another tenant of it rather than spawning its own process.
+				const shared = await ensureSharedSidecarNativeProcess(sidecar);
+				client = shared.client;
+				const session = shared.session;
+				nativeSession = session;
 				const hostPermissions = options?.permissions ?? {
 					...allowAll,
 					binding: "allow",
@@ -2859,10 +2864,15 @@ export class AgentOs {
 					runtime: "java_script",
 					config: createVmConfig,
 				});
+				createdNativeVm = nativeVm;
+				// Scope the readiness wait to THIS VM's ownership; on a shared process
+				// other VMs are emitting their own lifecycle events concurrently.
 				await client.waitForEvent(
 					(event) =>
 						event.payload.type === "vm_lifecycle" &&
-						event.payload.state === "ready",
+						event.payload.state === "ready" &&
+						event.ownership.scope === "vm" &&
+						event.ownership.vm_id === nativeVm.vmId,
 					10_000,
 				);
 				await client.configureVm(session, nativeVm, {
@@ -2900,6 +2910,9 @@ export class AgentOs {
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 					commandGuestPaths,
 					onDispose: cleanup,
+					// The native process is owned by the AgentOsSidecar handle and
+					// shared across VMs; disposing this VM must not kill the process.
+					ownsClient: false,
 				});
 				await bootstrapLiveBootstrapDirectories(
 					client,
@@ -2948,20 +2961,25 @@ export class AgentOs {
 					},
 				};
 			} catch (error) {
+				// The native process is shared and owned by the sidecar handle, so
+				// never dispose the client here — only tear down this VM's resources.
 				if (kernel) {
 					await kernel.dispose().catch(() => {});
 				}
 				if (rootBridge) {
 					await rootBridge.dispose().catch(() => {});
 				} else {
-					await client?.dispose().catch(() => {});
+					if (createdNativeVm && nativeSession && client) {
+						await client
+							.disposeVm(nativeSession, createdNativeVm)
+							.catch(() => {});
+					}
 					await cleanup();
 				}
 				throw error;
 			}
 		};
 
-		const sidecar = resolveAgentOsSidecar(options?.sidecar);
 		let sidecarLease: AgentOsSidecarVmLease<AgentOsVmAdmin> | null = null;
 
 		try {
@@ -5421,14 +5439,66 @@ interface AgentOsSidecarLeaseRecord {
 	dispose(): Promise<void>;
 }
 
+interface SharedSidecarNativeProcess {
+	client: SidecarProcess;
+	session: AuthenticatedSession;
+}
+
 interface AgentOsSidecarState {
 	description: AgentOsSidecarDescription;
 	activeLeases: Set<AgentOsSidecarLeaseRecord>;
 	sharedPool?: string;
+	/**
+	 * The single native sidecar process shared by every VM leased from this
+	 * handle. Spawned lazily on first VM creation and reused thereafter so VMs
+	 * are cheap incremental tenants of one process rather than one-process-each.
+	 */
+	nativeProcess?: Promise<SharedSidecarNativeProcess>;
 }
 
 const sidecarStates = new WeakMap<AgentOsSidecar, AgentOsSidecarState>();
 const sharedSidecars = new Map<string, AgentOsSidecar>();
+
+/**
+ * Spawn-once accessor for a sidecar handle's shared native process. Concurrent
+ * callers await the same promise, so one `AgentOsSidecar` maps to exactly one
+ * `agent-os-sidecar` OS process for its whole lifetime.
+ */
+function ensureSharedSidecarNativeProcess(
+	sidecar: AgentOsSidecar,
+): Promise<SharedSidecarNativeProcess> {
+	const state = getSidecarState(sidecar);
+	if (!state.nativeProcess) {
+		state.nativeProcess = (async () => {
+			const client = SidecarProcess.spawn({
+				cwd: REPO_ROOT,
+				command: ensureNativeSidecarBinary(),
+				args: [],
+				frameTimeoutMs: NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
+			});
+			const session = await client.authenticateAndOpenSession();
+			return { client, session };
+		})();
+	}
+	return state.nativeProcess;
+}
+
+/** Dispose a sidecar handle's shared native process, if one was spawned. */
+async function disposeSharedSidecarNativeProcess(
+	state: AgentOsSidecarState,
+): Promise<void> {
+	const pending = state.nativeProcess;
+	if (!pending) {
+		return;
+	}
+	state.nativeProcess = undefined;
+	try {
+		const { client } = await pending;
+		await client.dispose();
+	} catch {
+		// Process may have already exited; nothing to reclaim.
+	}
+}
 
 export class AgentOsSidecar {
 	constructor(
@@ -5470,6 +5540,8 @@ export class AgentOsSidecar {
 		}
 		state.activeLeases.clear();
 		state.description.activeVmCount = 0;
+		// Tear down the shared native process after all leased VMs are gone.
+		await disposeSharedSidecarNativeProcess(state);
 		state.description.state = "disposed";
 		if (state.sharedPool && sharedSidecars.get(state.sharedPool) === this) {
 			sharedSidecars.delete(state.sharedPool);

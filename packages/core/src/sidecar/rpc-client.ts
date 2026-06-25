@@ -299,6 +299,14 @@ interface NativeSidecarKernelProxyOptions {
 	commandGuestPaths: ReadonlyMap<string, string>;
 	onWasmCommandResolved?: (command: string) => void;
 	onDispose?: () => Promise<void>;
+	/**
+	 * Whether this proxy owns the underlying sidecar process. When VMs share one
+	 * sidecar process (the default for VMs leased from an `AgentOsSidecar`
+	 * handle), each proxy tears down only its own VM on `dispose()`; the shared
+	 * process is disposed when the sidecar handle is disposed. Defaults to true
+	 * for the legacy one-process-per-VM path.
+	 */
+	ownsClient?: boolean;
 }
 
 export class NativeSidecarKernelProxy {
@@ -312,6 +320,7 @@ export class NativeSidecarKernelProxy {
 	private readonly client: SidecarProcess;
 	private readonly session: AuthenticatedSession;
 	private readonly vm: CreatedVm;
+	private readonly ownsClient: boolean;
 	private readonly localMounts: LocalCompatMount[];
 	private readonly baseSidecarMounts: SidecarMountDescriptor[];
 	private readonly permissions: SidecarPermissionsPolicy | undefined;
@@ -350,6 +359,7 @@ export class NativeSidecarKernelProxy {
 		this.client = options.client;
 		this.session = options.session;
 		this.vm = options.vm;
+		this.ownsClient = options.ownsClient ?? true;
 		this.env = { ...options.env };
 		this.cwd = options.cwd;
 		this.defaultExecCwd = options.defaultExecCwd;
@@ -419,7 +429,12 @@ export class NativeSidecarKernelProxy {
 				this.finishProcess(entry, 143);
 			}
 		}
-		await this.client.dispose().catch(() => {});
+		// Only tear down the shared sidecar process when this proxy owns it. VMs
+		// leased from an `AgentOsSidecar` handle share one process, which is
+		// disposed when the handle is disposed.
+		if (this.ownsClient) {
+			await this.client.dispose().catch(() => {});
+		}
 		await this.eventPump.catch(() => {});
 		await this.onDispose?.().catch(() => {});
 	}
@@ -1572,11 +1587,19 @@ export class NativeSidecarKernelProxy {
 	}
 
 	private async runEventPump(): Promise<void> {
+		// Scope the pump to THIS VM's ownership so multiple proxies can share one
+		// sidecar process: events for other VMs stay buffered for their own pumps
+		// rather than being consumed (and dropped) here.
+		const vmId = this.vm.vmId;
 		while (!this.disposed) {
 			try {
-				const event = await this.client.waitForEvent({ any: true }, undefined, {
-					signal: this.eventPumpAbortController.signal,
-				});
+				const event = await this.client.waitForEvent(
+					(frame) =>
+						frame.ownership.scope === "vm" &&
+						frame.ownership.vm_id === vmId,
+					undefined,
+					{ signal: this.eventPumpAbortController.signal },
+				);
 				if (event.payload.type === "process_output") {
 					const entry = this.trackedProcessesById.get(event.payload.process_id);
 					if (!entry) {

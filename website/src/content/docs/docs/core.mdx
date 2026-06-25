@@ -60,6 +60,27 @@ console.log(result.stdout); // "hello\n"
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
 
+## Sidecar process
+
+Every VM runs inside a **shared sidecar process** rather than a process of its own. By default all VMs are tenants of a single, process-global sidecar (the `default` pool), so each additional VM only adds its marginal cost — a V8 isolate plus its kernel state — instead of a whole OS process. This is what keeps per-VM memory in the tens of MB and warm VM creation in the single-digit milliseconds (see [Benchmarks](/docs/benchmarks)).
+
+This is automatic — `agentOS()` and `AgentOs.create()` use the shared default sidecar with no configuration, and the same applies to Rivet Actors (each actor's VM is a tenant of the shared process). Disposing a VM tears down only that VM; the shared sidecar process is reused across VMs and stays alive for the lifetime of the host process.
+
+For advanced cases the core package exposes explicit sidecar handles so you can isolate a group of VMs in their own process:
+
+```ts title="advanced.ts"
+import { AgentOs } from "@rivet-dev/agentos-core";
+
+// One dedicated sidecar process hosting multiple VMs.
+const sidecar = await AgentOs.createSidecar();
+const a = await AgentOs.create({ sidecar: { kind: "explicit", handle: sidecar } });
+const b = await AgentOs.create({ sidecar: { kind: "explicit", handle: sidecar } });
+
+await a.dispose(); // tears down VM a only
+await b.dispose();
+await sidecar.dispose(); // tears down the shared process
+```
+
 ## Filesystem
 
 ```ts title="client.ts"
