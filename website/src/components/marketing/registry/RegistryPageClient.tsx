@@ -333,6 +333,17 @@ function CategorySection({
 									Coming Soon
 								</span>
 							)}
+							{entry.beta && (
+								<span
+									className={
+										light
+											? "shrink-0 rounded-full border border-ink/15 px-1.5 py-0.5 text-[10px] text-ink-faint"
+											: "shrink-0 rounded-full border border-white/20 px-1.5 py-0.5 text-[10px] text-white/50"
+									}
+								>
+									Beta
+								</span>
+							)}
 						</div>
 						<p
 							className={

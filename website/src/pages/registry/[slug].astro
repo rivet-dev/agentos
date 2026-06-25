@@ -149,6 +149,11 @@ const EntryIcon = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
 							Coming Soon
 						</span>
 					)}
+					{entry.beta && (
+						<span class="rounded-full border border-ink/15 px-2.5 py-1 text-xs text-ink-faint">
+							Beta
+						</span>
+					)}
 				</div>
 
 				<div class="mt-4 flex gap-2">
