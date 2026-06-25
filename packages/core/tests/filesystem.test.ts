@@ -2,8 +2,9 @@ import { resolve } from "node:path";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import claude from "@agentos-software/claude-code";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AgentOs } from "../src/index.js";
+import { getAgentOsKernel } from "../src/test/runtime.js";
 import {
 	createAnthropicFixture,
 	startLlmock,
@@ -64,6 +65,35 @@ describe("filesystem operations", () => {
 		await vm.writeFile("/tmp/roundtrip.txt", content);
 		const data = await vm.readFile("/tmp/roundtrip.txt");
 		expect(new TextDecoder().decode(data)).toBe(content);
+	});
+
+	// Regression guard: `mkdir(path, { recursive: true })` must NOT probe each
+	// ancestor with a read-side `exists()`. On the native sidecar every read-side op
+	// triggers a full shadow-tree walk, so a per-component exists() loop made
+	// `mkdir -p` cost O(components * tree) -- a major source of session-creation
+	// latency on populated VMs. The recursive kernel mkdir is sufficient on its own.
+	test("recursive mkdir issues one mkdir and zero exists() probes", async () => {
+		const kernel = getAgentOsKernel(vm);
+		const deepPath = "/tmp/mkdirp-no-walk/a/b/c/d/e";
+		const existsSpy = vi.spyOn(kernel, "exists");
+		const mkdirSpy = vi.spyOn(kernel, "mkdir");
+
+		await vm.mkdir(deepPath, { recursive: true });
+
+		expect(existsSpy).not.toHaveBeenCalled();
+		expect(mkdirSpy).toHaveBeenCalledTimes(1);
+		expect(mkdirSpy).toHaveBeenCalledWith(deepPath);
+
+		existsSpy.mockRestore();
+		mkdirSpy.mockRestore();
+
+		// Behavior is preserved: every intermediate dir exists and is writable, and
+		// repeating the call is a no-op (idempotent).
+		await vm.writeFile(`${deepPath}/leaf.txt`, "ok");
+		expect(new TextDecoder().decode(await vm.readFile(`${deepPath}/leaf.txt`))).toBe(
+			"ok",
+		);
+		await vm.mkdir(deepPath, { recursive: true });
 	});
 
 	test("writeFile is visible to WASM guest commands", async () => {

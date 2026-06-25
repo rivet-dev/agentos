@@ -3264,14 +3264,13 @@ export class AgentOs {
 	/** Recursively create directories (mkdir -p). */
 	private async _mkdirp(path: string): Promise<void> {
 		this._assertWritableAbsolutePath(path);
-		const parts = path.split("/").filter(Boolean);
-		let current = "";
-		for (const part of parts) {
-			current += `/${part}`;
-			if (!(await this.#kernel.exists(current))) {
-				await this.#kernel.mkdir(current);
-			}
-		}
+		// `kernel.mkdir` is already recursive (it defaults to recursive=true on both
+		// the native sidecar and compat kernels) and creating an existing directory is
+		// a no-op, so a single call is sufficient. Do NOT probe each ancestor with
+		// `exists()` first: on the native sidecar every read-side op
+		// (exists/stat/readFile) triggers a full shadow-tree walk, so a per-component
+		// exists() loop makes `mkdir -p` cost O(components * tree).
+		await this.#kernel.mkdir(path);
 	}
 
 	async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
