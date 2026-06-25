@@ -18,10 +18,13 @@ export const siteConfig = {
 	repo: "rivet-dev/agent-os",
 	editPath: "website/",
 
+	// Keep in sync with the marketing nav (src/components/Navigation.tsx):
+	// same links in the same order across docs + marketing.
 	topNav: [
+		{ label: "Documentation", href: "/docs", match: "/docs" },
 		{ label: "Use Cases", href: "/use-cases" },
 		{ label: "Registry", href: "/registry" },
-		{ label: "Docs", href: "/docs", match: "/docs" },
+		{ label: "Deploy", href: "/docs/deployment", match: "/docs/deployment" },
 	],
 	cta: { label: "Get Started", href: "/docs/quickstart" },
 	social: { discord: "https://rivet.dev/discord" },

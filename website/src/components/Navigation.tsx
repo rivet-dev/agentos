@@ -20,9 +20,10 @@ function DiscordIcon({ className }: { className?: string }) {
 }
 
 const NAV_LINKS: { href: string; label: string; badge?: number }[] = [
+  { href: "/docs", label: "Documentation" },
   { href: "/use-cases", label: "Use Cases" },
   { href: "/registry", label: "Registry", badge: registry.length },
-  { href: "/docs", label: "Docs" },
+  { href: "/docs/deployment", label: "Deploy" },
 ];
 
 function NavBadge({ count }: { count: number }) {

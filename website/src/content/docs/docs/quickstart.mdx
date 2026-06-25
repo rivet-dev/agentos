@@ -6,6 +6,7 @@ skill: true
 
 import { Aside, Steps } from '@astrojs/starlight/components';
 import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
+import DeployTargets from '../../../components/DeployTargets.astro';
 import { AGENT_PROMPT } from '../../../components/marketing/agentPrompt';
 
 <div style="border-radius:0.75rem;border:1px solid rgba(27,25,22,0.12);background:rgba(27,25,22,0.035);padding:0.875rem 1.125rem;margin:1.5rem 0;color:#56524a;display:flex;align-items:center;justify-content:space-between;gap:1.25rem;">
@@ -176,6 +177,14 @@ import { AGENT_PROMPT } from '../../../components/marketing/agentPrompt';
    - **[Filesystem](/docs/filesystem)** — Read, write, and manage files inside the VM
    - **[Permissions & Resource Limits](/docs/permissions)** — Gate what the agent can do and cap its resource usage
    - **[Bindings](/docs/bindings)** — Expose your JavaScript functions to agents as CLI commands
+
+5. **Deploy**
+
+   By default, agentOS runs locally with `npx rivetkit dev` — no infrastructure needed. To run in production, deploy to any of these targets:
+
+   <DeployTargets />
+
+   See [Deployment](/docs/deployment) for managed, self-hosted, and agentOS Core options.
 
 </Steps>
 
