@@ -41,6 +41,13 @@ jobs:
       - run: node scripts/check-registry-software-split.mjs
       - run: node --test scripts/check-secure-exec-package-boundary.test.mjs
       - run: node scripts/check-secure-exec-package-boundary.mjs
+      # Build the Rust crates against the pinned secure-exec. For a preview pin this
+      # clones secure-exec at the pinned <sha> and switches cargo to local path deps
+      # (crates.io has no preview track, so an unreleased crate API — e.g. a new
+      # Extension hook — is only reachable via the clone); no-op for release pins.
+      # Mirrors the same step in publish.yaml so PR CI matches the build.
+      - name: Prepare secure-exec crates
+        run: node scripts/secure-exec-dep.mjs prepare-build
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test -p agentos-protocol -- --test-threads=1

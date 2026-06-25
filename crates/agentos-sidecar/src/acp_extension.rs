@@ -12,6 +12,7 @@ use agentos_protocol::generated::v1::{
     AcpSessionEvent, AcpSessionRequest, AcpSessionResumedResponse, AcpSessionStateResponse,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
+use secure_exec_sidecar::extension::ExtensionSnapshot;
 use secure_exec_sidecar::limits::DEFAULT_ACP_MAX_READ_LINE_BYTES;
 use secure_exec_sidecar::wire::{
     CloseStdinRequest, EventPayload, ExecuteRequest, GuestFilesystemCallRequest,
@@ -66,6 +67,18 @@ const AGENTOS_SYSTEM_PROMPT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../packages/core/fixtures/AGENTOS_SYSTEM_PROMPT.md"
 ));
+/// Hard ceiling on the `stdout_buffer` retained on an `AcpSessionRecord` between
+/// requests. The buffer only ever holds the partial trailing line not yet parsed
+/// into a complete JSON-RPC message, so this also bounds the per-session record
+/// against a runaway or hostile adapter that streams bytes without ever emitting
+/// a newline. Mirrors the per-line cap enforced while reading
+/// (`DEFAULT_ACP_MAX_READ_LINE_BYTES`); a record's stdout must never outgrow it.
+const MAX_SESSION_STDOUT_BUFFER_BYTES: usize = DEFAULT_ACP_MAX_READ_LINE_BYTES;
+/// Substring identifying the `send_json_rpc_request` error raised when the
+/// adapter process exits before answering. `session_request` matches on it to
+/// evict the now-dead session record instead of leaking it until an explicit
+/// `close_session` that the client may never send.
+const ADAPTER_EXITED_ERROR_MARKER: &str = "exited with code";
 
 #[derive(Debug, Default)]
 pub struct AcpExtension {
@@ -601,7 +614,14 @@ impl AcpExtension {
         {
             Ok(exchange) => exchange,
             Err(error) => {
-                if let Some(preamble) = pending_preamble {
+                // Adapter process exit is a teardown signal: the session can never
+                // be driven again, so evict its record (incl. `stdout_buffer`)
+                // rather than leak it until a `close_session` that may never come.
+                // Other (transient) failures keep the session so the armed
+                // preamble can ride a retried prompt.
+                if is_adapter_exited_error(&error) {
+                    self.sessions.lock().await.remove(&request.session_id);
+                } else if let Some(preamble) = pending_preamble {
                     if let Some(session) = self.sessions.lock().await.get_mut(&request.session_id) {
                         if session.pending_preamble.is_none() {
                             session.pending_preamble = Some(preamble);
@@ -613,6 +633,7 @@ impl AcpExtension {
         };
 
         if let Some(session) = self.sessions.lock().await.get_mut(&request.session_id) {
+            cap_stdout_buffer(&mut stdout_buffer);
             session.stdout_buffer = stdout_buffer;
         }
 
@@ -1013,6 +1034,23 @@ impl AcpExtension {
         let id = self.next_process_id.fetch_add(1, Ordering::Relaxed) + 1;
         format!("{prefix}-{id}")
     }
+
+    /// Drop every session owned by `connection_id`, returning the adapter process
+    /// ids of the removed records so the caller can reap them. This is the
+    /// connection-teardown counterpart to the explicit `close_session` RPC: when
+    /// a connection goes away (client disconnect / shutdown) without a
+    /// `close_session` per live session, its records — including the potentially
+    /// large `stdout_buffer` — must not outlive the connection.
+    ///
+    /// Invoked from `on_session_disposed` (the host's per-connection teardown
+    /// callback, fired on `DisposeReason::ConnectionClosed`); the other live
+    /// teardown paths are `on_dispose` (whole-extension) and the process-exit
+    /// eviction in `session_request`. Covered by `connection_teardown_evicts_only_*`
+    /// tests.
+    async fn cleanup_sessions_for_connection(&self, connection_id: &str) -> Vec<String> {
+        let mut sessions = self.sessions.lock().await;
+        evict_sessions_for_connection(&mut sessions, connection_id)
+    }
 }
 
 impl Extension for AcpExtension {
@@ -1036,6 +1074,31 @@ impl Extension for AcpExtension {
             decode_request(payload),
             Ok(AcpRequest::AcpSessionRequest(request)) if request.method == "session/prompt"
         )
+    }
+
+    fn on_dispose<'a>(&'a self) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            // Extension/sidecar teardown: drop every remaining session record so
+            // no `stdout_buffer` survives the host process. The adapter processes
+            // themselves are reaped by the host's own session/VM dispose; this
+            // only frees the wrapper-side tracking map.
+            self.sessions.lock().await.clear();
+            Ok(())
+        })
+    }
+
+    fn on_session_disposed<'a>(&'a self, ctx: ExtensionSnapshot) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            // The host invokes this only on DisposeReason::ConnectionClosed, i.e.
+            // the client disconnected without sending `close_session` per live
+            // session. Evict this connection's ACP session records — including
+            // their potentially large `stdout_buffer` — so they don't outlive the
+            // connection. This closes the disconnect path of H4 (the per-request
+            // process-exit eviction and `on_dispose` cover the other paths).
+            let connection_id = ownership_connection_id(ctx.ownership());
+            self.cleanup_sessions_for_connection(&connection_id).await;
+            Ok(())
+        })
     }
 
     fn interrupt_blocking_request(
@@ -1431,8 +1494,11 @@ async fn send_json_rpc_request(
                 );
             }
             EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
+                // Embed ADAPTER_EXITED_ERROR_MARKER directly so is_adapter_exited_error()
+                // stays coupled to this producer: changing the wording can't silently
+                // disable session eviction (the H4 leak fix) without touching the const.
                 return Err(SidecarError::InvalidState(format!(
-                    "ACP adapter process {process_id} exited with code {} before response id={response_id}",
+                    "ACP adapter process {process_id} {ADAPTER_EXITED_ERROR_MARKER} {} before response id={response_id}",
                     exited.exit_code
                 )));
             }
@@ -1947,6 +2013,51 @@ fn ownership_connection_id(ownership: &OwnershipScope) -> String {
         OwnershipScope::SessionOwnership(inner) => inner.connection_id.clone(),
         OwnershipScope::VmOwnership(inner) => inner.connection_id.clone(),
     }
+}
+
+/// Remove every session in `sessions` owned by `connection_id`, returning the
+/// adapter process ids of the dropped records. Split out from
+/// [`AcpExtension::cleanup_sessions_for_connection`] as a pure helper so the
+/// connection-teardown eviction is unit-testable without locking the mutex.
+fn evict_sessions_for_connection(
+    sessions: &mut BTreeMap<String, AcpSessionRecord>,
+    connection_id: &str,
+) -> Vec<String> {
+    let owned = sessions
+        .iter()
+        .filter(|(_, session)| session.owner_connection_id == connection_id)
+        .map(|(session_id, _)| session_id.clone())
+        .collect::<Vec<_>>();
+    owned
+        .into_iter()
+        .filter_map(|session_id| {
+            sessions
+                .remove(&session_id)
+                .map(|session| session.process_id)
+        })
+        .collect()
+}
+
+/// Trim a retained `stdout_buffer` so it never exceeds
+/// [`MAX_SESSION_STDOUT_BUFFER_BYTES`], keeping the most recent (trailing) bytes
+/// — the partial line still being assembled — and truncating at a UTF-8 char
+/// boundary so the `String` stays valid.
+fn cap_stdout_buffer(buffer: &mut String) {
+    if buffer.len() <= MAX_SESSION_STDOUT_BUFFER_BYTES {
+        return;
+    }
+    let mut start = buffer.len() - MAX_SESSION_STDOUT_BUFFER_BYTES;
+    while start < buffer.len() && !buffer.is_char_boundary(start) {
+        start += 1;
+    }
+    *buffer = buffer.split_off(start);
+}
+
+/// True when `error` is the `send_json_rpc_request` failure raised because the
+/// adapter process exited before answering — the in-crate signal that a session
+/// has torn down and its record can be evicted.
+fn is_adapter_exited_error(error: &SidecarError) -> bool {
+    matches!(error, SidecarError::InvalidState(message) if message.contains(ADAPTER_EXITED_ERROR_MARKER))
 }
 
 fn parse_json_text(text: &str, label: &str) -> Result<Value, SidecarError> {
@@ -2567,5 +2678,176 @@ mod tests {
                 "received notification session/update"
             ])
         );
+    }
+
+    /// Drive a future that only awaits uncontended in-memory state (e.g. a free
+    /// `tokio::sync::Mutex`) to completion without a runtime: such a future is
+    /// `Ready` on its first poll. Panics if it parks, which would mean it touched
+    /// real async I/O the unit test cannot service. Lets the sync test harness
+    /// exercise the real async `Extension::on_dispose` wiring.
+    fn poll_uncontended<F: std::future::Future>(future: F) -> F::Output {
+        use std::task::{Context, Poll};
+        let waker = std::task::Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut future = std::pin::pin!(future);
+        match future.as_mut().poll(&mut cx) {
+            Poll::Ready(output) => output,
+            Poll::Pending => {
+                panic!("future parked; expected uncontended in-memory completion")
+            }
+        }
+    }
+
+    fn test_session_record(session_id: &str, owner_connection_id: &str) -> AcpSessionRecord {
+        AcpSessionRecord {
+            session_id: session_id.to_string(),
+            owner_connection_id: owner_connection_id.to_string(),
+            agent_type: String::from("pi"),
+            process_id: format!("acp-agent-{session_id}"),
+            pid: None,
+            modes: None,
+            config_options: Vec::new(),
+            agent_capabilities: None,
+            agent_info: None,
+            stdout_buffer: String::new(),
+            next_request_id: 3,
+            closed: false,
+            exit_code: None,
+            pending_preamble: None,
+        }
+    }
+
+    #[test]
+    fn connection_teardown_evicts_only_that_connections_sessions() {
+        // Regression: sessions were removed ONLY by the explicit close_session
+        // RPC, so a connection that disconnected without closing its sessions
+        // leaked every record (incl. its stdout_buffer) forever. The
+        // connection-teardown path must drop exactly that connection's sessions.
+        let ext = AcpExtension::new();
+        {
+            let mut sessions = ext.sessions.try_lock().expect("uncontended sessions lock");
+            sessions.insert(String::from("s1"), test_session_record("s1", "conn-a"));
+            sessions.insert(String::from("s2"), test_session_record("s2", "conn-a"));
+            sessions.insert(String::from("s3"), test_session_record("s3", "conn-b"));
+        }
+
+        let reaped = {
+            let mut sessions = ext.sessions.try_lock().expect("uncontended sessions lock");
+            evict_sessions_for_connection(&mut sessions, "conn-a")
+        };
+
+        assert_eq!(reaped.len(), 2, "both conn-a adapter processes reaped");
+        let sessions = ext.sessions.try_lock().expect("uncontended sessions lock");
+        assert!(!sessions.contains_key("s1"), "conn-a session evicted");
+        assert!(!sessions.contains_key("s2"), "conn-a session evicted");
+        assert!(
+            sessions.contains_key("s3"),
+            "other connection's session must survive its peer's teardown"
+        );
+    }
+
+    #[test]
+    fn on_dispose_clears_every_session_record() {
+        // H4 (the actually-wired ACP-session leak fix): on extension/sidecar
+        // teardown `Extension::on_dispose` must drop EVERY remaining session
+        // record so no `stdout_buffer` survives the host process — not just the
+        // records for one connection.
+        let ext = AcpExtension::new();
+        {
+            let mut sessions = ext.sessions.try_lock().expect("uncontended sessions lock");
+            sessions.insert(String::from("s1"), test_session_record("s1", "conn-a"));
+            sessions.insert(String::from("s2"), test_session_record("s2", "conn-b"));
+            sessions.insert(String::from("s3"), test_session_record("s3", "conn-c"));
+        }
+
+        // Drive the real wired async `on_dispose` impl; it only awaits the
+        // uncontended `sessions` mutex, so it completes on the first poll.
+        poll_uncontended(ext.on_dispose()).expect("on_dispose succeeds");
+
+        let sessions = ext.sessions.try_lock().expect("uncontended sessions lock");
+        assert!(
+            sessions.is_empty(),
+            "on_dispose must clear the entire sessions map"
+        );
+    }
+
+    #[test]
+    fn capped_stdout_buffer_never_exceeds_limit() {
+        let mut buffer = "x".repeat(MAX_SESSION_STDOUT_BUFFER_BYTES + 4096);
+        cap_stdout_buffer(&mut buffer);
+        assert!(
+            buffer.len() <= MAX_SESSION_STDOUT_BUFFER_BYTES,
+            "retained stdout_buffer must be bounded"
+        );
+
+        // A buffer already within the cap is left untouched.
+        let mut small = String::from("partial-line");
+        cap_stdout_buffer(&mut small);
+        assert_eq!(small, "partial-line");
+    }
+
+    #[test]
+    fn capped_stdout_buffer_truncates_on_utf8_char_boundary() {
+        // All-ASCII inputs never exercise the `is_char_boundary` adjustment loop.
+        // A buffer of multi-byte chars forces the naive split point off a char
+        // boundary, so the loop must advance it; the result must stay valid UTF-8
+        // (no panic / no split char) and keep the most recent trailing bytes.
+        const CHAR: char = '€'; // 3 bytes in UTF-8
+        let original = CHAR.to_string().repeat(MAX_SESSION_STDOUT_BUFFER_BYTES); // 3 * MAX bytes, far over the cap
+        let mut buffer = original.clone();
+        cap_stdout_buffer(&mut buffer);
+
+        assert!(
+            buffer.len() <= MAX_SESSION_STDOUT_BUFFER_BYTES,
+            "capped multi-byte buffer must be bounded"
+        );
+        // No char was split: a homogeneous 3-byte-char buffer can only have a
+        // length that is a multiple of 3 if every retained char is intact.
+        assert_eq!(
+            buffer.len() % CHAR.len_utf8(),
+            0,
+            "cap must truncate on a UTF-8 char boundary, not mid-char"
+        );
+        assert!(
+            std::str::from_utf8(buffer.as_bytes()).is_ok(),
+            "capped buffer must remain valid UTF-8"
+        );
+        assert!(
+            buffer.chars().all(|c| c == CHAR),
+            "every retained char survived intact"
+        );
+        // The trailing (most recent) bytes are kept, not the head.
+        assert!(
+            !buffer.is_empty() && original.ends_with(&buffer),
+            "cap keeps the trailing partial-line bytes"
+        );
+    }
+
+    #[test]
+    fn adapter_exit_error_is_recognized_for_eviction() {
+        // Build the EXACT error string the `ProcessExitedEvent` arm of
+        // `session_request` emits (it embeds `ADAPTER_EXITED_ERROR_MARKER`
+        // directly), so a change to the producer's wording that drops the marker
+        // would break this test instead of silently disabling session eviction.
+        let process_id = "acp-agent-1";
+        let exit_code = 1;
+        let response_id = 3;
+        let exited = SidecarError::InvalidState(format!(
+            "ACP adapter process {process_id} {ADAPTER_EXITED_ERROR_MARKER} {exit_code} before response id={response_id}",
+        ));
+        assert!(
+            is_adapter_exited_error(&exited),
+            "the real adapter-exit error must trigger session eviction"
+        );
+
+        // Transient failures must NOT be treated as adapter exit (would evict a
+        // session that is still alive).
+        let timed_out =
+            SidecarError::InvalidState(String::from("timed out waiting for ACP response id=3"));
+        assert!(!is_adapter_exited_error(&timed_out));
+        let broken_pipe = SidecarError::InvalidState(String::from(
+            "failed to write ACP request to adapter stdin: broken pipe",
+        ));
+        assert!(!is_adapter_exited_error(&broken_pipe));
     }
 }

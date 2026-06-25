@@ -32,9 +32,9 @@ import type {
 	AuthenticatedSession,
 	CreatedVm,
 	GuestFilesystemStat,
+	SidecarPermissionsPolicy,
 	SidecarProcess,
 	SidecarProcessSnapshotEntry,
-	SidecarPermissionsPolicy,
 	SidecarSignalHandlerRegistration,
 	SidecarSocketStateEntry,
 } from "./native-process-client.js";
@@ -294,7 +294,9 @@ interface NativeSidecarKernelProxyOptions {
 	localMounts: LocalCompatMount[];
 	sidecarMounts: SidecarMountDescriptor[];
 	permissions?: SidecarPermissionsPolicy;
-	commandPermissions?: Parameters<SidecarProcess["configureVm"]>[2]["commandPermissions"];
+	commandPermissions?: Parameters<
+		SidecarProcess["configureVm"]
+	>[2]["commandPermissions"];
 	loopbackExemptPorts?: number[];
 	commandGuestPaths: ReadonlyMap<string, string>;
 	onWasmCommandResolved?: (command: string) => void;
@@ -366,7 +368,9 @@ export class NativeSidecarKernelProxy {
 		this.localMounts = [...options.localMounts].sort(
 			(left, right) => right.path.length - left.path.length,
 		);
-		const localMountPaths = new Set(this.localMounts.map((mount) => mount.path));
+		const localMountPaths = new Set(
+			this.localMounts.map((mount) => mount.path),
+		);
 		this.baseSidecarMounts = options.sidecarMounts.filter(
 			(mount) =>
 				mount.plugin.id !== "js_bridge" ||
@@ -437,6 +441,48 @@ export class NativeSidecarKernelProxy {
 		}
 		await this.eventPump.catch(() => {});
 		await this.onDispose?.().catch(() => {});
+
+		// Drop all per-VM tracking state so a disposed proxy retains nothing.
+		for (const entry of this.trackedProcesses.values()) {
+			entry.onStdout.clear();
+			entry.onStderr.clear();
+		}
+		this.trackedProcesses.clear();
+		this.trackedProcessesById.clear();
+		this.signalStates.clear();
+		this.signalRefreshes.clear();
+		this.localMounts.length = 0;
+	}
+
+	/** Test-only snapshot of the per-VM tracking collection sizes. */
+	__trackingSizesForTest(): {
+		trackedProcesses: number;
+		trackedProcessesById: number;
+		signalStates: number;
+		signalRefreshes: number;
+		localMounts: number;
+	} {
+		return {
+			trackedProcesses: this.trackedProcesses.size,
+			trackedProcessesById: this.trackedProcessesById.size,
+			signalStates: this.signalStates.size,
+			signalRefreshes: this.signalRefreshes.size,
+			localMounts: this.localMounts.length,
+		};
+	}
+
+	/** Test-only handle to a tracked entry so its listener Sets can be inspected. */
+	__trackedEntryForTest(
+		pid: number,
+	):
+		| { onStdout: ReadonlySet<unknown>; onStderr: ReadonlySet<unknown> }
+		| undefined {
+		return this.trackedProcesses.get(pid);
+	}
+
+	/** Test-only join point for in-flight signal-state refreshes. */
+	async __awaitSignalRefreshesForTest(): Promise<void> {
+		await Promise.allSettled([...this.signalRefreshes.values()]);
 	}
 
 	async exec(
@@ -1595,8 +1641,7 @@ export class NativeSidecarKernelProxy {
 			try {
 				const event = await this.client.waitForEvent(
 					(frame) =>
-						frame.ownership.scope === "vm" &&
-						frame.ownership.vm_id === vmId,
+						frame.ownership.scope === "vm" && frame.ownership.vm_id === vmId,
 					undefined,
 					{ signal: this.eventPumpAbortController.signal },
 				);
@@ -1628,7 +1673,6 @@ export class NativeSidecarKernelProxy {
 						continue;
 					}
 					void this.refreshProcessSnapshot().catch(() => {});
-					this.signalRefreshes.delete(entry.pid);
 					this.finishProcess(entry, event.payload.exit_code);
 				}
 			} catch (error) {
@@ -1662,6 +1706,27 @@ export class NativeSidecarKernelProxy {
 		entry.exitTime = Date.now();
 		this.updateTrackedProcessSnapshot(entry);
 		entry.resolveWait(exitCode);
+		// Release per-process tracking now that the process has terminated so these
+		// maps/Sets don't grow without bound. Defer the release until trailing
+		// output has drained: `wait()`'s drain and late `process_output` events
+		// still need the entry + its listeners during the drain window. The exited
+		// record lives on in `processes` for listing.
+		void this.releaseProcessTrackingAfterDrain(entry);
+	}
+
+	private async releaseProcessTrackingAfterDrain(
+		entry: TrackedProcessEntry,
+	): Promise<void> {
+		try {
+			await this.drainTrailingProcessOutput(entry);
+		} finally {
+			this.trackedProcesses.delete(entry.pid);
+			this.trackedProcessesById.delete(entry.processId);
+			this.signalRefreshes.delete(entry.pid);
+			this.signalStates.delete(entry.pid);
+			entry.onStdout.clear();
+			entry.onStderr.clear();
+		}
 	}
 
 	private waitForTrackedProcess(entry: TrackedProcessEntry): Promise<number> {

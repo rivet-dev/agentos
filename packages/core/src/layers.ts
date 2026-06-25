@@ -65,11 +65,14 @@ export interface LayerStore {
 					lowers: SnapshotLayerHandle[];
 			  },
 	): VirtualFileSystem;
+	dispose(): void;
 }
 
 interface WritableLayerState {
 	kind: "writable";
-	fs: VirtualFileSystem;
+	// Cleared once the layer is sealed so the heavy filesystem payload is
+	// released; the (now invalid) state is kept as a tombstone.
+	fs: VirtualFileSystem | null;
 	leaseId: string;
 	valid: boolean;
 	activeOverlay: VirtualFileSystem | null;
@@ -189,8 +192,15 @@ export function createInMemoryLayerStore(): LayerStore {
 		return state;
 	}
 
-	return {
+	const store: LayerStore & {
+		/** test-only: number of layer states still retained by the store */
+		readonly retainedLayerCount: number;
+	} = {
 		storeId,
+
+		get retainedLayerCount(): number {
+			return layers.size;
+		},
 
 		async createWritableLayer(): Promise<WritableLayerHandle> {
 			const layerId = randomUUID();
@@ -239,13 +249,12 @@ export function createInMemoryLayerStore(): LayerStore {
 			if (state.kind !== "writable") {
 				throw new Error(`Layer ${layer.layerId} is not writable`);
 			}
-			if (!state.valid || state.leaseId !== layer.leaseId) {
+			const baseFs = state.activeOverlay ?? state.fs;
+			if (!state.valid || state.leaseId !== layer.leaseId || !baseFs) {
 				throw new Error(`Writable layer ${layer.layerId} is no longer valid`);
 			}
 
-			const entries = await snapshotVirtualFilesystem(
-				state.activeOverlay ?? state.fs,
-			);
+			const entries = await snapshotVirtualFilesystem(baseFs);
 			const snapshot = createSnapshotExport(entries).source;
 			const layerId = randomUUID();
 
@@ -255,8 +264,11 @@ export function createInMemoryLayerStore(): LayerStore {
 				fs: await createFilesystemFromEntries(snapshot.filesystem.entries),
 			});
 
+			// Release the writable layer's filesystem payload now that it is sealed;
+			// the invalid tombstone is retained so stale handles still report cleanly.
 			state.valid = false;
 			state.activeOverlay = null;
+			state.fs = null;
 
 			return cloneSnapshotHandle(storeId, layerId);
 		},
@@ -297,6 +309,11 @@ export function createInMemoryLayerStore(): LayerStore {
 					`Writable layer ${options.upper.layerId} is already attached to an overlay`,
 				);
 			}
+			if (!upperState.fs) {
+				throw new Error(
+					`Writable layer ${options.upper.layerId} is no longer valid`,
+				);
+			}
 
 			const overlay = createOverlayBackend({
 				upper: upperState.fs,
@@ -311,7 +328,15 @@ export function createInMemoryLayerStore(): LayerStore {
 			upperState.activeOverlay = overlay;
 			return overlay;
 		},
+
+		dispose(): void {
+			// Release every retained layer's filesystem payload so the store does
+			// not accumulate snapshots/writable layers for the process lifetime.
+			layers.clear();
+		},
 	};
+
+	return store;
 }
 
 export function createDefaultRootLowerInput(): SnapshotImportSource {

@@ -17,13 +17,13 @@ import {
 	resolve as resolveHostPath,
 } from "node:path";
 import { fileURLToPath } from "node:url";
+import commonSoftware from "@agentos-software/common";
 import type {
 	MountConfigJsonObject,
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
 } from "@secure-exec/core/descriptors";
 import type { CreateVmConfig } from "@secure-exec/core/vm-config";
-import commonSoftware from "@agentos-software/common";
 import type {
 	AgentCapabilities,
 	AgentInfo,
@@ -37,12 +37,12 @@ import type {
 } from "./agent-session-types.js";
 import { type HostTool, type ToolKit, validateToolkits } from "./host-tools.js";
 import { zodToJsonSchema } from "./host-tools-zod.js";
-import { parseAgentOsOptions } from "./options-schema.js";
 import type {
 	JsonRpcNotification,
 	JsonRpcRequest,
 	JsonRpcResponse,
 } from "./json-rpc.js";
+import { parseAgentOsOptions } from "./options-schema.js";
 import type {
 	ConnectTerminalOptions,
 	Kernel,
@@ -216,6 +216,7 @@ import {
 	type SoftwareInput,
 	type SoftwareRoot,
 } from "./packages.js";
+import type { PermissionTier } from "./runtime.js";
 import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
 import {
 	type AcpRequest,
@@ -241,17 +242,16 @@ import {
 	createAgentOsSidecarClient,
 	NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
 	NativeSidecarKernelProxy,
-	SidecarProcess,
 	type RootFilesystemEntry,
 	type SidecarMountDescriptor,
 	type SidecarPermissionsPolicy,
+	SidecarProcess,
 	type SidecarRegisteredHostCallbackDefinition,
 	type SidecarRequestFrame,
 	type SidecarResponsePayload,
 	type SidecarSessionState,
 	serializeRootFilesystemForSidecar,
 } from "./sidecar/rpc-client.js";
-import type { PermissionTier } from "./runtime.js";
 
 export interface AgentOsSharedSidecarOptions {
 	pool?: string;
@@ -2093,7 +2093,9 @@ function decodeBridgeBytes(value: unknown, field: string): Uint8Array {
 	}
 	if (
 		Array.isArray(value) &&
-		value.every((entry) => Number.isInteger(entry) && entry >= 0 && entry <= 255)
+		value.every(
+			(entry) => Number.isInteger(entry) && entry >= 0 && entry <= 255,
+		)
 	) {
 		return new Uint8Array(value);
 	}
@@ -2101,10 +2103,7 @@ function decodeBridgeBytes(value: unknown, field: string): Uint8Array {
 }
 
 async function handleJsBridgeCall(
-	request: Extract<
-		SidecarRequestFrame["payload"],
-		{ type: "js_bridge_call" }
-	>,
+	request: Extract<SidecarRequestFrame["payload"], { type: "js_bridge_call" }>,
 	context: JsBridgeContext,
 ): Promise<SidecarResponsePayload> {
 	try {
@@ -2157,7 +2156,10 @@ async function handleJsBridgeCall(
 				if (typeof args.target !== "string") {
 					throw new Error("js_bridge args.target must be a string");
 				}
-				await fs.symlink(args.target, bridgePath(request.mount_id, args.linkPath));
+				await fs.symlink(
+					args.target,
+					bridgePath(request.mount_id, args.linkPath),
+				);
 				break;
 			}
 			case "readlink":
@@ -2209,7 +2211,9 @@ async function handleJsBridgeCall(
 				);
 				break;
 			default:
-				throw new Error(`Unsupported js_bridge operation: ${request.operation}`);
+				throw new Error(
+					`Unsupported js_bridge operation: ${request.operation}`,
+				);
 		}
 
 		return {
@@ -2347,7 +2351,9 @@ async function invokeHostTool({
 	const callbackKey = `${toolKit.name}:${toolName}`;
 	const permissionMode = toolPermissionMode(context.permissions, callbackKey);
 	if (permissionMode !== "allow") {
-		throw new Error(`EACCES: blocked by binding.invoke policy for ${callbackKey}`);
+		throw new Error(
+			`EACCES: blocked by binding.invoke policy for ${callbackKey}`,
+		);
 	}
 	const input = await parseHostToolInput(tool, args, cwd, context.readFile);
 	return executeHostTool(tool, callbackKey, input);
@@ -2988,20 +2994,20 @@ export class AgentOs {
 			});
 			const vmAdmin = sidecarLease.admin;
 
-				const vm = new AgentOs(
-					vmAdmin.kernel,
-					sidecar,
-					processed.softwareRoots,
+			const vm = new AgentOs(
+				vmAdmin.kernel,
+				sidecar,
+				processed.softwareRoots,
 				processed.agentConfigs,
 				vmAdmin.hostMounts,
 				vmAdmin.env,
 				vmAdmin.rootView,
-					vmAdmin.sidecarClient,
-					vmAdmin.sidecarSession,
-					vmAdmin.sidecarVm,
-					options?.additionalInstructions,
-					options?.onAgentStderr ?? defaultAgentStderrHandler,
-				);
+				vmAdmin.sidecarClient,
+				vmAdmin.sidecarSession,
+				vmAdmin.sidecarVm,
+				options?.additionalInstructions,
+				options?.onAgentStderr ?? defaultAgentStderrHandler,
+			);
 			vm._sidecarLease = sidecarLease;
 			vm._toolKits = vmAdmin.toolKits;
 			vm._toolReference = vmAdmin.toolReference;
@@ -3059,6 +3065,11 @@ export class AgentOs {
 		};
 		this._processes.set(proc.pid, entry);
 
+		// NOTE: do NOT delete from `_processes` on exit — the public API contract
+		// (getProcess/listProcesses/stopProcess, see process-management.test.ts)
+		// requires exited processes to stay queryable (running:false, exitCode set).
+		// `_processes` is a process table for this VM's lifetime; it is freed wholesale
+		// in dispose(). (H5: the leak was that dispose() never cleared it.)
 		void proc.wait().then((code) => {
 			for (const h of exitHandlers) h(code);
 		});
@@ -4221,20 +4232,20 @@ export class AgentOs {
 				adapterEntrypoint,
 				args: launchArgs,
 				env: new Map(Object.entries(launchEnv)),
-					cwd: sessionCwd,
-					mcpServers: JSON.stringify(options?.mcpServers ?? []),
-					protocolVersion: ACP_PROTOCOL_VERSION,
-					clientCapabilities: JSON.stringify(defaultAcpClientCapabilities()),
-					additionalInstructions: combineInstructions(
-						[this._additionalInstructions, options?.additionalInstructions]
-							.map((part) => part?.trim())
-							.filter((part): part is string => Boolean(part))
-							.join("\n\n") || undefined,
-						this._toolReference,
-					),
-					skipOsInstructions: options?.skipOsInstructions ?? false,
-				},
-			});
+				cwd: sessionCwd,
+				mcpServers: JSON.stringify(options?.mcpServers ?? []),
+				protocolVersion: ACP_PROTOCOL_VERSION,
+				clientCapabilities: JSON.stringify(defaultAcpClientCapabilities()),
+				additionalInstructions: combineInstructions(
+					[this._additionalInstructions, options?.additionalInstructions]
+						.map((part) => part?.trim())
+						.filter((part): part is string => Boolean(part))
+						.join("\n\n") || undefined,
+					this._toolReference,
+				),
+				skipOsInstructions: options?.skipOsInstructions ?? false,
+			},
+		});
 		if (response.tag !== "AcpSessionCreatedResponse") {
 			throw new Error(`unexpected create_session response: ${response.tag}`);
 		}
@@ -4434,7 +4445,9 @@ export class AgentOs {
 				case "host_callback":
 					return handleHostCallback(request, context);
 				case "js_bridge_call":
-					return handleJsBridgeCall(request.payload, { filesystem: this.#kernel.vfs });
+					return handleJsBridgeCall(request.payload, {
+						filesystem: this.#kernel.vfs,
+					});
 				case "ext":
 					return this._handleAcpExtSidecarRequest(request.payload.envelope);
 			}
@@ -5379,6 +5392,7 @@ export class AgentOs {
 			);
 		}
 		this._acpTerminals.clear();
+		this._processes.clear();
 		await waitForTrackedExitPromises(
 			[...shellExitPromises, ...terminalExitPromises],
 			SHELL_DISPOSE_TIMEOUT_MS,

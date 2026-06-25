@@ -63,6 +63,10 @@ pub(crate) struct ProcessEntry {
     /// path builds `displayPidByKernelPid` from this so `all_processes`/`process_tree` report the
     /// public spawn pid (the map key) for the spawned root, not the raw kernel pid.
     pub kernel_pid: watch::Sender<Option<u32>>,
+    /// Handles for the per-process output-callback tasks seeded at spawn (`on_stdout`/`on_stderr`).
+    /// The entry retains its own `stdout_tx`/`stderr_tx` clones for late subscribers, so these tasks
+    /// never observe the broadcast `Closed`; `shutdown` aborts them when draining the registry.
+    pub output_tasks: Vec<JoinHandle<()>>,
 }
 
 /// A PTY-backed shell (TS `_shells` value). Keyed by synthetic `shell-N` id.
@@ -204,6 +208,10 @@ pub(crate) struct AgentOsInner {
     pub(crate) sidecar_lease: parking_lot::Mutex<Option<AgentOsSidecarVmLease>>,
     pub(crate) in_process_mounts: SccHashMap<String, crate::fs::MountedFs>,
     pub(crate) disposed: AtomicBool,
+    /// Handle for the background ACP event-pump task (`spawn_acp_event_pump`). Stored so `shutdown`
+    /// can abort it; the pump only exits on its own when the shared transport's event channel closes,
+    /// which does not happen while sibling VMs keep the transport alive. Mirrors `pending_shell_exits`.
+    pub(crate) acp_event_pump: parking_lot::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl AgentOs {
@@ -542,6 +550,7 @@ impl AgentOs {
             sidecar_lease: parking_lot::Mutex::new(Some(lease)),
             in_process_mounts: SccHashMap::new(),
             disposed: AtomicBool::new(false),
+            acp_event_pump: parking_lot::Mutex::new(None),
         };
 
         let client = AgentOs {
@@ -580,6 +589,14 @@ impl AgentOs {
 
         // 1. Cron dispose (cancel armed timers + tear down the driver).
         self.inner.cron.dispose();
+
+        // Abort the background ACP event pump and drain the SDK-spawned process registry. Neither
+        // ends on its own while a shared transport stays alive: the pump only exits on transport
+        // close, and the per-process output tasks await a broadcast `Closed` that the entry's own
+        // retained sender clones prevent. Aborting + clearing here stops both from leaking past
+        // dispose.
+        abort_tracked_task(&self.inner.acp_event_pump);
+        crate::process::drain_process_output_tasks(&self.inner.processes);
 
         // 2-5. Best-effort drain tracked shell and terminal tasks before the VM is disposed, bounded
         //      by SHELL_DISPOSE_TIMEOUT_MS so late output cannot race a closed transport.
@@ -724,10 +741,18 @@ impl AgentOs {
     }
 }
 
+/// Abort and clear a single tracked background-task handle (e.g. the ACP event pump) so it cannot
+/// outlive the disposed VM. Mirrors the `pending_shell_exits` drain in `shutdown`.
+fn abort_tracked_task(slot: &parking_lot::Mutex<Option<JoinHandle<()>>>) {
+    if let Some(handle) = slot.lock().take() {
+        handle.abort();
+    }
+}
+
 fn spawn_acp_event_pump(client: &AgentOs) {
     let mut events = client.transport().subscribe_wire_events();
     let inner = Arc::downgrade(&client.inner);
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         loop {
             match events.recv().await {
                 Ok((ownership, wire::EventPayload::ExtEnvelope(envelope))) => {
@@ -756,6 +781,7 @@ fn spawn_acp_event_pump(client: &AgentOs) {
             }
         }
     });
+    *client.inner.acp_event_pump.lock() = Some(handle);
 }
 
 fn deliver_acp_ext_event(
@@ -3688,8 +3714,9 @@ fn rejected_to_error(rejected: wire::RejectedResponse) -> ClientError {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_permissions_policy, permissions_policy, serialize_create_vm_config_for_sidecar,
-        serialize_root_filesystem_config_for_sidecar,
+        abort_tracked_task, default_permissions_policy, permissions_policy,
+        serialize_create_vm_config_for_sidecar, serialize_root_filesystem_config_for_sidecar,
+        JoinHandle,
     };
     use crate::config::{
         AgentOsConfig, AgentOsLimits, FsPermissionRule, FsPermissions, HttpLimits, JsRuntimeLimits,
@@ -3708,6 +3735,61 @@ mod tests {
         RootFilesystemEntryKind, RootFilesystemLowerDescriptor,
         RootFilesystemMode as ConfigRootFilesystemMode,
     };
+
+    /// Regression for the ACP event-pump leak (M7): `spawn_acp_event_pump` now stores its task
+    /// handle in `AgentOsInner::acp_event_pump`, and `shutdown` aborts it through `abort_tracked_task`
+    /// so the pump cannot outlive the disposed VM (it otherwise only ends on a shared-transport
+    /// close that never comes while sibling VMs hold the transport open).
+    ///
+    /// Gap: driving `spawn_acp_event_pump` itself needs a live `AgentOs` (it calls
+    /// `client.transport().subscribe_wire_events()`), which requires a real sidecar transport and so
+    /// is out of reach at unit level. We instead exercise the exact field (`Mutex<Option<JoinHandle>>`)
+    /// and the precise store-then-abort sequence the production code uses: `acp_event_pump` is
+    /// initialized to `None`, `spawn_acp_event_pump` does `*slot.lock() = Some(handle)`, and
+    /// `shutdown` does `abort_tracked_task(&slot)`.
+    #[tokio::test]
+    async fn abort_tracked_task_aborts_and_clears_the_handle() {
+        // Mirrors `AgentOsInner` init (`acp_event_pump: parking_lot::Mutex::new(None)`).
+        let slot: parking_lot::Mutex<Option<JoinHandle<()>>> = parking_lot::Mutex::new(None);
+        assert!(
+            slot.lock().is_none(),
+            "pump slot starts empty like AgentOsInner"
+        );
+
+        let task = tokio::spawn(async {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        });
+        let abort_handle = task.abort_handle();
+        // Mirrors the tail of `spawn_acp_event_pump`: `*client.inner.acp_event_pump.lock() = Some(handle)`.
+        *slot.lock() = Some(task);
+        assert!(
+            slot.lock().is_some(),
+            "spawning the pump must populate the tracked handle"
+        );
+
+        assert!(!abort_handle.is_finished(), "pump task should start alive");
+
+        abort_tracked_task(&slot);
+
+        assert!(
+            slot.lock().is_none(),
+            "tracked handle must be taken on abort"
+        );
+
+        // The abort is asynchronous; give the runtime a bounded window to reap the cancelled task.
+        for _ in 0..100 {
+            if abort_handle.is_finished() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert!(
+            abort_handle.is_finished(),
+            "pump task must be aborted on shutdown"
+        );
+    }
 
     #[test]
     fn permissions_policy_defaults_to_default_policy_when_unset() {

@@ -14,6 +14,7 @@ use anyhow::{Context, Result};
 use scc::HashMap as SccHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
+use tokio::task::JoinHandle;
 
 use secure_exec_client::wire::{self, EventPayload, ProcessSnapshotStatus, StreamChannel};
 
@@ -404,12 +405,15 @@ impl AgentOs {
         let (kernel_pid_tx, _) = watch::channel::<Option<u32>>(None);
 
         // Seed any caller-provided initial stdout/stderr callbacks into the fan-out, matching the TS
-        // initial-handler-set behavior (`stdoutHandlers.add(options.onStdout)`).
+        // initial-handler-set behavior (`stdoutHandlers.add(options.onStdout)`). The spawned task
+        // handles are retained on the entry so `shutdown` can abort them (the entry's own sender
+        // clones keep the channel open, so the tasks never observe `Closed` on their own).
+        let mut output_tasks = Vec::new();
         if let Some(cb) = options.base.on_stdout.take() {
-            install_output_callback(stdout_tx.clone(), cb);
+            output_tasks.push(install_output_callback(stdout_tx.clone(), cb));
         }
         if let Some(cb) = options.base.on_stderr.take() {
-            install_output_callback(stderr_tx.clone(), cb);
+            output_tasks.push(install_output_callback(stderr_tx.clone(), cb));
         }
 
         let entry = ProcessEntry {
@@ -420,6 +424,7 @@ impl AgentOs {
             exit_tx: exit_tx.clone(),
             process_id: process_id.clone(),
             kernel_pid: kernel_pid_tx.clone(),
+            output_tasks,
         };
         // `spawn` is documented as overwriting any prior entry for a freshly allocated pid; the pid
         // is monotonic so a collision is not expected.
@@ -1203,10 +1208,15 @@ fn prune_string_f64_map(map: &SccHashMap<String, f64>, limit: usize) {
 /// Drive a caller-supplied output callback from a fresh subscription on the given broadcast channel.
 /// Each chunk delivered to the channel is forwarded to `callback` as raw bytes. The task ends when
 /// the channel closes (process exit), matching the TS handler-set lifetime.
+///
+/// Returns the spawned task's handle so the owner can abort it on teardown: a [`ProcessEntry`]
+/// retains its own `stdout_tx`/`stderr_tx` clone for late subscribers, so the broadcast channel
+/// never closes (and this task never observes `Closed`) until the entry is dropped. `shutdown`
+/// drains the registry and aborts these handles rather than waiting on the channel close.
 pub(crate) fn install_output_callback(
     tx: broadcast::Sender<Vec<u8>>,
     mut callback: OutputCallback,
-) {
+) -> JoinHandle<()> {
     let mut rx = tx.subscribe();
     tokio::spawn(async move {
         loop {
@@ -1216,7 +1226,22 @@ pub(crate) fn install_output_callback(
                 Err(broadcast::error::RecvError::Closed) => break,
             }
         }
+    })
+}
+
+/// Drain the SDK-spawned process registry, dropping each entry's retained sender clones and aborting
+/// its per-process output-callback tasks. Called from `shutdown` so the output tasks (which would
+/// otherwise await a `Closed` that never fires, see [`install_output_callback`]) cannot outlive the
+/// disposed VM. Mirrors the `pending_shell_exits` / ACP-terminal drain in `shutdown`.
+pub(crate) fn drain_process_output_tasks(processes: &SccHashMap<u32, ProcessEntry>) {
+    let mut tasks = Vec::new();
+    processes.retain(|_, entry| {
+        tasks.append(&mut entry.output_tasks);
+        false
     });
+    for task in tasks {
+        task.abort();
+    }
 }
 
 /// Current wall-clock time as epoch milliseconds (TS `Date.now()`).
@@ -1231,10 +1256,130 @@ fn epoch_ms_now() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_exec_output, exited_pids_to_prune, prune_string_f64_map, ExecOptions,
+        append_exec_output, drain_process_output_tasks, exited_pids_to_prune,
+        install_output_callback, prune_string_f64_map, ExecOptions, OutputCallback,
         DEFAULT_EXEC_CWD, EXEC_OUTPUT_CAPTURE_LIMIT_BYTES,
     };
+    use crate::agent_os::ProcessEntry;
     use scc::HashMap as SccHashMap;
+    use tokio::sync::{broadcast, watch};
+
+    /// Regression for the per-process output-callback leak (H3): a `ProcessEntry` retains clones of
+    /// its `stdout_tx`/`stderr_tx`, so the output tasks never observe the broadcast `Closed` and hang
+    /// forever unless teardown aborts them. `drain_process_output_tasks` must empty the registry and
+    /// abort every retained output task.
+    #[tokio::test]
+    async fn drain_process_output_tasks_clears_registry_and_aborts_tasks() {
+        let processes: SccHashMap<u32, ProcessEntry> = SccHashMap::new();
+
+        let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(8);
+        let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(8);
+        let (exit_tx, _) = watch::channel::<Option<i32>>(None);
+        let (kernel_pid_tx, _) = watch::channel::<Option<u32>>(None);
+
+        // A task that never completes on its own, standing in for an output-callback task that is
+        // waiting on a `Closed` that the retained sender clone prevents.
+        let task = tokio::spawn(async {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        });
+        let abort_handle = task.abort_handle();
+
+        let entry = ProcessEntry {
+            command: "sleep".to_string(),
+            args: vec!["3600".to_string()],
+            stdout_tx,
+            stderr_tx,
+            exit_tx,
+            process_id: "proc-test".to_string(),
+            kernel_pid: kernel_pid_tx,
+            output_tasks: vec![task],
+        };
+        let _ = processes.insert(1, entry);
+
+        assert!(!abort_handle.is_finished(), "task should start alive");
+
+        drain_process_output_tasks(&processes);
+
+        assert!(processes.is_empty(), "registry must be cleared on drain");
+
+        // The abort is asynchronous; give the runtime a bounded window to reap the cancelled task.
+        for _ in 0..100 {
+            if abort_handle.is_finished() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert!(
+            abort_handle.is_finished(),
+            "output task must be aborted after drain"
+        );
+    }
+
+    /// Regression for the H3 wiring (not just the drain helper): `spawn`/`spawn_inner` must capture
+    /// the `JoinHandle` returned by `install_output_callback` into `ProcessEntry::output_tasks`. If a
+    /// refactor forgot to push the handle, the callback task would be unreachable and
+    /// `drain_process_output_tasks` would have nothing to abort, re-leaking the task. This reproduces
+    /// that exact seam and asserts the stored handle is the live callback task.
+    #[tokio::test]
+    async fn install_output_callback_handle_is_captured_into_process_entry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let (stdout_tx, _) = broadcast::channel::<Vec<u8>>(8);
+        let (stderr_tx, _) = broadcast::channel::<Vec<u8>>(8);
+        let (exit_tx, _) = watch::channel::<Option<i32>>(None);
+        let (kernel_pid_tx, _) = watch::channel::<Option<u32>>(None);
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_cb = Arc::clone(&calls);
+        let cb: OutputCallback = Box::new(move |_chunk: &[u8]| {
+            calls_cb.fetch_add(1, Ordering::SeqCst);
+        });
+
+        // The exact seam from `spawn_inner`: capture the returned handle in `output_tasks`.
+        let output_tasks = vec![install_output_callback(stdout_tx.clone(), cb)];
+
+        let entry = ProcessEntry {
+            command: "sleep".to_string(),
+            args: vec!["3600".to_string()],
+            stdout_tx: stdout_tx.clone(),
+            stderr_tx,
+            exit_tx,
+            process_id: "proc-test".to_string(),
+            kernel_pid: kernel_pid_tx,
+            output_tasks,
+        };
+
+        assert_eq!(
+            entry.output_tasks.len(),
+            1,
+            "the install_output_callback handle must be captured on the entry"
+        );
+
+        // Prove the captured handle is the live callback task: a chunk on the channel runs it.
+        stdout_tx
+            .send(b"hello".to_vec())
+            .expect("broadcast send to subscribed callback task");
+        for _ in 0..100 {
+            if calls.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the stored handle must drive the registered callback"
+        );
+
+        // And it is the handle `drain_process_output_tasks` aborts on teardown.
+        let processes: SccHashMap<u32, ProcessEntry> = SccHashMap::new();
+        let _ = processes.insert(1, entry);
+        drain_process_output_tasks(&processes);
+        assert!(processes.is_empty(), "registry must be cleared on drain");
+    }
 
     #[test]
     fn exec_options_default_uses_workspace_cwd() {
