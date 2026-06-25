@@ -384,8 +384,12 @@ jobs:
             [darwin-x64]=x86_64-apple-darwin
             [darwin-arm64]=aarch64-apple-darwin
           )
-          # Stage release assets: platform binaries + externalized pyodide assets
-          # (downloaded by the published execution crate's build.rs).
+          # Stage release assets: agentos-sidecar platform binaries only.
+          # Pyodide assets are NOT re-hosted here: they are owned by secure-exec
+          # and shipped on the secure-exec GitHub release, where the published
+          # secure-exec execution crate's build.rs downloads them from. The
+          # `crates/execution/assets/pyodide/` path does not exist in this repo
+          # (that crate lives in secure-exec), so staging it here always failed.
           mkdir -p release-assets
           for p in $SIDECAR_PLATFORMS; do
             agent_bin="artifacts/sidecar-${p}/agentos-sidecar"
@@ -395,14 +399,6 @@ jobs:
             else
               echo "::warning::missing agentos-sidecar binary for ${p}"
             fi
-          done
-          for f in \
-            pyodide.asm.wasm \
-            pyodide.asm.js \
-            python_stdlib.zip \
-            numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl \
-            pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl; do
-            cp "crates/execution/assets/pyodide/${f}" "release-assets/${f}"
           done
       - name: Create GitHub release and upload assets
         env:
@@ -469,6 +465,16 @@ jobs:
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
             --version ${{ needs.context.outputs.version }} \
             --version-only
+      - name: Vendor crate-local assets for packaging
+        run: |
+          set -euo pipefail
+          # agentos-sidecar include_str!s the system prompt; the source of truth
+          # lives in packages/core/fixtures. Refresh the crate-local copy so the
+          # published tarball is self-contained (cargo publish verification
+          # compiles the crate in isolation, where sibling packages do not exist).
+          cp packages/core/fixtures/AGENTOS_SYSTEM_PROMPT.md \
+            crates/agentos-sidecar/assets/AGENTOS_SYSTEM_PROMPT.md
+          git add -f crates/agentos-sidecar/assets/AGENTOS_SYSTEM_PROMPT.md
       - name: Dry-run crate publish (preview)
         if: ${{ needs.context.outputs.trigger != 'release' }}
         run: |

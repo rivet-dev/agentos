@@ -13,8 +13,8 @@ catalogs:
       specifier: 0.3.0-rc.2
       version: 0.3.0-rc.2
     '@agentos-software/codex-cli':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
+      specifier: 0.0.0-codex-claude-runtime-fixes.9cbef3a
+      version: 0.0.0-codex-claude-runtime-fixes.9cbef3a
     '@agentos-software/common':
       specifier: 0.3.0-rc.2
       version: 0.3.0-rc.2
@@ -82,20 +82,20 @@ catalogs:
       specifier: 0.3.0-rc.2
       version: 0.3.0-rc.2
     '@secure-exec/core':
-      specifier: 0.0.0-perf-regression.7264885
-      version: 0.0.0-perf-regression.7264885
+      specifier: 0.3.1
+      version: 0.3.1
     '@secure-exec/google-drive':
-      specifier: 0.0.0-perf-regression.7264885
-      version: 0.0.0-perf-regression.7264885
+      specifier: 0.3.1
+      version: 0.3.1
     '@secure-exec/nodejs':
       specifier: 0.2.1
       version: 0.2.1
     '@secure-exec/s3':
-      specifier: 0.0.0-perf-regression.7264885
-      version: 0.0.0-perf-regression.7264885
+      specifier: 0.3.1
+      version: 0.3.1
     '@secure-exec/sandbox':
-      specifier: 0.0.0-perf-regression.7264885
-      version: 0.0.0-perf-regression.7264885
+      specifier: 0.3.1
+      version: 0.3.1
 
 overrides:
   '@rivet-dev/agentos-core': workspace:*
@@ -133,7 +133,7 @@ importers:
         version: link:packages/core
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-perf-regression.7264885
+        version: 0.3.1
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -213,7 +213,7 @@ importers:
         version: link:../../packages/agentos-sandbox
       '@secure-exec/s3':
         specifier: 'catalog:'
-        version: 0.0.0-perf-regression.7264885
+        version: 0.3.1
       dockerode:
         specifier: ^4.0.9
         version: 4.0.10
@@ -284,7 +284,7 @@ importers:
         version: link:../core
       '@secure-exec/sandbox':
         specifier: 'catalog:'
-        version: 0.0.0-perf-regression.7264885(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.3.1(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -340,7 +340,7 @@ importers:
         version: 0.6.2
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-perf-regression.7264885
+        version: 0.3.1
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -377,7 +377,7 @@ importers:
         version: 0.3.0-rc.2
       '@agentos-software/codex-cli':
         specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        version: 0.0.0-codex-claude-runtime-fixes.9cbef3a
       '@agentos-software/coreutils':
         specifier: 'catalog:'
         version: 0.3.0-rc.2
@@ -464,10 +464,10 @@ importers:
         version: link:../agentos-sandbox
       '@secure-exec/google-drive':
         specifier: 'catalog:'
-        version: 0.0.0-perf-regression.7264885
+        version: 0.3.1
       '@secure-exec/s3':
         specifier: 'catalog:'
-        version: 0.0.0-perf-regression.7264885
+        version: 0.3.1
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -550,7 +550,7 @@ importers:
     dependencies:
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-perf-regression.7264885
+        version: 0.3.1
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -572,7 +572,7 @@ importers:
     dependencies:
       '@secure-exec/core':
         specifier: 'catalog:'
-        version: 0.0.0-perf-regression.7264885
+        version: 0.3.1
       pyodide:
         specifier: ^0.28.3
         version: 0.28.3(bufferutil@4.1.0)
@@ -654,7 +654,7 @@ importers:
     dependencies:
       '@agentos-software/codex-cli':
         specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        version: 0.0.0-codex-claude-runtime-fixes.9cbef3a
       '@agentos-software/common':
         specifier: 'catalog:'
         version: 0.3.0-rc.2
@@ -727,7 +727,7 @@ importers:
     dependencies:
       '@agentos-software/codex-cli':
         specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        version: 0.0.0-codex-claude-runtime-fixes.9cbef3a
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -892,8 +892,8 @@ packages:
     resolution: {integrity: sha512-lSrWgqisbNFV3kkUpcyjH67UZsI/BWAWqlzr/B5SrHN0FcQU/1xVqYp+ooz24HdUuLlpp4Otx5sJHfb1NLRvDQ==}
     hasBin: true
 
-  '@agentos-software/codex-cli@0.3.0-rc.2':
-    resolution: {integrity: sha512-n0iDKXJOKZrQuJvPbrJpCU8kLC15lj7ueMgUHVHi1uX5U+x6TPrezG8FNnEKZX49eMHtL8SBsYZIaDwNdjjjHw==}
+  '@agentos-software/codex-cli@0.0.0-codex-claude-runtime-fixes.9cbef3a':
+    resolution: {integrity: sha512-vxJ0T2h9O46oOzohDKChKZfduLGelpKz3p7AoatRUmz2n4pIntCcyvUyry6LeX0jcg1W5n0HaI5fX2b4C450Xw==}
 
   '@agentos-software/codex@0.3.0-rc.2':
     resolution: {integrity: sha512-DKAb9Qs1+zV1sgtMEqVo7K60R4IryKMY24jZdH5NX5cKhIi5ED1o+AufINtNSMJxdrByz+MuX+2HkvWXCvHYgw==}
@@ -2931,50 +2931,50 @@ packages:
     resolution: {integrity: sha512-trO//ypJBSt5xkewuol9LOykvDgHwUXq8R+yQVS+0CmpN3lYUtewHkb+At9RVGRhDMmJZY2oasaXDnhfurQ33w==}
     hasBin: true
 
-  '@secure-exec/core@0.0.0-perf-regression.7264885':
-    resolution: {integrity: sha512-VM7f1D/e0Fn7AwXgeM5dGExuM/PLAq3OZ18MqBFBwuJU+OIBjEWiimLaET6/dKb00eviyxujEwTY37qwdIar6w==}
-
   '@secure-exec/core@0.2.1':
     resolution: {integrity: sha512-HsnUv6gClpMA1BBRmX86j30TKTZtgJC/fO1tVavr7IpM2zNKbHU8LgSlBd7mv2SNy02ImTmU/GnQ3aYB4NSbEg==}
 
-  '@secure-exec/google-drive@0.0.0-perf-regression.7264885':
-    resolution: {integrity: sha512-7xacHcFA5AWz3akhSqzfTckEqL9pwPGuCYSyNXb0KtXs4hjbxURIw8ZBOHH9xk48sSQ6v6VzqzwZevmsV35PLw==}
+  '@secure-exec/core@0.3.1':
+    resolution: {integrity: sha512-/fUm03DY+Z5ZeBfSJYgQZJQ4eALxzNW+Ndz1MEZHOtWMgkC6f1e6cdmlOjLTfdbC01C6R4J0nK3y+drajPpzkg==}
+
+  '@secure-exec/google-drive@0.3.1':
+    resolution: {integrity: sha512-U5nciO1jBfHgNr5Cy8SmNIiMjeQU35UsHSDoDQbemlVyeLjMUaY8KLrK6tTzt42ax0TmEGFKBL6qOdYKlPmOQw==}
 
   '@secure-exec/nodejs@0.2.1':
     resolution: {integrity: sha512-UJMJqVFxexlHJV0Q9nWURvrz6GElj8673DDOOFln6FHR6JS+9SaSU3eISrN158DuNC3SFi4rgjb/scKnK4YOYQ==}
 
-  '@secure-exec/s3@0.0.0-perf-regression.7264885':
-    resolution: {integrity: sha512-MAcGZNWR6aVsehGVu/f3Jk41bBJJi6QsngU/kHE3OSRf9XgsIMFf48xzeU+MSj7z8RExXum7mNodRAuBg9Kaqw==}
+  '@secure-exec/s3@0.3.1':
+    resolution: {integrity: sha512-Sp0Uvcr39alJ9ske84vCKFgy6e5vzGFRne9cAy8396I201f2htuIvKb41sTKrgzdCKb5oalO/f5vvd5l0XEUhg==}
 
-  '@secure-exec/sandbox@0.0.0-perf-regression.7264885':
-    resolution: {integrity: sha512-fyuc+MiqkmZj/AGOWXrJ4y1L+tuH7pylO5/v8B/u4+Go9UX9F3t9uOF6NCRclS/xFEKm1pWzWpEWx9aDpFVVzQ==}
+  '@secure-exec/sandbox@0.3.1':
+    resolution: {integrity: sha512-KKh9CMQY5Fsa8OXfC8UlB04z+DDOtNbkOnSw7vTK6nVEfoN1mNx3Vo9dTfqbYFWIqnLs4Hy8PQ0KF1VUsX9k+w==}
 
-  '@secure-exec/sidecar-darwin-arm64@0.0.0-perf-regression.7264885':
-    resolution: {integrity: sha512-CEW4RXThKg18aVcOgB9Q8wmRkEbiaPaACOpaOmc32Oozw+8cfk5V0SAlGveuOKTSzZk9fvM4XRTY2vP+wCapXg==}
+  '@secure-exec/sidecar-darwin-arm64@0.3.1':
+    resolution: {integrity: sha512-q9vlwXwDfIZf9ElxuxtsjJXaIbG9OGcvOcUcNl3PbYqpYNQPEiP46EfeCNFRRhNz0W8kp/0jjDtg/P4vLf0eoA==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [darwin]
 
-  '@secure-exec/sidecar-darwin-x64@0.0.0-perf-regression.7264885':
-    resolution: {integrity: sha512-HulVMs1VuSL5GSr86qfZ1eMyVWYegqax6UjnpJ2sVX6JVeHenafel7laNv3Q0AWdWj6/k8gUdbSW6lRsTzpQzw==}
+  '@secure-exec/sidecar-darwin-x64@0.3.1':
+    resolution: {integrity: sha512-fAYkG6bct7iaxTb4hhjdsmGEs/FJgYBbV55OazzLwT/S1itF9EH7mTL3VakbtCTGBkUya4cZd3WsPkskU3OMzA==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [darwin]
 
-  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-perf-regression.7264885':
-    resolution: {integrity: sha512-lIUBaIU5C5Ss/DZNDohwYV2AOe51mAVDTg+bc8FqtekGzl1LBrKRmsCSAp7SSoBQL0IsbzA7mRrFN/wjp31omQ==}
+  '@secure-exec/sidecar-linux-arm64-gnu@0.3.1':
+    resolution: {integrity: sha512-hdILhOYKWmJjWFdtTR7Xfv2GEAzS85mB1KPhAD0JcgMB3IWLT5tUlcMKVpc1rpzU/EdZckRkaRE/JTW5bn+3dA==}
     engines: {node: '>=20'}
     cpu: [arm64]
     os: [linux]
 
-  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-perf-regression.7264885':
-    resolution: {integrity: sha512-G/B0T9DB97mlj5okfLE2JKUXzUd6kbzMYH4/M1DxnEx2ePPDfax6tJLHimm07NO03c7a0YA4QFw/gJM3xmX3HA==}
+  '@secure-exec/sidecar-linux-x64-gnu@0.3.1':
+    resolution: {integrity: sha512-HSaT17edNZ5bBcmBBbhxPp2xLBAoWU/JtzpDoINXLNJGm6500TdXJrG7TuU2D8OeeNaFXFLVOcdVInpAnrDjbg==}
     engines: {node: '>=20'}
     cpu: [x64]
     os: [linux]
 
-  '@secure-exec/sidecar@0.0.0-perf-regression.7264885':
-    resolution: {integrity: sha512-v+IKqZjhT5+QfLW1CixP/Bq609aS6Am76ofcNq90QlRCxkR0M3q1g3ReeaAmynRxtQPP89vUMVLu3VDCWyr/1Q==}
+  '@secure-exec/sidecar@0.3.1':
+    resolution: {integrity: sha512-xC+dMigq4dlDRhgSFN3kxTNUPXYvNHfWynVhlv83d3DwqvP4bggC19RQfg9CgCB76CICt3RhwCkg7qQMFKF3pw==}
     engines: {node: '>=20'}
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
@@ -7301,7 +7301,7 @@ snapshots:
       - '@cfworker/json-schema'
       - supports-color
 
-  '@agentos-software/codex-cli@0.3.0-rc.2': {}
+  '@agentos-software/codex-cli@0.0.0-codex-claude-runtime-fixes.9cbef3a': {}
 
   '@agentos-software/codex@0.3.0-rc.2': {}
 
@@ -9711,19 +9711,19 @@ snapshots:
       '@sandbox-agent/cli-win32-x64': 0.4.2
     optional: true
 
-  '@secure-exec/core@0.0.0-perf-regression.7264885':
-    dependencies:
-      '@rivetkit/bare-ts': 0.6.2
-      '@secure-exec/sidecar': 0.0.0-perf-regression.7264885
-      zod: 4.3.6
-
   '@secure-exec/core@0.2.1':
     dependencies:
       better-sqlite3: 12.8.0
 
-  '@secure-exec/google-drive@0.0.0-perf-regression.7264885':
+  '@secure-exec/core@0.3.1':
     dependencies:
-      '@secure-exec/core': 0.0.0-perf-regression.7264885
+      '@rivetkit/bare-ts': 0.6.2
+      '@secure-exec/sidecar': 0.3.1
+      zod: 4.3.6
+
+  '@secure-exec/google-drive@0.3.1':
+    dependencies:
+      '@secure-exec/core': 0.3.1
 
   '@secure-exec/nodejs@0.2.1':
     dependencies:
@@ -9736,13 +9736,13 @@ snapshots:
       node-stdlib-browser: 1.3.1
       web-streams-polyfill: 4.2.0
 
-  '@secure-exec/s3@0.0.0-perf-regression.7264885':
+  '@secure-exec/s3@0.3.1':
     dependencies:
-      '@secure-exec/core': 0.0.0-perf-regression.7264885
+      '@secure-exec/core': 0.3.1
 
-  '@secure-exec/sandbox@0.0.0-perf-regression.7264885(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
+  '@secure-exec/sandbox@0.3.1(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
     dependencies:
-      '@secure-exec/core': 0.0.0-perf-regression.7264885
+      '@secure-exec/core': 0.3.1
       sandbox-agent: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
     transitivePeerDependencies:
       - '@cloudflare/sandbox'
@@ -9756,24 +9756,24 @@ snapshots:
       - modal
       - zod
 
-  '@secure-exec/sidecar-darwin-arm64@0.0.0-perf-regression.7264885':
+  '@secure-exec/sidecar-darwin-arm64@0.3.1':
     optional: true
 
-  '@secure-exec/sidecar-darwin-x64@0.0.0-perf-regression.7264885':
+  '@secure-exec/sidecar-darwin-x64@0.3.1':
     optional: true
 
-  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-perf-regression.7264885':
+  '@secure-exec/sidecar-linux-arm64-gnu@0.3.1':
     optional: true
 
-  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-perf-regression.7264885':
+  '@secure-exec/sidecar-linux-x64-gnu@0.3.1':
     optional: true
 
-  '@secure-exec/sidecar@0.0.0-perf-regression.7264885':
+  '@secure-exec/sidecar@0.3.1':
     optionalDependencies:
-      '@secure-exec/sidecar-darwin-arm64': 0.0.0-perf-regression.7264885
-      '@secure-exec/sidecar-darwin-x64': 0.0.0-perf-regression.7264885
-      '@secure-exec/sidecar-linux-arm64-gnu': 0.0.0-perf-regression.7264885
-      '@secure-exec/sidecar-linux-x64-gnu': 0.0.0-perf-regression.7264885
+      '@secure-exec/sidecar-darwin-arm64': 0.3.1
+      '@secure-exec/sidecar-darwin-x64': 0.3.1
+      '@secure-exec/sidecar-linux-arm64-gnu': 0.3.1
+      '@secure-exec/sidecar-linux-x64-gnu': 0.3.1
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     optional: true

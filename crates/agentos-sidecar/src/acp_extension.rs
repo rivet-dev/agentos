@@ -62,9 +62,15 @@ const OPENCODE_DEFAULT_CONTEXT_PATHS: [&str; 11] = [
     "OPENCODE.md",
     "OPENCODE.local.md",
 ];
+// Vendored crate-local copy of packages/core/fixtures/AGENTOS_SYSTEM_PROMPT.md.
+// `include_str!` must stay inside the crate dir: a path that escaped via
+// `../../packages/core/...` broke `cargo publish` verification, which compiles
+// the crate from an isolated tarball where the sibling packages do not exist.
+// The publish workflow refreshes this copy from the canonical fixture before
+// packaging; keep them in sync.
 const AGENTOS_SYSTEM_PROMPT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../packages/core/fixtures/AGENTOS_SYSTEM_PROMPT.md"
+    "/assets/AGENTOS_SYSTEM_PROMPT.md"
 ));
 
 #[derive(Debug, Default)]
