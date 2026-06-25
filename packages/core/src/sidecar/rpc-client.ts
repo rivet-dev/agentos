@@ -34,6 +34,7 @@ import type {
 	GuestFilesystemStat,
 	SidecarProcess,
 	SidecarProcessSnapshotEntry,
+	SidecarPermissionsPolicy,
 	SidecarSignalHandlerRegistration,
 	SidecarSocketStateEntry,
 } from "./native-process-client.js";
@@ -229,6 +230,7 @@ export interface LocalCompatMount {
 	path: string;
 	fs: VirtualFileSystem;
 	readOnly: boolean;
+	sidecarMount?: SidecarMountDescriptor;
 }
 
 interface KernelSocketSnapshot {
@@ -290,6 +292,10 @@ interface NativeSidecarKernelProxyOptions {
 	cwd: string;
 	defaultExecCwd?: string;
 	localMounts: LocalCompatMount[];
+	sidecarMounts: SidecarMountDescriptor[];
+	permissions?: SidecarPermissionsPolicy;
+	commandPermissions?: Parameters<SidecarProcess["configureVm"]>[2]["commandPermissions"];
+	loopbackExemptPorts?: number[];
 	commandGuestPaths: ReadonlyMap<string, string>;
 	onWasmCommandResolved?: (command: string) => void;
 	onDispose?: () => Promise<void>;
@@ -307,6 +313,12 @@ export class NativeSidecarKernelProxy {
 	private readonly session: AuthenticatedSession;
 	private readonly vm: CreatedVm;
 	private readonly localMounts: LocalCompatMount[];
+	private readonly baseSidecarMounts: SidecarMountDescriptor[];
+	private readonly permissions: SidecarPermissionsPolicy | undefined;
+	private readonly commandPermissions:
+		| Parameters<SidecarProcess["configureVm"]>[2]["commandPermissions"]
+		| undefined;
+	private readonly loopbackExemptPorts: number[] | undefined;
 	private readonly commandDrivers: Map<string, string>;
 	private readonly onWasmCommandResolved:
 		| ((command: string) => void)
@@ -329,6 +341,7 @@ export class NativeSidecarKernelProxy {
 	private zombieTimerCountRefresh: Promise<void> | null = null;
 	private disposed = false;
 	private pumpError: Error | null = null;
+	private mountReconfigurePromise: Promise<void> | null = null;
 	private nextSyntheticPid = SYNTHETIC_PID_BASE;
 	private readonly eventPumpAbortController = new AbortController();
 	private readonly eventPump: Promise<void>;
@@ -343,6 +356,15 @@ export class NativeSidecarKernelProxy {
 		this.localMounts = [...options.localMounts].sort(
 			(left, right) => right.path.length - left.path.length,
 		);
+		const localMountPaths = new Set(this.localMounts.map((mount) => mount.path));
+		this.baseSidecarMounts = options.sidecarMounts.filter(
+			(mount) =>
+				mount.plugin.id !== "js_bridge" ||
+				!localMountPaths.has(posixPath.normalize(mount.guestPath)),
+		);
+		this.permissions = options.permissions;
+		this.commandPermissions = options.commandPermissions;
+		this.loopbackExemptPorts = options.loopbackExemptPorts;
 		this.commandDrivers = buildCommandMap(options.commandGuestPaths);
 		this.onWasmCommandResolved = options.onWasmCommandResolved;
 		this.onDispose = options.onDispose;
@@ -378,6 +400,7 @@ export class NativeSidecarKernelProxy {
 		}
 		this.disposed = true;
 		this.eventPumpAbortController.abort();
+		await this.mountReconfigurePromise?.catch(() => {});
 
 		const liveProcesses = [...this.trackedProcesses.values()].filter(
 			(entry) => entry.exitCode === null,
@@ -1298,16 +1321,18 @@ export class NativeSidecarKernelProxy {
 	mountFs(
 		path: string,
 		driver: VirtualFileSystem,
-		options?: { readOnly?: boolean },
+		options?: { readOnly?: boolean; sidecarMount?: SidecarMountDescriptor },
 	): void {
 		this.localMounts.unshift({
 			path: posixPath.normalize(path),
 			fs: driver,
 			readOnly: options?.readOnly ?? false,
+			sidecarMount: options?.sidecarMount,
 		});
 		this.localMounts.sort(
 			(left, right) => right.path.length - left.path.length,
 		);
+		void this.reconfigureSidecarMounts().catch(() => {});
 	}
 
 	unmountFs(path: string): void {
@@ -1317,6 +1342,53 @@ export class NativeSidecarKernelProxy {
 		);
 		if (index >= 0) {
 			this.localMounts.splice(index, 1);
+			void this.reconfigureSidecarMounts().catch(() => {});
+		}
+	}
+
+	private desiredSidecarMounts(): SidecarMountDescriptor[] {
+		return [
+			...this.baseSidecarMounts,
+			...this.localMounts.map(
+				(mount) =>
+					mount.sidecarMount ?? {
+						guestPath: mount.path,
+						readOnly: mount.readOnly,
+						plugin: {
+							id: "js_bridge",
+							config: {},
+						},
+					},
+			),
+		];
+	}
+
+	private reconfigureSidecarMounts(): Promise<void> {
+		const run = async () => {
+			if (this.disposed) {
+				return;
+			}
+			await this.client.configureVm(this.session, this.vm, {
+				mounts: this.desiredSidecarMounts(),
+				permissions: this.permissions,
+				commandPermissions: this.commandPermissions,
+				loopbackExemptPorts: this.loopbackExemptPorts,
+			});
+		};
+		const previous = this.mountReconfigurePromise ?? Promise.resolve();
+		const next = previous.then(run, run);
+		const tracked = next.finally(() => {
+			if (this.mountReconfigurePromise === tracked) {
+				this.mountReconfigurePromise = null;
+			}
+		});
+		this.mountReconfigurePromise = tracked;
+		return tracked;
+	}
+
+	private async waitForMountReconfigure(): Promise<void> {
+		if (this.mountReconfigurePromise) {
+			await this.mountReconfigurePromise;
 		}
 	}
 
@@ -1471,6 +1543,7 @@ export class NativeSidecarKernelProxy {
 	}
 
 	private async startTrackedProcess(entry: TrackedProcessEntry): Promise<void> {
+		await this.waitForMountReconfigure();
 		const started = await this.client.execute(this.session, this.vm, {
 			processId: entry.processId,
 			command: entry.command,
@@ -2071,7 +2144,8 @@ export class NativeSidecarKernelProxy {
 		return this.dispatchNativeRead(path) as Promise<T>;
 	}
 
-	private dispatchNativeRead(path: string): Promise<Uint8Array> {
+	private async dispatchNativeRead(path: string): Promise<Uint8Array> {
+		await this.waitForMountReconfigure();
 		return this.client.readFile(this.session, this.vm, path);
 	}
 
@@ -2088,6 +2162,7 @@ export class NativeSidecarKernelProxy {
 			await handler(local.mount, local.relativePath);
 			return;
 		}
+		await this.waitForMountReconfigure();
 		await nativeHandler();
 	}
 

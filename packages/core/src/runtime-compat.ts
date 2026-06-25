@@ -20,6 +20,7 @@ import {
 	NativeSidecarKernelProxy,
 	SidecarProcess,
 	type RootFilesystemEntry,
+	type SidecarMountDescriptor,
 	serializeMountConfigForSidecar,
 } from "./sidecar/rpc-client.js";
 
@@ -2417,6 +2418,45 @@ function bindLiveFilesystem(
 	};
 }
 
+function serializeLocalCompatMountForSidecar(
+	mount: LocalCompatMount,
+): SidecarMountDescriptor {
+	return (
+		mount.sidecarMount ??
+		(mount.fs instanceof NodeFileSystem
+			? serializeMountConfigForSidecar({
+					path: mount.path,
+					readOnly: mount.readOnly,
+					plugin: {
+						id: "host_dir",
+						config: {
+							hostPath: mount.fs.rootPath,
+							readOnly: mount.readOnly,
+						},
+					},
+				})
+			: serializeMountConfigForSidecar({
+					path: mount.path,
+					driver: mount.fs,
+					readOnly: mount.readOnly,
+				}))
+	);
+}
+
+function makeLocalCompatMount(options: {
+	path: string;
+	fs: VirtualFileSystem;
+	readOnly?: boolean;
+}): LocalCompatMount {
+	const localMount: LocalCompatMount = {
+		path: normalizePath(options.path),
+		fs: options.fs,
+		readOnly: options.readOnly ?? false,
+	};
+	localMount.sidecarMount = serializeLocalCompatMountForSidecar(localMount);
+	return localMount;
+}
+
 class NativeKernel implements Kernel {
 	readonly env: Record<string, string>;
 	readonly cwd: string;
@@ -2480,11 +2520,13 @@ class NativeKernel implements Kernel {
 		};
 		this.loopbackExemptPorts = [...(options.loopbackExemptPorts ?? [])];
 		for (const mount of options.mounts ?? []) {
-			this.pendingLocalMounts.push({
-				path: normalizePath(mount.path),
-				fs: mount.fs,
-				readOnly: mount.readOnly ?? false,
-			});
+			this.pendingLocalMounts.push(
+				makeLocalCompatMount({
+					path: mount.path,
+					fs: mount.fs,
+					readOnly: mount.readOnly,
+				}),
+			);
 		}
 		this.vfs = new DeferredFileSystem(() => this.rootFilesystem);
 		this.liveFilesystemBinding = bindLiveFilesystem(
@@ -2541,23 +2583,7 @@ class NativeKernel implements Kernel {
 			}),
 		);
 		const localMounts = this.pendingLocalMounts.map((mount) =>
-			mount.fs instanceof NodeFileSystem
-				? serializeMountConfigForSidecar({
-						path: mount.path,
-						readOnly: mount.readOnly,
-						plugin: {
-							id: "host_dir",
-							config: {
-								hostPath: mount.fs.rootPath,
-								readOnly: mount.readOnly,
-							},
-						},
-					})
-				: serializeMountConfigForSidecar({
-						path: mount.path,
-						driver: mount.fs,
-						readOnly: mount.readOnly,
-					}),
+			serializeLocalCompatMountForSidecar(mount),
 		);
 		await this.client.configureVm(this.session, this.vm, {
 			mounts: [...localMounts, ...sidecarMounts],
@@ -2685,14 +2711,24 @@ class NativeKernel implements Kernel {
 		options?: { readOnly?: boolean },
 	): void {
 		if (!this.proxy) {
-			this.pendingLocalMounts.push({
-				path: normalizePath(mountPath),
-				fs: filesystem,
-				readOnly: options?.readOnly ?? false,
-			});
+			this.pendingLocalMounts.push(
+				makeLocalCompatMount({
+					path: mountPath,
+					fs: filesystem,
+					readOnly: options?.readOnly,
+				}),
+			);
 			return;
 		}
-		this.proxy.mountFs(mountPath, filesystem, options);
+		const localMount = makeLocalCompatMount({
+			path: mountPath,
+			fs: filesystem,
+			readOnly: options?.readOnly,
+		});
+		this.proxy.mountFs(mountPath, filesystem, {
+			readOnly: localMount.readOnly,
+			sidecarMount: localMount.sidecarMount,
+		});
 	}
 
 	unmountFs(mountPath: string): void {
@@ -2864,37 +2900,33 @@ class NativeKernel implements Kernel {
 			);
 		}
 		if (rootPassthroughPlan.mounts.length > 0) {
-			this.pendingLocalMounts.push(...rootPassthroughPlan.mounts);
+			this.pendingLocalMounts.push(
+				...rootPassthroughPlan.mounts.map((mount) =>
+					makeLocalCompatMount({
+						path: mount.path,
+						fs: mount.fs,
+						readOnly: mount.readOnly,
+					}),
+				),
+			);
 		}
 		if (
 			this.pendingLocalMounts.length > 0 ||
 			this.loopbackExemptPorts.length > 0 ||
 			requestedPermissions
 		) {
+			const sidecarMounts = this.pendingLocalMounts.map((mount) =>
+				serializeLocalCompatMountForSidecar(mount),
+			);
 			await client.configureVm(session, vm, {
-				mounts: this.pendingLocalMounts.map((mount) =>
-					mount.fs instanceof NodeFileSystem
-						? serializeMountConfigForSidecar({
-								path: mount.path,
-								readOnly: mount.readOnly,
-								plugin: {
-									id: "host_dir",
-									config: {
-										hostPath: mount.fs.rootPath,
-										readOnly: mount.readOnly,
-									},
-								},
-							})
-						: serializeMountConfigForSidecar({
-								path: mount.path,
-								driver: mount.fs,
-								readOnly: mount.readOnly,
-							}),
-				),
+				mounts: sidecarMounts,
 				permissions: requestedPermissions,
 				loopbackExemptPorts: this.loopbackExemptPorts,
 			});
 		}
+		const configuredSidecarMounts = this.pendingLocalMounts.map((mount) =>
+			serializeLocalCompatMountForSidecar(mount),
+		);
 
 		const proxy = new NativeSidecarKernelProxy({
 			client,
@@ -2904,6 +2936,9 @@ class NativeKernel implements Kernel {
 			cwd: this.cwd,
 			defaultExecCwd: this.options.cwd === undefined ? "/workspace" : this.cwd,
 			localMounts: this.pendingLocalMounts,
+			sidecarMounts: configuredSidecarMounts,
+			permissions: requestedPermissions,
+			loopbackExemptPorts: this.loopbackExemptPorts,
 			commandGuestPaths: new Map<string, string>(),
 			onWasmCommandResolved: (command) => {
 				this.recordModuleExecution(command);

@@ -145,6 +145,53 @@ describe("mount integration", () => {
 		await expect(vm.readFile("/mnt/custom/note.txt")).rejects.toThrow();
 	});
 
+	test("guest processes can read and write a create-time plain JS VFS mount", async () => {
+		const mounted = createRecordingFilesystem();
+		vm = await createMountVm({
+			mounts: [{ path: "/mnt/custom", driver: mounted.fs }],
+		});
+
+		await vm.writeFile("/mnt/custom/host.txt", "from host api");
+		const result = await vm.execArgv("node", [
+			"-e",
+			[
+				'const { readFileSync, writeFileSync } = require("node:fs");',
+				'console.log(readFileSync("/mnt/custom/host.txt", "utf8"));',
+				'writeFileSync("/mnt/custom/guest.txt", "from guest process");',
+			].join("\n"),
+		]);
+		expect(result.exitCode, result.stderr).toBe(0);
+		expect(result.stdout.trim()).toBe("from host api");
+		expect(mounted.calls).toContain("readFile:/host.txt");
+		expect(mounted.calls).toContain("writeFile:/guest.txt");
+		expect(
+			new TextDecoder().decode(await vm.readFile("/mnt/custom/guest.txt")),
+		).toBe("from guest process");
+	});
+
+	test("guest processes can read and write a runtime-mounted plain JS VFS", async () => {
+		const mounted = createRecordingFilesystem();
+		vm = await createMountVm();
+
+		vm.mountFs("/mnt/custom", mounted.fs);
+		await vm.writeFile("/mnt/custom/host.txt", "from host api");
+		const result = await vm.execArgv("node", [
+			"-e",
+			[
+				'const { readFileSync, writeFileSync } = require("node:fs");',
+				'console.log(readFileSync("/mnt/custom/host.txt", "utf8"));',
+				'writeFileSync("/mnt/custom/guest.txt", "from guest process");',
+			].join("\n"),
+		]);
+		expect(result.exitCode, result.stderr).toBe(0);
+		expect(result.stdout.trim()).toBe("from host api");
+		expect(mounted.calls).toContain("readFile:/host.txt");
+		expect(mounted.calls).toContain("writeFile:/guest.txt");
+		expect(
+			new TextDecoder().decode(await vm.readFile("/mnt/custom/guest.txt")),
+		).toBe("from guest process");
+	});
+
 	test("readdir('/') includes 'data' alongside standard POSIX dirs", async () => {
 		vm = await createMountVm({
 			mounts: [{ path: "/data", driver: createInMemoryFileSystem() }],
