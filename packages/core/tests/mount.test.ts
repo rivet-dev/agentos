@@ -126,7 +126,9 @@ describe("mount integration", () => {
 
 		vm.unmountFs("/mnt/dynamic");
 		await expect(vm.readFile("/mnt/dynamic/test.txt")).rejects.toThrow();
-	});
+		// Runtime mount + unmount each trigger a full sidecar reconfigure, so this
+		// integration test needs more than the 30s default (see PR #1521 CI).
+	}, 120_000);
 
 	test("runtime mountFs routes through a plain JS VFS driver", async () => {
 		const mounted = createRecordingFilesystem();
@@ -143,7 +145,9 @@ describe("mount integration", () => {
 
 		vm.unmountFs("/mnt/custom");
 		await expect(vm.readFile("/mnt/custom/note.txt")).rejects.toThrow();
-	});
+		// Runtime mount + unmount each trigger a full sidecar reconfigure, so this
+		// integration test needs more than the 30s default (see PR #1521 CI).
+	}, 120_000);
 
 	test("guest processes can read and write a create-time plain JS VFS mount", async () => {
 		const mounted = createRecordingFilesystem();
