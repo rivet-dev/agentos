@@ -689,7 +689,7 @@ const Hero = () => {
 	const heroStats = [
 		{ value: `${Math.round(benchColdStart[2].sandbox / benchColdStart[2].agentOS)}×`, label: 'faster cold starts', sub: 'vs. fastest sandbox', href: '#bench-cold-start' },
 		{ value: `${benchWorkloads.agent.memory.multiplier.split('x')[0]}×`, label: 'less memory', sub: 'per agent · vs. sandbox', href: '#bench-memory' },
-		{ value: `${Math.max(...Object.values(benchWorkloads).flatMap((w) => w.cost.map((t) => t.ratio)))}×`, label: 'cheaper to run', sub: 'vs. cheapest sandbox', href: '#bench-cost' },
+		{ value: `${Math.max(...benchWorkloads.agent.cost.map((t) => t.ratio))}×`, label: 'cheaper to run', sub: 'per agent · vs. cheapest sandbox', href: '#bench-cost' },
 	];
 
 	// Auto-cycle through agents starting 2.5s before stroke animation ends

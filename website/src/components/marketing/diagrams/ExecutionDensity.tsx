@@ -60,7 +60,7 @@ function AutoHeight({ children }: { children: ReactNode }) {
 
 export const ExecutionDensity = ({ workload, onWorkloadChange }: { workload: WorkloadKey; onWorkloadChange: (w: WorkloadKey) => void }) => {
 	const reduced = useReducedMotion();
-	const [tierIdx, setTierIdx] = useState(0); // AWS ARM default
+	const [tierIdx, setTierIdx] = useState(0); // Hetzner ARM default
 	const [inView, setInView] = useState(false);
 
 	const wl = benchWorkloads[workload];
