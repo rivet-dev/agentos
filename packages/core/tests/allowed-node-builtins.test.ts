@@ -66,6 +66,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			env: { HOME: "/workspace" },
 			cwd: "/workspace",
 			localMounts: [],
+			sidecarMounts: [],
 			commandGuestPaths: new Map(),
 		});
 
@@ -108,6 +109,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			env: { HOME: "/workspace" },
 			cwd: "/workspace",
 			localMounts: [],
+			sidecarMounts: [],
 			commandGuestPaths: new Map([["sh", "/__secure_exec/commands/000/sh"]]),
 		});
 
@@ -138,6 +140,7 @@ describe("NativeSidecarKernelProxy execute payloads", () => {
 			env: { HOME: "/workspace" },
 			cwd: "/workspace",
 			localMounts: [],
+			sidecarMounts: [],
 			commandGuestPaths: new Map(),
 		});
 

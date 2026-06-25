@@ -61,6 +61,7 @@ describe("WASM command permission tiers", () => {
 			env: { HOME: "/workspace" },
 			cwd: "/workspace",
 			localMounts: [],
+			sidecarMounts: [],
 			commandGuestPaths: new Map([["grep", "/__secure_exec/commands/000/grep"]]),
 		});
 
@@ -92,6 +93,7 @@ describe("WASM command permission tiers", () => {
 			env: { HOME: "/workspace" },
 			cwd: "/workspace",
 			localMounts: [],
+			sidecarMounts: [],
 			commandGuestPaths: new Map([["echo", "/__secure_exec/commands/000/echo"]]),
 		});
 

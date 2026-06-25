@@ -51,18 +51,31 @@ export function toolKit(def: ToolKit): ToolKit {
 	return def;
 }
 
+const TOOLKIT_COMMAND_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function validateToolCommandName(kind: "Toolkit" | "Tool", name: string): void {
+	if (TOOLKIT_COMMAND_NAME_RE.test(name)) {
+		return;
+	}
+	throw new Error(
+		`${kind} name "${name}" must be lowercase alphanumeric with optional single hyphen separators`,
+	);
+}
+
 /**
  * Validate all description lengths in the given toolkits.
  * Throws if any toolkit or tool description exceeds MAX_TOOL_DESCRIPTION_LENGTH.
  */
 export function validateToolkits(toolKits: ToolKit[]): void {
 	for (const tk of toolKits) {
+		validateToolCommandName("Toolkit", tk.name);
 		if (tk.description.length > MAX_TOOL_DESCRIPTION_LENGTH) {
 			throw new Error(
 				`Toolkit "${tk.name}" description is ${tk.description.length} characters, max is ${MAX_TOOL_DESCRIPTION_LENGTH}`,
 			);
 		}
 		for (const [toolName, tool] of Object.entries(tk.tools)) {
+			validateToolCommandName("Tool", toolName);
 			if (tool.description.length > MAX_TOOL_DESCRIPTION_LENGTH) {
 				throw new Error(
 					`Tool "${tk.name}/${toolName}" description is ${tool.description.length} characters, max is ${MAX_TOOL_DESCRIPTION_LENGTH}`,

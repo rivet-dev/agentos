@@ -1,15 +1,8 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-import { createHostDirBackend } from "../src/host-dir-mount.js";
 
-/**
- * Workspace root has shamefully-hoisted node_modules with pi-acp available.
- */
-const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const OS_INSTRUCTIONS_FIXTURE = resolve(
 	import.meta.dirname,
 	"../fixtures/AGENTOS_SYSTEM_PROMPT.md",
@@ -91,29 +84,15 @@ process.stdin.on('data', (chunk) => {
 
 describe("createSession OS instructions integration", () => {
 	let vm: AgentOs;
-	let hostWorkspaceDir: string;
 
 	beforeEach(async () => {
-		hostWorkspaceDir = fs.mkdtempSync(
-			os.tmpdir() + "/agentos-os-instructions-",
-		);
 		vm = await AgentOs.create({
-			mounts: [
-				...moduleAccessMounts(MODULE_ACCESS_CWD),
-				{
-					path: "/home/agentos",
-					plugin: createHostDirBackend({
-						hostPath: hostWorkspaceDir,
-						readOnly: false,
-					}),
-				},
-			],
+			defaultSoftware: false,
 		});
 	});
 
 	afterEach(async () => {
 		await vm.dispose();
-		fs.rmSync(hostWorkspaceDir, { recursive: true, force: true });
 	});
 
 	/**
@@ -121,17 +100,20 @@ describe("createSession OS instructions integration", () => {
 	 * resolving the real adapter from node_modules.
 	 */
 	function useMockAdapterBin(scriptPath: string): () => void {
-		const origResolve = (
+		const privateVm = vm as unknown as {
+			_resolveAdapterBin: (pkg: string) => string;
+			_resolvePackageBin: (pkg: string, bin?: string) => string;
+		};
+		const origResolveAdapter = (
 			vm as unknown as { _resolveAdapterBin: (pkg: string) => string }
 		)._resolveAdapterBin;
-		(
-			vm as unknown as { _resolveAdapterBin: (pkg: string) => string }
-		)._resolveAdapterBin = (_pkg: string) => scriptPath;
+		const origResolvePackageBin = privateVm._resolvePackageBin;
+		privateVm._resolveAdapterBin = (_pkg: string) => scriptPath;
+		privateVm._resolvePackageBin = (_pkg: string, _bin?: string) => "/tmp/mock-bin";
 
 		return () => {
-			(
-				vm as unknown as { _resolveAdapterBin: (pkg: string) => string }
-			)._resolveAdapterBin = origResolve;
+			privateVm._resolveAdapterBin = origResolveAdapter;
+			privateVm._resolvePackageBin = origResolvePackageBin;
 		};
 	}
 
@@ -290,6 +272,37 @@ describe("createSession OS instructions integration", () => {
 			expect(argIdx).toBeGreaterThan(-1);
 			const instructionsArg = argv[argIdx + 1];
 			expect(instructionsArg).toContain(additionalText);
+
+			vm.closeSession(sessionId);
+		} finally {
+			restore();
+		}
+	});
+
+	test("AgentOs.create additionalInstructions are included in created sessions", async () => {
+		await vm.dispose();
+		const vmLevelInstructions =
+			"CUSTOM_MARKER: VM-level instruction applies to every session.";
+		vm = await AgentOs.create({
+			defaultSoftware: false,
+			additionalInstructions: vmLevelInstructions,
+		});
+
+		const scriptPath = "/tmp/mock-adapter.mjs";
+		await vm.writeFile(scriptPath, MOCK_ACP_ADAPTER);
+		const restore = useMockAdapterBin(scriptPath);
+
+		try {
+			const { sessionId } = await vm.createSession("pi");
+			const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+				argv?: string[];
+			};
+			const argv = agentInfo.argv ?? [];
+
+			const argIdx = argv.indexOf("--append-system-prompt");
+			expect(argIdx).toBeGreaterThan(-1);
+			const instructionsArg = argv[argIdx + 1];
+			expect(instructionsArg).toContain(vmLevelInstructions);
 
 			vm.closeSession(sessionId);
 		} finally {

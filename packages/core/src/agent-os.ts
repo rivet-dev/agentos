@@ -2677,6 +2677,7 @@ export class AgentOs {
 	private _hostMounts: HostMountInfo[];
 	private _env: Record<string, string>;
 	private _rootFilesystem: VirtualFileSystem;
+	private readonly _additionalInstructions: string | undefined;
 	private _sidecarLease: AgentOsSidecarVmLease<AgentOsVmAdmin> | null = null;
 	private readonly _sidecarClient: SidecarProcess;
 	private readonly _sidecarSession: AuthenticatedSession;
@@ -2695,6 +2696,7 @@ export class AgentOs {
 		sidecarClient: SidecarProcess,
 		sidecarSession: AuthenticatedSession,
 		sidecarVm: CreatedVm,
+		additionalInstructions?: string,
 		agentStderrHandler?: AgentStderrHandler,
 	) {
 		this.#kernel = kernel;
@@ -2707,6 +2709,7 @@ export class AgentOs {
 		this._sidecarClient = sidecarClient;
 		this._sidecarSession = sidecarSession;
 		this._sidecarVm = sidecarVm;
+		this._additionalInstructions = additionalInstructions;
 		this._agentStderrHandler = agentStderrHandler;
 		this._disposeSidecarEventListener = this._sidecarClient.onEvent((event) => {
 			this._handleSidecarEvent(event);
@@ -2957,19 +2960,20 @@ export class AgentOs {
 			});
 			const vmAdmin = sidecarLease.admin;
 
-			const vm = new AgentOs(
-				vmAdmin.kernel,
-				sidecar,
-				processed.softwareRoots,
+				const vm = new AgentOs(
+					vmAdmin.kernel,
+					sidecar,
+					processed.softwareRoots,
 				processed.agentConfigs,
 				vmAdmin.hostMounts,
 				vmAdmin.env,
 				vmAdmin.rootView,
-				vmAdmin.sidecarClient,
-				vmAdmin.sidecarSession,
-				vmAdmin.sidecarVm,
-				options?.onAgentStderr ?? defaultAgentStderrHandler,
-			);
+					vmAdmin.sidecarClient,
+					vmAdmin.sidecarSession,
+					vmAdmin.sidecarVm,
+					options?.additionalInstructions,
+					options?.onAgentStderr ?? defaultAgentStderrHandler,
+				);
 			vm._sidecarLease = sidecarLease;
 			vm._toolKits = vmAdmin.toolKits;
 			vm._toolReference = vmAdmin.toolReference;
@@ -3356,7 +3360,7 @@ export class AgentOs {
 
 	async delete(path: string, options?: { recursive?: boolean }): Promise<void> {
 		this._assertSafeAbsolutePath(path);
-		const s = await this.#kernel.stat(path);
+		const s = await this._vfs().lstat(path);
 		if (s.isDirectory) {
 			if (options?.recursive) {
 				const entries = await this.#kernel.readdir(path);
@@ -4189,17 +4193,20 @@ export class AgentOs {
 				adapterEntrypoint,
 				args: launchArgs,
 				env: new Map(Object.entries(launchEnv)),
-				cwd: sessionCwd,
-				mcpServers: JSON.stringify(options?.mcpServers ?? []),
-				protocolVersion: ACP_PROTOCOL_VERSION,
-				clientCapabilities: JSON.stringify(defaultAcpClientCapabilities()),
-				additionalInstructions: combineInstructions(
-					options?.additionalInstructions,
-					this._toolReference,
-				),
-				skipOsInstructions: options?.skipOsInstructions ?? false,
-			},
-		});
+					cwd: sessionCwd,
+					mcpServers: JSON.stringify(options?.mcpServers ?? []),
+					protocolVersion: ACP_PROTOCOL_VERSION,
+					clientCapabilities: JSON.stringify(defaultAcpClientCapabilities()),
+					additionalInstructions: combineInstructions(
+						[this._additionalInstructions, options?.additionalInstructions]
+							.map((part) => part?.trim())
+							.filter((part): part is string => Boolean(part))
+							.join("\n\n") || undefined,
+						this._toolReference,
+					),
+					skipOsInstructions: options?.skipOsInstructions ?? false,
+				},
+			});
 		if (response.tag !== "AcpSessionCreatedResponse") {
 			throw new Error(`unexpected create_session response: ${response.tag}`);
 		}
@@ -4300,6 +4307,11 @@ export class AgentOs {
 		const { sessionId: liveSessionId, mode } = response.val;
 
 		// Register + hydrate the live session so subsequent prompts route to it.
+		const existing = this._sessions.get(liveSessionId);
+		if (existing !== undefined && !existing.closed) {
+			throw new Error(`session id collision: ${liveSessionId}`);
+		}
+
 		const session = sessionEntryFromInit(liveSessionId, String(agentType), {});
 		this._closedSessionIds.delete(liveSessionId);
 		this._sessions.set(liveSessionId, session);

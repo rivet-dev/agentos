@@ -583,7 +583,7 @@ export class InMemoryFileSystem implements VirtualFileSystem {
 			throw errnoError("ENOENT", `open '${targetPath}'`);
 		}
 		entry.atimeMs = Date.now();
-		return entry.data;
+		return new Uint8Array(entry.data);
 	}
 
 	async readTextFile(targetPath: string): Promise<string> {
@@ -619,10 +619,12 @@ export class InMemoryFileSystem implements VirtualFileSystem {
 		targetPath: string,
 		content: string | Uint8Array,
 	): Promise<void> {
-		const normalized = normalizePath(targetPath);
-		await this.mkdir(dirnameVirtual(normalized), { recursive: true });
-		const data =
-			typeof content === "string" ? new TextEncoder().encode(content) : content;
+			const normalized = normalizePath(targetPath);
+			await this.mkdir(dirnameVirtual(normalized), { recursive: true });
+			const data =
+				typeof content === "string"
+					? new TextEncoder().encode(content)
+					: new Uint8Array(content);
 		const existing = this.entries.get(normalized);
 		if (existing?.type === "file") {
 			existing.data = data;
@@ -687,11 +689,11 @@ export class InMemoryFileSystem implements VirtualFileSystem {
 		return this.toStat(entry);
 	}
 
-	async removeFile(targetPath: string): Promise<void> {
-		const resolved = this.resolvePath(targetPath);
-		const entry = this.entries.get(resolved);
-		if (!entry || entry.type === "dir") {
-			throw errnoError("ENOENT", `unlink '${targetPath}'`);
+		async removeFile(targetPath: string): Promise<void> {
+			const resolved = normalizePath(targetPath);
+			const entry = this.entries.get(resolved);
+			if (!entry || entry.type === "dir") {
+				throw errnoError("ENOENT", `unlink '${targetPath}'`);
 		}
 		this.entries.delete(resolved);
 	}
@@ -870,9 +872,9 @@ export class InMemoryFileSystem implements VirtualFileSystem {
 			throw errnoError("ENOENT", `open '${targetPath}'`);
 		}
 		const nextSize = Math.max(entry.data.length, offset + data.length);
-		const updated = new Uint8Array(nextSize);
-		updated.set(entry.data);
-		updated.set(data, offset);
+			const updated = new Uint8Array(nextSize);
+			updated.set(entry.data);
+			updated.set(new Uint8Array(data), offset);
 		entry.data = updated;
 		entry.mtimeMs = Date.now();
 		entry.ctimeMs = Date.now();
@@ -2710,21 +2712,18 @@ class NativeKernel implements Kernel {
 		filesystem: VirtualFileSystem,
 		options?: { readOnly?: boolean },
 	): void {
-		if (!this.proxy) {
-			this.pendingLocalMounts.push(
-				makeLocalCompatMount({
-					path: mountPath,
-					fs: filesystem,
-					readOnly: options?.readOnly,
-				}),
-			);
-			return;
-		}
 		const localMount = makeLocalCompatMount({
 			path: mountPath,
 			fs: filesystem,
 			readOnly: options?.readOnly,
 		});
+		this.pendingLocalMounts.unshift(localMount);
+		this.pendingLocalMounts.sort(
+			(left, right) => right.path.length - left.path.length,
+		);
+		if (!this.proxy) {
+			return;
+		}
 		this.proxy.mountFs(mountPath, filesystem, {
 			readOnly: localMount.readOnly,
 			sidecarMount: localMount.sidecarMount,
@@ -2732,6 +2731,13 @@ class NativeKernel implements Kernel {
 	}
 
 	unmountFs(mountPath: string): void {
+		const normalized = normalizePath(mountPath);
+		const pendingIndex = this.pendingLocalMounts.findIndex(
+			(mount) => mount.path === normalized,
+		);
+		if (pendingIndex >= 0) {
+			this.pendingLocalMounts.splice(pendingIndex, 1);
+		}
 		this.proxy?.unmountFs(mountPath);
 	}
 

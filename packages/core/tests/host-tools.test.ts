@@ -72,6 +72,46 @@ describe("host tool description limits", () => {
 		);
 	});
 
+	test("rejects toolkit names that cannot become stable command names", () => {
+		expect(() =>
+			validateToolkits([
+				toolKit({
+					name: "Browser_Tools",
+					description: "Browser automation",
+					tools: {
+						screenshot: hostTool({
+							description: "Take a screenshot",
+							inputSchema: z.object({ url: z.string() }),
+							execute: () => ({ ok: true }),
+						}),
+					},
+				}),
+			]),
+		).toThrow(
+			'Toolkit name "Browser_Tools" must be lowercase alphanumeric with optional single hyphen separators',
+		);
+	});
+
+	test("rejects tool names that cannot become stable subcommands", () => {
+		expect(() =>
+			validateToolkits([
+				toolKit({
+					name: "browser-tools",
+					description: "Browser automation",
+					tools: {
+						"screenshot_now": hostTool({
+							description: "Take a screenshot",
+							inputSchema: z.object({ url: z.string() }),
+							execute: () => ({ ok: true }),
+						}),
+					},
+				}),
+			]),
+		).toThrow(
+			'Tool name "screenshot_now" must be lowercase alphanumeric with optional single hyphen separators',
+		);
+	});
+
 	test("fails loudly when a host tool input schema uses an unsupported discriminated union", () => {
 		const tool = hostTool({
 			description: "Inspect a variant payload",

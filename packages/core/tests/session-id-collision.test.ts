@@ -59,6 +59,16 @@ function cannedStateResponse(sessionId: string) {
 	};
 }
 
+function cannedResumedResponse(sessionId: string) {
+	return {
+		tag: "AcpSessionResumedResponse" as const,
+		val: {
+			sessionId,
+			mode: "native",
+		},
+	};
+}
+
 function sessionUpdateNotification(text: string): string {
 	return JSON.stringify({
 		jsonrpc: "2.0",
@@ -81,7 +91,7 @@ describe("colliding adapter sessionId isolation (I.4 / J.4)", () => {
 	});
 
 	test("a second createSession returning a colliding sessionId must not orphan the first session's handlers", async () => {
-		vm = await AgentOs.create({});
+		vm = await AgentOs.create({ defaultSoftware: false });
 
 		const internal = vm as unknown as {
 			_resolveAgentConfig(t: string): unknown;
@@ -151,5 +161,65 @@ describe("colliding adapter sessionId isolation (I.4 / J.4)", () => {
 			// Accepted: the original subscriber must still be wired up.
 			expect(firstEvents).toHaveLength(1);
 		}
+	});
+
+	test("resumeSession returning a colliding live sessionId is rejected without orphaning handlers", async () => {
+		vm = await AgentOs.create({ defaultSoftware: false });
+
+		const internal = vm as unknown as {
+			_resolveAgentConfig(t: string): unknown;
+			_resolveAdapterBin(p: string): string;
+			_sendAcpRequest(req: { tag: string }): Promise<unknown>;
+		};
+
+		vi.spyOn(internal, "_resolveAgentConfig").mockReturnValue({
+			acpAdapter: "@mock/adapter",
+			agentPackage: "@mock/agent",
+		});
+		vi.spyOn(internal, "_resolveAdapterBin").mockReturnValue(
+			"/root/node_modules/@mock/adapter/bin.js",
+		);
+		vi.spyOn(internal, "_sendAcpRequest").mockImplementation(
+			async (req: { tag: string }) => {
+				if (req.tag === "AcpCreateSessionRequest") {
+					return cannedCreatedResponse(COLLIDING_SESSION_ID);
+				}
+				if (req.tag === "AcpResumeSessionRequest") {
+					return cannedResumedResponse(COLLIDING_SESSION_ID);
+				}
+				if (req.tag === "AcpGetSessionStateRequest") {
+					return cannedStateResponse(COLLIDING_SESSION_ID);
+				}
+				throw new Error(`unexpected acp request ${req.tag}`);
+			},
+		);
+
+		const first = await vm.createSession("mock");
+		expect(first.sessionId).toBe(COLLIDING_SESSION_ID);
+
+		const firstEvents: JsonRpcNotification[] = [];
+		vm.onSessionEvent(first.sessionId, (n) => firstEvents.push(n));
+
+		await expect(
+			vm.resumeSession("external-session", "mock"),
+		).rejects.toThrow(`session id collision: ${COLLIDING_SESSION_ID}`);
+
+		const payload = encodeAcpEvent({
+			tag: "AcpSessionEvent",
+			val: {
+				sessionId: COLLIDING_SESSION_ID,
+				notification: sessionUpdateNotification("post-resume-collision"),
+			},
+		});
+		(
+			vm as unknown as {
+				_handleAcpExtEvent(env: {
+					namespace: string;
+					payload: Uint8Array;
+				}): void;
+			}
+		)._handleAcpExtEvent({ namespace: ACP_EXTENSION_NAMESPACE, payload });
+
+		expect(firstEvents).toHaveLength(1);
 	});
 });

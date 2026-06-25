@@ -1,10 +1,32 @@
 import { describe, expect, test } from "vitest";
 import {
+	AGENT_CONFIGS,
+	AgentOs,
+	AgentOsSidecar,
+	CronManager,
+	KernelError,
+	MAX_TOOL_DESCRIPTION_LENGTH,
 	InvalidScheduleError,
 	PastScheduleError,
+	TimerScheduleDriver,
+	agentOsLimitsSchema,
+	agentOsOptionsSchema,
+	createHostDirBackend,
+	createInMemoryFileSystem,
+	createInMemoryLayerStore,
+	createSnapshotExport,
+	defineSoftware,
+	hostTool,
+	hostToolSchema,
 	isAcpTimeoutErrorData,
 	isUnknownSessionErrorData,
+	mountConfigSchema,
 	nodeModulesMount,
+	parseAgentOsOptions,
+	rootFilesystemConfigSchema,
+	toolKit,
+	toolKitSchema,
+	validateToolkits,
 	type AcpTimeoutErrorData,
 	type AgentOsLimits,
 	type ExecOptions,
@@ -26,6 +48,36 @@ import {
 } from "../src/index.js";
 
 describe("root public API exports", () => {
+	test("re-exports the main public value surface from the root entrypoint", () => {
+		expect(AgentOs).toBeTypeOf("function");
+		expect(AgentOsSidecar).toBeTypeOf("function");
+		expect(AGENT_CONFIGS).toBeTypeOf("object");
+		expect(CronManager).toBeTypeOf("function");
+		expect(TimerScheduleDriver).toBeTypeOf("function");
+		expect(createHostDirBackend).toBeTypeOf("function");
+		expect(hostTool).toBeTypeOf("function");
+		expect(toolKit).toBeTypeOf("function");
+		expect(validateToolkits).toBeTypeOf("function");
+		expect(MAX_TOOL_DESCRIPTION_LENGTH).toBeGreaterThan(0);
+		expect(agentOsLimitsSchema.safeParse({}).success).toBe(true);
+		expect(agentOsOptionsSchema.safeParse({ defaultSoftware: false }).success).toBe(
+			true,
+		);
+		expect(hostToolSchema).toBeTypeOf("object");
+		expect(toolKitSchema).toBeTypeOf("object");
+		expect(mountConfigSchema).toBeTypeOf("object");
+		expect(rootFilesystemConfigSchema).toBeTypeOf("object");
+		expect(parseAgentOsOptions({ defaultSoftware: false })).toEqual({
+			defaultSoftware: false,
+		});
+		expect(createInMemoryFileSystem).toBeTypeOf("function");
+		expect(KernelError).toBeTypeOf("function");
+		expect(createInMemoryLayerStore).toBeTypeOf("function");
+		expect(createSnapshotExport).toBeTypeOf("function");
+		expect(defineSoftware({ name: "x", type: "wasm-commands", commandDir: "/tmp" }))
+			.toMatchObject({ name: "x" });
+	});
+
 	test("re-exports current public SDK types from the root entrypoint", () => {
 		void (null as AcpTimeoutErrorData | null);
 		void (null as AgentOsLimits | null);
