@@ -115,15 +115,19 @@ registry.start();
 
 <TabItem label="In-memory">
 
+Use the built-in `memory` plugin for an ephemeral mounted directory in the native RivetKit `agentOS()` actor.
+
 ```ts
 import { agentOS, setup } from "@rivet-dev/agentos";
-import { createInMemoryFileSystem } from "@rivet-dev/agent-os-core";
 import pi from "@agentos-software/pi";
 
 const vm = agentOS({
   software: [pi],
   mounts: [
-    { path: "/home/agentos/scratch", driver: createInMemoryFileSystem() },
+    {
+      path: "/home/agentos/scratch",
+      plugin: { id: "memory", config: {} },
+    },
   ],
 });
 
@@ -132,6 +136,24 @@ registry.start();
 ```
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/filesystem)*
+
+</TabItem>
+
+<TabItem label="Custom JS VFS">
+
+Use `mountFs()` for a callback-backed JS filesystem driver. The driver must live in the same JS process as the `AgentOs` instance, such as direct core usage or a custom RivetKit actor that owns an `AgentOs` instance.
+
+```ts
+import { AgentOs, createInMemoryFileSystem } from "@rivet-dev/agentos-core";
+
+const vm = await AgentOs.create({ defaultSoftware: false });
+const driver = createInMemoryFileSystem();
+
+vm.mountFs("/home/agentos/scratch", driver);
+await vm.writeFile("/home/agentos/scratch/hello.txt", "hello");
+```
+
+The native `agentOS()` actor cannot accept `{ driver }` mounts in config because JS callback objects are not serializable across the native plugin boundary. Use `plugin` mounts there.
 
 </TabItem>
 
@@ -255,4 +277,3 @@ With no `mounts` configured, every VM boots an Alpine-based root filesystem with
 - `/etc`, `/lib`, `/opt`, `/root`, `/run`, `/srv`, `/tmp`, `/var`, `/mnt`: standard system paths.
 
 It is backed by the VM's own filesystem and persisted across sleep/wake. Nothing comes from or touches the host disk.
-
