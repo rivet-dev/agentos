@@ -8,6 +8,30 @@ import { Aside } from '@astrojs/starlight/components';
 
 import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
+<Aside type="caution" title="Install a single, current agentos-core">
+The Claude agent's tools (Write, Bash, skills, and sub-agents) run through the shared
+secure-exec sidecar. The fix for a sidecar lifecycle bug that otherwise **hangs tool
+execution for 120s** with `timed out waiting for sidecar protocol frame for ext` landed in
+`@rivet-dev/agentos-core@0.2.2` (secure-exec-sidecar `0.3.2`).
+
+`@agentos-software/claude-code` currently pins `@rivet-dev/agentos-core` to an exact older
+version, so a default `npm install @rivet-dev/agentos-core @agentos-software/claude-code`
+can resolve **two** copies of `agentos-core` and route tool execution through the older,
+unfixed sidecar. Until the adapter is republished against `0.2.2`, force a single current
+version:
+
+```json title="package.json"
+{
+  "overrides": {
+    "@rivet-dev/agentos-core": "0.2.2"
+  }
+}
+```
+
+(`pnpm` / `yarn` users: use `pnpm.overrides` / `resolutions`.) See
+[#1542](https://github.com/rivet-dev/agentos/issues/1542) for the full root-cause trace.
+</Aside>
+
 ## Quick start
 
 <CodeGroup>
