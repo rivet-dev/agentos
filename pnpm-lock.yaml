@@ -189,8 +189,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -214,8 +214,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/agentos
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -254,8 +254,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -303,8 +303,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -352,8 +352,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -401,8 +401,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -450,8 +450,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -499,8 +499,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -548,8 +548,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -597,8 +597,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -646,8 +646,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -695,8 +695,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -744,8 +744,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -793,8 +793,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -842,8 +842,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -891,8 +891,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -940,8 +940,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -989,8 +989,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1038,8 +1038,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1087,8 +1087,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1136,8 +1136,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1185,8 +1185,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1234,8 +1234,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1286,8 +1286,8 @@ importers:
         specifier: ^18.3.1
         version: 18.3.1
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1338,8 +1338,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1387,8 +1387,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1436,8 +1436,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1485,8 +1485,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1534,8 +1534,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1583,8 +1583,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1632,8 +1632,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1681,8 +1681,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1730,8 +1730,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1779,8 +1779,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1828,8 +1828,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1877,8 +1877,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1926,8 +1926,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -1975,8 +1975,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2024,8 +2024,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2073,8 +2073,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2131,8 +2131,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2183,8 +2183,8 @@ importers:
         specifier: ^4.6.0
         version: 4.12.9
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2232,8 +2232,8 @@ importers:
         specifier: ^7.1.0
         version: 7.2.0
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2263,11 +2263,11 @@ importers:
         specifier: workspace:*
         version: link:../sidecar-binary
       '@rivetkit/react':
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.20.0(bufferutil@4.1.0))
       rivetkit:
-        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
-        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+        specifier: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+        version: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -4363,102 +4363,102 @@ packages:
     resolution: {integrity: sha512-3qndQUQXLdwafMEqfhz24hUtDPcsf1Bu3q52Kb8MqeH8JUh3h6R4HYW3ZJXiQsLcyYyFM68PuIwlLRlg1xDEpg==}
     engines: {node: ^14.18.0 || >=16.0.0}
 
-  '@rivetkit/engine-cli-darwin-arm64@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-eQW1WTZEe51zXRdI9lqUI9lF/A8rTqVLK9P7ysYNXIl4H1NWv36rFepdKK/chSgrig4/xLRuch2MHtjxLPDPew==}
+  '@rivetkit/engine-cli-darwin-arm64@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-DZvB5MzOKsZxwHjaX53IZ1ZQBkuaPdem2WgRJrjmOizk/1h3961mWyFsOPf025T4z04RATAL1/M/z8lRFHP8qQ==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [darwin]
 
-  '@rivetkit/engine-cli-darwin-x64@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-NNMNULr3XIyKKAwQcc8RyUBpL+l5vfiFtWZPGVRgpVRYysU4RG5IwZa0uXzraf2yzkgZDym9U3UPkwHmsNthOA==}
+  '@rivetkit/engine-cli-darwin-x64@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-7BFsc+B3fSLUdReSKnJb8EYL8usK+460hwlF5CPxrgyplNGf/XFAhJ7mf3vCnaIc/4s05Ln3yIOs5Mw/dkYEqw==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [darwin]
 
-  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-DlsxDN7tIiOs89GTDZS9ID/ZNiDvKA0vJ+ojq5LDqcp8X+dFb2uLuMLjaPXVwurkzXLoaDzz20ctnUm44muWLw==}
+  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-QSKV0qU/+oaQiGPIn7wT4GpFoggY/uSdRnqHI0LmmMqtSa8w/wM9McmQFtgL0/E4O6ZRvoqycpx93uWgJEfx4g==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-rBijR7naYpOyQnnK1gwFx6dDPTwGoON1wfia1fVCLJlpYcqqD5aVg4PU0oINRF9NPBqPW4vfVWSBKWHyF4YLFA==}
+  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-9MHlNOJY5nQA5Z/L23fFiPrmsYw5WzAT+1e7dmB8Jtkv67uGmpoagnVhGgqWv7mfXtf3Fx9w01OXLiHTSadKuA==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
 
-  '@rivetkit/engine-cli@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-gRmWkoU8ZiyaqYSHbl6nmAijREHEYdtQYUgA9CwxQa5Y3pglm+N3x4raOKUvmn+Xe1iV5KuHHyREhOO6Hkr5/Q==}
+  '@rivetkit/engine-cli@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-eLWWKYD2wvYz5Eb4EKvEd5cmPX+aPutwjNa3N+vf+w5/zdpvSzhcwNHqsDNm12aLo/ReVoxs1P4G4MLd5ZNgdw==}
     engines: {node: '>= 20.0.0'}
 
-  '@rivetkit/engine-envoy-protocol@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-NJeYJdE1sbSqOyknL7w32K/hIOta3uOc5eZgagL/kaGrrFKlzaVi1BWAgzNbSdWHgGpqfMN3XtdwW/XllN9vHQ==}
+  '@rivetkit/engine-envoy-protocol@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-qsPCbHgunKzJXRaobnrYnHeWvo+Gcv+AZvb7oVYnbl5MuE+Mykuc+elRdHt8kiBrabKwsqEL8tYO2jSRQJDHqw==}
 
-  '@rivetkit/framework-base@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-KO5CIHflFtXbto+VXXzSNdlHpDsVTvSYIKkJzwG8pjFfYdygg5dpWXExujQAVq6KMfuCMKlGisuugDu3bUAWvA==}
+  '@rivetkit/framework-base@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-nfdRT1mhkOhkfZL7bUWbZGlAmekzO321W3xNlUp8zccvGbUjMF6ah+ZsfURBxWBzD30WMFQ8s1mWw6bnrAYqLQ==}
 
   '@rivetkit/on-change@6.0.1':
     resolution: {integrity: sha512-QBN/KRBXLJdCgN4gBTL3XAc/zKm58atSnieXWMOyFSPmo6F1/yIVV/LTRdvAktfCttrGx7W6c32i/lwqCHWnsQ==}
     engines: {node: '>=20'}
 
-  '@rivetkit/react@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-X7V9BNVc6DJsQy9Fwbv9+f/BoQHrq4NhVrTEFbGJokkwpl8WYBQn1K/viYEO4aB/IIaEy8jHhhOrzOcNn8dMPQ==}
+  '@rivetkit/react@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-M1U9XgmbsLKw67GsqmWoD6C7oenl6tRjA07V9i+aZGJaTkIf03xexOrOn8P06Agt69TOcg6XRc0Xy2Rhwi514g==}
     peerDependencies:
       react: ^18 || ^19
       react-dom: ^18 || ^19
 
-  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-Yg4vhX57FcE6ajn5qym6hRlzJY2ExoRJ1NXw3h2v2C3Fr+6VD+R0C7/voiv+u8OutUld2SImt62Er+cS9JT3tw==}
+  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-jrIWFZV4qB8/Jxv1Xi/uIeEqKrg99UpW07QEKHWq8wrPIRL8hihAUlFYDzTUv0xYdQg7cGGaORaL8h8xmgvYCg==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [darwin]
 
-  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-fThfkJnRIAmCuAvgqz2cWyYY1uIzOybcXfumCSfSGfU6bS8d0jFBjaHnAZ3dgrncS+nBwK/0rqFt2JHLs7IXOA==}
+  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-aPX4l0DutwT8A9pm2fBFXGvYCaA0SRGV99irDHHZJp5x2L/K/Md6Ja+rG46Rs39tjF9AzdjHfFRniWWfZE1gYA==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [darwin]
 
-  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-ZixJthmxswfHx0DTyjyuYP2L602rYAK1v7eKixXJjGNosjpXNVKkYnV5ML/kf5NbjZ3qeN4GONGR4Zf3WznuZQ==}
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-ZO0sxI092CoKUfXok7pWsPJBYn6iItdCjVb4w2eu4MLkqjQEm1oa5eDLkJ7RfHi1H6tr+rZZiuxgBxpj9yHtLw==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-X1EpEj1TaYGfA2fOAUoJrnGg3AQynJBiKW0Q5KBVqJn3ofENQIomwCPrjb0jh+ctJg0EeRyEw1wC7Tj0cfPfjg==}
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-o4bS4zsL0yrpcgrfdYJnK14pjVfDJwI5KhbHOBSS16+oXij8BiACnRDmZMJvQvn6YV7hcRP3g5rkyurgLbmhCw==}
     engines: {node: '>= 20.0.0'}
     cpu: [arm64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-6L23MfUDBCasZBAOn5XveNNxLeBRqzSgWM7vpXkeWLn2Cz75IELHekJNEmnmM1qgWSahfCyTL2OCZh8MBHJAzQ==}
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-re4xEiHSC6gLkX8RYGnOkgJK1v39D7xDlBaVn+Cs6vo0FpUyy9/E0w09KWMxbWMJXblm8FG3jEy3M1tLjo8Itg==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-cYTxBkW/V3STXTC2nHpp9vXcahkmRLXD7Y2HptqJNYGlcMs/tlUJM7YPQSuhrfpQxIgcdZJKAvsKBWStKexROA==}
+  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-EaU65tYeIuauvzqWYRlN11wYw50zPhoK0Secer//dkFCnVkRjvbp9Md/oz0Ya/w1Wo38wSCawdabP2btByszCw==}
     engines: {node: '>= 20.0.0'}
     cpu: [x64]
     os: [linux]
 
-  '@rivetkit/rivetkit-napi@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-rpy4ObZRyqnUfHDf1Bo4QyGsQvYeAEhwPQk7806ObeguqrUozoST4eRHSLbvkOfwISdaHVuNjD6PySF4VWOwPg==}
+  '@rivetkit/rivetkit-napi@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-/ubV14pzntlgW3WJ6l8m78Tnvy57WMGK5ukJWczcRz3Fcq6CoSuhgP5v3F8Em+vyn+B0OqcclEt9gGJukrgUBw==}
     engines: {node: '>= 20.0.0'}
 
   '@rivetkit/rivetkit-wasm@2.3.2':
     resolution: {integrity: sha512-HNBzh6uQFi4ZYL0tHAZ6nrYKoGCfa+kObLCwdS+/ZzGePV7WGUl20Do1bHjBtnVgp9UwzQu+lka8kFwKfqm6WA==}
 
-  '@rivetkit/traces@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-J903UVLDSJ1XdYDQnBVvs1SxnNJW/geoHc7t6l7g0tUrwovmA34XACIYhsZRJU0hJGCiIGp/ByuOLPOlkDlp/A==}
+  '@rivetkit/traces@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-eqT8RRG2gM3hJxR42ghnRxCaE/6T39adz61E3GsjoiDIExsJmwGEA9RoRMe2x5FU4I4eDFg8HD/pmR60GrNp/g==}
     engines: {node: '>=18.0.0'}
 
-  '@rivetkit/virtual-websocket@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-tBHwzPHBd3Wi5ACbdJgwXiDICvNjSEztptXAKkUcQ6OeFsVwPEJNwQEVIoCGBSFHUi9YFdAWKv8tDN5NATc1ZQ==}
+  '@rivetkit/virtual-websocket@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-HWaRTiuFBXKH+UgIEuhwOtuu33jq57CgdQMgobtehvg/TQSqmo3vaCFVeQGOhIbAkUP5VU2K+dC/jZLiVJ/THA==}
 
-  '@rivetkit/workflow-engine@0.0.0-feat-dylib-actor-plugin.c44621f':
-    resolution: {integrity: sha512-Y6DHCLM7IpLOvSVIhj+LQH38+ffnB84Sy2g3JeLinpyd2ku/iLC7aBvxj1KX43S54PeslU6Tz8kgi2B5jRfA/A==}
+  '@rivetkit/workflow-engine@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
+    resolution: {integrity: sha512-EcipnvCJnMwFiMKbioPaPO5MTuIiaSDQgKHmauHrgaVwDPFKFo85C7WT1ZmMRjfzkFrvNFKG/BE+MfxlAXjynA==}
     engines: {node: '>=18.0.0'}
 
   '@rolldown/pluginutils@1.0.0-beta.27':
@@ -6919,8 +6919,8 @@ packages:
     resolution: {integrity: sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==}
     engines: {iojs: '>=1.0.0', node: '>=0.10.0'}
 
-  rivetkit@0.0.0-feat-dylib-actor-plugin.c44621f:
-    resolution: {integrity: sha512-/HF9QCzCtqnz6TbdcTS53IzngzIb/00VW1s15o43oATC1OpThvR2WVTpRk5dw33ViLIiMbGP8CzLwg3vvW8ZiA==}
+  rivetkit@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585:
+    resolution: {integrity: sha512-dmZUxgTfZJJxj6BTfb8FZG8Pa8xEAv2T1K7Kov8z7Zwb0mYHyjKsgSJ+ojBe6JWIJmviKLXt2XEXZHOncmzRpQ==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       drizzle-kit: ^0.31.2
@@ -9487,34 +9487,34 @@ snapshots:
 
   '@rivetkit/bare-ts@0.6.2': {}
 
-  '@rivetkit/engine-cli-darwin-arm64@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/engine-cli-darwin-arm64@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     optional: true
 
-  '@rivetkit/engine-cli-darwin-x64@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/engine-cli-darwin-x64@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     optional: true
 
-  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/engine-cli-linux-arm64-musl@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     optional: true
 
-  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/engine-cli-linux-x64-musl@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     optional: true
 
-  '@rivetkit/engine-cli@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/engine-cli@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     optionalDependencies:
-      '@rivetkit/engine-cli-darwin-arm64': 0.0.0-feat-dylib-actor-plugin.c44621f
-      '@rivetkit/engine-cli-darwin-x64': 0.0.0-feat-dylib-actor-plugin.c44621f
-      '@rivetkit/engine-cli-linux-arm64-musl': 0.0.0-feat-dylib-actor-plugin.c44621f
-      '@rivetkit/engine-cli-linux-x64-musl': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/engine-cli-darwin-arm64': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+      '@rivetkit/engine-cli-darwin-x64': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+      '@rivetkit/engine-cli-linux-arm64-musl': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+      '@rivetkit/engine-cli-linux-x64-musl': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
 
-  '@rivetkit/engine-envoy-protocol@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/engine-envoy-protocol@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
 
-  '@rivetkit/framework-base@0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))':
+  '@rivetkit/framework-base@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))':
     dependencies:
       '@tanstack/store': 0.7.7
       fast-deep-equal: 3.1.3
-      rivetkit: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+      rivetkit: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
     transitivePeerDependencies:
       - '@aws-sdk/client-rds-data'
       - '@cloudflare/workers-types'
@@ -9551,13 +9551,13 @@ snapshots:
 
   '@rivetkit/on-change@6.0.1': {}
 
-  '@rivetkit/react@0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.20.0(bufferutil@4.1.0))':
+  '@rivetkit/react@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.20.0(bufferutil@4.1.0))':
     dependencies:
-      '@rivetkit/framework-base': 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+      '@rivetkit/framework-base': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       '@tanstack/react-store': 0.7.7(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
-      rivetkit: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+      rivetkit: 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
     transitivePeerDependencies:
       - '@aws-sdk/client-rds-data'
       - '@cloudflare/workers-types'
@@ -9592,48 +9592,48 @@ snapshots:
       - sqlite3
       - ws
 
-  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/rivetkit-napi-darwin-arm64@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     optional: true
 
-  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/rivetkit-napi-darwin-x64@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/rivetkit-napi-linux-arm64-gnu@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/rivetkit-napi-linux-arm64-musl@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/rivetkit-napi-linux-x64-gnu@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     optional: true
 
-  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/rivetkit-napi-linux-x64-musl@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     optional: true
 
-  '@rivetkit/rivetkit-napi@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/rivetkit-napi@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     dependencies:
       '@napi-rs/cli': 2.18.4
-      '@rivetkit/engine-envoy-protocol': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/engine-envoy-protocol': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
     optionalDependencies:
-      '@rivetkit/rivetkit-napi-darwin-arm64': 0.0.0-feat-dylib-actor-plugin.c44621f
-      '@rivetkit/rivetkit-napi-darwin-x64': 0.0.0-feat-dylib-actor-plugin.c44621f
-      '@rivetkit/rivetkit-napi-linux-arm64-gnu': 0.0.0-feat-dylib-actor-plugin.c44621f
-      '@rivetkit/rivetkit-napi-linux-arm64-musl': 0.0.0-feat-dylib-actor-plugin.c44621f
-      '@rivetkit/rivetkit-napi-linux-x64-gnu': 0.0.0-feat-dylib-actor-plugin.c44621f
-      '@rivetkit/rivetkit-napi-linux-x64-musl': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/rivetkit-napi-darwin-arm64': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+      '@rivetkit/rivetkit-napi-darwin-x64': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+      '@rivetkit/rivetkit-napi-linux-arm64-gnu': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+      '@rivetkit/rivetkit-napi-linux-arm64-musl': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+      '@rivetkit/rivetkit-napi-linux-x64-gnu': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+      '@rivetkit/rivetkit-napi-linux-x64-musl': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
 
   '@rivetkit/rivetkit-wasm@2.3.2': {}
 
-  '@rivetkit/traces@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/traces@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
       cbor-x: 1.6.4
       fdb-tuple: 1.0.0
       vbare: 0.0.4
 
-  '@rivetkit/virtual-websocket@0.0.0-feat-dylib-actor-plugin.c44621f': {}
+  '@rivetkit/virtual-websocket@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585': {}
 
-  '@rivetkit/workflow-engine@0.0.0-feat-dylib-actor-plugin.c44621f':
+  '@rivetkit/workflow-engine@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585':
     dependencies:
       '@rivetkit/bare-ts': 0.6.2
       cbor-x: 1.6.4
@@ -12206,18 +12206,18 @@ snapshots:
 
   reusify@1.1.0: {}
 
-  rivetkit@0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0)):
+  rivetkit@0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0)):
     dependencies:
       '@hono/zod-openapi': 1.4.0(hono@4.12.9)(zod@4.3.6)
       '@rivetkit/bare-ts': 0.6.2
-      '@rivetkit/engine-cli': 0.0.0-feat-dylib-actor-plugin.c44621f
-      '@rivetkit/engine-envoy-protocol': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/engine-cli': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+      '@rivetkit/engine-envoy-protocol': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
       '@rivetkit/on-change': 6.0.1
-      '@rivetkit/rivetkit-napi': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/rivetkit-napi': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
       '@rivetkit/rivetkit-wasm': 2.3.2
-      '@rivetkit/traces': 0.0.0-feat-dylib-actor-plugin.c44621f
-      '@rivetkit/virtual-websocket': 0.0.0-feat-dylib-actor-plugin.c44621f
-      '@rivetkit/workflow-engine': 0.0.0-feat-dylib-actor-plugin.c44621f
+      '@rivetkit/traces': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+      '@rivetkit/virtual-websocket': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
+      '@rivetkit/workflow-engine': 0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585
       cbor-x: 1.6.4
       drizzle-orm: 0.44.7(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)
       hono: 4.12.9
