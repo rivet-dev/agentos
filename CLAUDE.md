@@ -99,6 +99,11 @@ Every limit, timeout, bounded queue/buffer, and per-entity collection MUST be bo
 - Still test the expensive safeguards. A configured limit/watchdog/quota actually firing — CPU-time limit set → runaway terminated; WASM fuel set → exit 124; heap cap → bounded; fd/process/socket cap → denied — is bounded and fast because the safeguard ends it. Keep these in the default suite; they are the regression guard that the protection works.
 - Rule of thumb: if the test ends only when a timeout/watchdog whose *absence* you are documenting fires (slow, unbounded) → `#[ignore]`. If it ends because a *safeguard* fires (fast, bounded) → keep it running.
 
+## Version Control
+
+- **Commit titles and PR titles are pure conventional commits** (`feat`, `fix`, `chore`, `docs`, `refactor`, etc.) with an optional scope, e.g. `fix(sidecar): handle empty ack batch`. Never indicate that a change was written by a coding agent: no model name, no agent name, no `[SLOP(...)]` prefix, and no `Co-Authored-By:` or `Generated with` trailer. The title must read exactly as a human-authored conventional commit.
+- **PR descriptions are a simple, high-level bullet list of what changed.** One bullet per meaningful change in plain language. No per-file or line-by-line detail, no implementation narration, and no mention of an agent.
+
 ## Agent Working Directory
 
 All agent working files live user-scoped in `~/.agents/`, never inside the repo. Override the location with the `AGENTS_DIR` env var. These files are not committed; `.agent/` is gitignored as a safety net.
