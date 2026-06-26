@@ -1,8 +1,0 @@
-{
-  "name": "module-access-pass-fixture",
-  "private": true,
-  "type": "commonjs",
-  "dependencies": {
-    "entry-lib": "file:./vendor/entry-lib"
-  }
-}

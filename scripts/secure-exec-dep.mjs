@@ -59,8 +59,20 @@ const SWAPPABLE_SCOPED = {
 	"@secure-exec/google-drive": "registry/file-system/google-drive",
 	"@secure-exec/sandbox": "registry/tool/sandbox",
 };
-// @agentos-software/<name> always maps to registry/software/<name> (renamed 3rd-party pkgs).
-const softwareSubpath = (name) => `registry/software/${name.split("/")[1]}`;
+// Agent packages are owned by secure-exec under registry/agent/*; generic VM
+// software packages are owned under registry/software/*.
+const AGENT_PACKAGE_SUBPATHS = {
+	"@agentos-software/claude-code": "registry/agent/claude",
+	"@agentos-software/codex": "registry/agent/codex",
+	"@agentos-software/opencode": "registry/agent/opencode",
+	"@agentos-software/pi": "registry/agent/pi",
+	"@agentos-software/pi-cli": "registry/agent/pi-cli",
+};
+const SOFTWARE_PACKAGE_SUBPATHS = {
+	"@agentos-software/codex-cli": "registry/software/codex",
+};
+const softwareSubpath = (name) =>
+	SOFTWARE_PACKAGE_SUBPATHS[name] ?? `registry/software/${name.split("/")[1]}`;
 // Published-only deps with no local source: always resolved from the registry.
 const REGISTRY_ONLY = new Set(["@secure-exec/nodejs"]);
 
@@ -95,7 +107,7 @@ const CATALOG_END = "# <<< secure-exec catalog <<<";
 // ---------------------------------------------------------------------------
 function consumerManifests() {
 	const dirs = [ROOT];
-	for (const group of ["packages", "examples", "registry/agent"]) {
+	for (const group of ["packages", "examples"]) {
 		const base = path.join(ROOT, group);
 		if (!existsSync(base)) continue;
 		for (const entry of readdirSync(base, { withFileTypes: true })) {
@@ -118,7 +130,9 @@ function isSwappable(name) {
 	return name.startsWith("@agentos-software/") || name in SWAPPABLE_SCOPED;
 }
 function localSubpath(name) {
-	if (name.startsWith("@agentos-software/")) return softwareSubpath(name);
+	if (name.startsWith("@agentos-software/")) {
+		return AGENT_PACKAGE_SUBPATHS[name] ?? softwareSubpath(name);
+	}
 	return SWAPPABLE_SCOPED[name];
 }
 
@@ -201,10 +215,10 @@ function versionFor(name, pinned) {
 	return SEED_VERSIONS[name] ?? SEED_SOFTWARE_VERSION;
 }
 // Which managed group a catalog package belongs to. secure-exec (the runtime)
-// and the @agentos-software/* software packages publish on independent cadences, so
+// and the @agentos-software/* registry packages publish on independent cadences, so
 // versions are set per scope.
 //   "secure-exec"   -> @secure-exec/* swappable scope (core, s3, google-drive, sandbox)
-//   "agentos-pkgs" -> @agentos-software/* renamed third-party software packages
+//   "agentos-pkgs" -> @agentos-software/* registry packages
 //   "registry-only" -> published-only deps pinned independently (e.g. @secure-exec/nodejs)
 function catalogScope(name) {
 	if (REGISTRY_ONLY.has(name)) return "registry-only";

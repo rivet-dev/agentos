@@ -50,7 +50,7 @@ const KNOWN_FAILING_E2E_FILES = [
 	"tests/pi-acp-adapter.test.ts",
 	"tests/process-lifecycle.test.ts",
 	// Registry-artifact / shell-behavior failures (red in both CI and local):
-	//  - duckdb-package: imports registry/software/duckdb/dist (unbuilt WASM in CI).
+	//  - duckdb-package: imports secure-exec registry/software/duckdb/dist (unbuilt WASM in CI).
 	//  - shell-flat-api: openShell/writeShell/onShellData yields empty output.
 	"tests/duckdb-package.test.ts",
 	"tests/shell-flat-api.test.ts",

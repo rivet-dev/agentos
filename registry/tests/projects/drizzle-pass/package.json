@@ -1,8 +1,0 @@
-{
-	"name": "project-matrix-drizzle-pass",
-	"private": true,
-	"type": "commonjs",
-	"dependencies": {
-		"drizzle-orm": "0.45.1"
-	}
-}

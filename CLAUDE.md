@@ -7,8 +7,8 @@ Agent OS is the agent-facing wrapper around secure-exec. It provides ACP session
 - secure-exec dependency workflow. Manage the secure-exec dependency ONLY through `scripts/secure-exec-dep.mjs` (the `just secure-exec-*` recipes); never hand-edit the `path` / `version` / `catalog:` pins.
   - Testing against local secure-exec changes: run `just secure-exec-local` to repoint npm (`link:`) and crates (`path = "../secure-exec/..."`) at the sibling checkout, then `node scripts/secure-exec-dep.mjs set-crate-version <sibling-version>` so the Cargo version requirement matches the sibling crate version (otherwise cargo cannot resolve the path deps). Also run `pnpm install` in `../secure-exec` first, or cargo panics in `v8-runtime/build.rs` with "missing Node dependencies at .../packages/build-tools/node_modules" (the V8 bridge assets are built from there). Use `just secure-exec-status` to inspect. This mode is for local builds/tests ONLY.
   - Pushing changes that depend on secure-exec changes: NEVER push with local (`path:` / `link:`) dependencies — this rule still holds. First preview-publish the secure-exec changes to their own secure-exec branch (the `preview-publish-secure-exec` flow), then point agent-os back at that exact published version with `just secure-exec-pinned` + `just secure-exec-set-version <version>`. Only commit/push the pinned state. Note the committed `Cargo.toml`/`Cargo.lock` stay pinned to a **crates.io** version (release-clean), NOT to a path/clone: a preview pin keeps the crate version at the last crates.io release and the secure-exec *crate* changes are picked up at CI build time by `prepare-build`, which clones secure-exec at the pinned `<sha>` and builds cargo in local mode (crates.io has no preview track). So you never commit a local path dep, yet a preview's crate changes still build. See "Depending on unreleased secure-exec changes".
-- Keep generic runtime, kernel, VFS, language execution, and registry software behavior in secure-exec.
-- Agent OS owns ACP, sessions, agent adapters, toolkit semantics, quickstarts, and the AgentOs facade.
+- Keep generic runtime, kernel, VFS, language execution, generic registry software, and packaged agent definitions/adapters in secure-exec.
+- Agent OS owns ACP, sessions, toolkit semantics, quickstarts, docs, and the AgentOs facade.
 - Call OS instances VMs, never sandboxes.
 - The protocol has no backwards compatibility. Clients and the sidecar ship in same-version lockstep, so never add protocol or config versioning, runtime negotiation, fallbacks, or converters. Configs such as `CreateVmConfig` carry no `version` field; the single same-version wire handshake is the only version check. Change the protocol freely and update both sides together.
 
@@ -16,9 +16,10 @@ Agent OS is the agent-facing wrapper around secure-exec. It provides ACP session
 
 ### secure-exec dependency versions (`just`)
 
-Two independent version tracks:
-- **secure-exec** — the `@secure-exec/*` npm packages and the `secure-exec-*` Cargo crates share **one** version on a real **release** (npm + crates publish together). On a **preview** they diverge: npm pins to the `0.0.0-<branch>.<sha>` preview tag while the crate version requirement stays at the last crates.io release (crates.io has no preview track), and CI's `prepare-build` clones secure-exec at `<sha>` to build the crates. See "Depending on unreleased secure-exec changes".
-- **`@agentos-software/*`** software packages (registry agents / WASM commands) are on a **separate** track and version independently of secure-exec.
+Three release tracks:
+- **secure-exec runtime** — `@secure-exec/*` npm packages and `secure-exec-*` crates. See "Depending on unreleased secure-exec changes" for preview-vs-release behavior.
+- **`@agentos-software/*` registry packages** — generic VM software from secure-exec `registry/software/*` plus agent adapters from secure-exec `registry/agent/*`; versioned independently of secure-exec runtime packages.
+- **agent-os product/API** — `@rivet-dev/agentos*`, AgentOs APIs, sidecar wrapper, docs, quickstarts, and examples; pins compatible secure-exec and registry package versions.
 
 Manage them ONLY via these recipes (never hand-edit `path`/`version`/`catalog:` pins):
 - `just secure-exec-local` — point deps at the sibling `../secure-exec` checkout for local hacking.

@@ -55,14 +55,14 @@ importers:
         specifier: ^0.60.0
         version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@agentos-software/claude-code':
-        specifier: link:../../registry/agent/claude
-        version: link:../../registry/agent/claude
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@secure-exec/codex':
         specifier: link:../../registry/software/codex
         version: link:../../registry/software/codex
       '@agentos-software/codex':
-        specifier: link:../../registry/agent/codex
-        version: link:../../registry/agent/codex
+        specifier: link:../../../secure-exec/registry/agent/codex
+        version: link:../../../secure-exec/registry/agent/codex
       '@secure-exec/coreutils':
         specifier: link:../../registry/software/coreutils
         version: link:../../registry/software/coreutils
@@ -94,14 +94,14 @@ importers:
         specifier: link:../../registry/software/jq
         version: link:../../registry/software/jq
       '@agentos-software/opencode':
-        specifier: link:../../registry/agent/opencode
-        version: link:../../registry/agent/opencode
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../registry/agent/pi
-        version: link:../../registry/agent/pi
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@agentos-software/pi-cli':
-        specifier: link:../../registry/agent/pi-cli
-        version: link:../../registry/agent/pi-cli
+        specifier: link:../../../secure-exec/registry/agent/pi-cli
+        version: link:../../../secure-exec/registry/agent/pi-cli
       '@secure-exec/ripgrep':
         specifier: link:../../registry/software/ripgrep
         version: link:../../registry/software/ripgrep

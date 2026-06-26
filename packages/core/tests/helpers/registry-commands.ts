@@ -6,7 +6,7 @@
  * to AgentOs.create({ software: [...] }).
  *
  * When a C-backed registry package is missing its built command artifact, this
- * helper builds the command on demand into `registry/native/c/build` and uses
+ * helper builds the command on demand into secure-exec `registry/native/c/build` and uses
  * that directory as a fallback command source.
  */
 
@@ -34,10 +34,16 @@ import yq from "@agentos-software/yq";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FALLBACK_COMMAND_DIR = resolve(
 	__dirname,
-	"../../../../registry/native/target/wasm32-wasip1/release/commands",
+	"../../../../../secure-exec/registry/native/target/wasm32-wasip1/release/commands",
 );
-const C_BUILD_COMMAND_DIR = resolve(__dirname, "../../../../registry/native/c/build");
-const C_BUILD_ROOT = resolve(__dirname, "../../../../registry/native/c");
+const C_BUILD_COMMAND_DIR = resolve(
+	__dirname,
+	"../../../../../secure-exec/registry/native/c/build",
+);
+const C_BUILD_ROOT = resolve(
+	__dirname,
+	"../../../../../secure-exec/registry/native/c",
+);
 const C_PATCHED_SYSROOT_TARGET = "sysroot/lib/wasm32-wasi/libc.a";
 const C_BUILD_TARGETS = new Map<string, string>([
 	["duckdb", "build/duckdb"],
@@ -57,7 +63,9 @@ type CommandPackageLike = {
 function declaredCommandNames(pkg: CommandPackageLike): string[] {
 	return (pkg.commands ?? [])
 		.map((command) => command.name)
-		.filter((name): name is string => typeof name === "string" && name.length > 0);
+		.filter(
+			(name): name is string => typeof name === "string" && name.length > 0,
+		);
 }
 
 function hasUsableCommandDir(dir: string, commands: string[]): boolean {
@@ -112,10 +120,14 @@ function ensureFallbackCommandArtifacts(commands: string[]): string | false {
 		return `Failed to build registry command artifacts via make sysroot:\n${output}`;
 	}
 
-	const buildResult = spawnSync("make", ["-o", C_PATCHED_SYSROOT_TARGET, ...buildTargets], {
-		cwd: C_BUILD_ROOT,
-		encoding: "utf8",
-	});
+	const buildResult = spawnSync(
+		"make",
+		["-o", C_PATCHED_SYSROOT_TARGET, ...buildTargets],
+		{
+			cwd: C_BUILD_ROOT,
+			encoding: "utf8",
+		},
+	);
 	if (buildResult.status === 0) {
 		return false;
 	}
@@ -130,9 +142,9 @@ function ensureFallbackCommandArtifacts(commands: string[]): string | false {
 	return `Failed to build registry command artifacts via make ${buildTargets.join(" ")}:\n${output}`;
 }
 
-export function withFallbackCommandDir<
-	T extends CommandPackageLike,
->(pkg: T): T {
+export function withFallbackCommandDir<T extends CommandPackageLike>(
+	pkg: T,
+): T {
 	const commands = declaredCommandNames(pkg);
 	if (hasUsableCommandDir(pkg.commandDir, commands)) {
 		return pkg;
@@ -155,15 +167,17 @@ export function withFallbackCommandDir<
 	return pkg;
 }
 
-export function commandPackageSkipReason(...packages: CommandPackageLike[]): string | false {
+export function commandPackageSkipReason(
+	...packages: CommandPackageLike[]
+): string | false {
 	const buildErrors = packages
 		.map((pkg) => ensureFallbackCommandArtifacts(declaredCommandNames(pkg)))
 		.filter((error): error is string => typeof error === "string");
 
 	const unavailable = packages.flatMap((pkg) => {
 		const commands = declaredCommandNames(pkg);
-		return [pkg.commandDir, FALLBACK_COMMAND_DIR, C_BUILD_COMMAND_DIR].some((dir) =>
-			hasUsableCommandDir(dir, commands),
+		return [pkg.commandDir, FALLBACK_COMMAND_DIR, C_BUILD_COMMAND_DIR].some(
+			(dir) => hasUsableCommandDir(dir, commands),
 		)
 			? []
 			: commands;
@@ -207,4 +221,4 @@ export const hasRegistryCommands =
 /** Skip reason for tests that need registry commands. */
 export const registrySkipReason = hasRegistryCommands
 	? false
-	: "Registry WASM binaries not available (run: make -C registry/native && make -C registry copy-wasm build)";
+	: "Registry WASM binaries not available (run: make -C ../secure-exec/registry/native && make -C ../secure-exec/registry copy-wasm build)";
