@@ -33,8 +33,22 @@ secure-exec-set-version VERSION:
 agentos-pkgs-set-version VERSION:
 	node scripts/secure-exec-dep.mjs set-agentos-pkgs-version "{{ VERSION }}"
 
-dev-shell *args:
-	pnpm --filter @rivet-dev/agentos-dev-shell dev-shell -- "$@"
+install-shell:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	pnpm --filter @rivet-dev/agentos-shell build
+	global_bin_dir="$(pnpm config get global-bin-dir)"
+	if [[ -z "$global_bin_dir" || "$global_bin_dir" == "undefined" ]]; then
+		global_bin_dir="${PNPM_HOME:-/tmp/pnpm}"
+	fi
+	mkdir -p "$global_bin_dir"
+	for package in @rivet-dev/agentos-shell @rivet-dev/agent-os-shell @rivet-dev/agentos-workspace; do
+		PATH="$global_bin_dir:$PATH" pnpm --global remove "$package" >/dev/null 2>&1 || true
+	done
+	(cd packages/shell && PATH="$global_bin_dir:$PATH" pnpm link --global)
+
+shell *args:
+	NODE_OPTIONS="--no-deprecation ${NODE_OPTIONS:-}" pnpm --filter @rivet-dev/agentos-shell exec tsx src/main.ts -i -t "$@"
 
 # Run the agentos-sdk.dev site (landing + /docs) locally with hot reload
 docs:

@@ -1,5 +1,6 @@
 # TODO
 
+- Move root-level npm scripts that are not Turbo orchestration into `justfile` recipes. Keep Turbo commands such as `build`, `start`, `test:watch`, and `check-types` in `package.json`; migrate wrapper/utility scripts such as `test`, `test:migration-parity`, `test:post-python-parity`, `lint`, `fmt`, and `shell`.
 - Add OCI import/export support for overlay filesystem layers and snapshots after phase 1. The phase-1 API should only guarantee the bundled base filesystem artifact and the internal snapshot export/import format.
 - Run the full secure-exec registry native-kernel suite after rebuilding the WASM command artifacts. `../secure-exec/registry/tests/smoke.test.ts` skipped in this pass because the local `../secure-exec/registry/native/target/wasm32-wasip1/release/commands` binaries were not present, so the new `createKernel` sidecar-backed path is only verified by package-level builds plus targeted core tests right now.
 - Expand verification for the new sidecar-backed kernel compatibility surface around `socketTable`/`processTable` observability and browser runtime end-to-end specs. The source builds are green and targeted tests passed, but the deeper integration suites were not exercised in this pass.

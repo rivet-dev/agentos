@@ -46,6 +46,42 @@ const TRAILING_OUTPUT_DRAIN_INTERVAL_MS = 10;
 const TRAILING_OUTPUT_DRAIN_MAX_MS = 250;
 const TRAILING_OUTPUT_DRAIN_QUIET_TURNS = 2;
 
+function shouldLogStructuredSidecarEvent(name: string): boolean {
+	const normalized = name.toLowerCase();
+	return (
+		normalized === "limit_warning" ||
+		normalized.startsWith("security.") ||
+		normalized.includes("warning") ||
+		normalized.includes("failed") ||
+		normalized.includes("error")
+	);
+}
+
+function formatStructuredSidecarDetail(
+	detail: Readonly<Record<string, string>>,
+): string {
+	const entries = Object.entries(detail);
+	if (entries.length === 0) {
+		return "";
+	}
+	return entries.map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(" ");
+}
+
+function logStructuredSidecarEvent(
+	name: string,
+	detail: Readonly<Record<string, string>>,
+): void {
+	if (!shouldLogStructuredSidecarEvent(name)) {
+		return;
+	}
+	const formatted = formatStructuredSidecarDetail(detail);
+	console.warn(
+		formatted
+			? `[agent-os] sidecar ${name}: ${formatted}`
+			: `[agent-os] sidecar ${name}`,
+	);
+}
+
 async function drainTrailingProcessOutputTurn(delayMs = 0): Promise<void> {
 	// Native-sidecar `process_output` events can lag one macrotask behind the
 	// terminal `process_exited` notification for very short-lived processes, and
@@ -774,16 +810,16 @@ export class NativeSidecarKernelProxy {
 			pid,
 			writeStdin: (data) => {
 				if (entry.exitCode !== null) {
-					return;
+					return Promise.resolve();
 				}
 				entry.pendingStdin.push(data);
-				void this.flushPendingStdin(entry).catch((error) => {
+				return this.flushPendingStdin(entry).catch((error) => {
 					this.handleBackgroundProcessError(entry, error);
 				});
 			},
 			closeStdin: () => {
 				entry.pendingCloseStdin = true;
-				void this.closeTrackedStdin(entry).catch((error) => {
+				return this.closeTrackedStdin(entry).catch((error) => {
 					this.handleBackgroundProcessError(entry, error);
 				});
 			},
@@ -832,8 +868,6 @@ export class NativeSidecarKernelProxy {
 			options?.args ??
 			(command === "sh" || command === "/bin/sh" ? ["-i"] : []);
 		const synthesizePrompt = !options?.command && !options?.args;
-		const autoCloseExplicitCommandStdin =
-			Boolean(options?.command) && !["sh", "/bin/sh", "bash"].includes(command);
 		const promptText = "sh-0.4$ ";
 		const textEncoder = new TextEncoder();
 		const textDecoder = new TextDecoder();
@@ -844,14 +878,21 @@ export class NativeSidecarKernelProxy {
 				.replace(/\u001b\[[0-9;]*m/g, "")
 				.replace(/^.*WARN could not retrieve pid for child process\n?/gm, "")
 				.replace(/^ProcessExitError:.*\n(?:\s+at .*\n)*/gm, "");
+		const sanitizeNativeShellOutput = (chunk: Uint8Array) => {
+			const text = textDecoder.decode(chunk);
+			const sanitized = text.replace(
+				/^.*WARN could not retrieve pid for child process\n?/gm,
+				"",
+			);
+			return sanitized.length > 0 ? textEncoder.encode(sanitized) : null;
+		};
 		let bufferedInput = "";
 		let bufferedCommand = "";
 		let activeForegroundProcess: ManagedProcess | null = null;
-		let shellEnv = { ...(options?.env ?? {}) };
+		let shellEnv = { ...(options?.env ?? {}), AGENTOS_EXEC_TTY: "1" };
 		let shellCwd = options?.cwd ?? this.cwd;
 		let syntheticCommandQueue = Promise.resolve();
 		let promptTimer: ReturnType<typeof setTimeout> | null = null;
-		let closeStdinTimer: ReturnType<typeof setTimeout> | null = null;
 		let commandInFlight = false;
 		let syntheticCursorAtLineStart = true;
 		const syntheticPid = this.nextSyntheticPid++;
@@ -864,12 +905,6 @@ export class NativeSidecarKernelProxy {
 			if (promptTimer !== null) {
 				clearTimeout(promptTimer);
 				promptTimer = null;
-			}
-		};
-		const clearCloseStdinTimer = () => {
-			if (closeStdinTimer !== null) {
-				clearTimeout(closeStdinTimer);
-				closeStdinTimer = null;
 			}
 		};
 		const normalizeSyntheticTerminalText = (text: string) =>
@@ -970,20 +1005,40 @@ export class NativeSidecarKernelProxy {
 			}
 			return parsed;
 		};
-		const writeForegroundInput = (
-			proc: ManagedProcess,
-			data: string | Uint8Array,
-		) => {
+			const writeForegroundInput = async (
+				proc: ManagedProcess,
+				data: string | Uint8Array,
+			) => {
 			if (typeof data === "string") {
 				for (const character of data) {
-					proc.writeStdin(character);
+					await proc.writeStdin(character);
 				}
 				return;
 			}
-			for (const byte of data) {
-				proc.writeStdin(new Uint8Array([byte]));
-			}
-		};
+				for (const byte of data) {
+					await proc.writeStdin(new Uint8Array([byte]));
+				}
+			};
+			const appendSyntheticInput = (input: string) => {
+				for (const character of input) {
+					if (character === "\u0004") {
+						continue;
+					}
+					if (character === "\b" || character === "\u007f") {
+						if (bufferedInput.length > 0) {
+							bufferedInput = bufferedInput.slice(0, -1);
+							emitSyntheticTerminal("\b \b");
+						}
+						continue;
+					}
+					bufferedInput += character;
+					if (character === "\n") {
+						emitSyntheticTerminal("\n");
+					} else if (character >= " ") {
+						emitSyntheticTerminal(character);
+					}
+				}
+			};
 
 		let onData: ((data: Uint8Array) => void) | null = null;
 		stdoutHandlers.add((data) => onData?.(data));
@@ -994,27 +1049,30 @@ export class NativeSidecarKernelProxy {
 			schedulePrompt(0);
 			return {
 				pid: syntheticPid,
-				write(data) {
-					if (syntheticExitCode !== null) {
-						return;
-					}
+					async write(data) {
+						if (syntheticExitCode !== null) {
+							return;
+						}
 					if (activeForegroundProcess) {
 						const rawText =
 							typeof data === "string"
 								? data
 								: Buffer.from(data).toString("utf8");
-						if (rawText.includes("\u0003")) {
-							const [beforeInterrupt] = rawText.split("\u0003");
-							if (beforeInterrupt) {
-								writeForegroundInput(activeForegroundProcess, beforeInterrupt);
+							if (rawText.includes("\u0003")) {
+								const [beforeInterrupt] = rawText.split("\u0003");
+								if (beforeInterrupt) {
+									await writeForegroundInput(
+										activeForegroundProcess,
+										beforeInterrupt,
+									);
+								}
+								emitSyntheticTerminal("^C\n");
+								activeForegroundProcess.kill(2);
+								return;
 							}
-							emitSyntheticTerminal("^C\n");
-							activeForegroundProcess.kill(2);
+							await writeForegroundInput(activeForegroundProcess, data);
 							return;
 						}
-						writeForegroundInput(activeForegroundProcess, data);
-						return;
-					}
 					const rawText =
 						typeof data === "string"
 							? data
@@ -1038,19 +1096,20 @@ export class NativeSidecarKernelProxy {
 						finishSyntheticShell(0);
 						return;
 					}
-					bufferedInput += text.replace(/\u0004/g, "");
-					while (true) {
-						const newlineIndex = bufferedInput.indexOf("\n");
-						if (newlineIndex < 0) {
-							break;
+						appendSyntheticInput(
+							text.replace(/\r\n/g, "\n").replace(/\r/g, "\n"),
+						);
+						while (true) {
+							const newlineIndex = bufferedInput.indexOf("\n");
+							if (newlineIndex < 0) {
+								break;
 						}
-						const line = bufferedInput
-							.slice(0, newlineIndex)
-							.replace(/\r$/, "");
-						bufferedInput = bufferedInput.slice(newlineIndex + 1);
-						emitSyntheticStdout(`${line}\n`);
-						const nextCommand = bufferedCommand
-							? `${bufferedCommand}\n${line}`
+							const line = bufferedInput
+								.slice(0, newlineIndex)
+								.replace(/\r$/, "");
+							bufferedInput = bufferedInput.slice(newlineIndex + 1);
+							const nextCommand = bufferedCommand
+								? `${bufferedCommand}\n${line}`
 							: line;
 						if (commandNeedsContinuation(nextCommand)) {
 							bufferedCommand = nextCommand;
@@ -1165,20 +1224,33 @@ export class NativeSidecarKernelProxy {
 		}
 
 		const proc = this.spawn(command, args, {
-			env: options?.env,
+			env: {
+				...(options?.env ?? {}),
+				...(options?.cols ? { COLUMNS: String(Math.trunc(options.cols)) } : {}),
+				...(options?.rows ? { LINES: String(Math.trunc(options.rows)) } : {}),
+				AGENTOS_EXEC_TTY: "1",
+			},
 			cwd: options?.cwd,
 			streamStdin: true,
 			onStdout: (chunk) => {
+				const sanitized = sanitizeNativeShellOutput(chunk);
+				if (!sanitized) {
+					return;
+				}
 				for (const handler of stdoutHandlers) {
-					handler(chunk);
+					handler(sanitized);
 				}
 				if (commandInFlight) {
 					schedulePrompt(120);
 				}
 			},
 			onStderr: (chunk) => {
+				const sanitized = sanitizeNativeShellOutput(chunk);
+				if (!sanitized) {
+					return;
+				}
 				for (const handler of stderrHandlers) {
-					handler(chunk);
+					handler(sanitized);
 				}
 				if (commandInFlight) {
 					schedulePrompt(120);
@@ -1188,18 +1260,11 @@ export class NativeSidecarKernelProxy {
 
 		return {
 			pid: proc.pid,
-			write(data) {
+			async write(data) {
 				if (synthesizePrompt) {
 					return;
 				}
-				proc.writeStdin(data);
-				if (autoCloseExplicitCommandStdin) {
-					clearCloseStdinTimer();
-					closeStdinTimer = setTimeout(() => {
-						closeStdinTimer = null;
-						proc.closeStdin();
-					}, 100);
-				}
+				await proc.writeStdin(data);
 				if (
 					synthesizePrompt &&
 					typeof data === "string" &&
@@ -1215,11 +1280,26 @@ export class NativeSidecarKernelProxy {
 			set onData(handler) {
 				onData = handler;
 			},
-			resize() {
-				// The current stdio-native path is process-backed rather than PTY-backed.
+			resize: (cols, rows) => {
+				const entry = this.trackedProcesses.get(proc.pid);
+				if (!entry || entry.exitCode !== null) {
+					return;
+				}
+				void entry.startPromise
+					.then(() =>
+						this.client.resizePty(
+							this.session,
+							this.vm,
+							entry.processId,
+							Math.trunc(cols),
+							Math.trunc(rows),
+						),
+					)
+					.catch((error) => {
+						this.handleBackgroundProcessError(entry, error);
+					});
 			},
 			kill(signal) {
-				clearCloseStdinTimer();
 				clearPromptTimer();
 				proc.kill(signal);
 			},
@@ -1674,6 +1754,11 @@ export class NativeSidecarKernelProxy {
 					}
 					void this.refreshProcessSnapshot().catch(() => {});
 					this.finishProcess(entry, event.payload.exit_code);
+					continue;
+				}
+
+				if (event.payload.type === "structured") {
+					logStructuredSidecarEvent(event.payload.name, event.payload.detail);
 				}
 			} catch (error) {
 				if (this.disposed) {

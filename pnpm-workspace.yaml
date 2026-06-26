@@ -3,7 +3,6 @@ packages:
   - packages/agentos
   - packages/browser
   - packages/core
-  - packages/dev-shell
   - packages/playground
   - packages/posix
   - packages/python
