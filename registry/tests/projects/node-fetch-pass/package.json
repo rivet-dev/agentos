@@ -1,8 +1,0 @@
-{
-	"name": "project-matrix-node-fetch-pass",
-	"private": true,
-	"type": "commonjs",
-	"dependencies": {
-		"node-fetch": "2.7.0"
-	}
-}

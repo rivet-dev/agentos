@@ -13,7 +13,6 @@ packages:
   - packages/shell
   - packages/sidecar-binary
   - examples/*
-  - registry/agent/*
   - scripts/publish
   - website
 

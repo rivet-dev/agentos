@@ -19,7 +19,7 @@ Two lanes, same llmock, same timer:
 - **`vm`** — `AgentOs.create()` (`vmCreate`) + `createSession("pi")` (`sessionCreate`).
 - **`bare-node`** — the *same* pi-SDK session construction on host node, **no VM**
   (`sessionCreate` = load pi SDK + `createAgentSession`). This is the "Node.js
-  equivalent" baseline; it mirrors `registry/agent/pi/src/adapter.ts` `newSession`.
+  equivalent" baseline; it mirrors `../secure-exec/registry/agent/pi/src/adapter.ts` `newSession`.
 
 Derived metrics:
 

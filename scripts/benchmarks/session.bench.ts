@@ -92,7 +92,10 @@ async function loadPiSoftware(): Promise<unknown> {
 	// dist/sdk-snapshot.js bundle). The published @agentos-software/pi may predate
 	// the snapshot work, so benchmarking against it silently measures the
 	// non-snapshot fallback path and hides the optimization entirely.
-	const local = join(import.meta.dirname, "../../registry/agent/pi/dist/index.js");
+		const local = join(
+			import.meta.dirname,
+			"../../../secure-exec/registry/agent/pi/dist/index.js",
+		);
 	if (existsSync(local)) return (await import(local)).default;
 	// Fallback: the published/installed software package. Variable specifier so
 	// this typechecks even when the package isn't installed in the dev workspace.
@@ -101,7 +104,7 @@ async function loadPiSoftware(): Promise<unknown> {
 		return (await import(piPkg)).default;
 	} catch {
 		throw new Error(
-			"Could not resolve the pi software package (registry/agent/pi/dist or @agentos-software/pi). Build it first.",
+				"Could not resolve the pi software package (../secure-exec/registry/agent/pi/dist or @agentos-software/pi). Build it first.",
 		);
 	}
 }
@@ -112,7 +115,12 @@ const PI_SDK_PKG = "@mariozechner/pi-coding-agent";
 function findPiSdkRoot(): string | null {
 	const reqs = [
 		createRequire(join(import.meta.dirname, "../../package.json")),
-		createRequire(join(import.meta.dirname, "../../registry/agent/pi/package.json")),
+			createRequire(
+				join(
+					import.meta.dirname,
+					"../../../secure-exec/registry/agent/pi/package.json",
+				),
+			),
 	];
 	for (const req of reqs) {
 		for (const base of req.resolve.paths(PI_SDK_PKG) ?? []) {
@@ -160,7 +168,7 @@ function resolvePiSdkRootOrThrow(): string {
  * The bare-node session-creation script, run in a FRESH node process per sample
  * so each pays the full cold SDK load (the VM lane reloads the SDK in a fresh V8
  * isolate every session, so this is the apples-to-apples "Node.js equivalent").
- * Mirrors registry/agent/pi/src/adapter.ts `newSession`, with no VM. It times the
+	 * Mirrors secure-exec registry/agent/pi/src/adapter.ts `newSession`, with no VM. It times the
  * SDK load + session construction internally and prints `__MS__=<ms>`.
  */
 function bareNodeScript(root: string): string {

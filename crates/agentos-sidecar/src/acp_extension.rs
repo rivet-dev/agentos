@@ -29,6 +29,11 @@ use tokio::sync::Mutex;
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 const SESSION_NEW_TIMEOUT: Duration = Duration::from_secs(30);
 const SESSION_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+// While an ACP request is in flight the stdio loop is inside the extension
+// dispatch, so this wait loop becomes the cooperative VM I/O pump. Keep it at
+// the same cadence as secure-exec's outer event pump so adapter fetches and
+// process output keep moving mid-turn.
+const ACP_JSON_RPC_POLL_INTERVAL: Duration = Duration::from_micros(250);
 const ACP_CANCEL_METHOD: &str = "session/cancel";
 /// Transcript-continuation preamble prepended (once) to the first prompt after a
 /// fallback resume. Lossy-but-universal floor: the agent is handed a *pointer* to
@@ -673,7 +678,11 @@ impl AcpExtension {
                         Err(error) => return AcpHandlerOutput::response(Err(error)),
                     };
                     match ctx.ext_event_wire(event) {
-                        Ok(event) => exchange.events.push(event),
+                        Ok(frame) => {
+                            if let Err(error) = deliver_event(&ctx, &mut exchange.events, frame) {
+                                return AcpHandlerOutput::response(Err(error));
+                            }
+                        }
                         Err(error) => return AcpHandlerOutput::response(Err(error)),
                     }
                 }
@@ -1336,6 +1345,23 @@ impl AcpSessionRecord {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Deliver an ACP event frame to the host. Streams it live through the sidecar's
+/// event sink (the stdio path) the instant it is produced; only when no live sink
+/// is configured (an in-process `NativeSidecar` with no stdout loop) does it fall
+/// back to collecting the frame into `events` for the dispatch-result batch. This
+/// is what makes `session/update`s arrive mid-turn instead of all arriving at
+/// once when the `session/prompt` dispatch finally resolves.
+fn deliver_event(
+    ctx: &ExtensionContext<'_>,
+    events: &mut Vec<secure_exec_sidecar::wire::EventFrame>,
+    frame: secure_exec_sidecar::wire::EventFrame,
+) -> Result<(), SidecarError> {
+    if let Some(frame) = ctx.emit_event_wire(frame)? {
+        events.push(frame);
+    }
+    Ok(())
+}
+
 async fn send_json_rpc_request(
     ctx: &mut ExtensionContext<'_>,
     process_id: &str,
@@ -1400,7 +1426,7 @@ async fn send_json_rpc_request(
         }
         let remaining = deadline.saturating_duration_since(now);
         let event = ctx
-            .poll_event_wire(remaining.min(Duration::from_millis(250)))
+            .poll_event_wire(remaining.min(ACP_JSON_RPC_POLL_INTERVAL))
             .await?;
         let Some(event) = event else {
             continue;
@@ -1455,7 +1481,7 @@ async fn send_json_rpc_request(
                             );
                         }
                         if let Some(session_id) = event_session_id {
-                            events.push(ctx.ext_event_wire(encode_event(
+                            let frame = ctx.ext_event_wire(encode_event(
                                 AcpEvent::AcpSessionEvent(AcpSessionEvent {
                                     session_id: session_id.to_string(),
                                     notification: serde_json::to_string(&message).map_err(
@@ -1466,7 +1492,8 @@ async fn send_json_rpc_request(
                                         },
                                     )?,
                                 }),
-                            )?)?);
+                            )?)?;
+                            deliver_event(ctx, &mut events, frame)?;
                         } else {
                             notifications.push(serde_json::to_string(&message).map_err(
                                 |error| {
@@ -1482,16 +1509,23 @@ async fn send_json_rpc_request(
             EventPayload::ProcessOutputEvent(output)
                 if output.process_id == process_id && output.channel == StreamChannel::Stderr =>
             {
-                events.push(
-                    ctx.ext_event_wire(encode_event(AcpEvent::AcpAgentStderrEvent(
-                        AcpAgentStderrEvent {
-                            session_id: event_session_id.unwrap_or_default().to_string(),
-                            agent_type: agent_type.to_string(),
-                            process_id: process_id.to_string(),
-                            chunk: output.chunk,
-                        },
-                    ))?)?,
-                );
+                let frame = ctx.ext_event_wire(encode_event(AcpEvent::AcpAgentStderrEvent(
+                    AcpAgentStderrEvent {
+                        session_id: event_session_id.unwrap_or_default().to_string(),
+                        agent_type: agent_type.to_string(),
+                        process_id: process_id.to_string(),
+                        chunk: output.chunk,
+                    },
+                ))?)?;
+                // Stream live during an owned session turn (prompt/cancel), but
+                // keep bootstrap stderr (initialize/session-new/load, which pass
+                // no session id) in the batch so it still arrives for callers that
+                // only subscribe after create/resume resolves.
+                if event_session_id.is_some() {
+                    deliver_event(ctx, &mut events, frame)?;
+                } else {
+                    events.push(frame);
+                }
             }
             EventPayload::ProcessExitedEvent(exited) if exited.process_id == process_id => {
                 // Embed ADAPTER_EXITED_ERROR_MARKER directly so is_adapter_exited_error()

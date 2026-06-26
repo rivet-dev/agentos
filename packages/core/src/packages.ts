@@ -42,11 +42,10 @@ export function resolvePackageDir(
 }
 
 import type { AgentConfig } from "./agents.js";
-import type { Kernel } from "./runtime-compat.js";
 
 const LOCAL_REGISTRY_COMMAND_DIR = resolve(
 	dirname(fileURLToPath(import.meta.url)),
-	"../../..",
+	"../../../../secure-exec",
 	"registry/native/target/wasm32-wasip1/release/commands",
 );
 
@@ -455,7 +454,10 @@ function collectCommandMetadata(
 		}
 	}
 
-	const commandDir = resolveLocalCommandDirFallback(pkg.commandDir, declaredCommands);
+	const commandDir = resolveLocalCommandDirFallback(
+		pkg.commandDir,
+		declaredCommands,
+	);
 
 	return {
 		commandDir,
@@ -464,7 +466,10 @@ function collectCommandMetadata(
 	};
 }
 
-function hasUsableCommandDir(commandDir: string, declaredCommands: string[]): boolean {
+function hasUsableCommandDir(
+	commandDir: string,
+	declaredCommands: string[],
+): boolean {
 	if (!existsSync(commandDir)) {
 		return false;
 	}

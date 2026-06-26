@@ -6,96 +6,9 @@ settings:
 
 catalogs:
   default:
-    '@agentos-software/claude-code':
-      specifier: 0.0.0-nathan-binding-workspace.9be0a88
-      version: 0.0.0-nathan-binding-workspace.9be0a88
-    '@agentos-software/codex':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/codex-cli':
-      specifier: 0.0.0-codex-claude-runtime-fixes.9cbef3a
-      version: 0.0.0-codex-claude-runtime-fixes.9cbef3a
-    '@agentos-software/common':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/coreutils':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/curl':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/diffutils':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/fd':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/file':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/findutils':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/gawk':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/git':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/grep':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/gzip':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/jq':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/opencode':
-      specifier: 0.0.0-nathan-binding-workspace.9be0a88
-      version: 0.0.0-nathan-binding-workspace.9be0a88
-    '@agentos-software/pi':
-      specifier: 0.0.0-nathan-binding-workspace.9be0a88
-      version: 0.0.0-nathan-binding-workspace.9be0a88
-    '@agentos-software/pi-cli':
-      specifier: 0.0.0-nathan-binding-workspace.9be0a88
-      version: 0.0.0-nathan-binding-workspace.9be0a88
-    '@agentos-software/ripgrep':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/sed':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/tar':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/tree':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/unzip':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/yq':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@agentos-software/zip':
-      specifier: 0.3.0-rc.2
-      version: 0.3.0-rc.2
-    '@secure-exec/core':
-      specifier: 0.0.0-main.f183ed2
-      version: 0.0.0-main.f183ed2
-    '@secure-exec/google-drive':
-      specifier: 0.0.0-main.f183ed2
-      version: 0.0.0-main.f183ed2
     '@secure-exec/nodejs':
       specifier: 0.2.1
       version: 0.2.1
-    '@secure-exec/s3':
-      specifier: 0.0.0-main.f183ed2
-      version: 0.0.0-main.f183ed2
-    '@secure-exec/sandbox':
-      specifier: 0.0.0-main.f183ed2
-      version: 0.0.0-main.f183ed2
 
 overrides:
   '@rivet-dev/agentos-core': workspace:*
@@ -108,17 +21,17 @@ importers:
   .:
     devDependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-binding-workspace.9be0a88(@cfworker/json-schema@4.1.1)
+        specifier: link:../secure-exec/registry/agent/claude
+        version: link:../secure-exec/registry/agent/claude
       '@agentos-software/codex':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../secure-exec/registry/agent/codex
+        version: link:../secure-exec/registry/agent/codex
       '@agentos-software/common':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../secure-exec/registry/software/common
+        version: link:../secure-exec/registry/software/common
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../secure-exec/registry/agent/pi
+        version: link:../secure-exec/registry/agent/pi
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
@@ -132,8 +45,8 @@ importers:
         specifier: workspace:*
         version: link:packages/core
       '@secure-exec/core':
-        specifier: 'catalog:'
-        version: 0.0.0-main.f183ed2
+        specifier: link:../secure-exec/packages/core
+        version: link:../secure-exec/packages/core
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -194,17 +107,17 @@ importers:
   examples/quickstart:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-binding-workspace.9be0a88(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-binding-workspace.9be0a88
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -212,8 +125,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
       '@secure-exec/s3':
-        specifier: 'catalog:'
-        version: 0.0.0-main.f183ed2
+        specifier: link:../../../secure-exec/registry/file-system/s3
+        version: link:../../../secure-exec/registry/file-system/s3
       dockerode:
         specifier: ^4.0.9
         version: 4.0.10
@@ -240,8 +153,8 @@ importers:
   packages/agentos:
     dependencies:
       '@agentos-software/common':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
@@ -283,8 +196,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@secure-exec/sandbox':
-        specifier: 'catalog:'
-        version: 0.0.0-main.f183ed2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/tool/sandbox
+        version: link:../../../secure-exec/registry/tool/sandbox
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -293,8 +206,8 @@ importers:
         version: 4.3.6
     devDependencies:
       '@agentos-software/common':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -327,8 +240,8 @@ importers:
   packages/core:
     dependencies:
       '@agentos-software/common':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@aws-sdk/client-s3':
         specifier: ^3.1019.0
         version: 3.1020.0
@@ -339,8 +252,8 @@ importers:
         specifier: ^0.6.2
         version: 0.6.2
       '@secure-exec/core':
-        specifier: 'catalog:'
-        version: 0.0.0-main.f183ed2
+        specifier: link:../../../secure-exec/packages/core
+        version: link:../../../secure-exec/packages/core
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -370,71 +283,71 @@ importers:
         version: 3.25.2(zod@4.3.6)
     devDependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-binding-workspace.9be0a88(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/codex':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/agent/codex
+        version: link:../../../secure-exec/registry/agent/codex
       '@agentos-software/codex-cli':
-        specifier: 'catalog:'
-        version: 0.0.0-codex-claude-runtime-fixes.9cbef3a
+        specifier: link:../../../secure-exec/registry/software/codex
+        version: link:../../../secure-exec/registry/software/codex
       '@agentos-software/coreutils':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/coreutils
+        version: link:../../../secure-exec/registry/software/coreutils
       '@agentos-software/curl':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/curl
+        version: link:../../../secure-exec/registry/software/curl
       '@agentos-software/diffutils':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/diffutils
+        version: link:../../../secure-exec/registry/software/diffutils
       '@agentos-software/fd':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/fd
+        version: link:../../../secure-exec/registry/software/fd
       '@agentos-software/file':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/file
+        version: link:../../../secure-exec/registry/software/file
       '@agentos-software/findutils':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/findutils
+        version: link:../../../secure-exec/registry/software/findutils
       '@agentos-software/gawk':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/gawk
+        version: link:../../../secure-exec/registry/software/gawk
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/grep':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/grep
+        version: link:../../../secure-exec/registry/software/grep
       '@agentos-software/gzip':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/gzip
+        version: link:../../../secure-exec/registry/software/gzip
       '@agentos-software/jq':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/jq
+        version: link:../../../secure-exec/registry/software/jq
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-binding-workspace.9be0a88
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@agentos-software/pi-cli':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi-cli
+        version: link:../../../secure-exec/registry/agent/pi-cli
       '@agentos-software/ripgrep':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/ripgrep
+        version: link:../../../secure-exec/registry/software/ripgrep
       '@agentos-software/sed':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/sed
+        version: link:../../../secure-exec/registry/software/sed
       '@agentos-software/tar':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/tar
+        version: link:../../../secure-exec/registry/software/tar
       '@agentos-software/tree':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/tree
+        version: link:../../../secure-exec/registry/software/tree
       '@agentos-software/yq':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/yq
+        version: link:../../../secure-exec/registry/software/yq
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.87
         version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
@@ -463,11 +376,11 @@ importers:
         specifier: link:../agentos-sandbox
         version: link:../agentos-sandbox
       '@secure-exec/google-drive':
-        specifier: 'catalog:'
-        version: 0.0.0-main.f183ed2
+        specifier: link:../../../secure-exec/registry/file-system/google-drive
+        version: link:../../../secure-exec/registry/file-system/google-drive
       '@secure-exec/s3':
-        specifier: 'catalog:'
-        version: 0.0.0-main.f183ed2
+        specifier: link:../../../secure-exec/registry/file-system/s3
+        version: link:../../../secure-exec/registry/file-system/s3
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -493,8 +406,8 @@ importers:
   packages/dev-shell:
     dependencies:
       '@agentos-software/common':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
@@ -549,8 +462,8 @@ importers:
   packages/posix:
     dependencies:
       '@secure-exec/core':
-        specifier: 'catalog:'
-        version: 0.0.0-main.f183ed2
+        specifier: link:../../../secure-exec/packages/core
+        version: link:../../../secure-exec/packages/core
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -571,8 +484,8 @@ importers:
   packages/python:
     dependencies:
       '@secure-exec/core':
-        specifier: 'catalog:'
-        version: 0.0.0-main.f183ed2
+        specifier: link:../../../secure-exec/packages/core
+        version: link:../../../secure-exec/packages/core
       pyodide:
         specifier: ^0.28.3
         version: 0.28.3(bufferutil@4.1.0)
@@ -653,35 +566,35 @@ importers:
   packages/shell:
     dependencies:
       '@agentos-software/codex-cli':
-        specifier: 'catalog:'
-        version: 0.0.0-codex-claude-runtime-fixes.9cbef3a
+        specifier: link:../../../secure-exec/registry/software/codex
+        version: link:../../../secure-exec/registry/software/codex
       '@agentos-software/common':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@agentos-software/fd':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/fd
+        version: link:../../../secure-exec/registry/software/fd
       '@agentos-software/file':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/file
+        version: link:../../../secure-exec/registry/software/file
       '@agentos-software/jq':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/jq
+        version: link:../../../secure-exec/registry/software/jq
       '@agentos-software/ripgrep':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/ripgrep
+        version: link:../../../secure-exec/registry/software/ripgrep
       '@agentos-software/tree':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/tree
+        version: link:../../../secure-exec/registry/software/tree
       '@agentos-software/unzip':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/unzip
+        version: link:../../../secure-exec/registry/software/unzip
       '@agentos-software/yq':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/yq
+        version: link:../../../secure-exec/registry/software/yq
       '@agentos-software/zip':
-        specifier: 'catalog:'
-        version: 0.3.0-rc.2
+        specifier: link:../../../secure-exec/registry/software/zip
+        version: link:../../../secure-exec/registry/software/zip
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
@@ -700,98 +613,6 @@ importers:
         version: 2.1.9(@types/node@22.19.15)
 
   packages/sidecar-binary: {}
-
-  registry/agent/claude:
-    dependencies:
-      '@agentclientprotocol/sdk':
-        specifier: ^0.16.1
-        version: 0.16.1(zod@4.3.6)
-      '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.2.87
-        version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../../../packages/core
-      zod:
-        specifier: ^4.1.11
-        version: 4.3.6
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  registry/agent/codex:
-    dependencies:
-      '@agentos-software/codex-cli':
-        specifier: 'catalog:'
-        version: 0.0.0-codex-claude-runtime-fixes.9cbef3a
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  registry/agent/opencode:
-    dependencies:
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../../../packages/core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      bun:
-        specifier: 1.3.11
-        version: 1.3.11
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  registry/agent/pi:
-    dependencies:
-      '@agentclientprotocol/sdk':
-        specifier: ^0.16.1
-        version: 0.16.1(zod@4.3.6)
-      '@mariozechner/pi-ai':
-        specifier: 0.60.0
-        version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@mariozechner/pi-coding-agent':
-        specifier: 0.60.0
-        version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../../../packages/core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  registry/agent/pi-cli:
-    dependencies:
-      '@mariozechner/pi-coding-agent':
-        specifier: ^0.60.0
-        version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../../../packages/core
-      pi-acp:
-        specifier: ^0.0.23
-        version: 0.0.23
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
 
   scripts/publish:
     dependencies:
@@ -887,84 +708,6 @@ packages:
     resolution: {integrity: sha512-1ad+Sc/0sCtZGHthxxvgEUo5Wsbw16I+aF+YwdiLnPwkZG8KAGUEAPK6LM6Pf69lCyJPt1Aomk1d+8oE3C4ZEw==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
-
-  '@agentos-software/claude-code@0.0.0-nathan-binding-workspace.9be0a88':
-    resolution: {integrity: sha512-lSrWgqisbNFV3kkUpcyjH67UZsI/BWAWqlzr/B5SrHN0FcQU/1xVqYp+ooz24HdUuLlpp4Otx5sJHfb1NLRvDQ==}
-    hasBin: true
-
-  '@agentos-software/codex-cli@0.0.0-codex-claude-runtime-fixes.9cbef3a':
-    resolution: {integrity: sha512-vxJ0T2h9O46oOzohDKChKZfduLGelpKz3p7AoatRUmz2n4pIntCcyvUyry6LeX0jcg1W5n0HaI5fX2b4C450Xw==}
-
-  '@agentos-software/codex@0.3.0-rc.2':
-    resolution: {integrity: sha512-DKAb9Qs1+zV1sgtMEqVo7K60R4IryKMY24jZdH5NX5cKhIi5ED1o+AufINtNSMJxdrByz+MuX+2HkvWXCvHYgw==}
-
-  '@agentos-software/common@0.3.0-rc.2':
-    resolution: {integrity: sha512-LWMGMFwjBbJDjbIAE8+hMDbbrOptxgXcgwJ6Ve5eFn0ncI6+T0fH5Fr3uTLZyxh0AUhSejbKDVjHwdQczFKnGQ==}
-
-  '@agentos-software/coreutils@0.3.0-rc.2':
-    resolution: {integrity: sha512-NoGMK0RMTAWnoTBOCAjR7SAsumS8Sx/k8P+/Tg3VPnqy5kdIbMWF3z+3Tw3B626hQB+cuZhgj4nOHcO8UxrHjQ==}
-
-  '@agentos-software/curl@0.3.0-rc.2':
-    resolution: {integrity: sha512-TRSzT29858IvHxQ6IxgyTNPNlLchmjtLhtqFss2UnKv/dRFK65/piouF0Ho53N2b0lvB3+eOkwV/A4zBLOqAuA==}
-
-  '@agentos-software/diffutils@0.3.0-rc.2':
-    resolution: {integrity: sha512-0nL1mauroKHPD+HIQ0S+2SnYD4Z7h+IpCED9AlMnbuhCfN6ePjXUSUuuPOTJplcIUrFlT2RWC0OM7Q/0zifyXA==}
-
-  '@agentos-software/fd@0.3.0-rc.2':
-    resolution: {integrity: sha512-Tdu0oJ/3gqPdrQKRl9tukUnRPD3ner7ZjMoStjnowlPCtLWYw+EGbH1yMBDlDInkrwM5ybzD8vUY6NoGJqTj4A==}
-
-  '@agentos-software/file@0.3.0-rc.2':
-    resolution: {integrity: sha512-fK8EiM/QX9Rr5KBUsCViO3m5Myz/dA3sMYDVvC3D4H+/FqrzujW1BmBjYv3H3QwH9X1GsC9EpTI0MPE0QJzmtQ==}
-
-  '@agentos-software/findutils@0.3.0-rc.2':
-    resolution: {integrity: sha512-v1HQbKHhhX4tC9HRYcV57COpYuZJfx8E8GBG2NAC2sj/fDTwhK9vnuNbRLWAy5kdnV/fK3vurXIst7DZfxSFUg==}
-
-  '@agentos-software/gawk@0.3.0-rc.2':
-    resolution: {integrity: sha512-GJYYNhRulRGXw6mKwB+0/1pkrMeS78aSXcB/wM8IuWpcFCb9NLkZENbDa9Mnc5Bpf3GKKhRsqtvgIEQ4KvxHFg==}
-
-  '@agentos-software/git@0.3.0-rc.2':
-    resolution: {integrity: sha512-fF6gMwRbkx77CeHKyuRigtasO/pHycQjGfJ2p5KK+/ygBXZJbpH3DyizLl1lBzARBYFhpcIDjLTr2GAKNLkV0A==}
-
-  '@agentos-software/grep@0.3.0-rc.2':
-    resolution: {integrity: sha512-OwTEYN2fBUK18LYyJzHp0ryIxBINBuAYHI/RGuSCrH7ljKX9dLYYlLmqayMV33IAP7fpzV5s9s+Ad6wNxe19gQ==}
-
-  '@agentos-software/gzip@0.3.0-rc.2':
-    resolution: {integrity: sha512-ylm/j9fqL5ykRxVZiGcwCDfwKUCb7nhP77bk5d4mX77vb/y0t/guX5CdAMoCEJbAUa7RZVxawKct2H+53TMWEg==}
-
-  '@agentos-software/jq@0.3.0-rc.2':
-    resolution: {integrity: sha512-xNLHt7m7OaCPOQDX5OlocxqG0dPoCv2JCKkGld2W3uD3oOsO70WZl9sbfNBf8n3doHKgN2Xs04DGVhA/Ynabiw==}
-
-  '@agentos-software/opencode@0.0.0-nathan-binding-workspace.9be0a88':
-    resolution: {integrity: sha512-CW4rrRKVLpnWY5pLM+JCLTROries+TMMLMIlr0XMwh07fcEJI0Asq8Z93mSmVR1uCFNcWJbB6NM7CRxcaxTq4w==}
-    hasBin: true
-
-  '@agentos-software/pi-cli@0.0.0-nathan-binding-workspace.9be0a88':
-    resolution: {integrity: sha512-ga8fnQNr8pmkWS+MfCqPAMa97aFd/xkoL56Fowb5IGZ878vYkhlUMPagO4LBwNcTDpfmJVX16VSqBP76tLiHmw==}
-
-  '@agentos-software/pi@0.0.0-nathan-binding-workspace.9be0a88':
-    resolution: {integrity: sha512-An4QkRI3K4uPonsjh6V85o0J/qUC7qJuVPaoSVP2KYT7DhDuQ2IYjrgrV6ggcBbDOKlMUIMY/m8GlPa4Skbatw==}
-    hasBin: true
-
-  '@agentos-software/ripgrep@0.3.0-rc.2':
-    resolution: {integrity: sha512-OsT641m1kXkGON6D8HZaqlOPnqBN2O3MI1Uvqn+//s9n0MuQDmZ5ojg/jIaaSCTjadXOeFcrJzSASP/lajrxzA==}
-
-  '@agentos-software/sed@0.3.0-rc.2':
-    resolution: {integrity: sha512-1Pgyt+ZUjBo2Bwdrq2unONw4+9xMmKnRE5xBm/jE7ECfN2L2JX4j7YvcKsN7j1wHrsnjlMuIZfyEBZpqbmH1eQ==}
-
-  '@agentos-software/tar@0.3.0-rc.2':
-    resolution: {integrity: sha512-0pHAV+sf945JTPdFypp3Dml1k2v1sPK82el6u4PEJWVStuZ3FJl9N+joqdb6ozkIjhmLd7Yk5Dw+sZw6zUtzdg==}
-
-  '@agentos-software/tree@0.3.0-rc.2':
-    resolution: {integrity: sha512-3hx2P8YOA9ndDPoNV6+ZN8UF75o/O6Uf2IDKCOQ06beamMnrCia1vADOZ2dakDRBYQY5wvf14ISQg0Vc8rTT+Q==}
-
-  '@agentos-software/unzip@0.3.0-rc.2':
-    resolution: {integrity: sha512-2MrIUpyekfSmcDpG9lXUI5tPrOZx+BdK0WxN2PkgV90ZxUEUnCI1s71IUfMB+4tr6BaO28ZQQCUFW0PkcvpNyQ==}
-
-  '@agentos-software/yq@0.3.0-rc.2':
-    resolution: {integrity: sha512-FfuElsvnBJXphb7v3MchMrvLpLrI31cOrrPd6KlIR1jvFb6Lv0aV39ksC19OFJDdnHrueutze9LXGDiXxJaGcA==}
-
-  '@agentos-software/zip@0.3.0-rc.2':
-    resolution: {integrity: sha512-q4A7d/XegHccQV5PboGGDlKKEZZ+89XNWq/pSy6Fu9WWdwChwaO2EAyZdiaQ64+Biu8hRoXlgKuLsripeuEUpw==}
 
   '@ai-sdk/amazon-bedrock@3.0.93':
     resolution: {integrity: sha512-57cP3Ume6DdQP05xPYl2g554EqPrQgKRW/eE3BGm1ktK1k71e35HGzNl1GZHIYKct82QrY/iQuheanSonI88Dg==}
@@ -2502,66 +2245,6 @@ packages:
   '@oslojs/encoding@1.1.0':
     resolution: {integrity: sha512-70wQhgYmndg4GCPxPPxPGevRKqTIJ2Nh4OkiMWmDAVYsTQ+Ta7Sq+rPevXyXGdzr30/qZBnyOalCszoMxlyldQ==}
 
-  '@oven/bun-darwin-aarch64@1.3.11':
-    resolution: {integrity: sha512-/8IzqSu4/OWGRs7Fs2ROzGVwJMFTBQkgAp6sAthkBYoN7OiM4rY/CpPVs2X9w9N1W61CHSkEdNKi8HrLZKfK3g==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@oven/bun-darwin-x64-baseline@1.3.11':
-    resolution: {integrity: sha512-CYjIHWaQG7T4phfjErHr6BiXRs0K/9DqMeiohJmuYSBF+H2m56vFslOenLCguGYQL9jeiiCZBeoVCpwjxZrMgQ==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@oven/bun-darwin-x64@1.3.11':
-    resolution: {integrity: sha512-TT7eUihnAzxM2tlZesusuC75PAOYKvUBgVU/Nm/lakZ/DpyuqhNkzUfcxSgmmK9IjVWzMmezLIGZl16XGCGJng==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@oven/bun-linux-aarch64-musl@1.3.11':
-    resolution: {integrity: sha512-jBwYCLG5Eb+PqtFrc3Wp2WMYlw1Id75gUcsdP+ApCOpf5oQhHxkFWCjZmcDoioDmEhMWAiM3wtwSrTlPg+sI6Q==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@oven/bun-linux-aarch64@1.3.11':
-    resolution: {integrity: sha512-8XMLyRNxHF4jfLajkWt+F8UDxsWbzysyxQVMZKUXwoeGvaxB0rVd07r3YbgDtG8U6khhRFM3oaGp+CQ0whwmdA==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@oven/bun-linux-x64-baseline@1.3.11':
-    resolution: {integrity: sha512-KZlf1jKtf4jai8xiQv/0XRjxVVhHnw/HtUKtLdOeQpTOQ1fQFhLoz2FGGtVRd0LVa/yiRbSz9HlWIzWlmJClng==}
-    cpu: [x64]
-    os: [linux]
-
-  '@oven/bun-linux-x64-musl-baseline@1.3.11':
-    resolution: {integrity: sha512-J+qz4Al05PrNIOdj7xsWVTyx0c/gjUauG5nKV3Rrx0Q+5JO+1pPVlnfNmWbOF9pKG4f3IGad8KXJUfGMORld+Q==}
-    cpu: [x64]
-    os: [linux]
-
-  '@oven/bun-linux-x64-musl@1.3.11':
-    resolution: {integrity: sha512-ADImD4yCHNpqZu718E2chWcCaAHvua90yhmpzzV6fF4zOhwkGGbPCgUWmKyJ83uz+DXaPdYxX0ttDvtolrzx3Q==}
-    cpu: [x64]
-    os: [linux]
-
-  '@oven/bun-linux-x64@1.3.11':
-    resolution: {integrity: sha512-z3GFCk1UBzDOOiEBHL32lVP7Edi26BhOjKb6bIc0nRyabbRiyON4++GR0zmd/H5zM5S0+UcXFgCGnD+b8avTLw==}
-    cpu: [x64]
-    os: [linux]
-
-  '@oven/bun-windows-aarch64@1.3.11':
-    resolution: {integrity: sha512-UOdkwScHRkGPz+n9ZJU7sTkTvqV7rD1SLCLaru1xH8WRsV7tDorPqNCzEN1msOIiPRK825nvAtEm9UsomO1GsA==}
-    cpu: [arm64]
-    os: [win32]
-
-  '@oven/bun-windows-x64-baseline@1.3.11':
-    resolution: {integrity: sha512-cCsXK9AQ9Zf18QlVnbrFu2IKfr4sf2sfbErkF2jfCzyCO9Bnhl0KRx63zlN+Ni1xU7gcBLAssgcui5R400N2eA==}
-    cpu: [x64]
-    os: [win32]
-
-  '@oven/bun-windows-x64@1.3.11':
-    resolution: {integrity: sha512-E51tyWDP1l0CbjZYhiUxhDGPaY8Hf5YBREx0PHBff1LM1/q3qsJ6ZvRUa8YbbOO0Ax9QP6GHjD9vf3n6bXZ7QA==}
-    cpu: [x64]
-    os: [win32]
-
   '@pagefind/darwin-arm64@1.5.2':
     resolution: {integrity: sha512-MXpI+7HsAdPkvJ0gk9xj9g541BCqBZOBbdwj9g6lB5LCj6kSV6nqDSjzcAJwvOsfu0fjwvC8hQU+ecfhp+MpiQ==}
     cpu: [arm64]
@@ -2931,51 +2614,11 @@ packages:
     resolution: {integrity: sha512-trO//ypJBSt5xkewuol9LOykvDgHwUXq8R+yQVS+0CmpN3lYUtewHkb+At9RVGRhDMmJZY2oasaXDnhfurQ33w==}
     hasBin: true
 
-  '@secure-exec/core@0.0.0-main.f183ed2':
-    resolution: {integrity: sha512-Ledfki+92G8p8hpk3fgNEa33l72eQnD41nX12Aw0ZPrwHH+sa73m7YfWANO3F4JThPZD8H7S0BLx3Gj+3fgGtA==}
-
   '@secure-exec/core@0.2.1':
     resolution: {integrity: sha512-HsnUv6gClpMA1BBRmX86j30TKTZtgJC/fO1tVavr7IpM2zNKbHU8LgSlBd7mv2SNy02ImTmU/GnQ3aYB4NSbEg==}
 
-  '@secure-exec/google-drive@0.0.0-main.f183ed2':
-    resolution: {integrity: sha512-CXE9Sz0XwEvv05Wbdg6w+dY3cXp/nPqQ3BkuBhqrErQlScdRXztcLbXrLsb7/qJ7MPnMJwMJb7sTvfxgQRzocA==}
-
   '@secure-exec/nodejs@0.2.1':
     resolution: {integrity: sha512-UJMJqVFxexlHJV0Q9nWURvrz6GElj8673DDOOFln6FHR6JS+9SaSU3eISrN158DuNC3SFi4rgjb/scKnK4YOYQ==}
-
-  '@secure-exec/s3@0.0.0-main.f183ed2':
-    resolution: {integrity: sha512-L4zq0ACxxzzthU5E1QxwCsPkxFsx2wXKOHC6KHVzB4mDGmWG/eRchY2120zwiRy2KPqirWLYBgWeROZFcq0FbQ==}
-
-  '@secure-exec/sandbox@0.0.0-main.f183ed2':
-    resolution: {integrity: sha512-1Za2qVPJuXoFp6fcXxTcBak0/H+0KjHM25qUKrTvmJ7C7vZNI7022ewXbnwfqGxpRRtf330JZ+EzlE8szi07ug==}
-
-  '@secure-exec/sidecar-darwin-arm64@0.0.0-main.f183ed2':
-    resolution: {integrity: sha512-tYQ2tKGKnVzU/cY5VmmohlytuaQeoo929/jT19EeXgpuq0jRlgb3TAfSiqn9q2VlLJayK0tF1pF44qg3EL3+Lg==}
-    engines: {node: '>=20'}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@secure-exec/sidecar-darwin-x64@0.0.0-main.f183ed2':
-    resolution: {integrity: sha512-Y2tU6uouACP4QuC9EdELnjGTF1d7wj/8b7OuBTFlA0nBtf64ktwoXW8RJRCWXd1pEOUVZsmqh8mDCh4aopGH1w==}
-    engines: {node: '>=20'}
-    cpu: [x64]
-    os: [darwin]
-
-  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-main.f183ed2':
-    resolution: {integrity: sha512-68enHSsL2Qm9ht9Xwf880W63jZOTpBCsGcSYBgUP8INg0p23pVtvmepmC3jQ6zEAXJTW5ehK4qNVtlYsbl7Qrg==}
-    engines: {node: '>=20'}
-    cpu: [arm64]
-    os: [linux]
-
-  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-main.f183ed2':
-    resolution: {integrity: sha512-dWvfVMoGCl96bLthDX4JIJ+5eD4XGGFHHD4i6ev64goBmxoSIHuIdllhVZ0BC3ckfSx/KxyuYaPcK5KSpczoPQ==}
-    engines: {node: '>=20'}
-    cpu: [x64]
-    os: [linux]
-
-  '@secure-exec/sidecar@0.0.0-main.f183ed2':
-    resolution: {integrity: sha512-VXlUIFWOLuLN2tpzBs0hycoU/7GISi9Sl6MR7e0DQ5UZ4M2CGQDVye2fp8WvIrnj/TZuQb/eMpWqd82K/8X7Qw==}
-    engines: {node: '>=20'}
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     resolution: {integrity: sha512-gEWhMHzUpLwzuBNAD0lVkZXE8wFlWMLp4IOZ+56FYwOW/C+m07cYxuW4TjHyPqZ+vPm3IkoaMqqH5yT9VhjX/Q==}
@@ -3776,12 +3419,6 @@ packages:
 
   builtin-status-codes@3.0.0:
     resolution: {integrity: sha512-HpGFw18DgFWlncDfjTa2rcQ4W88O1mC8e8yZ2AvQY5KDaktSTwo+KRf6nHK6FRI5FyRyb/5T6+TSxfP7QyGsmQ==}
-
-  bun@1.3.11:
-    resolution: {integrity: sha512-AvXWYFO6j/ZQ7bhGm4X6eilq2JHsDVC90ZM32k2B7/srhC2gs3Sdki1QTbwrdRCo8o7eT+167vcB1yzOvPdbjA==}
-    cpu: [arm64, x64]
-    os: [darwin, linux, win32]
-    hasBin: true
 
   bundle-require@5.1.0:
     resolution: {integrity: sha512-3WrrOuZiyaaZPWiEt4G3+IffISVC9HYlWueJEBWED4ZH4aIAC2PnkdnuRrR94M+w6yGWn4AglWtJtBI8YqvgoA==}
@@ -7291,100 +6928,6 @@ snapshots:
     dependencies:
       zod: 4.3.6
 
-  '@agentos-software/claude-code@0.0.0-nathan-binding-workspace.9be0a88(@cfworker/json-schema@4.1.1)':
-    dependencies:
-      '@agentclientprotocol/sdk': 0.16.1(zod@4.3.6)
-      '@anthropic-ai/claude-agent-sdk': 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
-      '@rivet-dev/agentos-core': link:packages/core
-      zod: 4.3.6
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - supports-color
-
-  '@agentos-software/codex-cli@0.0.0-codex-claude-runtime-fixes.9cbef3a': {}
-
-  '@agentos-software/codex@0.3.0-rc.2': {}
-
-  '@agentos-software/common@0.3.0-rc.2':
-    dependencies:
-      '@agentos-software/coreutils': 0.3.0-rc.2
-      '@agentos-software/diffutils': 0.3.0-rc.2
-      '@agentos-software/findutils': 0.3.0-rc.2
-      '@agentos-software/gawk': 0.3.0-rc.2
-      '@agentos-software/grep': 0.3.0-rc.2
-      '@agentos-software/gzip': 0.3.0-rc.2
-      '@agentos-software/sed': 0.3.0-rc.2
-      '@agentos-software/tar': 0.3.0-rc.2
-
-  '@agentos-software/coreutils@0.3.0-rc.2': {}
-
-  '@agentos-software/curl@0.3.0-rc.2': {}
-
-  '@agentos-software/diffutils@0.3.0-rc.2': {}
-
-  '@agentos-software/fd@0.3.0-rc.2': {}
-
-  '@agentos-software/file@0.3.0-rc.2': {}
-
-  '@agentos-software/findutils@0.3.0-rc.2': {}
-
-  '@agentos-software/gawk@0.3.0-rc.2': {}
-
-  '@agentos-software/git@0.3.0-rc.2': {}
-
-  '@agentos-software/grep@0.3.0-rc.2': {}
-
-  '@agentos-software/gzip@0.3.0-rc.2': {}
-
-  '@agentos-software/jq@0.3.0-rc.2': {}
-
-  '@agentos-software/opencode@0.0.0-nathan-binding-workspace.9be0a88':
-    dependencies:
-      '@rivet-dev/agentos-core': link:packages/core
-
-  '@agentos-software/pi-cli@0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)':
-    dependencies:
-      '@mariozechner/pi-coding-agent': 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@rivet-dev/agentos-core': link:packages/core
-      pi-acp: 0.0.23
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - aws-crt
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
-  '@agentos-software/pi@0.0.0-nathan-binding-workspace.9be0a88(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)':
-    dependencies:
-      '@agentclientprotocol/sdk': 0.16.1(zod@4.3.6)
-      '@mariozechner/pi-ai': 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@mariozechner/pi-coding-agent': 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@rivet-dev/agentos-core': link:packages/core
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - aws-crt
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
-  '@agentos-software/ripgrep@0.3.0-rc.2': {}
-
-  '@agentos-software/sed@0.3.0-rc.2': {}
-
-  '@agentos-software/tar@0.3.0-rc.2': {}
-
-  '@agentos-software/tree@0.3.0-rc.2': {}
-
-  '@agentos-software/unzip@0.3.0-rc.2': {}
-
-  '@agentos-software/yq@0.3.0-rc.2': {}
-
-  '@agentos-software/zip@0.3.0-rc.2': {}
-
   '@ai-sdk/amazon-bedrock@3.0.93(zod@4.3.6)':
     dependencies:
       '@ai-sdk/anthropic': 2.0.74(zod@4.3.6)
@@ -9320,42 +8863,6 @@ snapshots:
 
   '@oslojs/encoding@1.1.0': {}
 
-  '@oven/bun-darwin-aarch64@1.3.11':
-    optional: true
-
-  '@oven/bun-darwin-x64-baseline@1.3.11':
-    optional: true
-
-  '@oven/bun-darwin-x64@1.3.11':
-    optional: true
-
-  '@oven/bun-linux-aarch64-musl@1.3.11':
-    optional: true
-
-  '@oven/bun-linux-aarch64@1.3.11':
-    optional: true
-
-  '@oven/bun-linux-x64-baseline@1.3.11':
-    optional: true
-
-  '@oven/bun-linux-x64-musl-baseline@1.3.11':
-    optional: true
-
-  '@oven/bun-linux-x64-musl@1.3.11':
-    optional: true
-
-  '@oven/bun-linux-x64@1.3.11':
-    optional: true
-
-  '@oven/bun-windows-aarch64@1.3.11':
-    optional: true
-
-  '@oven/bun-windows-x64-baseline@1.3.11':
-    optional: true
-
-  '@oven/bun-windows-x64@1.3.11':
-    optional: true
-
   '@pagefind/darwin-arm64@1.5.2':
     optional: true
 
@@ -9711,19 +9218,9 @@ snapshots:
       '@sandbox-agent/cli-win32-x64': 0.4.2
     optional: true
 
-  '@secure-exec/core@0.0.0-main.f183ed2':
-    dependencies:
-      '@rivetkit/bare-ts': 0.6.2
-      '@secure-exec/sidecar': 0.0.0-main.f183ed2
-      zod: 4.3.6
-
   '@secure-exec/core@0.2.1':
     dependencies:
       better-sqlite3: 12.8.0
-
-  '@secure-exec/google-drive@0.0.0-main.f183ed2':
-    dependencies:
-      '@secure-exec/core': 0.0.0-main.f183ed2
 
   '@secure-exec/nodejs@0.2.1':
     dependencies:
@@ -9735,45 +9232,6 @@ snapshots:
       esbuild: 0.27.4
       node-stdlib-browser: 1.3.1
       web-streams-polyfill: 4.2.0
-
-  '@secure-exec/s3@0.0.0-main.f183ed2':
-    dependencies:
-      '@secure-exec/core': 0.0.0-main.f183ed2
-
-  '@secure-exec/sandbox@0.0.0-main.f183ed2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)':
-    dependencies:
-      '@secure-exec/core': 0.0.0-main.f183ed2
-      sandbox-agent: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
-    transitivePeerDependencies:
-      - '@cloudflare/sandbox'
-      - '@daytonaio/sdk'
-      - '@e2b/code-interpreter'
-      - '@fly/sprites'
-      - '@vercel/sandbox'
-      - computesdk
-      - dockerode
-      - get-port
-      - modal
-      - zod
-
-  '@secure-exec/sidecar-darwin-arm64@0.0.0-main.f183ed2':
-    optional: true
-
-  '@secure-exec/sidecar-darwin-x64@0.0.0-main.f183ed2':
-    optional: true
-
-  '@secure-exec/sidecar-linux-arm64-gnu@0.0.0-main.f183ed2':
-    optional: true
-
-  '@secure-exec/sidecar-linux-x64-gnu@0.0.0-main.f183ed2':
-    optional: true
-
-  '@secure-exec/sidecar@0.0.0-main.f183ed2':
-    optionalDependencies:
-      '@secure-exec/sidecar-darwin-arm64': 0.0.0-main.f183ed2
-      '@secure-exec/sidecar-darwin-x64': 0.0.0-main.f183ed2
-      '@secure-exec/sidecar-linux-arm64-gnu': 0.0.0-main.f183ed2
-      '@secure-exec/sidecar-linux-x64-gnu': 0.0.0-main.f183ed2
 
   '@secure-exec/v8-darwin-arm64@0.2.1':
     optional: true
@@ -10835,21 +10293,6 @@ snapshots:
     optional: true
 
   builtin-status-codes@3.0.0: {}
-
-  bun@1.3.11:
-    optionalDependencies:
-      '@oven/bun-darwin-aarch64': 1.3.11
-      '@oven/bun-darwin-x64': 1.3.11
-      '@oven/bun-darwin-x64-baseline': 1.3.11
-      '@oven/bun-linux-aarch64': 1.3.11
-      '@oven/bun-linux-aarch64-musl': 1.3.11
-      '@oven/bun-linux-x64': 1.3.11
-      '@oven/bun-linux-x64-baseline': 1.3.11
-      '@oven/bun-linux-x64-musl': 1.3.11
-      '@oven/bun-linux-x64-musl-baseline': 1.3.11
-      '@oven/bun-windows-aarch64': 1.3.11
-      '@oven/bun-windows-x64': 1.3.11
-      '@oven/bun-windows-x64-baseline': 1.3.11
 
   bundle-require@5.1.0(esbuild@0.27.4):
     dependencies:

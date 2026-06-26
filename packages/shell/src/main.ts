@@ -5,8 +5,6 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import codex from "@agentos-software/codex-cli";
 import common from "@agentos-software/common";
-import { AgentOs } from "@rivet-dev/agentos-core";
-import type { SoftwareInput } from "@rivet-dev/agentos-core";
 import fd from "@agentos-software/fd";
 import file from "@agentos-software/file";
 import jq from "@agentos-software/jq";
@@ -15,15 +13,15 @@ import tree from "@agentos-software/tree";
 import unzip from "@agentos-software/unzip";
 import yq from "@agentos-software/yq";
 import zip from "@agentos-software/zip";
+import type { SoftwareInput } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const COMMAND_SUBPATH = "registry/native/target/wasm32-wasip1/release/commands";
 
 // Published packages ship package-local wasm/ dirs. Workspace packages use the
-// native build output: agentos's own registry when present, or the sibling
-// secure-exec checkout under `just secure-exec-local` (where the WASM is built).
+// sibling secure-exec native build output.
 const fallbackCommandDir = [
-	resolve(__dirname, "../../..", COMMAND_SUBPATH),
 	resolve(__dirname, "../../../../secure-exec", COMMAND_SUBPATH),
 ].find((dir) => existsSync(dir));
 function withLocalCommandFallback(software: SoftwareInput): SoftwareInput {
@@ -49,9 +47,18 @@ function withLocalCommandFallback(software: SoftwareInput): SoftwareInput {
 	return software;
 }
 
-const software = [common, jq, ripgrep, fd, tree, file, zip, unzip, yq, codex].map(
-	withLocalCommandFallback,
-);
+const software = [
+	common,
+	jq,
+	ripgrep,
+	fd,
+	tree,
+	file,
+	zip,
+	unzip,
+	yq,
+	codex,
+].map(withLocalCommandFallback);
 
 function printUsage(): void {
 	console.error(
