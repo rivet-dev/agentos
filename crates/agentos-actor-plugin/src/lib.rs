@@ -29,6 +29,7 @@ mod persistence_e2e;
 
 use std::sync::Arc;
 
+
 /// Process-global plugin state created once per `dlopen` (spec §5.2): the
 /// plugin's own tokio runtime (`enable_all` — the time driver is required by
 /// agentos-client hot paths).
@@ -212,17 +213,34 @@ async fn actor_loop(
     pool: String,
     cancel: CancellationToken,
 ) {
-    let mut vm: Option<agentos_client::AgentOs> = None;
-    let mut vars = actions::Vars::default();
     // Ensure the agent-os schema exists before handling events (best-effort;
     // mirrors rivetkit-agent-os run.rs).
     if host.sql_is_enabled() {
         let _ = persistence::migrate(&host).await;
     }
+    // The VM handle + actor vars live on a dedicated worker task that drains
+    // stateful jobs (Action/Http/Sleep/Destroy) serially in submission order.
+    // The event loop below only forwards those jobs and answers
+    // connection-lifecycle events (ConnPreflight/ConnOpen/SerializeState) inline.
+    // This is what keeps the loop responsive: a cold VM bring-up (>5s) on the
+    // first action no longer blocks the loop, so a queued ConnOpen is still
+    // answered within RivetKit's 5s websocket-setup deadline. Previously
+    // `ensure_vm().await` ran inline in this loop, so the first action starved
+    // ConnOpen, the actor websocket connection setup timed out at 5000ms, and
+    // live `sessionEvent` streaming silently delivered zero events.
+    let (job_tx, job_rx) = tokio::sync::mpsc::unbounded_channel::<ActorJob>();
+    let worker = tokio::spawn(actor_worker(
+        host.clone(),
+        sidecar_path,
+        config,
+        pool,
+        job_rx,
+        cancel.clone(),
+    ));
     // Signal readiness: the native-plugin factory uses manual startup-ready, so
     // the host's `start()` caller blocks until we report this. The VM is brought
-    // up lazily on the first action, so the actor is ready once the schema is in
-    // place and the event loop is about to run.
+    // up lazily on the first action (on the worker), so the actor is ready once
+    // the schema is in place and the event loop is about to run.
     host.startup_ready(true, "");
     loop {
         let event = tokio::select! {
@@ -234,6 +252,92 @@ async fn actor_loop(
         };
         match abi::AbiEventTag::from_u32(tag) {
             Some(abi::AbiEventTag::Action) => {
+                if job_tx.send(ActorJob::Action { token, payload }).is_err() {
+                    let _ = host.reply_err(token, "agent-os actor worker unavailable");
+                }
+            }
+            Some(abi::AbiEventTag::Http) => {
+                if job_tx.send(ActorJob::Http { token, payload }).is_err() {
+                    let _ = host.reply_err(token, "agent-os actor worker unavailable");
+                }
+            }
+            Some(abi::AbiEventTag::ConnPreflight) => {
+                let _ = host.reply_ok(token, Vec::new());
+            }
+            Some(abi::AbiEventTag::ConnOpen) => {
+                let _ = host.reply_ok(token, Vec::new());
+            }
+            Some(abi::AbiEventTag::Subscribe) => {
+                // Accept the connection's event subscription (e.g. `sessionEvent`)
+                // so RivetKit registers it and routes matching broadcasts to this
+                // connection. Subscription state is tracked by RivetKit core; the
+                // plugin only needs to accept. Previously this fell through to the
+                // generic "event not supported" reply, which REJECTED every
+                // subscription — so the connection was never registered and every
+                // broadcast (sessionEvent, vmBooted, ...) was silently dropped,
+                // making live `sessionEvent` streaming deliver nothing.
+                let _ = host.reply_ok(token, Vec::new());
+            }
+            Some(abi::AbiEventTag::SerializeState) => {
+                // Agent OS persists durable data through SQLite and rebuilds VM/process
+                // state after wake, so there is no opaque actor state payload to return.
+                let _ = host.reply_ok(token, Vec::new());
+            }
+            Some(abi::AbiEventTag::Sleep) => {
+                if job_tx.send(ActorJob::Sleep { token }).is_err() {
+                    let _ = host.reply_ok(token, Vec::new());
+                }
+            }
+            Some(abi::AbiEventTag::Destroy) => {
+                if job_tx.send(ActorJob::Destroy { token }).is_err() {
+                    let _ = host.reply_ok(token, Vec::new());
+                }
+            }
+            Some(t) if t.needs_reply() => {
+                let _ = host.reply_err(token, "event not supported by agent-os actor");
+            }
+            _ => {}
+        }
+    }
+    // Stream closed (cancel/teardown): stop accepting new jobs and let the
+    // worker drain in-flight work + shut the VM down before we return.
+    drop(job_tx);
+    let _ = worker.await;
+}
+
+/// Stateful actor jobs serviced by the worker task in submission order. Keeping
+/// VM-touching work (bring-up, action dispatch, HTTP proxy, shutdown) off the
+/// event loop is what lets the loop answer connection-lifecycle events promptly.
+enum ActorJob {
+    Action { token: u64, payload: Vec<u8> },
+    Http { token: u64, payload: Vec<u8> },
+    Sleep { token: u64 },
+    Destroy { token: u64 },
+}
+
+/// Owns the VM handle + actor vars and processes `ActorJob`s serially. Runs as a
+/// sibling task to `actor_loop`; the loop forwards jobs and never blocks on the
+/// VM, so a slow cold boot can't starve connection setup.
+async fn actor_worker(
+    host: host_ctx::HostCtx,
+    sidecar_path: String,
+    config: Arc<config::AgentOsConfigJson>,
+    pool: String,
+    mut job_rx: tokio::sync::mpsc::UnboundedReceiver<ActorJob>,
+    cancel: CancellationToken,
+) {
+    let mut vm: Option<agentos_client::AgentOs> = None;
+    let mut vars = actions::Vars::default();
+    loop {
+        let job = tokio::select! {
+            _ = cancel.cancelled() => break,
+            job = job_rx.recv() => match job {
+                Some(job) => job,
+                None => break,
+            },
+        };
+        match job {
+            ActorJob::Action { token, payload } => {
                 if let Err(error) =
                     vm::ensure_vm(&host, &sidecar_path, &config, &pool, &mut vm).await
                 {
@@ -255,37 +359,22 @@ async fn actor_loop(
                     }
                 }
             }
-            Some(abi::AbiEventTag::Http) => {
+            ActorJob::Http { token, payload } => {
                 // Preview proxy: do NOT bring the VM up for HTTP (matches r6's
                 // run loop, which passes `vm.as_ref()`); no VM → 404.
                 let response = http::proxy_preview(&host, vm.as_ref(), &payload).await;
                 let _ = host.reply_ok(token, response);
             }
-            Some(abi::AbiEventTag::ConnPreflight) => {
-                let _ = host.reply_ok(token, Vec::new());
-            }
-            Some(abi::AbiEventTag::ConnOpen) => {
-                let _ = host.reply_ok(token, Vec::new());
-            }
-            Some(abi::AbiEventTag::SerializeState) => {
-                // Agent OS persists durable data through SQLite and rebuilds VM/process
-                // state after wake, so there is no opaque actor state payload to return.
-                let _ = host.reply_ok(token, Vec::new());
-            }
-            Some(abi::AbiEventTag::Sleep) => {
+            ActorJob::Sleep { token } => {
                 vars.clear();
                 vm::shutdown_vm(&host, &mut vm, "sleep").await;
                 let _ = host.reply_ok(token, Vec::new());
             }
-            Some(abi::AbiEventTag::Destroy) => {
+            ActorJob::Destroy { token } => {
                 vars.clear();
                 vm::shutdown_vm(&host, &mut vm, "destroy").await;
                 let _ = host.reply_ok(token, Vec::new());
             }
-            Some(t) if t.needs_reply() => {
-                let _ = host.reply_err(token, "event not supported by agent-os actor");
-            }
-            _ => {}
         }
     }
     // Stream closed (cancel/teardown): best-effort VM shutdown.

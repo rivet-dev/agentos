@@ -75,7 +75,13 @@ pub(crate) async fn ensure_vm(
         .await
         .map_err(|error| format!("agent-os vm bring-up failed: {error}"))?;
     *vm = Some(handle);
-    let _ = host.broadcast(b"vmBooted".to_vec(), b"{}".to_vec());
+    // CBOR array of handler args (`handler(...body)`): the listener takes one
+    // object argument, so the body is `[{}]`. JSON bytes / a bare object trip the
+    // client's CBOR decoder ("length over 4294967295" / "Spread requires iterable").
+    let mut cbor = Vec::new();
+    if ciborium::into_writer(&serde_json::json!([{}]), &mut cbor).is_ok() {
+        let _ = host.broadcast(b"vmBooted".to_vec(), cbor);
+    }
     Ok(())
 }
 
@@ -87,8 +93,10 @@ pub(crate) async fn shutdown_vm(host: &HostCtx, vm: &mut Option<AgentOs>, reason
     if let Err(error) = handle.shutdown().await {
         host.log_warn(&format!("agent-os vm shutdown error ({reason}): {error}"));
     }
-    let payload = format!("{{\"reason\":\"{reason}\"}}");
-    let _ = host.broadcast(b"vmShutdown".to_vec(), payload.into_bytes());
+    let mut cbor = Vec::new();
+    if ciborium::into_writer(&serde_json::json!([{ "reason": reason }]), &mut cbor).is_ok() {
+        let _ = host.broadcast(b"vmShutdown".to_vec(), cbor);
+    }
 }
 
 /// Durable-storage callback: routes a sidecar fs op to actor SQLite via

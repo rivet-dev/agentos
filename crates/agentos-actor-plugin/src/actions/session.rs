@@ -99,13 +99,33 @@ fn spawn_event_capture(
         // stream (on abort / channel close) is the unsubscribe.
         let _subscription = subscription;
         while let Some(notification) = stream.next().await {
-            let event_json = match serde_json::to_string(&notification) {
-                Ok(json) => json,
+            let event_value = match serde_json::to_value(&notification) {
+                Ok(value) => value,
                 Err(error) => {
                     tracing::warn!(?error, "failed to encode captured session event");
                     continue;
                 }
             };
+            // Live-stream to connected clients (`conn.on("sessionEvent")`) before
+            // persisting. The RivetKit event wire is CBOR, and the broadcast body
+            // is the array of handler ARGUMENTS the client spreads into the
+            // listener (`handler(...body)`). The quickstart listener is
+            // `(data) => data.event`, so the single argument is `{"event": <…>}`
+            // and the body is `[{"event": <notification>}]`. (A bare object trips
+            // the client's "Spread syntax requires …iterable"; JSON bytes trip
+            // "length over 4294967295".) Without this broadcast the events were
+            // only written to SQLite and never reached live subscribers, so
+            // `sessionEvent` streaming silently delivered nothing.
+            let mut cbor = Vec::new();
+            if ciborium::into_writer(
+                &serde_json::json!([{ "event": event_value }]),
+                &mut cbor,
+            )
+            .is_ok()
+            {
+                let _ = ctx.broadcast(b"sessionEvent".to_vec(), cbor);
+            }
+            let event_json = event_value.to_string();
             if let Err(error) = insert_session_event(&ctx, &external, &event_json).await {
                 tracing::warn!(?error, external, "failed to persist captured session event");
             }
