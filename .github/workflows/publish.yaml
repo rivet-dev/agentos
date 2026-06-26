@@ -354,7 +354,11 @@ jobs:
   release-assets:
     needs: [context, build-sidecar, build-sidecar-darwin]
     name: "Release assets"
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' && needs.context.outputs.trigger == 'release' }}
+    # Runs on BOTH preview and release: the "Stage release assets" step is
+    # exercised on every preview so staging bugs surface before a real release
+    # (this is exactly the kind of bug that previously only failed at release
+    # time). The GitHub-release + R2 upload steps below stay release-only.
+    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -384,8 +388,17 @@ jobs:
             [darwin-x64]=x86_64-apple-darwin
             [darwin-arm64]=aarch64-apple-darwin
           )
-          # Stage release assets: platform binaries + externalized pyodide assets
-          # (downloaded by the published execution crate's build.rs).
+          # Stage release assets: the platform sidecar binaries only.
+          #
+          # agent-os does NOT host pyodide. Those assets live in secure-exec
+          # (crates/execution/assets/pyodide), which does not exist in this repo:
+          # agent-os builds against the *published* secure-exec execution crate,
+          # whose build.rs stages zero-byte placeholders and disables guest
+          # Python ("no CDN dependency"), and nothing in agent-os fetches pyodide
+          # from its own release/R2 — secure-exec's release hosts it. Copying it
+          # here was vestigial copy-paste from secure-exec's publish.yaml and
+          # failed every release with
+          #   cp: cannot stat 'crates/execution/assets/pyodide/...': No such file
           mkdir -p release-assets
           for p in $SIDECAR_PLATFORMS; do
             agent_bin="artifacts/sidecar-${p}/agentos-sidecar"
@@ -396,15 +409,8 @@ jobs:
               echo "::warning::missing agentos-sidecar binary for ${p}"
             fi
           done
-          for f in \
-            pyodide.asm.wasm \
-            pyodide.asm.js \
-            python_stdlib.zip \
-            numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl \
-            pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl; do
-            cp "crates/execution/assets/pyodide/${f}" "release-assets/${f}"
-          done
       - name: Create GitHub release and upload assets
+        if: ${{ needs.context.outputs.trigger == 'release' }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.context.outputs.version }}
@@ -419,6 +425,7 @@ jobs:
           # --clobber so re-runs overwrite assets idempotently.
           gh release upload "v${VERSION}" release-assets/* --clobber
       - name: Upload sidecar binaries to R2 (best-effort)
+        if: ${{ needs.context.outputs.trigger == 'release' }}
         env:
           R2_RELEASES_ACCESS_KEY_ID: ${{ secrets.R2_RELEASES_ACCESS_KEY_ID }}
           R2_RELEASES_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASES_SECRET_ACCESS_KEY }}
