@@ -138,6 +138,9 @@ pub struct SpawnedProcessInfo {
     pub running: bool,
     #[serde(rename = "exitCode")]
     pub exit_code: Option<i32>,
+    /// Epoch milliseconds when `spawn` registered the process.
+    #[serde(rename = "startedAt")]
+    pub started_at: i64,
 }
 
 /// The pid returned by `spawn`.
@@ -425,6 +428,7 @@ impl AgentOs {
             process_id: process_id.clone(),
             kernel_pid: kernel_pid_tx.clone(),
             output_tasks,
+            started_at: epoch_ms_now() as i64,
         };
         // `spawn` is documented as overwriting any prior entry for a freshly allocated pid; the pid
         // is monotonic so a collision is not expected.
@@ -585,6 +589,7 @@ impl AgentOs {
                 args: entry.args.clone(),
                 running: exit_code.is_none(),
                 exit_code,
+                started_at: entry.started_at,
             });
         });
         out
@@ -823,6 +828,7 @@ impl AgentOs {
                     args: entry.args.clone(),
                     running: exit_code.is_none(),
                     exit_code,
+                    started_at: entry.started_at,
                 }
             })
             .ok_or(ClientError::ProcessNotFound(pid))
@@ -1295,6 +1301,7 @@ mod tests {
             process_id: "proc-test".to_string(),
             kernel_pid: kernel_pid_tx,
             output_tasks: vec![task],
+            started_at: 0,
         };
         let _ = processes.insert(1, entry);
 
@@ -1350,6 +1357,7 @@ mod tests {
             process_id: "proc-test".to_string(),
             kernel_pid: kernel_pid_tx,
             output_tasks,
+            started_at: 0,
         };
 
         assert_eq!(

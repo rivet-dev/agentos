@@ -381,7 +381,7 @@ pub(crate) async fn dispatch(
             },
             Err(error) => reply_err(host, token, error),
         },
-        "listPersistedSessions" => match session::list_persisted_sessions(host).await {
+        "listPersistedSessions" => match session::list_persisted_sessions(host, vm).await {
             Ok(sessions) => reply_ok(host, token, &sessions),
             Err(error) => reply_err(host, token, error),
         },

@@ -57,6 +57,22 @@ pub struct PersistedSessionDto {
     pub session_id: String,
     pub agent_type: String,
     pub created_at: f64,
+    /// Activity status derived from VM liveness: `"running"` when the ACP
+    /// session is currently loaded in the VM, `"idle"` when it is persisted
+    /// but hibernated (resumable).
+    pub status: &'static str,
+}
+
+/// One row of `getSessionEvents` — the full persisted event record (not just
+/// the bare JSON-RPC notification) so the client keeps `seq`/`createdAt`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedSessionEventDto {
+    pub session_id: String,
+    pub seq: i64,
+    /// The stored ACP JSON-RPC notification, parsed back to JSON.
+    pub event: JsonValue,
+    pub created_at: f64,
 }
 
 fn now_ms() -> i64 {
@@ -437,8 +453,12 @@ pub async fn close_session(
     Ok(())
 }
 
-/// List the sessions persisted for this actor (`listPersistedSessions`).
-pub async fn list_persisted_sessions(ctx: &HostCtx) -> Result<Vec<PersistedSessionDto>> {
+/// List the sessions persisted for this actor (`listPersistedSessions`), each
+/// tagged with its live/hibernated activity status.
+pub async fn list_persisted_sessions(
+    ctx: &HostCtx,
+    vm: &AgentOs,
+) -> Result<Vec<PersistedSessionDto>> {
     let rows = query_rows(
         ctx,
         "SELECT session_id, agent_type, created_at FROM agent_os_sessions \
@@ -448,37 +468,63 @@ pub async fn list_persisted_sessions(ctx: &HostCtx) -> Result<Vec<PersistedSessi
     .await?;
     Ok(rows
         .into_iter()
-        .map(|row| PersistedSessionDto {
-            session_id: row
+        .map(|row| {
+            let session_id = row
                 .get("session_id")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
-                .to_owned(),
-            agent_type: row
-                .get("agent_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_owned(),
-            created_at: row.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0) as f64,
+                .to_owned();
+            let status = if is_session_live(vm, &session_id) {
+                "running"
+            } else {
+                "idle"
+            };
+            PersistedSessionDto {
+                agent_type: row
+                    .get("agent_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+                created_at: row.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0) as f64,
+                status,
+                session_id,
+            }
         })
         .collect())
 }
 
 /// Return the persisted ACP events for a session, ordered by sequence
-/// (`getSessionEvents`). Each event is the stored JSON-RPC notification.
-pub async fn get_session_events(ctx: &HostCtx, session_id: &str) -> Result<Vec<JsonValue>> {
+/// (`getSessionEvents`). Each row is the full `PersistedSessionEvent`
+/// (`seq`/`createdAt` + the parsed JSON-RPC notification), not just the bare
+/// notification, so the client can key/order/timestamp them.
+pub async fn get_session_events(
+    ctx: &HostCtx,
+    session_id: &str,
+) -> Result<Vec<PersistedSessionEventDto>> {
     let rows = query_rows(
         ctx,
-        "SELECT event FROM agent_os_session_events WHERE session_id = ? ORDER BY seq",
+        "SELECT session_id, seq, event, created_at FROM agent_os_session_events \
+		 WHERE session_id = ? ORDER BY seq",
         &[json!(session_id)],
     )
     .await?;
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            row.get("event")
+            let event = row
+                .get("event")
                 .and_then(|v| v.as_str())
-                .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
+                .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())?;
+            Some(PersistedSessionEventDto {
+                session_id: row
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+                seq: row.get("seq").and_then(|v| v.as_i64()).unwrap_or(0),
+                event,
+                created_at: row.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0) as f64,
+            })
         })
         .collect())
 }

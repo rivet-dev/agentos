@@ -15,14 +15,13 @@ packages:
   # embeddable example is a workspace member that `turbo check-types` covers.
   - examples/*/*
   - scripts/publish
-  - website
-  # Local docs theme consumed as a workspace member (symlinked from ~/docs-theme
-  # via vendor-theme/*) so React hoists to ONE copy across website + theme —
-  # otherwise the file:/link: cross-repo dep duplicates React and docs islands
-  # don't hydrate in `astro dev`. Source of truth stays ~/docs-theme.
-  - website/vendor/theme
-  - website/vendor/theme/vendor/components
-  - website/vendor/theme/vendor/icons
+  # LOCAL WORKAROUND (do not commit): `website` needs @rivet-dev/docs-theme
+  # symlinked into website/vendor/theme, which isn't set up here and blocks
+  # `pnpm install` workspace-wide. Excluded to build/run the demo locally.
+  # - website
+  # - website/vendor/theme
+  # - website/vendor/theme/vendor/components
+  # - website/vendor/theme/vendor/icons
 
 ignoredBuiltDependencies:
   - '@clerk/shared'
@@ -48,6 +47,7 @@ catalog:
   '@agentos-software/coreutils': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/curl': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/diffutils': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/duckdb': 0.0.0-nathan-agentos-package-resolution.efc374f
   '@agentos-software/fd': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/file': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/findutils': 0.0.0-nathan-agentos-package-resolution.42d8146
@@ -57,6 +57,7 @@ catalog:
   '@agentos-software/gzip': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/http-get': 0.0.0-nathan-agentos-package-resolution.efc374f
   '@agentos-software/jq': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/make': 0.0.0-nathan-agentos-package-resolution.efc374f
   '@agentos-software/opencode': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/pi': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/pi-cli': 0.0.0-nathan-agentos-package-resolution.42d8146
@@ -66,8 +67,10 @@ catalog:
   '@agentos-software/tar': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/tree': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/unzip': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/wget': 0.0.0-nathan-agentos-package-resolution.efc374f
   '@agentos-software/yq': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/zip': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@secure-exec/browser': 0.0.0-nathan-agentos-package-resolution.0bf7dcb
   '@secure-exec/core': 0.0.0-nathan-agentos-package-resolution.0bf7dcb
   '@secure-exec/nodejs': 0.2.1
   '@secure-exec/sandbox': 0.0.0-nathan-agentos-package-resolution.0bf7dcb

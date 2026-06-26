@@ -22,11 +22,12 @@ use crate::fs::VirtualFileSystem;
 pub struct AgentOsConfig {
     /// Software packages to install (flattened). Default `[]`.
     pub software: Vec<SoftwareInput>,
-    /// `{ packageDir }` software package directories, forwarded to the sidecar
-    /// as boot `packages` (the sidecar owns the `/opt/agentos` projection).
-    /// Mirrors the TS `buildConfigJson` `packages` list. Default `[]`.
-    pub packages: Vec<String>,
-    /// Guest mount root for the package projection. Default `/opt/agentos`.
+    /// Package directories to project into the VM's `/opt/agentos` tree (the
+    /// secure-exec package projection). Each entry is a host dir containing an
+    /// `agentos-package.json` manifest + the package payload. Default `[]`.
+    pub packages: Vec<PackageRef>,
+    /// Guest mount point for the package projection. Default `/opt/agentos`
+    /// (secure-exec's `OPT_AGENTOS_ROOT`) when `None`.
     pub packages_mount_at: Option<String>,
     /// Loopback ports exempt from the default outbound-to-host block.
     pub loopback_exempt_ports: Vec<u16>,
@@ -70,12 +71,7 @@ impl AgentOsConfigBuilder {
         Self::default()
     }
 
-    pub fn software(mut self, software: Vec<SoftwareInput>) -> Self {
-        self.config.software = software;
-        self
-    }
-
-    pub fn packages(mut self, packages: Vec<String>) -> Self {
+    pub fn packages(mut self, packages: Vec<PackageRef>) -> Self {
         self.config.packages = packages;
         self
     }
@@ -179,6 +175,14 @@ pub struct SoftwareInput {
     /// How the package is mounted into the VM. Defaults to [`SoftwareKind::WasmCommands`].
     #[serde(default)]
     pub kind: SoftwareKind,
+}
+
+/// A reference to a package directory for the `/opt/agentos` projection. The dir
+/// holds an `agentos-package.json` manifest (name + optional agent block) and the
+/// package payload; the sidecar reads commands/version from it at projection time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageRef {
+    pub dir: String,
 }
 
 /// A host-side tool execute callback. Receives the validated JSON input, returns a JSON result or an
