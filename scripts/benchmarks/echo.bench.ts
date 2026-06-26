@@ -13,20 +13,35 @@
  * Usage: npx tsx benchmarks/echo.bench.ts
  */
 
-import type { AgentOs } from "@rivet-dev/agentos-core";
+import { coreutils } from "@agentos-software/common";
+import type { AgentOs, AgentOsSidecar } from "@rivet-dev/agentos-core";
+import { AgentOs as AgentOsClient } from "@rivet-dev/agentos-core";
+import os from "node:os";
 import {
-	BATCH_SIZES,
-	ECHO_COMMAND,
-	EXPECTED_OUTPUT,
-	ITERATIONS,
-	MAX_CONCURRENCY,
-	WARMUP_ITERATIONS,
-	createBenchVm,
 	getHardware,
 	printTable,
 	round,
 	stats,
-} from "./bench-utils.js";
+} from "./lib/perf-utils.js";
+
+const BATCH_SIZES = [1, 10];
+const ITERATIONS = 5;
+const WARMUP_ITERATIONS = 1;
+const MAX_CONCURRENCY = Math.max(1, os.availableParallelism() - 4);
+const ECHO_COMMAND = "echo hello";
+const EXPECTED_OUTPUT = "hello\n";
+
+async function createBenchVm(): Promise<{
+	vm: AgentOs;
+	sidecar: AgentOsSidecar;
+}> {
+	const sidecar = await AgentOsClient.createSidecar();
+	const vm = await AgentOsClient.create({
+		software: [coreutils],
+		sidecar: { kind: "explicit", handle: sidecar },
+	});
+	return { vm, sidecar };
+}
 
 interface ColdStartEntry {
 	batchSize: number;
@@ -38,28 +53,32 @@ interface ColdStartEntry {
 
 async function measureOne(): Promise<{ coldMs: number; warmMs: number }> {
 	const t0 = performance.now();
-	const vm = await createBenchVm();
-	const result1 = await vm.exec(ECHO_COMMAND);
-	const coldMs = performance.now() - t0;
+	const { vm, sidecar } = await createBenchVm();
+	try {
+		const result1 = await vm.exec(ECHO_COMMAND);
+		const coldMs = performance.now() - t0;
 
-	if (result1.stdout !== EXPECTED_OUTPUT) {
-		throw new Error(
-			`Unexpected cold-start output: ${JSON.stringify(result1.stdout)} (expected ${JSON.stringify(EXPECTED_OUTPUT)})`,
-		);
+		if (result1.stdout !== EXPECTED_OUTPUT) {
+			throw new Error(
+				`Unexpected cold-start output: ${JSON.stringify(result1.stdout)} (expected ${JSON.stringify(EXPECTED_OUTPUT)})`,
+			);
+		}
+
+		const t1 = performance.now();
+		const result2 = await vm.exec(ECHO_COMMAND);
+		const warmMs = performance.now() - t1;
+
+		if (result2.stdout !== EXPECTED_OUTPUT) {
+			throw new Error(
+				`Unexpected warm-start output: ${JSON.stringify(result2.stdout)} (expected ${JSON.stringify(EXPECTED_OUTPUT)})`,
+			);
+		}
+
+		return { coldMs, warmMs };
+	} finally {
+		await vm.dispose();
+		await sidecar.dispose();
 	}
-
-	const t1 = performance.now();
-	const result2 = await vm.exec(ECHO_COMMAND);
-	const warmMs = performance.now() - t1;
-
-	if (result2.stdout !== EXPECTED_OUTPUT) {
-		throw new Error(
-			`Unexpected warm-start output: ${JSON.stringify(result2.stdout)} (expected ${JSON.stringify(EXPECTED_OUTPUT)})`,
-		);
-	}
-
-	await vm.dispose();
-	return { coldMs, warmMs };
 }
 
 async function benchSequential(batchSize: number): Promise<ColdStartEntry> {
@@ -193,7 +212,8 @@ async function main() {
 	console.log(JSON.stringify({ hardware, results }, null, 2));
 }
 
-main().catch((err) => {
-	console.error(err);
-	process.exit(1);
-});
+main()
+	.catch((err) => {
+		console.error(err);
+		process.exitCode = 1;
+	});
