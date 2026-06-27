@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::host_ctx::HostCtx;
-use agentos_client::{AgentOs, CreateSessionOptions};
+use agentos_client::{AgentOs, CreateSessionOptions, PermissionReply};
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -135,6 +135,111 @@ fn spawn_event_capture(
         .insert(live_session_id.to_owned(), handle);
 }
 
+/// Build the `permissionRequest` broadcast body for one request.
+///
+/// The RivetKit event wire is CBOR and the body is the array of handler
+/// ARGUMENTS the client spreads into the listener (`handler(...body)`). The
+/// documented listener is `(data) => …`, so the single argument is the TS
+/// `PermissionRequestPayload` — `{ sessionId, request: { permissionId,
+/// description?, params } }` — and the body is `[ <that object> ]`. The
+/// `sessionId` is the client-facing external id (== live for native sessions).
+fn permission_event_body(
+    external_session_id: &str,
+    permission_id: &str,
+    description: Option<&str>,
+    params: &JsonValue,
+) -> JsonValue {
+    json!([{
+        "sessionId": external_session_id,
+        "request": {
+            "permissionId": permission_id,
+            "description": description,
+            "params": params,
+        },
+    }])
+}
+
+/// Map the wire reply string to a [`PermissionReply`] (`"once"` / `"always"` /
+/// `"reject"`), matching the TS `PermissionReply` union.
+fn parse_permission_reply(reply: &str) -> Result<PermissionReply> {
+    match reply {
+        "once" => Ok(PermissionReply::Once),
+        "always" => Ok(PermissionReply::Always),
+        "reject" => Ok(PermissionReply::Reject),
+        other => Err(anyhow!(
+            "invalid permission reply {other:?} (expected \"once\" | \"always\" | \"reject\")"
+        )),
+    }
+}
+
+/// Subscribe to the session's permission-request stream and spawn a task that
+/// broadcasts each request to connected clients as a `permissionRequest` event
+/// (`conn.on("permissionRequest", …)`).
+///
+/// Mirrors [`spawn_event_capture`]. A subscriber MUST exist before the guest
+/// agent raises a permission request, otherwise the client auto-rejects it
+/// (`deliver_sidecar_permission_request` checks `receiver_count() == 0`) — so
+/// this is started at session-create time. Clients answer via the
+/// `respondPermission` action (→ [`respond_permission`]), which resolves the
+/// pending reply slot; this pump only fans the request out, so dropping the
+/// broadcast item's responder clone here is harmless.
+fn spawn_permission_pump(
+    ctx: &HostCtx,
+    vm: &AgentOs,
+    vars: &mut Vars,
+    external_session_id: &str,
+    live_session_id: &str,
+) {
+    let (mut stream, subscription) = match vm.on_permission_request(live_session_id) {
+        Ok(sub) => sub,
+        Err(error) => {
+            tracing::warn!(?error, live_session_id, "on_permission_request subscribe failed");
+            return;
+        }
+    };
+    if let Some(old) = vars.permission_tasks.remove(live_session_id) {
+        old.abort();
+    }
+    let ctx = ctx.clone();
+    let external = external_session_id.to_owned();
+    let handle = tokio::spawn(async move {
+        // Keep the RAII guard alive for the pump's lifetime; dropping the stream
+        // (on abort / channel close) is the unsubscribe.
+        let _subscription = subscription;
+        while let Some(request) = stream.next().await {
+            let body = permission_event_body(
+                &external,
+                &request.permission_id,
+                request.description.as_deref(),
+                &request.params,
+            );
+            let mut cbor = Vec::new();
+            if ciborium::into_writer(&body, &mut cbor).is_ok() {
+                let _ = ctx.broadcast(b"permissionRequest".to_vec(), cbor);
+            }
+        }
+    });
+    vars.permission_tasks
+        .insert(live_session_id.to_owned(), handle);
+}
+
+/// Answer a permission request raised by the session's guest agent
+/// (`respondPermission`). Resolves the pending reply slot through the client's
+/// `respond_permission`, keyed by the live session id.
+pub async fn respond_permission(
+    vm: &AgentOs,
+    vars: &Vars,
+    session_id: &str,
+    permission_id: &str,
+    reply: &str,
+) -> Result<()> {
+    let reply = parse_permission_reply(reply)?;
+    let live_session_id = vars.live_id(session_id).to_owned();
+    vm.respond_permission(&live_session_id, permission_id, reply)
+        .await?;
+    Ok(())
+}
+
 pub async fn create_session(
     ctx: &HostCtx,
     vm: &AgentOs,
@@ -176,8 +281,11 @@ pub async fn create_session(
     )
     .await?;
     // At create time `external == live`; capture every `session/update` for this
-    // session under the external id (spec §3/§5).
+    // session under the external id (spec §3/§5), and start fanning the guest's
+    // permission requests out to connected clients. The permission pump must be
+    // subscribed before the agent runs, or requests would auto-reject.
     spawn_event_capture(ctx, vm, vars, &session_id, &session_id);
+    spawn_permission_pump(ctx, vm, vars, &session_id, &session_id);
     Ok(SessionIdDto { session_id })
 }
 
@@ -227,9 +335,12 @@ pub async fn close_session(
     vars: &mut Vars,
     session_id: &str,
 ) -> Result<()> {
-    // Stop event capture + drop the remap for this external session.
+    // Stop event capture + the permission pump + drop the remap for this session.
     let live_session_id = vars.live_id(session_id).to_owned();
     if let Some(task) = vars.capture_tasks.remove(&live_session_id) {
+        task.abort();
+    }
+    if let Some(task) = vars.permission_tasks.remove(&live_session_id) {
         task.abort();
     }
     vars.live_sessions.remove(session_id);
@@ -396,4 +507,59 @@ pub async fn resume_session(
 		 parallel sidecar/client implementation of the spec §6 \
 		 AcpResumeSessionRequest contract"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentos_client::PermissionReply;
+
+    #[test]
+    fn permission_event_body_matches_ts_payload_shape() {
+        // The TS client listener is `(data) => …` where data is
+        // `PermissionRequestPayload { sessionId, request: { permissionId,
+        // description?, params } }`, delivered as the single broadcast arg.
+        let params = json!({
+            "toolCall": { "title": "Bash", "kind": "execute" },
+            "options": [{ "optionId": "allow_once" }],
+        });
+        let body = permission_event_body("sess-1", "perm-7", Some("run a command"), &params);
+
+        // Body is the args array spread into the listener: exactly one argument.
+        let args = body.as_array().expect("body is an array");
+        assert_eq!(args.len(), 1, "exactly one handler argument");
+        let data = &args[0];
+
+        assert_eq!(data["sessionId"], json!("sess-1"));
+        assert_eq!(data["request"]["permissionId"], json!("perm-7"));
+        assert_eq!(data["request"]["description"], json!("run a command"));
+        // params are forwarded verbatim so the client can inspect the tool/paths.
+        assert_eq!(data["request"]["params"], params);
+    }
+
+    #[test]
+    fn permission_event_body_serializes_absent_description_as_null() {
+        let body = permission_event_body("sess-1", "perm-1", None, &json!({}));
+        assert_eq!(body[0]["request"]["description"], JsonValue::Null);
+    }
+
+    #[test]
+    fn parse_permission_reply_maps_each_wire_value() {
+        assert_eq!(parse_permission_reply("once").unwrap(), PermissionReply::Once);
+        assert_eq!(
+            parse_permission_reply("always").unwrap(),
+            PermissionReply::Always
+        );
+        assert_eq!(
+            parse_permission_reply("reject").unwrap(),
+            PermissionReply::Reject
+        );
+    }
+
+    #[test]
+    fn parse_permission_reply_rejects_unknown_value() {
+        let err = parse_permission_reply("maybe").unwrap_err().to_string();
+        assert!(err.contains("invalid permission reply"), "got: {err}");
+        assert!(err.contains("maybe"), "names the bad value: {err}");
+    }
 }

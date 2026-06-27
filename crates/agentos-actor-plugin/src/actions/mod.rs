@@ -39,6 +39,8 @@ pub struct Vars {
     pub live_sessions: HashMap<String, String>,
     /// `live_session_id -> capture pump task`.
     pub capture_tasks: HashMap<String, JoinHandle<()>>,
+    /// `live_session_id -> permission-request pump task`.
+    pub permission_tasks: HashMap<String, JoinHandle<()>>,
 }
 
 impl Vars {
@@ -51,10 +53,13 @@ impl Vars {
             .unwrap_or(external_session_id)
     }
 
-    /// Abort and clear all in-flight capture tasks. Called on VM teardown
-    /// (sleep / destroy / run-loop exit).
+    /// Abort and clear all in-flight pump tasks (event capture + permission
+    /// requests). Called on VM teardown (sleep / destroy / run-loop exit).
     pub fn clear(&mut self) {
         for (_, task) in self.capture_tasks.drain() {
+            task.abort();
+        }
+        for (_, task) in self.permission_tasks.drain() {
             task.abort();
         }
         self.live_sessions.clear();
@@ -334,6 +339,17 @@ pub(crate) async fn dispatch(
                 Ok(events) => reply_ok(host, token, &events),
                 Err(error) => reply_err(host, token, error),
             },
+            Err(error) => reply_err(host, token, error),
+        },
+        "respondPermission" => match decode_as::<(String, String, String)>(args) {
+            Ok((session_id, permission_id, reply)) => {
+                match session::respond_permission(vm, vars, &session_id, &permission_id, &reply)
+                    .await
+                {
+                    Ok(()) => reply_ok(host, token, &()),
+                    Err(error) => reply_err(host, token, error),
+                }
+            }
             Err(error) => reply_err(host, token, error),
         },
         "createSignedPreviewUrl" => match decode_as::<(u16, u64)>(args) {

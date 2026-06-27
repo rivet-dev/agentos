@@ -119,25 +119,9 @@ registry.start();
 
 ### Approvals
 
-Approve or deny agent tool use with human-in-the-loop patterns or auto-approve for trusted workloads.
+Approve or deny agent tool use by subscribing to `permissionRequest` and replying. Permissions are fail-closed — nothing runs until you reply.
 
 <CodeGroup>
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-// Auto-approve all permissions server-side
-const vm = agentOS({
-  software: [pi],
-  onPermissionRequest: async (sessionId, request) => {
-    console.log("Auto-approving", sessionId, request.permissionId);
-  },
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
 ```ts title="client.ts"
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
@@ -145,13 +129,25 @@ import type { registry } from "./server";
 const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 const agent = client.vm.getOrCreate("my-agent");
 
-// Or handle permissions client-side for human-in-the-loop
 const conn = agent.connect();
 conn.on("permissionRequest", async (data) => {
   console.log("Permission requested:", data.request);
-  // "once" | "always" | "reject"
+  // "once" | "always" | "reject". Reply "always" to auto-approve trusted
+  // workloads, or prompt a human for human-in-the-loop.
   await agent.respondPermission(data.sessionId, data.request.permissionId, "once");
 });
+```
+
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
 ```
 </CodeGroup>
 

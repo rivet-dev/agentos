@@ -324,6 +324,11 @@ interface AgentSessionEntry {
 	agentInfo: AgentInfo | null;
 	eventHandlers: Set<SessionEventSubscriber>;
 	permissionHandlers: Set<PermissionRequestHandler>;
+	/**
+	 * Set once we have emitted the "no permission handler registered" warning for
+	 * this session, so a tool-heavy turn does not re-warn on every request.
+	 */
+	warnedNoPermissionHandler: boolean;
 	configOverrides: Map<string, string>;
 	pendingPermissionReplies: Map<
 		string,
@@ -922,6 +927,7 @@ function sessionEntryFromInit(
 		agentInfo: initData.agentInfo ?? null,
 		eventHandlers: new Set(),
 		permissionHandlers: new Set(),
+		warnedNoPermissionHandler: false,
 		configOverrides: new Map(),
 		pendingPermissionReplies: new Map(),
 	};
@@ -3833,6 +3839,73 @@ export class AgentOs {
 		};
 	}
 
+	/**
+	 * Warn once per session (host-visible) that a tool-permission request was
+	 * auto-denied because no `onPermissionRequest` handler is registered. Shared
+	 * by both the bare-callback and JSON-RPC permission paths so the message and
+	 * the once-per-session guard cannot drift between them.
+	 */
+	private _warnNoPermissionHandlerOnce(
+		session: AgentSessionEntry,
+		params: Record<string, unknown>,
+	): void {
+		if (session.warnedNoPermissionHandler) {
+			return;
+		}
+		session.warnedNoPermissionHandler = true;
+		this._emitSessionWarning(
+			session,
+			`agentos: a tool-permission request (${this._permissionToolLabel(params)}) was ` +
+				`auto-denied because no onPermissionRequest handler is registered for session ` +
+				`${session.sessionId}. Register one with vm.onPermissionRequest(sessionId, ...) and ` +
+				`reply via vm.respondPermission(...) to let the agent use tools.`,
+		);
+	}
+
+	/** Best-effort human label for the tool named in a permission request. */
+	private _permissionToolLabel(params: Record<string, unknown>): string {
+		if (typeof params.toolName === "string") {
+			return params.toolName;
+		}
+		const toolCall = params.toolCall;
+		if (
+			toolCall &&
+			typeof toolCall === "object" &&
+			typeof (toolCall as { title?: unknown }).title === "string"
+		) {
+			return (toolCall as { title: string }).title;
+		}
+		return "a tool";
+	}
+
+	/**
+	 * Emit a host-visible warning for a session through the same agent-process log
+	 * channel that surfaces adapter stderr (`onAgentStderr`, default: process
+	 * stderr). Used for agent-os-owned diagnostics — e.g. a permission request
+	 * that was auto-denied because no host hook is registered — so they never fire
+	 * silently inside the sidecar.
+	 */
+	private _emitSessionWarning(
+		session: AgentSessionEntry,
+		message: string,
+	): void {
+		const handler = this._agentStderrHandler;
+		if (!handler) {
+			return;
+		}
+		try {
+			handler({
+				sessionId: session.sessionId,
+				agentType: session.agentType,
+				processId: session.processId,
+				pid: session.pid,
+				chunk: new TextEncoder().encode(`${message}\n`),
+			});
+		} catch {
+			// A warning sink failure must never affect permission handling.
+		}
+	}
+
 	private _recordAgentStderr(event: {
 		sessionId: string;
 		agentType: string;
@@ -4733,6 +4806,10 @@ export class AgentOs {
 			_acpMethod: request.method,
 		};
 		if (session.permissionHandlers.size === 0) {
+			// Default-closed deny; warn once (host-visible) so a forgotten
+			// onPermissionRequest handler is an observable cause rather than a
+			// silent denial. See _warnNoPermissionHandlerOnce.
+			this._warnNoPermissionHandlerOnce(session, permissionParams);
 			return this._buildAcpPermissionResult("reject", permissionParams);
 		}
 
@@ -5153,6 +5230,10 @@ export class AgentOs {
 		}
 
 		if (session.permissionHandlers.size === 0) {
+			// Default-closed: deny when no host hook is listening, and warn once
+			// (host-visible) so a forgotten onPermissionRequest handler is not an
+			// invisible cause of an agent that cannot use any tool.
+			this._warnNoPermissionHandlerOnce(session, params);
 			return "reject";
 		}
 

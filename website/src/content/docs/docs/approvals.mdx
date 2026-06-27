@@ -6,19 +6,19 @@ skill: true
 
 import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
-When an agent wants to use a tool (write a file, run a command, etc.), it asks for permission. You approve or deny that request, either interactively or with a server-side hook.
+When an agent wants to use a tool (write a file, run a command, etc.), it asks for permission. You approve or deny that request by subscribing to `permissionRequest` and calling `respondPermission`.
 
-- **Human-in-the-loop**: subscribe to `permissionRequest` on the client and respond per-request.
-- **Auto-approve**: use the `onPermissionRequest` server hook to decide without a client round-trip.
-- **Selective approval**: inspect the request and approve some, forward others to the client.
+- **Human-in-the-loop**: subscribe to `permissionRequest` and prompt a human, then respond per-request.
+- **Auto-approve**: subscribe to `permissionRequest` and immediately reply `"always"` for trusted workloads.
+- **Selective approval**: inspect each request and approve some, reject others.
 
 ## Permission request flow
 
-When an agent wants to use a tool, it emits a `permissionRequest`. Every request is delivered to two places at once, and you respond from whichever fits your app:
+When an agent wants to use a tool, it emits a `permissionRequest`. Subscribe to it and reply with `respondPermission(sessionId, permissionId, reply)`:
 
-- **On the client**: subscribe to the `permissionRequest` event and call `respondPermission(sessionId, permissionId, reply)`.
-- **On the server**: the `onPermissionRequest` hook on the actor runs for every request, with no client round-trip.
-- If neither responds, the request blocks until a reply arrives, then rejects after 120 seconds.
+- Until you reply, the request stays pending; the agent waits on your decision.
+- Permissions are **fail-closed** — a request is **never auto-approved on a timer**. If no reply arrives, it is denied after 120 seconds.
+- If you wire **no** responder at all, every tool request is denied immediately and the agent cannot use any tool. The runtime logs a one-time warning per session naming the missing handler, so a forgotten subscription is not a silent failure.
 
 <CodeGroup>
 ```ts title="client.ts"
@@ -54,10 +54,6 @@ import pi from "@agentos-software/pi";
 
 const vm = agentOS({
   software: [pi],
-  // Runs server-side for every permission request, before any client round-trip.
-  onPermissionRequest: async (sessionId, request) => {
-    console.log("permission requested:", sessionId, request.permissionId);
-  },
 });
 
 export const registry = setup({ use: { vm } });
@@ -86,31 +82,12 @@ Reply options for `respondPermission`:
 
 ### Auto-approve
 
-The `onPermissionRequest` hook runs server-side for every permission request before it reaches any client. Useful for fully automated pipelines.
+For fully automated, trusted pipelines, reply `"always"` to every request the moment it arrives. Because permissions are fail-closed, you must reply — there is no auto-grant on a timer.
 
-- **Signature**: `onPermissionRequest: async (sessionId, request) => { ... }`.
-- **Inspect**: `request.permissionId`, `request.description`, and `request.params`.
-- **Anything not handled** in the hook is forwarded to the client via the `permissionRequest` event.
+- **Reply `"always"`** so repeat requests of the same type are approved without re-prompting.
+- **Inspect** `request.permissionId`, `request.description`, and `request.params` if you want to log or audit.
 
 <CodeGroup>
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-  // The onPermissionRequest hook runs server-side for every request before it
-  // is forwarded to clients. Use it to inspect requests in fully automated
-  // pipelines without a client round-trip.
-  onPermissionRequest: async (sessionId, request) => {
-    console.log("auto-approving", sessionId, request.permissionId);
-  },
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
 ```ts title="client.ts"
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
@@ -118,11 +95,29 @@ import type { registry } from "./server";
 const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 const agent = client.vm.getOrCreate("my-agent");
 
-// No need to handle permissions on the client. The server hook handles them.
+// Auto-approve every request as it arrives. `"always"` also approves future
+// requests of the same type, so a multi-step agent run is not interrupted.
+const conn = agent.connect();
+conn.on("permissionRequest", async (data) => {
+  await agent.respondPermission(data.sessionId, data.request.permissionId, "always");
+});
+
 const session = await agent.createSession("claude", {
   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
 await agent.sendPrompt(session.sessionId, "Write files as needed");
+```
+
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
 ```
 </CodeGroup>
 
@@ -130,30 +125,9 @@ await agent.sendPrompt(session.sessionId, "Write files as needed");
 
 ### Selective approval
 
-Inspect the permission request to make approval decisions based on the tool or path. Approve some server-side, forward the rest to the client for human review.
+Inspect each permission request and decide per-request: auto-approve the safe ones (`request.description` / `request.params` carry the requested tool and paths) and prompt a human for the rest.
 
 <CodeGroup>
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({
-  software: [pi],
-  onPermissionRequest: async (sessionId, request) => {
-    // `request.description` and `request.params` carry the raw ACP permission
-    // details (the requested tool, paths, etc.). Inspect them to decide which
-    // requests to handle server-side and which to forward to clients.
-    const description = request.description ?? "";
-    if (description.toLowerCase().includes("read")) {
-      console.log("read request handled server-side", sessionId, request.permissionId);
-    }
-  },
-});
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-
 ```ts title="client.ts"
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
@@ -161,10 +135,17 @@ import type { registry } from "./server";
 const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 const agent = client.vm.getOrCreate("my-agent");
 
-// Permission requests forwarded by the server reach the client here. The
-// payload is inferred from the actor's event schema, so no cast is needed.
 const conn = agent.connect();
 conn.on("permissionRequest", async (data) => {
+  // Inspect the request and decide. `request.description` / `request.params`
+  // carry the raw ACP details (the requested tool, paths, etc.).
+  const description = data.request.description?.toLowerCase() ?? "";
+  if (description.includes("read")) {
+    // Auto-approve reads.
+    await agent.respondPermission(data.sessionId, data.request.permissionId, "always");
+    return;
+  }
+  // Forward everything else to a human.
   const approved = confirm(`Allow: ${JSON.stringify(data.request)}?`);
   await agent.respondPermission(
     data.sessionId,
@@ -178,9 +159,21 @@ const session = await agent.createSession("claude", {
 });
 await agent.sendPrompt(session.sessionId, "Read config.json and update it");
 ```
+
+```ts title="server.ts"
+import { agentOS, setup } from "@rivet-dev/agentos";
+import pi from "@agentos-software/pi";
+
+const vm = agentOS({
+  software: [pi],
+});
+
+export const registry = setup({ use: { vm } });
+registry.start();
+```
 </CodeGroup>
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/approvals)*
 
-- For interactive applications, subscribe to `permissionRequest` on the client and build an approval UI.
-- If neither the server hook nor the client responds, the agent blocks until a response is given or the action times out.
+- For interactive applications, subscribe to `permissionRequest` and build an approval UI.
+- Permissions are fail-closed: if nothing replies, the request is denied (after 120 seconds if a responder is connected, immediately if none is).
