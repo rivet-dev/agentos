@@ -6,7 +6,7 @@ skill: true
 
 import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
-agentOS uses the same authentication system as [Rivet Actors](/docs/actors/authentication): clients send credentials as connection params, and you validate them server-side.
+agentOS uses the same authentication system as [Rivet Actors](https://rivet.dev/docs/actors/authentication): clients send credentials as connection params, and you validate them server-side.
 
 - Clients pass credentials in `params` when they connect.
 - Validate them on the server in `onBeforeConnect` (throw to reject the connection), or extract user data into connection state with `createConnState` (read it in actions via `c.conn.state`).
@@ -62,4 +62,4 @@ await agent.sendPrompt(session.sessionId, "List the files in the working directo
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/authentication)*
 
-See [Actor Authentication](/docs/actors/authentication) for JWT validation, role-based access control, external auth providers, and token caching.
+See [Actor Authentication](https://rivet.dev/docs/actors/authentication) for JWT validation, role-based access control, external auth providers, and token caching.

@@ -22,7 +22,7 @@ Agent SDK snapshotting extends that same mechanism: it evaluates the agent SDK *
 
 ## Where it sits in the component model
 
-The [three components](/docs/architecture#three-components) are unchanged. Snapshotting only changes *how* the executor's isolate is seeded:
+The [three components](/docs/architecture#the-big-picture) are unchanged. Snapshotting only changes *how* the executor's isolate is seeded:
 
 - **Client.** Builds the SDK bundle at package-build time and passes it to the sidecar as trusted VM configuration (`jsRuntime.snapshotUserlandCode`). It decides which agents opt in.
 - **Sidecar.** Owns the snapshot. It builds the snapshot once, caches it process-wide, and seeds each session's isolate from it. The SDK runs inside the isolate under the same [permission policy](/docs/permissions) as any guest code — snapshotting grants the SDK no extra capability.

@@ -12,7 +12,7 @@ A session is a long-lived conversation with an agent (such as [Pi](https://githu
 
 ## Where a session sits in the component model
 
-The [three components](/docs/architecture#three-components) are unchanged for sessions: a trusted **client**, the trusted **sidecar** that owns the kernel, and the untrusted **executor** that runs guest code. An agent session adds one more layer on the guest side of the boundary:
+The [three components](/docs/architecture#the-big-picture) are unchanged for sessions: a trusted **client**, the trusted **sidecar** that owns the kernel, and the untrusted **executor** that runs guest code. An agent session adds one more layer on the guest side of the boundary:
 
 - **Client.** Calls `createSession`, `sendPrompt`, and the rest of the session API. It never runs the agent itself; it drives the session over the wire protocol.
 - **Sidecar / kernel.** Spawns the agent as a kernel-managed process inside the VM, owns the session's I/O, applies the permission policy on every syscall the agent makes, and persists the transcript.
@@ -31,13 +31,13 @@ A session is always created against an existing VM. The client resolves a VM han
 4. **The session is registered** in the VM with a `sessionId`, and the adapter performs its handshake with the agent to discover `capabilities` and `agentInfo`.
 5. **The handle returns** that metadata to the client.
 
-The session is bound to that VM for its lifetime. The agent process, its working directory, and its persisted transcript all live inside the VM's isolation domain. A VM can host several sessions at once: each gets its own agent process, but they share the one VM's filesystem (see [Multiple sessions](/docs/sessions#multiple-sessions)). Two sessions in two different VMs share nothing, exactly as described in the [isolation model](/docs/architecture#isolation-model).
+The session is bound to that VM for its lifetime. The agent process, its working directory, and its persisted transcript all live inside the VM's isolation domain. A VM can host several sessions at once: each gets its own agent process, but they share the one VM's filesystem (see [Multiple sessions](/docs/sessions#multiple-sessions)). Two sessions in two different VMs share nothing, exactly as described in the [isolation model](/docs/architecture).
 
 <Aside type="note">MCP servers configured on a session follow the same boundary. A `local` MCP server runs as a child process inside the VM (kernel-managed, gated by the permission policy); a `remote` MCP server is reached over the network, so its traffic flows through the kernel socket table and is subject to the network allowlist.</Aside>
 
 ## How a prompt flows: client to agent and back
 
-Sending a prompt is a request in one direction with a stream of events flowing back in the other. The lifecycle of a single prompt extends the general [lifecycle of a request](/docs/architecture#lifecycle-of-a-request):
+Sending a prompt is a request in one direction with a stream of events flowing back in the other. The lifecycle of a single prompt extends the general [lifecycle of a request](/docs/architecture):
 
 1. **The client calls `sendPrompt(sessionId, text)`.** The request crosses the wire to the sidecar (hop one).
 2. **The sidecar routes it to the session's agent adapter,** which translates the prompt into the agent's native input and writes it to the running agent process.

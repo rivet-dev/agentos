@@ -854,9 +854,9 @@ const orchestrationFeatures = [
 	{ icon: ListChecks, title: 'Durable sessions', description: 'Every run is a managed session with its own state, history, and lifecycle. Pause, resume, and replay.', docsHref: '/docs/sessions' },
 	{ icon: Workflow, title: 'Workflows', description: 'Chain durable, multi-step workflows that survive restarts and pick up exactly where they left off.', docsHref: '/docs/workflows' },
 	{ icon: Layers, title: 'Agent-to-agent', description: 'Let agents delegate to other agents through host-brokered calls, under the same limits and permissions.', docsHref: '/docs/agent-to-agent' },
-	{ icon: Wrench, title: 'Tools, MCP & skills', description: 'Write tools as JavaScript functions on the host, connect any MCP server, and add skills the agent can call.', docsHref: '/docs/tools' },
-	{ icon: ShieldCheck, title: 'Approvals & queue-in-loop', description: 'Gate sensitive actions behind human approval and queue work for review in the loop.', docsHref: '/docs/queues', span: 'lg:col-span-2' },
-	{ icon: Activity, title: 'Observability', description: 'Stream every event, tool call, and state change for full visibility into what your agents are doing.', docsHref: '/docs/events', span: 'lg:col-span-2' },
+	{ icon: Wrench, title: 'Tools, MCP & skills', description: 'Write tools as JavaScript functions on the host, connect any MCP server, and add skills the agent can call.', docsHref: '/docs/bindings' },
+	{ icon: ShieldCheck, title: 'Approvals & queue-in-loop', description: 'Gate sensitive actions behind human approval and queue work for review in the loop.', docsHref: '/docs/approvals', span: 'lg:col-span-2' },
+	{ icon: Activity, title: 'Observability', description: 'Stream every event, tool call, and state change for full visibility into what your agents are doing.', docsHref: '/docs/sessions#stream-responses', span: 'lg:col-span-2' },
 ];
 
 // "Orchestrate fleets…" title that scrubs in (fade + blur + rise) as you scroll
@@ -1015,7 +1015,7 @@ const osFeatures = [
 	{ icon: Globe, title: 'Preview deployments', description: 'Every app the agent runs gets its own unique preview URL, served straight from the VM.', docsHref: '/docs/networking' },
 	{ icon: Container, title: 'Sandbox mounting', description: 'agentOS handles most workloads — dev servers, CLIs, builds — in-process, and mounts a full sandbox when a job needs a real kernel, native binaries, or a GPU.', docsHref: '/docs/sandbox', span: 'lg:col-span-2' },
 	{ icon: CalendarClock, title: 'Cron jobs', description: 'Schedule recurring agent runs and background jobs inside the VM.', docsHref: '/docs/cron', span: 'lg:col-span-2' },
-	{ icon: Cpu, title: 'Resource limits', description: 'Per-agent CPU, memory, and network limits. One isolate can’t crash or starve the rest.', docsHref: '/docs/security', span: 'lg:col-span-2' },
+	{ icon: Cpu, title: 'Resource limits', description: 'Per-agent CPU, memory, and network limits. One isolate can’t crash or starve the rest.', docsHref: '/docs/resource-limits', span: 'lg:col-span-2' },
 ];
 
 // --- Floating agent logos for the featured "Any agent harness" tile ---
