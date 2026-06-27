@@ -17,7 +17,7 @@
     "@astrojs/sitemap": "^3.2.0",
     "@astrojs/starlight": "^0.36.0",
     "@astrojs/tailwind": "^6.0.0",
-    "@rivet-dev/docs-theme": "github:rivet-dev/docs-theme#v0.2.2",
+    "@rivet-dev/docs-theme": "github:rivet-dev/docs-theme#v0.2.3",
     "astro": "^5.18.2",
     "framer-motion": "^12.0.0",
     "lucide-react": "^0.469.0",
