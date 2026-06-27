@@ -5527,10 +5527,120 @@ interface AgentOsSidecarState {
 	 * are cheap incremental tenants of one process rather than one-process-each.
 	 */
 	nativeProcess?: Promise<SharedSidecarNativeProcess>;
+	/**
+	 * The shared sidecar's child process + stdio, cached for synchronous
+	 * ref/unref. Unref'd when no VM leases are active so a one-shot host process
+	 * can exit after `dispose()`; re-ref'd while leases are live.
+	 */
+	sharedChild?: SidecarEventLoopHandle;
+	/**
+	 * Number of live "holds" on the shared sidecar's event-loop reference. A hold
+	 * is taken for the WHOLE create→use→dispose lifetime of every VM lease (not
+	 * just while it sits in `activeLeases`), so a VM that is still mid-creation
+	 * still counts. The child + stdio are ref'd while this is >0 and unref'd at 0.
+	 * A counter (not a boolean) so concurrent create/dispose cannot clobber each
+	 * other — Node ref/unref is not itself counted.
+	 */
+	eventLoopHolds?: number;
 }
 
 const sidecarStates = new WeakMap<AgentOsSidecar, AgentOsSidecarState>();
 const sharedSidecars = new Map<string, AgentOsSidecar>();
+
+interface RefCountableHandle {
+	ref?(): unknown;
+	unref?(): unknown;
+}
+
+interface SidecarEventLoopHandle extends RefCountableHandle {
+	stdin?: RefCountableHandle | null;
+	stdout?: RefCountableHandle | null;
+	stderr?: RefCountableHandle | null;
+	kill?(signal?: string | number): unknown;
+}
+
+let sidecarProcessExitHookInstalled = false;
+
+/**
+ * Install a one-time, synchronous `process.on("exit")` hook that SIGKILLs any
+ * pooled shared sidecar child. Once a one-shot host process is allowed to exit
+ * (its sidecar handles are unref'd at 0 leases), this reaps the sidecar
+ * immediately instead of waiting for its stdin-EOF grace window — no orphan, no
+ * delay. We deliberately do NOT install SIGINT/SIGTERM handlers: a library
+ * should not hijack the host's signal handling. SIGINT still reaches the sidecar
+ * via the process group, and SIGTERM-driven exit still closes its stdin.
+ */
+function ensureSidecarProcessExitCleanup(): void {
+	if (sidecarProcessExitHookInstalled) return;
+	sidecarProcessExitHookInstalled = true;
+	process.on("exit", () => {
+		for (const sidecar of sharedSidecars.values()) {
+			try {
+				sidecarStates.get(sidecar)?.sharedChild?.kill?.("SIGKILL");
+			} catch {
+				// best-effort reap; the process is exiting regardless
+			}
+		}
+	});
+}
+
+function sidecarChildHandle(client: unknown): SidecarEventLoopHandle | undefined {
+	// SidecarProcess -> StdioSidecarProtocolClient.child (the spawned ChildProcess).
+	const protocolClient = (
+		client as { protocolClient?: { child?: SidecarEventLoopHandle } } | undefined
+	)?.protocolClient;
+	return protocolClient?.child ?? undefined;
+}
+
+/**
+ * Apply the current hold state to the shared sidecar's child + stdio: ref them
+ * while ≥1 hold is live so in-flight VM work keeps the host process alive; unref
+ * them at 0 so a one-shot script exits on its own after `dispose()`. The sidecar
+ * process itself stays running (reusable) and self-exits on stdin EOF when the
+ * host finally goes away. Best-effort: never let ref/unref break VM lifecycle.
+ */
+function applySharedSidecarHold(state: AgentOsSidecarState): void {
+	const child = state.sharedChild;
+	if (!child) return;
+	const hold = (state.eventLoopHolds ?? 0) > 0;
+	for (const handle of [child, child.stdin, child.stdout, child.stderr]) {
+		if (!handle) continue;
+		try {
+			if (hold) handle.ref?.();
+			else handle.unref?.();
+		} catch {
+			// ref/unref is an optimization, not correctness-critical
+		}
+	}
+}
+
+/**
+ * Take a hold for the entire create→use→dispose lifetime of one VM lease. Taken
+ * BEFORE VM creation starts (not when the lease lands in `activeLeases`) so a VM
+ * that is still mid-creation keeps the sidecar ref'd and a concurrent dispose
+ * cannot unref it out from under the in-flight create.
+ */
+function acquireSharedSidecarHold(state: AgentOsSidecarState): void {
+	state.eventLoopHolds = (state.eventLoopHolds ?? 0) + 1;
+	if (state.eventLoopHolds === 1) applySharedSidecarHold(state);
+}
+
+/** Release a hold taken by {@link acquireSharedSidecarHold}; unref at 0. */
+function releaseSharedSidecarHold(state: AgentOsSidecarState): void {
+	const current = state.eventLoopHolds ?? 0;
+	if (current <= 0) {
+		// The `holdReleased` guard makes each lease release exactly once, so this
+		// should be unreachable. Warn rather than silently floor, per the repo's
+		// no-silent-masking rule, so an accounting bug surfaces instead of hiding.
+		state.eventLoopHolds = 0;
+		console.warn(
+			"[agentos] shared sidecar event-loop hold released more than acquired",
+		);
+		return;
+	}
+	state.eventLoopHolds = current - 1;
+	if (state.eventLoopHolds === 0) applySharedSidecarHold(state);
+}
 
 /**
  * Spawn-once accessor for a sidecar handle's shared native process. Concurrent
@@ -5542,6 +5652,7 @@ function ensureSharedSidecarNativeProcess(
 ): Promise<SharedSidecarNativeProcess> {
 	const state = getSidecarState(sidecar);
 	if (!state.nativeProcess) {
+		ensureSidecarProcessExitCleanup();
 		state.nativeProcess = (async () => {
 			const client = SidecarProcess.spawn({
 				cwd: REPO_ROOT,
@@ -5549,8 +5660,39 @@ function ensureSharedSidecarNativeProcess(
 				args: [],
 				frameTimeoutMs: NATIVE_SIDECAR_FRAME_TIMEOUT_MS,
 			});
-			const session = await client.authenticateAndOpenSession();
-			return { client, session };
+			// Track the child immediately — BEFORE the handshake await — so a
+			// failed `authenticateAndOpenSession()` can still reap it (otherwise
+			// the spawned child is untracked, unreapable, and pins the loop).
+			state.sharedChild = sidecarChildHandle(client);
+			if (!state.sharedChild) {
+				// We reached into @secure-exec/core internals to get the child for
+				// idle-unref. If that shape ever changes this returns undefined and
+				// the optimization silently stops working (one-shot scripts would
+				// hang again). Make it loud rather than a silent regression.
+				console.warn(
+					"[agentos] could not resolve the shared sidecar child handle; " +
+						"standalone scripts may not exit cleanly after dispose(). " +
+						"This usually means @secure-exec/core internals changed.",
+				);
+			}
+			// Apply the current hold state to the just-spawned child.
+			applySharedSidecarHold(state);
+			try {
+				const session = await client.authenticateAndOpenSession();
+				return { client, session };
+			} catch (error) {
+				// Spawn/handshake failed: reap the child, drop the cached handle,
+				// and CLEAR the rejected promise so the next create() retries
+				// instead of permanently wedging on a rejected `nativeProcess`.
+				try {
+					state.sharedChild?.kill?.("SIGKILL");
+				} catch {
+					// already gone
+				}
+				state.sharedChild = undefined;
+				state.nativeProcess = undefined;
+				throw error;
+			}
 		})();
 	}
 	return state.nativeProcess;
@@ -5565,6 +5707,14 @@ async function disposeSharedSidecarNativeProcess(
 		return;
 	}
 	state.nativeProcess = undefined;
+	// The cached child is now dead; drop it (symmetric with the assignment in
+	// ensureSharedSidecarNativeProcess). We deliberately do NOT zero
+	// `eventLoopHolds` here: this runs only from `AgentOsSidecar.dispose()`, which
+	// has already set the handle to `disposing` (so no new lease can acquire) and
+	// drained `activeLeases`; the disposed handle's state is then abandoned. Force-
+	// zeroing a shared counter could clobber a hold on a freshly re-acquired
+	// process generation, so it is left to the balanced acquire/release pairs.
+	state.sharedChild = undefined;
 	try {
 		const { client } = await pending;
 		await client.dispose();
@@ -5700,6 +5850,18 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 		},
 	});
 
+	// Hold the shared sidecar's event-loop ref for this lease's WHOLE lifetime —
+	// taken now, before VM creation, so a concurrent dispose cannot unref the
+	// sidecar while this create is still in flight. Released exactly once on
+	// dispose or on a failed create.
+	acquireSharedSidecarHold(state);
+	let holdReleased = false;
+	const releaseHold = () => {
+		if (holdReleased) return;
+		holdReleased = true;
+		releaseSharedSidecarHold(state);
+	};
+
 	let disposed = false;
 	let leaseRecord: AgentOsSidecarLeaseRecord | undefined;
 
@@ -5726,6 +5888,10 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 				state.activeLeases.delete(leaseRecord!);
 				state.description.activeVmCount = state.activeLeases.size;
 				await client.dispose();
+				// Release this lease's hold; the shared sidecar is unref'd only
+				// once the last hold (across all in-flight + active leases) drops,
+				// so a one-shot host process can then exit on its own.
+				releaseHold();
 			},
 		};
 
@@ -5737,6 +5903,7 @@ async function leaseAgentOsSidecarVm<TVmAdmin extends InProcessSidecarVmAdmin>(
 		return lease;
 	} catch (error) {
 		await client.dispose().catch(() => {});
+		releaseHold();
 		throw error;
 	}
 }

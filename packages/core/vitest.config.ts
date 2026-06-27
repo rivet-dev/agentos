@@ -61,7 +61,13 @@ const KNOWN_FAILING_E2E_FILES = [
 	"tests/codex-fullturn.test.ts",
 ];
 
+// Real-API, real-install matrix (agent × package manager). Hits a live LLM API
+// and runs real npm/pnpm/yarn/bun installs, so it is excluded from BOTH the
+// default run and the AGENTOS_E2E_FULL sweep. Enable only with AGENTOS_MATRIX_E2E=1.
+const MATRIX_E2E_FILES = ["tests/agent-pkg-matrix.e2e.test.ts"];
+
 const runFullE2e = process.env.AGENTOS_E2E_FULL === "1";
+const runMatrixE2e = process.env.AGENTOS_MATRIX_E2E === "1";
 
 export default defineConfig({
 	test: {
@@ -76,6 +82,7 @@ export default defineConfig({
 		exclude: [
 			...configDefaults.exclude,
 			...(runFullE2e ? [] : [...SLOW_E2E_FILES, ...KNOWN_FAILING_E2E_FILES]),
+			...(runMatrixE2e ? [] : MATRIX_E2E_FILES),
 		],
 	},
 });

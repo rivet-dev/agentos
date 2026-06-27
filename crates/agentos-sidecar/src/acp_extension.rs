@@ -68,10 +68,10 @@ const OPENCODE_DEFAULT_CONTEXT_PATHS: [&str; 11] = [
     "OPENCODE.md",
     "OPENCODE.local.md",
 ];
-const AGENTOS_SYSTEM_PROMPT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../packages/core/fixtures/AGENTOS_SYSTEM_PROMPT.md"
-));
+// Embedded next to this source so `cargo publish` packages it (an out-of-crate
+// `include_str!` path breaks the isolated package-verify build). The TypeScript
+// side reads the same file from this location for its sanity check.
+const AGENTOS_SYSTEM_PROMPT: &str = include_str!("AGENTOS_SYSTEM_PROMPT.md");
 /// Hard ceiling on the `stdout_buffer` retained on an `AcpSessionRecord` between
 /// requests. The buffer only ever holds the partial trailing line not yet parsed
 /// into a complete JSON-RPC message, so this also bounds the per-session record

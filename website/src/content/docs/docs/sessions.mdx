@@ -52,6 +52,10 @@ The second argument to `createSession` accepts:
 - **`additionalInstructions`**: text appended to the agent's system prompt.
 - **`skipOsInstructions`**: skip the base OS instructions injection. Tool documentation is still included.
 
+## Agent-specific configuration
+
+Most agents need only a provider API key in `env` (see [LLM Credentials](/docs/llm-credentials)), but some require extra setup before a session — for example, OpenCode needs a model + provider config file written into the VM. See the per-agent pages under [Agents](/docs/agents/pi) — e.g. [OpenCode](/docs/agents/opencode) — for the details.
+
 
 ## Send a prompt
 
