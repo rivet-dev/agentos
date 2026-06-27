@@ -347,7 +347,7 @@ interface AcpTerminalEntry {
 interface ShellEntry {
 	handle: ShellHandle;
 	dataHandlers: Set<(data: Uint8Array) => void>;
-	exitPromise: Promise<void>;
+	exitPromise: Promise<number>;
 }
 
 export type RootLowerInput =
@@ -2698,7 +2698,7 @@ export class AgentOs {
 	private _closedShellIds = new BoundedSet<string>(
 		CLOSED_SHELL_ID_RETENTION_LIMIT,
 	);
-	private _pendingShellExitPromises = new Set<Promise<void>>();
+	private _pendingShellExitPromises = new Set<Promise<number>>();
 	private _shellCounter = 0;
 	private _acpTerminals = new Map<string, AcpTerminalEntry>();
 	private _acpTerminalCounter = 0;
@@ -3142,17 +3142,17 @@ export class AgentOs {
 	}
 
 	/** Write data to a process's stdin. */
-	writeProcessStdin(pid: number, data: string | Uint8Array): void {
+	writeProcessStdin(pid: number, data: string | Uint8Array): Promise<void> {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
-		entry.proc.writeStdin(data);
+		return entry.proc.writeStdin(data);
 	}
 
 	/** Close a process's stdin stream. */
-	closeProcessStdin(pid: number): void {
+	closeProcessStdin(pid: number): Promise<void> {
 		const entry = this._processes.get(pid);
 		if (!entry) throw new Error(`Process not found: ${pid}`);
-		entry.proc.closeStdin();
+		return entry.proc.closeStdin();
 	}
 
 	/** Subscribe to stdout data from a process. Returns an unsubscribe function. */
@@ -3487,12 +3487,9 @@ export class AgentOs {
 		const entry: ShellEntry = {
 			handle,
 			dataHandlers,
-			exitPromise: Promise.resolve(),
+			exitPromise: Promise.resolve(0),
 		};
-		const exitPromise = handle.wait().then(
-			() => undefined,
-			() => undefined,
-		);
+		const exitPromise = handle.wait();
 		entry.exitPromise = exitPromise.finally(() => {
 			this._pendingShellExitPromises.delete(entry.exitPromise);
 			if (this._shells.get(shellId) === entry) {
@@ -3510,10 +3507,10 @@ export class AgentOs {
 	}
 
 	/** Write data to a shell's PTY input. */
-	writeShell(shellId: string, data: string | Uint8Array): void {
+	writeShell(shellId: string, data: string | Uint8Array): Promise<void> {
 		const entry = this._shells.get(shellId);
 		if (!entry) throw new Error(`Shell not found: ${shellId}`);
-		entry.handle.write(data);
+		return entry.handle.write(data);
 	}
 
 	/** Subscribe to data output from a shell. Returns an unsubscribe function. */
@@ -3534,6 +3531,13 @@ export class AgentOs {
 		const entry = this._shells.get(shellId);
 		if (!entry) throw new Error(`Shell not found: ${shellId}`);
 		entry.handle.resize(cols, rows);
+	}
+
+	/** Wait for a shell to exit and return its process exit code. */
+	waitShell(shellId: string): Promise<number> {
+		const entry = this._shells.get(shellId);
+		if (!entry) throw new Error(`Shell not found: ${shellId}`);
+		return entry.exitPromise;
 	}
 
 	/** Kill a shell process and remove it from tracking. */

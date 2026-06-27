@@ -202,8 +202,8 @@ export interface ProcessInfo {
 
 export interface ManagedProcess {
 	pid: number;
-	writeStdin(data: Uint8Array | string): void;
-	closeStdin(): void;
+	writeStdin(data: Uint8Array | string): Promise<void>;
+	closeStdin(): Promise<void>;
 	kill(signal?: number): void;
 	wait(): Promise<number>;
 	readonly exitCode: number | null;
@@ -211,7 +211,7 @@ export interface ManagedProcess {
 
 export interface ShellHandle {
 	pid: number;
-	write(data: Uint8Array | string): void;
+	write(data: Uint8Array | string): Promise<void>;
 	onData: ((data: Uint8Array) => void) | null;
 	resize(cols: number, rows: number): void;
 	kill(signal?: number): void;
@@ -2672,10 +2672,10 @@ class NativeKernel implements Kernel {
 		return {
 			pid: proc.pid,
 			writeStdin(data) {
-				proc.writeStdin(data);
+				return proc.writeStdin(data);
 			},
 			closeStdin() {
-				proc.closeStdin();
+				return proc.closeStdin();
 			},
 			kill(signal) {
 				proc.kill(signal);

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
 
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe("flat shell API", () => {
 	let vm: AgentOs;
 
@@ -38,5 +42,24 @@ describe("flat shell API", () => {
 
 		const output = chunks.join("");
 		expect(output).toContain("hello-flat-shell");
+	}, 30_000);
+
+	test("default shell echoes typed characters before newline", async () => {
+		const { shellId } = vm.openShell();
+
+		const chunks: string[] = [];
+		vm.onShellData(shellId, (data) => {
+			chunks.push(new TextDecoder().decode(data));
+		});
+
+		await sleep(100);
+		vm.writeShell(shellId, "abc");
+		await sleep(100);
+
+		vm.closeShell(shellId);
+
+		const output = chunks.join("");
+		expect(output).toContain("sh-0.4$ ");
+		expect(output).toContain("abc");
 	}, 30_000);
 });

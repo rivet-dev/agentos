@@ -267,6 +267,9 @@ impl AgentOs {
             .command
             .clone()
             .unwrap_or_else(|| DEFAULT_SHELL_COMMAND.to_string());
+        options
+            .env
+            .insert(String::from("AGENTOS_EXEC_TTY"), String::from("1"));
         let execute = wire::ExecuteRequest {
             process_id: process_id.clone(),
             command: Some(command),

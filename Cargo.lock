@@ -3036,9 +3036,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-bridge"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca9f44ec9678425b934dd067dab37d7a2ef67ece3ceab5fa53017e01401aad22"
+version = "0.3.0-rc.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3047,9 +3045,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-client"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d09341bcd26de78deb5da5a96e34af75809d58c1a8145185ea5016f7be3cf89e"
+version = "0.3.0-rc.1"
 dependencies = [
  "futures",
  "parking_lot",
@@ -3062,9 +3058,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-execution"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5258fe9d40867e9558d8be678b92d4c64a45d465194279fe686cc122b646a44c"
+version = "0.3.0-rc.1"
 dependencies = [
  "base64 0.22.1",
  "ciborium",
@@ -3080,9 +3074,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-kernel"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39191ccae74b0ea81410492a51f2646e7c3fdc3de591f730d46403c9b00b421a"
+version = "0.3.0-rc.1"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
@@ -3096,9 +3088,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-sidecar"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59df6ffad6ace6b51d08e3ebbe6fa31ae19fd5895e39fdb64cdc072d536a8ab4"
+version = "0.3.0-rc.1"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -3147,9 +3137,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-v8-runtime"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce8167974ccf57dba1ddd308bcf381061c4f2afe58da7a8a00a7d31a2f2efe84"
+version = "0.3.0-rc.1"
 dependencies = [
  "ciborium",
  "crossbeam-channel",
@@ -3163,9 +3151,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-vfs"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1204f74f0b8659e029618808825c26276521609a6cdd877be121a164f8bf6676"
+version = "0.3.0-rc.1"
 dependencies = [
  "async-trait",
  "aws-sdk-s3",
@@ -3177,9 +3163,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-vfs-core"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dbfb44870f07ed7ad842edc95d9c369ade2abcf301a3185d79fd65319a2d83e"
+version = "0.3.0-rc.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3191,9 +3175,7 @@ dependencies = [
 
 [[package]]
 name = "secure-exec-vm-config"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0a7b76b828e2df1d5319b3b8bff98d1fdb0a2c20fba2d2e4280c1ff8f3914f4"
+version = "0.3.0-rc.1"
 dependencies = [
  "serde",
  "serde_json",

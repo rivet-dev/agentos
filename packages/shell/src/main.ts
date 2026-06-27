@@ -1,45 +1,109 @@
 #!/usr/bin/env node
 
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+/**
+ * Goal: `agentos-shell` should feel like the VM equivalent of `docker run`.
+ *
+ * Keep the CLI surface intentionally close to Docker's process flags:
+ * `-i/--interactive` keeps stdin attached, `-t/--tty` connects a terminal,
+ * `-e/--env` and `--env-file` inject environment variables, `-v/--volume`
+ * and `--mount type=bind,...` mount host paths, and `-w/--workdir` chooses
+ * the guest cwd. When TTY mode is requested, the guest command goes through
+ * Agent OS's terminal API instead of a custom prompt or line editor; non-TTY
+ * commands use process spawn with Docker-like stdin attachment rules.
+ */
+
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import codex from "@agentos-software/codex-cli";
-import common from "@agentos-software/common";
+import coreutils from "@agentos-software/coreutils";
+import curl from "@agentos-software/curl";
+import diffutils from "@agentos-software/diffutils";
+import duckdb from "@agentos-software/duckdb";
 import fd from "@agentos-software/fd";
 import file from "@agentos-software/file";
+import findutils from "@agentos-software/findutils";
+import gawk from "@agentos-software/gawk";
+import git from "@agentos-software/git";
+import grep from "@agentos-software/grep";
+import gzip from "@agentos-software/gzip";
+import httpGet from "@agentos-software/http-get";
 import jq from "@agentos-software/jq";
+import make from "@agentos-software/make";
 import ripgrep from "@agentos-software/ripgrep";
+import sed from "@agentos-software/sed";
+import sqlite3 from "@agentos-software/sqlite3";
+import tar from "@agentos-software/tar";
 import tree from "@agentos-software/tree";
 import unzip from "@agentos-software/unzip";
+import wget from "@agentos-software/wget";
 import yq from "@agentos-software/yq";
 import zip from "@agentos-software/zip";
-import type { SoftwareInput } from "@rivet-dev/agentos-core";
 import { AgentOs } from "@rivet-dev/agentos-core";
+import type { MountConfig, SoftwareInput } from "@rivet-dev/agentos-core";
+import { allowAll } from "@rivet-dev/agentos-core/internal/runtime-compat";
+import { Command, Option } from "commander";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const COMMAND_SUBPATH = "registry/native/target/wasm32-wasip1/release/commands";
+const workspaceRoot = resolve(__dirname, "../../..");
+const fallbackCommandDirs = [
+	resolve(
+		workspaceRoot,
+		"registry/native/target/wasm32-wasip1/release/commands",
+	),
+	resolve(
+		workspaceRoot,
+		"../secure-exec/registry/native/target/wasm32-wasip1/release/commands",
+	),
+];
+const INTERACTIVE_SHELL_WASM_FUEL_MS = 24 * 60 * 60 * 1000;
+const BRUSH_SHELL_COMMANDS = new Set(["bash", "sh"]);
+const SHELL_OPTIONS_WITH_VALUES = new Set([
+	"--command",
+	"--debuglog-enable",
+	"--init-file",
+	"--input-backend",
+	"--log-disable",
+	"--rcfile",
+	"-c",
+]);
+
+interface CliOptions {
+	interactive: boolean;
+	tty: boolean;
+	workdir: string;
+	env: string[];
+	envFile: string[];
+	volume: string[];
+	mount: string[];
+	rm: boolean;
+	name?: string;
+	command: string;
+	args: string[];
+}
 
 // Published packages ship package-local wasm/ dirs. Workspace packages use the
-// sibling secure-exec native build output.
-const fallbackCommandDir = [
-	resolve(__dirname, "../../../../secure-exec", COMMAND_SUBPATH),
-].find((dir) => existsSync(dir));
+// native build output when those package-local dirs have not been materialized.
 function withLocalCommandFallback(software: SoftwareInput): SoftwareInput {
 	if (Array.isArray(software)) {
 		return software.map(withLocalCommandFallback) as SoftwareInput;
 	}
 
 	if (
-		fallbackCommandDir !== undefined &&
 		"commandDir" in software &&
 		typeof software.commandDir === "string" &&
 		!existsSync(software.commandDir)
 	) {
-		const dir = fallbackCommandDir;
+		const fallbackCommandDir = fallbackCommandDirs.find((dir) =>
+			existsSync(dir),
+		);
+		if (!fallbackCommandDir) {
+			return software;
+		}
 		return {
 			...software,
 			get commandDir() {
-				return dir;
+				return fallbackCommandDir;
 			},
 		};
 	}
@@ -48,139 +112,479 @@ function withLocalCommandFallback(software: SoftwareInput): SoftwareInput {
 }
 
 const software = [
-	common,
+	coreutils,
+	sed,
+	grep,
+	gawk,
+	findutils,
+	diffutils,
+	tar,
+	gzip,
+	curl,
+	zip,
+	unzip,
 	jq,
 	ripgrep,
 	fd,
 	tree,
 	file,
-	zip,
-	unzip,
 	yq,
 	codex,
+	git,
+	make,
+	duckdb,
+	httpGet,
+	sqlite3,
+	wget,
 ].map(withLocalCommandFallback);
 
-function printUsage(): void {
-	console.error(
-		[
-			"Usage:",
-			"  agentos-shell [--work-dir <path>] [--] [command] [args...]",
-			"",
-			"Options:",
-			"  --work-dir <path>   Set the working directory inside the VM (default: /home/agentos)",
-			"  --help, -h          Show this help",
-			"",
-			"Examples:",
-			"  pnpm shell",
-			"  pnpm shell --work-dir /tmp/demo",
-			"  pnpm shell -- node -e 'console.log(42)'",
-		].join("\n"),
-	);
-}
+function createShellDiagnosticStripper(): (data: Uint8Array) => Uint8Array | null {
+	let suppressUntilNewline = false;
+	return (data: Uint8Array) => {
+		let text = Buffer.from(data).toString("utf8");
+		let output = "";
 
-interface CliOptions {
-	workDir?: string;
-	command: string;
-	args: string[];
-}
-
-function parseArgs(argv: string[]): CliOptions {
-	const options: CliOptions = {
-		command: "bash",
-		args: [],
-	};
-
-	for (let i = 0; i < argv.length; i++) {
-		const arg = argv[i];
-		if (arg === "--") {
-			const trailing = argv.slice(i + 1);
-			if (trailing.length > 0) {
-				options.command = trailing[0];
-				options.args = trailing.slice(1);
-			}
-			break;
-		}
-
-		if (!arg.startsWith("-")) {
-			options.command = arg;
-			options.args = argv.slice(i + 1);
-			break;
-		}
-
-		switch (arg) {
-			case "--work-dir":
-				if (!argv[i + 1]) {
-					throw new Error("--work-dir requires a path");
+		while (text.length > 0) {
+			if (suppressUntilNewline) {
+				const newlineIndex = text.indexOf("\n");
+				if (newlineIndex < 0) {
+					return output.length > 0 ? Buffer.from(output, "utf8") : null;
 				}
-				options.workDir = argv[++i];
+				text = text.slice(newlineIndex + 1);
+				suppressUntilNewline = false;
+				continue;
+			}
+
+			const warningIndex = text.indexOf("WARN could not retrieve pid");
+			if (warningIndex < 0) {
+				output += text;
 				break;
-			case "--help":
-			case "-h":
-				printUsage();
-				process.exit(0);
-				return options;
-			default:
-				throw new Error(`Unknown argument: ${arg}`);
+			}
+
+			const lineStartIndex = text.lastIndexOf("\n", warningIndex);
+			const lineStart = lineStartIndex < 0 ? 0 : lineStartIndex + 1;
+			output += text.slice(0, lineStart);
+
+			const lineEnd = text.indexOf("\n", warningIndex);
+			if (lineEnd < 0) {
+				suppressUntilNewline = true;
+				break;
+			}
+			text = text.slice(lineEnd + 1);
+		}
+
+		return output.length > 0 ? Buffer.from(output, "utf8") : null;
+	};
+}
+
+function collectOption(value: string, previous: string[]): string[] {
+	previous.push(value);
+	return previous;
+}
+
+function parseCli(argv: string[]): CliOptions {
+	const program = new Command()
+		.name("agentos-shell")
+		.description("Run a command or terminal inside an Agent OS VM.")
+		.exitOverride()
+		.passThroughOptions()
+		.allowExcessArguments()
+		.argument("[command]", "guest command to run", "bash")
+		.argument("[args...]", "guest command arguments")
+		.addOption(
+			new Option("-i, --interactive", "keep stdin attached")
+				.default(false),
+		)
+		.addOption(new Option("-t, --tty", "connect a terminal").default(false))
+		.option(
+			"-e, --env <env>",
+			"set environment variable (KEY=VALUE or KEY to copy from host)",
+			collectOption,
+			[],
+		)
+		.option(
+			"--env-file <path>",
+			"read environment variables from a file",
+			collectOption,
+			[],
+		)
+		.option(
+			"-v, --volume <spec>",
+			"bind mount a volume (host:guest[:ro|rw])",
+			collectOption,
+			[],
+		)
+		.option(
+			"--mount <spec>",
+			"bind mount using Docker syntax (type=bind,src=...,target=...,readonly)",
+			collectOption,
+			[],
+		)
+		.option("-w, --workdir <path>", "working directory inside the VM", "/")
+		.option("--name <name>", "container-style name label (accepted for Docker CLI parity)")
+		.option("--rm", "remove VM after exit (always true for this CLI)", false);
+
+	try {
+		program.parse(["node", "agentos-shell", ...argv]);
+	} catch (error) {
+		if (
+			error &&
+			typeof error === "object" &&
+			"code" in error &&
+			error.code === "commander.helpDisplayed"
+		) {
+			process.exit(0);
+		}
+		throw error;
+	}
+
+	const opts = program.opts<{
+		interactive: boolean;
+		tty: boolean;
+		workdir: string;
+		env: string[];
+		envFile: string[];
+		volume: string[];
+		mount: string[];
+		rm: boolean;
+		name?: string;
+	}>();
+	const [command = "bash", ...args] = program.args;
+
+	return {
+		interactive: opts.interactive,
+		tty: opts.tty,
+		workdir: opts.workdir,
+		env: opts.env,
+		envFile: opts.envFile,
+		volume: opts.volume,
+		mount: opts.mount,
+		rm: opts.rm,
+		name: opts.name,
+		command,
+		args,
+	};
+}
+
+function parseEnvLine(line: string): [string, string] | null {
+	const trimmed = line.trim();
+	if (!trimmed || trimmed.startsWith("#")) {
+		return null;
+	}
+	const equalsIndex = trimmed.indexOf("=");
+	if (equalsIndex < 0) {
+		const hostValue = process.env[trimmed];
+		return hostValue === undefined ? null : [trimmed, hostValue];
+	}
+	return [trimmed.slice(0, equalsIndex), trimmed.slice(equalsIndex + 1)];
+}
+
+function buildEnv(options: CliOptions): Record<string, string> {
+	const env: Record<string, string> = {};
+	for (const envFilePath of options.envFile) {
+		const content = readFileSync(resolve(envFilePath), "utf8");
+		for (const line of content.split(/\r?\n/)) {
+			const entry = parseEnvLine(line);
+			if (entry) {
+				env[entry[0]] = entry[1];
+			}
+		}
+	}
+	for (const value of options.env) {
+		const entry = parseEnvLine(value);
+		if (entry) {
+			env[entry[0]] = entry[1];
+		}
+	}
+	return env;
+}
+
+function hostDirMount(
+	hostPath: string,
+	guestPath: string,
+	readOnly: boolean,
+): MountConfig {
+	return {
+		path: guestPath,
+		readOnly,
+		plugin: {
+			id: "host_dir",
+			config: {
+				hostPath: resolve(hostPath),
+				readOnly,
+			},
+		},
+	};
+}
+
+function parseVolumeSpec(spec: string): MountConfig {
+	const [hostPath, guestPath, mode] = spec.split(":");
+	if (!hostPath || !guestPath) {
+		throw new Error(`Invalid volume spec "${spec}"; expected host:guest[:ro|rw]`);
+	}
+	if (mode && mode !== "ro" && mode !== "rw") {
+		throw new Error(`Invalid volume mode "${mode}" in "${spec}"`);
+	}
+	return hostDirMount(hostPath, guestPath, mode === "ro");
+}
+
+function parseMountSpec(spec: string): MountConfig {
+	const fields = new Map<string, string | true>();
+	for (const rawPart of spec.split(",")) {
+		const part = rawPart.trim();
+		if (!part) {
+			continue;
+		}
+		const equalsIndex = part.indexOf("=");
+		if (equalsIndex < 0) {
+			fields.set(part, true);
+		} else {
+			fields.set(part.slice(0, equalsIndex), part.slice(equalsIndex + 1));
 		}
 	}
 
-	return options;
+	if (fields.get("type") !== "bind") {
+		throw new Error(`Only bind mounts are supported: --mount ${spec}`);
+	}
+	const source = fields.get("source") ?? fields.get("src");
+	const target = fields.get("target") ?? fields.get("dst") ?? fields.get("destination");
+	if (typeof source !== "string" || typeof target !== "string") {
+		throw new Error(
+			`Invalid mount spec "${spec}"; expected type=bind,source=...,target=...`,
+		);
+	}
+	const readOnly = fields.has("readonly") || fields.get("ro") === "true";
+	return hostDirMount(source, target, readOnly);
 }
 
-async function runCommand(
+function buildMounts(options: CliOptions): MountConfig[] {
+	return [
+		...options.volume.map(parseVolumeSpec),
+		...options.mount.map(parseMountSpec),
+	];
+}
+
+function isBrushShellCommand(command: string): boolean {
+	return BRUSH_SHELL_COMMANDS.has(basename(command));
+}
+
+function hasBrushInputBackend(args: string[]): boolean {
+	return args.some(
+		(arg) => arg === "--input-backend" || arg.startsWith("--input-backend="),
+	);
+}
+
+function hasInteractiveShellFlag(args: string[]): boolean {
+	return args.some((arg) => arg === "-i" || arg === "--interactive");
+}
+
+function shellArgsRequestCommandOrScript(args: string[]): boolean {
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--") {
+			return i + 1 < args.length;
+		}
+		if (arg.startsWith("--") && arg.includes("=")) {
+			if (arg.startsWith("--command=")) {
+				return true;
+			}
+			continue;
+		}
+		if (SHELL_OPTIONS_WITH_VALUES.has(arg)) {
+			if (arg === "-c" || arg === "--command") {
+				return true;
+			}
+			i++;
+			continue;
+		}
+		if (arg.startsWith("-")) {
+			continue;
+		}
+		return true;
+	}
+	return false;
+}
+
+function buildTerminalCommand(options: CliOptions): {
+	command: string;
+	args: string[];
+} {
+	const args = [...options.args];
+	if (isBrushShellCommand(options.command)) {
+		if (!hasBrushInputBackend(args)) {
+			args.unshift("--input-backend", "reedline");
+		}
+		if (
+			!hasInteractiveShellFlag(args) &&
+			!shellArgsRequestCommandOrScript(args)
+		) {
+			args.push("-i");
+		}
+	}
+	return {
+		command: options.command,
+		args,
+	};
+}
+
+async function runSpawnedCommand(
 	vm: AgentOs,
-	cli: CliOptions,
-	cwd: string,
+	options: CliOptions,
+	env: Record<string, string>,
 ): Promise<number> {
-	const args =
-		(cli.command === "bash" || cli.command === "sh") && cli.args.length === 0
-			? ["-i"]
-			: cli.args;
-	const child = vm.spawn(cli.command, args, {
-		cwd,
+	const child = vm.spawn(options.command, options.args, {
+		cwd: options.workdir,
+		env,
+		streamStdin: options.interactive,
 		onStdout: (data) => {
 			process.stdout.write(data);
 		},
-		onStderr: (data) => {
+		onStderr: (data: Uint8Array) => {
 			process.stderr.write(data);
 		},
 	});
-	const restoreRawMode =
-		process.stdin.isTTY && typeof process.stdin.setRawMode === "function";
+	let stdinQueue = Promise.resolve();
+	const queueStdin = (operation: () => Promise<void>) => {
+		stdinQueue = stdinQueue.then(operation);
+		void stdinQueue.catch((error) => {
+			const message = error instanceof Error ? error.message : String(error);
+			process.stderr.write(`${message}\n`);
+		});
+	};
+	const closeChildStdin = () => {
+		queueStdin(async () => {
+			try {
+				await vm.closeProcessStdin(child.pid);
+			} catch {
+				// The process may have already exited before host stdin reports EOF.
+			}
+		});
+	};
 	const onStdinData = (data: Uint8Array | string) => {
-		vm.writeProcessStdin(child.pid, data);
+		queueStdin(() => vm.writeProcessStdin(child.pid, data));
 	};
 
+	if (!options.interactive) {
+		closeChildStdin();
+		return vm.waitProcess(child.pid);
+	}
+
 	try {
-		if (restoreRawMode) {
-			process.stdin.setRawMode(true);
-		}
 		process.stdin.on("data", onStdinData);
+		process.stdin.once("end", closeChildStdin);
+		process.stdin.once("error", closeChildStdin);
 		process.stdin.resume();
 		return await vm.waitProcess(child.pid);
 	} finally {
 		process.stdin.removeListener("data", onStdinData);
+		process.stdin.removeListener("end", closeChildStdin);
+		process.stdin.removeListener("error", closeChildStdin);
 		process.stdin.pause();
-		if (restoreRawMode) {
+	}
+}
+
+async function runTerminalCommand(
+	vm: AgentOs,
+	options: CliOptions,
+	env: Record<string, string>,
+): Promise<number> {
+	const stripDiagnostics = createShellDiagnosticStripper();
+	const shellOptions = {
+		cwd: options.workdir,
+		env,
+		cols: process.stdout.columns,
+		rows: process.stdout.rows,
+		onStderr: (data: Uint8Array) => {
+			const sanitized = stripDiagnostics(data);
+			if (sanitized) process.stderr.write(sanitized);
+		},
+	};
+	const { shellId } = vm.openShell({
+		...shellOptions,
+		...buildTerminalCommand(options),
+	});
+	let stdinQueue = Promise.resolve();
+	const queueShellInput = (data: Uint8Array | string) => {
+		stdinQueue = stdinQueue.then(() => vm.writeShell(shellId, data));
+		void stdinQueue.catch((error) => {
+			const message = error instanceof Error ? error.message : String(error);
+			process.stderr.write(`${message}\n`);
+		});
+	};
+	const onStdinData = (data: Uint8Array | string) => {
+		queueShellInput(data);
+	};
+	const onStdinEnd = () => {
+		queueShellInput("\u0004");
+	};
+	const onResize = () => {
+		vm.resizeShell(shellId, process.stdout.columns, process.stdout.rows);
+	};
+	const unsubscribeOutput = vm.onShellData(shellId, (data) => {
+		const sanitized = stripDiagnostics(data);
+		if (sanitized) process.stdout.write(sanitized);
+	});
+	const canUseRawMode =
+		options.interactive &&
+		process.stdin.isTTY &&
+		typeof process.stdin.setRawMode === "function";
+	let rawModeEnabled = false;
+
+	try {
+		if (options.interactive) {
+			if (canUseRawMode) {
+				process.stdin.setRawMode(true);
+				rawModeEnabled = true;
+			}
+			process.stdin.on("data", onStdinData);
+			process.stdin.once("end", onStdinEnd);
+			process.stdin.once("error", onStdinEnd);
+			process.stdin.resume();
+		}
+		if (process.stdout.isTTY) {
+			process.stdout.on("resize", onResize);
+			onResize();
+		}
+
+		return await vm.waitShell(shellId);
+	} finally {
+		unsubscribeOutput();
+		process.stdin.removeListener("data", onStdinData);
+		process.stdin.removeListener("end", onStdinEnd);
+		process.stdin.removeListener("error", onStdinEnd);
+		process.stdin.pause();
+		if (rawModeEnabled) {
 			process.stdin.setRawMode(false);
+		}
+		if (process.stdout.isTTY) {
+			process.stdout.removeListener("resize", onResize);
 		}
 	}
 }
 
-const cli = parseArgs(process.argv.slice(2));
+const cli = parseCli(process.argv.slice(2));
+const env = buildEnv(cli);
+const mounts = buildMounts(cli);
 
 const vm = await AgentOs.create({
+	mounts,
+	permissions: allowAll,
 	software,
+	limits: cli.tty
+		? {
+				resources: {
+					maxWasmFuel: INTERACTIVE_SHELL_WASM_FUEL_MS,
+				},
+			}
+		: undefined,
 });
-
-const cwd = cli.workDir ?? "/home/agentos";
-
-console.error("agent-os shell");
-console.error(`cwd: ${cwd}`);
 
 let exitCode = 1;
 try {
-	exitCode = await runCommand(vm, cli, cwd);
+	const useTerminal = cli.tty && process.stdin.isTTY && process.stdout.isTTY;
+	exitCode = useTerminal
+		? await runTerminalCommand(vm, cli, env)
+		: await runSpawnedCommand(vm, cli, env);
 } finally {
 	await vm.dispose();
 }
