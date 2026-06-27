@@ -50,7 +50,7 @@ Resolution is **longest-prefix wins**: if `/mnt/data` is a mount and the guest o
 \- ...
 ```
 
-The base layer is in-memory and per-VM; the runtime transparently persists it to backing storage so it survives sleep/wake. Mounts are pluggable: any guest path can be backed by the host, a remote, or a cloud store. See [Mounting filesystems](/docs/filesystem#mounting-filesystems) for the user-facing config.
+The base layer is in-memory and per-VM; the runtime transparently persists it to backing storage so it survives sleep/wake. Mounts are pluggable: any guest path can be backed by the host, a remote, or a cloud store. See [Mounting filesystems](/docs/filesystem#mounts) for the user-facing config.
 
 ## Routing a guest syscall
 
