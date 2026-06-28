@@ -49,15 +49,16 @@ CPython 3.13 and the standard library, with a few VM-shaped differences.
 ### Supported
 
 - Full VM filesystem (`/tmp`, `/etc`, `/root`, …) — shared with other processes and `readFile()`
-- Reading, writing, creating, deleting, and renaming files anywhere on the VM
+- Reading, writing, creating, deleting, and renaming files anywhere on the VM, plus symlinks and file metadata (`os.symlink` / `os.readlink` / `os.chmod` / `os.chown` / `os.utime`)
 - A real process in the tree: stdin/stdout/stderr, signals, `kill`
 - `subprocess` launching other VM commands (`node`, etc.)
 - Pure-Python packages, plus native packages with a prebuilt wheel — `numpy`, `pandas`, `scipy`, `scikit-learn`, `pydantic`, `cryptography`, `Pillow`, and [many more](https://pyodide.org/en/stable/usage/packages-in-pyodide.html)
 - `requests`, `urllib`, and `pip` over HTTP/DNS, under the VM network policy
+- Outbound raw TCP and UDP sockets (the `socket` module), under the VM network policy
 
 ### Unsupported
 
 - OS threads and `multiprocessing` — the runtime is single-threaded
 - `os.fork` / `os.exec`
 - Some packages with native (C/Rust) extensions — see the [full list of supported packages](https://pyodide.org/en/stable/usage/packages-in-pyodide.html)
-- Raw TCP/UDP sockets and listeners
+- Socket servers / listeners (`bind`/`listen`/`accept`) — outbound connections only
