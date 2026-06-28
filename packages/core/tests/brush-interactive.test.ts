@@ -60,17 +60,16 @@ async function waitFor(term: Terminal, text: string, timeoutMs = 20000): Promise
 	throw new Error(`timeout waiting for ${JSON.stringify(text)}\n${snapshot("timeout", term)}`);
 }
 
-describe("brush interactive PTY repaint", () => {
+// Requires the `sh` wasm command built locally (`make` in
+// ../secure-exec/registry/native). CI consumes published @agentos-software
+// packages and does not build wasm commands, so skip when the artifact is absent
+// rather than failing the suite.
+describe.skipIf(!existsSync(REGISTRY_SH))("brush interactive PTY repaint", () => {
 	let vm: AgentOs | undefined;
 	let term: Terminal | undefined;
 	let shellId: string | undefined;
 
 	beforeAll(() => {
-		if (!existsSync(REGISTRY_SH)) {
-			throw new Error(
-				`registry sh wasm not built at ${REGISTRY_SH}; run 'make' in ../secure-exec/registry/native`,
-			);
-		}
 		fixtureDir = mkdtempSync(join(tmpdir(), "brush-fixture-"));
 		copyFileSync(REGISTRY_SH, join(fixtureDir, FIXTURE_COMMAND));
 		process.env.AGENTOS_SIDECAR_BIN = SIDECAR_BINARY;
