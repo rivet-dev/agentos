@@ -117,11 +117,8 @@ fn spawn_event_capture(
             // only written to SQLite and never reached live subscribers, so
             // `sessionEvent` streaming silently delivered nothing.
             let mut cbor = Vec::new();
-            if ciborium::into_writer(
-                &serde_json::json!([{ "event": event_value }]),
-                &mut cbor,
-            )
-            .is_ok()
+            if ciborium::into_writer(&serde_json::json!([{ "event": event_value }]), &mut cbor)
+                .is_ok()
             {
                 let _ = ctx.broadcast(b"sessionEvent".to_vec(), cbor);
             }
@@ -193,7 +190,11 @@ fn spawn_permission_pump(
     let (mut stream, subscription) = match vm.on_permission_request(live_session_id) {
         Ok(sub) => sub,
         Err(error) => {
-            tracing::warn!(?error, live_session_id, "on_permission_request subscribe failed");
+            tracing::warn!(
+                ?error,
+                live_session_id,
+                "on_permission_request subscribe failed"
+            );
             return;
         }
     };
@@ -545,7 +546,10 @@ mod tests {
 
     #[test]
     fn parse_permission_reply_maps_each_wire_value() {
-        assert_eq!(parse_permission_reply("once").unwrap(), PermissionReply::Once);
+        assert_eq!(
+            parse_permission_reply("once").unwrap(),
+            PermissionReply::Once
+        );
         assert_eq!(
             parse_permission_reply("always").unwrap(),
             PermissionReply::Always

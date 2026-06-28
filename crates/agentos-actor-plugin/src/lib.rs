@@ -29,7 +29,6 @@ mod persistence_e2e;
 
 use std::sync::Arc;
 
-
 /// Process-global plugin state created once per `dlopen` (spec §5.2): the
 /// plugin's own tokio runtime (`enable_all` — the time driver is required by
 /// agentos-client hot paths).

@@ -1536,7 +1536,14 @@ async fn send_json_rpc_request(
                 // Embed ADAPTER_EXITED_ERROR_MARKER directly so is_adapter_exited_error()
                 // stays coupled to this producer: changing the wording can't silently
                 // disable session eviction (the H4 leak fix) without touching the const.
-                let stderr_tail: String = adapter_stderr.chars().rev().take(4000).collect::<String>().chars().rev().collect();
+                let stderr_tail: String = adapter_stderr
+                    .chars()
+                    .rev()
+                    .take(4000)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
                 return Err(SidecarError::InvalidState(format!(
                     "ACP adapter process {process_id} {ADAPTER_EXITED_ERROR_MARKER} {} before response id={response_id}; recent_activity={:?}; adapter_stderr={:?}",
                     exited.exit_code, recent_activity, stderr_tail
