@@ -1362,6 +1362,7 @@ fn deliver_event(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_json_rpc_request(
     ctx: &mut ExtensionContext<'_>,
     process_id: &str,

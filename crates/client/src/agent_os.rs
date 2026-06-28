@@ -276,6 +276,7 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceStateResponse(_)
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
+            | wire::ResponsePayload::PtyResizedResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected open_session response".to_string(),
@@ -340,6 +341,7 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceStateResponse(_)
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
+            | wire::ResponsePayload::PtyResizedResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected create_vm response".to_string(),
@@ -415,6 +417,7 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceStateResponse(_)
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
+            | wire::ResponsePayload::PtyResizedResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected configure_vm response".to_string(),
@@ -490,6 +493,7 @@ impl AgentOs {
                     | wire::ResponsePayload::PersistenceStateResponse(_)
                     | wire::ResponsePayload::PersistenceFlushedResponse(_)
                     | wire::ResponsePayload::VmFetchResponse(_)
+                    | wire::ResponsePayload::PtyResizedResponse(_)
                     | wire::ResponsePayload::ExtEnvelope(_) => {
                         return Err(ClientError::Sidecar(
                             "unexpected register_host_callbacks response".to_string(),
