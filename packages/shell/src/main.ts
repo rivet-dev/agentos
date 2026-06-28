@@ -19,7 +19,6 @@ import codex from "@agentos-software/codex-cli";
 import coreutils from "@agentos-software/coreutils";
 import curl from "@agentos-software/curl";
 import diffutils from "@agentos-software/diffutils";
-import duckdb from "@agentos-software/duckdb";
 import fd from "@agentos-software/fd";
 import file from "@agentos-software/file";
 import findutils from "@agentos-software/findutils";
@@ -29,14 +28,12 @@ import grep from "@agentos-software/grep";
 import gzip from "@agentos-software/gzip";
 import httpGet from "@agentos-software/http-get";
 import jq from "@agentos-software/jq";
-import make from "@agentos-software/make";
 import ripgrep from "@agentos-software/ripgrep";
 import sed from "@agentos-software/sed";
 import sqlite3 from "@agentos-software/sqlite3";
 import tar from "@agentos-software/tar";
 import tree from "@agentos-software/tree";
 import unzip from "@agentos-software/unzip";
-import wget from "@agentos-software/wget";
 import yq from "@agentos-software/yq";
 import zip from "@agentos-software/zip";
 import { AgentOs } from "@rivet-dev/agentos-core";
@@ -131,11 +128,8 @@ const software = [
 	yq,
 	codex,
 	git,
-	make,
-	duckdb,
 	httpGet,
 	sqlite3,
-	wget,
 ].map(withLocalCommandFallback);
 
 function createShellDiagnosticStripper(): (data: Uint8Array) => Uint8Array | null {

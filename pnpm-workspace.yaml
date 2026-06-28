@@ -46,20 +46,22 @@ catalog:
   '@agentos-software/git': 0.3.0-rc.2
   '@agentos-software/grep': 0.3.0-rc.2
   '@agentos-software/gzip': 0.3.0-rc.2
+  '@agentos-software/http-get': 0.3.0-rc.2
   '@agentos-software/jq': 0.3.0-rc.2
   '@agentos-software/opencode': 0.0.0-nathan-binding-workspace.9be0a88
   '@agentos-software/pi': 0.0.0-nathan-binding-workspace.9be0a88
   '@agentos-software/pi-cli': 0.0.0-nathan-binding-workspace.9be0a88
   '@agentos-software/ripgrep': 0.3.0-rc.2
   '@agentos-software/sed': 0.3.0-rc.2
+  '@agentos-software/sqlite3': 0.3.0-rc.2
   '@agentos-software/tar': 0.3.0-rc.2
   '@agentos-software/tree': 0.3.0-rc.2
   '@agentos-software/unzip': 0.3.0-rc.2
   '@agentos-software/yq': 0.3.0-rc.2
   '@agentos-software/zip': 0.3.0-rc.2
-  '@secure-exec/core': 0.0.0-python-cli.48bf1fc
-  '@secure-exec/google-drive': 0.0.0-python-cli.48bf1fc
+  '@secure-exec/core': 0.0.0-fix-ci-boundary-fixture-and-local-dep-guard.4a04f91
+  '@secure-exec/google-drive': 0.0.0-fix-ci-boundary-fixture-and-local-dep-guard.4a04f91
   '@secure-exec/nodejs': 0.2.1
-  '@secure-exec/s3': 0.0.0-python-cli.48bf1fc
-  '@secure-exec/sandbox': 0.0.0-python-cli.48bf1fc
+  '@secure-exec/s3': 0.0.0-fix-ci-boundary-fixture-and-local-dep-guard.4a04f91
+  '@secure-exec/sandbox': 0.0.0-fix-ci-boundary-fixture-and-local-dep-guard.4a04f91
 # <<< secure-exec catalog <<<

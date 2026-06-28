@@ -41,6 +41,8 @@ jobs:
       - run: node scripts/check-registry-software-split.mjs
       - run: node --test scripts/check-secure-exec-package-boundary.test.mjs
       - run: node scripts/check-secure-exec-package-boundary.mjs
+      - run: node --test scripts/check-no-escaping-local-deps.test.mjs
+      - run: node scripts/check-no-escaping-local-deps.mjs
       # Build the Rust crates against the pinned secure-exec. For a preview pin this
       # clones secure-exec at the pinned <sha> and switches cargo to local path deps
       # (crates.io has no preview track, so an unreleased crate API — e.g. a new
