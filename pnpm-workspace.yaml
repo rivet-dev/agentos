@@ -69,9 +69,9 @@ catalog:
   '@agentos-software/unzip': 0.3.0-rc.2
   '@agentos-software/yq': 0.3.0-rc.2
   '@agentos-software/zip': 0.3.0-rc.2
-  '@secure-exec/core': 0.0.0-fix-ci-boundary-fixture-and-local-dep-guard.4a04f91
-  '@secure-exec/google-drive': 0.0.0-fix-ci-boundary-fixture-and-local-dep-guard.4a04f91
+  '@secure-exec/core': 0.0.0-repin-se139.178d1d0
+  '@secure-exec/google-drive': 0.0.0-repin-se139.178d1d0
   '@secure-exec/nodejs': 0.2.1
-  '@secure-exec/s3': 0.0.0-fix-ci-boundary-fixture-and-local-dep-guard.4a04f91
-  '@secure-exec/sandbox': 0.0.0-fix-ci-boundary-fixture-and-local-dep-guard.4a04f91
+  '@secure-exec/s3': 0.0.0-repin-se139.178d1d0
+  '@secure-exec/sandbox': 0.0.0-repin-se139.178d1d0
 # <<< secure-exec catalog <<<
