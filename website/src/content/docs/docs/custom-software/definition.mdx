@@ -1,106 +1,166 @@
 ---
 title: "Software Definition"
-description: "The full software-package definition for custom agents, command packages, and WASM commands in an agentOS VM."
+description: "The software-package definition for custom commands and agents in an agentOS VM: a package is a directory, declared with defineSoftware({ packageDir })."
 ---
 
-**Software** is anything you install into a VM: an agent, a command package, or a set of WASM commands. Every package, including the built-ins, is declared with `defineSoftware()` and passed to the `software` option.
+**Software** is anything you install into a VM — **commands** (executables in a package's `bin/`) or an **agent** (a package that also exposes an ACP session).
 
-<CodeSnippet file="examples/software/definition-server.ts" />
+A package is a **self-contained directory**: package it first, then point `defineSoftware()` at it with `{ packageDir }`. The package's name, optional agent block, and any files/env it provides all live in an `agentos-package.json` at the root of that directory — the sidecar reads it when it mounts the package, so the client only forwards the directory. Pick the quickstart that matches what you're packaging.
 
-`defineSoftware()` is a typed identity helper. It returns the descriptor unchanged but gives you full type-checking. The descriptor's `type` field discriminates between the three kinds of software.
+## Quickstart
 
-## Software types
+### WebAssembly
 
-- **`"agent"`**: a coding agent runnable via `createSession(id)`. Key fields: `agent`, `requires`, `packageDir`.
-- **`"tool"`**: command-package software exposed inside the VM. Key fields: `bins`, `requires`, `packageDir`.
-- **`"wasm-commands"`**: compiled WASM command binaries. Key fields: `commandDir`, `aliases`, `permissions`.
+<Steps>
 
-All descriptors share two base fields:
+1. **You have** C or Rust source for a command. (Most common commands already ship as `@agentos-software/*` packages you can use directly — compile only new or custom ones.)
 
-- **`name`** (required). The software package name.
-- **`type`** (required). One of `"agent"`, `"tool"`, or `"wasm-commands"`.
+2. **Compile it** to WebAssembly — see [Building Binaries](/docs/custom-software/building-wasm). There's **no `pack` step**: WASM binaries are self-contained, so the compile output is already the package — a `bin/` of `\0asm` files plus a `package.json` for the name/version:
 
-### Agent software
+   ```
+   my-cmds/
+   ├── package.json
+   └── bin/
+       ├── tool-a       # \0asm WebAssembly
+       └── tool-b
+   ```
 
-Registers a coding agent. See [Custom Agents](/docs/agents/custom) for the agent-focused guide; this is the full field reference.
+3. **Define it** — point `defineSoftware()` at that directory:
 
-- **`packageDir`** (required). This package's directory on the host. Resolves `requires` from its own `node_modules/`, mounted into the VM at `/root/node_modules/<pkg>`.
-- **`requires`** (required). npm packages that must be available inside the VM (must include the adapter and agent packages).
-- **`agent.id`** (required). The id passed to `createSession(id)`. Reuse a built-in id to override it, or pick a new one.
-- **`agent.acpAdapter`** (required). npm package of the ACP adapter, spawned inside the VM. Must be in `requires`.
-- **`agent.agentPackage`** (required). npm package of the underlying agent SDK/CLI. Must be in `requires`.
-- **`agent.staticEnv`** (optional). Static env vars passed when spawning the adapter (merged **under** user `env`).
-- **`agent.env`** (optional). `(ctx: SoftwareContext) => Record<string, string>`; env computed at boot, e.g. to resolve a bin path.
-- **`agent.launchArgs`** (optional). Extra CLI args prepended when launching the adapter.
-- **`agent.snapshot`** (optional, default `false`). Opt in to evaluating this agent's SDK into the per-sidecar V8 heap snapshot so it is loaded **once per sidecar** and reused across every session, instead of re-evaluated on each `createSession`. This can remove most of the per-session SDK load/eval cost, but only works if the SDK is **snapshot-safe** (see below). SDKs that aren't — or where snapshot creation fails — automatically fall back to the normal per-session dynamic-import path, so this flag never affects correctness, only startup latency.
+   <CodeSnippet file="examples/software/quickstart-wasm/my-cmds.ts" />
 
-#### SDK snapshotting & snapshot-safety
+4. **Use it** — pass it to a VM; the commands are on `$PATH`:
 
-A V8 heap snapshot freezes the JavaScript heap *after* the SDK's modules have been evaluated, then seeds a fresh isolate from that frozen heap for each new session. Capturing the heap has hard requirements: the SDK's **module-initialization** code (everything that runs at `import`/`require` time, before any function is called) must not do any of the following, or the snapshot cannot be built and the agent falls back to per-session loading:
+   <CodeSnippet file="examples/software/quickstart-wasm/index.ts" />
 
-- Create **native handles**: load a `.node` addon, instantiate WebAssembly, or otherwise produce a V8 *External*/`Foreign` object at module top level. (Defer these behind a function/lazy `import()` that runs per-session.)
-- Open a **file descriptor, socket, timer, or worker**, or leave a **pending promise** at the end of evaluation.
-- Read **non-deterministic or per-session state** at top level — `process.env`, cwd, model, `Date.now()`, `Math.random()`, a random UUID — and bake it into a module constant. (Read these *inside* functions instead; per-session config is injected after restore.)
+</Steps>
 
-Snapshot-friendly SDKs keep module-init to pure, deterministic work and load anything native/lazy on first use. Set `agent.snapshot: false` (the default) for any SDK that doesn't meet these rules; the agent still runs, just without the shared-snapshot speedup.
+### Node.js
 
-<CodeSnippet file="examples/software/definition-pi.ts" />
+<Steps>
 
-### Command package software
+1. **You have** a local project whose `package.json` `bin` names its commands:
 
-Exposes one or more CLI commands inside the VM by mapping a command name to the npm package that provides its `bin`. The descriptor value is still `"tool"` because this is the software package type, separate from host [bindings](/docs/bindings).
+   ```
+   my-tool/
+   ├── package.json     # "bin": { "my-tool": "cli.js" }
+   └── cli.js           # #!/usr/bin/env node
+   ```
 
-- **`packageDir`** (required). This package's directory on the host (resolves `requires`).
-- **`requires`** (required). npm packages that must be available inside the VM.
-- **`bins`** (required). `Record<commandName, packageName>`, mapping the command name as invoked in the VM to the npm package providing it.
+2. **Package it** — `pack` installs the full dependency closure into a self-contained package directory (a flat `node_modules` plus a `bin` map of real files):
 
-<CodeSnippet file="examples/software/definition-my-tool.ts" />
+   ```bash
+   npx @rivet-dev/agentos-toolchain pack ./my-tool
+   # writes ./my-tool-package/   (override the location with --out <dir>)
+   #   my-tool-package/
+   #   ├── package.json     # "bin": { "my-tool": "node_modules/my-tool/cli.js" }
+   #   └── node_modules/    # flat, self-contained closure
+   ```
 
-### WASM command software
+   Commands come from the package's `package.json` `bin` map — **real files, no symlinks** — so the result ships cleanly as an npm dependency. (The runtime makes the `/opt/agentos/bin` symlinks itself when it mounts the package.) A native `.node` addon is an error (it can't run in V8); re-run with `--prune-native` to drop unreachable ones.
 
-Registers compiled WebAssembly command binaries (coreutils, ripgrep, jq, …). See [Building Binaries](/docs/custom-software/building-wasm) for how to produce the binaries.
+3. **Define it** — point `defineSoftware()` at the packaged directory:
 
-- **`commandDir`** (required). Absolute host path to the directory of `.wasm` command binaries.
-- **`aliases`** (optional). `Record<aliasName, targetCommandName>`; symlink-style aliases.
-- **`permissions`** (optional). Permission-tier assignments: `full`, `readWrite`, `readOnly` (`string[]` or `"*"`), `isolated`.
+   <CodeSnippet file="examples/software/quickstart-node/my-tool.ts" />
 
-<CodeSnippet file="examples/software/definition-my-commands.ts" />
+4. **Use it** — pass it to a VM; `my-tool` is now on `$PATH`:
+
+   <CodeSnippet file="examples/software/quickstart-node/index.ts" />
+
+</Steps>
+
+### Agent
+
+An agent is a Node.js or WASM package (packaged exactly as above) whose `agentos-package.json` carries an **`agent` block** naming a `bin/` command that speaks ACP over stdio.
+
+<Steps>
+
+1. **You have** an npm package with a `bin/` command that speaks ACP over stdio.
+
+2. **Package it** — same `pack` as Node.js, with `--agent` naming the ACP entrypoint. That writes the `agent` block into the package's `agentos-package.json`:
+
+   ```bash
+   npx @rivet-dev/agentos-toolchain pack @scope/my-agent --out ./packages --agent my-agent-acp
+   # → ./packages/my-agent/current   (its agentos-package.json now has the agent block)
+   ```
+
+3. **Define it** — point `defineSoftware()` at the packaged directory; the agent block is already in its `agentos-package.json`:
+
+   <CodeSnippet file="examples/software/quickstart-agent/my-agent.ts" />
+
+4. **Use it** — `createSession()` launches the agent by spawning its `acpEntrypoint`:
+
+   <CodeSnippet file="examples/software/quickstart-agent/index.ts" />
+
+</Steps>
+
+## Reference
+
+### The descriptor
+
+A software entry is just a pointer to the packaged directory:
+
+```ts
+defineSoftware({
+  packageDir: string,    // absolute host path to the self-contained package directory
+})
+```
+
+`packageDir` must contain **only the package** — a `package.json` with a `bin` map, the runtime
+files (`bin/`, a flat `node_modules`), and an `agentos-package.json`. It is mounted read-only, so
+**don't point it at a source root**: that drags `src/`, dev `node_modules/`, `tsconfig`, and build
+caches into the VM. Point it at a clean build output — `pack` and the WASM assemble step both emit
+one.
 
 <Note>
-Published registry packages (e.g. `@agentos-software/coreutils`) already expose a `commandDir`, so you can pass them to `software` directly without wrapping in `defineSoftware()`. Any object with a `commandDir` property is treated as a WASM command package.
+`pack` already emits a clean directory. For a package you build by hand (e.g. compiled WASM),
+assemble a `dist/package/` holding just `package.json` + `bin/` and point `packageDir` there —
+never at the workspace root:
+
+```ts
+// dist/package/  ←  { package.json (name, version, bin), bin/<cmd>…, agentos-package.json }
+const packageDir = resolve(import.meta.dirname, "dist/package");
+export default defineSoftware({ packageDir });
+```
 </Note>
 
-## `SoftwareContext`
+### `agentos-package.json`
 
-The `agent.env` callback (and other dynamic config) receives a `SoftwareContext` for resolving VM-side paths:
+The package's name, optional agent block, and any files/env it provides live in an
+`agentos-package.json` at the root of `packageDir`. The sidecar reads it when it mounts the
+package, so this metadata never travels on the wire. For command/WASM packages it is **generated**
+for you (name from `package.json`); for agents you author the `agent` block (or
+`agentos-toolchain pack --agent <cmd>` writes it).
 
-```ts
-interface SoftwareContext {
-  // Resolve a package's bin to its VM path, e.g.
-  //   ctx.resolveBin("@mariozechner/pi-coding-agent", "pi")
-  //   -> "/root/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
-  resolveBin(packageName: string, binName?: string): string;
-
-  // Resolve a package root to its VM path, e.g.
-  //   ctx.resolvePackage("pi-acp") -> "/root/node_modules/pi-acp"
-  resolvePackage(packageName: string): string;
+```jsonc
+{
+  "name": "my-agent",            // → /opt/agentos/<name>
+  "agent": {                     // optional — also exposes an agent session
+    "acpEntrypoint": "my-agent-acp",  // bin/ command that speaks ACP over stdio
+    "env":          { },               // static env for the adapter
+    "launchArgs":   [],
+    "snapshot":     false              // SDK snapshot optimization
+  },
+  "provides": {                  // optional — files + env the package contributes
+    "env":   { "EXAMPLE_HOME": "/opt/agentos/my-agent" },
+    "files": [{ "source": "etc/example.conf", "target": "/etc/example.conf" }]
+  }
 }
 ```
 
-```ts
-agent: {
-  id: "pi-cli",
-  acpAdapter: "pi-acp",
-  agentPackage: "@mariozechner/pi-coding-agent",
-  env: (ctx) => ({
-    PI_ACP_PI_COMMAND: ctx.resolveBin("@mariozechner/pi-coding-agent", "pi"),
-  }),
-}
-```
+- **`name`** — the package name; commands and the package mount under `/opt/agentos/<name>`.
+- **`agent.acpEntrypoint`** — the `bin/` command spawned to start a session; speaks ACP over stdio.
+- **`agent.env`** — static env vars for the adapter, merged under the user env. Every command is on `$PATH`, so point at one directly, e.g. `{ "PI_ACP_PI_COMMAND": "/opt/agentos/bin/pi" }` so `pi-acp` can spawn the `pi` CLI.
+- **`agent.launchArgs`** — extra CLI args prepended when launching the adapter.
+- **`agent.snapshot`** (default `false`) — load the SDK [once per sidecar](#sdk-snapshotting--snapshot-safety) via a shared V8 heap snapshot instead of per session. Falls back to per-session loading if the SDK isn't snapshot-safe, so it only affects startup latency.
+- **`provides.env`** — env vars merged into the VM's base environment (existing values win — a package never clobbers the user env).
+- **`provides.files`** — read-only files overlaid into the VM filesystem. Each `{ source, target }` maps a path **inside the package** to an **absolute VM path**; the sidecar mounts them as zero-copy read-only lower layers (a guest write copies-up, never touching the host). A missing `source` is a fatal packaging error.
 
-## Meta-packages
+## Advanced
 
-A software entry may be an **array** of descriptors, letting one package bundle several (e.g. a "build-essential" set). Pass arrays directly to `software`:
+### Meta-packages
+
+A software entry may be an **array** of descriptors, so one package can bundle several. Pass arrays directly to `software`:
 
 ```ts
 const vm = agentOS({
@@ -108,8 +168,19 @@ const vm = agentOS({
 });
 ```
 
+### SDK snapshotting & snapshot-safety
+
+A V8 heap snapshot freezes the heap *after* the SDK's modules are evaluated, then seeds each new session's isolate from it. This works only if the SDK's **module-init** code (everything that runs at `import`/`require` time) doesn't:
+
+- Create **native handles** — load a `.node` addon, instantiate WebAssembly, or produce a V8 `External`/`Foreign` at top level.
+- Open a **file descriptor, socket, timer, or worker**, or leave a **pending promise**.
+- Bake in **non-deterministic or per-session state** — `process.env`, cwd, `Date.now()`, `Math.random()`, a UUID.
+
+Defer all of the above behind functions or lazy `import()` that run per session. Leave `agent.snapshot: false` for any SDK that can't — the agent still runs, just without the speedup.
+
 ## Next steps
 
 - [Custom Agents](/docs/agents/custom): the agent-focused guide.
 - [Building Binaries](/docs/custom-software/building-wasm): compile WASM commands and use the registry.
+- [Packages & command resolution](/docs/architecture/packages-and-command-resolution): how packages mount and resolve.
 - [Request Software](https://github.com/rivet-dev/agentos/issues/new/choose): ask for a package you need.

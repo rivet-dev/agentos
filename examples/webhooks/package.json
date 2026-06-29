@@ -17,7 +17,6 @@
     "@agentos-software/claude-code": "catalog:",
     "@agentos-software/opencode": "catalog:",
     "@agentos-software/pi": "catalog:",
-    "@secure-exec/s3": "catalog:",
     "zod": "^4.1.11"
   },
   "devDependencies": { "@types/node": "^22.10.2", "tsx": "^4.19.0", "typescript": "^5.7.2" }

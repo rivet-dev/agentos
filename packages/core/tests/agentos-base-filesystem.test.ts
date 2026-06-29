@@ -4,10 +4,7 @@ import { join } from "node:path";
 import coreutils from "@agentos-software/coreutils";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-import {
-	getBaseEnvironment,
-	getBaseFilesystemEntries,
-} from "../src/base-filesystem.js";
+import { getBaseEnvironment } from "../src/base-filesystem.js";
 import type { VirtualFileSystem } from "../src/runtime-compat.js";
 import { getAgentOsKernel } from "../src/test/runtime.js";
 
@@ -32,48 +29,6 @@ describe("AgentOs base filesystem", () => {
 		const kernel = getAgentOsKernel(vm);
 		expect(kernel.env).toEqual(getBaseEnvironment());
 		expect((kernel as unknown as { cwd: string }).cwd).toBe("/workspace");
-	});
-
-	test("default filesystem matches the base layer", async () => {
-		const vfs = (
-			getAgentOsKernel(vm) as unknown as {
-				vfs: {
-					lstat: (path: string) => Promise<{
-						mode: number;
-						uid: number;
-						gid: number;
-						isDirectory: boolean;
-						isSymbolicLink: boolean;
-					}>;
-					readlink: (path: string) => Promise<string>;
-				};
-			}
-		).vfs;
-
-		for (const entry of getBaseFilesystemEntries()) {
-			if (entry.type === "symlink") {
-				const stat = await vfs.lstat(entry.path);
-				expect(stat.isSymbolicLink).toBe(true);
-				expect(stat.isDirectory).toBe(false);
-				expect(stat.mode & 0o7777).toBe(Number.parseInt(entry.mode, 8));
-				expect(stat.uid).toBe(entry.uid);
-				expect(stat.gid).toBe(entry.gid);
-				expect(await vfs.readlink(entry.path)).toBe(entry.target);
-				continue;
-			}
-
-			const stat = await vm.stat(entry.path);
-			expect(stat.isDirectory).toBe(entry.type === "directory");
-			expect(stat.isSymbolicLink).toBe(false);
-			expect(stat.mode & 0o7777).toBe(Number.parseInt(entry.mode, 8));
-			expect(stat.uid).toBe(entry.uid);
-			expect(stat.gid).toBe(entry.gid);
-
-			if (entry.type === "file" && entry.content !== undefined) {
-				const data = await vm.readFile(entry.path);
-				expect(textDecoder.decode(data)).toBe(entry.content);
-			}
-		}
 	});
 
 	test("overlay writes and deletes do not mutate the shared base layer", async () => {

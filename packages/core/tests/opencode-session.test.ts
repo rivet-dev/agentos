@@ -7,7 +7,6 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
-import opencode from "@agentos-software/opencode";
 import { describe, expect, test } from "vitest";
 import type { AgentCapabilities, AgentInfo } from "../src/agent-os.js";
 import { AgentOs } from "../src/agent-os.js";
@@ -244,14 +243,14 @@ async function createOpenCodeVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		software: [opencode, ...shellSoftware],
+		// opencode is pre-packed + projected by default.
+		software: [...shellSoftware],
 	});
 }
 
 async function createOpenCodeOnlyVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
-		software: [opencode],
 	});
 }
 

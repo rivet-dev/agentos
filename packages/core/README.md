@@ -157,10 +157,7 @@ await vm.dispose();
 - `MountConfigCustom` — Caller-provided VirtualFileSystem
 - `NativeMountConfig` — Declarative sidecar mount plugin configuration
 - `MountConfigOverlay` — Copy-on-write overlay (lower + upper layers)
-
-**Companion Filesystem Packages**
-- `createGoogleDriveBackend()` — Declarative Google Drive native mount helper from `@secure-exec/google-drive`
-- `createS3Backend()` — Declarative S3-compatible native mount helper from `@secure-exec/s3`
+- `chunkedS3MountPlugin()` — Declarative S3-compatible native mount plugin descriptor (from `@secure-exec/core/descriptors`)
 
 **MCP Servers**
 - `McpServerConfig` — Union of local and remote MCP configs

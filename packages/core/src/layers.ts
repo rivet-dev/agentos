@@ -1,8 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-	type BaseFilesystemSnapshot,
-	getBaseFilesystemSnapshot,
-} from "./base-filesystem.js";
+import type { BaseFilesystemSnapshot } from "./base-filesystem.js";
 import {
 	createFilesystemFromEntries,
 	type FilesystemEntry,
@@ -337,11 +334,4 @@ export function createInMemoryLayerStore(): LayerStore {
 	};
 
 	return store;
-}
-
-export function createDefaultRootLowerInput(): SnapshotImportSource {
-	return {
-		kind: "base-filesystem-artifact",
-		source: getBaseFilesystemSnapshot(),
-	};
 }

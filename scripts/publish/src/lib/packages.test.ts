@@ -47,7 +47,6 @@ test("discovers Agent OS sidecar resolver packages", () => {
 	// consumed from npm via the catalog instead.
 	assert(!names.includes("@secure-exec/core"));
 	assert(!names.includes("@secure-exec/sidecar"));
-	assert(!names.includes("@secure-exec/registry-types"));
 });
 
 test("discovers secure-exec-only staged packages", () => {
@@ -69,8 +68,6 @@ test("discovers secure-exec-only staged packages", () => {
 		);
 		for (const [rel, name] of [
 			["packages/browser", "@secure-exec/browser"],
-			["registry/file-system/s3", "@secure-exec/s3"],
-			["registry/file-system/google-drive", "@secure-exec/google-drive"],
 			["registry/tool/sandbox", "@secure-exec/sandbox"],
 		]) {
 			writeJson(root, join(rel, "package.json"), {
@@ -87,13 +84,10 @@ test("discovers secure-exec-only staged packages", () => {
 			[],
 		);
 		assert(names.includes("@secure-exec/browser"));
-		assert(names.includes("@secure-exec/s3"));
-		assert(names.includes("@secure-exec/google-drive"));
 		assert(names.includes("@secure-exec/sandbox"));
 		// a6 no longer discovers the secure-exec runtime packages for publish.
 		assert(!names.includes("@secure-exec/core"));
 		assert(!names.includes("@secure-exec/sidecar"));
-		assert(!names.includes("@secure-exec/registry-types"));
 		assert.doesNotThrow(() => assertDiscoverySanity(packages));
 	});
 });

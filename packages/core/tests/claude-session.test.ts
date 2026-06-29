@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import type { Fixture, LLMock, ToolCall } from "@copilotkit/llmock";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
-import claude from "@agentos-software/claude-code";
 import {
 	afterAll,
 	afterEach,
@@ -20,7 +19,6 @@ import {
 } from "./helpers/llmock-helper.js";
 import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
 import { AGENT_CONFIGS } from "../src/agents.js";
-import { processSoftware } from "../src/packages.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const XU_COMMAND = "xu hello-agent-os";
@@ -107,8 +105,6 @@ function createToolFixtures(toolCall: ToolCall, finalText: string): Fixture[] {
 }
 
 test("Claude config defaults to /bin/sh and V8-safe shell env flags", () => {
-	const processed = processSoftware([claude]);
-	const processedConfig = processed.agentConfigs.get("claude");
 	const expectedEnv = {
 		CLAUDE_CODE_DISABLE_CWD_PERSIST: "1",
 		CLAUDE_CODE_DISABLE_DEV_NULL_REDIRECT: "1",
@@ -120,7 +116,6 @@ test("Claude config defaults to /bin/sh and V8-safe shell env flags", () => {
 	};
 
 	expect(AGENT_CONFIGS.claude.defaultEnv).toMatchObject(expectedEnv);
-	expect(processedConfig?.defaultEnv).toMatchObject(expectedEnv);
 });
 
 async function writeAsyncSpawnScript(vm: AgentOs): Promise<void> {
@@ -166,7 +161,7 @@ describe("full createSession('claude')", () => {
 		vm = await AgentOs.create({
 			loopbackExemptPorts: [mockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [claude, ...REGISTRY_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE],
 		});
 	});
 
@@ -241,7 +236,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [claude, ...REGISTRY_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {
@@ -310,7 +305,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [claude, ...REGISTRY_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {
@@ -387,7 +382,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [claude, ...REGISTRY_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {

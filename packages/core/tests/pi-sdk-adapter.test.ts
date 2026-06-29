@@ -1,5 +1,4 @@
 import { resolve } from "node:path";
-import pi from "@agentos-software/pi";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
@@ -15,7 +14,7 @@ describe("pi-sdk software projection", () => {
 	beforeEach(async () => {
 		vm = await AgentOs.create({
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [pi],
+			software: [],
 		});
 	});
 

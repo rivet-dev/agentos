@@ -1,5 +1,5 @@
 import { agentOS, setup } from "@rivet-dev/agentos";
-import opencode from "./software/opencode";
+import opencode from "@agentos-software/opencode";
 
 const vm = agentOS({ software: [opencode] });
 

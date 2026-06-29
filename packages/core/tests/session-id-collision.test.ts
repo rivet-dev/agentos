@@ -95,18 +95,13 @@ describe("colliding adapter sessionId isolation (I.4 / J.4)", () => {
 
 		const internal = vm as unknown as {
 			_resolveAgentConfig(t: string): unknown;
-			_resolveAdapterBin(p: string): string;
 			_sendAcpRequest(req: { tag: string }): Promise<unknown>;
 		};
 
 		// The adapter (untrusted) always reports the same sessionId.
 		vi.spyOn(internal, "_resolveAgentConfig").mockReturnValue({
-			acpAdapter: "@mock/adapter",
-			agentPackage: "@mock/agent",
+			adapterEntrypoint: "/root/node_modules/@mock/adapter/bin.js",
 		});
-		vi.spyOn(internal, "_resolveAdapterBin").mockReturnValue(
-			"/root/node_modules/@mock/adapter/bin.js",
-		);
 		vi.spyOn(internal, "_sendAcpRequest").mockImplementation(
 			async (req: { tag: string }) => {
 				if (req.tag === "AcpCreateSessionRequest") {
@@ -168,17 +163,12 @@ describe("colliding adapter sessionId isolation (I.4 / J.4)", () => {
 
 		const internal = vm as unknown as {
 			_resolveAgentConfig(t: string): unknown;
-			_resolveAdapterBin(p: string): string;
 			_sendAcpRequest(req: { tag: string }): Promise<unknown>;
 		};
 
 		vi.spyOn(internal, "_resolveAgentConfig").mockReturnValue({
-			acpAdapter: "@mock/adapter",
-			agentPackage: "@mock/agent",
+			adapterEntrypoint: "/root/node_modules/@mock/adapter/bin.js",
 		});
-		vi.spyOn(internal, "_resolveAdapterBin").mockReturnValue(
-			"/root/node_modules/@mock/adapter/bin.js",
-		);
 		vi.spyOn(internal, "_sendAcpRequest").mockImplementation(
 			async (req: { tag: string }) => {
 				if (req.tag === "AcpCreateSessionRequest") {

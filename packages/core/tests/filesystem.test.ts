@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
-import claude from "@agentos-software/claude-code";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AgentOs } from "../src/index.js";
 import { getAgentOsKernel } from "../src/test/runtime.js";
@@ -133,7 +132,7 @@ describe("filesystem operations", () => {
 			loopbackExemptPorts: [mockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
 			permissions: ALLOW_ALL_VM_PERMISSIONS,
-			software: [claude, ...REGISTRY_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE],
 		});
 
 		let sessionId: string | undefined;

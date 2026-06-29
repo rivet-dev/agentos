@@ -3,7 +3,7 @@ title: "Building Binaries"
 description: "Compile WASM command binaries for agentOS from source in the secure-exec registry."
 ---
 
-WASM command packages (`type: "wasm-commands"`) ship **compiled `.wasm` binaries** that run inside the VM as guest commands. The binaries are build artifacts and are not checked into git, so to add or change a command you build it from source in the **secure-exec registry**.
+WASM command packages ship **compiled `.wasm` binaries** in their `bin/` that run inside the VM as guest commands. The binaries are build artifacts and are not checked into git, so to add or change a command you build it from source in the **secure-exec registry**.
 
 <Note>
 You only need this to author new commands. To use existing ones, install the published package (e.g. `@agentos-software/ripgrep`) and pass it to `software`. See [using the registry](#using-the-registry) below.
@@ -15,7 +15,7 @@ Command source and packages live under `registry/` in [secure-exec](https://gith
 
 - **`registry/native/crates/`**: the Rust source for the WASM commands.
 - **`registry/native/c/`**: the C source for the WASM commands.
-- **`registry/software/<name>/`**: the npm package for each command set (`@agentos-software/<name>`). It contains `dist/` (the TypeScript descriptor) and `wasm/` (the compiled binaries it exposes via `commandDir`).
+- **`registry/software/<name>/`**: the npm package for each command set (`@agentos-software/<name>`). It exports a `{ packageDir }` descriptor pointing at the self-contained package directory (`package.json` + a `bin/` of compiled `.wasm` binaries + a generated `agentos-package.json`).
 
 ## Build
 
@@ -27,7 +27,7 @@ make copy-wasm     # copy binaries into each package's wasm/ directory
 make test
 ```
 
-`copy-wasm` maps each compiled command into `registry/software/<name>/wasm/`, which is the `commandDir` the package exposes. The two toolchains build independently:
+`copy-wasm` maps each compiled command into its `registry/software/<name>/` package, which the assembled `{ packageDir }` package then exposes on `$PATH`. The two toolchains build independently:
 
 ### Rust
 
@@ -48,7 +48,7 @@ make build-wasm-c       # runs: cd native/c && make programs && make install
 ## Add a new command package
 
 1. Add the command source under `registry/native/crates/` (Rust) or `registry/native/c/` (C).
-2. Create `registry/software/<name>/` as an `@agentos-software/<name>` npm package that exports a descriptor with its `commandDir`.
+2. Create `registry/software/<name>/` as an `@agentos-software/<name>` npm package that exports a `{ packageDir }` descriptor pointing at its package directory.
 3. Add a copy rule to the `copy-wasm` target mapping the built binary into `registry/software/<name>/wasm/`.
 4. If it belongs in a meta-package (e.g. `common` or `build-essential`), add it there.
 5. Verify with `make copy-wasm && make build && make test`.
@@ -61,15 +61,15 @@ This is a mechanical, well-scoped task, so you can hand it to a coding agent. A 
 Add a WASM command package for `<command>` to the secure-exec registry:
 - put the Rust source under registry/native/crates/ (or C under registry/native/c/),
 - create registry/software/<command>/ as an @agentos-software/<command> npm
-  package that exports a commandDir descriptor,
+  package that exports a { packageDir } descriptor,
 - add a copy-wasm rule mapping the built binary into its wasm/ directory,
 then run `make copy-wasm && make build && make test` and fix any failures.
 ```
 
 ## Using the registry
 
-Install a published package and pass it to `software`. Registry WASM packages expose a `commandDir`, so you pass them directly (no `defineSoftware()` wrapper):
+Install a published package and pass it to `software`. Registry WASM packages are `{ packageDir }` descriptors — import and pass them directly:
 
 <CodeSnippet file="examples/software/registry-usage.ts" />
 
-Meta-packages bundle a full set, e.g. `@agentos-software/common` (coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip). Run the commands from the client; see [Processes & Shell](/docs/processes). Browse the full catalog on the [Registry](/registry), and see how packages map onto the `wasm-commands` descriptor in [Software Definition](/docs/custom-software/definition#wasm-command-software).
+Meta-packages bundle a full set, e.g. `@agentos-software/common` (coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip). Run the commands from the client; see [Processes & Shell](/docs/processes). Browse the full catalog on the [Registry](/registry), and see the package descriptor in [Software Definition](/docs/custom-software/definition).

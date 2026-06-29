@@ -1,11 +1,9 @@
 import { resolve } from "node:path";
-import claude from "@agentos-software/claude-code";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
-import opencode from "@agentos-software/opencode";
-import pi from "@agentos-software/pi";
 import piCli from "@agentos-software/pi-cli";
 import { describe, expect, test } from "vitest";
 import { AgentOs, type AgentInfo } from "../src/agent-os.js";
+import type { AgentConfig } from "../src/agents.js";
 import type { SoftwareInput } from "../src/packages.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
@@ -83,20 +81,26 @@ type LaunchProbe = AgentInfo & {
 	env?: Partial<Record<(typeof CAPTURED_ENV_KEYS)[number], string | null>>;
 };
 
+// The new model launches `config.adapterEntrypoint` directly, so override the
+// resolved config to point it at the mock adapter while preserving the config's
+// env + launch args.
 function useMockAdapterBin(vm: AgentOs, scriptPath: string): () => void {
-	const withPrivateResolver = vm as AgentOs & {
-		_resolveAdapterBin: (pkg: string) => string;
+	const priv = vm as AgentOs & {
+		_resolveAgentConfig: (id: string) => AgentConfig | undefined;
 	};
-	const originalResolve = withPrivateResolver._resolveAdapterBin;
-	withPrivateResolver._resolveAdapterBin = () => scriptPath;
+	const originalConfig = priv._resolveAgentConfig.bind(priv);
+	priv._resolveAgentConfig = (id: string) => {
+		const config = originalConfig(id);
+		return config ? { ...config, adapterEntrypoint: scriptPath } : config;
+	};
 	return () => {
-		withPrivateResolver._resolveAdapterBin = originalResolve;
+		priv._resolveAgentConfig = originalConfig;
 	};
 }
 
 async function inspectLaunch(
 	agentType: string,
-	software: SoftwareInput[],
+	software: SoftwareInput[] = [],
 ): Promise<LaunchProbe> {
 	const vm = await AgentOs.create({
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
@@ -119,26 +123,28 @@ async function inspectLaunch(
 }
 
 describe("agent launch args and env", () => {
-	test("Pi SDK injects the system prompt flag and resolved pi binary", async () => {
-		const agentInfo = await inspectLaunch("pi", [pi]);
+	test("Pi SDK injects the system prompt flag", async () => {
+		// The pre-packed pi-sdk adapter embeds the SDK, so (unlike the CLI adapter)
+		// it does NOT need a resolved `PI_ACP_PI_COMMAND` pi binary.
+		const agentInfo = await inspectLaunch("pi");
 
 		expect(agentInfo.argv).toContain("--append-system-prompt");
-		expect(agentInfo.env?.PI_ACP_PI_COMMAND).toContain(
-			"@mariozechner/pi-coding-agent",
-		);
 	});
 
 	test("Pi CLI injects the system prompt flag and resolved pi binary", async () => {
+		// pi-cli is still the legacy two-package CLI adapter that spawns the pi CLI
+		// via PI_ACP_PI_COMMAND.
 		const agentInfo = await inspectLaunch("pi-cli", [piCli]);
 
 		expect(agentInfo.argv).toContain("--append-system-prompt");
-		expect(agentInfo.env?.PI_ACP_PI_COMMAND).toContain(
-			"@mariozechner/pi-coding-agent",
-		);
+		// The {name,dir} model projects the pi CLI onto $PATH as /opt/agentos/bin/pi,
+		// so pi-cli points PI_ACP_PI_COMMAND at the projected command name (not a host
+		// node_modules path like the old @mariozechner/pi-coding-agent entry).
+		expect(agentInfo.env?.PI_ACP_PI_COMMAND).toBe("pi");
 	});
 
 	test("Claude injects shell-safe launch env defaults", async () => {
-		const agentInfo = await inspectLaunch("claude", [claude]);
+		const agentInfo = await inspectLaunch("claude");
 
 		expect(agentInfo.argv).toContain("--append-system-prompt");
 		expect(agentInfo.env).toMatchObject({
@@ -153,7 +159,7 @@ describe("agent launch args and env", () => {
 	});
 
 	test("OpenCode passes instruction paths through OPENCODE_CONTEXTPATHS", async () => {
-		const agentInfo = await inspectLaunch("opencode", [opencode]);
+		const agentInfo = await inspectLaunch("opencode");
 		const contextPaths = JSON.parse(
 			agentInfo.env?.OPENCODE_CONTEXTPATHS ?? "[]",
 		) as string[];

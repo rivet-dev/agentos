@@ -1,5 +1,5 @@
 import { agentOS, setup } from "@rivet-dev/agentos";
-import claude from "./software/claude";
+import claude from "@agentos-software/claude-code";
 
 const vm = agentOS({ software: [claude] });
 

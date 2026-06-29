@@ -4,8 +4,6 @@ packages:
   - packages/browser
   - packages/core
   - packages/playground
-  - packages/posix
-  - packages/python
   - packages/secure-exec
   - packages/secure-exec-example-ai-agent-type-check
   - packages/secure-exec-typescript
@@ -42,36 +40,33 @@ onlyBuiltDependencies:
 
 # >>> secure-exec catalog (managed by scripts/secure-exec-dep.mjs) >>>
 catalog:
-  '@agentos-software/claude-code': 0.0.0-nathan-binding-workspace.9be0a88
-  '@agentos-software/codex': 0.3.0-rc.2
-  '@agentos-software/codex-cli': 0.0.0-codex-claude-runtime-fixes.9cbef3a
-  '@agentos-software/common': 0.3.0-rc.2
-  '@agentos-software/coreutils': 0.3.0-rc.2
-  '@agentos-software/curl': 0.3.0-rc.2
-  '@agentos-software/diffutils': 0.3.0-rc.2
-  '@agentos-software/fd': 0.3.0-rc.2
-  '@agentos-software/file': 0.3.0-rc.2
-  '@agentos-software/findutils': 0.3.0-rc.2
-  '@agentos-software/gawk': 0.3.0-rc.2
-  '@agentos-software/git': 0.3.0-rc.2
-  '@agentos-software/grep': 0.3.0-rc.2
-  '@agentos-software/gzip': 0.3.0-rc.2
-  '@agentos-software/http-get': 0.3.0-rc.2
-  '@agentos-software/jq': 0.3.0-rc.2
-  '@agentos-software/opencode': 0.0.0-nathan-binding-workspace.9be0a88
-  '@agentos-software/pi': 0.0.0-nathan-binding-workspace.9be0a88
-  '@agentos-software/pi-cli': 0.0.0-nathan-binding-workspace.9be0a88
-  '@agentos-software/ripgrep': 0.3.0-rc.2
-  '@agentos-software/sed': 0.3.0-rc.2
-  '@agentos-software/sqlite3': 0.3.0-rc.2
-  '@agentos-software/tar': 0.3.0-rc.2
-  '@agentos-software/tree': 0.3.0-rc.2
-  '@agentos-software/unzip': 0.3.0-rc.2
-  '@agentos-software/yq': 0.3.0-rc.2
-  '@agentos-software/zip': 0.3.0-rc.2
-  '@secure-exec/core': 0.0.0-repin-se139.178d1d0
-  '@secure-exec/google-drive': 0.0.0-repin-se139.178d1d0
-  '@secure-exec/nodejs': 0.2.1
-  '@secure-exec/s3': 0.0.0-repin-se139.178d1d0
-  '@secure-exec/sandbox': 0.0.0-repin-se139.178d1d0
+  '@agentos-software/claude-code': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/codex': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/codex-cli': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/common': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/coreutils': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/curl': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/diffutils': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/fd': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/file': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/findutils': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/gawk': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/git': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/grep': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/gzip': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/http-get': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/jq': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/opencode': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/pi': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/pi-cli': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/ripgrep': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/sed': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/sqlite3': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/tar': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/tree': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/unzip': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/yq': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/zip': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@secure-exec/core': 0.0.0-nathan-agentos-package-resolution.0bf7dcb
+  '@secure-exec/sandbox': 0.0.0-nathan-agentos-package-resolution.0bf7dcb
 # <<< secure-exec catalog <<<

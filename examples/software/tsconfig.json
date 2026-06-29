@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "moduleResolution": "bundler", "noEmit": true, "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
     "lib": ["ESNext", "DOM"], "types": ["node"], "baseUrl": ".",
     "paths": {
       "@rivet-dev/agentos": ["../../packages/agentos/src/index.ts"],

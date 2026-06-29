@@ -1,7 +1,7 @@
 import { agentOS, setup } from "@rivet-dev/agentos";
 import { createClient } from "@rivet-dev/agentos/client";
 import { z } from "zod";
-import pi from "./software/pi";
+import pi from "@agentos-software/pi";
 
 // The reviewer is its own isolated agent VM.
 const reviewer = agentOS({ software: [pi] });

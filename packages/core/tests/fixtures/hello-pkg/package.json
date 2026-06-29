@@ -1,0 +1,6 @@
+{
+  "name": "hello-cmd",
+  "version": "1.2.3",
+  "bin": { "hello-cmd": "bin/hello.js" },
+  "scripts": { "check-types": "exit 0" }
+}

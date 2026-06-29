@@ -3,11 +3,10 @@
 // The VM creates an in-memory filesystem by default. Custom mounts
 // (S3, host directories) can be configured at boot:
 //
-//   import { createS3Backend } from "@secure-exec/s3";
 //   const vm = await AgentOs.create({
 //     mounts: [{
 //       path: "/data",
-//       plugin: createS3Backend({ bucket: "my-bucket" }),
+//       plugin: { id: "chunked_s3", config: { bucket: "my-bucket" } },
 //     }],
 //   });
 

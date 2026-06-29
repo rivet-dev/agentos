@@ -63,7 +63,7 @@ The ACP adapter is a thin **bridge** that spawns the real agent as its **own pro
   <text x="170" y="217" text-anchor="middle" font-size="10" fill="#56524a">(CLI / SDK)</text>
 </svg>
 
-For example, an adapter to run **Pi**: the `pi` CLI doesn't speak ACP, so `pi-acp` speaks ACP and spawns the CLI as a separate process. The descriptor names two packages, the adapter and the agent.
+For example, an adapter to run **Pi**: the `pi` CLI doesn't speak ACP, so `pi-acp` speaks ACP and spawns the CLI as a separate process. The packaged agent bundles both — its `agentos-package.json` names `pi-acp` as the `acpEntrypoint` and points it at the `pi` CLI via `agent.env`.
 
 <CodeSnippet file="examples/custom/pi-cli.ts" />
 
@@ -75,8 +75,7 @@ Register the package on the server with `software`. Sessions are then created fr
 import { agentOS, setup, defineSoftware } from "@rivet-dev/agentos";
 
 const myAgent = defineSoftware({
-  type: "agent",
-  /* ...name, packageDir, requires, agent (see above)... */
+  packageDir,   // the packaged agent directory; its agentos-package.json carries the agent block
 });
 
 const vm = agentOS({ software: [myAgent] });
@@ -85,13 +84,13 @@ export const registry = setup({ use: { vm } });
 registry.start();
 ```
 
-See [Sessions](/docs/sessions) for creating and driving sessions. Ship your adapter as a package so its dependencies resolve from `node_modules/` (via `requires`) inside the VM, rather than as a loose file.
+See [Sessions](/docs/sessions) for creating and driving sessions. Package your adapter with `agentos-toolchain pack --agent my-agent-acp` so its dependencies are bundled into the self-contained package directory and the `agent` block (naming the `bin/` ACP entrypoint) is written into the package's `agentos-package.json`, rather than shipping it as a loose file.
 
 All built-in agents are defined exactly this way. Browse them for reference on [GitHub](https://github.com/rivet-dev/agentos/tree/main/registry/agent).
 
 ## Read more
 
-- [Defining software packages](/docs/custom-software/definition): the full descriptor reference, including every `agent` field (`staticEnv`, `env`, `launchArgs`), the `SoftwareContext` helpers, and the tool and WASM-command software types.
+- [Defining software packages](/docs/custom-software/definition): the full descriptor reference, including the `agentos-package.json` schema and every `agent` field (`acpEntrypoint`, `env`, `launchArgs`, `snapshot`).
 - [Building binaries](/docs/custom-software/building-wasm): compile WASM command binaries and use the registry.
 
 ## Debugging

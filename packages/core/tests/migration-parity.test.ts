@@ -5,6 +5,7 @@ import common from "@agentos-software/common";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { AgentOs, hostTool, toolKit } from "../src/index.js";
+import type { AgentConfig } from "../src/agents.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 const MOCK_ADAPTER_PATH = "/tmp/mock-migration-parity-adapter.mjs";
@@ -189,13 +190,18 @@ function getRequestPath(req: IncomingMessage): string {
 }
 
 function useMockAdapterBin(vm: AgentOs, scriptPath: string): () => void {
-	const withPrivateResolver = vm as AgentOs & {
-		_resolveAdapterBin: (pkg: string) => string;
+	const priv = vm as AgentOs & {
+		_resolveAgentConfig: (id: string) => AgentConfig | undefined;
 	};
-	const originalResolve = withPrivateResolver._resolveAdapterBin;
-	withPrivateResolver._resolveAdapterBin = () => scriptPath;
+	const originalConfig = priv._resolveAgentConfig.bind(priv);
+	priv._resolveAgentConfig = (id: string) => {
+		const c = originalConfig(id);
+		return c
+			? { ...c, adapterEntrypoint: scriptPath }
+			: { adapterEntrypoint: scriptPath };
+	};
 	return () => {
-		withPrivateResolver._resolveAdapterBin = originalResolve;
+		priv._resolveAgentConfig = originalConfig;
 	};
 }
 

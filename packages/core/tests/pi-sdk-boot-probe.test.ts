@@ -1,5 +1,4 @@
 import { resolve } from "node:path";
-import pi from "@agentos-software/pi";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
@@ -308,7 +307,7 @@ async function runProbeCase(
 ): Promise<{ step: ProbeStep; failure: ProbeFailure | null }> {
 	const vm = await AgentOs.create({
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		software: [pi],
+		software: [],
 	});
 	let stdout = "";
 	let stderr = "";

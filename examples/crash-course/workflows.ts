@@ -1,7 +1,7 @@
 import { agentOS, setup } from "@rivet-dev/agentos";
 import { actor, queue } from "rivetkit";
 import { workflow } from "rivetkit/workflow";
-import pi from "./software/pi";
+import pi from "@agentos-software/pi";
 
 const vm = agentOS({ software: [pi] });
 

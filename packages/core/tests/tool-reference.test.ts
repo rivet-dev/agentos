@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { z } from "zod";
 import { AgentOs, hostTool, toolKit } from "../src/index.js";
+import type { AgentConfig } from "../src/agents.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 
@@ -82,16 +83,18 @@ describe("tool reference registration", () => {
 	});
 
 	function useMockAdapterBin(scriptPath: string): () => void {
-		const origResolve = (
-			vm as unknown as { _resolveAdapterBin: (pkg: string) => string }
-		)._resolveAdapterBin;
-		(
-			vm as unknown as { _resolveAdapterBin: (pkg: string) => string }
-		)._resolveAdapterBin = (_pkg: string) => scriptPath;
+		const priv = vm as unknown as {
+			_resolveAgentConfig: (id: string) => AgentConfig | undefined;
+		};
+		const originalConfig = priv._resolveAgentConfig.bind(priv);
+		priv._resolveAgentConfig = (id: string) => {
+			const c = originalConfig(id);
+			return c
+				? { ...c, adapterEntrypoint: scriptPath }
+				: { adapterEntrypoint: scriptPath };
+		};
 		return () => {
-			(
-				vm as unknown as { _resolveAdapterBin: (pkg: string) => string }
-			)._resolveAdapterBin = origResolve;
+			priv._resolveAgentConfig = originalConfig;
 		};
 	}
 

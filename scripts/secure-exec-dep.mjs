@@ -55,8 +55,6 @@ const SECURE_EXEC_REL = "../secure-exec"; // sibling checkout, per CLAUDE.md
 // Swappable @secure-exec/* packages -> their path under the secure-exec repo.
 const SWAPPABLE_SCOPED = {
 	"@secure-exec/core": "packages/core",
-	"@secure-exec/s3": "registry/file-system/s3",
-	"@secure-exec/google-drive": "registry/file-system/google-drive",
 	"@secure-exec/sandbox": "registry/tool/sandbox",
 };
 // Agent packages are owned by secure-exec under registry/agent/*; generic VM
@@ -92,8 +90,6 @@ const CRATES = {
 const SEED_VERSIONS = {
 	"@secure-exec/core": "0.2.1",
 	"@secure-exec/nodejs": "0.2.1",
-	"@secure-exec/s3": "0.2.0-rc.3",
-	"@secure-exec/google-drive": "0.2.0-rc.3",
 	"@secure-exec/sandbox": "0.2.0-rc.3",
 };
 const SEED_SOFTWARE_VERSION = "0.0.260331072558";
@@ -234,7 +230,7 @@ function versionFor(name, pinned) {
 // Which managed group a catalog package belongs to. secure-exec (the runtime)
 // and the @agentos-software/* registry packages publish on independent cadences, so
 // versions are set per scope.
-//   "secure-exec"   -> @secure-exec/* swappable scope (core, s3, google-drive, sandbox)
+//   "secure-exec"   -> @secure-exec/* swappable scope (core, sandbox)
 //   "agentos-pkgs" -> @agentos-software/* registry packages
 //   "registry-only" -> published-only deps pinned independently (e.g. @secure-exec/nodejs)
 function catalogScope(name) {
@@ -439,8 +435,8 @@ switch (cmd) {
 			console.error("usage: set-secure-exec-version <version>");
 			process.exit(1);
 		}
-		// Bump only the @secure-exec/* runtime scope (core, s3, google-drive,
-		// sandbox). The cargo crate version is independent — manage it with
+		// Bump only the @secure-exec/* runtime scope (core, sandbox). The cargo
+		// crate version is independent — manage it with
 		// `set-crate-version` when the sibling crates rebase.
 		writeCatalog(arg, "secure-exec");
 		console.log(`@secure-exec/* npm versions pinned to ${arg} (catalog).`);

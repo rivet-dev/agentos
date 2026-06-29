@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
+import type { AgentConfig } from "../src/agents.js";
 
 const OS_INSTRUCTIONS_FIXTURE = resolve(
 	import.meta.dirname,
@@ -98,24 +99,22 @@ describe("createSession OS instructions integration", () => {
 	});
 
 	/**
-	 * Patch _resolveAdapterBin to return a mock script path instead of
-	 * resolving the real adapter from node_modules.
+	 * Patch _resolveAgentConfig to inject a mock adapter entrypoint instead of
+	 * launching the real `/opt/agentos` adapter.
 	 */
 	function useMockAdapterBin(scriptPath: string): () => void {
-		const privateVm = vm as unknown as {
-			_resolveAdapterBin: (pkg: string) => string;
-			_resolvePackageBin: (pkg: string, bin?: string) => string;
+		const priv = vm as unknown as {
+			_resolveAgentConfig: (id: string) => AgentConfig | undefined;
 		};
-		const origResolveAdapter = (
-			vm as unknown as { _resolveAdapterBin: (pkg: string) => string }
-		)._resolveAdapterBin;
-		const origResolvePackageBin = privateVm._resolvePackageBin;
-		privateVm._resolveAdapterBin = (_pkg: string) => scriptPath;
-		privateVm._resolvePackageBin = (_pkg: string, _bin?: string) => "/tmp/mock-bin";
-
+		const originalConfig = priv._resolveAgentConfig.bind(priv);
+		priv._resolveAgentConfig = (id: string) => {
+			const c = originalConfig(id);
+			return c
+				? { ...c, adapterEntrypoint: scriptPath }
+				: { adapterEntrypoint: scriptPath };
+		};
 		return () => {
-			privateVm._resolveAdapterBin = origResolveAdapter;
-			privateVm._resolvePackageBin = origResolvePackageBin;
+			priv._resolveAgentConfig = originalConfig;
 		};
 	}
 

@@ -1,5 +1,4 @@
 import common, { coreutils } from "@agentos-software/common";
-import pi from "@agentos-software/pi";
 import { afterEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
 
@@ -30,7 +29,7 @@ describe("software projection on the sidecar path", () => {
 
 	test("preserves projected package roots without cwd node_modules", async () => {
 		vm = await AgentOs.create({
-			software: [pi],
+			software: [],
 		});
 
 		let stdout = "";
@@ -69,7 +68,7 @@ describe("software projection on the sidecar path", () => {
 
 	test("keeps projected package roots read-only on the sidecar path", async () => {
 		vm = await AgentOs.create({
-			software: [pi],
+			software: [],
 		});
 
 		let stdout = "";

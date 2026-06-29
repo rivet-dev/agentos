@@ -2,7 +2,7 @@ import { agentOS, setup } from "@rivet-dev/agentos";
 import { actor, queue } from "rivetkit";
 import { createClient } from "@rivet-dev/agentos/client";
 import { Hono } from "hono";
-import pi from "./software/pi";
+import pi from "@agentos-software/pi";
 
 // Actor that processes Slack messages via a queue
 const slackWorker = actor({

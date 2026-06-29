@@ -16,6 +16,9 @@ import {
 	createInMemoryLayerStore,
 	createSnapshotExport,
 	defineSoftware,
+	isPackageDescriptor,
+	OPT_AGENTOS_BIN,
+	OPT_AGENTOS_ROOT,
 	hostTool,
 	hostToolSchema,
 	isAcpTimeoutErrorData,
@@ -74,8 +77,11 @@ describe("root public API exports", () => {
 		expect(KernelError).toBeTypeOf("function");
 		expect(createInMemoryLayerStore).toBeTypeOf("function");
 		expect(createSnapshotExport).toBeTypeOf("function");
-		expect(defineSoftware({ name: "x", type: "wasm-commands", commandDir: "/tmp" }))
-			.toMatchObject({ name: "x" });
+		// Package dirs are the public software descriptor.
+		expect(defineSoftware("/opt/pkg")).toBe("/opt/pkg");
+		expect(isPackageDescriptor).toBeTypeOf("function");
+		expect(OPT_AGENTOS_ROOT).toBe("/opt/agentos");
+		expect(OPT_AGENTOS_BIN).toBe("/opt/agentos/bin");
 	});
 
 	test("re-exports current public SDK types from the root entrypoint", () => {

@@ -163,6 +163,7 @@ export const siteConfig = {
 										{ title: "Filesystem", href: "/docs/architecture/filesystem" },
 										{ title: "Networking", href: "/docs/architecture/networking" },
 										{ title: "POSIX Syscalls", href: "/docs/architecture/posix-syscalls" },
+										{ title: "Packages & Command Resolution", href: "/docs/architecture/packages-and-command-resolution" },
 										{ title: "Compiler Toolchain", href: "/docs/architecture/compiler-toolchain" },
 										{ title: "Limits & Observability", href: "/docs/architecture/limits-and-observability" },
 										{ title: "System Prompt", href: "/docs/system-prompt" },

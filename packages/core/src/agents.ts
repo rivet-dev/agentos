@@ -1,10 +1,20 @@
 // Agent configurations for ACP-compatible coding agents
 
 export interface AgentConfig {
-	/** npm package name for the ACP adapter (spawned inside the VM) */
-	acpAdapter: string;
-	/** npm package name for the underlying agent */
-	agentPackage: string;
+	/**
+	 * npm package name for the ACP adapter (spawned inside the VM). Optional: an
+	 * `/opt/agentos` agent package sets `adapterEntrypoint` instead.
+	 */
+	acpAdapter?: string;
+	/** npm package name for the underlying agent (optional for `/opt/agentos` packages). */
+	agentPackage?: string;
+	/**
+	 * Pre-resolved guest command path/name for the ACP adapter (e.g.
+	 * `/opt/agentos/bin/<acpEntrypoint>`). When set, it is used directly as the
+	 * adapter entrypoint and the npm-package resolution (`acpAdapter` →
+	 * `/root/node_modules/...`) is bypassed. Set by `/opt/agentos` agent packages.
+	 */
+	adapterEntrypoint?: string;
 	/**
 	 * Absolute host path to the software package directory that registered this
 	 * agent config. Package-provided agent adapters should resolve their nested

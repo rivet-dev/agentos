@@ -143,6 +143,18 @@ pub(crate) struct SessionEntry {
 // AgentOs
 // ---------------------------------------------------------------------------
 
+/// A self-contained agentOS package to link into a running VM via
+/// [`AgentOs::link_software`]. The descriptor is forwarded to the sidecar, which
+/// owns the `/opt/agentos` projection (builds the staging tree, derives commands,
+/// reads the version from the package's `package.json`).
+#[derive(Debug, Clone)]
+pub struct PackageDescriptor {
+    pub name: String,
+    pub dir: String,
+    /// `bin/` command that speaks ACP over stdio, if this is an agent package.
+    pub acp_entrypoint: Option<String>,
+}
+
 /// The high-level client. Cheaply cloneable via `Arc`.
 #[derive(Clone)]
 pub struct AgentOs {
@@ -156,6 +168,9 @@ pub(crate) struct AgentOsInner {
     pub(crate) session_id: String,
     pub(crate) vm_id: String,
     pub(crate) request_counter: AtomicI64,
+    /// Command names linked at runtime via `link_software` (the sidecar owns the
+    /// `/opt/agentos` staging dir; this just tracks what we've asked it to link).
+    pub(crate) linked_commands: parking_lot::Mutex<std::collections::HashSet<String>>,
 
     // Process registries.
     pub(crate) process_registry_lock: parking_lot::Mutex<()>,
@@ -276,8 +291,9 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceStateResponse(_)
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
-            | wire::ResponsePayload::PtyResizedResponse(_)
-            | wire::ResponsePayload::ExtEnvelope(_) => {
+            | wire::ResponsePayload::ExtEnvelope(_)
+            | wire::ResponsePayload::PackageLinkedResponse(_)
+            | wire::ResponsePayload::PtyResizedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected open_session response".to_string(),
                 ));
@@ -341,8 +357,9 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceStateResponse(_)
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
-            | wire::ResponsePayload::PtyResizedResponse(_)
-            | wire::ResponsePayload::ExtEnvelope(_) => {
+            | wire::ResponsePayload::ExtEnvelope(_)
+            | wire::ResponsePayload::PackageLinkedResponse(_)
+            | wire::ResponsePayload::PtyResizedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected create_vm response".to_string(),
                 ));
@@ -369,7 +386,11 @@ impl AgentOs {
         let mut mounts = serialize_mounts(&config)?;
         mounts.extend(command_mounts);
 
-        // 6. Configure the VM (vm scope).
+        // 6. Configure the VM (vm scope). The sidecar owns the `/opt/agentos` package
+        // projection: it builds the staging dir + registers the read-only host_dir
+        // mount itself from the forwarded `packages`. The Rust client projects no boot
+        // packages, so an empty `packages` list still yields a live `/opt/agentos`
+        // mount that runtime `link_software` can append to.
         match transport
             .request_wire(
                 wire_vm_ownership(&connection_id, &session_id, &vm_id),
@@ -382,6 +403,8 @@ impl AgentOs {
                     projected_modules: Vec::new(),
                     command_permissions: HashMap::new(),
                     loopback_exempt_ports: config.loopback_exempt_ports.clone(),
+                    packages: Vec::new(),
+                    packages_mount_at: String::new(),
                 }),
             )
             .await?
@@ -417,8 +440,9 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceStateResponse(_)
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
-            | wire::ResponsePayload::PtyResizedResponse(_)
-            | wire::ResponsePayload::ExtEnvelope(_) => {
+            | wire::ResponsePayload::ExtEnvelope(_)
+            | wire::ResponsePayload::PackageLinkedResponse(_)
+            | wire::ResponsePayload::PtyResizedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected configure_vm response".to_string(),
                 ));
@@ -493,8 +517,9 @@ impl AgentOs {
                     | wire::ResponsePayload::PersistenceStateResponse(_)
                     | wire::ResponsePayload::PersistenceFlushedResponse(_)
                     | wire::ResponsePayload::VmFetchResponse(_)
-                    | wire::ResponsePayload::PtyResizedResponse(_)
-                    | wire::ResponsePayload::ExtEnvelope(_) => {
+                    | wire::ResponsePayload::ExtEnvelope(_)
+                    | wire::ResponsePayload::PackageLinkedResponse(_)
+                    | wire::ResponsePayload::PtyResizedResponse(_) => {
                         return Err(ClientError::Sidecar(
                             "unexpected register_host_callbacks response".to_string(),
                         ));
@@ -530,6 +555,7 @@ impl AgentOs {
             session_id,
             vm_id,
             request_counter: AtomicI64::new(1),
+            linked_commands: parking_lot::Mutex::new(std::collections::HashSet::new()),
             process_registry_lock: parking_lot::Mutex::new(()),
             processes: SccHashMap::new(),
             process_counter: AtomicU64::new(1),
@@ -585,11 +611,49 @@ impl AgentOs {
     /// 7. release the lease (or tear down the transport)
     ///
     /// Idempotent (guarded by `disposed`).
+    /// Dynamically link a software package into the RUNNING VM (parity with the
+    /// TS client's `linkSoftware`). Forwarded to the sidecar, which owns the
+    /// `/opt/agentos` projection and appends the package to its live staging dir,
+    /// so the package's commands appear under `/opt/agentos/bin` (on `$PATH`)
+    /// immediately with no reboot. Errors if a command name is already linked.
+    pub async fn link_software(&self, descriptor: PackageDescriptor) -> Result<(), ClientError> {
+        let inner = self.inner();
+        let response = self
+            .transport()
+            .request_wire(
+                wire_vm_ownership(&inner.connection_id, &inner.session_id, &inner.vm_id),
+                wire::RequestPayload::LinkPackageRequest(wire::LinkPackageRequest {
+                    package: wire::PackageDescriptor {
+                        name: descriptor.name,
+                        dir: descriptor.dir,
+                        acp_entrypoint: descriptor.acp_entrypoint,
+                    },
+                }),
+            )
+            .await?;
+        match response {
+            wire::ResponsePayload::PackageLinkedResponse(linked) => {
+                let mut guard = inner.linked_commands.lock();
+                for cmd in linked.commands {
+                    guard.insert(cmd);
+                }
+                Ok(())
+            }
+            wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
+            other => Err(ClientError::Sidecar(format!(
+                "unexpected link_package response: {other:?}"
+            ))),
+        }
+    }
+
     pub async fn shutdown(&self) -> Result<(), ClientError> {
         // Idempotent: only the first caller runs teardown.
         if self.inner.disposed.swap(true, Ordering::SeqCst) {
             return Ok(());
         }
+
+        // The `/opt/agentos` projection staging dir is owned + cleaned up by the
+        // sidecar on VM dispose, so the client no longer removes it here.
 
         // 1. Cron dispose (cancel armed timers + tear down the driver).
         self.inner.cron.dispose();

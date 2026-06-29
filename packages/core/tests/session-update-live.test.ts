@@ -1,6 +1,5 @@
 import { resolve } from "node:path";
 import common from "@agentos-software/common";
-import pi from "@agentos-software/pi";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
@@ -119,7 +118,8 @@ describe("REPRO: Pi session/update live delivery", () => {
 		const vm = await AgentOs.create({
 			loopbackExemptPorts: [Number(new URL(url).port)],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: hasRegistryCommands ? [common, pi] : [pi],
+			// pi is pre-packed + projected by default; only add WASM commands here.
+			software: hasRegistryCommands ? [common] : [],
 		});
 
 		let sessionId: string | undefined;

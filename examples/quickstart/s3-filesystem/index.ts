@@ -1,7 +1,9 @@
 // S3 File System: mount an S3 bucket and use it like a local filesystem.
 //
-// Uses createS3Backend from @secure-exec/s3 to mount an S3-compatible
-// bucket at /mnt/data through the native S3 plugin descriptor.
+// S3 mounting is built into @rivet-dev/agentos-core: pass a `chunked_s3`
+// mount descriptor to AgentOs.create({ mounts }) and the VM treats the bucket
+// as a normal directory, so writeFile/readFile/readdir operate transparently
+// against S3.
 //
 // Required env vars:
 //   S3_BUCKET, S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY
@@ -15,7 +17,7 @@
 //   still exercises the real quickstart flow against signed S3 requests.
 
 import { AgentOs } from "@rivet-dev/agentos-core";
-import { createS3Backend } from "@secure-exec/s3";
+import type { MountConfigJsonObject } from "@rivet-dev/agentos-core";
 import type { MockS3ServerHandle } from "../../../packages/core/src/test/mock-s3.js";
 import { startMockS3Server } from "../../../packages/core/src/test/mock-s3.js";
 
@@ -47,20 +49,25 @@ if (endpoint) {
 	}
 }
 
-const s3Fs = createS3Backend({
+// Build the native `chunked_s3` mount descriptor that AgentOs.create() accepts.
+// `metadataPath` is the guest VM path for the chunked backend's sqlite metadata
+// DB; keep one per prefix so concurrent runs don't share a metadata store.
+const s3Config: MountConfigJsonObject = {
 	bucket,
 	prefix,
-	metadataPath: `${prefix}/.metadata`,
 	region,
+	metadataPath: `/tmp/agentos-s3-${prefix.replace(/[^a-z0-9]+/gi, "_") || "root"}.sqlite`,
 	credentials: {
 		accessKeyId,
 		secretAccessKey,
 	},
-	endpoint,
-});
+};
+if (endpoint) {
+	s3Config.endpoint = endpoint;
+}
 
 const vm = await AgentOs.create({
-	mounts: [{ path: "/mnt/data", plugin: s3Fs }],
+	mounts: [{ path: "/mnt/data", plugin: { id: "chunked_s3", config: s3Config } }],
 });
 
 try {

@@ -35,6 +35,12 @@ export {
 } from "./layers.js";
 export { defineSoftware } from "./packages.js";
 export {
+	isPackageDescriptor,
+	OPT_AGENTOS_BIN,
+	OPT_AGENTOS_ROOT,
+	tryReadAgentosPackageManifest,
+} from "./agentos-package.js";
+export {
 	isAcpTimeoutErrorData,
 	isUnknownSessionErrorData,
 } from "./json-rpc.js";

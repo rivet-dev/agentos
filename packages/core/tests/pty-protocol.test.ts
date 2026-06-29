@@ -1,6 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Terminal } from "@xterm/headless";
 import { afterEach, describe, expect, test } from "vitest";
@@ -41,6 +48,26 @@ function ensurePtyProbeBuilt(): void {
 				.join("\n"),
 		);
 	}
+}
+
+// Materialize the built `pty_probe` WASM into a self-contained agentOS package
+// directory: a root `package.json` (`name`/`version`), `agentos-package.json`,
+// plus a `bin/` of WASM command files. The sidecar projects
+// `dir` into `/opt/agentos/bin/pty_probe` (marking it executable) and registers
+// it as a guest command, so `openShell({ command: "pty_probe" })` resolves it.
+function materializePtyProbePackage(): string {
+	const pkgDir = mkdtempSync(join(tmpdir(), "agentos-pty-probe-pkg-"));
+	mkdirSync(join(pkgDir, "bin"));
+	copyFileSync(PTY_PROBE_BINARY, join(pkgDir, "bin", "pty_probe"));
+	writeFileSync(
+		join(pkgDir, "package.json"),
+		JSON.stringify({ name: "pty-probe-fixture", version: "0.0.0" }),
+	);
+	writeFileSync(
+		join(pkgDir, "agentos-package.json"),
+		JSON.stringify({ name: "pty-probe-fixture" }),
+	);
+	return pkgDir;
 }
 
 function ensureWorkspaceSidecarBuilt(): void {
@@ -149,14 +176,7 @@ describe("PTY protocol snapshots", () => {
 
 		term = new Terminal({ cols: 80, rows: 18, allowProposedApi: true });
 		vm = await AgentOs.create({
-			software: [
-				{
-					name: "pty-probe-fixture",
-					type: "wasm-commands",
-					commandDir: PTY_PROBE_COMMAND_DIR,
-					commands: [{ name: "pty_probe" }],
-				},
-			],
+			software: [materializePtyProbePackage()],
 		});
 
 		({ shellId } = vm.openShell({

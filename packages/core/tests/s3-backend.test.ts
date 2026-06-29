@@ -1,4 +1,4 @@
-import { createS3Backend } from "@secure-exec/s3";
+import { chunkedS3MountPlugin } from "@secure-exec/core/descriptors";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
 import type {
@@ -14,7 +14,7 @@ const ALLOW_LOCAL_S3_ENDPOINTS_ENV = "AGENT_OS_ALLOW_LOCAL_S3_ENDPOINTS";
 const skipS3 = process.env.SKIP_S3 === "1";
 
 function createMount(server: MockS3ServerHandle, prefix: string) {
-	return createS3Backend({
+	return chunkedS3MountPlugin({
 		bucket: server.bucket,
 		prefix,
 		// chunked_s3's sqlite metadata backend now requires an explicit path for

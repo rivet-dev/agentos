@@ -6,7 +6,8 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"files": [
-		"dist"
+		"dist",
+		"agents"
 	],
 	"exports": {
 		".": {
@@ -50,6 +51,8 @@
 		"build": "pnpm run build:protocols && tsc",
 		"build:agentos-protocol": "node ./scripts/compile-agentos-protocol.mjs",
 		"build:protocols": "pnpm run build:agentos-protocol",
+		"pack:agents": "node ./scripts/pack-agents.mjs",
+		"prepack": "node ./scripts/pack-agents.mjs",
 		"test": "vitest run --reporter=verbose"
 	},
 	"dependencies": {
@@ -78,8 +81,6 @@
 		"@copilotkit/llmock": "^1.6.0",
 		"@rivet-dev/agentos-sandbox": "link:../agentos-sandbox",
 		"@agentos-software/git": "catalog:",
-		"@secure-exec/google-drive": "catalog:",
-		"@secure-exec/s3": "catalog:",
 		"@mariozechner/pi-coding-agent": "^0.60.0",
 		"@agentos-software/claude-code": "catalog:",
 		"@agentos-software/codex-cli": "catalog:",

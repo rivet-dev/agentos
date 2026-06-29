@@ -55,7 +55,7 @@ pub const CRON_JOB_LIMIT: usize = 1024;
 // Public re-exports
 // ---------------------------------------------------------------------------
 
-pub use agent_os::AgentOs;
+pub use agent_os::{AgentOs, PackageDescriptor};
 pub use error::{ClientError, ClientResult};
 pub use sidecar::{
     AgentOsSidecar, AgentOsSidecarDescription, AgentOsSidecarPlacement, SidecarState,

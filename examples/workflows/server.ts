@@ -5,7 +5,7 @@ import {
   type WorkflowStepContextOf,
   workflow,
 } from "rivetkit/workflow";
-import pi from "./software/pi";
+import pi from "@agentos-software/pi";
 
 // The Agent OS VM that each workflow step drives. It is its own actor, kept
 // separate from the workflow orchestrator so steps can reach it over the client.

@@ -7,9 +7,6 @@ import {
 import { readlink, readdir } from "node:fs/promises";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { resolve } from "node:path";
-import claude from "@agentos-software/claude-code";
-import opencode from "@agentos-software/opencode";
-import pi from "@agentos-software/pi";
 import piCli from "@agentos-software/pi-cli";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
@@ -63,7 +60,7 @@ const PI_AGENTS: SessionCleanupAgent[] = [
 			AgentOs.create({
 				loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 				mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-				software: [pi],
+				software: [], // pi pre-packed (default)
 			}),
 		createSession: async (vm, mockUrl) => {
 			const homeDir = await createVmPiHome(vm, mockUrl);
@@ -118,7 +115,7 @@ const REGISTRY_AGENTS: SessionCleanupAgent[] = [
 			AgentOs.create({
 				loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 				mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-				software: [claude, ...REGISTRY_SOFTWARE],
+				software: [...REGISTRY_SOFTWARE], // claude pre-packed (default)
 			}),
 		createSession: async (vm, mockUrl) =>
 			vm.createSession("claude", {
@@ -139,7 +136,7 @@ const REGISTRY_AGENTS: SessionCleanupAgent[] = [
 			AgentOs.create({
 				loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 				mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-				software: [opencode, ...REGISTRY_SOFTWARE],
+				software: [...REGISTRY_SOFTWARE], // opencode pre-packed (default)
 			}),
 		createSession: async (vm, mockUrl) => {
 			const homeDir = await createVmOpenCodeHome(vm, mockUrl);

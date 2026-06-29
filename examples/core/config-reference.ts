@@ -1,5 +1,5 @@
 import { agentOS, nodeModulesMount, setup } from "@rivet-dev/agentos";
-import pi from "./software/pi";
+import pi from "@agentos-software/pi";
 
 const vm = agentOS({
   // Filesystems to mount at boot. Use nodeModulesMount() to expose a host

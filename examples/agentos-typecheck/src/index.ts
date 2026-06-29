@@ -20,7 +20,7 @@ import {
 	setup,
 } from "@rivet-dev/agentos";
 import { createClient } from "@rivet-dev/agentos/client";
-import pi from "./software/pi";
+import pi from "@agentos-software/pi";
 
 const mount: NodeModulesMountConfig = nodeModulesMount(
 	"/abs/host/node_modules",

@@ -105,6 +105,8 @@ describe("generated sidecar protocol", () => {
 						],
 						commandPermissions: new Map([["cat", WasmPermissionTier.ReadOnly]]),
 						loopbackExemptPorts: new Uint16Array([3000]),
+						packages: [],
+						packagesMountAt: "",
 					},
 				},
 			},
@@ -140,6 +142,8 @@ describe("generated sidecar protocol", () => {
 				],
 				command_permissions: { cat: "read-only" },
 				loopback_exempt_ports: [3000],
+				packages: [],
+				packages_mount_at: "",
 			},
 		};
 
@@ -301,6 +305,8 @@ describe("generated sidecar protocol", () => {
 						projectedModules: [],
 						commandPermissions: new Map(),
 						loopbackExemptPorts: new Uint16Array(),
+						packages: [],
+						packagesMountAt: "",
 					},
 				},
 			},

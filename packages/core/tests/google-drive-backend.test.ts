@@ -1,6 +1,27 @@
-import { createGoogleDriveBackend } from "@secure-exec/google-drive";
+import type { NativeMountPluginDescriptor } from "@secure-exec/core/descriptors";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentOs } from "../src/index.js";
+
+interface GoogleDriveMountConfig {
+	credentials: { clientEmail: string; privateKey: string };
+	folderId: string;
+	keyPrefix?: string;
+	chunkSize?: number;
+	inlineThreshold?: number;
+	[key: string]: unknown;
+}
+
+/**
+ * Declarative Google Drive native mount descriptor. Routes a first-party Google
+ * Drive-backed filesystem through the sidecar's native `google_drive` plugin.
+ * Google Drive mounts are part of core agentOS now, so the descriptor is built
+ * inline here rather than via a separate file-system registry package.
+ */
+function googleDriveMountPlugin(
+	config: GoogleDriveMountConfig,
+): NativeMountPluginDescriptor {
+	return { id: "google_drive", config: config as never };
+}
 
 const clientEmail = process.env.GOOGLE_DRIVE_CLIENT_EMAIL;
 const privateKey = process.env.GOOGLE_DRIVE_PRIVATE_KEY;
@@ -43,7 +64,7 @@ describe("Google Drive filesystem backend", () => {
 				mounts: [
 					{
 						path: "/data",
-						plugin: createGoogleDriveBackend({
+						plugin: googleDriveMountPlugin({
 							credentials: {
 								clientEmail: clientEmail!,
 								privateKey: privateKey!,

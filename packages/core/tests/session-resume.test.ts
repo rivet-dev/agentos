@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
+import type { AgentConfig } from "../src/agents.js";
 import type { SoftwareInput } from "../src/packages.js";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 
@@ -169,13 +170,18 @@ process.stdin.on("data", (chunk) => {
 `;
 
 function useMockAdapterBin(vm: AgentOs, scriptPath: string): () => void {
-	const withPrivateResolver = vm as AgentOs & {
-		_resolveAdapterBin: (pkg: string) => string;
+	const priv = vm as AgentOs & {
+		_resolveAgentConfig: (id: string) => AgentConfig | undefined;
 	};
-	const originalResolve = withPrivateResolver._resolveAdapterBin;
-	withPrivateResolver._resolveAdapterBin = () => scriptPath;
+	const originalConfig = priv._resolveAgentConfig.bind(priv);
+	priv._resolveAgentConfig = (id: string) => {
+		const c = originalConfig(id);
+		return c
+			? { ...c, adapterEntrypoint: scriptPath }
+			: { adapterEntrypoint: scriptPath };
+	};
 	return () => {
-		withPrivateResolver._resolveAdapterBin = originalResolve;
+		priv._resolveAgentConfig = originalConfig;
 	};
 }
 

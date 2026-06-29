@@ -83,17 +83,13 @@ export type {
 	SnapshotLayerHandle,
 	WritableLayerHandle,
 } from "./layers.js";
+export type { SoftwareInput, SoftwareRoot } from "./packages.js";
 export type {
-	AgentSoftwareDescriptor,
-	AnySoftwareDescriptor,
-	SoftwareContext,
-	SoftwareDescriptor,
-	SoftwareInput,
-	SoftwareRoot,
-	ToolSoftwareDescriptor,
-	WasmCommandDirDescriptor,
-	WasmCommandSoftwareDescriptor,
-} from "./packages.js";
+	AgentBlock,
+	PackageDescriptor,
+	PackageRef,
+	SoftwarePackageRef,
+} from "./agentos-package.js";
 export type {
 	ChildProcessPermissions,
 	ConnectTerminalOptions,

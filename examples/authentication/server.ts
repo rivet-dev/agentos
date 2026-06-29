@@ -1,6 +1,5 @@
 import { agentOS, setup } from "@rivet-dev/agentos";
-// In a real app: import pi from "@agentos-software/pi";
-import pi from "./software/pi";
+import pi from "@agentos-software/pi";
 
 // The credential shape clients pass when they connect. This documents the
 // connection params; the client's params are typed as unknown, so the real

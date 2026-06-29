@@ -242,15 +242,15 @@ test("rejects Agent OS package descriptions and readmes", () => {
 
 test("audits secure-exec packages outside packages directory", () => {
 	withFixture((root) => {
-		writePackageAt(root, join(root, "registry/file-system/s3"), {
-			name: "@secure-exec/s3",
+		writePackageAt(root, join(root, "registry/tool/sandbox"), {
+			name: "@secure-exec/sandbox",
 			dependencies: {
 				"@rivet-dev/agentos-core": "workspace:*",
 			},
 		});
 
 		assert.deepEqual(checkSecureExecPackageBoundary({ root }), [
-			"@secure-exec/s3 must not depend on Agent OS package @rivet-dev/agentos-core (dependencies)",
+			"@secure-exec/sandbox must not depend on Agent OS package @rivet-dev/agentos-core (dependencies)",
 		]);
 	});
 });

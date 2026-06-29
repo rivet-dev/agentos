@@ -16,7 +16,6 @@
     "@agentos-software/claude-code": "catalog:",
     "@agentos-software/opencode": "catalog:",
     "@agentos-software/pi": "catalog:",
-    "@secure-exec/s3": "catalog:",
     "zod": "^4.1.11",
     "@rivet-dev/agentos": "workspace:*",
     "rivetkit": "0.0.0-feat-dylib-actor-plugin.c44621f",

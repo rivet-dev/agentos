@@ -1,5 +1,5 @@
 import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "./software/pi";
+import pi from "@agentos-software/pi";
 
 // Auto-approve all permissions server-side
 const vm = agentOS({

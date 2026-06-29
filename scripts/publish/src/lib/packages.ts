@@ -80,8 +80,6 @@ const PLUGIN_BINARY_PACKAGE_DIRS = ["packages/agentos-plugin/npm"] as const;
 
 export const SECURE_EXEC_WORKSPACE_PACKAGES = new Set([
 	"@secure-exec/browser",
-	"@secure-exec/google-drive",
-	"@secure-exec/s3",
 	"@secure-exec/sandbox",
 ]);
 
@@ -233,11 +231,7 @@ export function assertDiscoverySanity(packages: Package[]): void {
 		);
 	}
 	if (hasSecureExecPackages) {
-		required.push(
-			"@secure-exec/google-drive",
-			"@secure-exec/s3",
-			"@secure-exec/sandbox",
-		);
+		required.push("@secure-exec/sandbox");
 	}
 	if (hasSecureExecPackages && !hasAgentOsPackages) {
 		required.push("@secure-exec/browser");

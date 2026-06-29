@@ -10,8 +10,13 @@
  * config envelope across the bridge — it owns no agent-os runtime logic.
  */
 
-import { sep } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import common from "@agentos-software/common";
+import {
+	OPT_AGENTOS_BIN,
+	OPT_AGENTOS_ROOT,
+} from "@rivet-dev/agentos-core";
 import { getSidecarPath } from "@rivet-dev/agentos-sidecar";
 import {
 	actor,
@@ -37,23 +42,12 @@ import type { AgentOsActorState, AgentOsActorVars } from "./types.js";
  * uses `deny_unknown_fields`, so the envelope must stay in lock-step with
  * `crates/agentos-actor-plugin/src/config.rs::AgentOsConfigJson`.
  *
- * Software threading: each software descriptor is flattened (meta packages
- * such as `common` are arrays of descriptors) and mapped to the Rust
- * `SoftwareInput { package, kind }`. The agentos-client resolves an
- * ABSOLUTE `package` directly (its `resolve_software` lets an absolute path
- * bypass the `node_modules` prefix), so the descriptor's already-resolved
- * `commandDir` (wasm commands) / `packageDir` (agents/tools) is forwarded as
- * `package`.
+ * Software threading: each software ref is flattened (meta packages such as
+ * `common` are arrays of refs), normalized to a package dir, and forwarded as
+ * `{ dir }` so the sidecar owns the `/opt/agentos` projection. Agent configs
+ * are derived from each package's `agentos-package.json`, mirroring
+ * `packages/core/src/agent-os.ts`.
  */
-interface SoftwareDescriptorLike {
-	commandDir?: string;
-	packageDir?: string;
-	requires?: string[];
-	agent?: unknown;
-	hostTool?: unknown;
-	toolkit?: unknown;
-}
-
 interface NativeMountLike {
 	path: string;
 	plugin: {
@@ -61,6 +55,30 @@ interface NativeMountLike {
 		config?: unknown;
 	};
 	readOnly?: boolean;
+}
+
+interface PackageAgentManifest {
+	acpEntrypoint: string;
+	env?: Record<string, string>;
+	launchArgs?: string[];
+	snapshot?: boolean;
+}
+
+interface PackageManifest {
+	name: string;
+	agent?: PackageAgentManifest;
+}
+
+interface NormalizedPackageRef {
+	dir: string;
+	legacyManifest?: PackageManifest;
+}
+
+interface SerializedAgentConfig {
+	name: string;
+	adapterEntrypoint: string;
+	launchArgs?: string[];
+	defaultEnv?: Record<string, string>;
 }
 
 /**
@@ -100,94 +118,170 @@ export function nodeModulesMount(
 	};
 }
 
-/**
- * Derive the `node_modules` root that contains an installed package directory.
- * For an agent descriptor whose `packageDir` is `<root>/node_modules/@scope/pkg`,
- * this returns `<root>/node_modules` — the hoist root that also holds the agent's
- * `requires` (the ACP adapter + agent SDK) and their transitive deps under a
- * flat (npm) install. Returns `undefined` when `packageDir` is not inside a
- * `node_modules` tree (e.g. a linked monorepo checkout), where the caller must
- * supply an explicit `nodeModulesMount(...)`.
- */
-function nodeModulesRootOf(packageDir: string): string | undefined {
-	const parts = packageDir.split(sep);
-	const idx = parts.lastIndexOf("node_modules");
-	if (idx === -1) return undefined;
-	return parts.slice(0, idx + 1).join(sep);
+function toRecord(value: unknown): Record<string, unknown> {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: {};
 }
 
-/**
- * Agents run their ACP adapter + SDK inside the VM from `/root/node_modules`.
- * Rather than make the caller hand-write `nodeModulesMount(...)`, auto-derive a
- * read-only `host_dir` mount of the `node_modules` root that holds the agent
- * packages (`requires`) from each agent descriptor's installed `packageDir`.
- *
- * An explicit `/root/node_modules` mount in `options.mounts` always wins. If
- * agents resolve to more than one distinct `node_modules` root the derivation is
- * ambiguous and the caller must mount explicitly.
- */
-function withAutoAgentNodeModulesMount(
-	mounts: NativeMountLike[] | undefined,
-	descriptors: SoftwareDescriptorLike[],
-): NativeMountLike[] | undefined {
-	if (mounts?.some((mount) => mount.path === "/root/node_modules")) {
-		return mounts;
+function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
+	if (typeof value === "string") {
+		return { dir: value };
 	}
+	const record = toRecord(value);
+	if (typeof record.packageDir === "string") {
+		return {
+			dir: record.packageDir,
+			legacyManifest: legacyPackageManifest(record),
+		};
+	}
+	if (typeof record.dir === "string") {
+		return {
+			dir: record.dir,
+			legacyManifest: legacyPackageManifest(record),
+		};
+	}
+	return undefined;
+}
 
-	const roots = new Set<string>();
-	for (const d of descriptors) {
-		if (!d.agent || typeof d.packageDir !== "string") continue;
-		const root = nodeModulesRootOf(d.packageDir);
-		if (root) {
-			roots.add(root);
-			continue;
+function legacyPackageManifest(
+	record: Record<string, unknown>,
+): PackageManifest | undefined {
+	if (typeof record.name !== "string") {
+		return undefined;
+	}
+	const manifest: PackageManifest = { name: record.name };
+	const agent = toRecord(record.agent);
+	if (typeof agent.acpEntrypoint === "string") {
+		manifest.agent = {
+			acpEntrypoint: agent.acpEntrypoint,
+			...(isStringRecord(agent.env) ? { env: agent.env } : {}),
+			...(Array.isArray(agent.launchArgs) &&
+			agent.launchArgs.every((arg) => typeof arg === "string")
+				? { launchArgs: agent.launchArgs }
+				: {}),
+			...(typeof agent.snapshot === "boolean" ? { snapshot: agent.snapshot } : {}),
+		};
+	}
+	return manifest;
+}
+
+function readPackageManifestForClient(
+	ref: NormalizedPackageRef,
+): PackageManifest | undefined {
+	return tryReadAgentosPackageManifest(ref.dir) ?? ref.legacyManifest;
+}
+
+function tryReadAgentosPackageManifest(
+	dir: string,
+): PackageManifest | undefined {
+	try {
+		return readAgentosPackageManifest(dir);
+	} catch (error) {
+		if (error instanceof Error && errorCode(error) === "ENOENT") {
+			return undefined;
 		}
-		const requires = d.requires?.length
-			? ` Required packages: ${d.requires.join(", ")}.`
-			: "";
-		throw new Error(
-			"agentOs() could not auto-mount agent node_modules: agent " +
-				`packageDir ${d.packageDir} is not inside a node_modules install. ` +
-				"Run from an npm-installed package tree, or pass an explicit " +
-				"nodeModulesMount(<absolute node_modules path>) in options.mounts." +
-				requires,
-		);
+		throw error;
 	}
-
-	if (roots.size === 0) return mounts;
-	if (roots.size > 1) {
-		throw new Error(
-			"agentOs() could not auto-mount agent node_modules: agents resolved to " +
-				`multiple node_modules roots (${[...roots].join(", ")}). Pass an ` +
-				"explicit nodeModulesMount(...) in options.mounts.",
-		);
-	}
-
-	const [hostNodeModulesDir] = [...roots];
-	return [...(mounts ?? []), nodeModulesMount(hostNodeModulesDir)];
 }
 
-/**
- * Stable identity for a software descriptor, used to de-duplicate the
- * auto-injected default bundle against software the caller passed explicitly.
- * Resolved `commandDir`/`packageDir` paths are the most reliable key; `name`
- * is the fallback for descriptors without a directory.
- */
-function softwareIdentity(d: SoftwareDescriptorLike): string {
-	if (typeof d.commandDir === "string") return `dir:${d.commandDir}`;
-	if (typeof d.packageDir === "string") return `dir:${d.packageDir}`;
-	const name = (d as { name?: unknown }).name;
-	if (typeof name === "string") return `name:${name}`;
-	return JSON.stringify(d);
+function readAgentosPackageManifest(dir: string): PackageManifest {
+	const manifestPath = join(dir, "agentos-package.json");
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
+	} catch (error) {
+		const wrapped = new Error(
+			`Failed to read agentOS package manifest at ${manifestPath}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		const code = errorCode(error);
+		if (code !== undefined) {
+			Object.assign(wrapped, { code });
+		}
+		throw wrapped;
+	}
+	return validateAgentosPackageManifest(parsed, manifestPath);
 }
 
-function flattenSoftware(input: unknown, out: SoftwareDescriptorLike[]): void {
-	if (input == null) return;
-	if (Array.isArray(input)) {
-		for (const item of input) flattenSoftware(item, out);
-		return;
+function errorCode(error: unknown): string | undefined {
+	if (!isPlainObject(error)) {
+		return undefined;
 	}
-	if (typeof input === "object") out.push(input as SoftwareDescriptorLike);
+	return typeof error.code === "string" ? error.code : undefined;
+}
+
+function validateAgentosPackageManifest(
+	value: unknown,
+	source: string,
+): PackageManifest {
+	if (!isPlainObject(value) || typeof value.name !== "string") {
+		throw new Error(`Invalid agentOS package manifest at ${source}: missing name`);
+	}
+	const manifest: PackageManifest = { name: value.name };
+	if (value.agent !== undefined) {
+		if (
+			!isPlainObject(value.agent) ||
+			typeof value.agent.acpEntrypoint !== "string"
+		) {
+			throw new Error(
+				`Invalid agentOS package manifest at ${source}: invalid agent.acpEntrypoint`,
+			);
+		}
+		manifest.agent = {
+			acpEntrypoint: value.agent.acpEntrypoint,
+			...(isStringRecord(value.agent.env) ? { env: value.agent.env } : {}),
+			...(Array.isArray(value.agent.launchArgs) &&
+			value.agent.launchArgs.every((arg) => typeof arg === "string")
+				? { launchArgs: value.agent.launchArgs }
+				: {}),
+			...(typeof value.agent.snapshot === "boolean"
+				? { snapshot: value.agent.snapshot }
+				: {}),
+		};
+	}
+	return manifest;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+	return (
+		value !== null &&
+		typeof value === "object" &&
+		!Array.isArray(value) &&
+		Object.values(value).every((entry) => typeof entry === "string")
+	);
+}
+
+function normalizedPackageRefs(software: unknown[]): NormalizedPackageRef[] {
+	const refs: NormalizedPackageRef[] = [];
+	const seen = new Set<string>();
+	for (const entry of software.flat()) {
+		const ref = normalizePackageRef(entry);
+		if (!ref || seen.has(ref.dir)) continue;
+		seen.add(ref.dir);
+		refs.push(ref);
+	}
+	return refs;
+}
+
+function serializedAgentConfigs(
+	packageRefs: NormalizedPackageRef[],
+): SerializedAgentConfig[] {
+	const configs: SerializedAgentConfig[] = [];
+	for (const ref of packageRefs) {
+		const manifest = readPackageManifestForClient(ref);
+		if (!manifest?.agent) continue;
+		configs.push({
+			name: manifest.name,
+			adapterEntrypoint: `${OPT_AGENTOS_BIN}/${manifest.agent.acpEntrypoint}`,
+			launchArgs: manifest.agent.launchArgs,
+			defaultEnv: manifest.agent.env,
+		});
+	}
+	return configs;
 }
 
 export function buildConfigJson<TConnParams>(
@@ -196,51 +290,19 @@ export function buildConfigJson<TConnParams>(
 	const options = nativeAgentOsOptionsSchema.parse(
 		parsed.options ?? {},
 	) as Record<string, unknown>;
-	const descriptors: SoftwareDescriptorLike[] = [];
-	flattenSoftware(options.software, descriptors);
-
-	// Auto-include the default software bundle (`@agentos-software/common`: `sh` +
-	// coreutils + the standard CLI tools agents rely on) unless the caller opted
-	// out with `defaultSoftware: false`. Anything already listed in `software`
-	// (e.g. an explicit `common`) is not duplicated. Prepended so the baseline
-	// tools come first, matching the previous explicit `[common, ...]` ordering.
+	const softwareInput = Array.isArray(options.software) ? options.software : [];
 	const defaultSoftwareEnabled = options.defaultSoftware !== false;
-	if (defaultSoftwareEnabled) {
-		const defaults: SoftwareDescriptorLike[] = [];
-		flattenSoftware(common, defaults);
-		const seen = new Set(descriptors.map(softwareIdentity));
-		const toPrepend = defaults.filter((d) => !seen.has(softwareIdentity(d)));
-		descriptors.unshift(...toPrepend);
-	}
-
-	const software: Array<{ package: string; kind?: string }> = [];
-	for (const d of descriptors) {
-		if (typeof d.commandDir === "string") {
-			// Wasm command directory (kind defaults to WasmCommands on the Rust side).
-			software.push({ package: d.commandDir });
-		} else if (typeof d.packageDir === "string") {
-			// Agent SDK / host-tool package: forwarded but not mounted as commands.
-			// `kind` matches the kebab-case serde tags of the Rust `SoftwareKind`
-			// enum (`wasm-commands` / `agent` / `tool`).
-			software.push({
-				package: d.packageDir,
-				kind: d.hostTool || d.toolkit ? "tool" : "agent",
-			});
-		}
-	}
-
-	// `/root/node_modules` (agent ACP adapter + SDK + transitive dep resolution)
-	// is auto-derived from the agent descriptors so the standard quickstart needs
-	// no manual `nodeModulesMount(...)`: see `withAutoAgentNodeModulesMount`. An
-	// explicit `/root/node_modules` mount in `options.mounts` always wins. The VM
-	// module resolver reads the mounted tree through the kernel VFS.
-	const mounts = withAutoAgentNodeModulesMount(
-		serializeNativeMounts(options.mounts),
-		descriptors,
+	const packageRefs = normalizedPackageRefs(
+		defaultSoftwareEnabled ? [common, ...softwareInput] : softwareInput,
 	);
+	const packages = packageRefs.map((ref) => ({ dir: ref.dir }));
+	const agentConfigs = serializedAgentConfigs(packageRefs);
+	const mounts = serializeNativeMounts(options.mounts);
 	const sidecar = serializeSidecar(options.sidecar);
 	return JSON.stringify({
-		software,
+		packages,
+		packagesMountAt: OPT_AGENTOS_ROOT,
+		agentConfigs,
 		additionalInstructions: options.additionalInstructions,
 		moduleAccessCwd: options.moduleAccessCwd,
 		loopbackExemptPorts: options.loopbackExemptPorts,

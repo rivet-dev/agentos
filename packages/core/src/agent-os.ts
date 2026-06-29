@@ -2,6 +2,7 @@ import { execFileSync, spawn as spawnChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
@@ -11,13 +12,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import {
-	dirname,
 	join,
 	posix as posixPath,
 	resolve as resolveHostPath,
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import commonSoftware from "@agentos-software/common";
+import type { AgentosPackageManifest } from "@agentos-software/manifest";
 import type {
 	MountConfigJsonObject,
 	MountConfigJsonValue,
@@ -170,17 +171,17 @@ export interface BatchReadResult {
 /** Entry in the agent registry, describing an available agent type. */
 export interface AgentRegistryEntry {
 	id: string;
-	acpAdapter: string;
-	agentPackage: string;
+	/** npm adapter package (legacy agents) — absent for `/opt/agentos` packages. */
+	acpAdapter?: string;
+	/** npm agent package (legacy agents) — absent for `/opt/agentos` packages. */
+	agentPackage?: string;
+	/** Pre-resolved adapter command path for an `/opt/agentos` agent package. */
+	adapterEntrypoint?: string;
 	installed: boolean;
 }
 
 import { AGENT_CONFIGS, type AgentConfig, type AgentType } from "./agents.js";
-import {
-	type BaseFilesystemEntry,
-	getBaseEnvironment,
-	getBaseFilesystemEntries,
-} from "./base-filesystem.js";
+import { getBaseEnvironment } from "./base-filesystem.js";
 import { CronManager } from "./cron/cron-manager.js";
 import type { ScheduleDriver } from "./cron/schedule-driver.js";
 import { TimerScheduleDriver } from "./cron/timer-driver.js";
@@ -209,13 +210,18 @@ import {
 	type SnapshotLayerHandle,
 } from "./layers.js";
 import {
-	type CommandPackageMetadata,
-	processSoftware,
 	resolveAgentSnapshotBundle,
-	resolvePackageDir,
 	type SoftwareInput,
 	type SoftwareRoot,
 } from "./packages.js";
+import {
+	OPT_AGENTOS_BIN,
+	OPT_AGENTOS_ROOT,
+	type PackageRef,
+	type SoftwarePackageRef,
+	tryReadAgentosPackageManifest,
+} from "./agentos-package.js";
+import { defaultAgentsRoot, resolveBuiltinAgents } from "./default-agents.js";
 import type { PermissionTier } from "./runtime.js";
 import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
 import {
@@ -525,11 +531,8 @@ export type LimitWarningHandler = (warning: LimitWarning) => void;
  */
 export interface AgentOsOptions {
 	/**
-	 * Software to install in the VM. Each entry provides agents, tools,
-	 * or WASM commands. Any object with a `commandDir` property (e.g.,
-	 * registry packages like @agentos-software/coreutils) is treated
-	 * as a WASM command source automatically. Arrays are flattened, so
-	 * meta-packages that export arrays of sub-packages work directly.
+	 * Software to install in the VM. Each entry is a package-dir ref. Arrays are
+	 * flattened, so meta-packages that export arrays of sub-packages work directly.
 	 */
 	software?: SoftwareInput[];
 	/**
@@ -756,6 +759,68 @@ function toRecord(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" && !Array.isArray(value)
 		? (value as Record<string, unknown>)
 		: {};
+}
+
+interface NormalizedPackageRef {
+	dir: string;
+	legacyManifest?: AgentosPackageManifest;
+}
+
+function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
+	if (typeof value === "string") {
+		return { dir: value };
+	}
+	const record = toRecord(value);
+	if (typeof record.packageDir === "string") {
+		return {
+			dir: record.packageDir,
+			legacyManifest: legacyPackageManifest(record),
+		};
+	}
+	if (typeof record.dir === "string") {
+		return {
+			dir: record.dir,
+			legacyManifest: legacyPackageManifest(record),
+		};
+	}
+	return undefined;
+}
+
+function legacyPackageManifest(
+	record: Record<string, unknown>,
+): AgentosPackageManifest | undefined {
+	if (typeof record.name !== "string") {
+		return undefined;
+	}
+	const manifest: AgentosPackageManifest = { name: record.name };
+	const agent = toRecord(record.agent);
+	if (typeof agent.acpEntrypoint === "string") {
+		manifest.agent = {
+			acpEntrypoint: agent.acpEntrypoint,
+			...(isStringRecord(agent.env) ? { env: agent.env } : {}),
+			...(Array.isArray(agent.launchArgs) &&
+			agent.launchArgs.every((arg) => typeof arg === "string")
+				? { launchArgs: agent.launchArgs }
+				: {}),
+			...(typeof agent.snapshot === "boolean" ? { snapshot: agent.snapshot } : {}),
+		};
+	}
+	return manifest;
+}
+
+function readPackageManifestForClient(
+	ref: NormalizedPackageRef,
+): AgentosPackageManifest | undefined {
+	return tryReadAgentosPackageManifest(ref.dir) ?? ref.legacyManifest;
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+	return (
+		value !== null &&
+		typeof value === "object" &&
+		!Array.isArray(value) &&
+		Object.values(value).every((entry) => typeof entry === "string")
+	);
 }
 
 type AcpResponseValue<TTag extends AcpResponse["tag"]> = Extract<
@@ -1172,6 +1237,25 @@ const KERNEL_POSIX_BOOTSTRAP_DIRS = [
 	"/etc/agentos",
 ] as const;
 
+// Standard POSIX metadata for the bootstrap dirs whose mode/owner is NOT the
+// default (`755`, root:root). Replicated as a constant so building the no-base
+// bootstrap layer needs no `base-filesystem.json` read — when a base IS present
+// the sidecar's embedded base layer is authoritative and these are never emitted.
+const KERNEL_POSIX_BOOTSTRAP_DIR_METADATA: Record<
+	string,
+	{ mode: string; uid: number; gid: number }
+> = {
+	"/tmp": { mode: "1777", uid: 0, gid: 0 },
+	"/root": { mode: "700", uid: 0, gid: 0 },
+	"/sys": { mode: "555", uid: 0, gid: 0 },
+	"/home/agentos": { mode: "2755", uid: 1000, gid: 1000 },
+	"/workspace": { mode: "755", uid: 1000, gid: 1000 },
+	"/var/empty": { mode: "555", uid: 0, gid: 0 },
+	"/var/lock": { mode: "777", uid: 0, gid: 0 },
+	"/var/run": { mode: "777", uid: 0, gid: 0 },
+	"/var/tmp": { mode: "1777", uid: 0, gid: 0 },
+};
+
 // Runtime commands that get a `/bin/<cmd>` stub at bootstrap so the guest shell
 // resolves them on PATH (e.g. `sh -c "python ..."`, pipelines). The sidecar
 // intercepts these by name and routes them to the embedded V8 / Pyodide runtime.
@@ -1195,152 +1279,6 @@ const SIDECAR_BUILD_INPUTS = [
 ] as const;
 let ensuredSidecarBinary: string | null = null;
 
-interface PreparedCommandDirs {
-	commandDirs: string[];
-	dispose(): void;
-}
-
-function isWasmBinaryFile(path: string): boolean {
-	try {
-		const header = readFileSync(path);
-		return (
-			header.length >= 4 &&
-			header[0] === 0x00 &&
-			header[1] === 0x61 &&
-			header[2] === 0x73 &&
-			header[3] === 0x6d
-		);
-	} catch {
-		return false;
-	}
-}
-
-function collectBootstrapWasmCommands(commandDirs: string[]): string[] {
-	const commands: string[] = [];
-	const seen = new Set<string>();
-
-	for (const dir of commandDirs) {
-		let entries: string[];
-		try {
-			entries = readdirSync(dir).sort((a, b) => a.localeCompare(b));
-		} catch {
-			continue;
-		}
-
-		for (const entry of entries) {
-			if (entry.startsWith(".")) {
-				continue;
-			}
-
-			const fullPath = join(dir, entry);
-			try {
-				if (statSync(fullPath).isDirectory()) {
-					continue;
-				}
-			} catch {
-				continue;
-			}
-
-			if (!isWasmBinaryFile(fullPath) || seen.has(entry)) {
-				continue;
-			}
-
-			seen.add(entry);
-			commands.push(entry);
-		}
-	}
-
-	return commands;
-}
-
-function resolveDeclaredCommandSource(
-	commandDir: string,
-	commandName: string,
-	aliases: Record<string, string>,
-): string | null {
-	let current = commandName;
-	const visited = new Set<string>();
-
-	while (!visited.has(current)) {
-		visited.add(current);
-
-		const candidatePath = join(commandDir, current);
-		if (isWasmBinaryFile(candidatePath)) {
-			return candidatePath;
-		}
-
-		const next = aliases[current];
-		if (!next) {
-			return null;
-		}
-
-		current = next;
-	}
-
-	return null;
-}
-
-function prepareCommandDirs(
-	commandPackages: CommandPackageMetadata[],
-): PreparedCommandDirs {
-	const commandDirs: string[] = [];
-	const tempDirs: string[] = [];
-
-	try {
-		for (const commandPackage of commandPackages) {
-			commandDirs.push(commandPackage.commandDir);
-
-			const aliasEntries = Object.entries(commandPackage.aliases)
-				.sort(([leftAlias], [rightAlias]) =>
-					leftAlias.localeCompare(rightAlias),
-				)
-				.flatMap(([aliasName]) => {
-					const aliasPath = join(commandPackage.commandDir, aliasName);
-					if (isWasmBinaryFile(aliasPath)) {
-						return [];
-					}
-
-					const sourcePath = resolveDeclaredCommandSource(
-						commandPackage.commandDir,
-						aliasName,
-						commandPackage.aliases,
-					);
-					if (!sourcePath) {
-						return [];
-					}
-
-					return [[aliasName, sourcePath] as const];
-				});
-
-			if (aliasEntries.length === 0) {
-				continue;
-			}
-
-			const aliasDir = mkdtempSync(join(tmpdir(), "agentos-command-aliases-"));
-			for (const [aliasName, sourcePath] of aliasEntries) {
-				writeFileSync(join(aliasDir, aliasName), readFileSync(sourcePath));
-			}
-
-			tempDirs.push(aliasDir);
-			commandDirs.push(aliasDir);
-		}
-	} catch (error) {
-		for (const tempDir of tempDirs) {
-			rmSync(tempDir, { recursive: true, force: true });
-		}
-		throw error;
-	}
-
-	return {
-		commandDirs,
-		dispose() {
-			for (const tempDir of tempDirs) {
-				rmSync(tempDir, { recursive: true, force: true });
-			}
-		},
-	};
-}
-
 function collectConfiguredLowerPaths(
 	config?: RootFilesystemConfig,
 ): Set<string> {
@@ -1361,7 +1299,7 @@ function collectConfiguredLowerPaths(
 function findBootstrapSeedEntry(
 	config: RootFilesystemConfig | undefined,
 	path: string,
-): BaseFilesystemEntry | undefined {
+): FilesystemEntry | undefined {
 	for (const lower of config?.lowers ?? []) {
 		if (lower.kind !== "snapshot-export") {
 			continue;
@@ -1374,7 +1312,11 @@ function findBootstrapSeedEntry(
 		}
 	}
 
-	return getBaseFilesystemEntries().find((entry) => entry.path === path);
+	// No base-filesystem JSON read: standard non-default dir metadata comes from
+	// the constant table. When a base layer IS present these dirs are never
+	// emitted (see createKernelBootstrapLower), so this only seeds the no-base case.
+	const meta = KERNEL_POSIX_BOOTSTRAP_DIR_METADATA[path];
+	return meta ? { path, type: "directory", ...meta } : undefined;
 }
 
 function createKernelBootstrapLower(
@@ -1384,11 +1326,6 @@ function createKernelBootstrapLower(
 ): RootSnapshotExport | null {
 	const includesBundledBaseLayer = !(config?.disableDefaultBaseLayer ?? false);
 	const existingPaths = collectConfiguredLowerPaths(config);
-	if (includesBundledBaseLayer) {
-		for (const entry of getBaseFilesystemEntries()) {
-			existingPaths.add(entry.path);
-		}
-	}
 	const entries: FilesystemEntry[] = [
 		{
 			path: "/",
@@ -1399,18 +1336,24 @@ function createKernelBootstrapLower(
 		},
 	];
 
-	for (const dir of KERNEL_POSIX_BOOTSTRAP_DIRS) {
-		if (existingPaths.has(dir)) {
-			continue;
+	// Only run the FS bootstrap (creating the POSIX dir tree) when there is NO
+	// base layer. When the bundled base IS present, the sidecar's embedded base
+	// layer already provides every POSIX dir with the correct mode/owner, so we
+	// emit nothing here and never read its filesystem table.
+	if (!includesBundledBaseLayer) {
+		for (const dir of KERNEL_POSIX_BOOTSTRAP_DIRS) {
+			if (existingPaths.has(dir)) {
+				continue;
+			}
+			const seed = findBootstrapSeedEntry(config, dir);
+			entries.push({
+				path: dir,
+				type: "directory",
+				mode: seed?.type === "directory" ? seed.mode : "755",
+				uid: seed?.uid ?? 0,
+				gid: seed?.gid ?? 0,
+			});
 		}
-		const seed = findBootstrapSeedEntry(config, dir);
-		entries.push({
-			path: dir,
-			type: "directory",
-			mode: seed?.type === "directory" ? seed.mode : "755",
-			uid: seed?.uid ?? 0,
-			gid: seed?.gid ?? 0,
-		});
 	}
 
 	if (!includesBundledBaseLayer && !existingPaths.has("/usr/bin/env")) {
@@ -1603,33 +1546,6 @@ function latestMtimeMs(path: string): number {
 	return latest;
 }
 
-function collectGuestCommandPaths(commandDirs: string[]): Map<string, string> {
-	const guestPaths = new Map<string, string>();
-
-	for (const [index, commandDir] of commandDirs.entries()) {
-		let entries: string[];
-		try {
-			entries = readdirSync(commandDir).sort((left, right) =>
-				left.localeCompare(right),
-			);
-		} catch {
-			continue;
-		}
-
-		for (const entry of entries) {
-			if (entry.startsWith(".")) {
-				continue;
-			}
-			if (!isWasmBinaryFile(join(commandDir, entry)) || guestPaths.has(entry)) {
-				continue;
-			}
-			guestPaths.set(entry, `/__secure_exec/commands/${index}/${entry}`);
-		}
-	}
-
-	return guestPaths;
-}
-
 async function resolveCompatLocalMounts(
 	mounts?: MountConfig[],
 ): Promise<LocalCompatMount[]> {
@@ -1676,8 +1592,6 @@ async function resolveCompatLocalMounts(
 
 function collectSidecarMountPlan(options: {
 	mounts?: MountConfig[];
-	softwareRoots: SoftwareRoot[];
-	commandDirs: string[];
 	shimDir: string | null;
 }): {
 	sidecarMounts: Array<ReturnType<typeof serializeMountConfigForSidecar>>;
@@ -1736,28 +1650,6 @@ function collectSidecarMountPlan(options: {
 			continue;
 		}
 		pushMount(mount);
-	}
-
-	for (const root of options.softwareRoots) {
-		pushMount({
-			path: root.vmPath,
-			plugin: createHostDirBackend({
-				hostPath: root.hostPath,
-				readOnly: true,
-			}),
-			readOnly: true,
-		});
-	}
-
-	for (const [index, commandDir] of options.commandDirs.entries()) {
-		pushMount({
-			path: `/__secure_exec/commands/${index}`,
-			plugin: createHostDirBackend({
-				hostPath: commandDir,
-				readOnly: true,
-			}),
-			readOnly: true,
-		});
 	}
 
 	if (options.shimDir) {
@@ -2715,6 +2607,8 @@ export class AgentOs {
 	);
 	private _pendingShellExitPromises = new Set<Promise<number>>();
 	private _shellCounter = 0;
+	/** Command names linked into `/opt/agentos/bin` at runtime (via the sidecar). */
+	private _linkedCommands = new Set<string>();
 	private _acpTerminals = new Map<string, AcpTerminalEntry>();
 	private _acpTerminalCounter = 0;
 	private _softwareRoots: SoftwareRoot[];
@@ -2788,14 +2682,50 @@ export class AgentOs {
 
 	static async create(options?: AgentOsOptions): Promise<AgentOs> {
 		options = parseAgentOsOptions(options);
-		const software =
+		// The built-in agents ship PRE-PACKED as `/opt/agentos` packages (no runtime
+		// npm dependency on the agent SDKs); project whatever the build produced.
+		const builtinAgents =
+			options?.defaultSoftware === false
+				? { software: [], configs: new Map<string, AgentConfig>() }
+				: resolveBuiltinAgents(defaultAgentsRoot());
+		const software: unknown[] =
 			options?.defaultSoftware === false
 				? (options.software ?? [])
-				: [commonSoftware, ...(options?.software ?? [])];
-		const processed = processSoftware(software);
+				: [commonSoftware, ...builtinAgents.software, ...(options?.software ?? [])];
+		// Package dirs are projected by the SIDECAR: the client forwards only
+		// `{dir}` over `configureVm` and the sidecar reads package metadata from
+		// `<dir>/agentos-package.json`.
+		const flatSoftware = software.flat();
+		const packageRefs = flatSoftware.flatMap((entry) => {
+			const ref = normalizePackageRef(entry);
+			return ref ? [ref] : [];
+		});
+		const sidecarPackages = packageRefs.map((ref) => ({ dir: ref.dir }));
+		// All package software is projected into `/opt/agentos` by the sidecar. The
+		// client stages nothing host-side; it only derives the agent configs.
+		const agentConfigs = new Map<string, AgentConfig>();
+		// Register `/opt/agentos` agent packages so `createSession(<name>)`
+		// launches via `/opt/agentos/bin/<acpEntrypoint>`. The wire no longer
+		// carries agent metadata; read it from the package manifest.
+		for (const ref of packageRefs) {
+			const manifest = readPackageManifestForClient(ref);
+			if (!manifest?.agent) continue;
+			agentConfigs.set(manifest.name, {
+				adapterEntrypoint: `${OPT_AGENTOS_BIN}/${manifest.agent.acpEntrypoint}`,
+				launchArgs: manifest.agent.launchArgs,
+				defaultEnv: manifest.agent.env,
+			});
+		}
+		// Expose the built-in agents under their friendly ids (`pi`, `claude`, …)
+		// with their default env, in addition to the package-name registration above.
+		for (const [id, config] of builtinAgents.configs) {
+			agentConfigs.set(id, config);
+		}
 		// Agent-SDK snapshot bundle (loaded once per sidecar into the V8 startup
 		// snapshot, reused across sessions) for any snapshot-enabled agent.
-		const snapshotUserlandCode = resolveAgentSnapshotBundle(software);
+		const snapshotUserlandCode = resolveAgentSnapshotBundle(
+			packageRefs.map((ref) => ({ packageDir: ref.dir })),
+		);
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
 		const toolKits = options?.toolKits;
 		if (toolKits && toolKits.length > 0) {
@@ -2807,17 +2737,16 @@ export class AgentOs {
 		const sidecar = resolveAgentOsSidecar(options?.sidecar);
 
 		const createVmAdmin = async (): Promise<AgentOsVmAdmin> => {
-			const preparedCommandDirs = prepareCommandDirs(processed.commandPackages);
+			// The `/opt/agentos` projection is built by the sidecar from the
+			// forwarded `packages` (it owns the staging dir + read-only mount, and
+			// runtime `linkSoftware` appends to that live dir). The client no longer
+			// stages packages host-side.
 			const toolBootstrapCommands = collectToolkitBootstrapCommands(
 				toolKits ?? [],
 			);
 			const bootstrapLower = createKernelBootstrapLower(
 				options?.rootFilesystem,
-				[
-					...collectBootstrapWasmCommands(preparedCommandDirs.commandDirs),
-					...RUNTIME_BOOTSTRAP_COMMANDS,
-					...toolBootstrapCommands,
-				],
+				[...RUNTIME_BOOTSTRAP_COMMANDS, ...toolBootstrapCommands],
 			);
 			let toolReference = "";
 			let rootBridge: NativeSidecarKernelProxy | null = null;
@@ -2837,7 +2766,6 @@ export class AgentOs {
 					rmSync(toolShimDir, { recursive: true, force: true });
 					toolShimDir = null;
 				}
-				preparedCommandDirs.dispose();
 			};
 
 			try {
@@ -2845,9 +2773,40 @@ export class AgentOs {
 				if (toolKits && toolKits.length > 0) {
 					toolShimDir = materializeToolShimDir(toolKits);
 				}
-				const commandGuestPaths = collectGuestCommandPaths(
-					preparedCommandDirs.commandDirs,
-				);
+				// Guest command paths. The sidecar owns the `/opt/agentos` projection,
+				// but the client's command map (rpc-client) still needs to KNOW the
+				// projected command names so its shell-exec guard (`this.commands.has("sh")`)
+				// and wasmvm routing work. Seed each projected package's commands from its
+				// `bin` map (mirroring the sidecar projection's command derivation), mapped
+				// to their projected `/opt/agentos/bin/<cmd>` path. Tool-shim commands are
+				// added below.
+				const commandGuestPaths = new Map<string, string>();
+				const deriveProjectedCommandNames = (dir: string): string[] => {
+					try {
+						const pkg = JSON.parse(
+							readFileSync(join(dir, "package.json"), "utf8"),
+						) as { bin?: Record<string, string> | string; name?: string };
+						if (pkg.bin && typeof pkg.bin === "object") {
+							return Object.keys(pkg.bin);
+						}
+						if (typeof pkg.bin === "string") {
+							const base = pkg.name?.split("/").pop();
+							if (base) return [base];
+						}
+					} catch {
+						// no/invalid package.json — fall through to the bin/ scan
+					}
+					try {
+						return readdirSync(join(dir, "bin"));
+					} catch {
+						return [];
+					}
+				};
+				for (const ref of packageRefs) {
+					for (const cmd of deriveProjectedCommandNames(ref.dir)) {
+						commandGuestPaths.set(cmd, `/opt/agentos/bin/${cmd}`);
+					}
+				}
 				const requestedMounts = options?.moduleAccessCwd
 					? [
 							...(options.mounts ?? []),
@@ -2864,8 +2823,6 @@ export class AgentOs {
 				const { sidecarMounts, hostMounts, hostPathMappings } =
 					collectSidecarMountPlan({
 						mounts: requestedMounts,
-						softwareRoots: processed.softwareRoots,
-						commandDirs: preparedCommandDirs.commandDirs,
 						shimDir: toolShimDir,
 					});
 				// Reuse the sidecar handle's single shared native process; this VM
@@ -2929,8 +2886,10 @@ export class AgentOs {
 				await client.configureVm(session, nativeVm, {
 					mounts: sidecarMounts,
 					permissions: sidecarPermissions,
-					commandPermissions: processed.commandPermissions,
+					commandPermissions: {},
 					loopbackExemptPorts: options?.loopbackExemptPorts,
+					packages: sidecarPackages,
+					packagesMountAt: OPT_AGENTOS_ROOT,
 				});
 				if (toolKits && toolKits.length > 0) {
 					toolReference = await registerToolkitsOnSidecar(
@@ -2957,7 +2916,7 @@ export class AgentOs {
 					localMounts,
 					sidecarMounts,
 					permissions: sidecarPermissions,
-					commandPermissions: processed.commandPermissions,
+					commandPermissions: {},
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 					commandGuestPaths,
 					onDispose: cleanup,
@@ -2982,7 +2941,7 @@ export class AgentOs {
 					rootView: rootBridge.createRootView(),
 					sidecarMounts,
 					sidecarPermissions,
-					commandPermissions: processed.commandPermissions,
+					commandPermissions: {},
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 					sidecarClient: client,
 					sidecarSession: session,
@@ -3042,8 +3001,8 @@ export class AgentOs {
 			const vm = new AgentOs(
 				vmAdmin.kernel,
 				sidecar,
-				processed.softwareRoots,
-				processed.agentConfigs,
+				[],
+				agentConfigs,
 				vmAdmin.hostMounts,
 				vmAdmin.env,
 				vmAdmin.rootView,
@@ -3681,6 +3640,41 @@ export class AgentOs {
 		return session;
 	}
 
+	/**
+	 * Dynamically link a software package into the RUNNING VM. The package's
+	 * `bin/` commands appear under `/opt/agentos/bin` (on `$PATH`) and its `share/man`
+	 * pages under MANPATH immediately — the `/opt/agentos` mount is host-backed, so
+	 * writing into its staging dir is reflected live with no reboot. An `agent`
+	 * block registers the package for `createSession(name)`. Persists for the VM's
+	 * lifetime (and across a snapshot iff the volume persists).
+	 */
+	async linkSoftware(descriptor: PackageRef | SoftwarePackageRef): Promise<void> {
+		const ref = normalizePackageRef(descriptor);
+		if (!ref) {
+			throw new Error("Invalid agentOS package reference");
+		}
+		// Forward to the sidecar, which owns the `/opt/agentos` projection and
+		// appends the package to its live host-backed staging dir; the commands
+		// appear under `/opt/agentos/bin` immediately. The sidecar rejects a
+		// duplicate command, surfaced here as a thrown error.
+		const commands = await this._sidecarClient.linkPackage(
+			this._sidecarSession,
+			this._sidecarVm,
+			{ dir: ref.dir },
+		);
+		for (const command of commands) {
+			this._linkedCommands.add(command);
+		}
+		const manifest = readPackageManifestForClient(ref);
+		if (manifest?.agent) {
+			this._softwareAgentConfigs.set(manifest.name, {
+				adapterEntrypoint: `${OPT_AGENTOS_BIN}/${manifest.agent.acpEntrypoint}`,
+				launchArgs: manifest.agent.launchArgs,
+				defaultEnv: manifest.agent.env,
+			});
+		}
+	}
+
 	/** Returns all registered agents with their installation status. */
 	listAgents(): AgentRegistryEntry[] {
 		// Collect all agent IDs from both package configs and hardcoded configs.
@@ -3690,29 +3684,29 @@ export class AgentOs {
 		]);
 
 		return [...allIds]
-			.map((id) => {
+			.map((id): AgentRegistryEntry | null => {
 				const config = this._resolveAgentConfig(id);
 				if (!config) return null;
 
+				// An `/opt/agentos` agent package is materialized into the VM at
+				// boot, so it is always "installed" — its adapter is a real command.
+				if (config.adapterEntrypoint || !config.acpAdapter) {
+					return {
+						id,
+						adapterEntrypoint: config.adapterEntrypoint,
+						installed: true,
+					};
+				}
+
 				let installed = false;
 				try {
-					// Check software roots first, then the host dir behind the
-					// `/root/node_modules` mount.
+					// Check the software roots that provide this adapter package.
 					const vmPrefix = `/root/node_modules/${config.acpAdapter}`;
 					let hostPkgJsonPath: string | null = null;
 					for (const root of this._softwareRoots) {
 						if (root.vmPath === vmPrefix) {
 							hostPkgJsonPath = join(root.hostPath, "package.json");
 							break;
-						}
-					}
-					if (!hostPkgJsonPath) {
-						const nodeModulesRoot = this._nodeModulesHostRoot();
-						if (nodeModulesRoot) {
-							hostPkgJsonPath = join(
-								resolvePackageDir(nodeModulesRoot, config.acpAdapter),
-								"package.json",
-							);
 						}
 					}
 					if (!hostPkgJsonPath) {
@@ -4352,17 +4346,16 @@ export class AgentOs {
 		// the sidecar at AcpCreateSessionRequest. The host only forwards additionalInstructions /
 		// skipOsInstructions plus the agent's static launch args and env.
 		const launchArgs = [...(config.launchArgs ?? [])];
-		let launchEnv = { ...config.defaultEnv, ...options?.env };
+		const launchEnv = { ...config.defaultEnv, ...options?.env };
 		const sessionCwd = options?.cwd ?? "/workspace";
-		const adapterEntrypoint = this._resolveAdapterBin(config.acpAdapter);
-		if (
-			(agentType === "pi" || agentType === "pi-cli") &&
-			!launchEnv.PI_ACP_PI_COMMAND
-		) {
-			launchEnv = {
-				...launchEnv,
-				PI_ACP_PI_COMMAND: this._resolvePackageBin(config.agentPackage, "pi"),
-			};
+		// Every agent is an `/opt/agentos` package now: the config carries a
+		// pre-resolved guest command path (`adapterEntrypoint`) that the sidecar
+		// spawns directly. There is no npm adapter resolution.
+		const adapterEntrypoint = config.adapterEntrypoint;
+		if (!adapterEntrypoint) {
+			throw new Error(
+				`agent "${String(agentType)}" config has no adapterEntrypoint`,
+			);
 		}
 
 		const response = await this._sendAcpRequest({
@@ -4451,23 +4444,22 @@ export class AgentOs {
 			throw new Error(`Unknown agent type: ${agentType}`);
 		}
 
-		const adapterEntrypoint = this._resolveAdapterBin(config.acpAdapter);
-		let launchEnv = { ...config.defaultEnv, ...options?.env };
-		const sessionCwd = options?.cwd ?? "/workspace";
-		if (
-			(agentType === "pi" || agentType === "pi-cli") &&
-			!launchEnv.PI_ACP_PI_COMMAND
-		) {
-			launchEnv = {
-				...launchEnv,
-				PI_ACP_PI_COMMAND: this._resolvePackageBin(config.agentPackage, "pi"),
-			};
+		// Every agent is an `/opt/agentos` package now: the config carries a
+		// pre-resolved guest command path (`adapterEntrypoint`). There is no npm
+		// adapter resolution.
+		const adapterEntrypoint = config.adapterEntrypoint;
+		if (!adapterEntrypoint) {
+			throw new Error(
+				`agent "${String(agentType)}" config has no adapterEntrypoint`,
+			);
 		}
+		const sessionCwd = options?.cwd ?? "/workspace";
 		// The resume wire request has no dedicated `adapterEntrypoint` field; carry
 		// the resolved entrypoint through env under the sidecar's reserved key. The
 		// sidecar reads it and strips it before launching the adapter.
-		launchEnv = {
-			...launchEnv,
+		const launchEnv = {
+			...config.defaultEnv,
+			...options?.env,
 			[RESUME_ADAPTER_ENTRYPOINT_ENV]: adapterEntrypoint,
 		};
 
@@ -4503,75 +4495,6 @@ export class AgentOs {
 		}
 
 		return { sessionId: liveSessionId, mode };
-	}
-
-	/**
-	 * Resolve the VM bin entry point of an ACP adapter package.
-	 * Reads from the host filesystem since kernel.readFile() resolves through
-	 * mounts; adapter package.json is read directly off the host dir backing
-	 * the relevant mount.
-	 */
-	private _resolveAdapterBin(adapterPackage: string): string {
-		return this._resolvePackageBin(adapterPackage);
-	}
-
-	/**
-	 * Parent of the host directory backing the `/root/node_modules` mount, if
-	 * the caller supplied one (e.g. via `nodeModulesMount(...)`). Used as the
-	 * `resolvePackageDir` start dir for adapter/agent package resolution when no
-	 * software root matches. `nodeModulesMount` mounts `<dir>/node_modules`, so
-	 * the start dir is `<dir>` (one level above the node_modules tree).
-	 */
-	private _nodeModulesHostRoot(): string | null {
-		for (const mount of this._hostMounts) {
-			if (mount.vmPath === "/root/node_modules") {
-				return dirname(mount.hostPath);
-			}
-		}
-		return null;
-	}
-
-	private _resolvePackageBin(packageName: string, binName?: string): string {
-		const vmPrefix = `/root/node_modules/${packageName}`;
-		let hostPkgJsonPath: string | null = null;
-		for (const root of this._softwareRoots) {
-			if (root.vmPath === vmPrefix) {
-				hostPkgJsonPath = join(root.hostPath, "package.json");
-				break;
-			}
-		}
-		// Fall back to the host dir behind the `/root/node_modules` mount.
-		if (!hostPkgJsonPath) {
-			const nodeModulesRoot = this._nodeModulesHostRoot();
-			if (!nodeModulesRoot) {
-				throw new Error(
-					`Cannot resolve package "${packageName}": no software root provides it and ` +
-						`no /root/node_modules mount was supplied. Pass ` +
-						`mounts: [nodeModulesMount("<host>/node_modules")] to AgentOs.create().`,
-				);
-			}
-			hostPkgJsonPath = join(
-				resolvePackageDir(nodeModulesRoot, packageName),
-				"package.json",
-			);
-		}
-		const pkg = JSON.parse(readFileSync(hostPkgJsonPath, "utf-8"));
-
-		let binEntry: string | undefined;
-		if (typeof pkg.bin === "string") {
-			binEntry = pkg.bin;
-		} else if (typeof pkg.bin === "object" && pkg.bin !== null) {
-			binEntry =
-				(binName ? (pkg.bin as Record<string, string>)[binName] : undefined) ??
-				(pkg.bin as Record<string, string>)[packageName] ??
-				Object.values(pkg.bin)[0];
-		}
-
-		if (!binEntry) {
-			throw new Error(`No bin entry found in ${packageName}/package.json`);
-		}
-
-		return `${vmPrefix}/${binEntry}`;
 	}
 
 	private _installSidecarRequestHandler(): void {
