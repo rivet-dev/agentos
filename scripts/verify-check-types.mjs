@@ -25,6 +25,7 @@ const found = execSync(
 		'-not -path "*/dist/*"',
 		'-not -path "*/.astro/*"',
 		'-not -path "*/.turbo/*"',
+		'-not -path "*/vendor/*"',
 	].join(" "),
 	{ encoding: "utf8", cwd: root },
 )
