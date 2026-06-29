@@ -350,8 +350,16 @@ async fn actor_worker(
                 };
                 match abi::decode_action_payload(&payload) {
                     Ok((name, action_args)) => {
-                        actions::dispatch(&host, vm_ref, &mut vars, &name, &action_args, token)
-                            .await;
+                        actions::dispatch(
+                            &host,
+                            vm_ref,
+                            &config,
+                            &mut vars,
+                            &name,
+                            &action_args,
+                            token,
+                        )
+                        .await;
                     }
                     Err(_) => {
                         let _ = host.reply_err(token, "malformed action event payload");

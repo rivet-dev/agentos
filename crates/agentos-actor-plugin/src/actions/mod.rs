@@ -105,6 +105,7 @@ fn reply_err(host: &HostCtx, token: u64, error: anyhow::Error) {
 pub(crate) async fn dispatch(
     host: &HostCtx,
     vm: &AgentOs,
+    config: &crate::config::AgentOsConfigJson,
     vars: &mut Vars,
     name: &str,
     args: &[u8],
@@ -373,6 +374,23 @@ pub(crate) async fn dispatch(
             },
             Err(error) => reply_err(host, token, error),
         },
+        // Config introspection: echo the actor's declarative mount / software
+        // config (no VM round-trip — the kernel has no runtime mount table and
+        // software is the requested bundle expanded TS-side in buildConfigJson).
+        "listMounts" => reply_ok(host, token, &config.list_mounts()),
+        "listSoftware" => {
+            // Config carries package/kind/version; the command names each
+            // wasm-commands package ships come from the live VM (host package
+            // dirs), zipped in here by package name.
+            let mut list = config.list_software();
+            let commands: HashMap<String, Vec<String>> = vm.provided_commands().into_iter().collect();
+            for dto in &mut list {
+                if let Some(cmds) = commands.get(&dto.package) {
+                    dto.commands = cmds.clone();
+                }
+            }
+            reply_ok(host, token, &list);
+        }
         other => {
             host.reply_err(
                 token,

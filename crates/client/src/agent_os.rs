@@ -811,6 +811,48 @@ impl AgentOs {
     pub fn sidecar(&self) -> Arc<AgentOsSidecar> {
         self.inner.sidecar.clone()
     }
+
+    /// The commands each configured `wasm-commands` package *ships*, keyed by
+    /// the package string used in the config — i.e. the wasm binaries in the
+    /// package's resolved command directory (`entry.descriptor.root`, which is
+    /// exactly what `build_command_mounts` mounts at `/__secure_exec/commands/
+    /// {index}/`), with `_stubs`/dotfiles filtered, sorted. Non-`wasm-commands`
+    /// packages contribute nothing.
+    ///
+    /// WORKAROUND: agent-os owns command *provisioning* (it resolves each
+    /// package and mounts its dir), so it knows the host dirs and can read them
+    /// here. But the authoritative *resolved* command set — deduping when two
+    /// packages provide the same command, priority order, and which files are
+    /// actually executable — is owned by secure-exec's command discovery
+    /// (`discover_command_guest_paths`). This reads the raw package contents and
+    /// re-derives a slice of that. TODO: replace with a secure-exec API that
+    /// reports discovered commands per package instead of us re-reading dirs.
+    pub fn provided_commands(&self) -> Vec<(String, Vec<String>)> {
+        let resolved = match resolve_software(&self.inner.config) {
+            Ok(resolved) => resolved,
+            Err(_) => return Vec::new(),
+        };
+        resolved
+            .into_iter()
+            .filter(|entry| entry.kind == SoftwareKind::WasmCommands)
+            .map(|entry| {
+                // `root` IS the command directory (mounted verbatim as the
+                // guest command dir), so the command binaries live directly in
+                // it — do not descend into a `wasm/` subdir.
+                let mut commands: Vec<String> = std::fs::read_dir(&entry.descriptor.root)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter_map(|dirent| dirent.file_name().into_string().ok())
+                    // `_stubs` is a secure-exec support entry, not a command;
+                    // dotfiles are metadata. Everything else is a command name.
+                    .filter(|name| !name.starts_with('_') && !name.starts_with('.'))
+                    .collect();
+                commands.sort();
+                (entry.descriptor.package_name, commands)
+            })
+            .collect()
+    }
 }
 
 /// Abort and clear a single tracked background-task handle (e.g. the ACP event pump) so it cannot

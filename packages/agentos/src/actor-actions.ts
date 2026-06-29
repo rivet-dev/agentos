@@ -91,6 +91,24 @@ export interface ReadFileResult {
 	error?: string;
 }
 
+/** One configured mount, returned by `listMounts`. Mirrors `MountInfoDto`. */
+export interface MountInfo {
+	path: string;
+	/** Native mount plugin id. */
+	kind: "host_dir" | "s3" | "google_drive" | "sandbox_agent";
+	/** Provider-specific config detail (null when the plugin carries none). */
+	config: unknown;
+	readOnly: boolean;
+}
+
+/** One configured software package, returned by `listSoftware`. Mirrors `SoftwareInfoDto`. */
+export interface SoftwareInfo {
+	package: string;
+	/** Kebab-case `SoftwareKind` tag. */
+	kind: "wasm-commands" | "agent" | "tool";
+	version: string | null;
+}
+
 /**
  * The agentOS VM actor's action map. Keep one method per Rust `dispatch` arm.
  *
@@ -150,4 +168,8 @@ export type AgentOsActions = {
 	// ── Preview URLs ──────────────────────────────────────────────────
 	createSignedPreviewUrl: (c: Ctx, port: number, ttlSeconds: number) => Promise<SignedPreviewUrl>;
 	expireSignedPreviewUrl: (c: Ctx, token: string) => Promise<void>;
+
+	// ── Config introspection ──────────────────────────────────────────
+	listMounts: (c: Ctx) => Promise<MountInfo[]>;
+	listSoftware: (c: Ctx) => Promise<SoftwareInfo[]>;
 }
