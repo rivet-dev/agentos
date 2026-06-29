@@ -361,8 +361,16 @@ async fn actor_worker(
                 match abi::decode_action_payload(&payload) {
                     Ok((name, action_args)) => {
                         tracing::debug!(action = %name, "agent-os action start");
-                        actions::dispatch(&host, vm_ref, &mut vars, &name, &action_args, token)
-                            .await;
+                        actions::dispatch(
+                            &host,
+                            vm_ref,
+                            &config,
+                            &mut vars,
+                            &name,
+                            &action_args,
+                            token,
+                        )
+                        .await;
                         tracing::debug!(action = %name, "agent-os action done");
                     }
                     Err(_) => {

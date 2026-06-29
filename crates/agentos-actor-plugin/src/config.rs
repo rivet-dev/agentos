@@ -81,6 +81,36 @@ struct SidecarJson {
     pool: Option<String>,
 }
 
+/// Reply DTO for the `listMounts` action: one configured mount, flattened so the
+/// UI gets `path` / `kind` (the native plugin id, e.g. `host_dir`, `s3`,
+/// `google_drive`, `sandbox_agent`) / `config` (provider-specific detail) /
+/// `readOnly`. This echoes the actor's declarative mount config — the kernel
+/// has no runtime mount table to enumerate.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MountInfoDto {
+    pub path: String,
+    pub kind: String,
+    pub config: Option<serde_json::Value>,
+    pub read_only: bool,
+}
+
+/// Reply DTO for the `listSoftware` action: one configured software package.
+/// `kind` is the kebab-case [`SoftwareKind`] tag (`wasm-commands` / `agent` /
+/// `tool`). Reflects the requested `software` bundle (the default `common`
+/// bundle is already expanded into the envelope TS-side in `buildConfigJson`).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SoftwareInfoDto {
+    pub package: String,
+    pub kind: String,
+    pub version: Option<String>,
+    /// Command names this package ships (wasm-commands packages only; empty for
+    /// agent/tool). Filled from the live VM in the `listSoftware` dispatch arm,
+    /// not derivable from config alone. See `AgentOs::provided_commands`.
+    pub commands: Vec<String>,
+}
+
 impl AgentOsConfigJson {
     /// Parse a `config_json` envelope. An empty/whitespace string is treated as
     /// the default config (the client supplied no overrides).
@@ -143,5 +173,38 @@ impl AgentOsConfigJson {
             sidecar: Some(sidecar),
             ..AgentOsConfig::default()
         }
+    }
+
+    /// Configured mounts, flattened for the `listMounts` action. `kind` is the
+    /// native plugin id and `config` its provider-specific detail.
+    pub(crate) fn list_mounts(&self) -> Vec<MountInfoDto> {
+        self.mounts
+            .iter()
+            .map(|mount| MountInfoDto {
+                path: mount.path.clone(),
+                kind: mount.plugin.id.clone(),
+                config: mount.plugin.config.clone(),
+                read_only: mount.read_only,
+            })
+            .collect()
+    }
+
+    /// Configured software packages, for the `listSoftware` action. `kind` is the
+    /// kebab-case [`SoftwareKind`] serde tag (`wasm-commands` / `agent` / `tool`).
+    pub(crate) fn list_software(&self) -> Vec<SoftwareInfoDto> {
+        self.software
+            .iter()
+            .map(|software| SoftwareInfoDto {
+                package: software.package.clone(),
+                kind: serde_json::to_value(software.kind)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .unwrap_or_else(|| "wasm-commands".to_owned()),
+                version: software.version.clone(),
+                // Filled from the live VM in the dispatch arm (config alone does
+                // not carry the packages' command binaries).
+                commands: Vec::new(),
+            })
+            .collect()
     }
 }
