@@ -176,29 +176,6 @@ async function closeAndDestroy() {
   await agent.destroySession(session.sessionId);
 }
 
-// ── Runtime configuration ─────────────────────────────────────────
-async function runtimeConfig() {
-  const session = await agent.createSession("pi", {
-    env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-  });
-
-  // Change model
-  await agent.setModel(session.sessionId, "claude-sonnet-4-6");
-
-  // Change mode (e.g. "plan", "auto")
-  await agent.setMode(session.sessionId, "plan");
-
-  // Change thought level
-  await agent.setThoughtLevel(session.sessionId, "high");
-
-  // Query available options
-  const modes = await agent.getModes(session.sessionId);
-  console.log(modes);
-
-  const options = await agent.getConfigOptions(session.sessionId);
-  console.log(options);
-}
-
 // ── Replay events ─────────────────────────────────────────────────
 async function replayEvents() {
   const session = await agent.createSession("pi", {
@@ -267,7 +244,6 @@ export {
   subscribeFirst,
   cancelPrompt,
   closeAndDestroy,
-  runtimeConfig,
   replayEvents,
   persistedHistory,
   multipleSessions,

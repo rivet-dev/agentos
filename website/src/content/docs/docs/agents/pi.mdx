@@ -55,7 +55,7 @@ See [LLM Credentials](/docs/llm-credentials), and Pi's [providers docs](https://
 
 ## Skills
 
-Pi discovers `SKILL.md` files from its skills directory. Write the skill into the VM before creating a session and Pi loads it automatically.
+Pi discovers `SKILL.md` files from its skills directory, but only when at least one [Pi extension](#extensions) is also present in the VM. The headless adapter skips skill loading entirely when no `.js` extension is discovered, so write the skill **and** an extension into the VM before creating a session.
 
 ```ts
 const skill = `---
@@ -70,7 +70,11 @@ Write commit messages in the imperative mood and keep the subject under 50 chara
 await agent.mkdir("/home/agentos/.pi/agent/skills/commit-style", { recursive: true });
 await agent.writeFile("/home/agentos/.pi/agent/skills/commit-style/SKILL.md", skill);
 
-// Pi discovers the skill automatically
+// Skills are only loaded when a Pi extension is also present
+await agent.mkdir("/home/agentos/.pi/agent/extensions", { recursive: true });
+await agent.writeFile("/home/agentos/.pi/agent/extensions/enable-skills.js", "export default function(pi) {}\n");
+
+// Pi loads the skill automatically
 const session = await agent.createSession("pi", {
   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });

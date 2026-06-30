@@ -1,7 +1,7 @@
 import { agentOS, setup } from "@rivet-dev/agentos";
 import { actor, queue } from "rivetkit";
 import {
-  type WorkflowLoopContextOf,
+  type WorkflowStepContextOf,
   workflow,
 } from "rivetkit/workflow";
 import pi from "./software/pi";
@@ -31,21 +31,25 @@ const bugFixer = actor({
 
       // Step 1: Clone the repo. Each step is an isolated, retryable unit of
       // work; a crash here resumes from this step on replay.
-      await loopCtx.step("clone-repo", () => cloneRepo(loopCtx, repo));
+      await loopCtx.step("clone-repo", (stepCtx) => cloneRepo(stepCtx, repo));
 
       // Step 2: An agent fixes the bug. The session is created and closed
       // inside the step, so it never has to outlive the work it backs (sessions
       // are ephemeral and would not survive a replay).
-      await loopCtx.step("fix-bug", () => fixBugWithAgent(loopCtx, issue));
+      await loopCtx.step("fix-bug", (stepCtx) =>
+        fixBugWithAgent(stepCtx, issue),
+      );
 
       // Step 3: Run the tests. The exit code feeds into the next step.
-      const exitCode = await loopCtx.step("run-tests", () => runTests(loopCtx));
+      const exitCode = await loopCtx.step("run-tests", (stepCtx) =>
+        runTests(stepCtx),
+      );
 
       // State changes are only valid inside a step callback, so they are
       // recorded as part of replay.
-      await loopCtx.step("record-result", async () => {
-        loopCtx.state.lastIssue = issue;
-        loopCtx.state.lastExitCode = exitCode;
+      await loopCtx.step("record-result", async (stepCtx) => {
+        stepCtx.state.lastIssue = issue;
+        stepCtx.state.lastExitCode = exitCode;
       });
     });
   }),
@@ -55,7 +59,7 @@ const bugFixer = actor({
 });
 
 async function cloneRepo(
-  ctx: WorkflowLoopContextOf<typeof bugFixer>,
+  ctx: WorkflowStepContextOf<typeof bugFixer>,
   repo: string,
 ): Promise<void> {
   const agentHandle = ctx.client<typeof registry>().vm.getOrCreate("bug-fixer");
@@ -63,7 +67,7 @@ async function cloneRepo(
 }
 
 async function fixBugWithAgent(
-  ctx: WorkflowLoopContextOf<typeof bugFixer>,
+  ctx: WorkflowStepContextOf<typeof bugFixer>,
   issue: string,
 ): Promise<void> {
   const agentHandle = ctx.client<typeof registry>().vm.getOrCreate("bug-fixer");
@@ -78,7 +82,7 @@ async function fixBugWithAgent(
 }
 
 async function runTests(
-  ctx: WorkflowLoopContextOf<typeof bugFixer>,
+  ctx: WorkflowStepContextOf<typeof bugFixer>,
 ): Promise<number> {
   const agentHandle = ctx.client<typeof registry>().vm.getOrCreate("bug-fixer");
   const tests = await agentHandle.exec("cd /home/agentos/repo && npm test");
@@ -101,17 +105,19 @@ const codeReviewer = actor({
       const { filePath } = message.body;
 
       // Step 1: An agent reviews the code and writes findings to a file.
-      await loopCtx.step("review", () => reviewCode(loopCtx, filePath));
+      await loopCtx.step("review", (stepCtx) => reviewCode(stepCtx, filePath));
 
       // Step 2: Read the review back from the VM filesystem. Its text is the
       // step return value, so it flows into the next step.
-      const review = await loopCtx.step("read-review", () => readReview(loopCtx));
+      const review = await loopCtx.step("read-review", (stepCtx) =>
+        readReview(stepCtx),
+      );
 
       // Step 3: A second session applies fixes based on the review.
-      await loopCtx.step("fix", () => applyReview(loopCtx, review));
+      await loopCtx.step("fix", (stepCtx) => applyReview(stepCtx, review));
 
-      await loopCtx.step("record-review", async () => {
-        loopCtx.state.reviewedFiles += 1;
+      await loopCtx.step("record-review", async (stepCtx) => {
+        stepCtx.state.reviewedFiles += 1;
       });
     });
   }),
@@ -121,7 +127,7 @@ const codeReviewer = actor({
 });
 
 async function reviewCode(
-  ctx: WorkflowLoopContextOf<typeof codeReviewer>,
+  ctx: WorkflowStepContextOf<typeof codeReviewer>,
   filePath: string,
 ): Promise<void> {
   const agentHandle = ctx.client<typeof registry>().vm.getOrCreate("reviewer");
@@ -136,7 +142,7 @@ async function reviewCode(
 }
 
 async function readReview(
-  ctx: WorkflowLoopContextOf<typeof codeReviewer>,
+  ctx: WorkflowStepContextOf<typeof codeReviewer>,
 ): Promise<string> {
   const agentHandle = ctx.client<typeof registry>().vm.getOrCreate("reviewer");
   const content = await agentHandle.readFile("/home/agentos/review.md");
@@ -144,7 +150,7 @@ async function readReview(
 }
 
 async function applyReview(
-  ctx: WorkflowLoopContextOf<typeof codeReviewer>,
+  ctx: WorkflowStepContextOf<typeof codeReviewer>,
   review: string,
 ): Promise<void> {
   const agentHandle = ctx.client<typeof registry>().vm.getOrCreate("reviewer");

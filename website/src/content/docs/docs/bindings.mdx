@@ -23,7 +23,7 @@ import { z } from "zod";
 const weatherBindings = {
   name: "weather",
   description: "Weather data bindings",
-  bindings: {
+  tools: {
     forecast: {
       description: "Get the weather forecast for a city",
       inputSchema: z.object({
@@ -44,7 +44,7 @@ const weatherBindings = {
 };
 
 const vm = agentOS({
-  bindings: [weatherBindings],
+  toolKits: [weatherBindings],
 });
 
 export const registry = setup({ use: { vm } });
@@ -67,7 +67,7 @@ await agent.sendPrompt(session.sessionId, "What's the weather in Paris?");
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/bindings)*
 
-Each binding can set an explicit `timeout` (in milliseconds) for long-running work. Bindings run without a timeout unless one is set.
+Each binding can set an explicit `timeout` (in milliseconds) for long-running work. Bindings run under a 30s (30000ms) default timeout when none is set, overridable per-binding via `timeout`, and capped at 300000ms (5 minutes).
 
 ### Zod to CLI mapping
 

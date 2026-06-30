@@ -6,7 +6,7 @@ skill: true
 
 import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
-Proxy HTTP requests into VM services with `vmFetch` and create time-limited, token-based preview URLs (with configurable expiration, revocation, and CORS), all carried over one transport (the kernel socket table) that is loopback-only by default under a three-layer confinement model.
+Proxy HTTP requests into VM services with `vmFetch` and create time-limited, token-based preview URLs (with per-call expiration and revocation), all carried over one transport (the kernel socket table) that is loopback-only by default under a three-layer confinement model.
 
 ## Run an HTTP server in the VM
 
@@ -88,23 +88,17 @@ registry.start();
 
 ## Preview URLs
 
-Preview URLs are port forwarding for VM services: a time-limited, public URL that proxies HTTP to a port inside the VM, for browser or external access (use `vmFetch` for server-to-server). Tokens survive sleep/wake and CORS is enabled; see [Security](/docs/security-model) for details.
+Preview URLs are port forwarding for VM services: a time-limited, public URL that proxies HTTP to a port inside the VM, for browser or external access (use `vmFetch` for server-to-server). Tokens survive sleep/wake; see [Security](/docs/security-model) for details.
 
 ### Create a preview URL
 
-Token lifetimes are configured under the `preview` key:
+Token lifetime is controlled per call via the second argument to `createSignedPreviewUrl(port, ttlSeconds)`, defaulting to 1 hour when omitted or `0`:
 
 <CodeGroup>
 ```ts title="server.ts"
 import { agentOS, setup } from "@rivet-dev/agentos";
 
-const vm = agentOS({
-  software: [],
-  preview: {
-    defaultExpiresInSeconds: 3600, // 1 hour default
-    maxExpiresInSeconds: 86400, // 24 hour maximum
-  },
-});
+const vm = agentOS({ software: [] });
 
 export const registry = setup({ use: { vm } });
 registry.start();
@@ -136,7 +130,7 @@ console.log("Short-lived preview:", shortPreview.path);
 
 ### Revoke a preview URL
 
-Mint short-lived preview tokens so access expires automatically; the lifetime is capped by `preview.maxExpiresInSeconds`.
+Mint short-lived preview tokens so access expires automatically; the lifetime is exactly the `ttlSeconds` you pass (no server-side maximum is currently enforced — omit it for the 1-hour default).
 
 <CodeGroup>
 ```ts title="client.ts"
@@ -179,3 +173,21 @@ const vm = agentOS({
 ```
 
 See [Permissions](/docs/permissions) for the full configuration.
+
+## Listen port policy
+
+Constrain which ports guest code may bind with the `listen` field on the VM config. It bounds the allowed listen range and gates privileged (below 1024) ports:
+
+```ts
+const vm = agentOS({
+  listen: {
+    portMin: 3000,           // lowest bindable port (validated 1–65535)
+    portMax: 9000,           // highest bindable port (portMin <= portMax)
+    allowPrivileged: false,  // default false; gates ports < 1024
+  },
+});
+```
+
+- `portMin` / `portMax` bound which ports the guest may bind and where automatic port allocation searches. Both are validated to be between `1` and `65535`, with `portMin <= portMax`.
+- `allowPrivileged` defaults to `false` and gates ports below `1024`. With it left `false`, binding a privileged port fails with `EACCES`.
+- A bind to a port outside `[portMin, portMax]`, or to a privileged port without `allowPrivileged: true`, fails with `EACCES`.

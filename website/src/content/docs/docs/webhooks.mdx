@@ -6,23 +6,57 @@ skill: true
 
 import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
-Use a lightweight HTTP server to receive webhooks and drive an agent. This example uses [Hono](https://hono.dev) to receive Slack webhooks and call an agent directly.
+Use a lightweight HTTP server to receive webhooks and drive an agent. This example uses [Hono](https://hono.dev) to receive Slack webhooks and push them to an actor queue that drives the agent.
 
 ## Example: Slack webhook to agent
 
 <CodeGroup>
 ```ts title="server.ts"
 import { agentOS, setup } from "@rivet-dev/agentos";
+import { actor, queue } from "rivetkit";
 import { createClient } from "@rivet-dev/agentos/client";
 import { Hono } from "hono";
 import pi from "@agentos-software/pi";
+
+// Actor that processes Slack messages via a queue
+const slackWorker = actor({
+  queues: {
+    messages: queue<{ channel: string; text: string; user: string }>(),
+  },
+  run: async (c) => {
+    const agentHandle = c.client<typeof registry>().vm.getOrCreate("slack-agent");
+
+    for await (const message of c.queue.iter()) {
+      const { channel, text, user } = message.body;
+
+      const session = await agentHandle.createSession("pi", {
+        env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
+      });
+      const result = await agentHandle.sendPrompt(
+        session.sessionId,
+        `Slack message from ${user} in #${channel}:\n\n${text}\n\nRespond helpfully.`,
+      );
+      await agentHandle.closeSession(session.sessionId);
+
+      // Post the response back to Slack
+      await fetch("https://slack.com/api/chat.postMessage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
+        },
+        body: JSON.stringify({ channel, text: result.text }),
+      });
+    }
+  },
+});
 
 const vm = agentOS({
   software: [pi],
   additionalInstructions: "You answer Slack messages concisely.",
 });
 
-export const registry = setup({ use: { vm } });
+export const registry = setup({ use: { slackWorker, vm } });
 registry.start();
 
 // Hono server to receive Slack webhooks
@@ -37,28 +71,12 @@ app.post("/slack/events", async (c) => {
     return c.json({ challenge: body.challenge });
   }
 
-  // Call the agent directly for a user message
+  // Queue the message for the agent
   if (body.event?.type === "message" && !body.event?.bot_id) {
-    const { channel, text, user } = body.event;
-    const agent = client.vm.getOrCreate("slack-agent");
-
-    const session = await agent.createSession("pi", {
-      env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-    });
-    const result = await agent.sendPrompt(
-      session.sessionId,
-      `Slack message from ${user} in #${channel}:\n\n${text}\n\nRespond helpfully.`,
-    );
-    await agent.closeSession(session.sessionId);
-
-    // Post the response back to Slack
-    await fetch("https://slack.com/api/chat.postMessage", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
-      },
-      body: JSON.stringify({ channel, text: result.text }),
+    await client.slackWorker.getOrCreate("main").send("messages", {
+      channel: body.event.channel,
+      text: body.event.text,
+      user: body.event.user,
     });
   }
 

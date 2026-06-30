@@ -82,7 +82,32 @@ capacity, fillPercent }`. This is the foundation for host-facing limit
 observability — a structured "a limit is approaching capacity" signal rather than
 a parsed log line.
 
+## ACP method timeouts
+
+The bounds above are secure-exec resource caps that agentOS forwards. agentOS also
+owns its own ACP/session-layer bounds, enforced in the sidecar. Chief among them is
+a **per-ACP-method request timeout**: every ACP call the sidecar makes to an agent
+adapter is bounded, so a stalled adapter surfaces as a typed error instead of a
+silent hang. The defaults are:
+
+| ACP method | Timeout |
+| --- | --- |
+| `initialize` | 10s |
+| `session/new` | 30s |
+| `session/prompt` | 600s |
+| any other method | 120s (default) |
+
+On breach the sidecar returns a typed JSON-RPC error (code **`-32000`**) whose
+`error.data` carries `kind: "acp_timeout"` plus `method`, `id`, `timeoutMs`,
+`transportState` (the cancel status), and `recentActivity`. The human-readable
+`error.message` additionally names the adapter **process id** and the recent ACP
+activity, so a stall is diagnosable from either the structured payload or the log.
+
+Host clients should detect this case via **`isAcpTimeoutErrorData()`** (exported
+from `@rivet-dev/agentos`) rather than parsing the message string.
+
 ## See also
 
+- [Agent Sessions](/docs/architecture/agent-sessions) — the ACP session layer these method timeouts bound.
 - [Resource Limits](/docs/resource-limits) — the full `limits` config surface.
 - [Processes](/docs/architecture/processes) and [Sessions & Persistence](/docs/architecture/sessions-persistence) — the layers the queue chain runs through.

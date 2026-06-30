@@ -304,14 +304,6 @@ const vm = agentOS({
     defaultExpiresInSeconds: 3600, // 1 hour (default)
     maxExpiresInSeconds: 86400, // 24 hours (default)
   },
-
-  // Lifecycle hooks (see below)
-  onSessionEvent: async (sessionId, event) => {
-    console.log("Session event:", sessionId, event.method);
-  },
-  onPermissionRequest: async (sessionId, request) => {
-    console.log("Permission request:", sessionId, request.permissionId);
-  },
 });
 
 export const registry = setup({ use: { vm } });
@@ -320,30 +312,15 @@ registry.start();
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
 
-The top-level fields are documented inline above. See [Mounts](#mounts), [Software](/docs/software), and (for the hooks) [Approvals](/docs/approvals).
+The top-level fields are documented inline above. See [Mounts](#mounts) and [Software](/docs/software).
 
-### Lifecycle hooks
-
-`onPermissionRequest(sessionId, request)` fires when an agent requests permission. `onSessionEvent(sessionId, event)` is a server-side hook called once for every session event: unlike the client-side `sessionEvent` connection subscription, it runs in the actor for every event regardless of connected clients, making it the place for server-side logging, persistence, or side effects.
-
-```ts title="server.ts"
-import { agentOS } from "@rivet-dev/agentos";
-
-export const vm = agentOS({
-  // Runs once per session event, server-side, for every session.
-  onSessionEvent: async (sessionId, event) => {
-    console.log("Session event:", sessionId, event.method);
-  },
-});
-```
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/core)*
+To observe session events and permission requests, subscribe to the live `sessionEvent` / `permissionRequest` connection events (see [Agent sessions](#agent-sessions) above). Persisted session history can be read back with `getSessionEvents()`.
 
 ### Timeouts
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Action timeout | 15 minutes | Maximum time for any single action |
-| Sleep grace period | 15 minutes | Time before sleeping after all activity stops |
+| Action timeout | 1 hour | Maximum time for any single action |
+| Sleep grace period | 1 hour | Time before sleeping after all activity stops |
 
 These are set internally by the `agentOS()` factory and cannot be overridden per-call. See [Persistence & Sleep](/docs/persistence) for details on the sleep lifecycle.

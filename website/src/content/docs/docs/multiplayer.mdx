@@ -6,7 +6,7 @@ skill: true
 
 import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
-Connect multiple clients to the same agentOS actor so all subscribers receive broadcasted session output, process logs, and shell data, enabling collaborative patterns where one user prompts and others observe.
+Connect multiple clients to the same agentOS actor so all subscribers receive broadcasted session events, enabling collaborative patterns where one user prompts and others observe.
 
 ## Multiple clients observing a session
 
@@ -48,10 +48,6 @@ import pi from "./software/pi";
 
 const vm = agentOS({
   software: [pi],
-  onSessionEvent: async (sessionId, event) => {
-    // Server-side hook runs once per event, even with multiple clients
-    console.log("Session event:", sessionId, event.method);
-  },
 });
 
 export const registry = setup({ use: { vm } });

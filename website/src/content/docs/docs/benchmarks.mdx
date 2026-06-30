@@ -106,7 +106,7 @@ From the repository root:
 ./scripts/benchmarks/run-benchmarks.sh
 ```
 
-The script builds the TypeScript packages and an **optimized (release) sidecar**, points the SDK at it via `AGENT_OS_SIDECAR_BIN`, and writes one JSON result per benchmark to `scripts/benchmarks/results/`:
+The script builds the TypeScript packages and an **optimized (release) sidecar**, points the SDK at it via `AGENTOS_SIDECAR_BIN`, and writes one JSON result per benchmark to `scripts/benchmarks/results/`:
 
 | Result file | Feeds marketing input |
 |---|---|
@@ -118,10 +118,10 @@ Copy those numbers into `website/src/data/bench.ts`; every figure and multiplier
 
 ### Run a single benchmark
 
-Each benchmark is a standalone `tsx` entrypoint. Build first (`pnpm build` and `cargo build --release -p agent-os-sidecar`), then:
+Each benchmark is a standalone `tsx` entrypoint. Build first (`pnpm build` and `cargo build --release -p agentos-sidecar`), then:
 
 ```sh
-export AGENT_OS_SIDECAR_BIN="$PWD/target/release/agent-os-sidecar"
+export AGENTOS_SIDECAR_BIN="$PWD/target/release/agentos-sidecar"
 
 # Cold start (sleep workload)
 pnpm exec tsx scripts/benchmarks/coldstart.bench.ts --workload=sleep --iterations=2000
@@ -134,6 +134,13 @@ pnpm exec tsx --expose-gc scripts/benchmarks/memory.bench.ts --workload=pi-sessi
 ```
 
 JSON goes to stdout; a human-readable table and progress go to stderr.
+
+### Local binary overrides
+
+Two dev escape-hatch env vars let you point the SDK at locally built native artifacts instead of the prebuilt platform `optionalDependencies` packages. Both expect an **absolute path**:
+
+- `AGENTOS_SIDECAR_BIN` — path to a locally built `agentos-sidecar` binary (`cargo build --release -p agentos-sidecar` → `$PWD/target/release/agentos-sidecar`). Used by the benchmark scripts above.
+- `AGENTOS_PLUGIN_BIN` — path to a locally built actor-plugin cdylib (`cargo build -p agentos-actor-plugin` → `target/debug/libagentos_actor_plugin.{so,dylib}`).
 
 ### Sample sizes
 

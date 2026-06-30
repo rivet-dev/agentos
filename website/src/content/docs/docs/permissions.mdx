@@ -9,13 +9,15 @@ The sandbox permission policy is the kernel-level enforcement layer. Every guest
 - **Six scopes**, configured independently: `fs`, `network`, `childProcess`, `process`, `env`, `binding`.
 - **Each scope** is a mode (`"allow"` or `"deny"`), or a rule set.
 - **A denied operation** is rejected with `EACCES` before any host resource is touched.
-- **Merged over a secure default**, so partial policies work.
+- **Not merged over a baseline.** Pass no policy and every scope defaults to `"allow"`; pass a policy and every scope you omit is **denied**.
 
 For the higher-level agent tool-approval layer (human-in-the-loop, auto-approve), see [Approvals](/docs/approvals).
 
 ## Defaults and merge semantics
 
-The sandbox is deny-by-default for outward-facing capabilities. When you pass no policy, this baseline applies:
+The policy is **not** merged over a baseline. There are two distinct modes:
+
+**1. No policy — everything is allowed.** When you pass no `permissions` object, every scope defaults to `"allow"`, including `network`:
 
 ```ts
 {
@@ -23,33 +25,40 @@ The sandbox is deny-by-default for outward-facing capabilities. When you pass no
   childProcess: "allow",
   process: "allow",
   env: "allow",
-  network: "deny",      // no network egress until you opt in
+  network: "allow",     // network egress is on by default
+  binding: "allow",
 }
 ```
 
-- `fs`/`childProcess`/`process`/`env` are allowed because they are fully virtualized (the guest sees only the VM, never the host) and are required to run a program at all.
-- `network` is denied: guest code cannot reach the network until you opt in.
-- Your policy is merged **over** this baseline. Omitted scopes keep their default; they are **not** denied. So `{ network: "allow" }` grants the network while keeping the execution essentials.
+**2. A policy is provided — every omitted scope is denied.** The moment you pass a `permissions` object it is *not* layered over the all-allow default. The sidecar treats any scope you leave out as `"deny"`. So `{ network: "allow" }` grants the network but **also denies `fs`, `childProcess`, `process`, and `env`** — the guest can no longer run a normal program.
+
+To keep the execution essentials on while opting into the network, list every scope you want allowed:
 
 ```ts
-// Grant the network, leave everything else at the secure default.
-const grantNetwork = { network: "allow" };
+// Grant the network AND keep the execution essentials — omitted scopes are denied.
+const grantNetwork = {
+  network: "allow",
+  fs: "allow",
+  childProcess: "allow",
+  process: "allow",
+  env: "allow",
+};
 ```
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/permissions)*
 
 ## Permission scopes
 
-| Scope | Controls | Default |
+The **No-policy default** column is the mode each scope takes when you pass *no* `permissions` object at all. If you pass any `permissions` object, every scope you omit is denied instead (see [Defaults and merge semantics](#defaults-and-merge-semantics)).
+
+| Scope | Controls | No-policy default |
 |---|---|---|
 | `fs` | Filesystem reads, writes, and metadata operations | `allow` |
-| `network` | Outbound connections: `fetch`, HTTP, DNS, and inbound `listen` | `deny` |
+| `network` | Outbound connections: `fetch`, HTTP, DNS, and inbound `listen` | `allow` |
 | `childProcess` | Spawning child processes | `allow` |
 | `process` | Process-control operations | `allow` |
 | `env` | Environment variable access | `allow` |
-| `binding` | Invoking bindings registered with the runtime | `deny`* |
-
-\* The `binding` scope is auto-granted to `allow` when you register bindings and set no `binding` policy of your own. Pass a `binding` policy to gate individual bindings.
+| `binding` | Invoking bindings registered with the runtime | `allow` |
 
 ## Bind a policy to the VM
 
@@ -73,12 +82,13 @@ registry.start();
 
 ## Grant or deny a whole scope
 
-The simplest value for a scope is a single mode string. `"allow"` permits every operation in the scope; `"deny"` rejects every one with `EACCES`. Omitted scopes keep their secure default, so you only list what you want to change.
+The simplest value for a scope is a single mode string. `"allow"` permits every operation in the scope; `"deny"` rejects every one with `EACCES`. Remember that once you pass a `permissions` object, every scope you omit is denied — so list every scope you want allowed, not just the ones you want to change.
 
 ```ts
 const permissions = {
 	network: "allow", // turn on network egress
 	fs: "deny",       // turn off all filesystem access
+	// childProcess, process, and env are omitted here, so they are denied.
 };
 ```
 

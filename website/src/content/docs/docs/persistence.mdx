@@ -6,7 +6,7 @@ skill: true
 
 import CodeGroup from '@rivet-dev/docs-theme/components/CodeGroup.astro';
 
-agentOS automatically persists the `/home/agentos` filesystem and session transcripts (with sequence numbers for replay) across sleep/wake, sleeping after a configurable grace period (15 minutes by default) and waking automatically when a client connects or a cron job triggers.
+agentOS automatically persists the `/home/agentos` filesystem and session transcripts (with sequence numbers for replay) across sleep/wake, sleeping after a configurable grace period (1 hour by default) and waking automatically when a client connects or a cron job triggers.
 
 ## What persists across sleep
 
@@ -35,10 +35,10 @@ When all activity stops, the sleep grace period begins.
 
 ## Sleep grace period
 
-After all activity stops, the actor waits 15 minutes before sleeping. This allows for brief pauses between interactions without restarting the VM.
+After all activity stops, the actor waits 1 hour before sleeping. This allows for brief pauses between interactions without restarting the VM.
 
 ```
-Activity stops ──> 15 min grace period ──> Actor sleeps
+Activity stops ──> 60 min grace period ──> Actor sleeps
                                            (VM shutdown, processes killed)
 
 New client connects ──> Actor wakes ──> VM boots ──> Filesystem restored
@@ -48,10 +48,10 @@ New client connects ──> Actor wakes ──> VM boots ──> Filesystem rest
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Action timeout | 15 minutes | Maximum time for any single action |
-| Sleep grace period | 15 minutes | Time before sleeping after all activity stops |
+| Action timeout | 1 hour | Maximum time for any single action |
+| Sleep grace period | 1 hour | Time before sleeping after all activity stops |
 
-These are set internally by the `agentOS()` factory and cannot be overridden per-call.
+These are high "never hit by normal use" defaults set by the `agentOS()` factory. Callers can override any single knob per actor via `actorOptions` (validated by `agentOsActorOptionsSchema`); a caller-supplied value wins over the default.
 
 ## Sleep vs destroy
 
@@ -144,11 +144,15 @@ Stores the virtual filesystem.
 | `is_directory` | INTEGER | 1 for directory, 0 for file |
 | `content` | BLOB | File content |
 | `mode` | INTEGER | POSIX mode bits |
+| `uid` | INTEGER | Owner user ID |
+| `gid` | INTEGER | Owner group ID |
 | `size` | INTEGER | File size in bytes |
 | `atime_ms` | INTEGER | Access time (ms) |
 | `mtime_ms` | INTEGER | Modification time (ms) |
 | `ctime_ms` | INTEGER | Change time (ms) |
 | `birthtime_ms` | INTEGER | Birth time (ms) |
+| `symlink_target` | TEXT | Symlink target path (NULL for non-symlinks) |
+| `nlink` | INTEGER | Hard link count |
 
 ### `agent_os_sessions`
 

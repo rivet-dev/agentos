@@ -104,6 +104,8 @@ These are often conflated but are separate. They stack, and a request must pass 
 2. **Loopback confinement.** Decides who may reach an already-permitted guest listener. By default only loopback inside the VM; a per-port exemption loosens it.
 3. **DNS / egress allowlist.** Constrains where permitted outbound connections may go. The kernel filters resolved addresses, blocking outbound access to restricted ranges, so an allowed `connect` can still be refused by destination.
 
+Guest listen ports are additionally constrained by the **listen policy** (the `listen` field on the VM config): a port range (`portMin` / `portMax`) plus a privileged-port gate (`allowPrivileged`, default false, gating ports below 1024). A bind outside the range or to a privileged port without `allowPrivileged` is refused with `EACCES`, and automatic port allocation searches within the range. The policy is validated in `crates/vm-config/src/lib.rs` (ports 1–65535, `portMin <= portMax`) and enforced by `allocate_guest_listen_port` in `crates/sidecar/src/execution.rs`. See [Networking & Previews](/docs/networking) for the configuration.
+
 The per-port loopback exemption belongs to layer 2 only. It is a trusted, per-port whitelist that *loosens* the default loopback confinement (for example, exposing an in-VM dev server beyond loopback). It is not an egress control and grants no outbound reach; layers 1 and 3 still apply. It is configured with `loopbackExemptPorts`, a list of ports that are exempt from the SSRF checks at layer 2; each listed port is reachable from outside the loopback interface, while the permission policy and egress allowlist continue to apply.
 
 ### Trust and ownership
@@ -116,9 +118,8 @@ Every guest connect, listen, read, and write passes through sidecar ownership an
 
 A preview URL is port forwarding for a VM service: a time-limited, signed, publicly reachable URL that proxies HTTP to a port inside the VM. Mechanically it reuses the host-to-guest path:
 
-- A signed token is minted for a `(VM, port)` pair with an expiration, capped by `preview.maxExpiresInSeconds`. Tokens are stored in SQLite, survive sleep/wake cycles, and expired ones are cleaned up automatically.
+- A signed token is minted for a `(VM, port)` pair with a client-supplied expiration (the `ttlSeconds` argument to `createSignedPreviewUrl`, defaulting to 1 hour when omitted or `0`; no server-side maximum is currently enforced). Tokens are stored in SQLite, survive sleep/wake cycles, and expired ones are cleaned up automatically.
 - An incoming request to the preview path is authenticated against the token, then proxied into the VM exactly like `vmFetch`: resolve the port to a VM-owned kernel listener, connect over loopback, frame HTTP/1.1, drive the target process, and stream the response back. The same fail-closed, VM-owned-listener-only rules apply.
-- CORS is enabled so browsers can reach preview URLs from any origin.
 - Revocation (`expireSignedPreviewUrl`) invalidates the token immediately, after which the proxy refuses the request before touching the socket table.
 
 Because previews ride the host fetch path, they are subject to loopback confinement at the kernel but **not** to the guest egress allowlist: the request enters the listener from the host side and never becomes guest outbound traffic.

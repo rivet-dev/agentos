@@ -20,7 +20,8 @@ async function quickStart() {
 // ── Skills ────────────────────────────────────────────────────────
 //
 // Write a SKILL.md into the agent's skills directory before creating the
-// session and the agent discovers it automatically.
+// session. Skills are only loaded when at least one Pi extension is also
+// present, so write an extension alongside the skill.
 async function withSkill() {
   const skill = `---
 name: commit-style
@@ -32,6 +33,10 @@ Write commit messages in the imperative mood and keep the subject under 50 chara
 
   await agent.mkdir("/home/agentos/.pi/agent/skills/commit-style", { recursive: true });
   await agent.writeFile("/home/agentos/.pi/agent/skills/commit-style/SKILL.md", skill);
+
+  // Skills are only loaded when a Pi extension is also present
+  await agent.mkdir("/home/agentos/.pi/agent/extensions", { recursive: true });
+  await agent.writeFile("/home/agentos/.pi/agent/extensions/enable-skills.js", "export default function(pi) {}\n");
 
   const session = await agent.createSession("pi", {
     env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
@@ -79,6 +84,10 @@ Write commit messages in the imperative mood and keep the subject under 50 chara
 
   await agent.mkdir("/home/agentos/.pi/agent/skills/commit-style", { recursive: true });
   await agent.writeFile("/home/agentos/.pi/agent/skills/commit-style/SKILL.md", skill);
+
+  // Skills are only loaded when a Pi extension is also present
+  await agent.mkdir("/home/agentos/.pi/agent/extensions", { recursive: true });
+  await agent.writeFile("/home/agentos/.pi/agent/extensions/enable-skills.js", "export default function(pi) {}\n");
 
   // Pre-install the MCP server so `npx` is silent — first-run install output
   // would otherwise corrupt the MCP stdio handshake ("Connection closed").

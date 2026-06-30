@@ -7,7 +7,7 @@ import { z } from "zod";
 const weatherBindings = {
   name: "weather",
   description: "Weather data bindings",
-  bindings: {
+  tools: {
     forecast: {
       description: "Get the weather forecast for a city",
       inputSchema: z.object({
@@ -28,7 +28,7 @@ const weatherBindings = {
 };
 
 const vm = agentOS({
-  bindings: [weatherBindings],
+  toolKits: [weatherBindings],
 });
 
 export const registry = setup({ use: { vm } });

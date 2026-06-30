@@ -11,7 +11,7 @@ Sessions launch an agent inside the VM, stream its responses in real time over `
 
 ## Create a session
 
-Use `createSession` to launch an agent inside the VM. Returns session metadata including capabilities and agent info. The agent starts in `/home/agentos` by default; override it with the `cwd` option below.
+Use `createSession` to launch an agent inside the VM. Returns session metadata including capabilities and agent info. The agent starts in `/workspace` by default; override it with the `cwd` option below.
 
 <CodeGroup>
 ```ts title="client.ts"
@@ -47,7 +47,7 @@ registry.start();
 The second argument to `createSession` accepts:
 
 - **`env`**: environment variables for the agent process (e.g. API keys). Not inherited from the host.
-- **`cwd`**: working directory inside the VM. Defaults to `/home/agentos`.
+- **`cwd`**: working directory inside the VM. Defaults to `/workspace`.
 - **`mcpServers`**: MCP servers (local child processes or remote URLs) exposing extra tools.
 - **`additionalInstructions`**: text appended to the agent's system prompt.
 - **`skipOsInstructions`**: skip the base OS instructions injection. Tool documentation is still included.
@@ -208,52 +208,6 @@ registry.start();
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/sessions)*
 
-## Runtime configuration
-
-Change model, mode, and thought level on a live session.
-
-<CodeGroup>
-```ts title="client.ts"
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
-const agent = client.vm.getOrCreate("my-agent");
-
-const session = await agent.createSession("pi", {
-  env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
-});
-
-// Change model
-await agent.setModel(session.sessionId, "claude-sonnet-4-6");
-
-// Change mode (e.g. "plan", "auto")
-await agent.setMode(session.sessionId, "plan");
-
-// Change thought level
-await agent.setThoughtLevel(session.sessionId, "high");
-
-// Query available options
-const modes = await agent.getModes(session.sessionId);
-console.log(modes);
-
-const options = await agent.getConfigOptions(session.sessionId);
-console.log(options);
-```
-
-```ts title="server.ts"
-import { agentOS, setup } from "@rivet-dev/agentos";
-import pi from "@agentos-software/pi";
-
-const vm = agentOS({ software: [pi] });
-
-export const registry = setup({ use: { vm } });
-registry.start();
-```
-</CodeGroup>
-
-*[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/sessions)*
-
 ## Replay events
 
 Use `getSessionEvents` to replay a session's persisted events, including for VMs that are not currently running. Pair it with `listPersistedSessions` to find earlier sessions.
@@ -310,7 +264,7 @@ for (const s of sessions) {
 // Get full event history for a session
 const events = await agent.getSessionEvents(sessions[0].sessionId);
 for (const e of events) {
-  console.log(e.seq, e.event.method, e.createdAt);
+  console.log(e.method, e.params);
 }
 ```
 
@@ -326,6 +280,24 @@ registry.start();
 </CodeGroup>
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/sessions)*
+
+## List available agents
+
+Enumerate the agents registered on a VM and check which are installed before creating a session. `listAgents()` returns an `AgentRegistryEntry[]`:
+
+```ts
+const agents = agent.listAgents();
+for (const a of agents) {
+  // a.id          -- agent id you pass to createSession, e.g. "pi", "pi-cli",
+  //                  "opencode", "claude", "codex", plus any package-provided ids
+  // a.acpAdapter  -- ACP adapter npm package
+  // a.agentPackage-- underlying agent npm package
+  // a.installed   -- whether the adapter package is resolvable in the VM
+  console.log(a.id, a.installed);
+}
+```
+
+The ids combine the built-in agents with any package-provided agents you've added via `software`. `installed: false` simply means the adapter package isn't mounted in the VM's `/root/node_modules` (or a mounted software root) yet -- it is not an error, just an indication that `createSession` for that id needs the package added first.
 
 ## Multiple sessions
 

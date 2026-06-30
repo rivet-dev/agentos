@@ -1,5 +1,5 @@
 import { agentOS, setup } from "@rivet-dev/agentos";
-import { createSandboxFs, createSandboxBindings } from "@rivet-dev/agentos-sandbox";
+import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agentos-sandbox";
 import { SandboxAgent } from "sandbox-agent";
 import { docker } from "sandbox-agent/docker";
 
@@ -8,13 +8,13 @@ import { docker } from "sandbox-agent/docker";
 const sandbox = await SandboxAgent.start({ sandbox: docker() });
 
 // `createSandboxFs` returns a mount plugin descriptor that projects the sandbox
-// filesystem into the VM, and `createSandboxBindings` exposes the sandbox's
-// process management as bindings.
+// filesystem into the VM, and `createSandboxToolkit` exposes the sandbox's
+// process management as a host toolkit.
 const vm = agentOS({
 	mounts: [
 		{ path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) },
 	],
-	bindings: [createSandboxBindings({ client: sandbox })],
+	toolKits: [createSandboxToolkit({ client: sandbox })],
 });
 
 export const registry = setup({ use: { vm } });

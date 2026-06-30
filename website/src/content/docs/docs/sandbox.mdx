@@ -4,7 +4,7 @@ description: "Extend agentOS with full sandboxes for heavy workloads like browse
 skill: true
 ---
 
-For heavy workloads like browsers, desktop automation, and compilation, pair agentOS with a full sandbox on demand. Its filesystem mounts into the VM as a native directory, and its process management is exposed as [bindings](/docs/bindings), all provider-agnostic through [Sandbox Agent](https://sandboxagent.dev).
+For heavy workloads like browsers, desktop automation, and compilation, pair agentOS with a full sandbox on demand. Its filesystem mounts into the VM as a native directory, and its process management is exposed as a [host toolkit](/docs/bindings), all provider-agnostic through [Sandbox Agent](https://sandboxagent.dev).
 
 ## Why use agentOS with a sandbox?
 
@@ -27,7 +27,7 @@ Start with the default agentOS VM for all workloads, and only spin up a sandbox 
 The sandbox integration ships as the `@rivet-dev/agentos-sandbox` package. It works through two mechanisms:
 
 - **Filesystem mount**: Projects the sandbox into the VM as a native directory, like mounting a hard drive on your own machine. Read and write files through the mount directly.
-- **Bindings**: Exposes sandbox process management as [bindings](/docs/bindings). Execute commands on the sandbox from within the VM.
+- **Host toolkit**: Exposes sandbox process management as a [host toolkit](/docs/bindings). Execute commands on the sandbox from within the VM.
 
 Both are powered by [Sandbox Agent](https://sandboxagent.dev), and you can swap providers without changing agent code. Install both packages:
 
@@ -35,11 +35,11 @@ Both are powered by [Sandbox Agent](https://sandboxagent.dev), and you can swap 
 npm install @rivet-dev/agentos-sandbox sandbox-agent
 ```
 
-`createSandboxFs` and `createSandboxBindings` come from `@rivet-dev/agentos-sandbox`. `SandboxAgent` and the provider helpers (such as `docker`) come from the `sandbox-agent` package.
+`createSandboxFs` and `createSandboxToolkit` come from `@rivet-dev/agentos-sandbox`. `SandboxAgent` and the provider helpers (such as `docker`) come from the `sandbox-agent` package.
 
 ```ts title="server.ts"
 import { agentOS, setup } from "@rivet-dev/agentos";
-import { createSandboxFs, createSandboxBindings } from "@rivet-dev/agentos-sandbox";
+import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agentos-sandbox";
 import { SandboxAgent } from "sandbox-agent";
 import { docker } from "sandbox-agent/docker";
 
@@ -47,11 +47,11 @@ import { docker } from "sandbox-agent/docker";
 const sandbox = await SandboxAgent.start({ sandbox: docker() });
 
 // `createSandboxFs` returns a mount plugin descriptor that projects the sandbox
-// filesystem into the VM, and `createSandboxBindings` exposes the sandbox's
-// process management as bindings.
+// filesystem into the VM, and `createSandboxToolkit` exposes the sandbox's
+// process management as a host toolkit.
 const vm = agentOS({
-	// Bindings let the agent control the sandbox
-	bindings: [createSandboxBindings({ client: sandbox })],
+	// The toolkit lets the agent control the sandbox
+	toolKits: [createSandboxToolkit({ client: sandbox })],
 	// Mounts let the agent read the sandbox filesystem (optional)
 	mounts: [
 		{ path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) },
@@ -65,9 +65,9 @@ registry.start();
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/sandbox)*
 
-## Calling the mounted bindings
+## Calling the toolkit
 
-Once the sandbox is mounted, write code through the filesystem and run it inside the sandbox. The sandbox bindings are exposed inside the VM as a CLI command, so you call it through the same `exec`/`spawn` surface as any other command.
+Once the sandbox is mounted, write code through the filesystem and run it inside the sandbox. The sandbox toolkit is exposed inside the VM as a CLI command, so you call it through the same `exec`/`spawn` surface as any other command.
 
 ```ts title="client.ts"
 import { createClient } from "@rivet-dev/agentos/client";
@@ -84,12 +84,12 @@ await vm.writeFile("/home/agentos/sandbox/app/index.ts", 'console.log("hello")')
 const result = await vm.exec("node /home/agentos/sandbox/app/index.ts");
 console.log(result.stdout); // "hello\n"
 
-// Call a mounted binding from the client. The sandbox bindings are exposed inside the
+// Call the sandbox toolkit from the client. The toolkit is exposed inside the
 // VM as a CLI command, so you invoke it through the same exec/spawn surface.
 const install = await vm.exec("agentos-sandbox run-command --command \"npm install\" --cwd /home/agentos/sandbox/app");
 console.log(install.exitCode, install.stdout);
 
-// Spawn a long-running process via the bindings and stream its output.
+// Spawn a long-running process via the toolkit and stream its output.
 const { pid } = await vm.spawn("agentos-sandbox", [
 	"create-process",
 	"--command",
@@ -109,9 +109,9 @@ conn.on("processOutput", (payload) => {
 
 *[See Full Example](https://github.com/rivet-dev/agent-os/tree/main/examples/docs/sandbox)*
 
-## Bindings reference
+## Toolkit reference
 
-The bindings expose these commands inside the VM:
+The toolkit exposes these commands inside the VM:
 
 ```bash
 # Run a command synchronously

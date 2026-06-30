@@ -4,10 +4,18 @@ import type { registry } from "./server";
 const client = createClient<typeof registry>({ endpoint: "http://localhost:6420" });
 const agent = client.vm.getOrCreate("my-agent");
 
-// Permission requests forwarded by the server reach the client here. The
-// payload is inferred from the actor's event schema, so no cast is needed.
+// `data.request.description` and `data.request.params` carry the raw ACP
+// permission details (the requested tool, paths, etc.). Inspect them to decide
+// which requests to approve automatically and which to send to a human.
 const conn = agent.connect();
 conn.on("permissionRequest", async (data) => {
+  const description = data.request.description ?? "";
+  if (description.toLowerCase().includes("read")) {
+    // Auto-approve read requests.
+    await agent.respondPermission(data.sessionId, data.request.permissionId, "once");
+    return;
+  }
+  // Everything else goes to a human.
   const approved = confirm(`Allow: ${JSON.stringify(data.request)}?`);
   await agent.respondPermission(
     data.sessionId,

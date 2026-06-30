@@ -7,7 +7,7 @@
  * sandbox example to type-check. Remove once the packages are installed here.
  *
  * Real packages and exports:
- * - `@rivet-dev/agentos-sandbox` -> `createSandboxFs`, `createSandboxBindings`
+ * - `@rivet-dev/agentos-sandbox` -> `createSandboxFs`, `createSandboxToolkit`
  * - `sandbox-agent`              -> `SandboxAgent`
  * - `sandbox-agent/docker`       -> `docker`
  */
@@ -45,10 +45,10 @@ declare module "@rivet-dev/agentos-sandbox" {
 	 * the VM. Use it as the `plugin` of a `{ path, plugin }` mount entry.
 	 */
 	export function createSandboxFs(options: SandboxFsOptions): unknown;
-	/** Build bindings that expose the sandbox's process management. */
-	export function createSandboxBindings(options: SandboxToolkitOptions): {
+	/** Build a host toolkit that exposes the sandbox's process management. */
+	export function createSandboxToolkit(options: SandboxToolkitOptions): {
 		name: string;
 		description: string;
-		bindings: Record<string, unknown>;
+		tools: Record<string, unknown>;
 	};
 }
