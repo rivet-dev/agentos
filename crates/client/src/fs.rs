@@ -802,6 +802,31 @@ impl AgentOs {
         Ok(entries)
     }
 
+    /// Fast typed directory listing: ONE guest filesystem round-trip that returns every child with
+    /// its type, instead of a `readdir` plus an `lstat` per entry (the [`Self::acp_read_dir_with_types`]
+    /// path, which wedges on large/virtual dirs). The native `READ_DIR` op returns the typed children
+    /// directly in the `entries` list (`GuestDirEntry`); this keeps the type fields (`kernel_readdir`
+    /// projects the same list to names only). `.`/`..` are filtered. Goes through the kernel, so mounts
+    /// are listed correctly.
+    pub async fn read_dir_with_types(&self, path: &str) -> Result<Vec<VirtualDirEntry>> {
+        Self::assert_safe_absolute_path(path)?;
+        let result = self
+            .guest_fs_call(Self::fs_request(GuestFilesystemOperation::ReadDir, path))
+            .await?;
+        let mut entries = Vec::new();
+        for entry in result.entries.unwrap_or_default() {
+            if entry.name == "." || entry.name == ".." {
+                continue;
+            }
+            entries.push(VirtualDirEntry {
+                name: entry.name,
+                is_directory: entry.is_directory,
+                is_symbolic_link: entry.is_symbolic_link,
+            });
+        }
+        Ok(entries)
+    }
+
     /// Recursive BFS listing; symlinks recorded but NOT descended; a stat failure aborts the call.
     pub async fn readdir_recursive(
         &self,
