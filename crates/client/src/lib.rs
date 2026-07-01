@@ -88,10 +88,10 @@ pub use fs::{
 pub use shell::{ConnectTerminalOptions, OpenShellOptions, ShellHandle};
 
 pub use session::{
-    AgentCapabilities, AgentInfo, AgentRegistryEntry, ConfigAllowedValue, CreateSessionOptions,
-    McpServerConfig, PermissionReply, PermissionRequest, PromptCapabilities, PromptResult,
-    ResumeSessionOptions, ResumeSessionResult, SessionConfigOption, SessionId, SessionInfo,
-    SessionInitData, SessionMode, SessionModeState,
+    AgentCapabilities, AgentExitEvent, AgentExitStream, AgentExitSubscription, AgentInfo,
+    AgentRegistryEntry, ConfigAllowedValue, CreateSessionOptions, McpServerConfig, PermissionReply,
+    PermissionRequest, PromptCapabilities, PromptResult, ResumeSessionOptions, ResumeSessionResult,
+    SessionConfigOption, SessionId, SessionInfo, SessionInitData, SessionMode, SessionModeState,
 };
 
 pub use json_rpc::{

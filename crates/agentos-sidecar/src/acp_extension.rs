@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use agentos_protocol::generated::v1::{
-    AcpAgentStderrEvent, AcpCallback, AcpCallbackResponse, AcpCloseSessionRequest,
+    AcpAgentExitedEvent, AcpAgentStderrEvent, AcpCallback, AcpCallbackResponse,
+    AcpCloseSessionRequest,
     AcpCreateSessionRequest, AcpErrorResponse, AcpEvent, AcpGetSessionStateRequest,
     AcpHostRequestCallback, AcpPermissionCallback, AcpRequest, AcpResponse,
     AcpResumeSessionRequest, AcpRuntimeKind, AcpSessionClosedResponse, AcpSessionCreatedResponse,
@@ -84,6 +85,26 @@ const MAX_SESSION_STDOUT_BUFFER_BYTES: usize = DEFAULT_ACP_MAX_READ_LINE_BYTES;
 /// evict the now-dead session record instead of leaking it until an explicit
 /// `close_session` that the client may never send.
 const ADAPTER_EXITED_ERROR_MARKER: &str = "exited with code";
+/// Substring of the secure-exec process-table error returned when an operation
+/// targets a process that already exited ("VM <vm> has no active process <id>").
+/// Writing a request to an adapter that crashed while *idle* surfaces this way
+/// (the exit is observed lazily, on the next stdin write), so it is classified
+/// as an adapter-gone failure alongside `ADAPTER_EXITED_ERROR_MARKER`.
+const ADAPTER_NO_ACTIVE_PROCESS_MARKER: &str = "has no active process";
+/// Bounded auto-restart budget per ACP session. Each unexpected adapter exit
+/// consumes one attempt (respawn + native `session/load`/`session/resume` under
+/// the same session id); once spent, further exits evict the session record,
+/// matching the pre-restart behavior. Every attempt and the exhaustion of the
+/// budget are logged at `warn` and surfaced to the host via
+/// `AcpAgentExitedEvent`, so the cap is observable rather than a silent retry
+/// loop.
+const MAX_ADAPTER_RESTARTS: u32 = 3;
+/// `AcpAgentExitedEvent.restart` outcome strings. Keep in sync with the schema
+/// doc on `agent_os_acp_v1.bare` and the TypeScript `AgentRestartOutcome` type.
+const ADAPTER_RESTART_OUTCOME_RESTARTED: &str = "restarted";
+const ADAPTER_RESTART_OUTCOME_UNSUPPORTED: &str = "unsupported";
+const ADAPTER_RESTART_OUTCOME_FAILED: &str = "failed";
+const ADAPTER_RESTART_OUTCOME_EXHAUSTED: &str = "exhausted";
 
 #[derive(Debug, Default)]
 pub struct AcpExtension {
@@ -115,6 +136,51 @@ struct AcpSessionRecord {
     /// then cleared. See `CONTINUATION_PREAMBLE` and the resume state machine on
     /// `AcpExtension::resume_session`.
     pending_preamble: Option<String>,
+    /// Launch + handshake parameters retained for adapter auto-restart. See
+    /// `AdapterRestartState`.
+    restart: AdapterRestartState,
+}
+
+/// Adapter launch + handshake parameters retained on the session record so the
+/// sidecar can auto-restart a crashed adapter (see
+/// `AcpExtension::handle_adapter_exit`). `args`/`env` are the FINAL values that
+/// went into the original `ExecuteRequest` — post prompt-injection, including
+/// `SECURE_EXEC_KEEP_STDIN_OPEN` — so a restart relaunches exactly what
+/// create/resume launched. `count` is the restarts already consumed for this
+/// session, bounded by `MAX_ADAPTER_RESTARTS`.
+#[derive(Debug, Clone)]
+struct AdapterRestartState {
+    runtime: AcpRuntimeKind,
+    entrypoint: String,
+    args: Vec<String>,
+    env: BTreeMap<String, String>,
+    cwd: String,
+    protocol_version: i32,
+    client_capabilities: String,
+    count: u32,
+}
+
+/// Why an adapter auto-restart attempt did not leave the session live. Maps to
+/// the `restart` outcome string on `AcpAgentExitedEvent`.
+#[derive(Debug)]
+enum AdapterRestartError {
+    /// The respawned adapter does not advertise a native resume capability
+    /// (`loadSession`/`resume`), so the session cannot be re-attached under its
+    /// existing id.
+    Unsupported,
+    /// The respawn, handshake, or native re-attach failed.
+    Failed(SidecarError),
+}
+
+impl AdapterRestartError {
+    fn detail(&self) -> String {
+        match self {
+            Self::Unsupported => {
+                String::from("adapter does not advertise loadSession/resume")
+            }
+            Self::Failed(error) => error.to_string(),
+        }
+    }
 }
 
 impl AcpExtension {
@@ -222,6 +288,19 @@ impl AcpExtension {
         }
         tracing::info!(target: "agentos_sidecar::perf", phase = "prompt_injection", elapsed_ms = __t0.elapsed().as_millis() as u64, "create_session phase");
 
+        // Retain the final launch + handshake parameters for adapter
+        // auto-restart before they are moved into the spawn request.
+        let restart_state = AdapterRestartState {
+            runtime: request.runtime.clone(),
+            entrypoint: request.adapter_entrypoint.clone(),
+            args: args.clone(),
+            env: env.clone(),
+            cwd: request.cwd.clone(),
+            protocol_version: request.protocol_version,
+            client_capabilities: request.client_capabilities.clone(),
+            count: 0,
+        };
+
         let started = match ctx
             .spawn_process_wire(ExecuteRequest {
                 process_id: process_id.clone(),
@@ -267,6 +346,7 @@ impl AcpExtension {
             closed: false,
             exit_code: None,
             pending_preamble: None,
+            restart: restart_state,
         };
 
         let mut events = Vec::new();
@@ -532,6 +612,13 @@ impl AcpExtension {
         let _ = ctx
             .dispose_session_resources_wire(&request.session_id)
             .await;
+        tracing::info!(
+            target: "agentos_sidecar::acp_extension",
+            session_id = request.session_id,
+            agent_type = session.agent_type,
+            process_id = session.process_id,
+            "ACP session closed; adapter process terminated",
+        );
         Ok(AcpResponse::AcpSessionClosedResponse(
             AcpSessionClosedResponse {
                 session_id: request.session_id,
@@ -625,13 +712,43 @@ impl AcpExtension {
         {
             Ok(exchange) => exchange,
             Err(error) => {
-                // Adapter process exit is a teardown signal: the session can never
-                // be driven again, so evict its record (incl. `stdout_buffer`)
-                // rather than leak it until a `close_session` that may never come.
-                // Other (transient) failures keep the session so the armed
-                // preamble can ride a retried prompt.
-                if is_adapter_exited_error(&error) {
-                    self.sessions.lock().await.remove(&request.session_id);
+                // Adapter process exit is a teardown signal. Log it, surface it
+                // as an `AcpAgentExitedEvent`, and attempt a bounded auto-restart
+                // (respawn + native `session/load`/`session/resume` under the
+                // same session id). Only a successful restart keeps the record;
+                // otherwise it is evicted (incl. `stdout_buffer`) rather than
+                // leaked until a `close_session` that may never come. Other
+                // (transient) failures keep the session so the armed preamble
+                // can ride a retried prompt.
+                if is_adapter_gone_error(&error) {
+                    let exit_code = adapter_exit_code_from_error(&error);
+                    let (event_frame, outcome, error) = self
+                        .handle_adapter_exit(&mut ctx, &request.session_id, exit_code, error)
+                        .await;
+                    if outcome == ADAPTER_RESTART_OUTCOME_RESTARTED {
+                        // The restarted session is live again; re-arm the
+                        // continuation preamble so a retried prompt still
+                        // carries the transcript pointer.
+                        if let Some(preamble) = pending_preamble {
+                            if let Some(session) =
+                                self.sessions.lock().await.get_mut(&request.session_id)
+                            {
+                                if session.pending_preamble.is_none() {
+                                    session.pending_preamble = Some(preamble);
+                                }
+                            }
+                        }
+                    }
+                    let mut events = Vec::new();
+                    if let Some(frame) = event_frame {
+                        // Best-effort: event delivery must not mask the
+                        // underlying adapter failure.
+                        let _ = deliver_event(&ctx, &mut events, frame);
+                    }
+                    return AcpHandlerOutput {
+                        response: Err(error),
+                        events,
+                    };
                 } else if let Some(preamble) = pending_preamble {
                     if let Some(session) = self.sessions.lock().await.get_mut(&request.session_id) {
                         if session.pending_preamble.is_none() {
@@ -804,6 +921,19 @@ impl AcpExtension {
             return AcpHandlerOutput::response(Err(error));
         }
 
+        // Retain the final launch + handshake parameters for adapter
+        // auto-restart before they are moved into the spawn request.
+        let restart_state = AdapterRestartState {
+            runtime: create_like.runtime.clone(),
+            entrypoint: create_like.adapter_entrypoint.clone(),
+            args: args.clone(),
+            env: env.clone(),
+            cwd: create_like.cwd.clone(),
+            protocol_version: create_like.protocol_version,
+            client_capabilities: create_like.client_capabilities.clone(),
+            count: 0,
+        };
+
         let started = match ctx
             .spawn_process_wire(ExecuteRequest {
                 process_id: process_id.clone(),
@@ -848,6 +978,7 @@ impl AcpExtension {
             exit_code: None,
             // Fallback arms the transcript-continuation preamble for the first prompt.
             pending_preamble: outcome.pending_preamble,
+            restart: restart_state,
         };
 
         let mut events = Vec::new();
@@ -1048,6 +1179,207 @@ impl AcpExtension {
     fn allocate_process_id(&self, prefix: &str) -> String {
         let id = self.next_process_id.fetch_add(1, Ordering::Relaxed) + 1;
         format!("{prefix}-{id}")
+    }
+
+    /// Handle an unexpected adapter exit observed while driving `session_id`:
+    /// record the exit on the session record, log it, attempt a bounded
+    /// auto-restart, and build the `AcpAgentExitedEvent` describing the
+    /// outcome. Returns the encoded event frame (when the session record still
+    /// existed), the outcome string, and the error to surface for the
+    /// in-flight request — augmented with the restart outcome so callers know
+    /// whether a retry can succeed.
+    ///
+    /// Extension dispatch is serialized by the stdio loop (one ACP request is
+    /// in flight at a time), so no second request can race the restart window
+    /// between the lock scopes below.
+    async fn handle_adapter_exit(
+        &self,
+        ctx: &mut ExtensionContext<'_>,
+        session_id: &str,
+        exit_code: Option<i32>,
+        error: SidecarError,
+    ) -> (
+        Option<secure_exec_sidecar::wire::EventFrame>,
+        &'static str,
+        SidecarError,
+    ) {
+        // Snapshot + mark the record under the lock; run the (slow) restart
+        // handshake outside it.
+        let Some((agent_type, dead_process_id, restart)) = ({
+            let mut sessions = self.sessions.lock().await;
+            sessions.get_mut(session_id).map(|session| {
+                session.closed = true;
+                session.exit_code = exit_code;
+                (
+                    session.agent_type.clone(),
+                    session.process_id.clone(),
+                    session.restart.clone(),
+                )
+            })
+        }) else {
+            // Record already gone (e.g. connection cleanup won the race);
+            // nothing to restart and no session to describe in an event.
+            return (None, ADAPTER_RESTART_OUTCOME_FAILED, error);
+        };
+
+        tracing::warn!(
+            target: "agentos_sidecar::acp_extension",
+            session_id,
+            agent_type,
+            process_id = dead_process_id,
+            exit_code = ?exit_code,
+            restarts_used = restart.count,
+            max_restarts = MAX_ADAPTER_RESTARTS,
+            "ACP adapter process exited unexpectedly",
+        );
+
+        let mut restart_detail: Option<String> = None;
+        let (outcome, restart_count) = if restart.count >= MAX_ADAPTER_RESTARTS {
+            self.sessions.lock().await.remove(session_id);
+            tracing::warn!(
+                target: "agentos_sidecar::acp_extension",
+                session_id,
+                agent_type,
+                max_restarts = MAX_ADAPTER_RESTARTS,
+                "ACP adapter restart budget exhausted (raise MAX_ADAPTER_RESTARTS \
+                 or investigate the crashing adapter); session evicted",
+            );
+            (ADAPTER_RESTART_OUTCOME_EXHAUSTED, restart.count)
+        } else {
+            let attempt = restart.count + 1;
+            if let Some(session) = self.sessions.lock().await.get_mut(session_id) {
+                session.restart.count = attempt;
+            }
+            match self
+                .restart_adapter(ctx, session_id, &agent_type, &restart)
+                .await
+            {
+                Ok(()) => {
+                    tracing::warn!(
+                        target: "agentos_sidecar::acp_extension",
+                        session_id,
+                        agent_type,
+                        attempt,
+                        max_restarts = MAX_ADAPTER_RESTARTS,
+                        "ACP adapter auto-restarted; session re-attached natively",
+                    );
+                    (ADAPTER_RESTART_OUTCOME_RESTARTED, attempt)
+                }
+                Err(restart_error) => {
+                    self.sessions.lock().await.remove(session_id);
+                    let outcome = match &restart_error {
+                        AdapterRestartError::Unsupported => ADAPTER_RESTART_OUTCOME_UNSUPPORTED,
+                        AdapterRestartError::Failed(_) => ADAPTER_RESTART_OUTCOME_FAILED,
+                    };
+                    let detail = restart_error.detail();
+                    tracing::warn!(
+                        target: "agentos_sidecar::acp_extension",
+                        session_id,
+                        agent_type,
+                        attempt,
+                        outcome,
+                        detail = %detail,
+                        "ACP adapter auto-restart did not recover the session; session evicted",
+                    );
+                    restart_detail = Some(detail);
+                    (outcome, attempt)
+                }
+            }
+        };
+
+        let frame = encode_event(AcpEvent::AcpAgentExitedEvent(AcpAgentExitedEvent {
+            session_id: session_id.to_string(),
+            agent_type,
+            process_id: dead_process_id,
+            exit_code,
+            restart: outcome.to_string(),
+            restart_count,
+            max_restarts: MAX_ADAPTER_RESTARTS,
+        }))
+        .and_then(|payload| ctx.ext_event_wire(payload))
+        .ok();
+
+        let error = SidecarError::InvalidState(match outcome {
+            ADAPTER_RESTART_OUTCOME_RESTARTED => format!(
+                "{error}; ACP adapter was auto-restarted (attempt \
+                 {restart_count}/{MAX_ADAPTER_RESTARTS}) and the session is live again — \
+                 retry the request"
+            ),
+            ADAPTER_RESTART_OUTCOME_EXHAUSTED => format!(
+                "{error}; ACP adapter restart budget exhausted \
+                 ({MAX_ADAPTER_RESTARTS} restarts) — session evicted"
+            ),
+            _ => format!(
+                "{error}; ACP adapter auto-restart {outcome} ({}) — session evicted",
+                restart_detail.as_deref().unwrap_or("no detail")
+            ),
+        });
+        (frame, outcome, error)
+    }
+
+    /// Respawn the adapter with the retained launch parameters and natively
+    /// re-attach `session_id` (`initialize` + `session/load`/`session/resume`).
+    /// On success the session record points at the new process and is live
+    /// again; the caller owns eviction on failure.
+    async fn restart_adapter(
+        &self,
+        ctx: &mut ExtensionContext<'_>,
+        session_id: &str,
+        agent_type: &str,
+        restart: &AdapterRestartState,
+    ) -> Result<(), AdapterRestartError> {
+        let process_id = self.allocate_process_id("acp-agent");
+        let started = ctx
+            .spawn_process_wire(ExecuteRequest {
+                process_id: process_id.clone(),
+                command: None,
+                runtime: Some(convert_runtime(restart.runtime.clone())),
+                entrypoint: Some(restart.entrypoint.clone()),
+                args: restart.args.clone(),
+                env: restart.env.clone().into_iter().collect(),
+                cwd: Some(restart.cwd.clone()),
+                wasm_permission_tier: None,
+            })
+            .await
+            .map_err(AdapterRestartError::Failed)?;
+
+        let bootstrap =
+            match restart_handshake(ctx, session_id, agent_type, restart, &process_id).await {
+                Ok(bootstrap) => bootstrap,
+                Err(error) => {
+                    kill_process_best_effort(ctx, &process_id).await;
+                    return Err(error);
+                }
+            };
+
+        if let Err(error) = ctx.bind_process_to_session(session_id, &process_id).await {
+            kill_process_best_effort(ctx, &process_id).await;
+            return Err(AdapterRestartError::Failed(error));
+        }
+
+        {
+            let mut sessions = self.sessions.lock().await;
+            let Some(session) = sessions.get_mut(session_id) else {
+                // The record vanished mid-restart (close/disconnect); don't
+                // leak the fresh adapter process.
+                drop(sessions);
+                kill_process_best_effort(ctx, &process_id).await;
+                return Err(AdapterRestartError::Failed(SidecarError::InvalidState(
+                    format!("ACP session {session_id} was removed during adapter restart"),
+                )));
+            };
+            session.process_id = process_id;
+            session.pid = started.pid;
+            session.closed = false;
+            session.exit_code = None;
+            session.modes = bootstrap.modes;
+            session.config_options = bootstrap.config_options;
+            session.agent_capabilities = bootstrap.agent_capabilities;
+            session.agent_info = bootstrap.agent_info;
+            session.stdout_buffer = bootstrap.stdout_buffer;
+            session.next_request_id = 3;
+        }
+        Ok(())
     }
 
     /// Drop every session owned by `connection_id`, returning the adapter process
@@ -1552,6 +1884,15 @@ async fn send_json_rpc_request(
                     .chars()
                     .rev()
                     .collect();
+                tracing::warn!(
+                    target: "agentos_sidecar::acp_extension",
+                    process_id,
+                    agent_type,
+                    session_id = ?event_session_id,
+                    exit_code = exited.exit_code,
+                    stderr_tail = %stderr_tail,
+                    "ACP adapter process exited before answering request id={response_id}",
+                );
                 return Err(SidecarError::InvalidState(format!(
                     "ACP adapter process {process_id} {ADAPTER_EXITED_ERROR_MARKER} {} before response id={response_id}; recent_activity={:?}; adapter_stderr={:?}",
                     exited.exit_code, recent_activity, stderr_tail
@@ -2115,6 +2456,129 @@ fn is_adapter_exited_error(error: &SidecarError) -> bool {
     matches!(error, SidecarError::InvalidState(message) if message.contains(ADAPTER_EXITED_ERROR_MARKER))
 }
 
+/// True when `error` means the adapter process is gone: either the in-pump exit
+/// observation (`is_adapter_exited_error`) or a secure-exec process-table
+/// lookup failure from operating on an adapter that already exited — the lazy
+/// observation of an idle-time crash (`ADAPTER_NO_ACTIVE_PROCESS_MARKER`).
+fn is_adapter_gone_error(error: &SidecarError) -> bool {
+    if is_adapter_exited_error(error) {
+        return true;
+    }
+    matches!(error, SidecarError::InvalidState(message) if message.contains(ADAPTER_NO_ACTIVE_PROCESS_MARKER))
+}
+
+/// Extract the adapter exit code from an `ADAPTER_EXITED_ERROR_MARKER` error
+/// message (`"... exited with code <code> before response ..."`). Returns
+/// `None` for indirect observations (e.g. a stdin write that failed because
+/// the process was already gone), where no exit code was seen.
+fn adapter_exit_code_from_error(error: &SidecarError) -> Option<i32> {
+    let SidecarError::InvalidState(message) = error else {
+        return None;
+    };
+    let tail = &message[message.find(ADAPTER_EXITED_ERROR_MARKER)? + ADAPTER_EXITED_ERROR_MARKER.len()..];
+    tail.split_whitespace().next()?.parse().ok()
+}
+
+/// Drive the restart handshake against a freshly respawned adapter:
+/// `initialize` (re-probing capabilities, which cannot be trusted across a
+/// relaunch) followed by the native `session/load`/`session/resume` for
+/// `session_id`. There is deliberately no `session/new` fallback tier here:
+/// a fallback would hand back a *different* adapter session id, which an
+/// in-place restart cannot remap transparently — callers that need the
+/// fallback tier go through the actor-level lazy resume instead. Replayed
+/// load notifications are dropped: the client already observed this session's
+/// history live, so re-forwarding the transcript replay would duplicate it.
+async fn restart_handshake(
+    ctx: &mut ExtensionContext<'_>,
+    session_id: &str,
+    agent_type: &str,
+    restart: &AdapterRestartState,
+    process_id: &str,
+) -> Result<CreateSessionBootstrap, AdapterRestartError> {
+    let mut stdout = String::new();
+    let client_capabilities = parse_json_text(&restart.client_capabilities, "clientCapabilities")
+        .map_err(AdapterRestartError::Failed)?;
+
+    let initialize = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": restart.protocol_version,
+            "clientCapabilities": client_capabilities,
+        },
+    });
+    let initialize_response = send_json_rpc_request(
+        ctx,
+        process_id,
+        agent_type,
+        initialize,
+        1,
+        INITIALIZE_TIMEOUT,
+        &mut stdout,
+        None,
+    )
+    .await
+    .map_err(AdapterRestartError::Failed)?;
+    let init_result = response_result(initialize_response.response, "ACP initialize")
+        .map_err(AdapterRestartError::Failed)?;
+    validate_initialize_result(&init_result, restart.protocol_version)
+        .map_err(AdapterRestartError::Failed)?;
+    let agent_capabilities = init_result.get("agentCapabilities").cloned();
+
+    let Some(native_resume_method) = native_resume_method(agent_capabilities.as_ref()) else {
+        return Err(AdapterRestartError::Unsupported);
+    };
+    let load = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": native_resume_method,
+        "params": {
+            "sessionId": session_id,
+            "cwd": restart.cwd,
+            "mcpServers": [],
+        },
+    });
+    let load_response = send_json_rpc_request(
+        ctx,
+        process_id,
+        agent_type,
+        load,
+        2,
+        SESSION_NEW_TIMEOUT,
+        &mut stdout,
+        None,
+    )
+    .await
+    .map_err(AdapterRestartError::Failed)?;
+    let replayed_notifications =
+        initialize_response.notifications.len() + load_response.notifications.len();
+    if replayed_notifications > 0 {
+        tracing::debug!(
+            target: "agentos_sidecar::acp_extension",
+            session_id,
+            replayed_notifications,
+            "dropped adapter-restart replay notifications",
+        );
+    }
+    let load_result = response_result(
+        load_response.response,
+        &format!("ACP {native_resume_method}"),
+    )
+    .map_err(AdapterRestartError::Failed)?;
+
+    build_resume_bootstrap(
+        session_id.to_string(),
+        &init_result,
+        &load_result,
+        agent_type,
+        agent_capabilities.as_ref(),
+        stdout,
+        Vec::new(),
+    )
+    .map_err(AdapterRestartError::Failed)
+}
+
 fn parse_json_text(text: &str, label: &str) -> Result<Value, SidecarError> {
     serde_json::from_str(text)
         .map_err(|error| SidecarError::InvalidState(format!("invalid {label} JSON: {error}")))
@@ -2490,6 +2954,33 @@ mod tests {
     }
 
     #[test]
+    fn adapter_gone_classifier_matches_both_observation_paths() {
+        // In-pump observation: the exchange loop saw the ProcessExitedEvent.
+        let exited = SidecarError::InvalidState(format!(
+            "ACP adapter process acp-agent-3 {ADAPTER_EXITED_ERROR_MARKER} 7 before response id=4"
+        ));
+        assert!(is_adapter_gone_error(&exited));
+        assert_eq!(adapter_exit_code_from_error(&exited), Some(7));
+
+        // Lazy observation: a request write to an already-reaped adapter fails
+        // with secure-exec's process-table error (the exact production shape:
+        // "VM vm-5 has no active process agent-6"). No exit code is observed.
+        let gone = SidecarError::InvalidState(String::from(
+            "VM vm-5 has no active process agent-6",
+        ));
+        assert!(is_adapter_gone_error(&gone));
+        assert_eq!(adapter_exit_code_from_error(&gone), None);
+
+        // Transient failures must NOT classify as adapter-gone, or the session
+        // would be restarted/evicted on retryable errors.
+        let transient = SidecarError::InvalidState(String::from(
+            "timed out waiting for ACP response id=4; sent session/cancel notification",
+        ));
+        assert!(!is_adapter_gone_error(&transient));
+        assert_eq!(adapter_exit_code_from_error(&transient), None);
+    }
+
+    #[test]
     fn unknown_session_normalization_pins_opencode_shape() {
         let mut opencode = serde_json::json!({
             "error": { "code": -32603, "message": "Internal error", "data": { "details": "NotFoundError" } }
@@ -2769,6 +3260,16 @@ mod tests {
             closed: false,
             exit_code: None,
             pending_preamble: None,
+            restart: AdapterRestartState {
+                runtime: AcpRuntimeKind::JavaScript,
+                entrypoint: String::from("/adapter.mjs"),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+                cwd: String::from("/"),
+                protocol_version: 1,
+                client_capabilities: String::from("{}"),
+                count: 0,
+            },
         }
     }
 

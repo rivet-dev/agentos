@@ -501,6 +501,51 @@ function defaultAgentStderrHandler(event: AgentStderrEvent): void {
 }
 
 /**
+ * Auto-restart outcome reported on an {@link AgentExitEvent}. Mirrors the
+ * sidecar's `AcpAgentExitedEvent.restart` strings:
+ * - `"restarted"` — the adapter was respawned and the session was natively
+ *   re-attached under the same session id; the session stays usable.
+ * - `"unsupported"` — the adapter does not advertise a native resume
+ *   capability (`loadSession`/`resume`); the session was evicted.
+ * - `"failed"` — the respawn or re-attach errored; the session was evicted.
+ * - `"exhausted"` — the per-session restart budget was already spent; evicted.
+ */
+export type AgentRestartOutcome =
+	| "restarted"
+	| "unsupported"
+	| "failed"
+	| "exhausted";
+
+/**
+ * An unexpected ACP adapter process exit — a crash from the host's
+ * perspective (any spontaneous exit without `closeSession()`, including exit
+ * code 0) — plus the sidecar's bounded auto-restart outcome.
+ */
+export interface AgentExitEvent {
+	sessionId: string;
+	agentType: string;
+	/** Sidecar process id of the adapter that exited. */
+	processId: string;
+	pid: number | null;
+	/** Adapter exit code; `null` when the exit was observed indirectly. */
+	exitCode: number | null;
+	/** Auto-restart outcome; only `"restarted"` leaves the session usable. */
+	restart: AgentRestartOutcome;
+	/** Restarts consumed for this session so far. */
+	restartCount: number;
+	/** Per-session restart budget. */
+	maxRestarts: number;
+}
+
+export type AgentExitHandler = (event: AgentExitEvent) => void;
+
+function defaultAgentExitHandler(event: AgentExitEvent): void {
+	process.stderr.write(
+		`[agentos] agent adapter exited unexpectedly: session=${event.sessionId} agent=${event.agentType} exitCode=${event.exitCode ?? "unknown"} restart=${event.restart} (${event.restartCount}/${event.maxRestarts})\n`,
+	);
+}
+
+/**
  * A near-capacity warning for one bounded limit (a queue/buffer, a saturating
  * resource cap, or a memory envelope) inside the VM runtime. Delivered the moment
  * usage crosses the runtime's warning threshold (~80%), once per crossing — the
@@ -587,6 +632,15 @@ export interface AgentOsOptions {
 	 * `process.stderr`.
 	 */
 	onAgentStderr?: AgentStderrHandler;
+	/**
+	 * Called when the ACP adapter process behind a session exits without
+	 * `closeSession()` — i.e. an adapter crash. The sidecar auto-restarts the
+	 * adapter (bounded per session, natively re-attaching the same session id)
+	 * and reports the outcome on the event; only `restart === "restarted"`
+	 * leaves the session usable. Defaults to writing a warning line to
+	 * `process.stderr`.
+	 */
+	onAgentExit?: AgentExitHandler;
 	/**
 	 * Called when a bounded limit inside the VM runtime approaches capacity
 	 * (~80%, edge-triggered with hysteresis so it does not spam). Use it to alert
@@ -2627,6 +2681,7 @@ export class AgentOs {
 	private readonly _sidecarVm: CreatedVm;
 	private readonly _disposeSidecarEventListener: () => void;
 	private readonly _agentStderrHandler?: AgentStderrHandler;
+	private readonly _agentExitHandler?: AgentExitHandler;
 	private readonly _limitWarningHandler?: LimitWarningHandler;
 
 	private constructor(
@@ -2642,6 +2697,7 @@ export class AgentOs {
 		sidecarVm: CreatedVm,
 		additionalInstructions?: string,
 		agentStderrHandler?: AgentStderrHandler,
+		agentExitHandler?: AgentExitHandler,
 		limitWarningHandler?: LimitWarningHandler,
 	) {
 		this.#kernel = kernel;
@@ -2656,6 +2712,7 @@ export class AgentOs {
 		this._sidecarVm = sidecarVm;
 		this._additionalInstructions = additionalInstructions;
 		this._agentStderrHandler = agentStderrHandler;
+		this._agentExitHandler = agentExitHandler;
 		this._limitWarningHandler = limitWarningHandler;
 		this._disposeSidecarEventListener = this._sidecarClient.onEvent((event) => {
 			this._handleSidecarEvent(event);
@@ -3011,6 +3068,7 @@ export class AgentOs {
 				vmAdmin.sidecarVm,
 				options?.additionalInstructions,
 				options?.onAgentStderr ?? defaultAgentStderrHandler,
+				options?.onAgentExit ?? defaultAgentExitHandler,
 				options?.onLimitWarning,
 			);
 			vm._sidecarLease = sidecarLease;
@@ -3945,6 +4003,36 @@ export class AgentOs {
 		}
 	}
 
+	private _recordAgentExit(event: {
+		sessionId: string;
+		agentType: string;
+		processId: string;
+		exitCode: number | null;
+		restart: string;
+		restartCount: number;
+		maxRestarts: number;
+	}): void {
+		const session = this._sessions.get(event.sessionId);
+		const handler = this._agentExitHandler;
+		if (!handler) {
+			return;
+		}
+		try {
+			handler({
+				sessionId: event.sessionId,
+				agentType: event.agentType || session?.agentType || "",
+				processId: event.processId,
+				pid: session?.pid ?? null,
+				exitCode: event.exitCode,
+				restart: event.restart as AgentRestartOutcome,
+				restartCount: event.restartCount,
+				maxRestarts: event.maxRestarts,
+			});
+		} catch {
+			// Ignore subscriber callback failures and keep event delivery moving.
+		}
+	}
+
 	private _applySyntheticConfigOverrides(session: AgentSessionEntry): void {
 		if (session.configOverrides.size === 0) {
 			return;
@@ -4049,6 +4137,10 @@ export class AgentOs {
 				}
 				case "AcpAgentStderrEvent": {
 					this._recordAgentStderr(event.val);
+					return;
+				}
+				case "AcpAgentExitedEvent": {
+					this._recordAgentExit(event.val);
 					return;
 				}
 			}

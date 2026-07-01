@@ -84,6 +84,36 @@ pub type SessionEventStream = Pin<Box<dyn Stream<Item = JsonRpcNotification> + S
 pub type SessionEventSubscription = (SessionEventStream, Subscription);
 pub type PermissionRequestStream = Pin<Box<dyn Stream<Item = PermissionRequest> + Send>>;
 pub type PermissionRequestSubscription = (PermissionRequestStream, Subscription);
+pub type AgentExitStream = Pin<Box<dyn Stream<Item = AgentExitEvent> + Send>>;
+pub type AgentExitSubscription = (AgentExitStream, Subscription);
+
+/// An unexpected ACP adapter process exit — a crash from the host's
+/// perspective (any spontaneous exit without `close_session`, including exit
+/// code 0) — plus the sidecar's bounded auto-restart outcome. Mirrors the wire
+/// `AcpAgentExitedEvent` and the TS `AgentExitEvent`.
+///
+/// `restart` is one of `"restarted"` (adapter respawned and the session
+/// natively re-attached under the same id; still usable), `"unsupported"`
+/// (adapter lacks `loadSession`/`resume`; session evicted), `"failed"`
+/// (respawn/re-attach errored; evicted), or `"exhausted"` (restart budget
+/// spent; evicted).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentExitEvent {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "agentType")]
+    pub agent_type: String,
+    #[serde(rename = "processId")]
+    pub process_id: String,
+    /// Adapter exit code; `None` when the exit was observed indirectly.
+    #[serde(rename = "exitCode")]
+    pub exit_code: Option<i32>,
+    pub restart: String,
+    #[serde(rename = "restartCount")]
+    pub restart_count: u32,
+    #[serde(rename = "maxRestarts")]
+    pub max_restarts: u32,
+}
 
 // ---------------------------------------------------------------------------
 // Supporting types
@@ -1390,6 +1420,7 @@ impl AgentOs {
 
         let (event_tx, _) = tokio::sync::broadcast::channel(1024);
         let (permission_tx, _) = tokio::sync::broadcast::channel(64);
+        let (agent_exit_tx, _) = tokio::sync::broadcast::channel(16);
         let entry = SessionEntry {
             agent_type: agent_type.to_string(),
             modes: parking_lot::Mutex::new(None),
@@ -1399,6 +1430,7 @@ impl AgentOs {
             config_overrides: parking_lot::Mutex::new(BTreeMap::new()),
             event_tx,
             permission_tx,
+            agent_exit_tx,
             pending_permission_replies: scc::HashMap::new(),
             pending_session_request_lock: parking_lot::Mutex::new(()),
             pending_prompt_resolvers: scc::HashMap::new(),
@@ -1998,6 +2030,27 @@ impl AgentOs {
         Ok((Box::pin(stream), Subscription::noop()))
     }
 
+    /// Subscribe to unexpected adapter process exits (crashes) for a session,
+    /// including the sidecar's bounded auto-restart outcome. Only events
+    /// emitted after subscription are delivered; only `restart == "restarted"`
+    /// leaves the session usable. Mirrors the TS `onAgentExit` option.
+    pub fn on_agent_exit(
+        &self,
+        session_id: &str,
+    ) -> std::result::Result<AgentExitSubscription, ClientError> {
+        let rx = self.require_session(session_id, |entry| entry.agent_exit_tx.subscribe())?;
+        let stream = futures::stream::unfold(rx, move |mut rx| async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => return Some((event, rx)),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        });
+        Ok((Box::pin(stream), Subscription::noop()))
+    }
+
     /// Answer an ACP permission callback by fanning a [`PermissionRequest`] out to
     /// `on_permission_request` subscribers and waiting for the reply. Mirrors TS
     /// `_handlePermissionSidecarRequest`:
@@ -2163,6 +2216,7 @@ mod prompt_accumulation_tests {
     fn pending_session_request_count_tracks_registered_resolvers() {
         let (event_tx, _) = tokio::sync::broadcast::channel(1);
         let (permission_tx, _) = tokio::sync::broadcast::channel(1);
+        let (agent_exit_tx, _) = tokio::sync::broadcast::channel(1);
         let entry = SessionEntry {
             agent_type: "pi".to_string(),
             modes: parking_lot::Mutex::new(None),
@@ -2172,6 +2226,7 @@ mod prompt_accumulation_tests {
             config_overrides: parking_lot::Mutex::new(BTreeMap::new()),
             event_tx,
             permission_tx,
+            agent_exit_tx,
             pending_permission_replies: scc::HashMap::new(),
             pending_session_request_lock: parking_lot::Mutex::new(()),
             pending_prompt_resolvers: scc::HashMap::new(),

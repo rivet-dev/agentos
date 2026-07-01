@@ -241,6 +241,75 @@ pub async fn respond_permission(
     Ok(())
 }
 
+/// Exit-capture task key for [`Vars::capture_tasks`]: distinct from the
+/// session/update pump key so both tasks are tracked (and cancelled)
+/// independently for one live session.
+fn exit_capture_key(live_session_id: &str) -> String {
+    format!("{live_session_id}#exit")
+}
+
+/// Subscribe to unexpected adapter process exits (crashes) for
+/// `live_session_id` and spawn a task that live-broadcasts each event to
+/// connected clients (`conn.on("agentCrashed")`), including the sidecar's
+/// auto-restart outcome — the actor-side counterpart of the core
+/// `onAgentExit` hook. Broadcast-only: the durable transcript stays limited to
+/// real session events. Tracked in [`Vars::capture_tasks`] under
+/// [`exit_capture_key`] so it shares the close/sleep/destroy cancellation path
+/// with the session/update pump.
+fn spawn_exit_capture(
+    ctx: &HostCtx,
+    vm: &AgentOs,
+    vars: &mut Vars,
+    external_session_id: &str,
+    live_session_id: &str,
+) {
+    let (mut stream, subscription) = match vm.on_agent_exit(live_session_id) {
+        Ok(sub) => sub,
+        Err(error) => {
+            tracing::warn!(?error, live_session_id, "on_agent_exit subscribe failed");
+            return;
+        }
+    };
+    let key = exit_capture_key(live_session_id);
+    if let Some(old) = vars.capture_tasks.remove(&key) {
+        old.abort();
+    }
+    let ctx = ctx.clone();
+    let external = external_session_id.to_owned();
+    let handle = tokio::spawn(async move {
+        // Keep the RAII guard alive for the lifetime of the pump; dropping the
+        // stream (on abort / channel close) is the unsubscribe.
+        let _subscription = subscription;
+        while let Some(event) = stream.next().await {
+            tracing::warn!(
+                external,
+                agent_type = event.agent_type,
+                exit_code = ?event.exit_code,
+                restart = event.restart,
+                restart_count = event.restart_count,
+                max_restarts = event.max_restarts,
+                "agent adapter exited unexpectedly",
+            );
+            let event_value = match serde_json::to_value(&event) {
+                Ok(value) => value,
+                Err(error) => {
+                    tracing::warn!(?error, "failed to encode agent exit event");
+                    continue;
+                }
+            };
+            // Same CBOR handler-arguments shape as `sessionEvent` (see
+            // spawn_event_capture): the body is `[{"event": <event>}]`.
+            let mut cbor = Vec::new();
+            if ciborium::into_writer(&serde_json::json!([{ "event": event_value }]), &mut cbor)
+                .is_ok()
+            {
+                let _ = ctx.broadcast(b"agentCrashed".to_vec(), cbor);
+            }
+        }
+    });
+    vars.capture_tasks.insert(key, handle);
+}
+
 pub async fn create_session(
     ctx: &HostCtx,
     vm: &AgentOs,
@@ -287,6 +356,8 @@ pub async fn create_session(
     // subscribed before the agent runs, or requests would auto-reject.
     spawn_event_capture(ctx, vm, vars, &session_id, &session_id);
     spawn_permission_pump(ctx, vm, vars, &session_id, &session_id);
+    // Live adapter-crash notifications for connected clients (`agentCrashed`).
+    spawn_exit_capture(ctx, vm, vars, &session_id, &session_id);
     Ok(SessionIdDto { session_id })
 }
 
@@ -342,6 +413,9 @@ pub async fn close_session(
         task.abort();
     }
     if let Some(task) = vars.permission_tasks.remove(&live_session_id) {
+        task.abort();
+    }
+    if let Some(task) = vars.capture_tasks.remove(&exit_capture_key(&live_session_id)) {
         task.abort();
     }
     vars.live_sessions.remove(session_id);

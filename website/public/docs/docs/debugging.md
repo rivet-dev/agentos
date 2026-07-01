@@ -10,6 +10,24 @@ The coding agent (ACP adapter) runs as a process inside the VM and uses **stdout
 
 It's a VM-level option covering every session's agent process; if omitted, chunks are written to the host `process.stderr` by default. See [Sessions → Agent logs](/docs/sessions#agent-logs).
 
+## Agent crashes (`onAgentExit`)
+
+If the agent process exits without `closeSession()`, the runtime logs the exit, **auto-restarts the agent** (bounded to 3 restarts per session, re-attaching the same session id when the agent supports native resume), and fires `onAgentExit` with the outcome:
+
+```ts
+const agentOs = await AgentOs.create({
+  software: [pi],
+  onAgentExit(event) {
+    // event: { sessionId, agentType, processId, pid, exitCode,
+    //          restart: "restarted" | "unsupported" | "failed" | "exhausted",
+    //          restartCount, maxRestarts }
+    console.warn(`agent exited (code ${event.exitCode}), restart=${event.restart}`);
+  },
+});
+```
+
+Only `restart === "restarted"` leaves the session usable; every other outcome means the session was evicted. The crash *reason* is on the agent's stderr (above); the exit event tells you it died and whether it recovered. See [Sessions → Agent crashes and auto-restart](/docs/sessions#agent-crashes-and-auto-restart).
+
 ## Runtime logs (sidecar)
 
 The agentOS sidecar emits structured **logfmt** logs for request handling, networking, and lifecycle. Configure them with environment variables on the **host process** (the sidecar inherits the host environment):

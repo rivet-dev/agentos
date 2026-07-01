@@ -694,9 +694,56 @@ export function writeAcpAgentStderrEvent(bc: bare.ByteCursor, x: AcpAgentStderrE
     bare.writeData(bc, x.chunk)
 }
 
+/**
+ * Emitted when the ACP adapter process exits without an explicit close_session —
+ * a crash from the host's perspective (any spontaneous exit, including code 0).
+ * `restart` reports the sidecar's bounded auto-restart outcome:
+ *   "restarted"   — adapter respawned and the session was natively re-attached
+ *                   (session/load | session/resume) under the same sessionId;
+ *                   the session stays live.
+ *   "unsupported" — the respawned adapter does not advertise a native resume
+ *                   capability; the session record was evicted.
+ *   "failed"      — the respawn or the native re-attach errored; evicted.
+ *   "exhausted"   — maxRestarts was already spent for this session; evicted.
+ * `exitCode` is absent when the exit was observed indirectly (e.g. a write to
+ * the adapter's stdin failed because the process was already gone).
+ */
+export type AcpAgentExitedEvent = {
+    readonly sessionId: string
+    readonly agentType: string
+    readonly processId: string
+    readonly exitCode: i32 | null
+    readonly restart: string
+    readonly restartCount: u32
+    readonly maxRestarts: u32
+}
+
+export function readAcpAgentExitedEvent(bc: bare.ByteCursor): AcpAgentExitedEvent {
+    return {
+        sessionId: bare.readString(bc),
+        agentType: bare.readString(bc),
+        processId: bare.readString(bc),
+        exitCode: read6(bc),
+        restart: bare.readString(bc),
+        restartCount: bare.readU32(bc),
+        maxRestarts: bare.readU32(bc),
+    }
+}
+
+export function writeAcpAgentExitedEvent(bc: bare.ByteCursor, x: AcpAgentExitedEvent): void {
+    bare.writeString(bc, x.sessionId)
+    bare.writeString(bc, x.agentType)
+    bare.writeString(bc, x.processId)
+    write6(bc, x.exitCode)
+    bare.writeString(bc, x.restart)
+    bare.writeU32(bc, x.restartCount)
+    bare.writeU32(bc, x.maxRestarts)
+}
+
 export type AcpEvent =
     | { readonly tag: "AcpSessionEvent"; readonly val: AcpSessionEvent }
     | { readonly tag: "AcpAgentStderrEvent"; readonly val: AcpAgentStderrEvent }
+    | { readonly tag: "AcpAgentExitedEvent"; readonly val: AcpAgentExitedEvent }
 
 export function readAcpEvent(bc: bare.ByteCursor): AcpEvent {
     const offset = bc.offset
@@ -706,6 +753,8 @@ export function readAcpEvent(bc: bare.ByteCursor): AcpEvent {
             return { tag: "AcpSessionEvent", val: readAcpSessionEvent(bc) }
         case 1:
             return { tag: "AcpAgentStderrEvent", val: readAcpAgentStderrEvent(bc) }
+        case 2:
+            return { tag: "AcpAgentExitedEvent", val: readAcpAgentExitedEvent(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -723,6 +772,11 @@ export function writeAcpEvent(bc: bare.ByteCursor, x: AcpEvent): void {
         case "AcpAgentStderrEvent": {
             bare.writeU8(bc, 1)
             writeAcpAgentStderrEvent(bc, x.val)
+            break
+        }
+        case "AcpAgentExitedEvent": {
+            bare.writeU8(bc, 2)
+            writeAcpAgentExitedEvent(bc, x.val)
             break
         }
     }

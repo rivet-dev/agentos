@@ -81,6 +81,16 @@ When a VM sleeps the agent process is destroyed, but the session registry and th
 
 Resume depends on a **durable root filesystem**. The RivetKit actor configures one automatically (its SQLite-backed root), so transcript capture and resume work out of the box. A direct `AgentOs` SDK user on the default in-memory root has no durable store: transcript capture is a no-op and context cannot be restored, so configure a durable root explicitly if you need resume outside the actor.
 
+## Adapter crashes and bounded auto-restart
+
+If the agent process exits without `closeSession()` — any spontaneous exit, including exit code 0 — the sidecar treats it as a crash, not a lifecycle transition. Crashes are detected both mid-request (the exchange loop observes the process exit) and while idle (the next write to the dead adapter fails). The sidecar logs the exit with its code and a stderr tail, emits an `AcpAgentExitedEvent` to the host (`onAgentExit` in the SDK, `agentCrashed` on the actor), and attempts an **in-place restart, bounded to 3 attempts per session**:
+
+- **Native re-attach only.** The restart relaunches the adapter with the exact parameters of the original launch, re-probes capabilities with a fresh `initialize`, and — if the agent advertises `loadSession`/`resume` — re-attaches the **same `sessionId`** via `session/load`. Clients keep their handle and the session stays active. There is deliberately no `session/new` fallback tier here: a fallback would produce a different live session id that an in-place restart cannot remap transparently. That path belongs to lazy resume (above), which owns the external→live remap.
+- **Eviction otherwise.** If the adapter has no native resume capability, the restart fails, or the budget is exhausted, the session record is evicted — the same teardown as before auto-restart existed. The persisted transcript is untouched, so the actor's lazy resume can still recover the conversation on the next prompt.
+- **The interrupted request still fails.** A prompt in flight when the adapter died is never replayed (the turn may have had side effects); its error names the restart outcome so the caller knows whether a retry will succeed.
+
+Each event carries `{ exitCode, restart, restartCount, maxRestarts }`, where `restart` is `"restarted"`, `"unsupported"`, `"failed"`, or `"exhausted"`; only `"restarted"` leaves the session usable. See [Debugging](/docs/debugging#agent-crashes-onagentexit) for capturing these from the SDK.
+
 ## Where session state lives
 
 Session state spans two tiers:

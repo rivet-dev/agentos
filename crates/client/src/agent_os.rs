@@ -36,8 +36,9 @@ use crate::error::ClientError;
 use crate::json_rpc::JsonRpcNotification;
 use crate::process::SYNTHETIC_PID_BASE;
 use crate::session::{
-    record_live_session_event, AgentCapabilities, AgentInfo, PermissionReply, PermissionRequest,
-    PermissionRouteRequest, PermissionRouteResult, SessionConfigOption, SessionModeState,
+    record_live_session_event, AgentCapabilities, AgentExitEvent, AgentInfo, PermissionReply,
+    PermissionRequest, PermissionRouteRequest, PermissionRouteResult, SessionConfigOption,
+    SessionModeState,
 };
 use crate::sidecar::{AgentOsSidecar, AgentOsSidecarPlacement, AgentOsSidecarVmLease};
 use crate::transport::{SidecarProcess, WireSidecarCallback};
@@ -126,6 +127,7 @@ pub(crate) struct SessionEntry {
     pub config_overrides: parking_lot::Mutex<std::collections::BTreeMap<String, String>>,
     pub event_tx: broadcast::Sender<JsonRpcNotification>,
     pub permission_tx: broadcast::Sender<PermissionRequest>,
+    pub agent_exit_tx: broadcast::Sender<AgentExitEvent>,
     pub pending_permission_replies: SccHashMap<String, oneshot::Sender<PermissionReply>>,
     pub pending_session_request_lock: parking_lot::Mutex<()>,
     /// Pending prompt resolvers, for cancel prompt-fallback + abort-on-close.
@@ -900,6 +902,39 @@ fn deliver_acp_ext_event(
             let mut stderr = std::io::stderr().lock();
             if let Err(error) = stderr.write_all(&event.chunk).and_then(|_| stderr.flush()) {
                 tracing::warn!(?error, "failed to write acp stderr event");
+            }
+            Ok(())
+        }
+        AcpEvent::AcpAgentExitedEvent(event) => {
+            tracing::warn!(
+                session_id = event.session_id,
+                agent_type = event.agent_type,
+                process_id = event.process_id,
+                exit_code = ?event.exit_code,
+                restart = event.restart,
+                restart_count = event.restart_count,
+                max_restarts = event.max_restarts,
+                "acp agent adapter exited unexpectedly"
+            );
+            let delivered = inner
+                .sessions
+                .read(&event.session_id, |_, entry| {
+                    let _ = entry.agent_exit_tx.send(AgentExitEvent {
+                        session_id: event.session_id.clone(),
+                        agent_type: event.agent_type.clone(),
+                        process_id: event.process_id.clone(),
+                        exit_code: event.exit_code,
+                        restart: event.restart.clone(),
+                        restart_count: event.restart_count,
+                        max_restarts: event.max_restarts,
+                    });
+                })
+                .is_some();
+            if !delivered {
+                tracing::warn!(
+                    session_id = event.session_id,
+                    "received acp agent exit event for unknown session"
+                );
             }
             Ok(())
         }

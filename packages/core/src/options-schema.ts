@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import type {
+	AgentExitHandler,
 	AgentOsOptions,
 	AgentStderrHandler,
 	LimitWarningHandler,
@@ -283,6 +284,10 @@ export const agentOsOptionFieldSchemas = {
 	sidecar: sidecarConfigSchema.optional(),
 	limits: agentOsLimitsSchema.optional(),
 	onAgentStderr: z.custom<AgentStderrHandler>(
+		(value) => typeof value === "function",
+		{ message: "Expected function" },
+	).optional(),
+	onAgentExit: z.custom<AgentExitHandler>(
 		(value) => typeof value === "function",
 		{ message: "Expected function" },
 	).optional(),
