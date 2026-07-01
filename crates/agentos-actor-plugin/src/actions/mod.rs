@@ -16,6 +16,7 @@ pub mod network;
 pub mod preview;
 pub mod process;
 pub mod session;
+pub mod shell;
 
 use std::collections::HashMap;
 
@@ -41,6 +42,11 @@ pub struct Vars {
     pub capture_tasks: HashMap<String, JoinHandle<()>>,
     /// `live_session_id -> permission-request pump task`.
     pub permission_tasks: HashMap<String, JoinHandle<()>>,
+    /// Shell data/stderr/exit broadcast pump tasks (one triple per `openShell`).
+    /// The pumps end on their own when the shell exits (stream close); this
+    /// list exists so VM teardown aborts any still-live pumps. Bounded by the
+    /// client's shell registries, not here.
+    pub shell_tasks: Vec<JoinHandle<()>>,
 }
 
 impl Vars {
@@ -60,6 +66,9 @@ impl Vars {
             task.abort();
         }
         for (_, task) in self.permission_tasks.drain() {
+            task.abort();
+        }
+        for task in self.shell_tasks.drain(..) {
             task.abort();
         }
         self.live_sessions.clear();
@@ -207,18 +216,45 @@ pub(crate) async fn dispatch(
             },
             Err(error) => reply_err(host, token, error),
         },
-        "spawn" => match decode_as::<(String, Vec<String>)>(args) {
-            Ok((command, spawn_args)) => match process::spawn(vm, &command, spawn_args) {
-                Ok(handle) => reply_ok(host, token, &handle),
+        "spawn" => {
+            // The trailing options object is optional on the TS side, so a
+            // 2-arg call decodes via the fallback.
+            let decoded =
+                decode_as::<(String, Vec<String>, Option<process::SpawnActionOptions>)>(args)
+                    .or_else(|_| {
+                        decode_as::<(String, Vec<String>)>(args)
+                            .map(|(command, spawn_args)| (command, spawn_args, None))
+                    });
+            match decoded {
+                Ok((command, spawn_args, options)) => match process::spawn(
+                    host,
+                    vm,
+                    vars,
+                    &command,
+                    spawn_args,
+                    options.unwrap_or_default(),
+                ) {
+                    Ok(handle) => reply_ok(host, token, &handle),
+                    Err(error) => reply_err(host, token, error),
+                },
                 Err(error) => reply_err(host, token, error),
-            },
-            Err(error) => reply_err(host, token, error),
-        },
+            }
+        }
+        // Long-running wait: replies from a spawned task so it does not occupy
+        // the serial action worker (a waitProcess held for the process lifetime
+        // would starve every later action, including the stdin writes the
+        // process needs to make progress).
         "waitProcess" => match decode_as::<(u32,)>(args) {
-            Ok((pid,)) => match process::wait_process(vm, pid).await {
-                Ok(code) => reply_ok(host, token, &code),
-                Err(error) => reply_err(host, token, error),
-            },
+            Ok((pid,)) => {
+                let host = host.clone();
+                let vm = vm.clone();
+                vars.shell_tasks.push(tokio::spawn(async move {
+                    match process::wait_process(&vm, pid).await {
+                        Ok(code) => reply_ok(&host, token, &code),
+                        Err(error) => reply_err(&host, token, error),
+                    }
+                }));
+            }
             Err(error) => reply_err(host, token, error),
         },
         "killProcess" => match decode_as::<(u32,)>(args) {
@@ -371,6 +407,53 @@ pub(crate) async fn dispatch(
                 Ok(()) => reply_ok(host, token, &()),
                 Err(error) => reply_err(host, token, error),
             },
+            Err(error) => reply_err(host, token, error),
+        },
+        "openShell" => match decode_as::<(Option<shell::OpenShellActionOptions>,)>(args) {
+            Ok((options,)) => {
+                match shell::open_shell(host, vm, vars, options.unwrap_or_default()) {
+                    Ok(dto) => reply_ok(host, token, &dto),
+                    Err(error) => reply_err(host, token, error),
+                }
+            }
+            Err(error) => reply_err(host, token, error),
+        },
+        "writeShell" => match decode_as::<(String, WriteFileContent)>(args) {
+            Ok((shell_id, data)) => match shell::write_shell(vm, &shell_id, data).await {
+                Ok(()) => reply_ok(host, token, &()),
+                Err(error) => reply_err(host, token, error),
+            },
+            Err(error) => reply_err(host, token, error),
+        },
+        "resizeShell" => match decode_as::<(String, u16, u16)>(args) {
+            Ok((shell_id, cols, rows)) => match shell::resize_shell(vm, &shell_id, cols, rows) {
+                Ok(()) => reply_ok(host, token, &()),
+                Err(error) => reply_err(host, token, error),
+            },
+            Err(error) => reply_err(host, token, error),
+        },
+        "closeShell" => match decode_as::<(String,)>(args) {
+            Ok((shell_id,)) => match shell::close_shell(vm, &shell_id) {
+                Ok(()) => reply_ok(host, token, &()),
+                Err(error) => reply_err(host, token, error),
+            },
+            Err(error) => reply_err(host, token, error),
+        },
+        // Long-running wait: replies from a spawned task so it does not occupy
+        // the serial action worker (the shell CLI calls waitShell up front and
+        // streams writeShell input afterwards; holding the worker here would
+        // deadlock the shell — input can never arrive to end the wait).
+        "waitShell" => match decode_as::<(String,)>(args) {
+            Ok((shell_id,)) => {
+                let host = host.clone();
+                let vm = vm.clone();
+                vars.shell_tasks.push(tokio::spawn(async move {
+                    match shell::wait_shell(&vm, &shell_id).await {
+                        Ok(exit_code) => reply_ok(&host, token, &exit_code),
+                        Err(error) => reply_err(&host, token, error),
+                    }
+                }));
+            }
             Err(error) => reply_err(host, token, error),
         },
         other => {

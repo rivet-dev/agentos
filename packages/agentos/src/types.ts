@@ -59,6 +59,11 @@ export interface ShellDataPayload {
 	data: Uint8Array;
 }
 
+export interface ShellExitPayload {
+	shellId: string;
+	exitCode: number;
+}
+
 export interface CronEventPayload {
 	event: CronEvent;
 }
@@ -73,6 +78,10 @@ export interface AgentOsEvents {
 	processOutput: ProcessOutputPayload;
 	processExit: ProcessExitPayload;
 	shellData: ShellDataPayload;
+	/** Shell stderr (the dedicated channel backing the TS `onStderr` option). */
+	shellStderr: ShellDataPayload;
+	/** Shell process exit (mirrors `waitShell` resolution). */
+	shellExit: ShellExitPayload;
 	cronEvent: CronEventPayload;
 }
 

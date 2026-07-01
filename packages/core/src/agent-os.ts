@@ -903,9 +903,9 @@ function isLocalCancelledPromptResponse(
 const CLOSED_SESSION_ID_RETENTION_LIMIT = 2048;
 const CLOSED_SHELL_ID_RETENTION_LIMIT = 2048;
 
-class BoundedSet<T> {
+class BoundedSet<T, V = undefined> {
 	readonly limit: number;
-	#entries = new Map<T, undefined>();
+	#entries = new Map<T, V | undefined>();
 
 	constructor(limit: number) {
 		if (!Number.isInteger(limit) || limit <= 0) {
@@ -914,11 +914,11 @@ class BoundedSet<T> {
 		this.limit = limit;
 	}
 
-	add(value: T): void {
+	add(value: T, associated?: V): void {
 		if (this.#entries.has(value)) {
 			this.#entries.delete(value);
 		}
-		this.#entries.set(value, undefined);
+		this.#entries.set(value, associated);
 		if (this.#entries.size <= this.limit) {
 			return;
 		}
@@ -930,6 +930,10 @@ class BoundedSet<T> {
 
 	has(value: T): boolean {
 		return this.#entries.has(value);
+	}
+
+	get(value: T): V | undefined {
+		return this.#entries.get(value);
 	}
 
 	delete(value: T): boolean {
@@ -2602,7 +2606,9 @@ export class AgentOs {
 		}
 	>();
 	private _shells = new Map<string, ShellEntry>();
-	private _closedShellIds = new BoundedSet<string>(
+	// Value is the recorded exit code (undefined until/unless the exit
+	// resolves) so waitShell can still report it after the entry is dropped.
+	private _closedShellIds = new BoundedSet<string, number>(
 		CLOSED_SHELL_ID_RETENTION_LIMIT,
 	);
 	private _pendingShellExitPromises = new Set<Promise<number>>();
@@ -3464,13 +3470,25 @@ export class AgentOs {
 			exitPromise: Promise.resolve(0),
 		};
 		const exitPromise = handle.wait();
-		entry.exitPromise = exitPromise.finally(() => {
+		const finalize = (exitCode?: number) => {
 			this._pendingShellExitPromises.delete(entry.exitPromise);
 			if (this._shells.get(shellId) === entry) {
 				this._shells.delete(shellId);
-				this._closedShellIds.add(shellId);
 			}
-		});
+			// Record the exit code even when closeShell already dropped the
+			// entry, so a waitShell issued after exit still resolves with it.
+			this._closedShellIds.add(shellId, exitCode);
+		};
+		entry.exitPromise = exitPromise.then(
+			(exitCode) => {
+				finalize(exitCode);
+				return exitCode;
+			},
+			(error) => {
+				finalize();
+				throw error;
+			},
+		);
 		this._pendingShellExitPromises.add(entry.exitPromise);
 		this._shells.set(shellId, entry);
 		return { shellId };
@@ -3507,10 +3525,18 @@ export class AgentOs {
 		entry.handle.resize(cols, rows);
 	}
 
-	/** Wait for a shell to exit and return its process exit code. */
+	/**
+	 * Wait for a shell to exit and return its process exit code. Resolves
+	 * immediately for a shell that has already exited (within the closed-shell
+	 * retention window).
+	 */
 	waitShell(shellId: string): Promise<number> {
 		const entry = this._shells.get(shellId);
-		if (!entry) throw new Error(`Shell not found: ${shellId}`);
+		if (!entry) {
+			const exitCode = this._closedShellIds.get(shellId);
+			if (exitCode !== undefined) return Promise.resolve(exitCode);
+			throw new Error(`Shell not found: ${shellId}`);
+		}
 		return entry.exitPromise;
 	}
 

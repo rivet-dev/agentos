@@ -18,11 +18,45 @@ pub async fn exec(vm: &AgentOs, command: &str) -> Result<ExecResultDto> {
         .map(ExecResultDto::from)
 }
 
-/// `spawn(command, args)` — port of [`AgentOs::spawn`]. Returns the
-/// [`SpawnHandle`] `{ pid }` directly; the underlying type already
-/// derives `Serialize`.
-pub fn spawn(vm: &AgentOs, command: &str, args: Vec<String>) -> Result<SpawnHandle> {
-    vm.spawn(command, args, SpawnOptions::default())
+/// JSON options for the `spawn` action — the serializable subset of the TS
+/// `SpawnOptions` (output callbacks are replaced by the `processOutput` /
+/// `processExit` broadcasts).
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnActionOptions {
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+    pub cwd: Option<String>,
+    pub stream_stdin: Option<bool>,
+}
+
+/// `spawn(command, args, options?)` — port of [`AgentOs::spawn`]. Returns the
+/// [`SpawnHandle`] `{ pid }`; stdout/stderr chunks stream to connected clients
+/// as `processOutput` events and the exit code broadcasts as `processExit`.
+pub fn spawn(
+    host: &crate::host_ctx::HostCtx,
+    vm: &AgentOs,
+    vars: &mut super::Vars,
+    command: &str,
+    args: Vec<String>,
+    options: SpawnActionOptions,
+) -> Result<SpawnHandle> {
+    let mut base = ExecOptions::default();
+    base.env = options.env;
+    if options.cwd.is_some() {
+        base.cwd = options.cwd;
+    }
+    let handle = vm.spawn(
+        command,
+        args,
+        SpawnOptions {
+            base,
+            stream_stdin: options.stream_stdin,
+            ..SpawnOptions::default()
+        },
+    )?;
+    super::shell::spawn_process_output_pumps(host, vm, vars, handle.pid);
+    Ok(handle)
 }
 
 /// `waitProcess(pid)` — port of [`AgentOs::wait_process`]. Returns the

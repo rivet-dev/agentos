@@ -12,8 +12,16 @@
  * commands use process spawn with Docker-like stdin attachment rules.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import {
+	cpSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import codex from "@agentos-software/codex-cli";
 import coreutils from "@agentos-software/coreutils";
@@ -36,10 +44,11 @@ import tree from "@agentos-software/tree";
 import unzip from "@agentos-software/unzip";
 import yq from "@agentos-software/yq";
 import zip from "@agentos-software/zip";
-import { AgentOs } from "@rivet-dev/agentos-core";
 import type { MountConfig, SoftwareInput } from "@rivet-dev/agentos-core";
+import { AgentOs } from "@rivet-dev/agentos-core";
 import { allowAll } from "@rivet-dev/agentos-core/internal/runtime-compat";
 import { Command, Option } from "commander";
+import { createActorShellVm, type ShellVmHandle } from "./actor-vm.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = resolve(__dirname, "../../..");
@@ -68,6 +77,7 @@ const SHELL_OPTIONS_WITH_VALUES = new Set([
 interface CliOptions {
 	interactive: boolean;
 	tty: boolean;
+	actor: boolean;
 	workdir: string;
 	env: string[];
 	envFile: string[];
@@ -79,36 +89,44 @@ interface CliOptions {
 	args: string[];
 }
 
-// Published packages ship package-local wasm/ dirs. Workspace packages use the
-// native build output when those package-local dirs have not been materialized.
-function withLocalCommandFallback(software: SoftwareInput): SoftwareInput {
-	if (Array.isArray(software)) {
-		return software.map(withLocalCommandFallback) as SoftwareInput;
-	}
-
-	if (
-		"commandDir" in software &&
-		typeof software.commandDir === "string" &&
-		!existsSync(software.commandDir)
-	) {
-		const fallbackCommandDir = fallbackCommandDirs.find((dir) =>
-			existsSync(dir),
-		);
-		if (!fallbackCommandDir) {
-			return software;
-		}
-		return {
-			...software,
-			get commandDir() {
-				return fallbackCommandDir;
-			},
-		};
-	}
-
-	return software;
+// The `@agentos-software/*` packages default-export a package descriptor
+// pointing at their self-contained package directory (a `bin/` of wasm files +
+// an `agentos-package.json`). Current packages export `{ packageDir }`; older
+// builds exported `{ name, dir }` — accept both.
+interface RegistryPackage {
+	name?: string;
+	dir?: string;
+	packageDir?: string;
 }
 
-const software = [
+// The sidecar requires an agentos-package.json manifest in every package dir.
+function isUsablePackageDir(dir: string | undefined): dir is string {
+	return dir !== undefined && existsSync(resolve(dir, "agentos-package.json"));
+}
+
+// Published packages ship their package dir materialized. Workspace packages
+// may not have run the native build yet, so their dir can be missing — fall
+// back to the native command-build output when it is. A package whose dir
+// exists but predates the agentos-package.json manifest requirement is skipped
+// (with a warning) rather than aborting VM creation for the whole shell.
+function withLocalCommandFallback(pkg: RegistryPackage): SoftwareInput | null {
+	const packageDir = pkg.packageDir ?? pkg.dir;
+	if (isUsablePackageDir(packageDir)) {
+		return { packageDir };
+	}
+	const fallbackCommandDir = fallbackCommandDirs.find(isUsablePackageDir);
+	if (fallbackCommandDir !== undefined) {
+		return { packageDir: fallbackCommandDir };
+	}
+	console.warn(
+		`agentos-shell: skipping software package without agentos-package.json: ${
+			pkg.name ?? packageDir ?? "<unknown>"
+		}`,
+	);
+	return null;
+}
+
+const software: SoftwareInput[] = [
 	coreutils,
 	sed,
 	grep,
@@ -130,9 +148,81 @@ const software = [
 	git,
 	httpGet,
 	sqlite3,
-].map(withLocalCommandFallback);
+]
+	.map(withLocalCommandFallback)
+	.filter((input): input is SoftwareInput => input !== null);
 
-function createShellDiagnosticStripper(): (data: Uint8Array) => Uint8Array | null {
+// Local-only: minimal vi-like editors (vix, vim) built to wasm32-wasip1, used to
+// prove raw-mode PTY round-trips (insert mode, :wq, file written). The raw
+// binaries live in a workspace-local command dir; the sidecar wants a
+// self-contained package directory, so materialize one with a `bin/<cmd>` layout
+// and an `agentos-package.json`, then reference it via `{ packageDir }`.
+const VIX_COMMAND_DIR = resolve(workspaceRoot, ".local-cmds");
+const localEditors = (["vix", "vim"] as const).filter((name) =>
+	existsSync(resolve(VIX_COMMAND_DIR, name)),
+);
+
+// Bare `vim` sources `$VIMRUNTIME/defaults.vim` on startup; without a runtime
+// tree in the VM it fails with `E1187: Failed to source defaults.vim` and drops
+// to the "Press ENTER" prompt. Provide a host vim runtime read-only through the
+// package `provides` field and point `VIMRUNTIME` straight at it (which bypasses
+// vim's version-dir search, so a 9.0/9.1 runtime sources cleanly under our 9.2
+// binary).
+const VIM_RUNTIME_GUEST_DIR = "/usr/local/share/vim/vim92";
+const vimRuntimeHostDir = localEditors.includes("vim")
+	? [
+			resolve(VIX_COMMAND_DIR, "vim-runtime"),
+			"/usr/share/vim/vim92",
+			"/usr/share/vim/vim91",
+			"/usr/share/vim/vim90",
+			"/usr/local/share/vim/vim92",
+		].find((dir) => existsSync(resolve(dir, "defaults.vim")))
+	: undefined;
+
+if (localEditors.length > 0) {
+	// Assemble the package directory: bin/<cmd> for each editor, a package.json,
+	// and an agentos-package.json carrying the runtime `provides` (env + files).
+	const packageDir = mkdtempSync(join(tmpdir(), "agentos-local-editors-"));
+	const binDir = join(packageDir, "bin");
+	mkdirSync(binDir, { recursive: true });
+	for (const name of localEditors) {
+		cpSync(resolve(VIX_COMMAND_DIR, name), join(binDir, name));
+	}
+	writeFileSync(
+		join(packageDir, "package.json"),
+		JSON.stringify({ name: "local-editors", version: "0.0.0" }),
+	);
+	// The runtime tree is overlaid read-only into the package under `runtime/`,
+	// so `provides.files.source` is a package-relative path the sidecar can read.
+	let provides:
+		| {
+				env: Record<string, string>;
+				files: Array<{ source: string; target: string }>;
+		  }
+		| undefined;
+	if (vimRuntimeHostDir) {
+		cpSync(vimRuntimeHostDir, join(packageDir, "runtime"), { recursive: true });
+		provides = {
+			env: {
+				VIMRUNTIME: VIM_RUNTIME_GUEST_DIR,
+				VIM: "/usr/local/share/vim",
+			},
+			files: [{ source: "runtime", target: VIM_RUNTIME_GUEST_DIR }],
+		};
+	}
+	writeFileSync(
+		join(packageDir, "agentos-package.json"),
+		JSON.stringify({
+			name: "local-editors",
+			...(provides ? { provides } : {}),
+		}),
+	);
+	software.push({ packageDir });
+}
+
+function createShellDiagnosticStripper(): (
+	data: Uint8Array,
+) => Uint8Array | null {
 	let suppressUntilNewline = false;
 	return (data: Uint8Array) => {
 		let text = Buffer.from(data).toString("utf8");
@@ -186,10 +276,15 @@ function parseCli(argv: string[]): CliOptions {
 		.argument("[command]", "guest command to run", "bash")
 		.argument("[args...]", "guest command arguments")
 		.addOption(
-			new Option("-i, --interactive", "keep stdin attached")
-				.default(false),
+			new Option("-i, --interactive", "keep stdin attached").default(false),
 		)
 		.addOption(new Option("-t, --tty", "connect a terminal").default(false))
+		.addOption(
+			new Option(
+				"--actor",
+				"run through the RivetKit agentOS actor (engine + dylib plugin) instead of the in-process core client",
+			).default(false),
+		)
 		.option(
 			"-e, --env <env>",
 			"set environment variable (KEY=VALUE or KEY to copy from host)",
@@ -215,7 +310,10 @@ function parseCli(argv: string[]): CliOptions {
 			[],
 		)
 		.option("-w, --workdir <path>", "working directory inside the VM", "/")
-		.option("--name <name>", "container-style name label (accepted for Docker CLI parity)")
+		.option(
+			"--name <name>",
+			"container-style name label (accepted for Docker CLI parity)",
+		)
 		.option("--rm", "remove VM after exit (always true for this CLI)", false);
 
 	try {
@@ -235,6 +333,7 @@ function parseCli(argv: string[]): CliOptions {
 	const opts = program.opts<{
 		interactive: boolean;
 		tty: boolean;
+		actor: boolean;
 		workdir: string;
 		env: string[];
 		envFile: string[];
@@ -248,6 +347,7 @@ function parseCli(argv: string[]): CliOptions {
 	return {
 		interactive: opts.interactive,
 		tty: opts.tty,
+		actor: opts.actor,
 		workdir: opts.workdir,
 		env: opts.env,
 		envFile: opts.envFile,
@@ -314,7 +414,9 @@ function hostDirMount(
 function parseVolumeSpec(spec: string): MountConfig {
 	const [hostPath, guestPath, mode] = spec.split(":");
 	if (!hostPath || !guestPath) {
-		throw new Error(`Invalid volume spec "${spec}"; expected host:guest[:ro|rw]`);
+		throw new Error(
+			`Invalid volume spec "${spec}"; expected host:guest[:ro|rw]`,
+		);
 	}
 	if (mode && mode !== "ro" && mode !== "rw") {
 		throw new Error(`Invalid volume mode "${mode}" in "${spec}"`);
@@ -341,7 +443,8 @@ function parseMountSpec(spec: string): MountConfig {
 		throw new Error(`Only bind mounts are supported: --mount ${spec}`);
 	}
 	const source = fields.get("source") ?? fields.get("src");
-	const target = fields.get("target") ?? fields.get("dst") ?? fields.get("destination");
+	const target =
+		fields.get("target") ?? fields.get("dst") ?? fields.get("destination");
 	if (typeof source !== "string" || typeof target !== "string") {
 		throw new Error(
 			`Invalid mount spec "${spec}"; expected type=bind,source=...,target=...`,
@@ -399,34 +502,48 @@ function shellArgsRequestCommandOrScript(args: string[]): boolean {
 	return false;
 }
 
-function buildTerminalCommand(options: CliOptions): {
+// The error brush prints when the requested input backend is not compiled
+// into the wasm build (e.g. reedline missing from the shipped package). Used
+// to auto-fall back to the always-available `minimal` backend.
+const BRUSH_BACKEND_UNSUPPORTED_MARKER =
+	"requested input backend type not supported";
+
+/**
+ * Terminal command candidates, tried in order. Prefer `reedline` (history,
+ * arrows, reverse search — requires a brush wasm build with the reedline
+ * feature) and fall back to `minimal` when the shipped build rejects it. An
+ * explicit user-provided backend is used verbatim with no fallback.
+ */
+function buildTerminalCommandAttempts(options: CliOptions): {
 	command: string;
 	args: string[];
-} {
-	const args = [...options.args];
-	if (isBrushShellCommand(options.command)) {
-		if (!hasBrushInputBackend(args)) {
-			args.unshift("--input-backend", "reedline");
-		}
-		if (
-			!hasInteractiveShellFlag(args) &&
-			!shellArgsRequestCommandOrScript(args)
-		) {
-			args.push("-i");
-		}
+}[] {
+	const baseArgs = [...options.args];
+	if (!isBrushShellCommand(options.command)) {
+		return [{ command: options.command, args: baseArgs }];
 	}
-	return {
+	if (
+		!hasInteractiveShellFlag(baseArgs) &&
+		!shellArgsRequestCommandOrScript(baseArgs)
+	) {
+		baseArgs.push("-i");
+	}
+	if (hasBrushInputBackend(baseArgs)) {
+		// Explicit backend: use it verbatim; the brush error surfaces as-is.
+		return [{ command: options.command, args: baseArgs }];
+	}
+	return ["reedline", "minimal"].map((backend) => ({
 		command: options.command,
-		args,
-	};
+		args: ["--input-backend", backend, ...baseArgs],
+	}));
 }
 
 async function runSpawnedCommand(
-	vm: AgentOs,
+	vm: ShellVmHandle,
 	options: CliOptions,
 	env: Record<string, string>,
 ): Promise<number> {
-	const child = vm.spawn(options.command, options.args, {
+	const child = await vm.spawn(options.command, options.args, {
 		cwd: options.workdir,
 		env,
 		streamStdin: options.interactive,
@@ -478,24 +595,64 @@ async function runSpawnedCommand(
 }
 
 async function runTerminalCommand(
-	vm: AgentOs,
+	vm: ShellVmHandle,
 	options: CliOptions,
 	env: Record<string, string>,
 ): Promise<number> {
+	const attempts = buildTerminalCommandAttempts(options);
+	for (let index = 0; index < attempts.length; index++) {
+		const canFallback = index + 1 < attempts.length;
+		const result = await runTerminalAttempt(
+			vm,
+			options,
+			env,
+			attempts[index],
+			canFallback,
+		);
+		if (result.backendUnsupported && canFallback) {
+			process.stderr.write(
+				"agentos-shell: shell build does not support the requested input backend; retrying with --input-backend minimal\n",
+			);
+			continue;
+		}
+		return result.exitCode;
+	}
+	return 1;
+}
+
+async function runTerminalAttempt(
+	vm: ShellVmHandle,
+	options: CliOptions,
+	env: Record<string, string>,
+	terminalCommand: { command: string; args: string[] },
+	canFallback: boolean,
+): Promise<{ exitCode: number; backendUnsupported: boolean }> {
 	const stripDiagnostics = createShellDiagnosticStripper();
+	let backendUnsupported = false;
+	const decoder = new TextDecoder();
+	const detectBackendError = (data: Uint8Array) => {
+		if (decoder.decode(data).includes(BRUSH_BACKEND_UNSUPPORTED_MARKER)) {
+			backendUnsupported = true;
+		}
+	};
+	// Suppress the backend error output only when a fallback attempt will run;
+	// without one the error must reach the user.
+	const suppress = () => backendUnsupported && canFallback;
 	const shellOptions = {
 		cwd: options.workdir,
 		env,
 		cols: process.stdout.columns,
 		rows: process.stdout.rows,
 		onStderr: (data: Uint8Array) => {
+			detectBackendError(data);
+			if (suppress()) return;
 			const sanitized = stripDiagnostics(data);
 			if (sanitized) process.stderr.write(sanitized);
 		},
 	};
-	const { shellId } = vm.openShell({
+	const { shellId } = await vm.openShell({
 		...shellOptions,
-		...buildTerminalCommand(options),
+		...terminalCommand,
 	});
 	let stdinQueue = Promise.resolve();
 	const queueShellInput = (data: Uint8Array | string) => {
@@ -515,6 +672,8 @@ async function runTerminalCommand(
 		vm.resizeShell(shellId, process.stdout.columns, process.stdout.rows);
 	};
 	const unsubscribeOutput = vm.onShellData(shellId, (data) => {
+		detectBackendError(data);
+		if (suppress()) return;
 		const sanitized = stripDiagnostics(data);
 		if (sanitized) process.stdout.write(sanitized);
 	});
@@ -540,7 +699,12 @@ async function runTerminalCommand(
 			onResize();
 		}
 
-		return await vm.waitShell(shellId);
+		const exitCode = await vm.waitShell(shellId);
+		// Give trailing output events a moment to flush before unsubscribing:
+		// a fast-failing shell otherwise exits with its error output silently
+		// dropped, leaving nothing but a bare exit code to debug from.
+		await new Promise((r) => setTimeout(r, 250));
+		return { exitCode, backendUnsupported };
 	} finally {
 		unsubscribeOutput();
 		process.stdin.removeListener("data", onStdinData);
@@ -558,20 +722,29 @@ async function runTerminalCommand(
 
 const cli = parseCli(process.argv.slice(2));
 const env = buildEnv(cli);
+if (cli.tty && env.AGENTOS_V8_CPU_TIME_LIMIT_MS === undefined) {
+	// Interactive sessions idle for hours; the wasm runner's input polling
+	// accrues active-CPU against the default 30s watchdog and kills the guest
+	// (vim/reedline die mid-session). Match the 24h interactive fuel budget.
+	env.AGENTOS_V8_CPU_TIME_LIMIT_MS = String(INTERACTIVE_SHELL_WASM_FUEL_MS);
+}
 const mounts = buildMounts(cli);
+const limits = cli.tty
+	? {
+			resources: {
+				maxWasmFuel: INTERACTIVE_SHELL_WASM_FUEL_MS,
+			},
+		}
+	: undefined;
 
-const vm = await AgentOs.create({
-	mounts,
-	permissions: allowAll,
-	software,
-	limits: cli.tty
-		? {
-				resources: {
-					maxWasmFuel: INTERACTIVE_SHELL_WASM_FUEL_MS,
-				},
-			}
-		: undefined,
-});
+const vm: ShellVmHandle = cli.actor
+	? await createActorShellVm({ software, mounts, limits })
+	: await AgentOs.create({
+			mounts,
+			permissions: allowAll,
+			software,
+			limits,
+		});
 
 let exitCode = 1;
 try {

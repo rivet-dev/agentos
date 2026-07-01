@@ -244,6 +244,8 @@ impl AgentOs {
         let (stderr_tx, _) = tokio::sync::broadcast::channel(SHELL_DATA_CHANNEL_CAPACITY);
         // Spawn-readiness gate: write/close await this before issuing their wire request.
         let (spawned_tx, _) = tokio::sync::watch::channel(false);
+        // Exit-code channel backing `wait_shell`.
+        let (exit_tx, _) = tokio::sync::watch::channel(None::<i32>);
 
         // Seed any caller-provided initial stderr callback into the stderr fan-out, matching the TS
         // initial-handler-set behavior (`stderrHandlers.add(options.onStderr)`).
@@ -259,6 +261,7 @@ impl AgentOs {
             stderr_tx: stderr_tx.clone(),
             process_id: process_id.clone(),
             spawned_tx: spawned_tx.clone(),
+            exit_tx: exit_tx.clone(),
         };
         // `insert` fails only if the key already exists; the monotonic counter guarantees it cannot.
         let _ = inner.shells.insert(shell_id.clone(), entry);
@@ -270,6 +273,15 @@ impl AgentOs {
         options
             .env
             .insert(String::from("AGENTOS_EXEC_TTY"), String::from("1"));
+        // Seed the PTY winsize env exactly like the TS openShell (COLUMNS/LINES).
+        if let Some(cols) = options.cols {
+            options
+                .env
+                .insert(String::from("COLUMNS"), cols.to_string());
+        }
+        if let Some(rows) = options.rows {
+            options.env.insert(String::from("LINES"), rows.to_string());
+        }
         let execute = wire::ExecuteRequest {
             process_id: process_id.clone(),
             command: Some(command),
@@ -322,7 +334,12 @@ impl AgentOs {
                     .shells
                     .update(&exit_shell_id, |_, existing| existing.pid = pid);
             }
-            let _ = spawned_tx.send(true);
+            // send_replace, not send: `watch::Sender::send` REFUSES to store the
+            // value while no receiver exists (and the initial receiver is dropped
+            // at channel creation), which left the spawn gate permanently false
+            // for any write/resize issued after this point — they hung forever in
+            // wait_for_spawn. send_replace stores unconditionally.
+            let _ = spawned_tx.send_replace(true);
 
             loop {
                 let (_scope, payload) = match events.recv().await {
@@ -347,6 +364,18 @@ impl AgentOs {
                     }
                     EventPayload::ProcessExitedEvent(exited) => {
                         if exited.process_id == route_process_id {
+                            // Record the exit code for `wait_shell`: live waiters observe the watch
+                            // update; late waiters (after the entry is dropped below) find it in the
+                            // bounded retention map, mirroring the TS closed-shell retention.
+                            {
+                                let mut retained = agent.inner().closed_shell_exit_codes.lock();
+                                retained.push_back((exit_shell_id.clone(), exited.exit_code));
+                                while retained.len() > crate::CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT
+                                {
+                                    retained.pop_front();
+                                }
+                            }
+                            let _ = exit_tx.send(Some(exited.exit_code));
                             break;
                         }
                     }
@@ -397,6 +426,8 @@ impl AgentOs {
             stderr_tx: stderr_tx.clone(),
             process_id: process_id.clone(),
             spawned_tx: spawned_tx.clone(),
+            // The caller-supplied exit channel doubles as the entry's `wait_shell` source.
+            exit_tx: exit_tx.clone(),
         };
         let _ = inner.shells.insert(shell_id.clone(), entry);
 
@@ -452,7 +483,12 @@ impl AgentOs {
                     .shells
                     .update(&exit_shell_id, |_, existing| existing.pid = pid);
             }
-            let _ = spawned_tx.send(true);
+            // send_replace, not send: `watch::Sender::send` REFUSES to store the
+            // value while no receiver exists (and the initial receiver is dropped
+            // at channel creation), which left the spawn gate permanently false
+            // for any write/resize issued after this point — they hung forever in
+            // wait_for_spawn. send_replace stores unconditionally.
+            let _ = spawned_tx.send_replace(true);
 
             let mut exit_code: i32 = 0;
             loop {
@@ -690,6 +726,32 @@ impl AgentOs {
         Ok(())
     }
 
+    /// Write to a shell and AWAIT the wire write. Same routing as [`Self::write_shell`], but the
+    /// caller observes wire failures instead of a fire-and-forget warn — used by the actor plugin's
+    /// `writeShell` action so a failed write rejects the action.
+    pub async fn write_shell_awaited(
+        &self,
+        shell_id: &str,
+        data: StdinInput,
+    ) -> std::result::Result<(), ClientError> {
+        let (process_id, spawned_rx) = self.shell_wire_handle(shell_id)?;
+        let chunk = stdin_chunk(data);
+        tracing::debug!(shell_id, "write_shell_awaited: waiting for spawn gate");
+        wait_for_spawn(spawned_rx).await;
+        tracing::debug!(shell_id, "write_shell_awaited: issuing wire write");
+        let payload =
+            wire::RequestPayload::WriteStdinRequest(wire::WriteStdinRequest { process_id, chunk });
+        let response = self
+            .transport()
+            .request_wire(self.vm_ownership(), payload)
+            .await?;
+        tracing::debug!(shell_id, "write_shell_awaited: wire write acked");
+        match response {
+            wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
+            _ => Ok(()),
+        }
+    }
+
     /// Subscribe to a shell's stdout data. SYNC register; multi-handler; dropping the returned stream
     /// is the unsubscribe. Carries stdout ONLY (stderr is on `on_shell_stderr`). Errors with
     /// [`ClientError::ShellNotFound`].
@@ -712,11 +774,9 @@ impl AgentOs {
             .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()))
     }
 
-    /// Resize a shell's PTY winsize. SYNC. Errors with [`ClientError::ShellNotFound`].
-    ///
-    /// Validates shell existence (the load-bearing parity behavior). The native wire protocol has no
-    /// winsize request, so the resize itself is currently a best-effort no-op (the synthetic TS
-    /// kernel path is likewise a no-op).
+    /// Resize a shell's PTY winsize. SYNC fire-and-forget, mirroring the TS `ShellHandle.resize`
+    /// (which dispatches `resizePty` in the background after the spawn lands). Errors with
+    /// [`ClientError::ShellNotFound`].
     pub fn resize_shell(
         &self,
         shell_id: &str,
@@ -724,14 +784,59 @@ impl AgentOs {
         rows: u16,
     ) -> std::result::Result<(), ClientError> {
         // Existence check matches the TS `if (!entry) throw Shell not found`.
-        let _ = self.shell_wire_handle(shell_id)?;
-        tracing::warn!(
-            shell_id = %shell_id,
-            cols,
-            rows,
-            "resize_shell has no native winsize wire op; resize is a no-op"
-        );
+        let (process_id, spawned_rx) = self.shell_wire_handle(shell_id)?;
+
+        let agent = self.clone();
+        let ownership = self.vm_ownership();
+        tokio::spawn(async move {
+            wait_for_spawn(spawned_rx).await;
+            let payload = wire::RequestPayload::ResizePtyRequest(wire::ResizePtyRequest {
+                process_id,
+                cols,
+                rows,
+            });
+            if let Err(error) = agent.transport().request_wire(ownership, payload).await {
+                tracing::warn!(?error, "resize_shell failed");
+            }
+        });
+
         Ok(())
+    }
+
+    /// Wait for a shell to exit and return its process exit code (TS `waitShell`). Resolves
+    /// immediately for a shell that already exited within the bounded retention window. Errors with
+    /// [`ClientError::ShellNotFound`] for an unknown id.
+    pub async fn wait_shell(&self, shell_id: &str) -> std::result::Result<i32, ClientError> {
+        let exit_rx = self
+            .inner()
+            .shells
+            .read(shell_id, |_, entry| entry.exit_tx.subscribe());
+        let Some(mut exit_rx) = exit_rx else {
+            // Entry already dropped: fall back to the recorded exit code (TS retention behavior).
+            let retained = self.inner().closed_shell_exit_codes.lock();
+            return retained
+                .iter()
+                .rev()
+                .find(|(id, _)| id == shell_id)
+                .map(|(_, code)| *code)
+                .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()));
+        };
+        loop {
+            if let Some(code) = *exit_rx.borrow_and_update() {
+                return Ok(code);
+            }
+            if exit_rx.changed().await.is_err() {
+                // Sender dropped without publishing a code (spawn failure / teardown): check the
+                // retention map once more before reporting the shell unknown.
+                let retained = self.inner().closed_shell_exit_codes.lock();
+                return retained
+                    .iter()
+                    .rev()
+                    .find(|(id, _)| id == shell_id)
+                    .map(|(_, code)| *code)
+                    .ok_or_else(|| ClientError::ShellNotFound(shell_id.to_string()));
+            }
+        }
     }
 
     /// Close a shell. SYNC. `kill()` + immediate map delete; the exit task is still drained by

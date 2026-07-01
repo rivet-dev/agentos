@@ -60,6 +60,16 @@ pub extern "C" fn rivet_actor_abi_version() -> u64 {
 
 #[no_mangle]
 pub extern "C" fn rivet_actor_plugin_init(out_err: *mut abi::OwnedBuf) -> *mut c_void {
+    // Debug-only tracing to stderr, gated on AGENTOS_PLUGIN_LOG (RUST_LOG
+    // syntax). Without a subscriber every tracing::warn! from the embedded
+    // agentos-client (e.g. a failed fire-and-forget shell write) is silently
+    // dropped, which makes plugin-side failures undiagnosable.
+    if let Ok(filter) = std::env::var("AGENTOS_PLUGIN_LOG") {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
     let built = std::panic::catch_unwind(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -350,8 +360,10 @@ async fn actor_worker(
                 };
                 match abi::decode_action_payload(&payload) {
                     Ok((name, action_args)) => {
+                        tracing::debug!(action = %name, "agent-os action start");
                         actions::dispatch(&host, vm_ref, &mut vars, &name, &action_args, token)
                             .await;
+                        tracing::debug!(action = %name, "agent-os action done");
                     }
                     Err(_) => {
                         let _ = host.reply_err(token, "malformed action event payload");

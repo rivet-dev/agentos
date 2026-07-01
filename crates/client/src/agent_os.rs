@@ -85,6 +85,9 @@ pub(crate) struct ShellEntry {
     /// Rust wire spawn is async, so `write_shell`/`close_shell` await this gate before issuing their
     /// wire request to preserve the deterministic ordering and avoid dropping early input.
     pub spawned_tx: watch::Sender<bool>,
+    /// Exit-code channel backing `wait_shell` (TS `ShellHandle.wait`). Seeded `None`; the background
+    /// event loop publishes `Some(exit_code)` when the shell process exits.
+    pub exit_tx: watch::Sender<Option<i32>>,
 }
 
 /// A connected ACP terminal process and its output fan-out task.
@@ -195,6 +198,10 @@ pub(crate) struct AgentOsInner {
     pub(crate) shells: SccHashMap<String, ShellEntry>,
     pub(crate) shell_counter: AtomicU64,
     pub(crate) pending_shell_exits: SccHashMap<u64, JoinHandle<()>>,
+    /// Bounded ordered map (cap [`crate::CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT`]) of exited shells'
+    /// exit codes, so `wait_shell` issued after the shell already exited (entry dropped from
+    /// `shells`) still resolves with the recorded code — mirrors the TS `_closedShellIds` retention.
+    pub(crate) closed_shell_exit_codes: parking_lot::Mutex<VecDeque<(String, i32)>>,
     pub(crate) acp_terminals: SccHashMap<String, AcpTerminalEntry>,
     pub(crate) acp_terminal_count: AtomicUsize,
     pub(crate) acp_terminal_lifecycle_lock: tokio::sync::Mutex<()>,
@@ -283,6 +290,7 @@ impl AgentOs {
             | wire::ResponsePayload::StdinClosedResponse(_)
             | wire::ResponsePayload::ProcessKilledResponse(_)
             | wire::ResponsePayload::ProcessSnapshotResponse(_)
+            | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::ListenerSnapshotResponse(_)
             | wire::ResponsePayload::BoundUdpSnapshotResponse(_)
             | wire::ResponsePayload::SignalStateResponse(_)
@@ -350,6 +358,7 @@ impl AgentOs {
             | wire::ResponsePayload::StdinClosedResponse(_)
             | wire::ResponsePayload::ProcessKilledResponse(_)
             | wire::ResponsePayload::ProcessSnapshotResponse(_)
+            | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::ListenerSnapshotResponse(_)
             | wire::ResponsePayload::BoundUdpSnapshotResponse(_)
             | wire::ResponsePayload::SignalStateResponse(_)
@@ -390,9 +399,18 @@ impl AgentOs {
 
         // 6. Configure the VM (vm scope). The sidecar owns the `/opt/agentos` package
         // projection: it builds the staging dir + registers the read-only host_dir
-        // mount itself from the forwarded `packages`. The Rust client projects no boot
-        // packages, so an empty `packages` list still yields a live `/opt/agentos`
-        // mount that runtime `link_software` can append to.
+        // mount itself from the forwarded `packages` (`{ packageDir }` dirs from
+        // `config.packages`); an empty `packages` list still yields a live
+        // `/opt/agentos` mount that runtime `link_software` can append to.
+        let packages: Vec<wire::PackageDescriptor> = config
+            .packages
+            .iter()
+            .map(|dir| wire::PackageDescriptor { dir: dir.clone() })
+            .collect();
+        let packages_mount_at = config
+            .packages_mount_at
+            .clone()
+            .unwrap_or_else(|| String::from("/opt/agentos"));
         match transport
             .request_wire(
                 wire_vm_ownership(&connection_id, &session_id, &vm_id),
@@ -405,8 +423,8 @@ impl AgentOs {
                     projected_modules: Vec::new(),
                     command_permissions: HashMap::new(),
                     loopback_exempt_ports: config.loopback_exempt_ports.clone(),
-                    packages: Vec::new(),
-                    packages_mount_at: String::new(),
+                    packages,
+                    packages_mount_at,
                 }),
             )
             .await?
@@ -434,6 +452,7 @@ impl AgentOs {
             | wire::ResponsePayload::StdinClosedResponse(_)
             | wire::ResponsePayload::ProcessKilledResponse(_)
             | wire::ResponsePayload::ProcessSnapshotResponse(_)
+            | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::ListenerSnapshotResponse(_)
             | wire::ResponsePayload::BoundUdpSnapshotResponse(_)
             | wire::ResponsePayload::SignalStateResponse(_)
@@ -508,10 +527,11 @@ impl AgentOs {
                     | wire::ResponsePayload::RootFilesystemSnapshotResponse(_)
                     | wire::ResponsePayload::ProcessStartedResponse(_)
                     | wire::ResponsePayload::StdinWrittenResponse(_)
-            | wire::ResponsePayload::PtyResizedResponse(_)
+                    | wire::ResponsePayload::PtyResizedResponse(_)
                     | wire::ResponsePayload::StdinClosedResponse(_)
                     | wire::ResponsePayload::ProcessKilledResponse(_)
                     | wire::ResponsePayload::ProcessSnapshotResponse(_)
+                    | wire::ResponsePayload::ResourceSnapshotResponse(_)
                     | wire::ResponsePayload::ListenerSnapshotResponse(_)
                     | wire::ResponsePayload::BoundUdpSnapshotResponse(_)
                     | wire::ResponsePayload::SignalStateResponse(_)
@@ -570,6 +590,7 @@ impl AgentOs {
             shells: SccHashMap::new(),
             shell_counter: AtomicU64::new(0),
             pending_shell_exits: SccHashMap::new(),
+            closed_shell_exit_codes: parking_lot::Mutex::new(VecDeque::new()),
             acp_terminals: SccHashMap::new(),
             acp_terminal_count: AtomicUsize::new(0),
             acp_terminal_lifecycle_lock: tokio::sync::Mutex::new(()),
@@ -627,10 +648,10 @@ impl AgentOs {
             .request_wire(
                 wire_vm_ownership(&inner.connection_id, &inner.session_id, &inner.vm_id),
                 wire::RequestPayload::LinkPackageRequest(wire::LinkPackageRequest {
+                    // The wire descriptor is dir-only: the sidecar derives the package
+                    // name/commands/manifest from the package directory itself.
                     package: wire::PackageDescriptor {
-                        name: descriptor.name,
                         dir: descriptor.dir,
-                        acp_entrypoint: descriptor.acp_entrypoint,
                     },
                 }),
             )

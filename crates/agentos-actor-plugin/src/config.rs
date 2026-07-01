@@ -27,6 +27,18 @@ use anyhow::{Context, Result};
 pub(crate) struct AgentOsConfigJson {
     #[serde(default)]
     software: Vec<SoftwareInput>,
+    /// `{ packageDir }` boot packages (the current TS `buildConfigJson` shape).
+    #[serde(default)]
+    packages: Vec<PackageDirJson>,
+    /// Guest mount root for the package projection (`/opt/agentos`).
+    #[serde(default)]
+    packages_mount_at: Option<String>,
+    /// Agent ACP adapter configs derived from package manifests. Accepted for
+    /// schema parity with the TS `buildConfigJson`; adapter registration is not
+    /// yet ported to the plugin, so a non-empty list logs a warning at
+    /// bring-up.
+    #[serde(default)]
+    agent_configs: Vec<serde_json::Value>,
     #[serde(default)]
     additional_instructions: Option<String>,
     #[serde(default)]
@@ -45,6 +57,12 @@ pub(crate) struct AgentOsConfigJson {
     limits: Option<AgentOsLimits>,
     #[serde(default)]
     sidecar: Option<SidecarJson>,
+}
+
+#[derive(serde::Deserialize, Clone)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PackageDirJson {
+    dir: String,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -91,8 +109,21 @@ impl AgentOsConfigJson {
                 pool: Some(fallback_pool.to_owned()),
             },
         };
+        if !self.agent_configs.is_empty() {
+            tracing::warn!(
+                count = self.agent_configs.len(),
+                "agentConfigs are not yet applied by the actor plugin; package \
+                 agents will not be registered for sessions"
+            );
+        }
         AgentOsConfig {
             software: self.software.clone(),
+            packages: self
+                .packages
+                .iter()
+                .map(|package| package.dir.clone())
+                .collect(),
+            packages_mount_at: self.packages_mount_at.clone(),
             loopback_exempt_ports: self.loopback_exempt_ports.clone(),
             allowed_node_builtins: self.allowed_node_builtins.clone(),
             module_access_cwd: self.module_access_cwd.clone(),

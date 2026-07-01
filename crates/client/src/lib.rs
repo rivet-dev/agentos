@@ -42,6 +42,9 @@ pub const PERMISSION_TIMEOUT_MS: u64 = 120_000;
 /// Bounded closed-session-id set capacity (for `close_session` idempotence).
 pub const CLOSED_SESSION_ID_RETENTION_LIMIT: usize = 2048;
 
+/// Bounded exited-shell exit-code retention (for `wait_shell` after exit).
+pub const CLOSED_SHELL_EXIT_CODE_RETENTION_LIMIT: usize = 2048;
+
 /// Two-phase shell-drain timeout during dispose (milliseconds).
 pub const SHELL_DISPOSE_TIMEOUT_MS: u64 = 5_000;
 

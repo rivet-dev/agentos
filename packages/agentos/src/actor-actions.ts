@@ -44,6 +44,13 @@ export interface SpawnedProcess {
 	pid: number;
 }
 
+/** Options accepted by `spawn` (mirrors `SpawnActionOptions`). */
+export interface SpawnActionOptions {
+	env?: Record<string, string>;
+	cwd?: string;
+	streamStdin?: boolean;
+}
+
 /** Handle returned by `scheduleCron` (mirrors `ScheduledCronDto`). */
 export interface ScheduledCronJob {
 	id: string;
@@ -77,6 +84,21 @@ export interface SignedPreviewUrl {
 	url: string;
 	token: string;
 	expiresAt: number;
+}
+
+/** Options accepted by `openShell` (mirrors `OpenShellActionOptions`). */
+export interface OpenShellActionOptions {
+	command?: string;
+	args?: string[];
+	env?: Record<string, string>;
+	cwd?: string;
+	cols?: number;
+	rows?: number;
+}
+
+/** Handle returned by `openShell` (mirrors `OpenShellDto`). */
+export interface OpenShellResult {
+	shellId: string;
 }
 
 /** Per-entry result of the batch `writeFiles` / `readFiles` actions. */
@@ -116,7 +138,14 @@ export type AgentOsActions = {
 
 	// ── Processes ─────────────────────────────────────────────────────
 	exec: (c: Ctx, command: string) => Promise<ExecResult>;
-	spawn: (c: Ctx, command: string, args: string[]) => Promise<SpawnedProcess>;
+	// Output streams to connected clients as `processOutput` events; the exit
+	// code also broadcasts as `processExit`.
+	spawn: (
+		c: Ctx,
+		command: string,
+		args: string[],
+		options?: SpawnActionOptions,
+	) => Promise<SpawnedProcess>;
 	waitProcess: (c: Ctx, pid: number) => Promise<number>;
 	killProcess: (c: Ctx, pid: number) => Promise<void>;
 	stopProcess: (c: Ctx, pid: number) => Promise<void>;
@@ -126,6 +155,15 @@ export type AgentOsActions = {
 	getProcess: (c: Ctx, pid: number) => Promise<ProcessInfo>;
 	writeProcessStdin: (c: Ctx, pid: number, data: string | Uint8Array) => Promise<void>;
 	closeProcessStdin: (c: Ctx, pid: number) => Promise<void>;
+
+	// ── Shells (PTY) ──────────────────────────────────────────────────
+	// Output streams to connected clients as `shellData` / `shellStderr`
+	// events; the exit code also broadcasts as `shellExit`.
+	openShell: (c: Ctx, options?: OpenShellActionOptions) => Promise<OpenShellResult>;
+	writeShell: (c: Ctx, shellId: string, data: string | Uint8Array) => Promise<void>;
+	resizeShell: (c: Ctx, shellId: string, cols: number, rows: number) => Promise<void>;
+	closeShell: (c: Ctx, shellId: string) => Promise<void>;
+	waitShell: (c: Ctx, shellId: string) => Promise<number>;
 
 	// ── Network ───────────────────────────────────────────────────────
 	vmFetch: (

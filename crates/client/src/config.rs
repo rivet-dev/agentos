@@ -22,6 +22,12 @@ use crate::fs::VirtualFileSystem;
 pub struct AgentOsConfig {
     /// Software packages to install (flattened). Default `[]`.
     pub software: Vec<SoftwareInput>,
+    /// `{ packageDir }` software package directories, forwarded to the sidecar
+    /// as boot `packages` (the sidecar owns the `/opt/agentos` projection).
+    /// Mirrors the TS `buildConfigJson` `packages` list. Default `[]`.
+    pub packages: Vec<String>,
+    /// Guest mount root for the package projection. Default `/opt/agentos`.
+    pub packages_mount_at: Option<String>,
     /// Loopback ports exempt from the default outbound-to-host block.
     pub loopback_exempt_ports: Vec<u16>,
     /// Allowed Node.js builtins. Default: the hardened native-bridge set.
@@ -66,6 +72,16 @@ impl AgentOsConfigBuilder {
 
     pub fn software(mut self, software: Vec<SoftwareInput>) -> Self {
         self.config.software = software;
+        self
+    }
+
+    pub fn packages(mut self, packages: Vec<String>) -> Self {
+        self.config.packages = packages;
+        self
+    }
+
+    pub fn packages_mount_at(mut self, mount_at: impl Into<String>) -> Self {
+        self.config.packages_mount_at = Some(mount_at.into());
         self
     }
 

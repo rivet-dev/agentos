@@ -5,7 +5,7 @@ exports[`PTY protocol snapshots > C WASM probe snapshots raw, cooked, CPR, resiz
 cols=80 rows=18 cursor=11,8
 01|PTY_PROBE start
 02|TTY_HOST stdin=1 stdout=1 stderr=1
-03|TTY_LIBC stdin=0 stdout=0 stderr=0
+03|TTY_LIBC stdin=1 stdout=1 stderr=1
 04|SIZE_START env_cols=80 env_rows=18 host_rc=0 host_cols=80 host_rows=18 ioctl_rc=
 05|-1 ioctl_errno=28 ioctl_cols=0 ioctl_rows=0
 06|RAW_ON rc=0
@@ -28,7 +28,7 @@ exports[`PTY protocol snapshots > C WASM probe snapshots raw, cooked, CPR, resiz
 cols=80 rows=18 cursor=14,11
 01|PTY_PROBE start
 02|TTY_HOST stdin=1 stdout=1 stderr=1
-03|TTY_LIBC stdin=0 stdout=0 stderr=0
+03|TTY_LIBC stdin=1 stdout=1 stderr=1
 04|SIZE_START env_cols=80 env_rows=18 host_rc=0 host_cols=80 host_rows=18 ioctl_rc=
 05|-1 ioctl_errno=28 ioctl_cols=0 ioctl_rows=0
 06|RAW_ON rc=0
@@ -48,10 +48,10 @@ cols=80 rows=18 cursor=14,11
 
 exports[`PTY protocol snapshots > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 3`] = `
 "# after cooked enter
-cols=80 rows=18 cursor=14,13
+cols=80 rows=18 cursor=14,14
 01|PTY_PROBE start
 02|TTY_HOST stdin=1 stdout=1 stderr=1
-03|TTY_LIBC stdin=0 stdout=0 stderr=0
+03|TTY_LIBC stdin=1 stdout=1 stderr=1
 04|SIZE_START env_cols=80 env_rows=18 host_rc=0 host_cols=80 host_rows=18 ioctl_rc=
 05|-1 ioctl_errno=28 ioctl_cols=0 ioctl_rows=0
 06|RAW_ON rc=0
@@ -60,10 +60,10 @@ cols=80 rows=18 cursor=14,13
 09|RAW_INPUT> 
 10|RAW_BYTES bytes=7 hex=41 0A 1B 5B 41 17 21 text=A\\n\\e[A\\x17!
 11|RAW_OFF rc=0
-12|COOKED_INPUT> COOKED_BYTES bytes=13 hex=68 65 6C 6C 6F 20 63 6F 6F 6B 65 64 0A t
-13|ext=hello cooked\\n
-14|RESIZE_READY> 
-15|
+12|COOKED_INPUT> hello cooked
+13|COOKED_BYTES bytes=13 hex=68 65 6C 6C 6F 20 63 6F 6F 6B 65 64 0A text=hello cook
+14|ed\\n
+15|RESIZE_READY> 
 16|
 17|
 18|"
@@ -71,10 +71,10 @@ cols=80 rows=18 cursor=14,13
 
 exports[`PTY protocol snapshots > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 4`] = `
 "# after resize trigger
-cols=100 rows=20 cursor=11,15
+cols=100 rows=20 cursor=11,17
 01|PTY_PROBE start
 02|TTY_HOST stdin=1 stdout=1 stderr=1
-03|TTY_LIBC stdin=0 stdout=0 stderr=0
+03|TTY_LIBC stdin=1 stdout=1 stderr=1
 04|SIZE_START env_cols=80 env_rows=18 host_rc=0 host_cols=80 host_rows=18 ioctl_rc=-1 ioctl_errno=28 io
 05|ctl_cols=0 ioctl_rows=0
 06|RAW_ON rc=0
@@ -83,23 +83,23 @@ cols=100 rows=20 cursor=11,15
 09|RAW_INPUT> 
 10|RAW_BYTES bytes=7 hex=41 0A 1B 5B 41 17 21 text=A\\n\\e[A\\x17!
 11|RAW_OFF rc=0
-12|COOKED_INPUT> COOKED_BYTES bytes=13 hex=68 65 6C 6C 6F 20 63 6F 6F 6B 65 64 0A text=hello cooked\\n
-13|RESIZE_READY> RESIZE_TRIGGER bytes=11 hex=72 65 73 69 7A 65 2D 6E 6F 77 0A text=resize-now\\n
-14|SIZE_AFTER_RESIZE env_cols=80 env_rows=18 host_rc=0 host_cols=100 host_rows=20 ioctl_rc=-1 ioctl_err
-15|no=28 ioctl_cols=0 ioctl_rows=0
-16|EOF_READY> 
-17|
-18|
+12|COOKED_INPUT> hello cooked
+13|COOKED_BYTES bytes=13 hex=68 65 6C 6C 6F 20 63 6F 6F 6B 65 64 0A text=hello cooked\\n
+14|RESIZE_READY> resize-now
+15|RESIZE_TRIGGER bytes=11 hex=72 65 73 69 7A 65 2D 6E 6F 77 0A text=resize-now\\n
+16|SIZE_AFTER_RESIZE env_cols=80 env_rows=18 host_rc=0 host_cols=100 host_rows=20 ioctl_rc=-1 ioctl_err
+17|no=28 ioctl_cols=0 ioctl_rows=0
+18|EOF_READY> 
 19|
 20|"
 `;
 
 exports[`PTY protocol snapshots > C WASM probe snapshots raw, cooked, CPR, resize, and EOF terminal protocol 5`] = `
 "# after eof
-cols=100 rows=20 cursor=0,17
+cols=100 rows=20 cursor=0,19
 01|PTY_PROBE start
 02|TTY_HOST stdin=1 stdout=1 stderr=1
-03|TTY_LIBC stdin=0 stdout=0 stderr=0
+03|TTY_LIBC stdin=1 stdout=1 stderr=1
 04|SIZE_START env_cols=80 env_rows=18 host_rc=0 host_cols=80 host_rows=18 ioctl_rc=-1 ioctl_errno=28 io
 05|ctl_cols=0 ioctl_rows=0
 06|RAW_ON rc=0
@@ -108,13 +108,13 @@ cols=100 rows=20 cursor=0,17
 09|RAW_INPUT> 
 10|RAW_BYTES bytes=7 hex=41 0A 1B 5B 41 17 21 text=A\\n\\e[A\\x17!
 11|RAW_OFF rc=0
-12|COOKED_INPUT> COOKED_BYTES bytes=13 hex=68 65 6C 6C 6F 20 63 6F 6F 6B 65 64 0A text=hello cooked\\n
-13|RESIZE_READY> RESIZE_TRIGGER bytes=11 hex=72 65 73 69 7A 65 2D 6E 6F 77 0A text=resize-now\\n
-14|SIZE_AFTER_RESIZE env_cols=80 env_rows=18 host_rc=0 host_cols=100 host_rows=20 ioctl_rc=-1 ioctl_err
-15|no=28 ioctl_cols=0 ioctl_rows=0
-16|EOF_READY> EOF_READ n=0
-17|PTY_PROBE done
-18|
-19|
+12|COOKED_INPUT> hello cooked
+13|COOKED_BYTES bytes=13 hex=68 65 6C 6C 6F 20 63 6F 6F 6B 65 64 0A text=hello cooked\\n
+14|RESIZE_READY> resize-now
+15|RESIZE_TRIGGER bytes=11 hex=72 65 73 69 7A 65 2D 6E 6F 77 0A text=resize-now\\n
+16|SIZE_AFTER_RESIZE env_cols=80 env_rows=18 host_rc=0 host_cols=100 host_rows=20 ioctl_rc=-1 ioctl_err
+17|no=28 ioctl_cols=0 ioctl_rows=0
+18|EOF_READY> EOF_READ n=0
+19|PTY_PROBE done
 20|"
 `;
