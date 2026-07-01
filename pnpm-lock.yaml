@@ -7,26 +7,26 @@ settings:
 catalogs:
   default:
     '@agentos-software/claude-code':
-      specifier: 0.0.0-nathan-agentos-package-resolution.efc374f
-      version: 0.0.0-nathan-agentos-package-resolution.efc374f
+      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
+      version: 0.0.0-nathan-agentos-package-resolution.42d8146
     '@agentos-software/coreutils':
-      specifier: 0.0.0-nathan-agentos-package-resolution.efc374f
-      version: 0.0.0-nathan-agentos-package-resolution.efc374f
+      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
+      version: 0.0.0-nathan-agentos-package-resolution.42d8146
     '@agentos-software/git':
-      specifier: 0.0.0-nathan-agentos-package-resolution.efc374f
-      version: 0.0.0-nathan-agentos-package-resolution.efc374f
+      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
+      version: 0.0.0-nathan-agentos-package-resolution.42d8146
     '@agentos-software/jq':
-      specifier: 0.0.0-nathan-agentos-package-resolution.efc374f
-      version: 0.0.0-nathan-agentos-package-resolution.efc374f
+      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
+      version: 0.0.0-nathan-agentos-package-resolution.42d8146
     '@agentos-software/opencode':
-      specifier: 0.0.0-nathan-agentos-package-resolution.efc374f
-      version: 0.0.0-nathan-agentos-package-resolution.efc374f
+      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
+      version: 0.0.0-nathan-agentos-package-resolution.42d8146
     '@agentos-software/pi':
-      specifier: 0.0.0-nathan-agentos-package-resolution.efc374f
-      version: 0.0.0-nathan-agentos-package-resolution.efc374f
+      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
+      version: 0.0.0-nathan-agentos-package-resolution.42d8146
     '@agentos-software/ripgrep':
-      specifier: 0.0.0-nathan-agentos-package-resolution.efc374f
-      version: 0.0.0-nathan-agentos-package-resolution.efc374f
+      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
+      version: 0.0.0-nathan-agentos-package-resolution.42d8146
 
 overrides:
   '@rivet-dev/agentos-core': workspace:*
@@ -85,16 +85,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -150,16 +150,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -199,16 +199,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -248,16 +248,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -297,16 +297,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -346,16 +346,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -395,16 +395,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -444,16 +444,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -493,16 +493,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -542,16 +542,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -591,16 +591,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -640,16 +640,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -689,16 +689,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -738,16 +738,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -787,16 +787,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -836,16 +836,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -885,16 +885,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -934,16 +934,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -983,16 +983,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1032,16 +1032,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1081,16 +1081,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1182,16 +1182,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1237,16 +1237,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1286,16 +1286,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1335,16 +1335,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1384,16 +1384,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1433,16 +1433,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1482,16 +1482,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1531,16 +1531,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1580,16 +1580,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1629,16 +1629,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1678,16 +1678,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1727,16 +1727,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1776,16 +1776,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1825,16 +1825,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1874,16 +1874,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1923,16 +1923,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1972,16 +1972,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2021,25 +2021,25 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/coreutils':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/jq':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@agentos-software/ripgrep':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2079,16 +2079,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2131,16 +2131,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
       '@agentos-software/git':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/opencode':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
       '@agentos-software/pi':
         specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2733,29 +2733,29 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  '@agentos-software/claude-code@0.0.0-nathan-agentos-package-resolution.efc374f':
-    resolution: {integrity: sha512-UamUPuNKCzcJ6gU4aBOQXGbiCfyYcsiq/01IsHxQI/B/gUOnEY2ZchTrBB9FWIrqlpnpM+ye9Mnn9PLkH4mvzQ==}
+  '@agentos-software/claude-code@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-m7XBRKklrLBsL5pcTlHRDc/wczmoleoPHdD36AYkCyWO0RZX5I/Ha1P0Kz0N1g0m1q7Vu8PcdSdT9ak6jWwX3w==}
     hasBin: true
 
-  '@agentos-software/coreutils@0.0.0-nathan-agentos-package-resolution.efc374f':
-    resolution: {integrity: sha512-zXmcLdRVLl7xOukRsFspAbERa4w07EdfiMpjUQss+x9EZsNnpFbXb9BJ79Vl0j5Xmdkxjt1722XGuAY+fehwkg==}
+  '@agentos-software/coreutils@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-Gjh/SPjhfbNX6mCaM/WCnW/jT3IBXO21jXMgfscjPs+C/9E0+60leT1xab8+om1v4KzK7+yiEChVUpk4M99M6A==}
 
-  '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.efc374f':
-    resolution: {integrity: sha512-Lts/JwtnTnUgtW5iUZrQqixjuOpQwMaTKSF1sqGVniY4r5MlJTJ8teB+4rWM3FqAUXHfI8+g6UV4RCSP6VgJfA==}
+  '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-O4ubhuNoHQ7JVoPuUusOKHbk93XAH5OkRNC7C78VV3lchlzf5WeTLY+JM7QoNOyJqEuT2ZOz5JM88QJ7LmoyPg==}
 
-  '@agentos-software/jq@0.0.0-nathan-agentos-package-resolution.efc374f':
-    resolution: {integrity: sha512-T7aJ84NkE5juw4GGbZ1m/N5E3UBWeo2fRBdm2n3auXnOvJ4lrDY7M5N7eR8GSQitRb29yTXXcZSQblPaTzqxQA==}
+  '@agentos-software/jq@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-2QSqWxzmOC4iv19PdTAd9IfLN35s+2VXosHVmU3AhK7KPixfc8On9PDM8FaNGRruqzSkH+DbR6xK8dmNOS8q7w==}
 
-  '@agentos-software/opencode@0.0.0-nathan-agentos-package-resolution.efc374f':
-    resolution: {integrity: sha512-jXQXQDSMBnOWX/aJ3nhMmhMPw0LiQadEPeCzQEuM3qoKJq6taBQPcF/imvDCNyxJ/zqGhrh1cUxcrUoKL9AJnA==}
+  '@agentos-software/opencode@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-rjVYfj6f+X7ps/VmlsYEa7g3Q9LkFSdzp+E/untBGfx20OPoXiCS/zOP8M+ov486Ty16gbD9Q17qhTrocn9nlA==}
     hasBin: true
 
-  '@agentos-software/pi@0.0.0-nathan-agentos-package-resolution.efc374f':
-    resolution: {integrity: sha512-Kiw3Nl+ZKfem58r7i0eGr+WscIS23s1TwZxVFRyF4Q7zZESgf2XvSMKxhadqj0zQFRUIjrS6UV86Yzc5zqmfsw==}
+  '@agentos-software/pi@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-fatQvo1vrIZepIM6qNVn2qjmxZoe8sSxDCA++NbdRn0pTdTD7azMrF2XA/zc3DNwwWAqiDJrOiMFRsoX6HMVSQ==}
     hasBin: true
 
-  '@agentos-software/ripgrep@0.0.0-nathan-agentos-package-resolution.efc374f':
-    resolution: {integrity: sha512-BwuK7MwVd3ZhjmbIOyFZV6dQbdq0h4NGu8+og/qp3n3X56ZgFwiVSjFJiLwyBlixltj2t/xnoMwnavJNjrpLLA==}
+  '@agentos-software/ripgrep@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-mUYipQCElmjxlBqcI4tlTfHcm2Sc4qeAKBVmaenVy4orn3Kyxs77vygt8m38gwR5XMHw35utgOstnqcvsjXnJA==}
 
   '@ai-sdk/amazon-bedrock@3.0.93':
     resolution: {integrity: sha512-57cP3Ume6DdQP05xPYl2g554EqPrQgKRW/eE3BGm1ktK1k71e35HGzNl1GZHIYKct82QrY/iQuheanSonI88Dg==}
@@ -10086,7 +10086,7 @@ snapshots:
     dependencies:
       zod: 4.3.6
 
-  '@agentos-software/claude-code@0.0.0-nathan-agentos-package-resolution.efc374f(@cfworker/json-schema@4.1.1)':
+  '@agentos-software/claude-code@0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)':
     dependencies:
       '@agentclientprotocol/sdk': 0.16.1(zod@4.3.6)
       '@anthropic-ai/claude-agent-sdk': 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
@@ -10095,15 +10095,15 @@ snapshots:
       - '@cfworker/json-schema'
       - supports-color
 
-  '@agentos-software/coreutils@0.0.0-nathan-agentos-package-resolution.efc374f': {}
+  '@agentos-software/coreutils@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
-  '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.efc374f': {}
+  '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
-  '@agentos-software/jq@0.0.0-nathan-agentos-package-resolution.efc374f': {}
+  '@agentos-software/jq@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
-  '@agentos-software/opencode@0.0.0-nathan-agentos-package-resolution.efc374f': {}
+  '@agentos-software/opencode@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
-  '@agentos-software/pi@0.0.0-nathan-agentos-package-resolution.efc374f(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)':
+  '@agentos-software/pi@0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)':
     dependencies:
       '@agentclientprotocol/sdk': 0.16.1(zod@4.3.6)
       '@mariozechner/pi-ai': 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
@@ -10117,7 +10117,7 @@ snapshots:
       - ws
       - zod
 
-  '@agentos-software/ripgrep@0.0.0-nathan-agentos-package-resolution.efc374f': {}
+  '@agentos-software/ripgrep@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
   '@ai-sdk/amazon-bedrock@3.0.93(zod@4.3.6)':
     dependencies:

@@ -41,32 +41,32 @@ onlyBuiltDependencies:
 
 # >>> secure-exec catalog (managed by scripts/secure-exec-dep.mjs) >>>
 catalog:
-  '@agentos-software/claude-code': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/claude-code': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/codex': 0.0.0-nathan-agentos-package-resolution.efc374f
   '@agentos-software/codex-cli': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/common': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/coreutils': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/curl': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/diffutils': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/fd': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/file': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/findutils': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/gawk': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/git': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/grep': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/gzip': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/common': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/coreutils': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/curl': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/diffutils': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/fd': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/file': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/findutils': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/gawk': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/git': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/grep': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/gzip': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/http-get': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/jq': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/opencode': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/pi': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/pi-cli': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/ripgrep': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/sed': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/jq': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/opencode': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/pi': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/pi-cli': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/ripgrep': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/sed': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/sqlite3': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/tar': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/tree': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/tar': 0.0.0-nathan-agentos-package-resolution.42d8146
+  '@agentos-software/tree': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/unzip': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/yq': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/yq': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/zip': 0.0.0-nathan-agentos-package-resolution.efc374f
   '@secure-exec/core': 0.0.0-nathan-agentos-package-resolution.0bf7dcb
   '@secure-exec/nodejs': 0.2.1
