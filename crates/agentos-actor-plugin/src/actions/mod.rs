@@ -151,6 +151,13 @@ pub(crate) async fn dispatch(
             },
             Err(error) => reply_err(host, token, error),
         },
+        "readdirEntries" => match decode_as::<(String,)>(args) {
+            Ok((path,)) => match filesystem::readdir_entries(vm, &path).await {
+                Ok(entries) => reply_ok(host, token, &entries),
+                Err(error) => reply_err(host, token, error),
+            },
+            Err(error) => reply_err(host, token, error),
+        },
         "exists" => match decode_as::<(String,)>(args) {
             Ok((path,)) => match filesystem::exists(vm, &path).await {
                 Ok(present) => reply_ok(host, token, &present),
