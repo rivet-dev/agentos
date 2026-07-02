@@ -83,6 +83,12 @@ Every limit, timeout, bounded queue/buffer, and per-entity collection MUST be bo
 - The agent-os sidecar wrapper embeds and extends secure-exec; secure-exec must remain free of ACP, agent, and session dependencies.
 - Prefer the agent-os sidecar wrapper for heavy lifting. Multi-step ACP/session orchestration, state machines, and anything that would otherwise cost several client→sidecar round-trips belong in the sidecar (`crates/agentos-sidecar`), exposed as a single wire request; the TypeScript (`packages/core`) and Rust (`crates/client`) clients stay thin forwarders and must BOTH expose it. Rationale: (a) keep clients simple and in parity, (b) cut client↔sidecar latency. Keep logic client-side only when it needs state the sidecar cannot reach — e.g. RivetKit actor durable storage (`ctx.db_*`/SQLite), which the sidecar has no access to. Even then, the sidecar must not pull ACP/session deps into secure-exec core.
 
+## Benchmarks
+
+- Agent OS keeps **product-surface benches only** in `scripts/benchmarks/`: `session.bench.ts` (VM-tax vs bare-node pi SDK — the CI-gated one, with `baseline.json`), `coldstart.bench.ts`, and `memory.bench.ts`. Run via `bash scripts/benchmarks/run-benchmarks.sh` (`BENCH_ONLY=<lane>`).
+- The runtime differential matrix (native/node/vm-js/vm-wasm lanes), focused runtime lanes (bridge floor, sockets, fs, readdir, process spawn), and ecosystem command benches (`ls`, `grep`, `git`, `sh`) live in **secure-exec `packages/benchmarks`** — see secure-exec root `CLAUDE.md` → Benchmarks. Runtime perf work belongs there, not here.
+- **Keep them current:** changes to session/ACP/client behavior that affect latency or memory must re-run the affected agent-os lanes; new product surface (session kinds, adapters, client-side orchestration) needs a lane or an explicit follow-up. Never delete or silently skip a bench — skips carry a reason.
+
 ## Website And Docs
 
 - External/consumer usage (installing `@rivet-dev/agentos` and using it in your own project) is documented in the website quickstart + Agents/Custom Software pages under `website/`, not in this file. This `CLAUDE.md` is contributor/maintainer-only.

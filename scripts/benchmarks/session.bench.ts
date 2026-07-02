@@ -27,22 +27,220 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
+import os from "node:os";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { AgentOs } from "@rivet-dev/agentos-core";
 import { LLMock } from "@copilotkit/llmock";
-import {
-	type BenchResult,
-	type GateRule,
-	type PhaseStats,
-	collectMetadata,
-	evaluateGate,
-	loadBaseline,
-	printDeltaTable,
-	round,
-	stats,
-	writeBaseline,
-} from "./baseline.js";
+
+const BASELINE_PATH = join(import.meta.dirname, "baseline.json");
+const REPO_ROOT = join(import.meta.dirname, "..", "..");
+
+interface PhaseStats {
+	mean: number;
+	p50: number;
+	p95: number;
+	p99: number;
+	min: number;
+	max: number;
+	stddev: number;
+}
+
+interface BenchMetadata {
+	timestamp: string;
+	gitSha: string;
+	gitDirty: boolean;
+	hardware: {
+		cpu: string;
+		cores: number;
+		ram: string;
+		node: string;
+		os: string;
+		arch: string;
+	};
+	deps: Record<string, string>;
+	llmock: boolean;
+	iterations: number;
+	warmup: number;
+}
+
+interface BenchResult extends BenchMetadata {
+	benchmark: string;
+	lanes: Record<string, Record<string, PhaseStats>>;
+	derived: Record<string, number>;
+}
+
+interface GateRule {
+	path: string;
+	tolerance: number;
+	noiseFloor?: number;
+	label?: string;
+}
+
+function round(n: number, decimals = 2): number {
+	const f = 10 ** decimals;
+	return Math.round(n * f) / f;
+}
+
+function percentile(sorted: number[], p: number): number {
+	const idx = Math.ceil((p / 100) * sorted.length) - 1;
+	return sorted[Math.max(0, Math.min(sorted.length - 1, idx))];
+}
+
+function stats(samples: number[]): PhaseStats {
+	const sorted = [...samples].sort((a, b) => a - b);
+	const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+	const variance =
+		samples.reduce((a, b) => a + (b - mean) ** 2, 0) / samples.length;
+	return {
+		mean: round(mean),
+		p50: round(percentile(sorted, 50)),
+		p95: round(percentile(sorted, 95)),
+		p99: round(percentile(sorted, 99)),
+		min: round(sorted[0]),
+		max: round(sorted[sorted.length - 1]),
+		stddev: round(Math.sqrt(variance)),
+	};
+}
+
+function safe<T>(fn: () => T, fallback: T): T {
+	try {
+		return fn();
+	} catch {
+		return fallback;
+	}
+}
+
+function pkgVersion(name: string): string {
+	return safe(() => {
+		const req = createRequire(join(REPO_ROOT, "package.json"));
+		let dir = dirname(req.resolve(name));
+		for (let i = 0; i < 8; i++) {
+			const candidate = join(dir, "package.json");
+			if (existsSync(candidate)) {
+				const pkg = JSON.parse(readFileSync(candidate, "utf8"));
+				if (pkg.name === name && pkg.version) return pkg.version;
+			}
+			const parent = dirname(dir);
+			if (parent === dir) break;
+			dir = parent;
+		}
+		return "unknown";
+	}, "absent");
+}
+
+function collectMetadata(opts: {
+	iterations: number;
+	warmup: number;
+	llmock: boolean;
+}): BenchMetadata {
+	const cpus = os.cpus();
+	return {
+		timestamp: new Date().toISOString(),
+		gitSha: process.env.GITHUB_SHA?.slice(0, 12) ?? "unknown",
+		gitDirty: false,
+		hardware: {
+			cpu: cpus[0]?.model ?? "unknown",
+			cores: os.availableParallelism(),
+			ram: `${round(os.totalmem() / 1024 ** 3, 1)} GB`,
+			node: process.version,
+			os: `${os.type()} ${os.release()}`,
+			arch: os.arch(),
+		},
+		deps: {
+			"@rivet-dev/agentos-core": pkgVersion("@rivet-dev/agentos-core"),
+			"@rivet-dev/agentos-sidecar": pkgVersion("@rivet-dev/agentos-sidecar"),
+			"@secure-exec/core": pkgVersion("@secure-exec/core"),
+			"@agentos-software/pi": pkgVersion("@agentos-software/pi"),
+			"@mariozechner/pi-coding-agent": pkgVersion(
+				"@mariozechner/pi-coding-agent",
+			),
+		},
+		iterations: opts.iterations,
+		warmup: opts.warmup,
+		llmock: opts.llmock,
+	};
+}
+
+function loadBaseline(): BenchResult | null {
+	if (!existsSync(BASELINE_PATH)) return null;
+	return JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as BenchResult;
+}
+
+function writeBaseline(result: BenchResult): void {
+	writeFileSync(BASELINE_PATH, `${JSON.stringify(result, null, 2)}\n`);
+}
+
+function resolvePath(result: BenchResult, path: string): number | undefined {
+	const parts = path.split(".");
+	if (parts[0] === "derived") return result.derived[parts[1]];
+	const [lane, metric, field] = parts;
+	const s = result.lanes[lane]?.[metric];
+	return s ? (s[field as keyof PhaseStats] as number) : undefined;
+}
+
+interface GateOutcome {
+	path: string;
+	label: string;
+	baseline: number | undefined;
+	current: number | undefined;
+	deltaPct: number | undefined;
+	tolerance: number;
+	regressed: boolean;
+}
+
+function evaluateGate(
+	current: BenchResult,
+	baseline: BenchResult | null,
+	rules: GateRule[],
+): GateOutcome[] {
+	return rules.map((rule) => {
+		const cur = resolvePath(current, rule.path);
+		const base = baseline ? resolvePath(baseline, rule.path) : undefined;
+		const deltaPct =
+			base !== undefined && base !== 0 && cur !== undefined
+				? round(((cur - base) / base) * 100)
+				: undefined;
+		const absDelta =
+			base !== undefined && cur !== undefined ? cur - base : undefined;
+		const regressed =
+			deltaPct !== undefined &&
+			absDelta !== undefined &&
+			deltaPct > rule.tolerance * 100 &&
+			absDelta > (rule.noiseFloor ?? 0);
+		return {
+			path: rule.path,
+			label: rule.label ?? rule.path,
+			baseline: base,
+			current: cur,
+			deltaPct,
+			tolerance: rule.tolerance,
+			regressed,
+		};
+	});
+}
+
+function printDeltaTable(outcomes: GateOutcome[]): void {
+	const headers = ["metric", "baseline", "current", "delta%", "budget%", ""];
+	const rows = outcomes.map((o) => [
+		o.label,
+		o.baseline ?? "-",
+		o.current ?? "-",
+		o.deltaPct === undefined ? "-" : `${o.deltaPct > 0 ? "+" : ""}${o.deltaPct}`,
+		`+${round(o.tolerance * 100)}`,
+		o.baseline === undefined ? "NEW" : o.regressed ? "REGRESSED" : "ok",
+	]);
+	const widths = headers.map((h, i) =>
+		Math.max(h.length, ...rows.map((r) => String(r[i]).length)),
+	);
+	const fmt = (row: (string | number)[]) =>
+		row.map((c, i) => String(c).padStart(widths[i])).join(" | ");
+	console.error("");
+	console.error(fmt(headers));
+	console.error(widths.map((w) => "-".repeat(w)).join("-+-"));
+	for (const row of rows) console.error(fmt(row));
+	console.error("");
+}
 
 // ── args ─────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -60,6 +258,13 @@ const TRACE = flag("trace");
 // build the snapshot once, reuse it). Pass --fresh-vm-per-session for the cold
 // path (a fresh sidecar per session, so the snapshot cache is never reused).
 const FRESH_VM_PER_SESSION = flag("fresh-vm-per-session");
+
+if (flag("help")) {
+	console.log(
+		"Usage: pnpm exec tsx scripts/benchmarks/session.bench.ts [--iterations=N] [--warmup=N] [--lanes=vm,bare-node] [--gate] [--update-baseline]",
+	);
+	process.exit(0);
+}
 
 // ── gate rules: p50 of deterministic metrics + the hardware-independent ratio ──
 const GATE_RULES: GateRule[] = [

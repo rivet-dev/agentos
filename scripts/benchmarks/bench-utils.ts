@@ -12,10 +12,8 @@ import { LLMock } from "@copilotkit/llmock";
 import os from "node:os";
 
 // Benchmark parameters. Keep batch sizes minimal for fast iteration.
-export const BATCH_SIZES = [1, 10];
 export const ITERATIONS = 5;
 export const WARMUP_ITERATIONS = 1;
-export const MAX_CONCURRENCY = Math.max(1, os.availableParallelism() - 4);
 
 export const ECHO_COMMAND = "echo hello";
 export const EXPECTED_OUTPUT = "hello\n";
@@ -343,41 +341,6 @@ export async function createBenchVm(): Promise<AgentOs> {
 			software: [coreutils],
 		}),
 	);
-}
-
-/**
- * Create a fresh AgentOS VM with agent software and a ready session.
- * Measures cold start from AgentOs.create() through createSession() completing
- * (ACP handshake done, agent ready to accept prompts).
- */
-export async function createAgentSessionVm(
-	agentId: string,
-	software: SoftwareInput[],
-): Promise<{
-	vm: AgentOs;
-	coldStartMs: number;
-}> {
-	const { url, port } = await ensureLlmock();
-	const t0 = performance.now();
-	const vm = await AgentOs.create(
-		benchCreateOptions({
-			software,
-			loopbackExemptPorts: [port],
-		}),
-	);
-	await vm.createSession(agentId, {
-		env: {
-			ANTHROPIC_API_KEY: "bench-key",
-			ANTHROPIC_BASE_URL: url,
-		},
-	});
-	const coldStartMs = performance.now() - t0;
-	return { vm, coldStartMs };
-}
-
-/** Convenience alias for PI agent session. */
-export function createPiSessionVm() {
-	return createAgentSessionVm("pi", [pi]);
 }
 
 // ── Stats and formatting ────────────────────────────────────────────
