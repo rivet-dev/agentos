@@ -22,7 +22,7 @@ RUN rustup toolchain install stable --profile minimal && \
     rustup target add "$TARGET"
 
 RUN corepack enable && \
-    pnpm install --frozen-lockfile --filter='!@agentos/website'
+    pnpm install --no-frozen-lockfile --filter='!@agentos/website'
 
 # crates.io has no preview track: a secure-exec preview pin builds the crates
 # from a clone at the pinned commit (../secure-exec == /secure-exec here);

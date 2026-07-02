@@ -6,32 +6,61 @@ release *args:
 preview-publish REF:
 	gh workflow run .github/workflows/publish.yaml --ref "{{ REF }}"
 
-# Point deps at the sibling ../secure-exec checkout for local hacking.
+# THE COMMITTED STATE IS FILE-BASED (link:/path at ../secure-exec) — see
+# CLAUDE.md "Boundaries". The pinned recipes below are publish-time machinery;
+# never commit their output (the verify-file-deps CI gate rejects it).
+
+# Pin secure-exec.ref to a new secure-exec sha (defaults to the sibling
+# checkout's current commit). This is how agent-os advances its secure-exec dep.
+secure-exec-bump REF="":
+	node scripts/secure-exec-dep.mjs bump-ref "{{ REF }}"
+
+# Restore the runtime track (@secure-exec/* npm + crates) to the committed
+# file-dep state at ../secure-exec.
 secure-exec-local:
 	node scripts/secure-exec-dep.mjs local
 
-# Switch deps back to pinned (published) mode without changing the pinned versions.
+# Publish-time: switch the runtime deps to their pinned catalog versions.
 secure-exec-pinned:
 	node scripts/secure-exec-dep.mjs pinned
 
-# Show the current dep mode + the pinned npm/crate versions.
+# Show both dep tracks' modes + the catalog versions.
 secure-exec-status:
 	node scripts/secure-exec-dep.mjs status
 
-# Pin secure-exec to a published version and switch to pinned mode.
-#   Release <v>  -> @secure-exec/* npm AND secure-exec-* crates both pin to <v>
-#                   (a release publishes npm + crates together).
-#   Preview <v>  -> @secure-exec/* npm pin to the 0.0.0-<branch>.<sha> tag; the
-#                   crate version is left at the last crates.io release because
-#                   crates.io has no preview track. CI's `prepare-build` clones
-#                   secure-exec at <sha> and builds the crates from that clone.
+# Publish-time: pin secure-exec to a published version (what release-swap
+# uses). Release <v> pins npm + crates; preview <v> pins npm only (crates come
+# from the ../secure-exec clone at secure-exec.ref). Never commit the result.
 secure-exec-set-version VERSION:
 	node scripts/secure-exec-dep.mjs pinned
 	node scripts/secure-exec-dep.mjs pin-secure-exec "{{ VERSION }}"
 
-# Pin the @agentos-software/* software packages (separate version track).
-agentos-pkgs-set-version VERSION:
-	node scripts/secure-exec-dep.mjs set-agentos-pkgs-version "{{ VERSION }}"
+# --- @agentos-software/* registry packages (independent, PER-PACKAGE versions) ---
+
+# Restore the @agentos-software/* packages to the committed file-dep state
+# (link: into ../secure-exec/registry/{software,agent}/*). Build them there
+# first: `just registry-native` + `just registry-build` in ../secure-exec.
+agentos-pkgs-local:
+	node scripts/secure-exec-dep.mjs agentos-pkgs-local
+
+# Publish-time: switch the @agentos-software/* packages to their pinned
+# per-package catalog versions. Never commit the result.
+agentos-pkgs-pinned:
+	node scripts/secure-exec-dep.mjs agentos-pkgs-pinned
+
+# Show both dep tracks' modes + the pinned versions (alias of secure-exec-status).
+agentos-pkgs-status:
+	node scripts/secure-exec-dep.mjs status
+
+# Pin ONE @agentos-software package (PKG may omit the scope), e.g.
+#   just agentos-pkgs-set-version coreutils 0.3.1
+agentos-pkgs-set-version PKG VERSION:
+	node scripts/secure-exec-dep.mjs set-agentos-pkg-version "{{ PKG }}" "{{ VERSION }}"
+
+# Re-pin every @agentos-software package to its published version under a
+# dist-tag (default: latest), e.g. `just agentos-pkgs-update dev`.
+agentos-pkgs-update TAG="latest":
+	node scripts/secure-exec-dep.mjs agentos-pkgs-update "{{ TAG }}"
 
 install-shell:
 	#!/usr/bin/env bash

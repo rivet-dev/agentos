@@ -9,13 +9,10 @@ catalogs:
     '@agentos-software/claude-code':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
-    '@agentos-software/coreutils':
-      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
-      version: 0.0.0-nathan-agentos-package-resolution.42d8146
+    '@agentos-software/codex-cli':
+      specifier: 0.0.0-nathan-agentos-package-resolution.efc374f
+      version: 0.0.0-nathan-agentos-package-resolution.efc374f
     '@agentos-software/git':
-      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
-      version: 0.0.0-nathan-agentos-package-resolution.42d8146
-    '@agentos-software/jq':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
     '@agentos-software/opencode':
@@ -24,32 +21,36 @@ catalogs:
     '@agentos-software/pi':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
-    '@agentos-software/ripgrep':
-      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
-      version: 0.0.0-nathan-agentos-package-resolution.42d8146
+    '@secure-exec/google-drive':
+      specifier: 0.0.0-main.8425e65
+      version: 0.0.0-main.8425e65
+    '@secure-exec/s3':
+      specifier: 0.0.0-main.8425e65
+      version: 0.0.0-main.8425e65
 
 overrides:
   '@rivet-dev/agentos-core': workspace:*
   '@rivetkit/rivetkit-wasm': 2.3.2
   '@mariozechner/pi-tui': 0.60.0
   '@mariozechner/pi-agent-core': 0.60.0
+  '@secure-exec/core': link:../secure-exec/packages/core
 
 importers:
 
   .:
     devDependencies:
       '@agentos-software/claude-code':
-        specifier: link:../secure-exec-convwasi/registry/agent/claude
-        version: link:../secure-exec-convwasi/registry/agent/claude
+        specifier: link:../secure-exec/registry/agent/claude
+        version: link:../secure-exec/registry/agent/claude
       '@agentos-software/codex':
-        specifier: link:../secure-exec-convwasi/registry/agent/codex
-        version: link:../secure-exec-convwasi/registry/agent/codex
+        specifier: link:../secure-exec/registry/agent/codex
+        version: link:../secure-exec/registry/agent/codex
       '@agentos-software/common':
-        specifier: link:../secure-exec-convwasi/registry/software/common
-        version: link:../secure-exec-convwasi/registry/software/common
+        specifier: link:../secure-exec/registry/software/common
+        version: link:../secure-exec/registry/software/common
       '@agentos-software/pi':
-        specifier: link:../secure-exec-convwasi/registry/agent/pi
-        version: link:../secure-exec-convwasi/registry/agent/pi
+        specifier: link:../secure-exec/registry/agent/pi
+        version: link:../secure-exec/registry/agent/pi
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
@@ -63,8 +64,8 @@ importers:
         specifier: workspace:*
         version: link:packages/core
       '@secure-exec/core':
-        specifier: link:../secure-exec-convwasi/packages/core
-        version: link:../secure-exec-convwasi/packages/core
+        specifier: link:../secure-exec/packages/core
+        version: link:../secure-exec/packages/core
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -84,17 +85,17 @@ importers:
   examples/agent-to-agent:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -149,17 +150,17 @@ importers:
   examples/approvals:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -198,17 +199,17 @@ importers:
   examples/authentication:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -247,17 +248,17 @@ importers:
   examples/bindings:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -296,17 +297,17 @@ importers:
   examples/claude:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -345,17 +346,17 @@ importers:
   examples/codex:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -394,17 +395,17 @@ importers:
   examples/core:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -443,17 +444,17 @@ importers:
   examples/crash-course:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -492,17 +493,17 @@ importers:
   examples/cron:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -541,17 +542,17 @@ importers:
   examples/custom:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -590,17 +591,17 @@ importers:
   examples/debugging:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -639,17 +640,17 @@ importers:
   examples/filesystem:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -688,17 +689,17 @@ importers:
   examples/js-runtime:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -737,17 +738,17 @@ importers:
   examples/llm-credentials:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -786,17 +787,17 @@ importers:
   examples/multiplayer:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -835,17 +836,17 @@ importers:
   examples/networking:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -884,17 +885,17 @@ importers:
   examples/opencode:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -933,17 +934,17 @@ importers:
   examples/permissions:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -982,17 +983,17 @@ importers:
   examples/persistence:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1031,17 +1032,17 @@ importers:
   examples/pi:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1080,17 +1081,17 @@ importers:
   examples/processes:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1129,17 +1130,17 @@ importers:
   examples/quickstart:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/claude
-        version: link:../../../secure-exec-convwasi/registry/agent/claude
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec-convwasi/registry/software/git
-        version: link:../../../secure-exec-convwasi/registry/software/git
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/opencode
-        version: link:../../../secure-exec-convwasi/registry/agent/opencode
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/pi
-        version: link:../../../secure-exec-convwasi/registry/agent/pi
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1150,8 +1151,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
       '@secure-exec/s3':
-        specifier: link:../../../secure-exec-convwasi/registry/file-system/s3
-        version: link:../../../secure-exec-convwasi/registry/file-system/s3
+        specifier: 'catalog:'
+        version: 0.0.0-main.8425e65
       dockerode:
         specifier: ^4.0.9
         version: 4.0.10
@@ -1181,17 +1182,17 @@ importers:
   examples/quickstart-app:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1873,17 +1874,17 @@ importers:
   examples/resource-limits:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1922,17 +1923,17 @@ importers:
   examples/sandbox:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1971,17 +1972,17 @@ importers:
   examples/sessions:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2020,26 +2021,26 @@ importers:
   examples/software:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/coreutils':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/coreutils
+        version: link:../../../secure-exec/registry/software/coreutils
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/jq':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/jq
+        version: link:../../../secure-exec/registry/software/jq
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@agentos-software/ripgrep':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/ripgrep
+        version: link:../../../secure-exec/registry/software/ripgrep
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2078,17 +2079,17 @@ importers:
   examples/webhooks:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2130,17 +2131,17 @@ importers:
   examples/workflows:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2179,8 +2180,8 @@ importers:
   packages/agentos:
     dependencies:
       '@agentos-software/common':
-        specifier: link:../../../secure-exec-convwasi/registry/software/common
-        version: link:../../../secure-exec-convwasi/registry/software/common
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
@@ -2208,7 +2209,7 @@ importers:
         version: 22.19.15
       tsup:
         specifier: ^8.4.0
-        version: 8.5.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(@microsoft/api-extractor@7.43.0(@types/node@22.19.15))(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -2222,8 +2223,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@secure-exec/sandbox':
-        specifier: link:../../../secure-exec-convwasi/registry/tool/sandbox
-        version: link:../../../secure-exec-convwasi/registry/tool/sandbox
+        specifier: link:../../../secure-exec/registry/tool/sandbox
+        version: link:../../../secure-exec/registry/tool/sandbox
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2232,8 +2233,8 @@ importers:
         version: 4.3.6
     devDependencies:
       '@agentos-software/common':
-        specifier: link:../../../secure-exec-convwasi/registry/software/common
-        version: link:../../../secure-exec-convwasi/registry/software/common
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -2247,11 +2248,11 @@ importers:
   packages/browser:
     dependencies:
       '@secure-exec/browser':
-        specifier: link:../../../secure-exec-convwasi/packages/browser
-        version: link:../../../secure-exec-convwasi/packages/browser
+        specifier: link:../../../secure-exec/packages/browser
+        version: link:../../../secure-exec/packages/browser
       '@secure-exec/core':
-        specifier: link:../../../secure-exec-convwasi/packages/core
-        version: link:../../../secure-exec-convwasi/packages/core
+        specifier: link:../../../secure-exec/packages/core
+        version: link:../../../secure-exec/packages/core
       sucrase:
         specifier: ^3.35.0
         version: 3.35.1
@@ -2281,8 +2282,8 @@ importers:
   packages/core:
     dependencies:
       '@agentos-software/common':
-        specifier: link:../../../secure-exec-convwasi/registry/software/common
-        version: link:../../../secure-exec-convwasi/registry/software/common
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@aws-sdk/client-s3':
         specifier: ^3.1019.0
         version: 3.1020.0
@@ -2293,8 +2294,8 @@ importers:
         specifier: ^0.6.2
         version: 0.6.2
       '@secure-exec/core':
-        specifier: link:../../../secure-exec-convwasi/packages/core
-        version: link:../../../secure-exec-convwasi/packages/core
+        specifier: link:../../../secure-exec/packages/core
+        version: link:../../../secure-exec/packages/core
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -2324,71 +2325,71 @@ importers:
         version: 3.25.2(zod@4.3.6)
     devDependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/claude
-        version: link:../../../secure-exec-convwasi/registry/agent/claude
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/codex':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/codex
-        version: link:../../../secure-exec-convwasi/registry/agent/codex
+        specifier: link:../../../secure-exec/registry/agent/codex
+        version: link:../../../secure-exec/registry/agent/codex
       '@agentos-software/codex-cli':
-        specifier: link:../../../secure-exec-convwasi/registry/software/codex
-        version: link:../../../secure-exec-convwasi/registry/software/codex
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.efc374f
       '@agentos-software/coreutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/coreutils
-        version: link:../../../secure-exec-convwasi/registry/software/coreutils
+        specifier: link:../../../secure-exec/registry/software/coreutils
+        version: link:../../../secure-exec/registry/software/coreutils
       '@agentos-software/curl':
-        specifier: link:../../../secure-exec-convwasi/registry/software/curl
-        version: link:../../../secure-exec-convwasi/registry/software/curl
+        specifier: link:../../../secure-exec/registry/software/curl
+        version: link:../../../secure-exec/registry/software/curl
       '@agentos-software/diffutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/diffutils
-        version: link:../../../secure-exec-convwasi/registry/software/diffutils
+        specifier: link:../../../secure-exec/registry/software/diffutils
+        version: link:../../../secure-exec/registry/software/diffutils
       '@agentos-software/fd':
-        specifier: link:../../../secure-exec-convwasi/registry/software/fd
-        version: link:../../../secure-exec-convwasi/registry/software/fd
+        specifier: link:../../../secure-exec/registry/software/fd
+        version: link:../../../secure-exec/registry/software/fd
       '@agentos-software/file':
-        specifier: link:../../../secure-exec-convwasi/registry/software/file
-        version: link:../../../secure-exec-convwasi/registry/software/file
+        specifier: link:../../../secure-exec/registry/software/file
+        version: link:../../../secure-exec/registry/software/file
       '@agentos-software/findutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/findutils
-        version: link:../../../secure-exec-convwasi/registry/software/findutils
+        specifier: link:../../../secure-exec/registry/software/findutils
+        version: link:../../../secure-exec/registry/software/findutils
       '@agentos-software/gawk':
-        specifier: link:../../../secure-exec-convwasi/registry/software/gawk
-        version: link:../../../secure-exec-convwasi/registry/software/gawk
+        specifier: link:../../../secure-exec/registry/software/gawk
+        version: link:../../../secure-exec/registry/software/gawk
       '@agentos-software/git':
-        specifier: link:../../../secure-exec-convwasi/registry/software/git
-        version: link:../../../secure-exec-convwasi/registry/software/git
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/grep':
-        specifier: link:../../../secure-exec-convwasi/registry/software/grep
-        version: link:../../../secure-exec-convwasi/registry/software/grep
+        specifier: link:../../../secure-exec/registry/software/grep
+        version: link:../../../secure-exec/registry/software/grep
       '@agentos-software/gzip':
-        specifier: link:../../../secure-exec-convwasi/registry/software/gzip
-        version: link:../../../secure-exec-convwasi/registry/software/gzip
+        specifier: link:../../../secure-exec/registry/software/gzip
+        version: link:../../../secure-exec/registry/software/gzip
       '@agentos-software/jq':
-        specifier: link:../../../secure-exec-convwasi/registry/software/jq
-        version: link:../../../secure-exec-convwasi/registry/software/jq
+        specifier: link:../../../secure-exec/registry/software/jq
+        version: link:../../../secure-exec/registry/software/jq
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/opencode
-        version: link:../../../secure-exec-convwasi/registry/agent/opencode
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/pi
-        version: link:../../../secure-exec-convwasi/registry/agent/pi
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@agentos-software/pi-cli':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/pi-cli
-        version: link:../../../secure-exec-convwasi/registry/agent/pi-cli
+        specifier: link:../../../secure-exec/registry/agent/pi-cli
+        version: link:../../../secure-exec/registry/agent/pi-cli
       '@agentos-software/ripgrep':
-        specifier: link:../../../secure-exec-convwasi/registry/software/ripgrep
-        version: link:../../../secure-exec-convwasi/registry/software/ripgrep
+        specifier: link:../../../secure-exec/registry/software/ripgrep
+        version: link:../../../secure-exec/registry/software/ripgrep
       '@agentos-software/sed':
-        specifier: link:../../../secure-exec-convwasi/registry/software/sed
-        version: link:../../../secure-exec-convwasi/registry/software/sed
+        specifier: link:../../../secure-exec/registry/software/sed
+        version: link:../../../secure-exec/registry/software/sed
       '@agentos-software/tar':
-        specifier: link:../../../secure-exec-convwasi/registry/software/tar
-        version: link:../../../secure-exec-convwasi/registry/software/tar
+        specifier: link:../../../secure-exec/registry/software/tar
+        version: link:../../../secure-exec/registry/software/tar
       '@agentos-software/tree':
-        specifier: link:../../../secure-exec-convwasi/registry/software/tree
-        version: link:../../../secure-exec-convwasi/registry/software/tree
+        specifier: link:../../../secure-exec/registry/software/tree
+        version: link:../../../secure-exec/registry/software/tree
       '@agentos-software/yq':
-        specifier: link:../../../secure-exec-convwasi/registry/software/yq
-        version: link:../../../secure-exec-convwasi/registry/software/yq
+        specifier: link:../../../secure-exec/registry/software/yq
+        version: link:../../../secure-exec/registry/software/yq
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.87
         version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
@@ -2417,11 +2418,11 @@ importers:
         specifier: link:../agentos-sandbox
         version: link:../agentos-sandbox
       '@secure-exec/google-drive':
-        specifier: link:../../../secure-exec-convwasi/registry/file-system/google-drive
-        version: link:../../../secure-exec-convwasi/registry/file-system/google-drive
+        specifier: 'catalog:'
+        version: 0.0.0-main.8425e65
       '@secure-exec/s3':
-        specifier: link:../../../secure-exec-convwasi/registry/file-system/s3
-        version: link:../../../secure-exec-convwasi/registry/file-system/s3
+        specifier: 'catalog:'
+        version: 0.0.0-main.8425e65
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -2535,83 +2536,89 @@ importers:
   packages/shell:
     dependencies:
       '@agentos-software/codex-cli':
-        specifier: link:../../../secure-exec-convwasi/registry/software/codex
-        version: link:../../../secure-exec-convwasi/registry/software/codex
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.efc374f
       '@agentos-software/coreutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/coreutils
-        version: link:../../../secure-exec-convwasi/registry/software/coreutils
+        specifier: link:../../../secure-exec/registry/software/coreutils
+        version: link:../../../secure-exec/registry/software/coreutils
       '@agentos-software/curl':
-        specifier: link:../../../secure-exec-convwasi/registry/software/curl
-        version: link:../../../secure-exec-convwasi/registry/software/curl
+        specifier: link:../../../secure-exec/registry/software/curl
+        version: link:../../../secure-exec/registry/software/curl
       '@agentos-software/diffutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/diffutils
-        version: link:../../../secure-exec-convwasi/registry/software/diffutils
+        specifier: link:../../../secure-exec/registry/software/diffutils
+        version: link:../../../secure-exec/registry/software/diffutils
       '@agentos-software/duckdb':
-        specifier: link:../../../secure-exec-convwasi/registry/software/duckdb
-        version: link:../../../secure-exec-convwasi/registry/software/duckdb
+        specifier: link:../../../secure-exec/registry/software/duckdb
+        version: link:../../../secure-exec/registry/software/duckdb
       '@agentos-software/fd':
-        specifier: link:../../../secure-exec-convwasi/registry/software/fd
-        version: link:../../../secure-exec-convwasi/registry/software/fd
+        specifier: link:../../../secure-exec/registry/software/fd
+        version: link:../../../secure-exec/registry/software/fd
       '@agentos-software/file':
-        specifier: link:../../../secure-exec-convwasi/registry/software/file
-        version: link:../../../secure-exec-convwasi/registry/software/file
+        specifier: link:../../../secure-exec/registry/software/file
+        version: link:../../../secure-exec/registry/software/file
       '@agentos-software/findutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/findutils
-        version: link:../../../secure-exec-convwasi/registry/software/findutils
+        specifier: link:../../../secure-exec/registry/software/findutils
+        version: link:../../../secure-exec/registry/software/findutils
       '@agentos-software/gawk':
-        specifier: link:../../../secure-exec-convwasi/registry/software/gawk
-        version: link:../../../secure-exec-convwasi/registry/software/gawk
+        specifier: link:../../../secure-exec/registry/software/gawk
+        version: link:../../../secure-exec/registry/software/gawk
       '@agentos-software/git':
-        specifier: link:../../../secure-exec-convwasi/registry/software/git
-        version: link:../../../secure-exec-convwasi/registry/software/git
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/grep':
-        specifier: link:../../../secure-exec-convwasi/registry/software/grep
-        version: link:../../../secure-exec-convwasi/registry/software/grep
+        specifier: link:../../../secure-exec/registry/software/grep
+        version: link:../../../secure-exec/registry/software/grep
       '@agentos-software/gzip':
-        specifier: link:../../../secure-exec-convwasi/registry/software/gzip
-        version: link:../../../secure-exec-convwasi/registry/software/gzip
+        specifier: link:../../../secure-exec/registry/software/gzip
+        version: link:../../../secure-exec/registry/software/gzip
       '@agentos-software/http-get':
-        specifier: link:../../../secure-exec-convwasi/registry/software/http-get
-        version: link:../../../secure-exec-convwasi/registry/software/http-get
+        specifier: link:../../../secure-exec/registry/software/http-get
+        version: link:../../../secure-exec/registry/software/http-get
       '@agentos-software/jq':
-        specifier: link:../../../secure-exec-convwasi/registry/software/jq
-        version: link:../../../secure-exec-convwasi/registry/software/jq
+        specifier: link:../../../secure-exec/registry/software/jq
+        version: link:../../../secure-exec/registry/software/jq
       '@agentos-software/make':
-        specifier: link:../../../secure-exec-convwasi/registry/software/make
-        version: link:../../../secure-exec-convwasi/registry/software/make
+        specifier: link:../../../secure-exec/registry/software/make
+        version: link:../../../secure-exec/registry/software/make
       '@agentos-software/ripgrep':
-        specifier: link:../../../secure-exec-convwasi/registry/software/ripgrep
-        version: link:../../../secure-exec-convwasi/registry/software/ripgrep
+        specifier: link:../../../secure-exec/registry/software/ripgrep
+        version: link:../../../secure-exec/registry/software/ripgrep
       '@agentos-software/sed':
-        specifier: link:../../../secure-exec-convwasi/registry/software/sed
-        version: link:../../../secure-exec-convwasi/registry/software/sed
+        specifier: link:../../../secure-exec/registry/software/sed
+        version: link:../../../secure-exec/registry/software/sed
       '@agentos-software/sqlite3':
-        specifier: link:../../../secure-exec-convwasi/registry/software/sqlite3
-        version: link:../../../secure-exec-convwasi/registry/software/sqlite3
+        specifier: link:../../../secure-exec/registry/software/sqlite3
+        version: link:../../../secure-exec/registry/software/sqlite3
       '@agentos-software/tar':
-        specifier: link:../../../secure-exec-convwasi/registry/software/tar
-        version: link:../../../secure-exec-convwasi/registry/software/tar
+        specifier: link:../../../secure-exec/registry/software/tar
+        version: link:../../../secure-exec/registry/software/tar
       '@agentos-software/tree':
-        specifier: link:../../../secure-exec-convwasi/registry/software/tree
-        version: link:../../../secure-exec-convwasi/registry/software/tree
+        specifier: link:../../../secure-exec/registry/software/tree
+        version: link:../../../secure-exec/registry/software/tree
       '@agentos-software/unzip':
-        specifier: link:../../../secure-exec-convwasi/registry/software/unzip
-        version: link:../../../secure-exec-convwasi/registry/software/unzip
+        specifier: link:../../../secure-exec/registry/software/unzip
+        version: link:../../../secure-exec/registry/software/unzip
       '@agentos-software/wget':
-        specifier: link:../../../secure-exec-convwasi/registry/software/wget
-        version: link:../../../secure-exec-convwasi/registry/software/wget
+        specifier: link:../../../secure-exec/registry/software/wget
+        version: link:../../../secure-exec/registry/software/wget
       '@agentos-software/yq':
-        specifier: link:../../../secure-exec-convwasi/registry/software/yq
-        version: link:../../../secure-exec-convwasi/registry/software/yq
+        specifier: link:../../../secure-exec/registry/software/yq
+        version: link:../../../secure-exec/registry/software/yq
       '@agentos-software/zip':
-        specifier: link:../../../secure-exec-convwasi/registry/software/zip
-        version: link:../../../secure-exec-convwasi/registry/software/zip
+        specifier: link:../../../secure-exec/registry/software/zip
+        version: link:../../../secure-exec/registry/software/zip
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../agentos
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
       commander:
         specifier: ^14.0.2
         version: 14.0.3
+      rivetkit:
+        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
+        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
     devDependencies:
       '@types/node':
         specifier: ^22.19.3
@@ -2669,13 +2676,13 @@ importers:
         version: 6.0.2(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))
       '@rivet-dev/docs-theme':
         specifier: workspace:*
-        version: file:website/vendor/theme(@babel/core@7.29.7)(@babel/runtime@7.29.2)(@babel/template@7.29.7)(@codemirror/language@6.12.4)(@codemirror/search@6.7.1)(@codemirror/theme-one-dark@6.1.3)(@types/node@24.13.2)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))(codemirror@6.0.2)(jiti@1.21.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tsx@4.21.0)(use-sync-external-store@1.6.0(react@19.2.7))(yaml@2.9.0)
+        version: link:vendor/theme
       '@rivet-gg/components':
         specifier: workspace:*
         version: file:website/vendor/theme/vendor/components(@babel/core@7.29.7)(@babel/runtime@7.29.2)(@babel/template@7.29.7)(@codemirror/language@6.12.4)(@codemirror/search@6.7.1)(@codemirror/theme-one-dark@6.1.3)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(codemirror@6.0.2)(lodash@4.18.1)(posthog-js@1.395.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))
       '@rivet-gg/icons':
         specifier: workspace:*
-        version: file:website/vendor/theme/vendor/icons(@fortawesome/fontawesome-svg-core@6.7.2)(@fortawesome/free-brands-svg-icons@6.7.2)(@fortawesome/free-solid-svg-icons@6.7.2)(@fortawesome/react-fontawesome@0.2.6(@fortawesome/fontawesome-svg-core@6.7.2)(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: link:vendor/theme/vendor/icons
       astro:
         specifier: ^5.18.2
         version: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
@@ -2721,6 +2728,414 @@ importers:
         specifier: ^6.4.1
         version: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0)
 
+  website/vendor/theme:
+    dependencies:
+      '@astrojs/mdx':
+        specifier: ^4.0.2
+        version: 4.3.14(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))
+      '@astrojs/react':
+        specifier: ^4.1.2
+        version: 4.4.2(@types/node@24.13.2)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(jiti@1.21.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tsx@4.21.0)(yaml@2.9.0)
+      '@astrojs/sitemap':
+        specifier: ^3.2.1
+        version: 3.7.3
+      '@fortawesome/fontawesome-svg-core':
+        specifier: ^7.1.0
+        version: 7.3.0
+      '@fortawesome/free-brands-svg-icons':
+        specifier: ^7.1.0
+        version: 7.3.0
+      '@fortawesome/free-solid-svg-icons':
+        specifier: ^7.1.0
+        version: 7.3.0
+      '@fortawesome/react-fontawesome':
+        specifier: ^3.1.0
+        version: 3.3.1(@fortawesome/fontawesome-svg-core@7.3.0)(react@19.2.7)
+      '@headlessui/react':
+        specifier: ^2.2.9
+        version: 2.2.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@rivet-gg/components':
+        specifier: file:./vendor/components
+        version: file:website/vendor/theme/vendor/components(@babel/core@7.29.7)(@babel/runtime@7.29.2)(@babel/template@7.29.7)(@codemirror/language@6.12.4)(@codemirror/search@6.7.1)(@codemirror/theme-one-dark@6.1.3)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(codemirror@6.0.2)(lodash@4.18.1)(posthog-js@1.395.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))
+      '@rivet-gg/icons':
+        specifier: file:./vendor/icons
+        version: file:website/vendor/theme/vendor/icons(@fortawesome/fontawesome-svg-core@7.3.0)(@fortawesome/free-brands-svg-icons@7.3.0)(@fortawesome/free-solid-svg-icons@7.3.0)(@fortawesome/react-fontawesome@3.3.1(@fortawesome/fontawesome-svg-core@7.3.0)(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@shikijs/transformers':
+        specifier: ^3.15.0
+        version: 3.23.0
+      '@sindresorhus/slugify':
+        specifier: ^3.0.0
+        version: 3.0.0
+      '@tailwindcss/typography':
+        specifier: ^0.5.15
+        version: 0.5.20(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))
+      acorn:
+        specifier: ^8.15.0
+        version: 8.17.0
+      astro:
+        specifier: '>=5.0.0'
+        version: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      dedent:
+        specifier: ^1.7.0
+        version: 1.7.2
+      esast-util-from-js:
+        specifier: ^2.0.1
+        version: 2.0.1
+      escape-html:
+        specifier: ^1.0.3
+        version: 1.0.3
+      estree-util-to-js:
+        specifier: ^2.0.0
+        version: 2.0.0
+      fast-glob:
+        specifier: ^3.3.3
+        version: 3.3.3
+      framer-motion:
+        specifier: ^12.23.24
+        version: 12.40.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      fuse.js:
+        specifier: ^7.1.0
+        version: 7.4.2
+      lodash:
+        specifier: ^4.17.21
+        version: 4.18.1
+      lucide-react:
+        specifier: ^0.439.0
+        version: 0.439.0(react@19.2.7)
+      mdast-util-to-string:
+        specifier: ^4.0.0
+        version: 4.0.0
+      mdx-annotations:
+        specifier: ^0.1.4
+        version: 0.1.4
+      mermaid:
+        specifier: ^11.12.2
+        version: 11.16.0
+      playwright:
+        specifier: ^1.57.0
+        version: 1.59.1
+      posthog-js:
+        specifier: ^1.297.0
+        version: 1.395.0
+      react:
+        specifier: '>=19.0.0'
+        version: 19.2.7
+      react-dom:
+        specifier: '>=19.0.0'
+        version: 19.2.7(react@19.2.7)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@19.2.17)(react@19.2.7)
+      rehype-mermaid:
+        specifier: ^3.0.0
+        version: 3.0.0(playwright@1.59.1)
+      rehype-parse:
+        specifier: ^9.0.1
+        version: 9.0.1
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
+      shiki:
+        specifier: ^3.15.0
+        version: 3.23.0
+      tailwindcss:
+        specifier: ^3.4.17
+        version: 3.4.19(tsx@4.21.0)(yaml@2.9.0)
+      tm-themes:
+        specifier: ^1.10.12
+        version: 1.12.2
+      typesense:
+        specifier: ^2.1.0
+        version: 2.1.0(@babel/runtime@7.29.2)
+      unified:
+        specifier: ^11.0.5
+        version: 11.0.5
+      unist-util-filter:
+        specifier: ^5.0.1
+        version: 5.0.1
+      unist-util-visit:
+        specifier: ^5.0.0
+        version: 5.1.0
+      zustand:
+        specifier: ^5.0.8
+        version: 5.0.14(@types/react@19.2.17)(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
+    devDependencies:
+      esbuild:
+        specifier: ^0.25.9
+        version: 0.25.12
+
+  website/vendor/theme/vendor/components:
+    dependencies:
+      '@codemirror/autocomplete':
+        specifier: ^6.18.7
+        version: 6.20.3
+      '@codemirror/commands':
+        specifier: ^6.8.1
+        version: 6.10.4
+      '@codemirror/lang-javascript':
+        specifier: ^6.2.4
+        version: 6.2.5
+      '@codemirror/lang-json':
+        specifier: ^6.0.2
+        version: 6.0.2
+      '@codemirror/lint':
+        specifier: ^6.8.5
+        version: 6.9.7
+      '@codemirror/state':
+        specifier: ^6.5.2
+        version: 6.7.0
+      '@codemirror/view':
+        specifier: ^6.38.2
+        version: 6.43.4
+      '@fortawesome/fontawesome-svg-core':
+        specifier: ^6.7.2
+        version: 6.7.2
+      '@fortawesome/free-brands-svg-icons':
+        specifier: ^6.7.2
+        version: 6.7.2
+      '@fortawesome/free-solid-svg-icons':
+        specifier: ^6.7.2
+        version: 6.7.2
+      '@fortawesome/react-fontawesome':
+        specifier: ^0.2.6
+        version: 0.2.6(@fortawesome/fontawesome-svg-core@6.7.2)(react@19.2.7)
+      '@hookform/resolvers':
+        specifier: ^3.10.0
+        version: 3.10.0(react-hook-form@7.80.0(react@19.2.7))
+      '@radix-ui/react-accordion':
+        specifier: ^1.2.12
+        version: 1.2.14(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-avatar':
+        specifier: ^1.1.10
+        version: 1.2.0(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-checkbox':
+        specifier: ^1.3.3
+        version: 1.3.5(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-context-menu':
+        specifier: ^2.2.16
+        version: 2.3.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-dialog':
+        specifier: ^1.1.15
+        version: 1.1.17(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-dropdown-menu':
+        specifier: ^2.1.16
+        version: 2.1.18(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-label':
+        specifier: ^2.1.7
+        version: 2.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-popover':
+        specifier: ^1.1.15
+        version: 1.1.17(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-progress':
+        specifier: ^1.1.7
+        version: 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-radio-group':
+        specifier: ^1.3.8
+        version: 1.4.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-scroll-area':
+        specifier: ^1.2.10
+        version: 1.2.12(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-select':
+        specifier: ^2.2.6
+        version: 2.3.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-separator':
+        specifier: ^1.1.7
+        version: 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-slider':
+        specifier: ^1.3.6
+        version: 1.4.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-slot':
+        specifier: ^1.2.3
+        version: 1.3.0(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-switch':
+        specifier: ^1.2.6
+        version: 1.3.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-tabs':
+        specifier: ^1.1.13
+        version: 1.1.15(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-toggle':
+        specifier: ^1.1.10
+        version: 1.1.12(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-toggle-group':
+        specifier: ^1.1.11
+        version: 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-tooltip':
+        specifier: ^1.2.8
+        version: 1.2.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-visually-hidden':
+        specifier: ^1.2.3
+        version: 1.2.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@rivet-gg/icons':
+        specifier: file:../icons
+        version: link:../icons
+      '@sentry/react':
+        specifier: ^8.55.0
+        version: 8.55.2(react@19.2.7)
+      '@shikijs/langs':
+        specifier: ^3.12.2
+        version: 3.23.0
+      '@tailwindcss/container-queries':
+        specifier: ^0.1.1
+        version: 0.1.1(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))
+      '@tailwindcss/typography':
+        specifier: ^0.5.19
+        version: 0.5.20(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))
+      '@tanstack/react-table':
+        specifier: ^8.21.3
+        version: 8.21.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@tanstack/react-virtual':
+        specifier: ^3.13.12
+        version: 3.14.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@uiw/codemirror-extensions-basic-setup':
+        specifier: ^4.25.1
+        version: 4.25.10(@codemirror/autocomplete@6.20.3)(@codemirror/commands@6.10.4)(@codemirror/language@6.12.4)(@codemirror/lint@6.9.7)(@codemirror/search@6.7.1)(@codemirror/state@6.7.0)(@codemirror/view@6.43.4)
+      '@uiw/codemirror-theme-github':
+        specifier: ^4.25.1
+        version: 4.25.10(@codemirror/language@6.12.4)(@codemirror/state@6.7.0)(@codemirror/view@6.43.4)
+      '@uiw/react-codemirror':
+        specifier: ^4.25.1
+        version: 4.25.10(@babel/runtime@7.29.2)(@codemirror/autocomplete@6.20.3)(@codemirror/language@6.12.4)(@codemirror/lint@6.9.7)(@codemirror/search@6.7.1)(@codemirror/state@6.7.0)(@codemirror/theme-one-dark@6.1.3)(@codemirror/view@6.43.4)(codemirror@6.0.2)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      cmdk:
+        specifier: ^1.1.1
+        version: 1.1.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      date-fns:
+        specifier: ^4.1.0
+        version: 4.4.0
+      esast-util-from-js:
+        specifier: ^2.0.1
+        version: 2.0.1
+      estree-util-to-js:
+        specifier: ^2.0.0
+        version: 2.0.0
+      fast-deep-equal:
+        specifier: ^3.1.3
+        version: 3.1.3
+      framer-motion:
+        specifier: ^11.18.2
+        version: 11.18.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      input-otp:
+        specifier: ^1.4.2
+        version: 1.4.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      jotai:
+        specifier: ^2.14.0
+        version: 2.20.1(@babel/core@7.29.7)(@babel/template@7.29.7)(@types/react@18.3.31)(react@19.2.7)
+      jotai-effect:
+        specifier: ^2.1.0
+        version: 2.3.1(jotai@2.20.1(@babel/core@7.29.7)(@babel/template@7.29.7)(@types/react@18.3.31)(react@19.2.7))
+      lodash:
+        specifier: ^4.0.0
+        version: 4.18.1
+      lucide-react:
+        specifier: ^0.439.0
+        version: 0.439.0(react@19.2.7)
+      posthog-js:
+        specifier: ^1.0.0
+        version: 1.395.0
+      react:
+        specifier: ^19
+        version: 19.2.7
+      react-day-picker:
+        specifier: 8.10.1
+        version: 8.10.1(date-fns@4.4.0)(react@19.2.7)
+      react-dom:
+        specifier: ^19
+        version: 19.2.7(react@19.2.7)
+      react-hook-form:
+        specifier: ^7.62.0
+        version: 7.80.0(react@19.2.7)
+      react-resizable-panels:
+        specifier: ^2.1.9
+        version: 2.1.9(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      recharts:
+        specifier: ^2.15.4
+        version: 2.15.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      sonner:
+        specifier: ^1.7.4
+        version: 1.7.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      tailwind-merge:
+        specifier: ^2.6.0
+        version: 2.6.1
+      tailwindcss-animate:
+        specifier: ^1.0.7
+        version: 1.0.7(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))
+      usehooks-ts:
+        specifier: ^3.1.1
+        version: 3.1.1(react@19.2.7)
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/mime':
+        specifier: ^4.0.0
+        version: 4.0.0
+      '@types/node':
+        specifier: ^20.19.13
+        version: 20.19.43
+      '@types/react':
+        specifier: ^18.3.24
+        version: 18.3.31
+      '@types/react-dom':
+        specifier: ^18.3.7
+        version: 18.3.7(@types/react@18.3.31)
+      '@vitejs/plugin-react':
+        specifier: ^4.7.0
+        version: 4.7.0(vite@5.4.21(@types/node@20.19.43))
+      autoprefixer:
+        specifier: ^10.4.21
+        version: 10.5.0(postcss@8.5.8)
+      postcss:
+        specifier: ^8.5.6
+        version: 8.5.8
+      tailwindcss:
+        specifier: ^3.4.17
+        version: 3.4.19(tsx@4.21.0)(yaml@2.9.0)
+      vite:
+        specifier: ^5.4.20
+        version: 5.4.21(@types/node@20.19.43)
+      vite-plugin-dts:
+        specifier: ^3.9.1
+        version: 3.9.1(@types/node@20.19.43)(rollup@4.60.1)(typescript@5.9.3)(vite@5.4.21(@types/node@20.19.43))
+
+  website/vendor/theme/vendor/icons:
+    dependencies:
+      '@fortawesome/fontawesome-svg-core':
+        specifier: ^6.5.2
+        version: 6.7.2
+      '@fortawesome/free-brands-svg-icons':
+        specifier: ^6.5.2
+        version: 6.7.2
+      '@fortawesome/free-solid-svg-icons':
+        specifier: ^6.5.2
+        version: 6.7.2
+      '@fortawesome/react-fontawesome':
+        specifier: ^0.2.2
+        version: 0.2.6(@fortawesome/fontawesome-svg-core@6.7.2)(react@19.2.7)
+      react:
+        specifier: ^19
+        version: 19.2.7
+      react-dom:
+        specifier: ^19
+        version: 19.2.7(react@19.2.7)
+    devDependencies:
+      dedent:
+        specifier: ^1.7.0
+        version: 1.7.2
+      esbuild:
+        specifier: ^0.25.9
+        version: 0.25.12
+      local-pkg:
+        specifier: ^0.5.1
+        version: 0.5.1
+
 packages:
 
   '@agentclientprotocol/sdk@0.12.0':
@@ -2737,14 +3152,11 @@ packages:
     resolution: {integrity: sha512-m7XBRKklrLBsL5pcTlHRDc/wczmoleoPHdD36AYkCyWO0RZX5I/Ha1P0Kz0N1g0m1q7Vu8PcdSdT9ak6jWwX3w==}
     hasBin: true
 
-  '@agentos-software/coreutils@0.0.0-nathan-agentos-package-resolution.42d8146':
-    resolution: {integrity: sha512-Gjh/SPjhfbNX6mCaM/WCnW/jT3IBXO21jXMgfscjPs+C/9E0+60leT1xab8+om1v4KzK7+yiEChVUpk4M99M6A==}
+  '@agentos-software/codex-cli@0.0.0-nathan-agentos-package-resolution.efc374f':
+    resolution: {integrity: sha512-otNFbSsottCjNaimluKREP/s+teuhicW4BZrFSLIz8y6RpLflR4cCH+6bu50QAu/ecZS84WqLBxYubslJviUVQ==}
 
   '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-O4ubhuNoHQ7JVoPuUusOKHbk93XAH5OkRNC7C78VV3lchlzf5WeTLY+JM7QoNOyJqEuT2ZOz5JM88QJ7LmoyPg==}
-
-  '@agentos-software/jq@0.0.0-nathan-agentos-package-resolution.42d8146':
-    resolution: {integrity: sha512-2QSqWxzmOC4iv19PdTAd9IfLN35s+2VXosHVmU3AhK7KPixfc8On9PDM8FaNGRruqzSkH+DbR6xK8dmNOS8q7w==}
 
   '@agentos-software/opencode@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-rjVYfj6f+X7ps/VmlsYEa7g3Q9LkFSdzp+E/untBGfx20OPoXiCS/zOP8M+ov486Ty16gbD9Q17qhTrocn9nlA==}
@@ -2753,9 +3165,6 @@ packages:
   '@agentos-software/pi@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-fatQvo1vrIZepIM6qNVn2qjmxZoe8sSxDCA++NbdRn0pTdTD7azMrF2XA/zc3DNwwWAqiDJrOiMFRsoX6HMVSQ==}
     hasBin: true
-
-  '@agentos-software/ripgrep@0.0.0-nathan-agentos-package-resolution.42d8146':
-    resolution: {integrity: sha512-mUYipQCElmjxlBqcI4tlTfHcm2Sc4qeAKBVmaenVy4orn3Kyxs77vygt8m38gwR5XMHw35utgOstnqcvsjXnJA==}
 
   '@ai-sdk/amazon-bedrock@3.0.93':
     resolution: {integrity: sha512-57cP3Ume6DdQP05xPYl2g554EqPrQgKRW/eE3BGm1ktK1k71e35HGzNl1GZHIYKct82QrY/iQuheanSonI88Dg==}
@@ -4385,6 +4794,19 @@ packages:
   '@mermaid-js/parser@1.2.0':
     resolution: {integrity: sha512-oYPyv8A4As1yH5Bx+04iQEQxXuIQDe0GKCNSRgao6z8AM9jixXIfP0vsppRLvGf+nKIOb9/LdpWA4YuJiVvESA==}
 
+  '@microsoft/api-extractor-model@7.28.13':
+    resolution: {integrity: sha512-39v/JyldX4MS9uzHcdfmjjfS6cYGAoXV+io8B5a338pkHiSt+gy2eXQ0Q7cGFJ7quSa1VqqlMdlPrB6sLR/cAw==}
+
+  '@microsoft/api-extractor@7.43.0':
+    resolution: {integrity: sha512-GFhTcJpB+MI6FhvXEI9b2K0snulNLWHqC/BbcJtyNYcKUiw7l3Lgis5ApsYncJ0leALX7/of4XfmXk+maT111w==}
+    hasBin: true
+
+  '@microsoft/tsdoc-config@0.16.2':
+    resolution: {integrity: sha512-OGiIzzoBLgWWR0UdRJX98oYO+XKGf7tiK4Zk6tQ/E4IJqGCe7dvkTvgDZV5cFJUzLGDOjeAXrnZoA6QkVySuxw==}
+
+  '@microsoft/tsdoc@0.14.2':
+    resolution: {integrity: sha512-9b8mPpKrfeGRuhFH5iO1iwCLeIIsV6+H1sRfxbkoGXIyQE2BTsPd9zqSqQJ+pv5sJ/hT5M1zvOFL02MnEezFug==}
+
   '@mistralai/mistralai@1.14.1':
     resolution: {integrity: sha512-IiLmmZFCCTReQgPAT33r7KQ1nYo5JPdvGkrkZqA8qQ2qB1GHgs5LoP5K2ICyrjnpw2n8oSxMM/VP+liiKcGNlQ==}
 
@@ -5045,14 +5467,6 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0-rc.1 || ^18.0.0 || ^19.0.0-rc.1
 
-  '@rivet-dev/docs-theme@file:website/vendor/theme':
-    resolution: {directory: website/vendor/theme, type: directory}
-    hasBin: true
-    peerDependencies:
-      astro: '>=5.0.0'
-      react: '>=19.0.0'
-      react-dom: '>=19.0.0'
-
   '@rivet-gg/components@file:website/vendor/theme/vendor/components':
     resolution: {directory: website/vendor/theme/vendor/components, type: directory}
     peerDependencies:
@@ -5314,6 +5728,28 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@rushstack/node-core-library@4.0.2':
+    resolution: {integrity: sha512-hyES82QVpkfQMeBMteQUnrhASL/KHPhd7iJ8euduwNJG4mu2GSOKybf0rOEjOm1Wz7CwJEUm9y0yD7jg2C1bfg==}
+    peerDependencies:
+      '@types/node': '*'
+    peerDependenciesMeta:
+      '@types/node':
+        optional: true
+
+  '@rushstack/rig-package@0.5.2':
+    resolution: {integrity: sha512-mUDecIJeH3yYGZs2a48k+pbhM6JYwWlgjs2Ca5f2n1G2/kgdgP9D/07oglEGf6mRyXEnazhEENeYTSNDRCwdqA==}
+
+  '@rushstack/terminal@0.10.0':
+    resolution: {integrity: sha512-UbELbXnUdc7EKwfH2sb8ChqNgapUOdqcCIdQP4NGxBpTZV2sQyeekuK3zmfQSa/MN+/7b4kBogl2wq0vpkpYGw==}
+    peerDependencies:
+      '@types/node': '*'
+    peerDependenciesMeta:
+      '@types/node':
+        optional: true
+
+  '@rushstack/ts-command-line@4.19.1':
+    resolution: {integrity: sha512-J7H768dgcpG60d7skZ5uSSwyCZs/S2HrWP1Ds8d1qYAyaaeJmpmmLr9BVw97RjFzmQPOYnoXcKA4GkqDCkduQg==}
+
   '@sandbox-agent/cli-darwin-arm64@0.4.2':
     resolution: {integrity: sha512-+L1O8SI7k/LLhyB4dG0ghmz1cJHa0WtVjuRTrEE2gw/5EbGLWopPBsCVCmQ7snrQ4fPwtaiZDhfExcEj1VI7aw==}
     cpu: [arm64]
@@ -5345,6 +5781,12 @@ packages:
   '@sandbox-agent/cli@0.4.2':
     resolution: {integrity: sha512-trO//ypJBSt5xkewuol9LOykvDgHwUXq8R+yQVS+0CmpN3lYUtewHkb+At9RVGRhDMmJZY2oasaXDnhfurQ33w==}
     hasBin: true
+
+  '@secure-exec/google-drive@0.0.0-main.8425e65':
+    resolution: {integrity: sha512-7iPJu9KEqLH5AA70h9dtDoAqaXZSpSa7jgO1UzRssWqbsW0lrfFxdMlycIX69YMejqHAWxULn4kEoR5nbGPs+w==}
+
+  '@secure-exec/s3@0.0.0-main.8425e65':
+    resolution: {integrity: sha512-ClLvrFqceNb87Gb75w18c9Fx93MtrU+/8MVaW9q8HFfCkJl3jzRym95ninmbBTGcf8Sg6GzNEqJBTWVLuFfQCw==}
 
   '@sentry-internal/browser-utils@8.55.2':
     resolution: {integrity: sha512-GnKod+gL/Y+1FUM/RGV8q6le1CoyiGbT40MitEK7eVwWe+bfTRq1gN7ioupyHFMUg1RlQkDQ4/sENmio/uow5A==}
@@ -5711,6 +6153,9 @@ packages:
     cpu: [arm64]
     os: [win32]
 
+  '@types/argparse@1.0.38':
+    resolution: {integrity: sha512-ebDJ9b0e702Yr7pWgB0jzm+CX4Srzz8RcXtLJDJB+BSccqMa36uyH/zUsSYao5+BD1ytv3k3rPYCq4mAE1hsXA==}
+
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
 
@@ -5840,6 +6285,10 @@ packages:
   '@types/mime-types@2.1.4':
     resolution: {integrity: sha512-lfU4b34HOri+kAY5UheuFMWPDOI+OPceBSHZKp69gEyTL/mmJ4cnU6Y/rlme3UL3GyOn6Y42hyIEw0/q8sWx5w==}
 
+  '@types/mime@4.0.0':
+    resolution: {integrity: sha512-5eEkJZ/BLvTE3vXGKkWlyTSUVZuzj23Wj8PoyOq2lt5I3CYbiLBOPb3XmCW6QcuOibIUE6emHXHt9E/F/rCa6w==}
+    deprecated: This is a stub types definition. mime provides its own type definitions, so you do not need this installed.
+
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
 
@@ -5852,6 +6301,9 @@ packages:
   '@types/node@18.19.130':
     resolution: {integrity: sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg==}
 
+  '@types/node@20.19.43':
+    resolution: {integrity: sha512-6oYBAi5ikg4Pl+kGsoYtawUMBT2zZMCvPNF7pVLnHZfd1zf38DRiWn/gT01RYCdUqkv7Fhr+C9ot4/tb+2sVvA==}
+
   '@types/node@22.19.15':
     resolution: {integrity: sha512-F0R/h2+dsy5wJAUe3tAU6oqa2qbWY5TpNfL/RGmo1y38hiyO1w3x2jPtt76wmuaJI4DQnOBu21cNXQ2STIUUWg==}
 
@@ -5860,6 +6312,11 @@ packages:
 
   '@types/prop-types@15.7.15':
     resolution: {integrity: sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==}
+
+  '@types/react-dom@18.3.7':
+    resolution: {integrity: sha512-MEe3UeoENYVFXzoXEWsvcpg6ZvlrFNlOQ7EOsvhI3CfAXwzPfO8Qwuxd40nepsYKqyyVQnTdEfv68q91yLcKrQ==}
+    peerDependencies:
+      '@types/react': ^18.0.0
 
   '@types/react-dom@19.2.3':
     resolution: {integrity: sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==}
@@ -5976,6 +6433,32 @@ packages:
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
 
+  '@volar/language-core@1.11.1':
+    resolution: {integrity: sha512-dOcNn3i9GgZAcJt43wuaEykSluAuOkQgzni1cuxLxTV0nJKanQztp7FxyswdRILaKH+P2XZMPRp2S4MV/pElCw==}
+
+  '@volar/source-map@1.11.1':
+    resolution: {integrity: sha512-hJnOnwZ4+WT5iupLRnuzbULZ42L7BWWPMmruzwtLhJfpDVoZLjNBxHDi2sY2bgZXCKlpU5XcsMFoYrsQmPhfZg==}
+
+  '@volar/typescript@1.11.1':
+    resolution: {integrity: sha512-iU+t2mas/4lYierSnoFOeRFQUhAEMgsFuQxoxvwn5EdQopw43j+J27a4lt9LMInx1gLJBC6qL14WYGlgymaSMQ==}
+
+  '@vue/compiler-core@3.5.39':
+    resolution: {integrity: sha512-16KBTEXAJCpDr0mwlw+AZyhu8iyC7R3S2vBwsI7QnWJU6X3WKc9VKeNEZpiMdZ569qWhz9574L3vV55qRL0Vtw==}
+
+  '@vue/compiler-dom@3.5.39':
+    resolution: {integrity: sha512-oQPigALqYbNxTNPvNgSOe+czwVExfbVF02lz8jP0S3AXJiu3jxYDygNUiqSep4ezzW8XgnubqH63My2A7JR/vg==}
+
+  '@vue/language-core@1.8.27':
+    resolution: {integrity: sha512-L8Kc27VdQserNaCUNiSFdDl9LWT24ly8Hpwf1ECy3aFb9m6bDhBGQYOujDm21N7EW3moKIOKEanQwe1q5BK+mA==}
+    peerDependencies:
+      typescript: '*'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
+  '@vue/shared@3.5.39':
+    resolution: {integrity: sha512-l1rrBtBfTnmxvtsvdQDXltUUy8S1Y+ZaqdfUzmAnJkTd8Z8rv5v/ytW+TKiqEOWyHPoqtPlNFSs0lhRmYVSHVA==}
+
   '@xterm/addon-fit@0.10.0':
     resolution: {integrity: sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==}
     peerDependencies:
@@ -6040,6 +6523,9 @@ packages:
       ajv:
         optional: true
 
+  ajv@6.12.6:
+    resolution: {integrity: sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==}
+
   ajv@8.18.0:
     resolution: {integrity: sha512-PlXPeEWMXMZ7sPYOHqmDyCJzcfNrUr3fGNKtezX14ykXOEIvyK81d+qydx89KY5O71FKMPaQ2vBfBFI5NHR63A==}
 
@@ -6083,6 +6569,9 @@ packages:
 
   arg@5.0.2:
     resolution: {integrity: sha512-PYjyFOLKQ9y57JvQ6QLo8dAgNqswh8M1RMJYdQduT6xbWSgK36P/Z/v+p888pM69jMMfS8Xd8F6I1kQ/I9HUGg==}
+
+  argparse@1.0.10:
+    resolution: {integrity: sha512-o5Roy6tNG4SL/FOkCAN6RzjiakZS25RLYFrcMttJqbdd8BWrnA+fGz57iN5Pb06pvBGvl5gQ0B48dJlslXvoTg==}
 
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
@@ -6253,6 +6742,9 @@ packages:
   boxen@8.0.1:
     resolution: {integrity: sha512-F3PH5k5juxom4xktynS7MoFY+NUWH5LC4CnH11YB8NPew+HLpmBLCybSAEyb2F+4pRXhuhWqFesoQd6DAyc2hw==}
     engines: {node: '>=18'}
+
+  brace-expansion@1.1.15:
+    resolution: {integrity: sha512-EwOCDEex4quD37XhqM3omwtMoJjr//isUZz1JopUNWms+4Z2ViyM/k1YIRePpoVNnQhENnxtFjLaxNHrT7xIUg==}
 
   brace-expansion@2.0.3:
     resolution: {integrity: sha512-MCV/fYJEbqx68aE58kv2cA/kiky1G8vux3OR6/jbS+jIMe/6fJWa0DTzJU7dqijOWYwHi1t29FlfYI9uytqlpA==}
@@ -6481,12 +6973,22 @@ packages:
     resolution: {integrity: sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==}
     engines: {node: '>= 12'}
 
+  commander@9.5.0:
+    resolution: {integrity: sha512-KRs7WVDKg86PWiuAqhDrAQnTXZKraVcCc6vFdL14qrZ/DcWwuRo7VoiYXalXO7S5GKpqYiVEwCbgFDfxNHKJBQ==}
+    engines: {node: ^12.20.0 || >=14}
+
   common-ancestor-path@1.0.1:
     resolution: {integrity: sha512-L3sHRo1pXXEqX8VU28kfgUY+YGsk09hPqZiZmLacNib6XNTCM8ubYeT7ryXQw8asB1sKgcU5lkB7ONug08aB8w==}
 
   compress-commons@6.0.2:
     resolution: {integrity: sha512-6FqVXeETqWPoGcfzrXb37E50NP0LXT8kAMu5ooZayhWWdgEY4lBEEcbQNXtkuKQsGduxiIcI4gOTsxTmuq/bSg==}
     engines: {node: '>= 14'}
+
+  computeds@0.0.1:
+    resolution: {integrity: sha512-7CEBgcMjVmitjYo5q8JTJVra6X5mQ20uTThdK+0kR7UEaDrAWEQcRiBtWJzga4eRpP6afNwwLsX2SET2JhVB1Q==}
+
+  concat-map@0.0.1:
+    resolution: {integrity: sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==}
 
   confbox@0.1.8:
     resolution: {integrity: sha512-RMtmw0iFkeR4YV+fUOSucriAQNb9g8zFR52MWCtl+cCZOFRNL6zeB395vPzFhEjjn4fMxXudmELnl/KF/WrK6w==}
@@ -6767,6 +7269,9 @@ packages:
   dayjs@1.11.21:
     resolution: {integrity: sha512-98IT+HOahAisibz/yjKbzuOBwYcjJ7BCLPzARyHiyEBmRz4fatF+KPJszEHXsGYjUG234aH/cOjW1wwTbKUZlA==}
 
+  de-indent@1.0.2:
+    resolution: {integrity: sha512-e/1zu3xH5MQryN2zdVaF0OrdNLUbvWxzMbi+iNA6Bky7l1RoP8a2fIbRocyHclXt/arDrrR6lL3TqFD9pMQTsg==}
+
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
     engines: {node: '>=6.0'}
@@ -7035,6 +7540,10 @@ packages:
     resolution: {integrity: sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g==}
     engines: {node: '>=0.12'}
 
+  entities@7.0.1:
+    resolution: {integrity: sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA==}
+    engines: {node: '>=0.12'}
+
   es-define-property@1.0.1:
     resolution: {integrity: sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==}
     engines: {node: '>= 0.4'}
@@ -7214,6 +7723,9 @@ packages:
     resolution: {integrity: sha512-7MptL8U0cqcFdzIzwOTHoilX9x5BrNqye7Z/LuC7kCMRio1EMSyqRK3BEAUD7sXRq4iT4AzTVuZdhgQ2TCvYLg==}
     engines: {node: '>=8.6.0'}
 
+  fast-json-stable-stringify@2.1.0:
+    resolution: {integrity: sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==}
+
   fast-safe-stringify@2.1.1:
     resolution: {integrity: sha512-W+KJc2dmILlPplD/H4K9l9LcAHAfPtP6BY84uVLXQ6Evcz9Lcg33Y2z1IVblT6xdY54PXYVHEv+0Wpq8Io6zkA==}
 
@@ -7353,6 +7865,10 @@ packages:
 
   fs-constants@1.0.0:
     resolution: {integrity: sha512-y6OAwoSIf7FyjMIv94u+b5rdheZEjzR63GTyZJm5qh4Bi+2YgwLCcI/fPFZkL5PSixOt6ZNKm+w+Hfp/Bciwow==}
+
+  fs-extra@7.0.1:
+    resolution: {integrity: sha512-YJDaCJZEnBmcbw13fvdAM9AwNOJwOzrE4pqMqBq5nFiEqXUqHwlK4B+3pUw6JNvfSPtX05xFHtYy/1ni01eGCw==}
+    engines: {node: '>=6 <7 || >=8'}
 
   fsevents@2.3.2:
     resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
@@ -7626,6 +8142,10 @@ packages:
   immediate@3.0.6:
     resolution: {integrity: sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==}
 
+  import-lazy@4.0.0:
+    resolution: {integrity: sha512-rKtvo6a868b5Hu3heneU+L4yEQ4jYKLtjpnPeUdK7h0yzXGmyBTypknlkCvHFBqfX9YlorEiMM6Dnq/5atfHkw==}
+    engines: {node: '>=8'}
+
   import-meta-resolve@4.2.0:
     resolution: {integrity: sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg==}
 
@@ -7763,6 +8283,9 @@ packages:
     resolution: {integrity: sha512-/imKNG4EbWNrVjoNC/1H5/9GFy+tqjGBHCaSsN+P2RnPqjsLmv6UD3Ej+Kj8nBWaRAwyk7kK5ZUc+OEatnTR3A==}
     hasBin: true
 
+  jju@1.4.0:
+    resolution: {integrity: sha512-8wb9Yw966OSxApiCt0K3yNJL8pnNeIv+OEq2YMidz4FKP6nonSRoOXc80iXY4JaN2FC11B9qsNmDsm+ZOfMROA==}
+
   jose@6.2.2:
     resolution: {integrity: sha512-d7kPDd34KO/YnzaDOlikGpOurfF0ByC2sEV4cANCtdqLlTfBlw2p14O/5d/zv40gJPbIQxfES3nSx1/oYNyuZQ==}
 
@@ -7816,6 +8339,9 @@ packages:
     resolution: {integrity: sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==}
     engines: {node: '>=16'}
 
+  json-schema-traverse@0.4.1:
+    resolution: {integrity: sha512-xbbCH5dCYU5T8LcEhhuh7HJ88HXuW3qsI3Y0zOZFKfZEHcpWiHU/Jxzk629Brsab/mMiHQti9wMP+845RPe3Vg==}
+
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
 
@@ -7829,6 +8355,9 @@ packages:
     resolution: {integrity: sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==}
     engines: {node: '>=6'}
     hasBin: true
+
+  jsonfile@4.0.0:
+    resolution: {integrity: sha512-m6F1R3z8jjlf2imQHS2Qez5sjKWQzbuuhuJ/FKYFRZvPE3PuHcSMVZzfsLhGVOkfd20obL5SWEBew5ShlquNxg==}
 
   jszip@3.10.1:
     resolution: {integrity: sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==}
@@ -7852,6 +8381,9 @@ packages:
 
   koffi@2.15.2:
     resolution: {integrity: sha512-r9tjJLVRSOhCRWdVyQlF3/Ugzeg13jlzS4czS82MAgLff4W+BcYOW7g8Y62t9O5JYjYOLAjAovAZDNlDfZNu+g==}
+
+  kolorist@1.8.0:
+    resolution: {integrity: sha512-Y+60/zizpJ3HRH8DCss+q95yr6145JXZo46OTpFvDZWLfRCE4qChOyk1b26nMaNpfHHgxagk9dXT5OP0Tfe+dQ==}
 
   langsmith@0.3.87:
     resolution: {integrity: sha512-XXR1+9INH8YX96FKWc5tie0QixWz6tOqAsAKfcJyPkE0xPep+NDz0IQLR32q4bn10QK3LqD2HN6T3n6z1YLW7Q==}
@@ -7900,6 +8432,10 @@ packages:
     resolution: {integrity: sha512-IXO6OCs9yg8tMKzfPZ1YmheJbZCiEsnBdcB03l0OcfK9prKnJb96siuHCr5Fl37/yo9DnKU+TLpxzTUspw9shg==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
+  local-pkg@0.5.1:
+    resolution: {integrity: sha512-9rrA30MRRP3gBD3HTGnC6cDFpaE1kVDWxWgqWJUN0RvDNAo+Nz/9GxB+nHOH0ifbVFy0hSA1V6vFDvnx54lTEQ==}
+    engines: {node: '>=14'}
+
   lodash-es@4.18.1:
     resolution: {integrity: sha512-J8xewKD/Gk22OZbhpOVSwcs60zhd95ESDwezOFuA3/099925PdHJ7OFHNTGtajL3AlZkykD32HykiMo+BIBI8A==}
 
@@ -7908,6 +8444,17 @@ packages:
 
   lodash.debounce@4.0.8:
     resolution: {integrity: sha512-FT1yDzDYEoYWhnSGnpE/4Kj1fLZkDFyqRb7fNt6FdYOSxlUWAtp42Eh6Wb0rGIv/m9Bgo7x4GhQbm5Ys4SG5ow==}
+
+  lodash.get@4.4.2:
+    resolution: {integrity: sha512-z+Uw/vLuy6gQe8cfaFWD7p0wVv8fJl3mbzXh33RS+0oW2wvUqiRXiQ69gLWSLpgB5/6sU+r6BlQR0MBILadqTQ==}
+    deprecated: This package is deprecated. Use the optional chaining (?.) operator instead.
+
+  lodash.isequal@4.5.0:
+    resolution: {integrity: sha512-pDo3lu8Jhfjqls6GkMgpahsF9kCyayhgykjyLMNFTKWrpVdAQtYyB4muAMWozBB4ig/dtWAmsMxLEI8wuz+DYQ==}
+    deprecated: This package is deprecated. Use require('node:util').isDeepStrictEqual instead.
+
+  lodash@4.17.23:
+    resolution: {integrity: sha512-LgVTMpQtIopCi79SJeDiP0TfWi5CNEc/L/aRdTh3yIvmZXTnheWpKjSZhnvMl8iXbC1tFg9gdHHDMLoV7CnG+w==}
 
   lodash@4.18.1:
     resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
@@ -7941,6 +8488,10 @@ packages:
 
   lru-cache@5.1.1:
     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
+
+  lru-cache@6.0.0:
+    resolution: {integrity: sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==}
+    engines: {node: '>=10'}
 
   lru-cache@7.18.3:
     resolution: {integrity: sha512-jumlc0BIUrS3qJGgIkWZsyfAM7NCWiBcCDhnd+3NNM5KbBmLTgHVfWBcg6W+rLUsIpzpERPsvwUP7CckAQSOoA==}
@@ -8207,6 +8758,11 @@ packages:
     resolution: {integrity: sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A==}
     engines: {node: '>=18'}
 
+  mime@4.1.0:
+    resolution: {integrity: sha512-X5ju04+cAzsojXKes0B/S4tcYtFAJ6tTMuSPBEn9CPGlrWr8Fiw7qYeLT0XyH80HSoAoqWCaz+MWKh22P7G1cw==}
+    engines: {node: '>=16'}
+    hasBin: true
+
   mimic-fn@4.0.0:
     resolution: {integrity: sha512-vqiC06CuhBTUdZH+RYl8sFrL096vA45Ok5ISO6sE/Mr1jRbGH4Csnhi8f3wKVl7x8mO4Au7Ir9D3Oyv1VYMFJw==}
     engines: {node: '>=12'}
@@ -8222,6 +8778,9 @@ packages:
   minimatch@10.2.5:
     resolution: {integrity: sha512-MULkVLfKGYDFYejP07QOurDLLQpcjk7Fw+7jXS2R2czRQzR56yHRveU5NDJEOviH+hETZKSkIk5c+T23GjFUMg==}
     engines: {node: 18 || 20 || >=22}
+
+  minimatch@3.0.8:
+    resolution: {integrity: sha512-6FsRAQsxQ61mw+qP1ZzbL9Bc78x2p5OqNgNpnoAFLTrX8n5Kxph0CsnhmKKNXTWjXqU5L0pGPR7hYk+XWZr60Q==}
 
   minimatch@5.1.9:
     resolution: {integrity: sha512-7o1wEA2RyMP7Iu7GNba9vc0RWWGACJOCZBJX2GJWip0ikV+wcOsgVuY9uE8CPiyQhkGFSlhuSkZPavN7u1c2Fw==}
@@ -8268,6 +8827,9 @@ packages:
 
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
+
+  muggle-string@0.3.1:
+    resolution: {integrity: sha512-ckmWDJjphvd/FvZawgygcUeQCxzvohjFO5RxTjj4eq8kw359gFF3E1brjfI+viLMxss5JrHTDRHZvu2/tuy0Qg==}
 
   mustache@4.2.0:
     resolution: {integrity: sha512-71ippSywq5Yb7/tVYyGbkBggbU8H3u5Rz56fH60jGFgr8uHwxs+aSKeqmluIVzM0m0kB7xQjKS6qPfd0b2ZoqQ==}
@@ -8511,6 +9073,9 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
+  path-browserify@1.0.1:
+    resolution: {integrity: sha512-b7uo2UCUOYZcnF/3ID0lulOJi/bafxa1xPe7ZPsammBSpjSWQkjNxlt635YGS2MiR9GjvuXCtz2emr3jbsz98g==}
+
   path-data-parser@0.1.0:
     resolution: {integrity: sha512-NOnmBpt5Y2RWbuv0LMzsayp3lVylAHLPUTut412ZA3l+C4uw4ZVkQbjShYCQ8TCpUMdPapr4YjUqLYD6v68j+w==}
 
@@ -8753,6 +9318,10 @@ packages:
 
   punycode.js@2.3.1:
     resolution: {integrity: sha512-uxFIHU0YlHYhDQtV4R9J6a52SLx28BCjT+4ieh7IGbgwVJWO+km431c4yRlREUAsAmt/uMjQUyQHNEPf0M39CA==}
+    engines: {node: '>=6'}
+
+  punycode@2.3.1:
+    resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
 
   puppeteer-core@22.15.0:
@@ -9011,6 +9580,9 @@ packages:
   resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
 
+  resolve@1.19.0:
+    resolution: {integrity: sha512-rArEXAgsBG4UgRGcynxWIWKFvh/XZCcS8UJdHhwy91zwAvCZIbcs+vAbflgBnNjYMs/i/i+/Ux6IZhML1yPvxg==}
+
   resolve@1.22.11:
     resolution: {integrity: sha512-RfqAvLnMl313r7c9oclB1HhUEAezcpLjz95wFH4LVuhk9JF/r22qmVP9AMmOU4vMX7Q8pN8jwNg/CSpdFnMjTQ==}
     engines: {node: '>= 0.4'}
@@ -9133,6 +9705,11 @@ packages:
 
   semver@6.3.1:
     resolution: {integrity: sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==}
+    hasBin: true
+
+  semver@7.5.4:
+    resolution: {integrity: sha512-1bCSESV6Pv+i21Hvpxp3Dx+pSD8lIPt8uVjRrxAUt/nbswYc+tK6Y2btiULjd4+fnq15PX+nqQDC7Oft7WkwcA==}
+    engines: {node: '>=10'}
     hasBin: true
 
   semver@7.7.4:
@@ -9269,6 +9846,9 @@ packages:
     resolution: {integrity: sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==}
     engines: {node: '>= 10.x'}
 
+  sprintf-js@1.0.3:
+    resolution: {integrity: sha512-D9cPgkvLlV3t3IzL0D0YLvGA9Ahk4PcvVwUbN0dSGr1aP0Nrt4AEnTUbuGvquEC0mA64Gqt1fzirlRs5ibXx8g==}
+
   ssh2@1.17.0:
     resolution: {integrity: sha512-wPldCk3asibAjQ/kziWQQt1Wh3PgDFpC0XpwclzKcdT1vql6KeYxf5LIt4nlFkUeR8WuphYMKqUA56X4rjbfgQ==}
     engines: {node: '>=10.16.0'}
@@ -9288,6 +9868,10 @@ packages:
 
   streamx@2.25.0:
     resolution: {integrity: sha512-0nQuG6jf1w+wddNEEXCF4nTg3LtufWINB5eFEN+5TNZW7KWJp6x87+JFL43vaAUPyCfH1wID+mNVyW6OHtFamg==}
+
+  string-argv@0.3.2:
+    resolution: {integrity: sha512-aqD2Q0144Z+/RqG52NeHEkZauTAUWJO8c6yTftGJKO3Tja5tUgIfmIl6kExvhtxSDP7fXB6DvzkfMpCd/F3G+Q==}
+    engines: {node: '>=0.6.19'}
 
   string-width@4.2.3:
     resolution: {integrity: sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==}
@@ -9326,6 +9910,10 @@ packages:
     resolution: {integrity: sha512-4gB8na07fecVVkOI6Rs4e7T6NOTki5EmL7TUduTs6bu3EdnSycntVJ4re8kgZA+wx9IueI2Y11bfbgwtzuE0KQ==}
     engines: {node: '>=0.10.0'}
 
+  strip-json-comments@3.1.1:
+    resolution: {integrity: sha512-6fPc+R4ihwqP6N/aIv2f1gMH8lOVtWQHoqC4yK6oSDVVocumAsfCqjkXnqiYMhmMwS/mEHLp7Vehlt3ql6lEig==}
+    engines: {node: '>=8'}
+
   strip-json-comments@5.0.3:
     resolution: {integrity: sha512-1tB5mhVo7U+ETBKNf92xT4hrQa3pm0MZ0PQvuDnWgAAGHDsfp4lPSpiS6psrSiet87wyGPh9ft6wmhOMQ0hDiw==}
     engines: {node: '>=14.16'}
@@ -9357,6 +9945,10 @@ packages:
   supports-color@7.2.0:
     resolution: {integrity: sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==}
     engines: {node: '>=8'}
+
+  supports-color@8.1.1:
+    resolution: {integrity: sha512-MpUEN2OodtUzxvKQl72cUF7RQ5EiHsGvSsVG0ia9c5RbWGL2CI4C7EpPS8UTBIplnlzZiNuV56w+FuNxy3ty2Q==}
+    engines: {node: '>=10'}
 
   supports-preserve-symlinks-flag@1.0.0:
     resolution: {integrity: sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==}
@@ -9562,6 +10154,11 @@ packages:
     peerDependencies:
       typescript: 5.0.x || 5.1.x || 5.2.x || 5.3.x || 5.4.x || 5.5.x || 5.6.x || 5.7.x || 5.8.x || 5.9.x || 6.0.x
 
+  typescript@5.4.2:
+    resolution: {integrity: sha512-+2/g0Fds1ERlP6JsakQQDXjZdZMM+rqpamFZJEKh4kwTIn3iDkgKtby0CeNd5ATNZ4Ry1ax15TMx0W2V+miizQ==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
@@ -9653,6 +10250,10 @@ packages:
   unist-util-visit@5.1.0:
     resolution: {integrity: sha512-m+vIdyeCOpdr/QeQCu2EzxX/ohgS8KbnPDgFni4dQsfSCtpz8UqDyY5GjRru8PDKuYn7Fq19j1CQ+nJSsGKOzg==}
 
+  universalify@0.1.2:
+    resolution: {integrity: sha512-rBJeI5CXAlmy1pV+617WB9J63U6XcazHHF2f2dbJix4XzpUF0RS3Zbj0FGIOCAva5P/d/GBOYaACQ1w+0azUkg==}
+    engines: {node: '>= 4.0.0'}
+
   unpipe@1.0.0:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
     engines: {node: '>= 0.8'}
@@ -9725,6 +10326,9 @@ packages:
     peerDependencies:
       browserslist: '>= 4.21.0'
 
+  uri-js@4.4.1:
+    resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
+
   url-template@2.0.8:
     resolution: {integrity: sha512-XdVKMF4SJ0nP/O7XIPB0JwAEuT9lDIYnNsK8yGVe43y0AWoKeJNdv3ZNWh7ksJ6KqQFjOO6ox/VEitLnaVNufw==}
 
@@ -9783,6 +10387,10 @@ packages:
     deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
+  validator@13.15.35:
+    resolution: {integrity: sha512-TQ5pAGhd5whStmqWvYF4OjQROlmv9SMFVt37qoCBdqRffuuklWYQlCNnEs2ZaIBD1kZRNnikiZOS1eqgkar0iw==}
+    engines: {node: '>= 0.10'}
+
   vary@1.1.2:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
@@ -9807,6 +10415,16 @@ packages:
     resolution: {integrity: sha512-AM9aQ/IPrW/6ENLQg3AGY4K1N2TGZdR5e4gu/MmmR2xR3Ll1+dib+nook92g4TV3PXVyeyxdWwtaCAiUL0hMxA==}
     engines: {node: ^18.0.0 || >=20.0.0}
     hasBin: true
+
+  vite-plugin-dts@3.9.1:
+    resolution: {integrity: sha512-rVp2KM9Ue22NGWB8dNtWEr+KekN3rIgz1tWD050QnRGlriUCmaDwa7qA5zDEjbXg5lAXhYMSBJtx3q3hQIJZSg==}
+    engines: {node: ^14.18.0 || >=16.0.0}
+    peerDependencies:
+      typescript: '*'
+      vite: '*'
+    peerDependenciesMeta:
+      vite:
+        optional: true
 
   vite@5.4.21:
     resolution: {integrity: sha512-o5a9xKjbtuhY6Bi5S3+HvbRERmouabWbyUcpXXUA1u+GNUKoROi9byOJ8M0nHbHYHkYICiMlqxkg1KkYmm25Sw==}
@@ -9912,6 +10530,15 @@ packages:
       jsdom:
         optional: true
 
+  vue-template-compiler@2.7.16:
+    resolution: {integrity: sha512-AYbUWAJHLGGQM7+cNTELw+KsOG9nl2CnSv467WobS5Cv9uk3wFcnr1Etsz2sEIHEZvw1U+o9mRlEO6QbZvUPGQ==}
+
+  vue-tsc@1.8.27:
+    resolution: {integrity: sha512-WesKCAZCRAbmmhuGl3+VrdWItEvfoFIPXOvUJkjULi+x+6G/Dy69yO3TBRJDr9eUlmsNAwVmxsNZxvHKzbkKdg==}
+    hasBin: true
+    peerDependencies:
+      typescript: '*'
+
   w3c-keyname@2.2.8:
     resolution: {integrity: sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ==}
 
@@ -9990,6 +10617,9 @@ packages:
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
 
+  yallist@4.0.0:
+    resolution: {integrity: sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==}
+
   yaml@2.8.3:
     resolution: {integrity: sha512-AvbaCLOO2Otw/lW5bmh9d/WEdcDFdQp2Z2ZUH3pX9U2ihyUY0nvLv7J6TrWowklRGPYbB/IuIMfYgxaCPg5Bpg==}
     engines: {node: '>= 14.6'}
@@ -10030,6 +10660,11 @@ packages:
   yoctocolors@2.1.2:
     resolution: {integrity: sha512-CzhO+pFNo8ajLM2d2IW/R93ipy99LWjtwblvC1RsoSUMZgyLbYFr221TnSNT7GjGdYui6P459mw9JH/g/zW2ug==}
     engines: {node: '>=18'}
+
+  z-schema@5.0.5:
+    resolution: {integrity: sha512-D7eujBWkLa3p2sIpJA0d1pr7es+a7m0vFAnZLlCEKq/Ij2k0MLi9Br2UPxoxdYystm5K1yeBGzub0FlYUEWj2Q==}
+    engines: {node: '>=8.0.0'}
+    hasBin: true
 
   zip-stream@6.0.1:
     resolution: {integrity: sha512-zK7YHHz4ZXpW89AHXUPbQVGKI7uvkd3hzusTdotCg1UxyaVtg0zFJSTfW/Dq5f7OBBVnq6cZIaC8Ti4hb6dtCA==}
@@ -10095,11 +10730,9 @@ snapshots:
       - '@cfworker/json-schema'
       - supports-color
 
-  '@agentos-software/coreutils@0.0.0-nathan-agentos-package-resolution.42d8146': {}
+  '@agentos-software/codex-cli@0.0.0-nathan-agentos-package-resolution.efc374f': {}
 
   '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.42d8146': {}
-
-  '@agentos-software/jq@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
   '@agentos-software/opencode@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
@@ -10116,8 +10749,6 @@ snapshots:
       - utf-8-validate
       - ws
       - zod
-
-  '@agentos-software/ripgrep@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
   '@ai-sdk/amazon-bedrock@3.0.93(zod@4.3.6)':
     dependencies:
@@ -12229,6 +12860,69 @@ snapshots:
     dependencies:
       '@chevrotain/types': 11.1.2
 
+  '@microsoft/api-extractor-model@7.28.13(@types/node@20.19.43)':
+    dependencies:
+      '@microsoft/tsdoc': 0.14.2
+      '@microsoft/tsdoc-config': 0.16.2
+      '@rushstack/node-core-library': 4.0.2(@types/node@20.19.43)
+    transitivePeerDependencies:
+      - '@types/node'
+
+  '@microsoft/api-extractor-model@7.28.13(@types/node@22.19.15)':
+    dependencies:
+      '@microsoft/tsdoc': 0.14.2
+      '@microsoft/tsdoc-config': 0.16.2
+      '@rushstack/node-core-library': 4.0.2(@types/node@22.19.15)
+    transitivePeerDependencies:
+      - '@types/node'
+    optional: true
+
+  '@microsoft/api-extractor@7.43.0(@types/node@20.19.43)':
+    dependencies:
+      '@microsoft/api-extractor-model': 7.28.13(@types/node@20.19.43)
+      '@microsoft/tsdoc': 0.14.2
+      '@microsoft/tsdoc-config': 0.16.2
+      '@rushstack/node-core-library': 4.0.2(@types/node@20.19.43)
+      '@rushstack/rig-package': 0.5.2
+      '@rushstack/terminal': 0.10.0(@types/node@20.19.43)
+      '@rushstack/ts-command-line': 4.19.1(@types/node@20.19.43)
+      lodash: 4.17.23
+      minimatch: 3.0.8
+      resolve: 1.22.11
+      semver: 7.5.4
+      source-map: 0.6.1
+      typescript: 5.4.2
+    transitivePeerDependencies:
+      - '@types/node'
+
+  '@microsoft/api-extractor@7.43.0(@types/node@22.19.15)':
+    dependencies:
+      '@microsoft/api-extractor-model': 7.28.13(@types/node@22.19.15)
+      '@microsoft/tsdoc': 0.14.2
+      '@microsoft/tsdoc-config': 0.16.2
+      '@rushstack/node-core-library': 4.0.2(@types/node@22.19.15)
+      '@rushstack/rig-package': 0.5.2
+      '@rushstack/terminal': 0.10.0(@types/node@22.19.15)
+      '@rushstack/ts-command-line': 4.19.1(@types/node@22.19.15)
+      lodash: 4.17.23
+      minimatch: 3.0.8
+      resolve: 1.22.11
+      semver: 7.5.4
+      source-map: 0.6.1
+      typescript: 5.4.2
+    transitivePeerDependencies:
+      - '@types/node'
+    optional: true
+
+  '@microsoft/tsdoc-config@0.16.2':
+    dependencies:
+      '@microsoft/tsdoc': 0.14.2
+      ajv: 6.12.6
+      jju: 1.4.0
+      resolve: 1.19.0
+
+  '@microsoft/tsdoc@0.14.2': {}
+
   '@mistralai/mistralai@1.14.1(bufferutil@4.1.0)':
     dependencies:
       ws: 8.20.0(bufferutil@4.1.0)
@@ -12372,6 +13066,23 @@ snapshots:
 
   '@radix-ui/primitive@1.1.4': {}
 
+  '@radix-ui/react-accordion@1.2.14(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-collapsible': 1.1.14(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-collection': 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-direction': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-id': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-accordion@1.2.14(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/primitive': 1.1.4
@@ -12389,6 +13100,15 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-arrow@1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-arrow@1.1.10(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/react-primitive': 2.1.6(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -12397,6 +13117,19 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
+
+  '@radix-ui/react-avatar@1.2.0(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-callback-ref': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-is-hydrated': 0.1.1(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-avatar@1.2.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12410,6 +13143,22 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
+
+  '@radix-ui/react-checkbox@1.3.5(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-presence': 1.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-previous': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-size': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-checkbox@1.3.5(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12427,6 +13176,22 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-collapsible@1.1.14(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-id': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-presence': 1.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-collapsible@1.1.14(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/primitive': 1.1.4
@@ -12443,6 +13208,18 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-collection@1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-slot': 1.3.0(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-collection@1.1.10(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/react-compose-refs': 1.1.3(@types/react@19.2.17)(react@19.2.7)
@@ -12455,11 +13232,30 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-compose-refs@1.1.3(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   '@radix-ui/react-compose-refs@1.1.3(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
       react: 19.2.7
     optionalDependencies:
       '@types/react': 19.2.17
+
+  '@radix-ui/react-context-menu@2.3.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-menu': 2.1.18(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-context-menu@2.3.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12474,11 +13270,39 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-context@1.1.4(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   '@radix-ui/react-context@1.1.4(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
       react: 19.2.7
     optionalDependencies:
       '@types/react': 19.2.17
+
+  '@radix-ui/react-dialog@1.1.17(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-dismissable-layer': 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-focus-guards': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-focus-scope': 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-id': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-portal': 1.1.12(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-presence': 1.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-slot': 1.3.0(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      aria-hidden: 1.2.6
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+      react-remove-scroll: 2.7.2(@types/react@18.3.31)(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-dialog@1.1.17(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12502,11 +13326,30 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-direction@1.1.2(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   '@radix-ui/react-direction@1.1.2(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
       react: 19.2.7
     optionalDependencies:
       '@types/react': 19.2.17
+
+  '@radix-ui/react-dismissable-layer@1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-callback-ref': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-escape-keydown': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-dismissable-layer@1.1.13(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12520,6 +13363,21 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
+
+  '@radix-ui/react-dropdown-menu@2.1.18(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-id': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-menu': 2.1.18(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-dropdown-menu@2.1.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12536,11 +13394,28 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-focus-guards@1.1.4(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   '@radix-ui/react-focus-guards@1.1.4(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
       react: 19.2.7
     optionalDependencies:
       '@types/react': 19.2.17
+
+  '@radix-ui/react-focus-scope@1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-callback-ref': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-focus-scope@1.1.10(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12553,12 +13428,28 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-id@1.1.2(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   '@radix-ui/react-id@1.1.2(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
       '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@19.2.17)(react@19.2.7)
       react: 19.2.7
     optionalDependencies:
       '@types/react': 19.2.17
+
+  '@radix-ui/react-label@2.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-label@2.1.10(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12568,6 +13459,32 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
+
+  '@radix-ui/react-menu@2.1.18(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-collection': 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-direction': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-dismissable-layer': 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-focus-guards': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-focus-scope': 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-id': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-popper': 1.3.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-portal': 1.1.12(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-presence': 1.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-roving-focus': 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-slot': 1.3.0(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-callback-ref': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      aria-hidden: 1.2.6
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+      react-remove-scroll: 2.7.2(@types/react@18.3.31)(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-menu@2.1.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12595,6 +13512,29 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-popover@1.1.17(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-dismissable-layer': 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-focus-guards': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-focus-scope': 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-id': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-popper': 1.3.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-portal': 1.1.12(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-presence': 1.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-slot': 1.3.0(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      aria-hidden: 1.2.6
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+      react-remove-scroll: 2.7.2(@types/react@18.3.31)(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-popover@1.1.17(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/primitive': 1.1.4
@@ -12618,6 +13558,24 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-popper@1.3.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@floating-ui/react-dom': 2.1.8(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-arrow': 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-callback-ref': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-rect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-size': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/rect': 1.1.2
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-popper@1.3.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@floating-ui/react-dom': 2.1.8(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -12636,6 +13594,16 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-portal@1.1.12(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-portal@1.1.12(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/react-primitive': 2.1.6(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -12646,6 +13614,15 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-presence@1.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-presence@1.1.6(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@19.2.17)(react@19.2.7)
@@ -12654,6 +13631,15 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
+
+  '@radix-ui/react-primitive@2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-slot': 1.3.0(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-primitive@2.1.6(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12664,6 +13650,16 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-progress@1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-progress@1.1.10(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/react-context': 1.1.4(@types/react@19.2.17)(react@19.2.7)
@@ -12673,6 +13669,24 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
+
+  '@radix-ui/react-radio-group@1.4.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-direction': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-presence': 1.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-roving-focus': 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-previous': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-size': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-radio-group@1.4.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12692,6 +13706,23 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-roving-focus@1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-collection': 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-direction': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-id': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-callback-ref': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-roving-focus@1.1.13(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/primitive': 1.1.4
@@ -12709,6 +13740,23 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-scroll-area@1.2.12(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/number': 1.1.2
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-direction': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-presence': 1.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-callback-ref': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-scroll-area@1.2.12(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/number': 1.1.2
@@ -12725,6 +13773,36 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
+
+  '@radix-ui/react-select@2.3.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/number': 1.1.2
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-collection': 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-direction': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-dismissable-layer': 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-focus-guards': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-focus-scope': 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-id': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-popper': 1.3.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-portal': 1.1.12(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-presence': 1.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-slot': 1.3.0(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-callback-ref': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-previous': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-visually-hidden': 1.2.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      aria-hidden: 1.2.6
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+      react-remove-scroll: 2.7.2(@types/react@18.3.31)(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-select@2.3.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12756,6 +13834,15 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-separator@1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-separator@1.1.10(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/react-primitive': 2.1.6(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -12764,6 +13851,25 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
+
+  '@radix-ui/react-slider@1.4.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/number': 1.1.2
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-collection': 1.1.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-direction': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-previous': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-size': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-slider@1.4.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12784,12 +13890,34 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-slot@1.3.0(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   '@radix-ui/react-slot@1.3.0(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
       '@radix-ui/react-compose-refs': 1.1.3(@types/react@19.2.17)(react@19.2.7)
       react: 19.2.7
     optionalDependencies:
       '@types/react': 19.2.17
+
+  '@radix-ui/react-switch@1.3.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-previous': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-size': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-switch@1.3.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12805,6 +13933,22 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
+
+  '@radix-ui/react-tabs@1.1.15(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-direction': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-id': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-presence': 1.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-roving-focus': 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-tabs@1.1.15(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12822,6 +13966,21 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-toggle-group@1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-direction': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-roving-focus': 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-toggle': 1.1.12(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-toggle-group@1.1.13(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/primitive': 1.1.4
@@ -12837,6 +13996,17 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-toggle@1.1.12(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
+
   '@radix-ui/react-toggle@1.1.12(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@radix-ui/primitive': 1.1.4
@@ -12847,6 +14017,26 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
+
+  '@radix-ui/react-tooltip@1.2.10(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/primitive': 1.1.4
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-context': 1.1.4(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-dismissable-layer': 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-id': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-popper': 1.3.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-portal': 1.1.12(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-presence': 1.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-slot': 1.3.0(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-controllable-state': 1.2.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-visually-hidden': 1.2.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-tooltip@1.2.10(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12868,11 +14058,25 @@ snapshots:
       '@types/react': 19.2.17
       '@types/react-dom': 19.2.3(@types/react@19.2.17)
 
+  '@radix-ui/react-use-callback-ref@1.1.2(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   '@radix-ui/react-use-callback-ref@1.1.2(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
       react: 19.2.7
     optionalDependencies:
       '@types/react': 19.2.17
+
+  '@radix-ui/react-use-controllable-state@1.2.3(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-use-effect-event': 0.0.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
 
   '@radix-ui/react-use-controllable-state@1.2.3(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
@@ -12882,12 +14086,26 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
 
+  '@radix-ui/react-use-effect-event@0.0.3(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   '@radix-ui/react-use-effect-event@0.0.3(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
       '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@19.2.17)(react@19.2.7)
       react: 19.2.7
     optionalDependencies:
       '@types/react': 19.2.17
+
+  '@radix-ui/react-use-escape-keydown@1.1.2(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-use-callback-ref': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
 
   '@radix-ui/react-use-escape-keydown@1.1.2(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
@@ -12896,11 +14114,23 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
 
+  '@radix-ui/react-use-is-hydrated@0.1.1(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   '@radix-ui/react-use-is-hydrated@0.1.1(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
       react: 19.2.7
     optionalDependencies:
       '@types/react': 19.2.17
+
+  '@radix-ui/react-use-layout-effect@1.1.2(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
 
   '@radix-ui/react-use-layout-effect@1.1.2(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
@@ -12908,11 +14138,24 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
 
+  '@radix-ui/react-use-previous@1.1.2(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   '@radix-ui/react-use-previous@1.1.2(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
       react: 19.2.7
     optionalDependencies:
       '@types/react': 19.2.17
+
+  '@radix-ui/react-use-rect@1.1.2(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      '@radix-ui/rect': 1.1.2
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
 
   '@radix-ui/react-use-rect@1.1.2(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
@@ -12921,12 +14164,28 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
 
+  '@radix-ui/react-use-size@1.1.2(@types/react@18.3.31)(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      react: 19.2.7
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   '@radix-ui/react-use-size@1.1.2(@types/react@19.2.17)(react@19.2.7)':
     dependencies:
       '@radix-ui/react-use-layout-effect': 1.1.2(@types/react@19.2.17)(react@19.2.7)
       react: 19.2.7
     optionalDependencies:
       '@types/react': 19.2.17
+
+  '@radix-ui/react-visually-hidden@1.2.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@radix-ui/react-visually-hidden@1.2.6(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -12957,80 +14216,6 @@ snapshots:
   '@react-types/shared@3.36.0(react@19.2.7)':
     dependencies:
       react: 19.2.7
-
-  '@rivet-dev/docs-theme@file:website/vendor/theme(@babel/core@7.29.7)(@babel/runtime@7.29.2)(@babel/template@7.29.7)(@codemirror/language@6.12.4)(@codemirror/search@6.7.1)(@codemirror/theme-one-dark@6.1.3)(@types/node@24.13.2)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))(codemirror@6.0.2)(jiti@1.21.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tsx@4.21.0)(use-sync-external-store@1.6.0(react@19.2.7))(yaml@2.9.0)':
-    dependencies:
-      '@astrojs/mdx': 4.3.14(astro@5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0))
-      '@astrojs/react': 4.4.2(@types/node@24.13.2)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(jiti@1.21.7)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tsx@4.21.0)(yaml@2.9.0)
-      '@astrojs/sitemap': 3.7.3
-      '@fortawesome/fontawesome-svg-core': 7.3.0
-      '@fortawesome/free-brands-svg-icons': 7.3.0
-      '@fortawesome/free-solid-svg-icons': 7.3.0
-      '@fortawesome/react-fontawesome': 3.3.1(@fortawesome/fontawesome-svg-core@7.3.0)(react@19.2.7)
-      '@headlessui/react': 2.2.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@rivet-gg/components': file:website/vendor/theme/vendor/components(@babel/core@7.29.7)(@babel/runtime@7.29.2)(@babel/template@7.29.7)(@codemirror/language@6.12.4)(@codemirror/search@6.7.1)(@codemirror/theme-one-dark@6.1.3)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(codemirror@6.0.2)(lodash@4.18.1)(posthog-js@1.395.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))
-      '@rivet-gg/icons': file:website/vendor/theme/vendor/icons(@fortawesome/fontawesome-svg-core@7.3.0)(@fortawesome/free-brands-svg-icons@7.3.0)(@fortawesome/free-solid-svg-icons@7.3.0)(@fortawesome/react-fontawesome@3.3.1(@fortawesome/fontawesome-svg-core@7.3.0)(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@shikijs/transformers': 3.23.0
-      '@sindresorhus/slugify': 3.0.0
-      '@tailwindcss/typography': 0.5.20(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))
-      acorn: 8.17.0
-      astro: 5.18.2(@types/node@24.13.2)(aws4fetch@1.0.20)(jiti@1.21.7)(rollup@4.60.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0)
-      clsx: 2.1.1
-      dedent: 1.7.2
-      esast-util-from-js: 2.0.1
-      escape-html: 1.0.3
-      estree-util-to-js: 2.0.0
-      fast-glob: 3.3.3
-      framer-motion: 12.40.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      fuse.js: 7.4.2
-      lodash: 4.18.1
-      lucide-react: 0.439.0(react@19.2.7)
-      mdast-util-to-string: 4.0.0
-      mdx-annotations: 0.1.4
-      mermaid: 11.16.0
-      playwright: 1.59.1
-      posthog-js: 1.395.0
-      react: 19.2.7
-      react-dom: 19.2.7(react@19.2.7)
-      react-markdown: 10.1.0(@types/react@19.2.17)(react@19.2.7)
-      rehype-mermaid: 3.0.0(playwright@1.59.1)
-      rehype-parse: 9.0.1
-      remark-gfm: 4.0.1
-      shiki: 3.23.0
-      tailwindcss: 3.4.19(tsx@4.21.0)(yaml@2.9.0)
-      tm-themes: 1.12.2
-      typesense: 2.1.0(@babel/runtime@7.29.2)
-      unified: 11.0.5
-      unist-util-filter: 5.0.1
-      unist-util-visit: 5.1.0
-      zustand: 5.0.14(@types/react@19.2.17)(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
-    transitivePeerDependencies:
-      - '@babel/core'
-      - '@babel/runtime'
-      - '@babel/template'
-      - '@codemirror/language'
-      - '@codemirror/search'
-      - '@codemirror/theme-one-dark'
-      - '@emotion/is-prop-valid'
-      - '@types/node'
-      - '@types/react'
-      - '@types/react-dom'
-      - babel-plugin-macros
-      - codemirror
-      - debug
-      - immer
-      - jiti
-      - less
-      - lightningcss
-      - sass
-      - sass-embedded
-      - stylus
-      - sugarss
-      - supports-color
-      - terser
-      - tsx
-      - use-sync-external-store
-      - yaml
 
   '@rivet-gg/components@file:website/vendor/theme/vendor/components(@babel/core@7.29.7)(@babel/runtime@7.29.2)(@babel/template@7.29.7)(@codemirror/language@6.12.4)(@codemirror/search@6.7.1)(@codemirror/theme-one-dark@6.1.3)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(codemirror@6.0.2)(lodash@4.18.1)(posthog-js@1.395.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@3.4.19(tsx@4.21.0)(yaml@2.9.0))':
     dependencies:
@@ -13375,6 +14560,68 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.1':
     optional: true
 
+  '@rushstack/node-core-library@4.0.2(@types/node@20.19.43)':
+    dependencies:
+      fs-extra: 7.0.1
+      import-lazy: 4.0.0
+      jju: 1.4.0
+      resolve: 1.22.11
+      semver: 7.5.4
+      z-schema: 5.0.5
+    optionalDependencies:
+      '@types/node': 20.19.43
+
+  '@rushstack/node-core-library@4.0.2(@types/node@22.19.15)':
+    dependencies:
+      fs-extra: 7.0.1
+      import-lazy: 4.0.0
+      jju: 1.4.0
+      resolve: 1.22.11
+      semver: 7.5.4
+      z-schema: 5.0.5
+    optionalDependencies:
+      '@types/node': 22.19.15
+    optional: true
+
+  '@rushstack/rig-package@0.5.2':
+    dependencies:
+      resolve: 1.22.11
+      strip-json-comments: 3.1.1
+
+  '@rushstack/terminal@0.10.0(@types/node@20.19.43)':
+    dependencies:
+      '@rushstack/node-core-library': 4.0.2(@types/node@20.19.43)
+      supports-color: 8.1.1
+    optionalDependencies:
+      '@types/node': 20.19.43
+
+  '@rushstack/terminal@0.10.0(@types/node@22.19.15)':
+    dependencies:
+      '@rushstack/node-core-library': 4.0.2(@types/node@22.19.15)
+      supports-color: 8.1.1
+    optionalDependencies:
+      '@types/node': 22.19.15
+    optional: true
+
+  '@rushstack/ts-command-line@4.19.1(@types/node@20.19.43)':
+    dependencies:
+      '@rushstack/terminal': 0.10.0(@types/node@20.19.43)
+      '@types/argparse': 1.0.38
+      argparse: 1.0.10
+      string-argv: 0.3.2
+    transitivePeerDependencies:
+      - '@types/node'
+
+  '@rushstack/ts-command-line@4.19.1(@types/node@22.19.15)':
+    dependencies:
+      '@rushstack/terminal': 0.10.0(@types/node@22.19.15)
+      '@types/argparse': 1.0.38
+      argparse: 1.0.10
+      string-argv: 0.3.2
+    transitivePeerDependencies:
+      - '@types/node'
+    optional: true
+
   '@sandbox-agent/cli-darwin-arm64@0.4.2':
     optional: true
 
@@ -13402,6 +14649,14 @@ snapshots:
       '@sandbox-agent/cli-linux-x64': 0.4.2
       '@sandbox-agent/cli-win32-x64': 0.4.2
     optional: true
+
+  '@secure-exec/google-drive@0.0.0-main.8425e65':
+    dependencies:
+      '@secure-exec/core': link:../secure-exec/packages/core
+
+  '@secure-exec/s3@0.0.0-main.8425e65':
+    dependencies:
+      '@secure-exec/core': link:../secure-exec/packages/core
 
   '@sentry-internal/browser-utils@8.55.2':
     dependencies:
@@ -13888,6 +15143,8 @@ snapshots:
   '@turbo/windows-arm64@2.9.1':
     optional: true
 
+  '@types/argparse@1.0.38': {}
+
   '@types/babel__core@7.20.5':
     dependencies:
       '@babel/parser': 7.29.7
@@ -14050,6 +15307,10 @@ snapshots:
 
   '@types/mime-types@2.1.4': {}
 
+  '@types/mime@4.0.0':
+    dependencies:
+      mime: 4.1.0
+
   '@types/ms@2.1.0': {}
 
   '@types/nlcst@2.0.3':
@@ -14065,6 +15326,10 @@ snapshots:
     dependencies:
       undici-types: 5.26.5
 
+  '@types/node@20.19.43':
+    dependencies:
+      undici-types: 6.21.0
+
   '@types/node@22.19.15':
     dependencies:
       undici-types: 6.21.0
@@ -14074,6 +15339,10 @@ snapshots:
       undici-types: 7.18.2
 
   '@types/prop-types@15.7.15': {}
+
+  '@types/react-dom@18.3.7(@types/react@18.3.31)':
+    dependencies:
+      '@types/react': 18.3.31
 
   '@types/react-dom@19.2.3(@types/react@19.2.17)':
     dependencies:
@@ -14162,6 +15431,18 @@ snapshots:
 
   '@vercel/oidc@3.1.0': {}
 
+  '@vitejs/plugin-react@4.7.0(vite@5.4.21(@types/node@20.19.43))':
+    dependencies:
+      '@babel/core': 7.29.7
+      '@babel/plugin-transform-react-jsx-self': 7.29.7(@babel/core@7.29.7)
+      '@babel/plugin-transform-react-jsx-source': 7.29.7(@babel/core@7.29.7)
+      '@rolldown/pluginutils': 1.0.0-beta.27
+      '@types/babel__core': 7.20.5
+      react-refresh: 0.17.0
+      vite: 5.4.21(@types/node@20.19.43)
+    transitivePeerDependencies:
+      - supports-color
+
   '@vitejs/plugin-react@4.7.0(vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0))':
     dependencies:
       '@babel/core': 7.29.7
@@ -14213,6 +15494,48 @@ snapshots:
       '@vitest/pretty-format': 2.1.9
       loupe: 3.2.1
       tinyrainbow: 1.2.0
+
+  '@volar/language-core@1.11.1':
+    dependencies:
+      '@volar/source-map': 1.11.1
+
+  '@volar/source-map@1.11.1':
+    dependencies:
+      muggle-string: 0.3.1
+
+  '@volar/typescript@1.11.1':
+    dependencies:
+      '@volar/language-core': 1.11.1
+      path-browserify: 1.0.1
+
+  '@vue/compiler-core@3.5.39':
+    dependencies:
+      '@babel/parser': 7.29.7
+      '@vue/shared': 3.5.39
+      entities: 7.0.1
+      estree-walker: 2.0.2
+      source-map-js: 1.2.1
+
+  '@vue/compiler-dom@3.5.39':
+    dependencies:
+      '@vue/compiler-core': 3.5.39
+      '@vue/shared': 3.5.39
+
+  '@vue/language-core@1.8.27(typescript@5.9.3)':
+    dependencies:
+      '@volar/language-core': 1.11.1
+      '@volar/source-map': 1.11.1
+      '@vue/compiler-dom': 3.5.39
+      '@vue/shared': 3.5.39
+      computeds: 0.0.1
+      minimatch: 9.0.9
+      muggle-string: 0.3.1
+      path-browserify: 1.0.1
+      vue-template-compiler: 2.7.16
+    optionalDependencies:
+      typescript: 5.9.3
+
+  '@vue/shared@3.5.39': {}
 
   '@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0)':
     dependencies:
@@ -14275,6 +15598,13 @@ snapshots:
     optionalDependencies:
       ajv: 8.18.0
 
+  ajv@6.12.6:
+    dependencies:
+      fast-deep-equal: 3.1.3
+      fast-json-stable-stringify: 2.1.0
+      json-schema-traverse: 0.4.1
+      uri-js: 4.4.1
+
   ajv@8.18.0:
     dependencies:
       fast-deep-equal: 3.1.3
@@ -14330,6 +15660,10 @@ snapshots:
       - react-native-b4a
 
   arg@5.0.2: {}
+
+  argparse@1.0.10:
+    dependencies:
+      sprintf-js: 1.0.3
 
   argparse@2.0.1: {}
 
@@ -14585,6 +15919,11 @@ snapshots:
       widest-line: 5.0.0
       wrap-ansi: 9.0.2
 
+  brace-expansion@1.1.15:
+    dependencies:
+      balanced-match: 1.0.2
+      concat-map: 0.0.1
+
   brace-expansion@2.0.3:
     dependencies:
       balanced-match: 1.0.2
@@ -14770,6 +16109,18 @@ snapshots:
 
   clsx@2.1.1: {}
 
+  cmdk@1.1.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
+    dependencies:
+      '@radix-ui/react-compose-refs': 1.1.3(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-dialog': 1.1.17(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@radix-ui/react-id': 1.1.2(@types/react@18.3.31)(react@19.2.7)
+      '@radix-ui/react-primitive': 2.1.6(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    transitivePeerDependencies:
+      - '@types/react'
+      - '@types/react-dom'
+
   cmdk@1.1.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
     dependencies:
       '@radix-ui/react-compose-refs': 1.1.3(@types/react@19.2.17)(react@19.2.7)
@@ -14830,6 +16181,9 @@ snapshots:
 
   commander@8.3.0: {}
 
+  commander@9.5.0:
+    optional: true
+
   common-ancestor-path@1.0.1: {}
 
   compress-commons@6.0.2:
@@ -14839,6 +16193,10 @@ snapshots:
       is-stream: 2.0.1
       normalize-path: 3.0.0
       readable-stream: 4.7.0
+
+  computeds@0.0.1: {}
+
+  concat-map@0.0.1: {}
 
   confbox@0.1.8: {}
 
@@ -15128,6 +16486,8 @@ snapshots:
 
   dayjs@1.11.21: {}
 
+  de-indent@1.0.2: {}
+
   debug@4.4.3:
     dependencies:
       ms: 2.1.3
@@ -15285,6 +16645,8 @@ snapshots:
   entities@4.5.0: {}
 
   entities@6.0.1: {}
+
+  entities@7.0.1: {}
 
   es-define-property@1.0.1: {}
 
@@ -15570,6 +16932,8 @@ snapshots:
       merge2: 1.4.1
       micromatch: 4.0.8
 
+  fast-json-stable-stringify@2.1.0: {}
+
   fast-safe-stringify@2.1.1: {}
 
   fast-uri@3.1.0: {}
@@ -15703,6 +17067,12 @@ snapshots:
   fresh@2.0.0: {}
 
   fs-constants@1.0.0: {}
+
+  fs-extra@7.0.1:
+    dependencies:
+      graceful-fs: 4.2.11
+      jsonfile: 4.0.0
+      universalify: 0.1.2
 
   fsevents@2.3.2:
     optional: true
@@ -16122,6 +17492,8 @@ snapshots:
 
   immediate@3.0.6: {}
 
+  import-lazy@4.0.0: {}
+
   import-meta-resolve@4.2.0: {}
 
   inherits@2.0.4: {}
@@ -16224,11 +17596,24 @@ snapshots:
 
   jiti@1.21.7: {}
 
+  jju@1.4.0: {}
+
   jose@6.2.2: {}
+
+  jotai-effect@2.3.1(jotai@2.20.1(@babel/core@7.29.7)(@babel/template@7.29.7)(@types/react@18.3.31)(react@19.2.7)):
+    dependencies:
+      jotai: 2.20.1(@babel/core@7.29.7)(@babel/template@7.29.7)(@types/react@18.3.31)(react@19.2.7)
 
   jotai-effect@2.3.1(jotai@2.20.1(@babel/core@7.29.7)(@babel/template@7.29.7)(@types/react@19.2.17)(react@19.2.7)):
     dependencies:
       jotai: 2.20.1(@babel/core@7.29.7)(@babel/template@7.29.7)(@types/react@19.2.17)(react@19.2.7)
+
+  jotai@2.20.1(@babel/core@7.29.7)(@babel/template@7.29.7)(@types/react@18.3.31)(react@19.2.7):
+    optionalDependencies:
+      '@babel/core': 7.29.7
+      '@babel/template': 7.29.7
+      '@types/react': 18.3.31
+      react: 19.2.7
 
   jotai@2.20.1(@babel/core@7.29.7)(@babel/template@7.29.7)(@types/react@19.2.17)(react@19.2.7):
     optionalDependencies:
@@ -16260,6 +17645,8 @@ snapshots:
       '@babel/runtime': 7.29.2
       ts-algebra: 2.0.0
 
+  json-schema-traverse@0.4.1: {}
+
   json-schema-traverse@1.0.0: {}
 
   json-schema-typed@8.0.2: {}
@@ -16267,6 +17654,10 @@ snapshots:
   json-schema@0.4.0: {}
 
   json5@2.2.3: {}
+
+  jsonfile@4.0.0:
+    optionalDependencies:
+      graceful-fs: 4.2.11
 
   jszip@3.10.1:
     dependencies:
@@ -16296,6 +17687,8 @@ snapshots:
 
   koffi@2.15.2:
     optional: true
+
+  kolorist@1.8.0: {}
 
   langsmith@0.3.87(@opentelemetry/api@1.9.0)(openai@4.104.0(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)):
     dependencies:
@@ -16339,11 +17732,22 @@ snapshots:
 
   load-tsconfig@0.2.5: {}
 
+  local-pkg@0.5.1:
+    dependencies:
+      mlly: 1.8.2
+      pkg-types: 1.3.1
+
   lodash-es@4.18.1: {}
 
   lodash.camelcase@4.3.0: {}
 
   lodash.debounce@4.0.8: {}
+
+  lodash.get@4.4.2: {}
+
+  lodash.isequal@4.5.0: {}
+
+  lodash@4.17.23: {}
 
   lodash@4.18.1: {}
 
@@ -16368,6 +17772,10 @@ snapshots:
   lru-cache@5.1.1:
     dependencies:
       yallist: 3.1.1
+
+  lru-cache@6.0.0:
+    dependencies:
+      yallist: 4.0.0
 
   lru-cache@7.18.3: {}
 
@@ -16915,6 +18323,8 @@ snapshots:
     dependencies:
       mime-db: 1.54.0
 
+  mime@4.1.0: {}
+
   mimic-fn@4.0.0: {}
 
   mimic-response@3.1.0: {}
@@ -16924,6 +18334,10 @@ snapshots:
   minimatch@10.2.5:
     dependencies:
       brace-expansion: 5.0.5
+
+  minimatch@3.0.8:
+    dependencies:
+      brace-expansion: 1.1.15
 
   minimatch@5.1.9:
     dependencies:
@@ -16966,6 +18380,8 @@ snapshots:
   mrmime@2.0.1: {}
 
   ms@2.1.3: {}
+
+  muggle-string@0.3.1: {}
 
   mustache@4.2.0: {}
 
@@ -17221,6 +18637,8 @@ snapshots:
 
   patchright-core@1.59.4:
     optional: true
+
+  path-browserify@1.0.1: {}
 
   path-data-parser@0.1.0: {}
 
@@ -17492,6 +18910,8 @@ snapshots:
 
   punycode.js@2.3.1: {}
 
+  punycode@2.3.1: {}
+
   puppeteer-core@22.15.0(bufferutil@4.1.0):
     dependencies:
       '@puppeteer/browsers': 2.3.0
@@ -17588,6 +19008,14 @@ snapshots:
 
   react-refresh@0.17.0: {}
 
+  react-remove-scroll-bar@2.3.8(@types/react@18.3.31)(react@19.2.7):
+    dependencies:
+      react: 19.2.7
+      react-style-singleton: 2.2.3(@types/react@18.3.31)(react@19.2.7)
+      tslib: 2.8.1
+    optionalDependencies:
+      '@types/react': 18.3.31
+
   react-remove-scroll-bar@2.3.8(@types/react@19.2.17)(react@19.2.7):
     dependencies:
       react: 19.2.7
@@ -17595,6 +19023,17 @@ snapshots:
       tslib: 2.8.1
     optionalDependencies:
       '@types/react': 19.2.17
+
+  react-remove-scroll@2.7.2(@types/react@18.3.31)(react@19.2.7):
+    dependencies:
+      react: 19.2.7
+      react-remove-scroll-bar: 2.3.8(@types/react@18.3.31)(react@19.2.7)
+      react-style-singleton: 2.2.3(@types/react@18.3.31)(react@19.2.7)
+      tslib: 2.8.1
+      use-callback-ref: 1.3.3(@types/react@18.3.31)(react@19.2.7)
+      use-sidecar: 1.1.3(@types/react@18.3.31)(react@19.2.7)
+    optionalDependencies:
+      '@types/react': 18.3.31
 
   react-remove-scroll@2.7.2(@types/react@19.2.17)(react@19.2.7):
     dependencies:
@@ -17629,6 +19068,14 @@ snapshots:
       '@swc/helpers': 0.5.23
       react: 19.2.7
       use-sync-external-store: 1.6.0(react@19.2.7)
+
+  react-style-singleton@2.2.3(@types/react@18.3.31)(react@19.2.7):
+    dependencies:
+      get-nonce: 1.0.1
+      react: 19.2.7
+      tslib: 2.8.1
+    optionalDependencies:
+      '@types/react': 18.3.31
 
   react-style-singleton@2.2.3(@types/react@19.2.17)(react@19.2.7):
     dependencies:
@@ -17854,6 +19301,11 @@ snapshots:
 
   resolve-pkg-maps@1.0.0: {}
 
+  resolve@1.19.0:
+    dependencies:
+      is-core-module: 2.16.1
+      path-parse: 1.0.7
+
   resolve@1.22.11:
     dependencies:
       is-core-module: 2.16.1
@@ -18027,6 +19479,10 @@ snapshots:
   secure-json-parse@4.1.0: {}
 
   semver@6.3.1: {}
+
+  semver@7.5.4:
+    dependencies:
+      lru-cache: 6.0.0
 
   semver@7.7.4: {}
 
@@ -18221,8 +19677,7 @@ snapshots:
 
   source-map-js@1.2.1: {}
 
-  source-map@0.6.1:
-    optional: true
+  source-map@0.6.1: {}
 
   source-map@0.7.6: {}
 
@@ -18231,6 +19686,8 @@ snapshots:
   split-ca@1.0.1: {}
 
   split2@4.2.0: {}
+
+  sprintf-js@1.0.3: {}
 
   ssh2@1.17.0:
     dependencies:
@@ -18256,6 +19713,8 @@ snapshots:
     transitivePeerDependencies:
       - bare-abort-controller
       - react-native-b4a
+
+  string-argv@0.3.2: {}
 
   string-width@4.2.3:
     dependencies:
@@ -18300,6 +19759,8 @@ snapshots:
 
   strip-json-comments@2.0.1: {}
 
+  strip-json-comments@3.1.1: {}
+
   strip-json-comments@5.0.3: {}
 
   strnum@2.2.2: {}
@@ -18331,6 +19792,10 @@ snapshots:
       ts-interface-checker: 0.1.13
 
   supports-color@7.2.0:
+    dependencies:
+      has-flag: 4.0.0
+
+  supports-color@8.1.1:
     dependencies:
       has-flag: 4.0.0
 
@@ -18516,7 +19981,7 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  tsup@8.5.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0):
+  tsup@8.5.1(@microsoft/api-extractor@7.43.0(@types/node@22.19.15))(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.9.0):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.27.4)
       cac: 6.7.14
@@ -18536,6 +20001,7 @@ snapshots:
       tinyglobby: 0.2.15
       tree-kill: 1.2.2
     optionalDependencies:
+      '@microsoft/api-extractor': 7.43.0(@types/node@22.19.15)
       postcss: 8.5.8
       typescript: 5.9.3
     transitivePeerDependencies:
@@ -18582,6 +20048,8 @@ snapshots:
       minimatch: 10.2.5
       typescript: 5.9.3
       yaml: 2.9.0
+
+  typescript@5.4.2: {}
 
   typescript@5.9.3: {}
 
@@ -18702,6 +20170,8 @@ snapshots:
       unist-util-is: 6.0.1
       unist-util-visit-parents: 6.0.2
 
+  universalify@0.1.2: {}
+
   unpipe@1.0.0: {}
 
   unstorage@1.17.5(aws4fetch@1.0.20):
@@ -18723,10 +20193,21 @@ snapshots:
       escalade: 3.2.0
       picocolors: 1.1.1
 
+  uri-js@4.4.1:
+    dependencies:
+      punycode: 2.3.1
+
   url-template@2.0.8: {}
 
   urlpattern-polyfill@10.0.0:
     optional: true
+
+  use-callback-ref@1.3.3(@types/react@18.3.31)(react@19.2.7):
+    dependencies:
+      react: 19.2.7
+      tslib: 2.8.1
+    optionalDependencies:
+      '@types/react': 18.3.31
 
   use-callback-ref@1.3.3(@types/react@19.2.17)(react@19.2.7):
     dependencies:
@@ -18734,6 +20215,14 @@ snapshots:
       tslib: 2.8.1
     optionalDependencies:
       '@types/react': 19.2.17
+
+  use-sidecar@1.1.3(@types/react@18.3.31)(react@19.2.7):
+    dependencies:
+      detect-node-es: 1.1.0
+      react: 19.2.7
+      tslib: 2.8.1
+    optionalDependencies:
+      '@types/react': 18.3.31
 
   use-sidecar@1.1.3(@types/react@19.2.17)(react@19.2.7):
     dependencies:
@@ -18761,6 +20250,8 @@ snapshots:
   uuid@12.0.1: {}
 
   uuid@9.0.1: {}
+
+  validator@13.15.35: {}
 
   vary@1.1.2: {}
 
@@ -18815,6 +20306,32 @@ snapshots:
       - sugarss
       - supports-color
       - terser
+
+  vite-plugin-dts@3.9.1(@types/node@20.19.43)(rollup@4.60.1)(typescript@5.9.3)(vite@5.4.21(@types/node@20.19.43)):
+    dependencies:
+      '@microsoft/api-extractor': 7.43.0(@types/node@20.19.43)
+      '@rollup/pluginutils': 5.4.0(rollup@4.60.1)
+      '@vue/language-core': 1.8.27(typescript@5.9.3)
+      debug: 4.4.3
+      kolorist: 1.8.0
+      magic-string: 0.30.21
+      typescript: 5.9.3
+      vue-tsc: 1.8.27(typescript@5.9.3)
+    optionalDependencies:
+      vite: 5.4.21(@types/node@20.19.43)
+    transitivePeerDependencies:
+      - '@types/node'
+      - rollup
+      - supports-color
+
+  vite@5.4.21(@types/node@20.19.43):
+    dependencies:
+      esbuild: 0.21.5
+      postcss: 8.5.8
+      rollup: 4.60.1
+    optionalDependencies:
+      '@types/node': 20.19.43
+      fsevents: 2.3.3
 
   vite@5.4.21(@types/node@22.19.15):
     dependencies:
@@ -18894,6 +20411,18 @@ snapshots:
       - supports-color
       - terser
 
+  vue-template-compiler@2.7.16:
+    dependencies:
+      de-indent: 1.0.2
+      he: 1.2.0
+
+  vue-tsc@1.8.27(typescript@5.9.3):
+    dependencies:
+      '@volar/typescript': 1.11.1
+      '@vue/language-core': 1.8.27(typescript@5.9.3)
+      semver: 7.7.4
+      typescript: 5.9.3
+
   w3c-keyname@2.2.8: {}
 
   web-namespaces@2.0.1: {}
@@ -18956,6 +20485,8 @@ snapshots:
 
   yallist@3.1.1: {}
 
+  yallist@4.0.0: {}
+
   yaml@2.8.3: {}
 
   yaml@2.9.0: {}
@@ -18996,6 +20527,14 @@ snapshots:
       yoctocolors: 2.1.2
 
   yoctocolors@2.1.2: {}
+
+  z-schema@5.0.5:
+    dependencies:
+      lodash.get: 4.4.2
+      lodash.isequal: 4.5.0
+      validator: 13.15.35
+    optionalDependencies:
+      commander: 9.5.0
 
   zip-stream@6.0.1:
     dependencies:

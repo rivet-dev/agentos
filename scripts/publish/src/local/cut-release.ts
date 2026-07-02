@@ -59,6 +59,7 @@ async function confirmPrompt(question: string): Promise<boolean> {
 
 interface CliOpts {
 	version?: string;
+	secureExecVersion?: string;
 	major?: boolean;
 	minor?: boolean;
 	patch?: boolean;
@@ -75,6 +76,10 @@ async function main() {
 		.name("cut-release")
 		.description("Cut a new Agent OS release (local orchestrator)")
 		.option("--version <version>", "Explicit version (e.g. 0.2.0 or 0.2.0-rc.1)")
+		.option(
+			"--secure-exec-version <version>",
+			"secure-exec RELEASE to build against (required; must exist on npm AND crates.io — the committed deps are file-based and the workflow swaps to this version transiently)",
+		)
 		.option("--major", "Bump major")
 		.option("--minor", "Bump minor")
 		.option("--patch", "Bump patch")
@@ -87,6 +92,19 @@ async function main() {
 
 	const opts = program.opts<CliOpts>();
 	const repoRoot = findRepoRoot();
+
+	// Releases build against a REAL secure-exec release (npm + crates.io must
+	// both resolve it) — the committed file deps never ship.
+	if (!opts.secureExecVersion) {
+		throw new Error(
+			"--secure-exec-version <v> is required: agent-os releases pin a real secure-exec release (cut one first if needed)",
+		);
+	}
+	if (opts.secureExecVersion.startsWith("0.0.0-")) {
+		throw new Error(
+			`--secure-exec-version ${opts.secureExecVersion} looks like a preview; releases require a real secure-exec release`,
+		);
+	}
 
 	// 1. Resolve version.
 	const version = await resolveVersion({
@@ -181,7 +199,7 @@ async function main() {
 	await $({
 		stdio: "inherit",
 		cwd: repoRoot,
-	})`gh workflow run .github/workflows/publish.yaml -f version=${version} -f latest=${latestFlag} --ref ${currentBranch}`;
+	})`gh workflow run .github/workflows/publish.yaml -f version=${version} -f latest=${latestFlag} -f secure_exec_version=${opts.secureExecVersion} --ref ${currentBranch}`;
 
 	const { stdout: repo } =
 		await $`gh repo view --json nameWithOwner -q .nameWithOwner`;

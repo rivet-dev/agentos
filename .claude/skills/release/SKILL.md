@@ -16,10 +16,15 @@ The publish flow lives in `scripts/publish` and is driven by the unified
 
 ## Release
 
+A release REQUIRES a real secure-exec release version (the committed deps are
+file-based; the workflow verifies `<v>` on npm AND crates.io and release-swaps
+to it transiently — cut one first with secure-exec's `release-secure-exec`
+skill if needed):
+
 ```bash
-just release --version 0.2.0          # exact version
-just release --version 0.2.0-rc.1     # rc (npm tag `rc`, prerelease)
-just release --patch                  # semver bump from latest git tag
+just release --secure-exec-version <v> --version 0.2.0       # exact version
+just release --secure-exec-version <v> --version 0.2.0-rc.1  # rc (npm tag `rc`)
+just release --secure-exec-version <v> --patch               # semver bump from latest git tag
 ```
 
 `just release` runs `scripts/publish/src/local/cut-release.ts`, which:
@@ -28,8 +33,10 @@ just release --patch                  # semver bump from latest git tag
 3. Rewrites `Cargo.toml` + every publishable `package.json` version.
 4. Runs a local core build + type-check fail-fast (`--skip-checks` to skip).
 5. Commits + pushes the version bump.
-6. Triggers `publish.yaml` with the version, which builds release binaries,
-   publishes npm + crates.io, uploads release assets, and tags `v<version>`.
+6. Triggers `publish.yaml` with the version + `secure_exec_version`, which
+   verifies the secure-exec release, release-swaps the file deps to it in the
+   CI checkout (never committed), builds release binaries, publishes npm +
+   crates.io, uploads release assets, and tags `v<version>`.
 
 Flags: `--latest` / `--no-latest`, `--dry-run` (mutate files only), `-y`.
 
@@ -42,6 +49,10 @@ just preview-publish <branch>
 Dispatches `publish.yaml` on the branch with no version. The context resolver
 computes `version = 0.0.0-<sanitized-branch>.<sha>` and `npm_tag = <sanitized-branch>`,
 builds a debug sidecar, and publishes every package to npm under that tag.
+The `secure-exec-version` job auto-cuts (or reuses) a secure-exec preview at
+the committed `.github/refs/secure-exec` sha and release-swaps to it — see the
+`preview-publish-agentos` skill for the end-to-end cross-repo loop (needs the
+`SECURE_EXEC_DISPATCH_TOKEN` secret).
 Install a preview with:
 
 ```bash

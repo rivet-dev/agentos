@@ -5,19 +5,16 @@
 //
 // Single tool to control how this workspace (agent-os / a6) consumes secure-exec.
 //
-// Two modes:
-//   pinned  (default for CI/release) — every secure-exec dependency resolves
-//           from its published version. The npm versions live in ONE place (the
-//           `catalog:` block in pnpm-workspace.yaml); the crate versions live in
-//           the root Cargo.toml `[workspace.dependencies]` block. CI needs no
-//           sibling checkout.
-//   local   (for hacking on secure-exec) — every swappable dependency is
-//           redirected at the sibling ../secure-exec checkout via `link:` (npm)
-//           and `path = "../secure-exec/..."` (cargo). Reproduces the classic
-//           path-dep dev loop.
-//
-// Bump the whole workspace to a new secure-exec version with ONE command:
-//   node scripts/secure-exec-dep.mjs set-version <version>
+// TWO INDEPENDENT TRACKS, each with a pinned and a local mode:
+//   runtime  — the @secure-exec/* npm packages + secure-exec-* crates.
+//              `pinned` (default): published versions from the catalog +
+//              Cargo.toml [workspace.dependencies]. `local`: link:/path deps
+//              at the sibling ../secure-exec checkout.
+//   registry — the @agentos-software/* packages (registry software + agent
+//              adapters). Pinned PER-PACKAGE in the catalog (they version
+//              independently); `agentos-pkgs-local` flips them to link: deps at
+//              the sibling checkout's registry/{software,agent}/*.
+// Flipping one track never touches the other.
 //
 // PREVIEW CRATE BUILDS (`prepare-build`):
 //   npm has dist-tags, so a secure-exec *preview* publishes `@secure-exec/*` to
@@ -31,12 +28,18 @@
 //   crates straight from crates.io and need no clone. CI runs `prepare-build`
 //   before every `cargo build`; it is a no-op for release pins.
 //
-// Commands:
-//   node scripts/secure-exec-dep.mjs pinned
-//   node scripts/secure-exec-dep.mjs local
-//   node scripts/secure-exec-dep.mjs set-version <version>
+// Commands (runtime track):
+//   node scripts/secure-exec-dep.mjs pinned | local
+//   node scripts/secure-exec-dep.mjs pin-secure-exec <version>
+//   node scripts/secure-exec-dep.mjs set-secure-exec-version <version>
+//   node scripts/secure-exec-dep.mjs set-crate-version <version>
 //   node scripts/secure-exec-dep.mjs prepare-build   # CI: clone+local for previews, no-op for releases
 //   node scripts/secure-exec-dep.mjs secure-exec-sha # print the pinned preview sha ("" for releases)
+// Commands (registry track):
+//   node scripts/secure-exec-dep.mjs agentos-pkgs-pinned | agentos-pkgs-local
+//   node scripts/secure-exec-dep.mjs set-agentos-pkg-version <pkg> <version>   # pin ONE package
+//   node scripts/secure-exec-dep.mjs agentos-pkgs-update [dist-tag]            # pin each package from npm (default: latest)
+// Both:
 //   node scripts/secure-exec-dep.mjs status
 //
 // After switching modes or versions, run `pnpm install` (and a cargo build) so
@@ -183,12 +186,18 @@ function collectManagedNames() {
 // ---------------------------------------------------------------------------
 // npm: rewrite consumer dep values
 // ---------------------------------------------------------------------------
-function rewriteConsumers(mode) {
+// track: "runtime" (@secure-exec/*) or "registry" (@agentos-software/*). Names
+// outside the track are left untouched so the two tracks flip independently.
+function trackOf(name) {
+	return name.startsWith("@agentos-software/") ? "registry" : "runtime";
+}
+function rewriteConsumers(mode, track) {
 	let changed = 0;
 	for (const m of consumerManifests()) {
 		let text = readFileSync(m, "utf8");
 		const before = text;
 		for (const name of collectNamesIn(text)) {
+			if (trackOf(name) !== track) continue;
 			const value =
 				mode === "local" && isSwappable(name) && siblingProvides(name)
 					? linkValue(m, name)
@@ -249,7 +258,7 @@ function catalogScope(name) {
 
 // scope: undefined => every managed group except registry-only; "secure-exec" or
 // "agentos-pkgs" => only that group is bumped, the others keep their existing pins.
-function writeCatalog(setVersion, scope) {
+function writeCatalog(setVersion, scope, overrides = {}) {
 	const wsPath = path.join(ROOT, "pnpm-workspace.yaml");
 	let text = readFileSync(wsPath, "utf8");
 	const existing = readVersions();
@@ -261,7 +270,9 @@ function writeCatalog(setVersion, scope) {
 		// bumped only when it falls in the targeted scope (no scope = all groups).
 		const inScope =
 			group !== "registry-only" && (scope === undefined || group === scope);
-		const v = setVersion && inScope ? setVersion : versionFor(name, existing);
+		const v =
+			overrides[name] ??
+			(setVersion && inScope ? setVersion : versionFor(name, existing));
 		lines.push(`  '${name}': ${v}`);
 	}
 	lines.push(CATALOG_END);
@@ -381,13 +392,33 @@ function readCloneCrateVersion(dir) {
 }
 
 // ---------------------------------------------------------------------------
+// .github/refs/secure-exec — the committed sha this repo develops and CI builds against
+// ---------------------------------------------------------------------------
+const REF_FILE = path.join(ROOT, ".github", "refs", "secure-exec");
+
+function readRefFile() {
+	if (!existsSync(REF_FILE)) {
+		throw new Error(".github/refs/secure-exec not found — run `just secure-exec-bump` to pin a secure-exec sha");
+	}
+	const sha = readFileSync(REF_FILE, "utf8").trim();
+	if (!/^[0-9a-f]{40}$/.test(sha)) {
+		throw new Error(`.github/refs/secure-exec must hold one full 40-char sha, got "${sha}"`);
+	}
+	return sha;
+}
+
+// ---------------------------------------------------------------------------
 // commands
 // ---------------------------------------------------------------------------
-function npmMode() {
-	const root = readFileSync(path.join(ROOT, "package.json"), "utf8");
-	return /"@(?:secure-exec|agentos-software)\/[^"]+"\s*:\s*"link:/.test(root)
-		? "local"
-		: "pinned";
+function npmMode(track) {
+	const re =
+		track === "registry"
+			? /"@agentos-software\/[^"]+"\s*:\s*"link:/
+			: /"@secure-exec\/[^"]+"\s*:\s*"link:/;
+	for (const m of consumerManifests()) {
+		if (re.test(readFileSync(m, "utf8"))) return "local";
+	}
+	return "pinned";
 }
 function cargoMode() {
 	const cargo = readFileSync(path.join(ROOT, "Cargo.toml"), "utf8");
@@ -396,16 +427,17 @@ function cargoMode() {
 	const rel = SECURE_EXEC_REL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 	return new RegExp(`path\\s*=\\s*"${rel}/crates/`).test(cargo) ? "local" : "pinned";
 }
-function currentMode() {
-	return npmMode() === cargoMode() ? npmMode() : `hybrid(npm=${npmMode()},cargo=${cargoMode()})`;
+function runtimeMode() {
+	const npm = npmMode("runtime");
+	return npm === cargoMode() ? npm : `hybrid(npm=${npm},cargo=${cargoMode()})`;
 }
 
 // scope: undefined = both, "npm" = only package.json/catalog, "cargo" = only Cargo.toml
 function apply(mode, setVersion, scope) {
 	let npm = 0;
 	if (scope !== "cargo") {
-		npm = rewriteConsumers(mode);
-		writeCatalog(setVersion);
+		npm = rewriteConsumers(mode, "runtime");
+		writeCatalog(setVersion, "secure-exec");
 	}
 	if (scope !== "npm") rewriteCargo(mode, setVersion);
 	return npm;
@@ -428,16 +460,60 @@ switch (cmd) {
 		console.log("Run: pnpm install   (and a cargo build) to refresh lockfiles.");
 		break;
 	}
-	case "set-version": {
-		if (!arg) {
-			console.error("usage: set-version <version>");
+	case "agentos-pkgs-local": {
+		const n = rewriteConsumers("local", "registry");
+		writeCatalog(undefined, "agentos-pkgs");
+		console.log(`@agentos-software/* deps -> LOCAL (${SECURE_EXEC_REL} registry/{software,agent} via link:) in ${n} manifest(s).`);
+		console.log("Build them there first (just registry-native + just registry-build), then: pnpm install.");
+		break;
+	}
+	case "agentos-pkgs-pinned": {
+		const n = rewriteConsumers("pinned", "registry");
+		writeCatalog(undefined, "agentos-pkgs");
+		console.log(`@agentos-software/* deps -> PINNED (per-package catalog versions) in ${n} manifest(s).`);
+		console.log("Run: pnpm install to refresh the lockfile.");
+		break;
+	}
+	case "set-agentos-pkg-version": {
+		const [, pkgArg, verArg] = process.argv.slice(2);
+		if (!pkgArg || !verArg) {
+			console.error("usage: set-agentos-pkg-version <pkg> <version>   (pkg may omit the @agentos-software/ scope)");
 			process.exit(1);
 		}
-		// Bump EVERY managed npm package (both scopes) to one version. Only correct
-		// when secure-exec and the software packages publish at the same version;
-		// otherwise use the scoped commands below.
-		writeCatalog(arg);
-		console.log(`all secure-exec + agentos-pkgs npm versions pinned to ${arg} (catalog).`);
+		const name = pkgArg.startsWith("@") ? pkgArg : `@agentos-software/${pkgArg}`;
+		if (!collectManagedNames().includes(name)) {
+			console.error(`ERROR: ${name} is not referenced by any workspace manifest`);
+			process.exit(1);
+		}
+		writeCatalog(undefined, undefined, { [name]: verArg });
+		console.log(`${name} pinned to ${verArg} (catalog).`);
+		console.log("Run: pnpm install to refresh the lockfile.");
+		break;
+	}
+	case "agentos-pkgs-update": {
+		// Pin every managed @agentos-software/* package to its published version
+		// under <dist-tag> (default: latest). Packages without the tag are skipped.
+		const tag = arg ?? "latest";
+		const overrides = {};
+		for (const name of collectManagedNames()) {
+			if (trackOf(name) !== "registry") continue;
+			try {
+				const v = execFileSync("npm", ["view", `${name}@${tag}`, "version"], {
+					encoding: "utf8",
+					stdio: ["ignore", "pipe", "ignore"],
+				}).trim();
+				if (v) {
+					overrides[name] = v;
+					console.log(`  ${name}: ${v}`);
+				} else {
+					console.log(`  ${name}: SKIP (no ${tag} dist-tag)`);
+				}
+			} catch {
+				console.log(`  ${name}: SKIP (no ${tag} dist-tag)`);
+			}
+		}
+		writeCatalog(undefined, undefined, overrides);
+		console.log(`@agentos-software/* pins updated from dist-tag "${tag}" (catalog).`);
 		console.log("Run: pnpm install to refresh the lockfile.");
 		break;
 	}
@@ -451,17 +527,6 @@ switch (cmd) {
 		// `set-crate-version` when the sibling crates rebase.
 		writeCatalog(arg, "secure-exec");
 		console.log(`@secure-exec/* npm versions pinned to ${arg} (catalog).`);
-		console.log("Run: pnpm install to refresh the lockfile.");
-		break;
-	}
-	case "set-agentos-pkgs-version": {
-		if (!arg) {
-			console.error("usage: set-agentos-pkgs-version <version>");
-			process.exit(1);
-		}
-		// Bump only the @agentos-software/* software packages.
-		writeCatalog(arg, "agentos-pkgs");
-		console.log(`@agentos-software/* npm versions pinned to ${arg} (catalog).`);
 		console.log("Run: pnpm install to refresh the lockfile.");
 		break;
 	}
@@ -507,42 +572,143 @@ switch (cmd) {
 		break;
 	}
 	case "prepare-build": {
-		// CI step run before every `cargo build`. For a preview pin, clone
-		// secure-exec at the pinned sha and switch cargo to local path deps; for
-		// a release pin this is a no-op and cargo resolves crates from crates.io.
-		const version = pinnedSecureExecVersion();
-		const sha = previewSha(version);
-		if (!sha) {
-			console.log(
-				`secure-exec ${version} is a release pin; cargo resolves crates from crates.io (no clone).`,
-			);
+		// CI step run before pnpm install / any cargo build. The committed state
+		// is FILE-BASED (link:/path at ../secure-exec), so CI must materialize the
+		// sibling checkout at the committed .github/refs/secure-exec sha and build what the
+		// links resolve to. Idempotent; a warm actions/cache of ../secure-exec
+		// keyed on .github/refs/secure-exec makes this near-free.
+		//
+		// If cargo has been swapped to a pinned release (release-swap during a
+		// release publish), crates resolve from crates.io and only the npm side
+		// of the sibling is needed for any remaining link: deps.
+		if (npmMode("runtime") === "pinned" && npmMode("registry") === "pinned" && cargoMode() === "pinned") {
+			// Fully swapped to published versions (release-swap) — nothing resolves
+			// through the sibling, so there is nothing to prepare.
+			console.log("all deps are pinned to published versions — no sibling needed.");
 			break;
 		}
-		console.log(
-			`secure-exec ${version} is a preview; cloning ${SECURE_EXEC_GIT_URL} @ ${sha} -> ${SECURE_EXEC_REL}`,
-		);
-		const abs = await cloneSecureExecAtSha(sha);
+		const sha = readRefFile();
+		const abs = path.resolve(ROOT, SECURE_EXEC_REL);
+		if (!existsSync(path.join(abs, "package.json"))) {
+			console.log(`cloning ${SECURE_EXEC_GIT_URL} @ ${sha} -> ${SECURE_EXEC_REL}`);
+			await cloneSecureExecAtSha(sha);
+		} else {
+			console.log(`sibling ${SECURE_EXEC_REL} present — leaving its checkout untouched.`);
+		}
+		if (process.argv.includes("--clone-only")) {
+			// Enough for `pnpm install` in THIS repo (link: only needs the target
+			// package.json files); cargo builds need the full prepare.
+			console.log("clone-only: sibling materialized, skipping install/build.");
+			break;
+		}
 		// The v8-runtime build.rs needs the secure-exec workspace's node deps
 		// (packages/build-tools/node_modules) or it panics — install them.
-		console.log("installing cloned secure-exec workspace deps (for the v8-runtime build)...");
+		console.log("installing secure-exec workspace deps...");
 		execFileSync("pnpm", ["install", "--frozen-lockfile"], { cwd: abs, stdio: "inherit" });
-		const crateVer = readCloneCrateVersion(abs);
-		rewriteCargo("local", crateVer);
-		console.log(
-			`cargo -> LOCAL path deps against cloned secure-exec @ ${sha} (crate version ${crateVer}).`,
-		);
+		if (process.argv.includes("--build")) {
+			// Native wasm commands (skipped when already built — cache hit).
+			const commandsDir = path.join(abs, "registry/native/target/wasm32-wasip1/release/commands");
+			if (!existsSync(commandsDir)) {
+				console.log("building native wasm commands (cache miss — slow)...");
+				execFileSync("make", ["-C", path.join(abs, "registry/native"), "wasm"], { stdio: "inherit" });
+			} else {
+				console.log("native wasm commands present — skipping make wasm.");
+			}
+			console.log("building secure-exec TS packages...");
+			execFileSync("npx", ["turbo", "build", "--filter=!@secure-exec/website", "--filter=!./examples/*"], {
+				cwd: abs,
+				stdio: "inherit",
+			});
+		}
+		if (cargoMode() === "local") {
+			const crateVer = readCloneCrateVersion(abs);
+			rewriteCargo("local", crateVer);
+			console.log(`cargo path deps against ${SECURE_EXEC_REL} @ ${sha} (crate version ${crateVer}).`);
+		} else {
+			console.log("cargo is pinned (release-swap) — crates resolve from crates.io.");
+		}
+		break;
+	}
+	case "bump-ref": {
+		// Pin .github/refs/secure-exec to <ref> (a sha), or to the sibling checkout's
+		// current commit when no arg is given.
+		let sha = arg;
+		if (!sha) {
+			const abs = path.resolve(ROOT, SECURE_EXEC_REL);
+			sha = execFileSync("git", ["-C", abs, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+		}
+		sha = await resolveFullSha(sha);
+		writeFileSync(REF_FILE, `${sha}\n`);
+		console.log(`.github/refs/secure-exec -> ${sha}`);
+		break;
+	}
+	case "ref": {
+		console.log(readRefFile());
+		break;
+	}
+	case "release-swap": {
+		// PUBLISH-ONLY, transient: swap the whole workspace from the committed
+		// file deps to published versions so the packed tarballs carry real,
+		// resolvable versions. Never commit the result — CI checkouts are
+		// ephemeral; local runs revert with `release-revert`.
+		//   release-swap <secure-exec-version> [registry-dist-tag]
+		const [, secureExecVersion, registryTag] = process.argv.slice(2);
+		if (!secureExecVersion) {
+			console.error("usage: release-swap <secure-exec-version> [registry-dist-tag]");
+			process.exit(1);
+		}
+		rewriteConsumers("pinned", "runtime");
+		rewriteConsumers("pinned", "registry");
+		writeCatalog(secureExecVersion, "secure-exec");
+		const sha = previewSha(secureExecVersion);
+		if (sha) {
+			console.log(
+				`@secure-exec/* pinned to preview ${secureExecVersion}; crate version left as-is ` +
+					`(crates build from the ../secure-exec clone at the committed ref).`,
+			);
+		} else {
+			rewriteCargo("pinned", secureExecVersion);
+			console.log(`@secure-exec/* npm + crates pinned to release ${secureExecVersion}.`);
+		}
+		if (registryTag) {
+			const overrides = {};
+			for (const name of collectManagedNames()) {
+				if (trackOf(name) !== "registry") continue;
+				try {
+					const v = execFileSync("npm", ["view", `${name}@${registryTag}`, "version"], {
+						encoding: "utf8",
+						stdio: ["ignore", "pipe", "ignore"],
+					}).trim();
+					if (v) overrides[name] = v;
+					console.log(`  ${name}: ${v || `SKIP (no ${registryTag} dist-tag)`}`);
+				} catch {
+					console.log(`  ${name}: SKIP (no ${registryTag} dist-tag)`);
+				}
+			}
+			writeCatalog(undefined, undefined, overrides);
+		}
+		console.log("release-swap complete. Run: pnpm install --no-frozen-lockfile.");
+		break;
+	}
+	case "release-revert": {
+		// Undo release-swap on a dev machine: back to the committed file deps.
+		rewriteConsumers("local", "runtime");
+		rewriteConsumers("local", "registry");
+		rewriteCargo("local", undefined);
+		console.log("deps reverted to file-based (../secure-exec). Run: pnpm install.");
 		break;
 	}
 	case "status": {
 		const versions = readVersions();
-		console.log(`mode: ${currentMode()}`);
+		console.log(`runtime  (@secure-exec/* + crates): ${runtimeMode()}`);
+		console.log(`registry (@agentos-software/*):     ${npmMode("registry")}`);
 		console.log("pinned versions:");
 		for (const [n, v] of Object.entries(versions)) console.log(`  ${n}: ${v}`);
 		break;
 	}
 	default:
 		console.error(
-			"usage: secure-exec-dep.mjs <pinned|local|status|set-version <v>|pin-secure-exec <v>|set-secure-exec-version <v>|set-agentos-pkgs-version <v>|set-crate-version <v>|prepare-build|secure-exec-sha>",
+			"usage: secure-exec-dep.mjs <pinned|local|agentos-pkgs-pinned|agentos-pkgs-local|status|pin-secure-exec <v>|set-secure-exec-version <v>|set-crate-version <v>|set-agentos-pkg-version <pkg> <v>|agentos-pkgs-update [tag]|bump-ref [sha]|ref|release-swap <v> [tag]|release-revert|prepare-build [--clone-only|--build]|secure-exec-sha>",
 		);
 		process.exit(1);
 }
