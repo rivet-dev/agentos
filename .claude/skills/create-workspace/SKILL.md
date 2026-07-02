@@ -10,8 +10,11 @@ Creates `~/workspaces/<topic>/` with sibling jj workspaces `agentos/` and
 `main@origin`.
 
 Derive `<topic>` as a short kebab-case slug from the user's ask (e.g.
-"create a new workspace for the poll rework" → `poll-rework`). If the user
-did not imply a topic, ask for one.
+"create a new workspace for the poll rework" → `poll-rework`). If it is not
+obvious from the request or the conversation what the workspace will be for,
+ASK the user before creating anything (e.g. "What's this workspace for?") and
+derive the slug from their answer — do not invent a topic or fall back to a
+generic name.
 
 ## Steps
 
