@@ -1,10 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ACTOR_NAME, useActor } from "./rivet";
-import { type ReadResult, TerminalPane } from "./TerminalPane";
+import { loadShellIds, saveShellIds } from "./store";
+import { TerminalPane } from "./TerminalPane";
 
 interface Tab {
 	shellId: string;
 	title: string;
+}
+
+interface ShellDataPayload {
+	shellId: string;
+	data: unknown;
+}
+interface ShellExitPayload {
+	shellId: string;
+}
+
+function toBytes(data: unknown): Uint8Array {
+	if (data instanceof Uint8Array) return data;
+	if (data instanceof ArrayBuffer) return new Uint8Array(data);
+	if (Array.isArray(data)) return new Uint8Array(data as number[]);
+	if (typeof data === "string") {
+		const bin = atob(data);
+		const bytes = new Uint8Array(bin.length);
+		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+		return bytes;
+	}
+	return new Uint8Array();
 }
 
 export function ActorView({ actorId }: { actorId: string }) {
@@ -17,23 +39,104 @@ export function ActorView({ actorId }: { actorId: string }) {
 	const [error, setError] = useState<string | null>(null);
 	const initedRef = useRef(false);
 
-	// On (re)connect, adopt any shells already running in the VM.
+	const writers = useRef<Map<string, (bytes: Uint8Array) => void>>(new Map());
+	const pending = useRef<Map<string, Uint8Array[]>>(new Map());
+
+	const dispatchData = useCallback((shellId: string, bytes: Uint8Array) => {
+		const writer = writers.current.get(shellId);
+		if (writer) {
+			writer(bytes);
+			return;
+		}
+		const buf = pending.current.get(shellId) ?? [];
+		buf.push(bytes);
+		pending.current.set(shellId, buf);
+	}, []);
+
+	const dropTab = useCallback(
+		(shellId: string) => {
+			writers.current.delete(shellId);
+			pending.current.delete(shellId);
+			setTabs((prev) => {
+				const next = prev.filter((t) => t.shellId !== shellId);
+				saveShellIds(
+					actorId,
+					next.map((t) => t.shellId),
+				);
+				setActive((cur) =>
+					cur === shellId ? (next[next.length - 1]?.shellId ?? null) : cur,
+				);
+				return next;
+			});
+		},
+		[actorId],
+	);
+
+	const subscribe = useCallback(
+		(shellId: string) => (onData: (bytes: Uint8Array) => void) => {
+			writers.current.set(shellId, onData);
+			const buf = pending.current.get(shellId);
+			if (buf) {
+				for (const b of buf) onData(b);
+				pending.current.delete(shellId);
+			}
+			return () => {
+				writers.current.delete(shellId);
+			};
+		},
+		[],
+	);
+
+	useEffect(() => {
+		if (!conn) return;
+		const events = conn as unknown as {
+			on(name: string, cb: (p: never) => void): () => void;
+		};
+		const offData = events.on("shellData", (p: ShellDataPayload) =>
+			dispatchData(p.shellId, toBytes(p.data)),
+		);
+		const offStderr = events.on("shellStderr", (p: ShellDataPayload) =>
+			dispatchData(p.shellId, toBytes(p.data)),
+		);
+		const offExit = events.on("shellExit", (p: ShellExitPayload) =>
+			dropTab(p.shellId),
+		);
+		return () => {
+			offData();
+			offStderr();
+			offExit();
+		};
+	}, [conn, dispatchData, dropTab]);
+
 	useEffect(() => {
 		if (!conn || initedRef.current) return;
 		initedRef.current = true;
-		conn
-			.listShells()
-			.then((shells: { shellId: string; title: string }[]) => {
-				if (shells.length === 0) return;
-				setTabs(shells.map((s) => ({ shellId: s.shellId, title: s.title })));
-				setActive(shells[0].shellId);
+		const ids = loadShellIds(actorId);
+		if (ids.length === 0) return;
+		Promise.all(
+			ids.map(async (shellId) => {
+				try {
+					await conn.resizeShell(shellId, 80, 24);
+					return shellId;
+				} catch {
+					return null;
+				}
+			}),
+		)
+			.then((probed) => {
+				const live = probed.filter((id): id is string => id !== null);
+				saveShellIds(actorId, live);
+				if (live.length === 0) return;
+				setTabs(live.map((id, i) => ({ shellId: id, title: `shell ${i + 1}` })));
+				setActive(live[0]);
 			})
 			.catch((e: unknown) => setError(String(e)));
-	}, [conn]);
+	}, [conn, actorId]);
 
-	// Reset when switching to a different actor.
 	useEffect(() => {
 		initedRef.current = false;
+		writers.current.clear();
+		pending.current.clear();
 		setTabs([]);
 		setActive(null);
 		setError(null);
@@ -45,36 +148,31 @@ export function ActorView({ actorId }: { actorId: string }) {
 		setError(null);
 		try {
 			const { shellId } = await conn.openShell({ cols: 80, rows: 24 });
-			setTabs((prev) => [
-				...prev,
-				{ shellId, title: `shell ${prev.length + 1}` },
-			]);
+			setTabs((prev) => {
+				const next = [
+					...prev,
+					{ shellId, title: `shell ${prev.length + 1}` },
+				];
+				saveShellIds(
+					actorId,
+					next.map((t) => t.shellId),
+				);
+				return next;
+			});
 			setActive(shellId);
 		} catch (e) {
 			setError(String(e));
 		} finally {
 			setBusy(false);
 		}
-	}, [conn]);
-
-	const dropTab = useCallback((shellId: string) => {
-		setTabs((prev) => {
-			const next = prev.filter((t) => t.shellId !== shellId);
-			setActive((cur) =>
-				cur === shellId ? (next[next.length - 1]?.shellId ?? null) : cur,
-			);
-			return next;
-		});
-	}, []);
+	}, [conn, actorId]);
 
 	const closeTab = useCallback(
 		async (shellId: string) => {
 			dropTab(shellId);
 			try {
 				await conn?.closeShell(shellId);
-			} catch {
-				// already gone
-			}
+			} catch {}
 		},
 		[conn, dropTab],
 	);
@@ -131,14 +229,9 @@ export function ActorView({ actorId }: { actorId: string }) {
 						key={t.shellId}
 						shellId={t.shellId}
 						active={t.shellId === active}
-						// TerminalPane does local echo + line editing and sends whole
-						// `\n`-terminated lines (and control bytes) here.
 						onInput={(text) => conn?.writeShell(t.shellId, text)}
 						onResize={(cols, rows) => conn?.resizeShell(t.shellId, cols, rows)}
-						readShell={async (fromOffset): Promise<ReadResult | undefined> =>
-							conn?.readShell(t.shellId, fromOffset)
-						}
-						onGone={dropTab}
+						subscribe={subscribe(t.shellId)}
 					/>
 				))}
 			</div>

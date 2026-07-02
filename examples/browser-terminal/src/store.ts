@@ -1,7 +1,3 @@
-// Actor list persisted in localStorage. Each entry is one Agent OS VM; its
-// `id` is used verbatim as the RivetKit actor key, so the same VM is reachable
-// across page reloads (and its running shells can be reconnected).
-
 export interface ActorEntry {
 	id: string;
 	name: string;
@@ -38,4 +34,24 @@ function randomId(): string {
 export function createActor(existing: ActorEntry[]): ActorEntry {
 	const n = existing.length + 1;
 	return { id: `vm-${randomId()}`, name: `VM ${n}` };
+}
+
+const shellsKey = (actorId: string) =>
+	`agentos.browser-terminal.shells.${actorId}`;
+
+export function loadShellIds(actorId: string): string[] {
+	try {
+		const raw = localStorage.getItem(shellsKey(actorId));
+		if (!raw) return [];
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed)
+			? parsed.filter((s): s is string => typeof s === "string")
+			: [];
+	} catch {
+		return [];
+	}
+}
+
+export function saveShellIds(actorId: string, ids: string[]): void {
+	localStorage.setItem(shellsKey(actorId), JSON.stringify(ids));
 }

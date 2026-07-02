@@ -32,7 +32,6 @@ body {
 	height: 100%;
 }
 
-/* Sidebar */
 .sidebar {
 	width: 240px;
 	flex: 0 0 240px;
@@ -128,7 +127,6 @@ body {
 	color: #ff6b6b;
 }
 
-/* Main */
 .main {
 	flex: 1;
 	min-width: 0;
