@@ -13,12 +13,12 @@
 		"check-types": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@agentos-software/common": "catalog:",
-		"@agentos-software/curl": "catalog:",
-		"@agentos-software/git": "catalog:",
-		"@agentos-software/jq": "catalog:",
-		"@agentos-software/ripgrep": "catalog:",
-		"@agentos-software/sqlite3": "catalog:",
+		"@agentos-software/common": "link:../../../secure-exec/registry/software/common",
+		"@agentos-software/curl": "link:../../../secure-exec/registry/software/curl",
+		"@agentos-software/git": "link:../../../secure-exec/registry/software/git",
+		"@agentos-software/jq": "link:../../../secure-exec/registry/software/jq",
+		"@agentos-software/ripgrep": "link:../../../secure-exec/registry/software/ripgrep",
+		"@agentos-software/sqlite3": "link:../../../secure-exec/registry/software/sqlite3",
 		"@rivet-dev/agentos": "workspace:*",
 		"@rivetkit/react": "catalog:rivetkit",
 		"@xterm/addon-fit": "^0.10.0",

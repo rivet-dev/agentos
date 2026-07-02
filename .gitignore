@@ -78,4 +78,6 @@ crates/v8-runtime/assets/generated/
 # Transient repro scratch files and Vite/Vitest config timestamp artifacts
 .tmp-*
 *.timestamp-*.mjs
+
+# staged local wasm command fixtures (11MB+ binaries; never commit)
 .local-cmds/
