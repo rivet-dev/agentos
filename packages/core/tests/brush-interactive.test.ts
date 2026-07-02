@@ -17,7 +17,13 @@
 // `sh` collides with the base-filesystem `/bin/sh` and the VM would run that
 // default shell instead of the registry build under test.
 
-import { copyFileSync, existsSync, mkdtempSync } from "node:fs";
+import {
+	copyFileSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,9 +34,12 @@ import type { AgentOs } from "../src/index.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
 const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
-const REGISTRY_SH = resolve(
-	REPO_ROOT,
+const REGISTRY_SH_CANDIDATES = [
 	"../secure-exec/registry/native/target/wasm32-wasip1/release/commands/sh",
+	"../secure-exec-provides/registry/native/target/wasm32-wasip1/release/commands/sh",
+].map((candidate) => resolve(REPO_ROOT, candidate));
+const REGISTRY_SH = REGISTRY_SH_CANDIDATES.find((candidate) =>
+	existsSync(candidate),
 );
 const FIXTURE_COMMAND = "brushsh"; // unique name so it does not shadow /bin/sh
 
@@ -60,18 +69,30 @@ async function waitFor(term: Terminal, text: string, timeoutMs = 20000): Promise
 	throw new Error(`timeout waiting for ${JSON.stringify(text)}\n${snapshot("timeout", term)}`);
 }
 
-// Requires the `sh` wasm command built locally (`make` in
-// ../secure-exec/registry/native). CI consumes published @agentos-software
-// packages and does not build wasm commands, so skip when the artifact is absent
-// rather than failing the suite.
-describe.skipIf(!existsSync(REGISTRY_SH))("brush interactive PTY repaint", () => {
+// Requires the `sh` wasm command built locally (`make` in the secure-exec
+// sibling's registry/native). CI consumes published @agentos-software packages
+// and does not build wasm commands, so skip when the artifact is absent rather
+// than failing the suite.
+describe.skipIf(REGISTRY_SH === undefined)("brush interactive PTY repaint", () => {
 	let vm: AgentOs | undefined;
 	let term: Terminal | undefined;
 	let shellId: string | undefined;
 
 	beforeAll(() => {
+		// Materialize a self-contained `{ packageDir }` fixture: bin/<cmd> plus
+		// the agentos-package.json manifest the sidecar projection requires.
 		fixtureDir = mkdtempSync(join(tmpdir(), "brush-fixture-"));
-		copyFileSync(REGISTRY_SH, join(fixtureDir, FIXTURE_COMMAND));
+		const binDir = join(fixtureDir, "bin");
+		mkdirSync(binDir, { recursive: true });
+		copyFileSync(REGISTRY_SH as string, join(binDir, FIXTURE_COMMAND));
+		writeFileSync(
+			join(fixtureDir, "package.json"),
+			JSON.stringify({ name: "brush-fixture", version: "0.0.0" }),
+		);
+		writeFileSync(
+			join(fixtureDir, "agentos-package.json"),
+			JSON.stringify({ name: "brush-fixture" }),
+		);
 		process.env.AGENTOS_SIDECAR_BIN = SIDECAR_BINARY;
 	});
 
@@ -92,14 +113,7 @@ describe.skipIf(!existsSync(REGISTRY_SH))("brush interactive PTY repaint", () =>
 		const { AgentOs } = await import("../src/index.js");
 		term = new Terminal({ cols: 80, rows: 14, allowProposedApi: true });
 		vm = await AgentOs.create({
-			software: [
-				{
-					name: "brush-fixture",
-					type: "wasm-commands",
-					commandDir: fixtureDir,
-					commands: [{ name: FIXTURE_COMMAND }],
-				},
-			],
+			software: [{ packageDir: fixtureDir }],
 		});
 
 		({ shellId } = vm.openShell({
@@ -107,7 +121,16 @@ describe.skipIf(!existsSync(REGISTRY_SH))("brush interactive PTY repaint", () =>
 			args: ["--input-backend", "reedline", "-i"],
 			cols: term.cols,
 			rows: term.rows,
-			env: { TERM: "xterm-256color", PS1: "AOS$ ", COLUMNS: "80", LINES: "14" },
+			env: {
+				TERM: "xterm-256color",
+				PS1: "AOS$ ",
+				COLUMNS: "80",
+				LINES: "14",
+				// The runner's input polling accrues active CPU while the shell
+				// idles between steps; keep the watchdog out of the test's way
+				// (mirrors the interactive-shell CLI).
+				AGENTOS_V8_CPU_TIME_LIMIT_MS: "600000",
+			},
 			// A real PTY merges stdout+stderr; brush paints its prompt on stderr.
 			onStderr: (d: Uint8Array) => term?.write(d),
 		}));

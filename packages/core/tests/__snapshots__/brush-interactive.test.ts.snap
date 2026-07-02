@@ -21,17 +21,17 @@ cursor=5,0
 
 exports[`brush interactive PTY repaint > Enter preserves scrollback; history and word-edit work 2`] = `
 "# after three commands (scrollback intact)
-cursor=5,9
+cursor=5,6
 01|AOS$ echo alpha
 02|alpha
-03|
-04|AOS$ echo bravo
-05|bravo
-06|
-07|AOS$ echo charlie
-08|charlie
+03|AOS$ echo bravo
+04|bravo
+05|AOS$ echo charlie
+06|charlie
+07|AOS$
+08|
 09|
-10|AOS$
+10|
 11|
 12|
 13|
@@ -40,17 +40,17 @@ cursor=5,9
 
 exports[`brush interactive PTY repaint > Enter preserves scrollback; history and word-edit work 3`] = `
 "# after up-arrow recall
-cursor=17,9
+cursor=17,6
 01|AOS$ echo alpha
 02|alpha
-03|
-04|AOS$ echo bravo
-05|bravo
-06|
+03|AOS$ echo bravo
+04|bravo
+05|AOS$ echo charlie
+06|charlie
 07|AOS$ echo charlie
-08|charlie
+08|
 09|
-10|AOS$ echo charlie
+10|
 11|
 12|
 13|
@@ -59,19 +59,19 @@ cursor=17,9
 
 exports[`brush interactive PTY repaint > Enter preserves scrollback; history and word-edit work 4`] = `
 "# after ctrl-w edit + enter
-cursor=5,12
+cursor=5,8
 01|AOS$ echo alpha
 02|alpha
-03|
-04|AOS$ echo bravo
-05|bravo
-06|
-07|AOS$ echo charlie
-08|charlie
-09|
-10|AOS$ echo delta
-11|delta
+03|AOS$ echo bravo
+04|bravo
+05|AOS$ echo charlie
+06|charlie
+07|AOS$ echo delta
+08|delta
+09|AOS$
+10|
+11|
 12|
-13|AOS$
+13|
 14|"
 `;
