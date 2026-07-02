@@ -15,7 +15,7 @@
 	},
 	"dependencies": {
 		"@rivet-dev/agentos-core": "workspace:*",
-		"@agentos-software/codex-cli": "catalog:",
+		"@agentos-software/codex-cli": "link:../../../secure-exec/registry/software/codex-cli",
 		"@agentos-software/coreutils": "link:../../../secure-exec/registry/software/coreutils",
 		"@agentos-software/curl": "link:../../../secure-exec/registry/software/curl",
 		"@agentos-software/diffutils": "link:../../../secure-exec/registry/software/diffutils",

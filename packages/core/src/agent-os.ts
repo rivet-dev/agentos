@@ -17,7 +17,6 @@ import {
 	resolve as resolveHostPath,
 } from "node:path";
 import { fileURLToPath } from "node:url";
-import commonSoftware from "@agentos-software/common";
 import type { AgentosPackageManifest } from "@agentos-software/manifest";
 import type {
 	MountConfigJsonObject,
@@ -221,7 +220,10 @@ import {
 	type SoftwarePackageRef,
 	tryReadAgentosPackageManifest,
 } from "./agentos-package.js";
-import { defaultAgentsRoot, resolveBuiltinAgents } from "./default-agents.js";
+import {
+	resolveDefaultSoftware,
+	resolveDependencyAgents,
+} from "./default-software.js";
 import type { PermissionTier } from "./runtime.js";
 import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
 import {
@@ -2753,16 +2755,19 @@ export class AgentOs {
 
 	static async create(options?: AgentOsOptions): Promise<AgentOs> {
 		options = parseAgentOsOptions(options);
-		// The built-in agents ship PRE-PACKED as `/opt/agentos` packages (no runtime
-		// npm dependency on the agent SDKs); project whatever the build produced.
-		const builtinAgents =
-			options?.defaultSoftware === false
-				? { software: [], configs: new Map<string, AgentConfig>() }
-				: resolveBuiltinAgents(defaultAgentsRoot());
+		// Default software is FULLY DYNAMIC: this package's own NON-agent
+		// @agentos-software/* dependencies (e.g. common), each default-exporting
+		// its registry-built descriptor. Agent packages are NOT projected here —
+		// createSession(id) links the matching agent dependency into the running
+		// VM on first use, so agent closures (and pi's V8 snapshot bundle) only
+		// enter VMs that run them. Unbuilt packages throw with build
+		// instructions; opt out via defaultSoftware: false.
+		const defaultSoftware =
+			options?.defaultSoftware === false ? [] : await resolveDefaultSoftware();
 		const software: unknown[] =
 			options?.defaultSoftware === false
 				? (options.software ?? [])
-				: [commonSoftware, ...builtinAgents.software, ...(options?.software ?? [])];
+				: [...defaultSoftware, ...(options?.software ?? [])];
 		// Package dirs are projected by the SIDECAR: the client forwards only
 		// `{dir}` over `configureVm` and the sidecar reads package metadata from
 		// `<dir>/agentos-package.json`.
@@ -2786,11 +2791,6 @@ export class AgentOs {
 				launchArgs: manifest.agent.launchArgs,
 				defaultEnv: manifest.agent.env,
 			});
-		}
-		// Expose the built-in agents under their friendly ids (`pi`, `claude`, …)
-		// with their default env, in addition to the package-name registration above.
-		for (const [id, config] of builtinAgents.configs) {
-			agentConfigs.set(id, config);
 		}
 		// Agent-SDK snapshot bundle (loaded once per sidecar into the V8 startup
 		// snapshot, reused across sessions) for any snapshot-enabled agent.
@@ -3773,16 +3773,27 @@ export class AgentOs {
 
 	/** Returns all registered agents with their installation status. */
 	listAgents(): AgentRegistryEntry[] {
-		// Collect all agent IDs from both package configs and hardcoded configs.
+		// Collect agent IDs from package configs, the hardcoded configs, and the
+		// @agentos-software/* agent dependencies (linked lazily on first
+		// createSession — see createSession).
+		const dependencyAgents = resolveDependencyAgents();
 		const allIds = new Set<string>([
 			...this._softwareAgentConfigs.keys(),
 			...Object.keys(AGENT_CONFIGS),
+			...dependencyAgents.keys(),
 		]);
 
 		return [...allIds]
 			.map((id): AgentRegistryEntry | null => {
-				const config = this._resolveAgentConfig(id);
-				if (!config) return null;
+				let config = this._resolveAgentConfig(id);
+				if (!config) {
+					// Dependency agent not linked yet — report it from its manifest.
+					const dependencyAgent = dependencyAgents.get(id);
+					if (!dependencyAgent) return null;
+					config = {
+						adapterEntrypoint: `${OPT_AGENTOS_BIN}/${dependencyAgent.acpEntrypoint}`,
+					};
+				}
 
 				// An `/opt/agentos` agent package is materialized into the VM at
 				// boot, so it is always "installed" — its adapter is a real command.
@@ -4467,7 +4478,19 @@ export class AgentOs {
 		agentType: AgentType | string,
 		options?: CreateSessionOptions,
 	): Promise<{ sessionId: string }> {
-		const config = this._resolveAgentConfig(agentType);
+		let config = this._resolveAgentConfig(agentType);
+		if (!config) {
+			// Lazily link an agent dependency on first use: agent packages are not
+			// projected by default (each carries a full node closure), so resolve
+			// the @agentos-software/* dep whose packed manifest name matches and
+			// link it into the running VM now. linkSoftware registers its
+			// entrypoint/env from the package's own agentos-package.json.
+			const dependencyAgent = resolveDependencyAgents().get(String(agentType));
+			if (dependencyAgent) {
+				await this.linkSoftware({ packageDir: dependencyAgent.packageDir });
+				config = this._resolveAgentConfig(agentType);
+			}
+		}
 		if (!config) {
 			throw new Error(`Unknown agent type: ${agentType}`);
 		}

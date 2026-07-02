@@ -9,9 +9,6 @@ catalogs:
     '@agentos-software/claude-code':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
-    '@agentos-software/codex-cli':
-      specifier: 0.0.0-nathan-agentos-package-resolution.efc374f
-      version: 0.0.0-nathan-agentos-package-resolution.efc374f
     '@agentos-software/git':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
@@ -2374,9 +2371,24 @@ importers:
 
   packages/core:
     dependencies:
+      '@agentos-software/claude-code':
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/common':
         specifier: link:../../../secure-exec/registry/software/common
         version: link:../../../secure-exec/registry/software/common
+      '@agentos-software/manifest':
+        specifier: link:../../../secure-exec/packages/manifest
+        version: link:../../../secure-exec/packages/manifest
+      '@agentos-software/opencode':
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
+      '@agentos-software/pi':
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
+      '@agentos-software/pi-cli':
+        specifier: link:../../../secure-exec/registry/agent/pi-cli
+        version: link:../../../secure-exec/registry/agent/pi-cli
       '@aws-sdk/client-s3':
         specifier: ^3.1019.0
         version: 3.1020.0
@@ -2417,15 +2429,12 @@ importers:
         specifier: ^3.25.2
         version: 3.25.2(zod@4.3.6)
     devDependencies:
-      '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/codex':
         specifier: link:../../../secure-exec/registry/agent/codex
         version: link:../../../secure-exec/registry/agent/codex
       '@agentos-software/codex-cli':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        specifier: link:../../../secure-exec/registry/software/codex-cli
+        version: link:../../../secure-exec/registry/software/codex-cli
       '@agentos-software/coreutils':
         specifier: link:../../../secure-exec/registry/software/coreutils
         version: link:../../../secure-exec/registry/software/coreutils
@@ -2435,6 +2444,9 @@ importers:
       '@agentos-software/diffutils':
         specifier: link:../../../secure-exec/registry/software/diffutils
         version: link:../../../secure-exec/registry/software/diffutils
+      '@agentos-software/duckdb':
+        specifier: link:../../../secure-exec/registry/software/duckdb
+        version: link:../../../secure-exec/registry/software/duckdb
       '@agentos-software/fd':
         specifier: link:../../../secure-exec/registry/software/fd
         version: link:../../../secure-exec/registry/software/fd
@@ -2456,18 +2468,12 @@ importers:
       '@agentos-software/gzip':
         specifier: link:../../../secure-exec/registry/software/gzip
         version: link:../../../secure-exec/registry/software/gzip
+      '@agentos-software/http-get':
+        specifier: link:../../../secure-exec/registry/software/http-get
+        version: link:../../../secure-exec/registry/software/http-get
       '@agentos-software/jq':
         specifier: link:../../../secure-exec/registry/software/jq
         version: link:../../../secure-exec/registry/software/jq
-      '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
-      '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
-      '@agentos-software/pi-cli':
-        specifier: link:../../../secure-exec/registry/agent/pi-cli
-        version: link:../../../secure-exec/registry/agent/pi-cli
       '@agentos-software/ripgrep':
         specifier: link:../../../secure-exec/registry/software/ripgrep
         version: link:../../../secure-exec/registry/software/ripgrep
@@ -2623,8 +2629,8 @@ importers:
   packages/shell:
     dependencies:
       '@agentos-software/codex-cli':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+        specifier: link:../../../secure-exec/registry/software/codex-cli
+        version: link:../../../secure-exec/registry/software/codex-cli
       '@agentos-software/coreutils':
         specifier: link:../../../secure-exec/registry/software/coreutils
         version: link:../../../secure-exec/registry/software/coreutils
@@ -2759,9 +2765,6 @@ packages:
   '@agentos-software/claude-code@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-m7XBRKklrLBsL5pcTlHRDc/wczmoleoPHdD36AYkCyWO0RZX5I/Ha1P0Kz0N1g0m1q7Vu8PcdSdT9ak6jWwX3w==}
     hasBin: true
-
-  '@agentos-software/codex-cli@0.0.0-nathan-agentos-package-resolution.efc374f':
-    resolution: {integrity: sha512-otNFbSsottCjNaimluKREP/s+teuhicW4BZrFSLIz8y6RpLflR4cCH+6bu50QAu/ecZS84WqLBxYubslJviUVQ==}
 
   '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-O4ubhuNoHQ7JVoPuUusOKHbk93XAH5OkRNC7C78VV3lchlzf5WeTLY+JM7QoNOyJqEuT2ZOz5JM88QJ7LmoyPg==}
@@ -7498,8 +7501,6 @@ snapshots:
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - supports-color
-
-  '@agentos-software/codex-cli@0.0.0-nathan-agentos-package-resolution.efc374f': {}
 
   '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 

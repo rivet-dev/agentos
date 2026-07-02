@@ -4,11 +4,7 @@ import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
-import {
-	commandPackageSkipReason,
-	registrySkipReason,
-	withFallbackCommandDir,
-} from "./helpers/registry-commands.js";
+import { requireBuilt } from "./helpers/registry-commands.js";
 
 type ExecResult = {
 	stdout: string;
@@ -22,13 +18,8 @@ const GIT_QUICKSTART_PERMISSIONS = {
 	env: "allow",
 } as const;
 
-const COMMON_SOFTWARE = common.map(withFallbackCommandDir);
-const GIT_PACKAGE = {
-	...withFallbackCommandDir(git),
-	commands: git.commands.filter((command) => command.name === "git"),
-};
-const gitQuickstartArtifactReason =
-	registrySkipReason || commandPackageSkipReason(GIT_PACKAGE);
+const COMMON_SOFTWARE = common;
+const GIT_PACKAGE = requireBuilt(git, "git");
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 
 function parseCurrentBranch(output: string): string {
@@ -55,12 +46,6 @@ function parseHeadRef(content: string): string {
 }
 
 describe("git quickstart integration", () => {
-	if (gitQuickstartArtifactReason) {
-		test("requires registry git command artifacts", () => {
-			expect(gitQuickstartArtifactReason).toBe(false);
-		});
-		return;
-	}
 
 		let vm: AgentOs;
 
