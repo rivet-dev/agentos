@@ -5,7 +5,7 @@
 
 use agentos_client::{
     AgentOs, BatchReadResult, BatchWriteEntry, BatchWriteResult, DeleteOptions, DirEntry,
-    FileContent, MkdirOptions, ReaddirRecursiveOptions, VirtualStat,
+    FileContent, MkdirOptions, ReaddirRecursiveOptions, VirtualDirEntry, VirtualStat,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,61 @@ pub async fn mkdir(vm: &AgentOs, path: &str) -> Result<()> {
 /// is up to the caller.
 pub async fn readdir(vm: &AgentOs, path: &str) -> Result<Vec<String>> {
     vm.readdir(path).await
+}
+
+/// One typed directory entry returned by [`readdir_entries`]. Serializes as
+/// `{ name, isDirectory, isSymbolicLink }`. No `size` — the fast path skips the
+/// per-entry `stat`; callers that need a size `stat` the file when it is opened.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaddirEntryDto {
+    pub name: String,
+    pub is_directory: bool,
+    pub is_symbolic_link: bool,
+}
+
+impl From<VirtualDirEntry> for ReaddirEntryDto {
+    fn from(entry: VirtualDirEntry) -> Self {
+        Self {
+            name: entry.name,
+            is_directory: entry.is_directory,
+            is_symbolic_link: entry.is_symbolic_link,
+        }
+    }
+}
+
+/// `readdirEntries(path)` — one round-trip directory listing with each child's
+/// type, replacing `readdir` + a `stat` per entry (which wedges the actor on
+/// large or virtual dirs). Routes through the kernel, so mounts list correctly.
+///
+/// Returns `None` (serialized as `null`) when `path` is not a listable directory
+/// — i.e. it does not exist (`ENOENT`) or is a file (`ENOTDIR`). Callers (the
+/// inspector's editable cwd) treat `null` as "not found / not a directory",
+/// distinct from `Some([])` (an empty directory). Other kernel failures still
+/// propagate as errors. This avoids surfacing an opaque RivetKit
+/// `internal_error` for the common typo-a-path case, since a *successful* `null`
+/// is not sanitized the way a rejection's message is.
+pub async fn readdir_entries(vm: &AgentOs, path: &str) -> Result<Option<Vec<ReaddirEntryDto>>> {
+    match vm.read_dir_with_types(path).await {
+        Ok(entries) => Ok(Some(
+            entries.into_iter().map(ReaddirEntryDto::from).collect(),
+        )),
+        Err(error) if is_not_a_listable_dir(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// True when a `read_dir_with_types` failure means "there is no directory here":
+/// the kernel embeds the POSIX errno in the message (the wire `code` is a generic
+/// `kernel_error`), reporting `ENOENT` for a missing path and `ENOTDIR` for a
+/// path that resolves to a file. Any other errno is a real failure.
+fn is_not_a_listable_dir(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| {
+            let msg = cause.to_string();
+            msg.contains("ENOENT") || msg.contains("ENOTDIR")
+        })
 }
 
 /// `exists(path)` — port of [`AgentOs::exists`].
