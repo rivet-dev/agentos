@@ -1,0 +1,53 @@
+latency fs/open_close_churn
+  wasm lane: guest JS measured first, wasm native-baseline after
+latency fs/stat_storm
+  wasm lane: guest JS measured first, wasm native-baseline after
+latency fs/small_write
+  wasm lane: guest JS measured first, wasm native-baseline after
+latency fs/big_read
+  wasm lane: guest JS measured first, wasm native-baseline after
+latency fs/mkdir_rmdir
+  wasm lane: guest JS measured first, wasm native-baseline after
+latency fs/rename_file
+  wasm lane: guest JS measured first, wasm native-baseline after
+latency fs/readdir_large
+  wasm lane: guest JS measured first, wasm native-baseline after
+latency fs/fsync_small
+  wasm lane: guest JS measured first, wasm native-baseline after
+latency fs/fs_promises_stat_x32
+  wasm lane: guest JS measured first, wasm native-baseline after
+latency fs/stream_copy_1m
+  wasm lane: guest JS measured first, wasm native-baseline after
+latency control/cpu_loop
+  wasm lane: guest JS measured first, wasm native-baseline after
+latency control/alloc_free
+  wasm lane: guest JS measured first, wasm native-baseline after
+WARNING: AgentOs.getResourceSnapshot is missing in this build; leak/footprint resource counters are STUBBED TO ZERO and prove nothing (resourceSnapshotStubbed=true in findings.json).
+
+ family |                   op | native p50 | node p50 | guest p50 | wasm p50
+------- | -------------------- | ---------- | -------- | --------- | --------
+     fs |     open_close_churn |     0.03ms |   0.01ms |    0.07ms |     19ms
+     fs |           stat_storm |     0.03ms |   0.02ms |    0.08ms |     13ms
+     fs |          small_write |     0.06ms |   0.03ms |    0.05ms |     10ms
+     fs |             big_read |        0ms |   0.04ms |    0.16ms |      9ms
+     fs |          mkdir_rmdir |     0.05ms |   0.04ms |    0.15ms |      4ms
+     fs |          rename_file |     0.05ms |   0.04ms |    0.12ms |     14ms
+     fs |        readdir_large |     0.06ms |   0.02ms |    0.28ms |     44ms
+     fs |          fsync_small |     1.57ms |   0.63ms |    0.09ms |     11ms
+     fs | fs_promises_stat_x32 |     0.03ms |   0.23ms |    1.37ms |     12ms
+     fs |       stream_copy_1m |     0.02ms |   0.93ms |     5.7ms |      9ms
+control |             cpu_loop |     1.26ms |   7.91ms |    7.92ms |      3ms
+control |           alloc_free |     2.14ms |   4.54ms |    4.16ms |      5ms
+
+
+family |                   op | guest/node | guest/native |                            file:line
+------ | -------------------- | ---------- | ------------ | ------------------------------------
+    fs |        readdir_large |         14 |         4.67 | crates/kernel/src/mount_table.rs:814
+    fs |     open_close_churn |          7 |         2.33 |     crates/kernel/src/kernel.rs:1950
+    fs |       stream_copy_1m |       6.13 |          285 | crates/kernel/src/mount_table.rs:814
+    fs | fs_promises_stat_x32 |       5.96 |        45.67 |     crates/kernel/src/kernel.rs:1950
+    fs |           stat_storm |          4 |         2.67 |     crates/kernel/src/kernel.rs:1950
+    fs |             big_read |          4 |     Infinity | crates/kernel/src/mount_table.rs:814
+    fs |          mkdir_rmdir |       3.75 |            3 | crates/kernel/src/mount_table.rs:814
+    fs |          rename_file |          3 |          2.4 | crates/kernel/src/mount_table.rs:814
+

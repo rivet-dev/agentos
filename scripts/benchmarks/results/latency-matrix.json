@@ -1,0 +1,546 @@
+{
+  "latency": [
+    {
+      "family": "fs",
+      "op": "open_close_churn",
+      "fileLine": "crates/kernel/src/kernel.rs:1950",
+      "reproducer": "fs.openSync + fs.closeSync on a small fixture inside VM",
+      "layers": {
+        "native": {
+          "mean": 0.03,
+          "p50": 0.03,
+          "p95": 0.03,
+          "p99": 0.03,
+          "min": 0.03,
+          "max": 0.03
+        },
+        "node": {
+          "mean": 0.02,
+          "p50": 0.01,
+          "p95": 0.03,
+          "p99": 0.03,
+          "min": 0.01,
+          "max": 0.03
+        },
+        "guest": {
+          "mean": 0.08,
+          "p50": 0.07,
+          "p95": 0.08,
+          "p99": 0.08,
+          "min": 0.07,
+          "max": 0.08
+        },
+        "wasm": {
+          "mean": 19.3,
+          "p50": 19,
+          "p95": 27,
+          "p99": 27,
+          "min": 13,
+          "max": 27
+        }
+      },
+      "tax": {
+        "emulation": 7,
+        "total": 2.33,
+        "wasm": 633.33
+      }
+    },
+    {
+      "family": "fs",
+      "op": "stat_storm",
+      "fileLine": "crates/kernel/src/kernel.rs:1950",
+      "reproducer": "node fs.statSync('/tmp/fuzz-perf-stat.txt') inside VM",
+      "layers": {
+        "native": {
+          "mean": 0.03,
+          "p50": 0.03,
+          "p95": 0.04,
+          "p99": 0.04,
+          "min": 0.03,
+          "max": 0.04
+        },
+        "node": {
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.04,
+          "p99": 0.04,
+          "min": 0.01,
+          "max": 0.04
+        },
+        "guest": {
+          "mean": 0.09,
+          "p50": 0.08,
+          "p95": 0.14,
+          "p99": 0.14,
+          "min": 0.07,
+          "max": 0.14
+        },
+        "wasm": {
+          "mean": 13.9,
+          "p50": 13,
+          "p95": 17,
+          "p99": 17,
+          "min": 12,
+          "max": 17
+        }
+      },
+      "tax": {
+        "emulation": 4,
+        "total": 2.67,
+        "wasm": 433.33
+      }
+    },
+    {
+      "family": "fs",
+      "op": "small_write",
+      "fileLine": "crates/kernel/src/kernel.rs:1930",
+      "reproducer": "node fs.writeFileSync('/tmp/fuzz-perf-write.txt', payload)",
+      "layers": {
+        "native": {
+          "mean": 0.06,
+          "p50": 0.06,
+          "p95": 0.07,
+          "p99": 0.07,
+          "min": 0.06,
+          "max": 0.07
+        },
+        "node": {
+          "mean": 0.03,
+          "p50": 0.03,
+          "p95": 0.04,
+          "p99": 0.04,
+          "min": 0.02,
+          "max": 0.04
+        },
+        "guest": {
+          "mean": 0.05,
+          "p50": 0.05,
+          "p95": 0.07,
+          "p99": 0.07,
+          "min": 0.04,
+          "max": 0.07
+        },
+        "wasm": {
+          "mean": 11.1,
+          "p50": 10,
+          "p95": 13,
+          "p99": 13,
+          "min": 9,
+          "max": 13
+        }
+      },
+      "tax": {
+        "emulation": 1.67,
+        "total": 0.83,
+        "wasm": 166.67
+      }
+    },
+    {
+      "family": "fs",
+      "op": "big_read",
+      "fileLine": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "node fs.readFileSync('/tmp/fuzz-perf-read.bin')",
+      "layers": {
+        "native": {
+          "mean": 0,
+          "p50": 0,
+          "p95": 0.01,
+          "p99": 0.01,
+          "min": 0,
+          "max": 0.01
+        },
+        "node": {
+          "mean": 0.05,
+          "p50": 0.04,
+          "p95": 0.06,
+          "p99": 0.06,
+          "min": 0.04,
+          "max": 0.06
+        },
+        "guest": {
+          "mean": 0.16,
+          "p50": 0.16,
+          "p95": 0.19,
+          "p99": 0.19,
+          "min": 0.15,
+          "max": 0.19
+        },
+        "wasm": {
+          "mean": 9.1,
+          "p50": 9,
+          "p95": 10,
+          "p99": 10,
+          "min": 8,
+          "max": 10
+        }
+      },
+      "tax": {
+        "emulation": 4,
+        "total": null,
+        "wasm": null
+      }
+    },
+    {
+      "family": "fs",
+      "op": "mkdir_rmdir",
+      "fileLine": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "fs.mkdirSync + fs.rmdirSync on a fresh VM path",
+      "layers": {
+        "native": {
+          "mean": 0.05,
+          "p50": 0.05,
+          "p95": 0.05,
+          "p99": 0.05,
+          "min": 0.03,
+          "max": 0.05
+        },
+        "node": {
+          "mean": 0.05,
+          "p50": 0.04,
+          "p95": 0.06,
+          "p99": 0.06,
+          "min": 0.03,
+          "max": 0.06
+        },
+        "guest": {
+          "mean": 0.16,
+          "p50": 0.15,
+          "p95": 0.24,
+          "p99": 0.24,
+          "min": 0.14,
+          "max": 0.24
+        },
+        "wasm": {
+          "mean": 4.2,
+          "p50": 4,
+          "p95": 5,
+          "p99": 5,
+          "min": 4,
+          "max": 5
+        }
+      },
+      "tax": {
+        "emulation": 3.75,
+        "total": 3,
+        "wasm": 80
+      }
+    },
+    {
+      "family": "fs",
+      "op": "rename_file",
+      "fileLine": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "write one file, rename it, then unlink",
+      "layers": {
+        "native": {
+          "mean": 0.05,
+          "p50": 0.05,
+          "p95": 0.06,
+          "p99": 0.06,
+          "min": 0.05,
+          "max": 0.06
+        },
+        "node": {
+          "mean": 0.04,
+          "p50": 0.04,
+          "p95": 0.05,
+          "p99": 0.05,
+          "min": 0.03,
+          "max": 0.05
+        },
+        "guest": {
+          "mean": 0.12,
+          "p50": 0.12,
+          "p95": 0.13,
+          "p99": 0.13,
+          "min": 0.11,
+          "max": 0.13
+        },
+        "wasm": {
+          "mean": 14.1,
+          "p50": 14,
+          "p95": 18,
+          "p99": 18,
+          "min": 12,
+          "max": 18
+        }
+      },
+      "tax": {
+        "emulation": 3,
+        "total": 2.4,
+        "wasm": 280
+      }
+    },
+    {
+      "family": "fs",
+      "op": "readdir_large",
+      "fileLine": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "readdirSync over a 32-entry VM directory",
+      "layers": {
+        "native": {
+          "mean": 0.06,
+          "p50": 0.06,
+          "p95": 0.08,
+          "p99": 0.08,
+          "min": 0.06,
+          "max": 0.08
+        },
+        "node": {
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.04,
+          "p99": 0.04,
+          "min": 0.02,
+          "max": 0.04
+        },
+        "guest": {
+          "mean": 0.29,
+          "p50": 0.28,
+          "p95": 0.34,
+          "p99": 0.34,
+          "min": 0.26,
+          "max": 0.34
+        },
+        "wasm": {
+          "mean": 43.8,
+          "p50": 44,
+          "p95": 46,
+          "p99": 46,
+          "min": 43,
+          "max": 46
+        }
+      },
+      "tax": {
+        "emulation": 14,
+        "total": 4.67,
+        "wasm": 733.33
+      }
+    },
+    {
+      "family": "fs",
+      "op": "fsync_small",
+      "fileLine": "crates/kernel/src/kernel.rs:1930",
+      "reproducer": "fs.writeSync then fs.fsyncSync on a small file",
+      "layers": {
+        "native": {
+          "mean": 1.73,
+          "p50": 1.57,
+          "p95": 3.06,
+          "p99": 3.06,
+          "min": 1.37,
+          "max": 3.06
+        },
+        "node": {
+          "mean": 0.68,
+          "p50": 0.63,
+          "p95": 1.1,
+          "p99": 1.1,
+          "min": 0.58,
+          "max": 1.1
+        },
+        "guest": {
+          "mean": 0.1,
+          "p50": 0.09,
+          "p95": 0.18,
+          "p99": 0.18,
+          "min": 0.07,
+          "max": 0.18
+        },
+        "wasm": {
+          "mean": 10.7,
+          "p50": 11,
+          "p95": 11,
+          "p99": 11,
+          "min": 10,
+          "max": 11
+        }
+      },
+      "tax": {
+        "emulation": 0.14,
+        "total": 0.06,
+        "wasm": 7.01
+      }
+    },
+    {
+      "family": "fs",
+      "op": "fs_promises_stat_x32",
+      "fileLine": "crates/kernel/src/kernel.rs:1950",
+      "reproducer": "32 sequential fs.promises.stat calls on one VM file",
+      "layers": {
+        "native": {
+          "mean": 0.03,
+          "p50": 0.03,
+          "p95": 0.03,
+          "p99": 0.03,
+          "min": 0.03,
+          "max": 0.03
+        },
+        "node": {
+          "mean": 0.26,
+          "p50": 0.23,
+          "p95": 0.58,
+          "p99": 0.58,
+          "min": 0.21,
+          "max": 0.58
+        },
+        "guest": {
+          "mean": 1.55,
+          "p50": 1.37,
+          "p95": 2.06,
+          "p99": 2.06,
+          "min": 1.21,
+          "max": 2.06
+        },
+        "wasm": {
+          "mean": 12.2,
+          "p50": 12,
+          "p95": 13,
+          "p99": 13,
+          "min": 12,
+          "max": 13
+        }
+      },
+      "tax": {
+        "emulation": 5.96,
+        "total": 45.67,
+        "wasm": 400
+      }
+    },
+    {
+      "family": "fs",
+      "op": "stream_copy_1m",
+      "fileLine": "crates/kernel/src/mount_table.rs:814",
+      "reproducer": "stream pipeline copies one 1MiB file inside VM",
+      "layers": {
+        "native": {
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.02,
+          "p99": 0.02,
+          "min": 0.01,
+          "max": 0.02
+        },
+        "node": {
+          "mean": 1.03,
+          "p50": 0.93,
+          "p95": 1.46,
+          "p99": 1.46,
+          "min": 0.8,
+          "max": 1.46
+        },
+        "guest": {
+          "mean": 5.74,
+          "p50": 5.7,
+          "p95": 8.08,
+          "p99": 8.08,
+          "min": 4.64,
+          "max": 8.08
+        },
+        "wasm": {
+          "mean": 9.4,
+          "p50": 9,
+          "p95": 10,
+          "p99": 10,
+          "min": 9,
+          "max": 10
+        }
+      },
+      "tax": {
+        "emulation": 6.13,
+        "total": 285,
+        "wasm": 450
+      }
+    },
+    {
+      "family": "control",
+      "op": "cpu_loop",
+      "fileLine": "crates/execution/src/javascript.rs:1741",
+      "reproducer": "bounded integer loop inside one node process",
+      "expectedRatio": "control",
+      "layers": {
+        "native": {
+          "mean": 1.3,
+          "p50": 1.26,
+          "p95": 1.46,
+          "p99": 1.46,
+          "min": 1.25,
+          "max": 1.46
+        },
+        "node": {
+          "mean": 7.9,
+          "p50": 7.91,
+          "p95": 7.95,
+          "p99": 7.95,
+          "min": 7.83,
+          "max": 7.95
+        },
+        "guest": {
+          "mean": 7.92,
+          "p50": 7.92,
+          "p95": 7.96,
+          "p99": 7.96,
+          "min": 7.89,
+          "max": 7.96
+        },
+        "wasm": {
+          "mean": 3,
+          "p50": 3,
+          "p95": 3,
+          "p99": 3,
+          "min": 3,
+          "max": 3
+        }
+      },
+      "tax": {
+        "emulation": 1,
+        "total": 6.29,
+        "wasm": 2.38
+      }
+    },
+    {
+      "family": "control",
+      "op": "alloc_free",
+      "fileLine": "crates/execution/src/javascript.rs:1741",
+      "reproducer": "allocate and drop one 4MiB Uint8Array inside one node process",
+      "expectedRatio": "control",
+      "layers": {
+        "native": {
+          "mean": 2.16,
+          "p50": 2.14,
+          "p95": 2.2,
+          "p99": 2.2,
+          "min": 2.11,
+          "max": 2.2
+        },
+        "node": {
+          "mean": 4.74,
+          "p50": 4.54,
+          "p95": 5.75,
+          "p99": 5.75,
+          "min": 4.47,
+          "max": 5.75
+        },
+        "guest": {
+          "mean": 4.35,
+          "p50": 4.16,
+          "p95": 5.81,
+          "p99": 5.81,
+          "min": 4.09,
+          "max": 5.81
+        },
+        "wasm": {
+          "mean": 5.5,
+          "p50": 5,
+          "p95": 6,
+          "p99": 6,
+          "min": 5,
+          "max": 6
+        }
+      },
+      "tax": {
+        "emulation": 0.92,
+        "total": 1.94,
+        "wasm": 2.34
+      }
+    }
+  ]
+}

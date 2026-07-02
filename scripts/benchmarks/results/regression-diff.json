@@ -1,0 +1,5 @@
+{
+  "status": "missing-baseline",
+  "baselinePath": "/home/nathan/.herdr/workspaces/agent-os/fuzz-perf/scripts/benchmarks/results//baseline/findings-baseline.json",
+  "regressions": []
+}
