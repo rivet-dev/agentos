@@ -1,5 +1,5 @@
 /**
- * Rust-backed `agentOs(...)` definition.
+ * Rust-backed `agentOS(...)` definition.
  *
  * Produces an `ActorDefinition` whose `nativeFactoryBuilder` constructs a
  * native-actor-plugin factory through `runtime.createNativePluginFactory(...)`
@@ -83,7 +83,7 @@ interface SerializedAgentConfig {
 
 /**
  * A native `host_dir` mount of a host `node_modules` directory at
- * `/root/node_modules`, the serializable form `agentOs({ options: { mounts } })`
+ * `/root/node_modules`, the serializable form `agentOS({ options: { mounts } })`
  * accepts across the NAPI boundary.
  */
 export interface NodeModulesMountConfig {
@@ -318,21 +318,21 @@ export function buildConfigJson<TConnParams>(
 function serializeNativeMounts(input: unknown): NativeMountLike[] | undefined {
 	if (input == null) return undefined;
 	if (!Array.isArray(input)) {
-		throw new Error("agentOs() options.mounts must be an array");
+		throw new Error("agentOS() options.mounts must be an array");
 	}
 	return input.map((mount, index) => {
 		if (!mount || typeof mount !== "object") {
-			throw new Error(`agentOs() options.mounts[${index}] must be an object`);
+			throw new Error(`agentOS() options.mounts[${index}] must be an object`);
 		}
 		const record = mount as Record<string, unknown>;
 		if (record.driver !== undefined) {
 			throw new Error(
-				"agentOs() only supports Native mounts across the NAPI boundary; Plain mounts with driver callbacks are not serializable",
+				"agentOS() only supports Native mounts across the NAPI boundary; Plain mounts with driver callbacks are not serializable",
 			);
 		}
 		if (record.filesystem !== undefined) {
 			throw new Error(
-				"agentOs() only supports Native mounts across the NAPI boundary; Overlay mounts are not serializable",
+				"agentOS() only supports Native mounts across the NAPI boundary; Overlay mounts are not serializable",
 			);
 		}
 		const plugin = record.plugin;
@@ -343,7 +343,7 @@ function serializeNativeMounts(input: unknown): NativeMountLike[] | undefined {
 			typeof (plugin as Record<string, unknown>).id !== "string"
 		) {
 			throw new Error(
-				`agentOs() options.mounts[${index}] must be a Native mount with { path, plugin: { id, config? } }`,
+				`agentOS() options.mounts[${index}] must be a Native mount with { path, plugin: { id, config? } }`,
 			);
 		}
 		return {
@@ -361,16 +361,16 @@ function serializeNativeMounts(input: unknown): NativeMountLike[] | undefined {
 function serializeSidecar(input: unknown): { pool?: string } | undefined {
 	if (input == null) return undefined;
 	if (!input || typeof input !== "object") {
-		throw new Error("agentOs() options.sidecar must be an object");
+		throw new Error("agentOS() options.sidecar must be an object");
 	}
 	const record = input as Record<string, unknown>;
 	if (record.kind === "explicit" || record.handle !== undefined) {
 		throw new Error(
-			"agentOs() only supports sidecar shared pool configuration across the NAPI boundary; explicit sidecar handles are not serializable",
+			"agentOS() only supports sidecar shared pool configuration across the NAPI boundary; explicit sidecar handles are not serializable",
 		);
 	}
 	if (record.kind !== undefined && record.kind !== "shared") {
-		throw new Error('agentOs() options.sidecar.kind must be "shared"');
+		throw new Error('agentOS() options.sidecar.kind must be "shared"');
 	}
 	return typeof record.pool === "string" ? { pool: record.pool } : {};
 }
@@ -381,7 +381,7 @@ function buildNativeFactoryBuilder<TConnParams>(
 	return (runtime) => {
 		if (runtime.kind !== "napi") {
 			throw new Error(
-				`agentOs() is only supported on the native NAPI runtime (current runtime kind: ${runtime.kind})`,
+				`agentOS() is only supported on the native NAPI runtime (current runtime kind: ${runtime.kind})`,
 			);
 		}
 		if (!runtime.createNativePluginFactory) {
@@ -405,7 +405,7 @@ function buildNativeFactoryBuilder<TConnParams>(
 }
 
 /**
- * Type alias for the `agentOs(...)` return type. Events are not typed at the TS
+ * Type alias for the `agentOS(...)` return type. Events are not typed at the TS
  * surface because the Rust plugin owns the broadcast set, but the ACTIONS are
  * typed via {@link AgentOsActions} — a TS mirror of the Rust dispatch in
  * `crates/agentos-actor-plugin/src/actions/mod.rs`. That is what gives
@@ -465,7 +465,7 @@ export const DEFAULT_AGENTOS_ACTOR_OPTIONS = {
 	maxQueueMessageSize: ACTOR_NEVER_HIT_MESSAGE_BYTES,
 } as const;
 
-export function agentOs<TConnParams = undefined>(
+export function createAgentOS<TConnParams = undefined>(
 	config: AgentOsActorConfigInput<TConnParams>,
 ): AgentOsActorDefinition<TConnParams> {
 	const parsed = agentOsActorConfigSchema.parse(

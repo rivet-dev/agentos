@@ -1,6 +1,6 @@
 // Rust-backed agent-os actor surface (native actor plugin / cdylib).
 //
-// Only the `agentOs()` definition function, the config schema, the
+// Only the `agentOS()` definition function, the config schema, the
 // `nodeModulesMount` helper, the plugin-path resolver, and the public domain
 // types are exported. All actor lifecycle + action dispatch live in the Rust
 // plugin (`crates/agentos-actor-plugin`), loaded by RivetKit via the generic
@@ -13,7 +13,7 @@ import type {
 } from "@rivet-dev/agentos-core";
 import {
 	type AgentOsActorDefinition,
-	agentOs as createAgentOs,
+	createAgentOS,
 } from "./actor.js";
 import type {
 	AgentOsActorConfigInput,
@@ -94,7 +94,6 @@ export type {
 	VmFetchResponse,
 	WriteFileResult,
 } from "./actor-actions.js";
-export { createAgentOs as agentOs };
 
 export type AgentOSActorConfigInput<TConnParams = undefined> =
 	NativeAgentOsOptions &
@@ -124,7 +123,7 @@ export function agentOS<TConnParams = undefined>(
 		...options
 	} = config;
 
-	return createAgentOs({
+	return createAgentOS({
 		options,
 		preview,
 		onBeforeConnect,

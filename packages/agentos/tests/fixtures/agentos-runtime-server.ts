@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setup } from "rivetkit";
-import { agentOs } from "../../src/index.js";
+import { agentOS } from "../../src/index.js";
 import { buildNativeRegistry } from "../../../../../r6/rivetkit-typescript/packages/rivetkit/src/registry/native";
 
 const fixtureDir = dirname(fileURLToPath(import.meta.url));
@@ -17,19 +17,17 @@ function resolveEngineBinaryPath(): string | undefined {
 
 const registry = setup({
 	use: {
-		os: agentOs({
-			options: {
-				permissions: {
-					fs: "allow",
-					network: "allow",
-					childProcess: "allow",
-					process: "allow",
-					env: "allow",
-				},
-				sidecar: {
-					kind: "shared",
-					pool: process.env.AGENTOS_TEST_SIDECAR_POOL,
-				},
+		os: agentOS({
+			permissions: {
+				fs: "allow",
+				network: "allow",
+				childProcess: "allow",
+				process: "allow",
+				env: "allow",
+			},
+			sidecar: {
+				kind: "shared",
+				pool: process.env.AGENTOS_TEST_SIDECAR_POOL,
 			},
 		}),
 	},

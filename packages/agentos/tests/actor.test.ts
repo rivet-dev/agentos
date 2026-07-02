@@ -15,7 +15,6 @@ import { createClient } from "rivetkit/client";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import {
 	agentOS,
-	agentOs,
 	buildConfigJson,
 	getPluginPath,
 	nodeModulesMount,
@@ -306,13 +305,11 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 	});
 
 	test("serializes config and hands plugin paths to the NAPI runtime", () => {
-		const definition = agentOs({
-			options: {
-				additionalInstructions: "stay deterministic",
-				loopbackExemptPorts: [4020],
-				mounts: [nodeModulesMount("/host/project/node_modules")],
-				sidecar: { kind: "shared", pool: "agentos-smoke" },
-			},
+		const definition = agentOS({
+			additionalInstructions: "stay deterministic",
+			loopbackExemptPorts: [4020],
+			mounts: [nodeModulesMount("/host/project/node_modules")],
+			sidecar: { kind: "shared", pool: "agentos-smoke" },
 		});
 		const expectedHandle = Symbol(
 			"native-factory",
@@ -378,48 +375,34 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 
 	test("rejects native actor options that cannot cross the NAPI config boundary", () => {
 		expect(() =>
-			agentOs({
-				options: {
-					toolKits: [],
-				} as never,
-			}),
-		).toThrow(/toolKits/);
-
-		expect(() =>
 			agentOS({
 				toolKits: [],
 			} as never),
 		).toThrow(/toolKits/);
 
 		expect(() =>
-			agentOs({
-				options: {
-					mounts: [{ path: "/data", driver: {} }],
-				} as never,
-			}),
+			agentOS({
+				mounts: [{ path: "/data", driver: {} }],
+			} as never),
 		).toThrow(/driver/);
 
 		expect(() =>
-			agentOs({
-				options: {
-					mounts: [
-						{
-							path: "/data",
-							driver: {
-								readFile: async () => new Uint8Array(),
-							},
+			agentOS({
+				mounts: [
+					{
+						path: "/data",
+						driver: {
+							readFile: async () => new Uint8Array(),
 						},
-					],
-				} as never,
-			}),
+					},
+				],
+			} as never),
 		).toThrow(/driver/);
 
 		expect(() =>
-			agentOs({
-				options: {
-					sidecar: { kind: "explicit", handle: {} },
-				} as never,
-			}),
+			agentOS({
+				sidecar: { kind: "explicit", handle: {} },
+			} as never),
 		).toThrow(/sidecar/);
 	});
 
