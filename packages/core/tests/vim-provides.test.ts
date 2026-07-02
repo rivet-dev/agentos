@@ -20,9 +20,13 @@ const { Terminal } = pkg;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
-const VIM_COMMAND_DIR = resolve(REPO_ROOT, ".local-cmds");
+// Local-fixture locations, overridable so the suite is not tied to one
+// machine's layout (CI skips via the fixture gate below).
+const VIM_COMMAND_DIR =
+	process.env.AGENTOS_VIM_FIXTURE_DIR ?? resolve(REPO_ROOT, ".local-cmds");
 const VIM_BINARY = resolve(VIM_COMMAND_DIR, "vim");
 const SNAP_DIR =
+	process.env.AGENTOS_VIM_SNAPSHOT_DIR ??
 	"/home/nathan/progress/agent-os/2026-06-30-package-provisioned-files-env/vim-provides-snapshots";
 
 // Mirror packages/shell/src/main.ts: VIMRUNTIME pointed straight at a runtime

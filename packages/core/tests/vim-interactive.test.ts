@@ -19,9 +19,13 @@ const { Terminal } = pkg;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
-const VIM_COMMAND_DIR = resolve(REPO_ROOT, ".local-cmds");
+// Local-fixture locations, overridable so the suite is not tied to one
+// machine's layout (CI skips via the fixture gate below).
+const VIM_COMMAND_DIR =
+	process.env.AGENTOS_VIM_FIXTURE_DIR ?? resolve(REPO_ROOT, ".local-cmds");
 const VIM_BINARY = resolve(VIM_COMMAND_DIR, "vim");
 const SNAP_DIR =
+	process.env.AGENTOS_VIM_SNAPSHOT_DIR ??
 	"/home/nathan/progress/agent-os/2026-06-28-just-shell-fix/vim-snapshots";
 
 const VIM_ARGS = [
@@ -244,6 +248,83 @@ describe.skipIf(!existsSync(VIM_BINARY))("interactive vim over VM PTY", () => {
 				`# /work/hello.txt after :w\n${JSON.stringify(fileContent)}\n\n---raw---\n${fileContent}`,
 			);
 			expect(fileContent).toBe("hello world\n");
+
+			offData();
+			void __disposeAllSharedSidecarsForTesting().catch(() => {});
+			vm = undefined;
+		},
+		TEST_TIMEOUT_MS,
+	);
+
+	// Regression guard for the idle full-screen raw-mode case: the guest must
+	// survive a long idle stretch on the DEFAULT CPU watchdog (no
+	// AGENTOS_V8_CPU_TIME_LIMIT_MS override) and still consume a keystroke
+	// afterwards. Guards both the event-driven kernel wait servicing (idle must
+	// accrue ~zero active CPU) and the poll/read wake path (the keystroke must
+	// land promptly, not after a polling slice).
+	it(
+		"idles 60s+ in raw mode on the default CPU watchdog, then consumes a keystroke",
+		async () => {
+			assertVimAvailable();
+
+			const { AgentOs } = await import("../src/index.js");
+			vm = await AgentOs.create({
+				permissions: allowAll,
+				software: [materializeVimPackage()],
+			});
+			await vm.mkdir("/work", { recursive: true });
+
+			const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true });
+			let writes = Promise.resolve();
+			const { shellId } = vm.openShell({
+				command: "vim",
+				args: VIM_ARGS,
+				cols: 80,
+				rows: 24,
+				cwd: "/work",
+				env: { TERM: "xterm" },
+			});
+			const offData = vm.onShellData(shellId, (data) => {
+				const bytes = Buffer.from(data);
+				writes = writes.then(
+					() => new Promise<void>((resolve) => term.write(bytes, resolve)),
+				);
+			});
+
+			const waitForScreen = async (
+				predicate: (current: string) => boolean,
+				label: string,
+				timeoutMs = 30_000,
+			) => {
+				const deadline = Date.now() + timeoutMs;
+				let current = screen(term);
+				while (Date.now() < deadline) {
+					await sleep(250);
+					await writes;
+					current = screen(term);
+					if (predicate(current)) {
+						return current;
+					}
+				}
+				throw new Error(`timed out waiting for ${label}\n\n${current}`);
+			};
+
+			await waitForScreen((s) => s.includes("~"), "vim startup screen");
+
+			// Idle well past a minute. With polling-based input waits this idle
+			// stretch used to burn the 30s default CPU budget and the watchdog
+			// killed the isolate.
+			await sleep(65_000);
+
+			await vm.writeShell(shellId, "iidle-survivor");
+			await waitForScreen(
+				(s) => s.includes("idle-survivor"),
+				"keystrokes consumed after long idle",
+				10_000,
+			);
+
+			await vm.writeShell(shellId, "\u001b:q!\r");
+			await sleep(1_000);
 
 			offData();
 			void __disposeAllSharedSidecarsForTesting().catch(() => {});

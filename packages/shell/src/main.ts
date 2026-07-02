@@ -62,7 +62,6 @@ const fallbackCommandDirs = [
 		"../secure-exec/registry/native/target/wasm32-wasip1/release/commands",
 	),
 ];
-const INTERACTIVE_SHELL_WASM_FUEL_MS = 24 * 60 * 60 * 1000;
 const BRUSH_SHELL_COMMANDS = new Set(["bash", "sh"]);
 const SHELL_OPTIONS_WITH_VALUES = new Set([
 	"--command",
@@ -722,28 +721,14 @@ async function runTerminalAttempt(
 
 const cli = parseCli(process.argv.slice(2));
 const env = buildEnv(cli);
-if (cli.tty && env.AGENTOS_V8_CPU_TIME_LIMIT_MS === undefined) {
-	// Interactive sessions idle for hours; the wasm runner's input polling
-	// accrues active-CPU against the default 30s watchdog and kills the guest
-	// (vim/reedline die mid-session). Match the 24h interactive fuel budget.
-	env.AGENTOS_V8_CPU_TIME_LIMIT_MS = String(INTERACTIVE_SHELL_WASM_FUEL_MS);
-}
 const mounts = buildMounts(cli);
-const limits = cli.tty
-	? {
-			resources: {
-				maxWasmFuel: INTERACTIVE_SHELL_WASM_FUEL_MS,
-			},
-		}
-	: undefined;
 
 const vm: ShellVmHandle = cli.actor
-	? await createActorShellVm({ software, mounts, limits })
+	? await createActorShellVm({ software, mounts })
 	: await AgentOs.create({
 			mounts,
 			permissions: allowAll,
 			software,
-			limits,
 		});
 
 let exitCode = 1;

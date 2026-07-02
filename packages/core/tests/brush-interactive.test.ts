@@ -126,10 +126,6 @@ describe.skipIf(REGISTRY_SH === undefined)("brush interactive PTY repaint", () =
 				PS1: "AOS$ ",
 				COLUMNS: "80",
 				LINES: "14",
-				// The runner's input polling accrues active CPU while the shell
-				// idles between steps; keep the watchdog out of the test's way
-				// (mirrors the interactive-shell CLI).
-				AGENTOS_V8_CPU_TIME_LIMIT_MS: "600000",
 			},
 			// A real PTY merges stdout+stderr; brush paints its prompt on stderr.
 			onStderr: (d: Uint8Array) => term?.write(d),
