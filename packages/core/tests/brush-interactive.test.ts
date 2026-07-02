@@ -41,6 +41,9 @@ const REGISTRY_SH_CANDIDATES = [
 const REGISTRY_SH = REGISTRY_SH_CANDIDATES.find((candidate) =>
 	existsSync(candidate),
 );
+const REGISTRY_CAT = REGISTRY_SH_CANDIDATES.map((candidate) =>
+	resolve(dirname(candidate), "cat"),
+).find(existsSync);
 const FIXTURE_COMMAND = "brushsh"; // unique name so it does not shadow /bin/sh
 
 let fixtureDir: string;
@@ -85,6 +88,11 @@ describe.skipIf(REGISTRY_SH === undefined)("brush interactive PTY repaint", () =
 		const binDir = join(fixtureDir, "bin");
 		mkdirSync(binDir, { recursive: true });
 		copyFileSync(REGISTRY_SH as string, join(binDir, FIXTURE_COMMAND));
+		// A real external command (spawned as a CHILD of the shell) for the
+		// child-output regression below; a unique name avoids /bin/cat.
+		if (REGISTRY_CAT !== undefined) {
+			copyFileSync(REGISTRY_CAT, join(binDir, "childcat"));
+		}
 		writeFileSync(
 			join(fixtureDir, "package.json"),
 			JSON.stringify({ name: "brush-fixture", version: "0.0.0" }),
@@ -158,5 +166,48 @@ describe.skipIf(REGISTRY_SH === undefined)("brush interactive PTY repaint", () =
 		await waitFor(t, "echo delta");
 		await new Promise((r) => setTimeout(r, 400));
 		expect(snapshot("after ctrl-w edit + enter", t)).toMatchSnapshot();
+	}, 60000);
+
+	// Regression: output from an EXTERNAL command (a child process sharing the
+	// shell's terminal) must reach the host exactly once. It used to arrive
+	// twice — once relayed by the shell's runner from the child's stdout
+	// events, and once via the PTY master drain of the same bytes — doubling
+	// every child's output (`cat` lines printed twice, vim keystroke echo
+	// corrupting the screen).
+	test.skipIf(REGISTRY_CAT === undefined)("external child command output renders exactly once", async () => {
+		const { AgentOs } = await import("../src/index.js");
+		term = new Terminal({ cols: 80, rows: 14, allowProposedApi: true });
+		vm = await AgentOs.create({
+			software: [{ packageDir: fixtureDir }],
+		});
+		await vm.writeFile("/tmp/marker.txt", "child-once-marker\n");
+
+		({ shellId } = vm.openShell({
+			command: FIXTURE_COMMAND,
+			args: ["--input-backend", "reedline", "-i"],
+			cols: term.cols,
+			rows: term.rows,
+			env: {
+				TERM: "xterm-256color",
+				PS1: "AOS$ ",
+				COLUMNS: "80",
+				LINES: "14",
+			},
+			onStderr: (d: Uint8Array) => term?.write(d),
+		}));
+		vm.onShellData(shellId, (d) => term?.write(d));
+		const t = term;
+		const s = shellId;
+		const v = vm;
+		t.onData((d) => v.writeShell(s, d));
+
+		await waitFor(t, "AOS$");
+		v.writeShell(s, "childcat /tmp/marker.txt\r");
+		await waitFor(t, "child-once-marker");
+		await new Promise((r) => setTimeout(r, 500));
+
+		const rendered = snapshot("child output", t);
+		const occurrences = rendered.split("child-once-marker").length - 1;
+		expect(occurrences).toBe(1);
 	}, 60000);
 });
