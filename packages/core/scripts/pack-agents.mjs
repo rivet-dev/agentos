@@ -6,7 +6,14 @@
 //
 // Usage: node scripts/pack-agents.mjs [--agent <id>]...
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	symlinkSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,10 +75,25 @@ for (let i = 0; i < argv.length; i++) {
 	if (argv[i] === "--agent") only.push(argv[++i]);
 }
 
+// The toolchain writes a FLAT package into `--out` ("the package IS out"). The
+// runtime (`resolveBuiltinAgentDir`) expects the versioned `<name>/<version>` +
+// `current` layout, so pack into a temp dir, read the packed name/version, then
+// move it under `<outRoot>/<name>/<version>` and repoint `current`.
 function pack(args) {
-	execFileSync("node", [toolchainCli, "pack", ...args, "--prune-native", "--out", outRoot], {
+	const tmp = join(outRoot, ".pack-tmp");
+	rmSync(tmp, { recursive: true, force: true });
+	mkdirSync(tmp, { recursive: true });
+	execFileSync("node", [toolchainCli, "pack", ...args, "--prune-native", "--out", tmp], {
 		stdio: "inherit",
 	});
+	const pkg = JSON.parse(readFileSync(join(tmp, "package.json"), "utf8"));
+	const versionDir = join(outRoot, pkg.name, pkg.version);
+	rmSync(versionDir, { recursive: true, force: true });
+	mkdirSync(dirname(versionDir), { recursive: true });
+	renameSync(tmp, versionDir);
+	const current = join(outRoot, pkg.name, "current");
+	rmSync(current, { recursive: true, force: true });
+	symlinkSync(pkg.version, current);
 }
 
 const selected = only.length ? AGENTS.filter((a) => only.includes(a.id)) : AGENTS;
