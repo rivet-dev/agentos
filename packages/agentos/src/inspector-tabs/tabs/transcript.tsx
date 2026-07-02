@@ -1,10 +1,10 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AgentOsEmpty, relativeTime, StatusDot } from "../common";
 import { cn } from "../lib/cn";
-import { agentOsSource } from "../lib/source";
-import { useLiveSessionEvents } from "../lib/use-session-events";
-import type { TranscriptEvent } from "../lib/types";
+import { useAgentOsActor } from "../lib/rivet";
+import { agentOsSource, mapNotification } from "../lib/source";
+import type { JsonRpcNotification, SessionEventPayload, TranscriptEvent } from "../lib/types";
 import { ScrollArea } from "../ui/scroll-area";
 import React from "react";
 
@@ -58,7 +58,35 @@ export function TranscriptTabConnected({ actorId }: { actorId: string }) {
 	const sessionId = selected ?? sessions[0]?.sessionId ?? null;
 	// Persisted history (one-off) + live tail (websocket `sessionEvent` stream).
 	const { data: backfill = [] } = useQuery(agentOsSource.transcriptQueryOptions(actorId, sessionId));
-	const live = useLiveSessionEvents(sessionId);
+
+	// Live tail via the typed useActor connection. `sessionEvent` isn't in the
+	// actor's TS event schema (Rust owns broadcasts), so `useEvent` is typed with
+	// `never` event names — cast to subscribe to the real runtime event.
+	const actor = useAgentOsActor();
+	const useAgentEvent = actor.useEvent as (
+		name: string,
+		handler: (payload: SessionEventPayload) => void,
+	) => void;
+	const [live, setLive] = useState<TranscriptEvent[]>([]);
+	// Synthetic monotonic seq (broadcasts carry none); latest sessionId via ref so
+	// the (ref-stable) event handler never filters against a stale value.
+	const seqRef = useRef(0);
+	const sessionIdRef = useRef(sessionId);
+	sessionIdRef.current = sessionId;
+	useEffect(() => {
+		setLive([]);
+		seqRef.current = 0;
+	}, [sessionId]);
+	useAgentEvent("sessionEvent", (payload) => {
+		const cur = sessionIdRef.current;
+		if (!cur) return;
+		// Broadcast may omit sessionId; when present, keep only this session's.
+		if (payload?.sessionId && payload.sessionId !== cur) return;
+		const notification: JsonRpcNotification | undefined =
+			payload?.event ?? (payload as unknown as JsonRpcNotification);
+		if (!notification) return;
+		setLive((prev) => [...prev, mapNotification(notification, seqRef.current++)]);
+	});
 	return (
 		<div className="flex h-full min-h-0">
 			<div className="flex h-full w-64 shrink-0 flex-col border-r">
