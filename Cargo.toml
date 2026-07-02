@@ -5,7 +5,7 @@ members = [
     "crates/agentos-sidecar-core",
     "crates/agentos-sidecar",
     # LOCAL-DEV (web/wasm convergence): re-added because the converged
-    # `secure-exec-sidecar-browser` is provided via the local ../secure-exec-convwasi
+    # `secure-exec-sidecar-browser` is provided via the local ../secure-exec
     # link. Before a real push this must go back to excluded (or be pinned to a
     # published browser crate) — secure-exec does not publish it to crates.io yet.
     "crates/agentos-sidecar-browser",
@@ -23,19 +23,19 @@ repository = "https://github.com/rivet-dev/agent-os"
 # normal crates.io dependencies so CI/publish builds do not need a sibling
 # checkout.
 [workspace.dependencies]
-agentos-bridge = { package = "secure-exec-bridge", path = "../secure-exec-convwasi/crates/bridge", version = "0.3.0-rc.1" }
+agentos-bridge = { package = "secure-exec-bridge", path = "../secure-exec/crates/bridge", version = "0.3.0-rc.1" }
 agentos-protocol = { path = "crates/agentos-protocol", version = "0.2.0-rc.3" }
 agentos-sidecar-core = { path = "crates/agentos-sidecar-core", version = "0.2.0-rc.3" }
 agentos-sidecar = { path = "crates/agentos-sidecar", version = "0.2.0-rc.3" }
 agentos-sidecar-browser = { path = "crates/agentos-sidecar-browser", version = "0.2.0-rc.3" }
-agentos-kernel = { package = "secure-exec-kernel", path = "../secure-exec-convwasi/crates/kernel", version = "0.3.0-rc.1" }
-agentos-execution = { package = "secure-exec-execution", path = "../secure-exec-convwasi/crates/execution", version = "0.3.0-rc.1" }
-agentos-v8-runtime = { package = "secure-exec-v8-runtime", path = "../secure-exec-convwasi/crates/v8-runtime", version = "0.3.0-rc.1" }
-secure-exec-client = { path = "../secure-exec-convwasi/crates/secure-exec-client", version = "0.3.0-rc.1" }
-secure-exec-bridge = { path = "../secure-exec-convwasi/crates/bridge", version = "0.3.0-rc.1" }
-secure-exec-sidecar = { path = "../secure-exec-convwasi/crates/sidecar", version = "0.3.0-rc.1" }
+agentos-kernel = { package = "secure-exec-kernel", path = "../secure-exec/crates/kernel", version = "0.3.0-rc.1" }
+agentos-execution = { package = "secure-exec-execution", path = "../secure-exec/crates/execution", version = "0.3.0-rc.1" }
+agentos-v8-runtime = { package = "secure-exec-v8-runtime", path = "../secure-exec/crates/v8-runtime", version = "0.3.0-rc.1" }
+secure-exec-client = { path = "../secure-exec/crates/secure-exec-client", version = "0.3.0-rc.1" }
+secure-exec-bridge = { path = "../secure-exec/crates/bridge", version = "0.3.0-rc.1" }
+secure-exec-sidecar = { path = "../secure-exec/crates/sidecar", version = "0.3.0-rc.1" }
 # LOCAL-DEV: unpublished converged browser crate from the convwasi link (web/wasm work).
-secure-exec-sidecar-browser = { path = "../secure-exec-convwasi/crates/sidecar-browser", version = "0.3.0-rc.1" }
-secure-exec-vm-config = { path = "../secure-exec-convwasi/crates/vm-config", version = "0.3.0-rc.1" }
+secure-exec-sidecar-browser = { path = "../secure-exec/crates/sidecar-browser", version = "0.3.0-rc.1" }
+secure-exec-vm-config = { path = "../secure-exec/crates/vm-config", version = "0.3.0-rc.1" }
 vbare = "0.0.4"
 vbare-compiler = { package = "rivet-vbare-compiler", version = "0.0.5" }

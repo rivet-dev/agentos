@@ -9,22 +9,16 @@ catalogs:
     '@agentos-software/claude-code':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
-    '@agentos-software/coreutils':
-      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
-      version: 0.0.0-nathan-agentos-package-resolution.42d8146
+    '@agentos-software/codex-cli':
+      specifier: 0.0.0-nathan-agentos-package-resolution.efc374f
+      version: 0.0.0-nathan-agentos-package-resolution.efc374f
     '@agentos-software/git':
-      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
-      version: 0.0.0-nathan-agentos-package-resolution.42d8146
-    '@agentos-software/jq':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
     '@agentos-software/opencode':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
     '@agentos-software/pi':
-      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
-      version: 0.0.0-nathan-agentos-package-resolution.42d8146
-    '@agentos-software/ripgrep':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
 
@@ -39,17 +33,17 @@ importers:
   .:
     devDependencies:
       '@agentos-software/claude-code':
-        specifier: link:../secure-exec-convwasi/registry/agent/claude
-        version: link:../secure-exec-convwasi/registry/agent/claude
+        specifier: link:../secure-exec/registry/agent/claude
+        version: link:../secure-exec/registry/agent/claude
       '@agentos-software/codex':
-        specifier: link:../secure-exec-convwasi/registry/agent/codex
-        version: link:../secure-exec-convwasi/registry/agent/codex
+        specifier: link:../secure-exec/registry/agent/codex
+        version: link:../secure-exec/registry/agent/codex
       '@agentos-software/common':
-        specifier: link:../secure-exec-convwasi/registry/software/common
-        version: link:../secure-exec-convwasi/registry/software/common
+        specifier: link:../secure-exec/registry/software/common
+        version: link:../secure-exec/registry/software/common
       '@agentos-software/pi':
-        specifier: link:../secure-exec-convwasi/registry/agent/pi
-        version: link:../secure-exec-convwasi/registry/agent/pi
+        specifier: link:../secure-exec/registry/agent/pi
+        version: link:../secure-exec/registry/agent/pi
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
@@ -63,8 +57,8 @@ importers:
         specifier: workspace:*
         version: link:packages/core
       '@secure-exec/core':
-        specifier: link:../secure-exec-convwasi/packages/core
-        version: link:../secure-exec-convwasi/packages/core
+        specifier: link:../secure-exec/packages/core
+        version: link:../secure-exec/packages/core
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -84,17 +78,17 @@ importers:
   examples/agent-to-agent:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -149,17 +143,17 @@ importers:
   examples/approvals:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -198,17 +192,17 @@ importers:
   examples/authentication:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -247,17 +241,17 @@ importers:
   examples/bindings:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -296,17 +290,17 @@ importers:
   examples/claude:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -345,17 +339,17 @@ importers:
   examples/codex:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -394,17 +388,17 @@ importers:
   examples/core:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -443,17 +437,17 @@ importers:
   examples/crash-course:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -492,17 +486,17 @@ importers:
   examples/cron:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -541,17 +535,17 @@ importers:
   examples/custom:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -590,17 +584,17 @@ importers:
   examples/debugging:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -639,17 +633,17 @@ importers:
   examples/filesystem:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -688,17 +682,17 @@ importers:
   examples/js-runtime:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -737,17 +731,17 @@ importers:
   examples/llm-credentials:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -786,17 +780,17 @@ importers:
   examples/multiplayer:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -835,17 +829,17 @@ importers:
   examples/networking:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -884,17 +878,17 @@ importers:
   examples/opencode:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -933,17 +927,17 @@ importers:
   examples/permissions:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -982,17 +976,17 @@ importers:
   examples/persistence:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1031,17 +1025,17 @@ importers:
   examples/pi:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1080,17 +1074,17 @@ importers:
   examples/processes:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1129,17 +1123,17 @@ importers:
   examples/quickstart:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/claude
-        version: link:../../../secure-exec-convwasi/registry/agent/claude
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec-convwasi/registry/software/git
-        version: link:../../../secure-exec-convwasi/registry/software/git
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/opencode
-        version: link:../../../secure-exec-convwasi/registry/agent/opencode
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/pi
-        version: link:../../../secure-exec-convwasi/registry/agent/pi
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1149,9 +1143,6 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      '@secure-exec/s3':
-        specifier: link:../../../secure-exec-convwasi/registry/file-system/s3
-        version: link:../../../secure-exec-convwasi/registry/file-system/s3
       dockerode:
         specifier: ^4.0.9
         version: 4.0.10
@@ -1181,17 +1172,17 @@ importers:
   examples/quickstart-app:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1873,17 +1864,17 @@ importers:
   examples/resource-limits:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1922,17 +1913,17 @@ importers:
   examples/sandbox:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1971,17 +1962,17 @@ importers:
   examples/sessions:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2020,26 +2011,26 @@ importers:
   examples/software:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/coreutils':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/coreutils
+        version: link:../../../secure-exec/registry/software/coreutils
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/jq':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/jq
+        version: link:../../../secure-exec/registry/software/jq
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@agentos-software/ripgrep':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/ripgrep
+        version: link:../../../secure-exec/registry/software/ripgrep
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2078,17 +2069,17 @@ importers:
   examples/webhooks:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2130,17 +2121,17 @@ importers:
   examples/workflows:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2179,8 +2170,8 @@ importers:
   packages/agentos:
     dependencies:
       '@agentos-software/common':
-        specifier: link:../../../secure-exec-convwasi/registry/software/common
-        version: link:../../../secure-exec-convwasi/registry/software/common
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
@@ -2222,8 +2213,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@secure-exec/sandbox':
-        specifier: link:../../../secure-exec-convwasi/registry/tool/sandbox
-        version: link:../../../secure-exec-convwasi/registry/tool/sandbox
+        specifier: link:../../../secure-exec/registry/tool/sandbox
+        version: link:../../../secure-exec/registry/tool/sandbox
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2232,8 +2223,8 @@ importers:
         version: 4.3.6
     devDependencies:
       '@agentos-software/common':
-        specifier: link:../../../secure-exec-convwasi/registry/software/common
-        version: link:../../../secure-exec-convwasi/registry/software/common
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -2247,11 +2238,11 @@ importers:
   packages/browser:
     dependencies:
       '@secure-exec/browser':
-        specifier: link:../../../secure-exec-convwasi/packages/browser
-        version: link:../../../secure-exec-convwasi/packages/browser
+        specifier: link:../../../secure-exec/packages/browser
+        version: link:../../../secure-exec/packages/browser
       '@secure-exec/core':
-        specifier: link:../../../secure-exec-convwasi/packages/core
-        version: link:../../../secure-exec-convwasi/packages/core
+        specifier: link:../../../secure-exec/packages/core
+        version: link:../../../secure-exec/packages/core
       sucrase:
         specifier: ^3.35.0
         version: 3.35.1
@@ -2281,8 +2272,8 @@ importers:
   packages/core:
     dependencies:
       '@agentos-software/common':
-        specifier: link:../../../secure-exec-convwasi/registry/software/common
-        version: link:../../../secure-exec-convwasi/registry/software/common
+        specifier: link:../../../secure-exec/registry/software/common
+        version: link:../../../secure-exec/registry/software/common
       '@aws-sdk/client-s3':
         specifier: ^3.1019.0
         version: 3.1020.0
@@ -2293,8 +2284,8 @@ importers:
         specifier: ^0.6.2
         version: 0.6.2
       '@secure-exec/core':
-        specifier: link:../../../secure-exec-convwasi/packages/core
-        version: link:../../../secure-exec-convwasi/packages/core
+        specifier: link:../../../secure-exec/packages/core
+        version: link:../../../secure-exec/packages/core
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -2324,71 +2315,74 @@ importers:
         version: 3.25.2(zod@4.3.6)
     devDependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/claude
-        version: link:../../../secure-exec-convwasi/registry/agent/claude
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/codex':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/codex
-        version: link:../../../secure-exec-convwasi/registry/agent/codex
+        specifier: link:../../../secure-exec/registry/agent/codex
+        version: link:../../../secure-exec/registry/agent/codex
       '@agentos-software/codex-cli':
-        specifier: link:../../../secure-exec-convwasi/registry/software/codex
-        version: link:../../../secure-exec-convwasi/registry/software/codex
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.efc374f
       '@agentos-software/coreutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/coreutils
-        version: link:../../../secure-exec-convwasi/registry/software/coreutils
+        specifier: link:../../../secure-exec/registry/software/coreutils
+        version: link:../../../secure-exec/registry/software/coreutils
       '@agentos-software/curl':
-        specifier: link:../../../secure-exec-convwasi/registry/software/curl
-        version: link:../../../secure-exec-convwasi/registry/software/curl
+        specifier: link:../../../secure-exec/registry/software/curl
+        version: link:../../../secure-exec/registry/software/curl
       '@agentos-software/diffutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/diffutils
-        version: link:../../../secure-exec-convwasi/registry/software/diffutils
+        specifier: link:../../../secure-exec/registry/software/diffutils
+        version: link:../../../secure-exec/registry/software/diffutils
       '@agentos-software/fd':
-        specifier: link:../../../secure-exec-convwasi/registry/software/fd
-        version: link:../../../secure-exec-convwasi/registry/software/fd
+        specifier: link:../../../secure-exec/registry/software/fd
+        version: link:../../../secure-exec/registry/software/fd
       '@agentos-software/file':
-        specifier: link:../../../secure-exec-convwasi/registry/software/file
-        version: link:../../../secure-exec-convwasi/registry/software/file
+        specifier: link:../../../secure-exec/registry/software/file
+        version: link:../../../secure-exec/registry/software/file
       '@agentos-software/findutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/findutils
-        version: link:../../../secure-exec-convwasi/registry/software/findutils
+        specifier: link:../../../secure-exec/registry/software/findutils
+        version: link:../../../secure-exec/registry/software/findutils
       '@agentos-software/gawk':
-        specifier: link:../../../secure-exec-convwasi/registry/software/gawk
-        version: link:../../../secure-exec-convwasi/registry/software/gawk
+        specifier: link:../../../secure-exec/registry/software/gawk
+        version: link:../../../secure-exec/registry/software/gawk
       '@agentos-software/git':
-        specifier: link:../../../secure-exec-convwasi/registry/software/git
-        version: link:../../../secure-exec-convwasi/registry/software/git
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/grep':
-        specifier: link:../../../secure-exec-convwasi/registry/software/grep
-        version: link:../../../secure-exec-convwasi/registry/software/grep
+        specifier: link:../../../secure-exec/registry/software/grep
+        version: link:../../../secure-exec/registry/software/grep
       '@agentos-software/gzip':
-        specifier: link:../../../secure-exec-convwasi/registry/software/gzip
-        version: link:../../../secure-exec-convwasi/registry/software/gzip
+        specifier: link:../../../secure-exec/registry/software/gzip
+        version: link:../../../secure-exec/registry/software/gzip
       '@agentos-software/jq':
-        specifier: link:../../../secure-exec-convwasi/registry/software/jq
-        version: link:../../../secure-exec-convwasi/registry/software/jq
+        specifier: link:../../../secure-exec/registry/software/jq
+        version: link:../../../secure-exec/registry/software/jq
+      '@agentos-software/manifest':
+        specifier: link:../../../secure-exec/packages/manifest
+        version: link:../../../secure-exec/packages/manifest
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/opencode
-        version: link:../../../secure-exec-convwasi/registry/agent/opencode
+        specifier: link:../../../secure-exec/registry/agent/opencode
+        version: link:../../../secure-exec/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/pi
-        version: link:../../../secure-exec-convwasi/registry/agent/pi
+        specifier: link:../../../secure-exec/registry/agent/pi
+        version: link:../../../secure-exec/registry/agent/pi
       '@agentos-software/pi-cli':
-        specifier: link:../../../secure-exec-convwasi/registry/agent/pi-cli
-        version: link:../../../secure-exec-convwasi/registry/agent/pi-cli
+        specifier: link:../../../secure-exec/registry/agent/pi-cli
+        version: link:../../../secure-exec/registry/agent/pi-cli
       '@agentos-software/ripgrep':
-        specifier: link:../../../secure-exec-convwasi/registry/software/ripgrep
-        version: link:../../../secure-exec-convwasi/registry/software/ripgrep
+        specifier: link:../../../secure-exec/registry/software/ripgrep
+        version: link:../../../secure-exec/registry/software/ripgrep
       '@agentos-software/sed':
-        specifier: link:../../../secure-exec-convwasi/registry/software/sed
-        version: link:../../../secure-exec-convwasi/registry/software/sed
+        specifier: link:../../../secure-exec/registry/software/sed
+        version: link:../../../secure-exec/registry/software/sed
       '@agentos-software/tar':
-        specifier: link:../../../secure-exec-convwasi/registry/software/tar
-        version: link:../../../secure-exec-convwasi/registry/software/tar
+        specifier: link:../../../secure-exec/registry/software/tar
+        version: link:../../../secure-exec/registry/software/tar
       '@agentos-software/tree':
-        specifier: link:../../../secure-exec-convwasi/registry/software/tree
-        version: link:../../../secure-exec-convwasi/registry/software/tree
+        specifier: link:../../../secure-exec/registry/software/tree
+        version: link:../../../secure-exec/registry/software/tree
       '@agentos-software/yq':
-        specifier: link:../../../secure-exec-convwasi/registry/software/yq
-        version: link:../../../secure-exec-convwasi/registry/software/yq
+        specifier: link:../../../secure-exec/registry/software/yq
+        version: link:../../../secure-exec/registry/software/yq
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.87
         version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
@@ -2416,12 +2410,6 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: link:../agentos-sandbox
         version: link:../agentos-sandbox
-      '@secure-exec/google-drive':
-        specifier: link:../../../secure-exec-convwasi/registry/file-system/google-drive
-        version: link:../../../secure-exec-convwasi/registry/file-system/google-drive
-      '@secure-exec/s3':
-        specifier: link:../../../secure-exec-convwasi/registry/file-system/s3
-        version: link:../../../secure-exec-convwasi/registry/file-system/s3
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -2535,83 +2523,89 @@ importers:
   packages/shell:
     dependencies:
       '@agentos-software/codex-cli':
-        specifier: link:../../../secure-exec-convwasi/registry/software/codex
-        version: link:../../../secure-exec-convwasi/registry/software/codex
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.efc374f
       '@agentos-software/coreutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/coreutils
-        version: link:../../../secure-exec-convwasi/registry/software/coreutils
+        specifier: link:../../../secure-exec/registry/software/coreutils
+        version: link:../../../secure-exec/registry/software/coreutils
       '@agentos-software/curl':
-        specifier: link:../../../secure-exec-convwasi/registry/software/curl
-        version: link:../../../secure-exec-convwasi/registry/software/curl
+        specifier: link:../../../secure-exec/registry/software/curl
+        version: link:../../../secure-exec/registry/software/curl
       '@agentos-software/diffutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/diffutils
-        version: link:../../../secure-exec-convwasi/registry/software/diffutils
+        specifier: link:../../../secure-exec/registry/software/diffutils
+        version: link:../../../secure-exec/registry/software/diffutils
       '@agentos-software/duckdb':
-        specifier: link:../../../secure-exec-convwasi/registry/software/duckdb
-        version: link:../../../secure-exec-convwasi/registry/software/duckdb
+        specifier: link:../../../secure-exec/registry/software/duckdb
+        version: link:../../../secure-exec/registry/software/duckdb
       '@agentos-software/fd':
-        specifier: link:../../../secure-exec-convwasi/registry/software/fd
-        version: link:../../../secure-exec-convwasi/registry/software/fd
+        specifier: link:../../../secure-exec/registry/software/fd
+        version: link:../../../secure-exec/registry/software/fd
       '@agentos-software/file':
-        specifier: link:../../../secure-exec-convwasi/registry/software/file
-        version: link:../../../secure-exec-convwasi/registry/software/file
+        specifier: link:../../../secure-exec/registry/software/file
+        version: link:../../../secure-exec/registry/software/file
       '@agentos-software/findutils':
-        specifier: link:../../../secure-exec-convwasi/registry/software/findutils
-        version: link:../../../secure-exec-convwasi/registry/software/findutils
+        specifier: link:../../../secure-exec/registry/software/findutils
+        version: link:../../../secure-exec/registry/software/findutils
       '@agentos-software/gawk':
-        specifier: link:../../../secure-exec-convwasi/registry/software/gawk
-        version: link:../../../secure-exec-convwasi/registry/software/gawk
+        specifier: link:../../../secure-exec/registry/software/gawk
+        version: link:../../../secure-exec/registry/software/gawk
       '@agentos-software/git':
-        specifier: link:../../../secure-exec-convwasi/registry/software/git
-        version: link:../../../secure-exec-convwasi/registry/software/git
+        specifier: link:../../../secure-exec/registry/software/git
+        version: link:../../../secure-exec/registry/software/git
       '@agentos-software/grep':
-        specifier: link:../../../secure-exec-convwasi/registry/software/grep
-        version: link:../../../secure-exec-convwasi/registry/software/grep
+        specifier: link:../../../secure-exec/registry/software/grep
+        version: link:../../../secure-exec/registry/software/grep
       '@agentos-software/gzip':
-        specifier: link:../../../secure-exec-convwasi/registry/software/gzip
-        version: link:../../../secure-exec-convwasi/registry/software/gzip
+        specifier: link:../../../secure-exec/registry/software/gzip
+        version: link:../../../secure-exec/registry/software/gzip
       '@agentos-software/http-get':
-        specifier: link:../../../secure-exec-convwasi/registry/software/http-get
-        version: link:../../../secure-exec-convwasi/registry/software/http-get
+        specifier: link:../../../secure-exec/registry/software/http-get
+        version: link:../../../secure-exec/registry/software/http-get
       '@agentos-software/jq':
-        specifier: link:../../../secure-exec-convwasi/registry/software/jq
-        version: link:../../../secure-exec-convwasi/registry/software/jq
+        specifier: link:../../../secure-exec/registry/software/jq
+        version: link:../../../secure-exec/registry/software/jq
       '@agentos-software/make':
-        specifier: link:../../../secure-exec-convwasi/registry/software/make
-        version: link:../../../secure-exec-convwasi/registry/software/make
+        specifier: link:../../../secure-exec/registry/software/make
+        version: link:../../../secure-exec/registry/software/make
       '@agentos-software/ripgrep':
-        specifier: link:../../../secure-exec-convwasi/registry/software/ripgrep
-        version: link:../../../secure-exec-convwasi/registry/software/ripgrep
+        specifier: link:../../../secure-exec/registry/software/ripgrep
+        version: link:../../../secure-exec/registry/software/ripgrep
       '@agentos-software/sed':
-        specifier: link:../../../secure-exec-convwasi/registry/software/sed
-        version: link:../../../secure-exec-convwasi/registry/software/sed
+        specifier: link:../../../secure-exec/registry/software/sed
+        version: link:../../../secure-exec/registry/software/sed
       '@agentos-software/sqlite3':
-        specifier: link:../../../secure-exec-convwasi/registry/software/sqlite3
-        version: link:../../../secure-exec-convwasi/registry/software/sqlite3
+        specifier: link:../../../secure-exec/registry/software/sqlite3
+        version: link:../../../secure-exec/registry/software/sqlite3
       '@agentos-software/tar':
-        specifier: link:../../../secure-exec-convwasi/registry/software/tar
-        version: link:../../../secure-exec-convwasi/registry/software/tar
+        specifier: link:../../../secure-exec/registry/software/tar
+        version: link:../../../secure-exec/registry/software/tar
       '@agentos-software/tree':
-        specifier: link:../../../secure-exec-convwasi/registry/software/tree
-        version: link:../../../secure-exec-convwasi/registry/software/tree
+        specifier: link:../../../secure-exec/registry/software/tree
+        version: link:../../../secure-exec/registry/software/tree
       '@agentos-software/unzip':
-        specifier: link:../../../secure-exec-convwasi/registry/software/unzip
-        version: link:../../../secure-exec-convwasi/registry/software/unzip
+        specifier: link:../../../secure-exec/registry/software/unzip
+        version: link:../../../secure-exec/registry/software/unzip
       '@agentos-software/wget':
-        specifier: link:../../../secure-exec-convwasi/registry/software/wget
-        version: link:../../../secure-exec-convwasi/registry/software/wget
+        specifier: link:../../../secure-exec/registry/software/wget
+        version: link:../../../secure-exec/registry/software/wget
       '@agentos-software/yq':
-        specifier: link:../../../secure-exec-convwasi/registry/software/yq
-        version: link:../../../secure-exec-convwasi/registry/software/yq
+        specifier: link:../../../secure-exec/registry/software/yq
+        version: link:../../../secure-exec/registry/software/yq
       '@agentos-software/zip':
-        specifier: link:../../../secure-exec-convwasi/registry/software/zip
-        version: link:../../../secure-exec-convwasi/registry/software/zip
+        specifier: link:../../../secure-exec/registry/software/zip
+        version: link:../../../secure-exec/registry/software/zip
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../agentos
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
       commander:
         specifier: ^14.0.2
         version: 14.0.3
+      rivetkit:
+        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
+        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
     devDependencies:
       '@types/node':
         specifier: ^22.19.3
@@ -2737,14 +2731,11 @@ packages:
     resolution: {integrity: sha512-m7XBRKklrLBsL5pcTlHRDc/wczmoleoPHdD36AYkCyWO0RZX5I/Ha1P0Kz0N1g0m1q7Vu8PcdSdT9ak6jWwX3w==}
     hasBin: true
 
-  '@agentos-software/coreutils@0.0.0-nathan-agentos-package-resolution.42d8146':
-    resolution: {integrity: sha512-Gjh/SPjhfbNX6mCaM/WCnW/jT3IBXO21jXMgfscjPs+C/9E0+60leT1xab8+om1v4KzK7+yiEChVUpk4M99M6A==}
+  '@agentos-software/codex-cli@0.0.0-nathan-agentos-package-resolution.efc374f':
+    resolution: {integrity: sha512-otNFbSsottCjNaimluKREP/s+teuhicW4BZrFSLIz8y6RpLflR4cCH+6bu50QAu/ecZS84WqLBxYubslJviUVQ==}
 
   '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-O4ubhuNoHQ7JVoPuUusOKHbk93XAH5OkRNC7C78VV3lchlzf5WeTLY+JM7QoNOyJqEuT2ZOz5JM88QJ7LmoyPg==}
-
-  '@agentos-software/jq@0.0.0-nathan-agentos-package-resolution.42d8146':
-    resolution: {integrity: sha512-2QSqWxzmOC4iv19PdTAd9IfLN35s+2VXosHVmU3AhK7KPixfc8On9PDM8FaNGRruqzSkH+DbR6xK8dmNOS8q7w==}
 
   '@agentos-software/opencode@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-rjVYfj6f+X7ps/VmlsYEa7g3Q9LkFSdzp+E/untBGfx20OPoXiCS/zOP8M+ov486Ty16gbD9Q17qhTrocn9nlA==}
@@ -2753,9 +2744,6 @@ packages:
   '@agentos-software/pi@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-fatQvo1vrIZepIM6qNVn2qjmxZoe8sSxDCA++NbdRn0pTdTD7azMrF2XA/zc3DNwwWAqiDJrOiMFRsoX6HMVSQ==}
     hasBin: true
-
-  '@agentos-software/ripgrep@0.0.0-nathan-agentos-package-resolution.42d8146':
-    resolution: {integrity: sha512-mUYipQCElmjxlBqcI4tlTfHcm2Sc4qeAKBVmaenVy4orn3Kyxs77vygt8m38gwR5XMHw35utgOstnqcvsjXnJA==}
 
   '@ai-sdk/amazon-bedrock@3.0.93':
     resolution: {integrity: sha512-57cP3Ume6DdQP05xPYl2g554EqPrQgKRW/eE3BGm1ktK1k71e35HGzNl1GZHIYKct82QrY/iQuheanSonI88Dg==}
@@ -10095,11 +10083,9 @@ snapshots:
       - '@cfworker/json-schema'
       - supports-color
 
-  '@agentos-software/coreutils@0.0.0-nathan-agentos-package-resolution.42d8146': {}
+  '@agentos-software/codex-cli@0.0.0-nathan-agentos-package-resolution.efc374f': {}
 
   '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.42d8146': {}
-
-  '@agentos-software/jq@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
   '@agentos-software/opencode@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
@@ -10116,8 +10102,6 @@ snapshots:
       - utf-8-validate
       - ws
       - zod
-
-  '@agentos-software/ripgrep@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
   '@ai-sdk/amazon-bedrock@3.0.93(zod@4.3.6)':
     dependencies:
