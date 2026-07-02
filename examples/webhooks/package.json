@@ -8,7 +8,7 @@
     "@rivet-dev/agentos": "workspace:*",
     "@rivet-dev/agentos-core": "workspace:*",
     "@rivet-dev/agentos-sandbox": "workspace:*",
-    "rivetkit": "0.0.0-feat-dylib-actor-plugin.c44621f",
+    "rivetkit": "0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585",
     "hono": "^4.6.0",
     "sandbox-agent": "^0.4.2",
     "dockerode": "^4.0.9",

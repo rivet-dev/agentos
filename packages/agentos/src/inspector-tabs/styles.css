@@ -1,0 +1,56 @@
+/* IBM Plex (rivet frontend's typeface) — loaded from the Google Fonts CDN, so
+   it adds ~0 bundle weight. Must precede the @tailwind directives. */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens vendored from the rivet inspector theme (src/components/theme.css,
+   dark-mode). The vendored shadcn-style primitives reference these via
+   hsl(var(--token)). */
+:root {
+	--radius: 0.5rem;
+	--background: 240 6% 4%;
+	--foreground: 0 0% 100%;
+	--card: 240 7% 5%;
+	--card-foreground: 0 0% 100%;
+	--popover: 240 7% 5%;
+	--popover-foreground: 0 0% 100%;
+	--primary: 18.5 100% 50%;
+	--primary-foreground: 0 0% 100%;
+	--secondary: 240 5% 7%;
+	--secondary-foreground: 0 0% 100%;
+	--muted: 240 5% 9%;
+	--muted-foreground: 240 5% 65%;
+	--accent: 240 5% 9%;
+	--accent-foreground: 0 0% 100%;
+	--destructive: 0 72.2% 50.6%;
+	--destructive-foreground: 0 0% 100%;
+	--warning: 47.9 95.8% 53.1%;
+	--border: 240 5% 14%;
+	--input: 240 5% 14%;
+	--ring: 18.59 100% 50%;
+}
+
+*,:before,:after {
+    box-sizing: border-box;
+    border-width: 0;
+    border-style: solid;
+    border-color: hsl(var(--border)) !important;
+}
+
+
+html,
+body,
+#root {
+	height: 100%;
+	margin: 0;
+}
+
+body {
+	background: hsl(var(--background));
+	color: hsl(var(--foreground));
+	font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+	-webkit-font-smoothing: antialiased;
+}

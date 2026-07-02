@@ -259,12 +259,14 @@ async function main() {
 				// A binary file to exercise the viewer's binary-detection path.
 				handle.writeFile("/root/blob.bin", new Uint8Array([0, 1, 2, 3, 255, 254, 0, 128, 7, 42, 0, 99])),
 			]);
-			await Promise.allSettled([
-				handle.spawn("sleep", ["86400"]),
-				handle.spawn("sleep", ["7200"]),
-				handle.spawn("sleep", ["1800"]),
-				handle.spawn("sh", ["-c", "sleep 99999"]),
-			]);
+			if (!process.env.DEMO_NO_SLEEPS) {
+				await Promise.allSettled([
+					handle.spawn("sleep", ["86400"]),
+					handle.spawn("sleep", ["7200"]),
+					handle.spawn("sleep", ["1800"]),
+					handle.spawn("sh", ["-c", "sleep 99999"]),
+				]);
+			}
 			log("seeded demo filesystem + processes for the inspector tabs");
 		} catch (e) {
 			log(`(optional demo seeding skipped: ${e?.message ?? e})`);

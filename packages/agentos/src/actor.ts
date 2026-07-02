@@ -11,7 +11,8 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import common from "@agentos-software/common";
 import {
 	OPT_AGENTOS_BIN,
@@ -399,6 +400,16 @@ function buildNativeFactoryBuilder<TConnParams>(
 			// spawns the bundled binary rather than relying on `agentos-sidecar`
 			// being on PATH.
 			sidecarPath: getSidecarPath(),
+			// Custom inspector tabs. The native-plugin path bypasses the normal
+			// actor-config assembly (`buildActorConfig`/`inspectorTabs`), so the
+			// tabs MUST ride on the plugin options: the Rust NAPI binding
+			// `from_native_plugin` forwards `inspectorTabs` into the actor config so
+			// the dashboard serves `/inspector/custom-tabs/<id>/` and advertises them
+			// in `tab-config`. (Setting `actor({ inspector })` alone does nothing for
+			// native-plugin actors.)
+			inspectorTabs: AGENTOS_INSPECTOR_CONFIG.tabs,
+		} as NapiNativePluginOptions & {
+			inspectorTabs: typeof AGENTOS_INSPECTOR_CONFIG.tabs;
 		};
 		return runtime.createNativePluginFactory(options);
 	};
@@ -465,6 +476,34 @@ export const DEFAULT_AGENTOS_ACTOR_OPTIONS = {
 	maxQueueMessageSize: ACTOR_NEVER_HIT_MESSAGE_BYTES,
 } as const;
 
+// Absolute path to the built inspector-tabs app (the shared Vite bundle). All
+// custom tabs share this one `source` dir; the app routes on the
+// `/inspector/custom-tabs/<id>/` URL segment. Resolves from both `src/` (tsx dev
+// / the demo) and the published `dist/`, since `assets/` sits at the package
+// root in both layouts.
+const INSPECTOR_TABS_ASSET_DIR = join(
+	dirname(fileURLToPath(import.meta.url)),
+	"..",
+	"assets",
+	"inspector-tabs-app",
+);
+
+// Custom inspector tabs shipped by agent-os. Ids MUST match the `TABS` registry
+// in `src/inspector-tabs/main.tsx`. The built-in rivetkit tabs are hidden so the
+// dashboard shows only the agent-os tabs.
+const AGENTOS_INSPECTOR_CONFIG = {
+	tabs: [
+		{ id: "transcript", label: "Transcript", source: INSPECTOR_TABS_ASSET_DIR, icon: "comments" },
+		{ id: "filesystem", label: "Filesystem", source: INSPECTOR_TABS_ASSET_DIR, icon: "folder-tree" },
+		{ id: "processes", label: "Processes", source: INSPECTOR_TABS_ASSET_DIR, icon: "microchip" },
+		{ id: "software", label: "Software", source: INSPECTOR_TABS_ASSET_DIR, icon: "box-archive" },
+		{ id: "mounts", label: "Mounts", source: INSPECTOR_TABS_ASSET_DIR, icon: "hard-drive" },
+		...(["workflow", "database", "state", "queue", "connections", "console"].map(
+			(id) => ({ id, hidden: true as const }),
+		)),
+	],
+};
+
 export function agentOs<TConnParams = undefined>(
 	config: AgentOsActorConfigInput<TConnParams>,
 ): AgentOsActorDefinition<TConnParams> {
@@ -487,6 +526,10 @@ export function agentOs<TConnParams = undefined>(
 	const definition = actor({
 		actions: {},
 		options: actorOptions,
+		// Register the custom agent-os inspector tabs (and hide the built-in
+		// rivetkit tabs) so the dashboard renders the agent-os UI. Without this
+		// the shipped tab assets are never surfaced.
+		inspector: AGENTOS_INSPECTOR_CONFIG,
 	} as Parameters<
 		typeof actor
 	>[0]) as unknown as AgentOsActorDefinition<TConnParams>;
