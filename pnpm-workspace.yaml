@@ -14,10 +14,6 @@ packages:
   # Nested example packages (e.g. examples/quickstart/hello-world) so every
   # embeddable example is a workspace member that `turbo check-types` covers.
   - examples/*/*
-  # browser-terminal is a standalone example installed from published npm
-  # packages (own node_modules); keep it out of the workspace so its pinned
-  # published deps are not linked to workspace source.
-  - '!examples/browser-terminal'
   - scripts/publish
   - website
   # Local docs theme consumed as a workspace member (symlinked from ~/docs-theme

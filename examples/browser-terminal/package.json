@@ -1,39 +1,39 @@
 {
-  "name": "@rivet-dev/agentos-example-browser-terminal",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "description": "Browser terminal for Agent OS VMs — RivetKit actor + xterm.js.",
-  "scripts": {
-    "server": "node run-server.mjs",
-    "web": "vite",
-    "dev": "concurrently -k -n server,web -c blue,magenta \"node run-server.mjs\" \"vite\"",
-    "build": "vite build",
-    "preview": "vite preview",
-    "check-types": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@agentos-software/common": "0.3.0",
-    "@agentos-software/everything": "0.3.0",
-    "@agentos-software/git": "0.3.0",
-    "@agentos-software/http-get": "0.3.0",
-    "@agentos-software/sqlite3": "0.3.0",
-    "@rivet-dev/agentos": "0.2.4",
-    "@rivet-dev/agentos-core": "0.2.4",
-    "@rivetkit/react": "0.0.0-feat-dylib-actor-plugin.c44621f",
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "rivetkit": "0.0.0-feat-dylib-actor-plugin.c44621f"
-  },
-  "devDependencies": {
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.3.4",
-    "concurrently": "^9.1.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.2",
-    "vite": "^6.0.0"
-  }
+	"name": "@rivet-dev/agentos-example-browser-terminal",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "Browser terminal for Agent OS VMs — RivetKit actor + xterm.js.",
+	"scripts": {
+		"server": "tsx server.ts",
+		"web": "vite",
+		"dev": "concurrently -k -n server,web -c blue,magenta \"tsx server.ts\" \"vite\"",
+		"build": "vite build",
+		"preview": "vite preview",
+		"check-types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@agentos-software/common": "catalog:",
+		"@agentos-software/curl": "catalog:",
+		"@agentos-software/git": "catalog:",
+		"@agentos-software/jq": "catalog:",
+		"@agentos-software/ripgrep": "catalog:",
+		"@agentos-software/sqlite3": "catalog:",
+		"@rivet-dev/agentos": "workspace:*",
+		"@rivetkit/react": "0.0.0-feat-dylib-actor-plugin.c44621f",
+		"@xterm/addon-fit": "^0.10.0",
+		"@xterm/xterm": "^5.5.0",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0",
+		"rivetkit": "0.0.0-feat-dylib-actor-plugin.c44621f"
+	},
+	"devDependencies": {
+		"@types/react": "^19.0.0",
+		"@types/react-dom": "^19.0.0",
+		"@vitejs/plugin-react": "^4.3.4",
+		"concurrently": "^9.1.0",
+		"tsx": "^4.19.0",
+		"typescript": "^5.7.2",
+		"vite": "^6.0.0"
+	}
 }

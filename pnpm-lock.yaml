@@ -9,7 +9,13 @@ catalogs:
     '@agentos-software/claude-code':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
+    '@agentos-software/common':
+      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
+      version: 0.0.0-nathan-agentos-package-resolution.42d8146
     '@agentos-software/coreutils':
+      specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
+      version: 0.0.0-nathan-agentos-package-resolution.42d8146
+    '@agentos-software/curl':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
     '@agentos-software/git':
@@ -27,6 +33,9 @@ catalogs:
     '@agentos-software/ripgrep':
       specifier: 0.0.0-nathan-agentos-package-resolution.42d8146
       version: 0.0.0-nathan-agentos-package-resolution.42d8146
+    '@agentos-software/sqlite3':
+      specifier: 0.0.0-nathan-agentos-package-resolution.efc374f
+      version: 0.0.0-nathan-agentos-package-resolution.efc374f
 
 overrides:
   '@rivet-dev/agentos-core': workspace:*
@@ -292,6 +301,70 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+
+  examples/browser-terminal:
+    dependencies:
+      '@agentos-software/common':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/curl':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/git':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/jq':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/ripgrep':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/sqlite3':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.efc374f
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../packages/agentos
+      '@rivetkit/react':
+        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
+        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(ws@8.20.0(bufferutil@4.1.0))
+      '@xterm/addon-fit':
+        specifier: ^0.10.0
+        version: 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/xterm':
+        specifier: ^5.5.0
+        version: 5.5.0
+      react:
+        specifier: ^19.0.0
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.7(react@19.2.7)
+      rivetkit:
+        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
+        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.3(@types/react@19.2.17)
+      '@vitejs/plugin-react':
+        specifier: ^4.3.4
+        version: 4.7.0(vite@6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0))
+      concurrently:
+        specifier: ^9.1.0
+        version: 9.2.3
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vite:
+        specifier: ^6.0.0
+        version: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0)
 
   examples/claude:
     dependencies:
@@ -2606,12 +2679,18 @@ importers:
       '@agentos-software/zip':
         specifier: link:../../../secure-exec-convwasi/registry/software/zip
         version: link:../../../secure-exec-convwasi/registry/software/zip
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../agentos
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
       commander:
         specifier: ^14.0.2
         version: 14.0.3
+      rivetkit:
+        specifier: 0.0.0-feat-dylib-actor-plugin.c44621f
+        version: 0.0.0-feat-dylib-actor-plugin.c44621f(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
     devDependencies:
       '@types/node':
         specifier: ^22.19.3
@@ -2737,11 +2816,32 @@ packages:
     resolution: {integrity: sha512-m7XBRKklrLBsL5pcTlHRDc/wczmoleoPHdD36AYkCyWO0RZX5I/Ha1P0Kz0N1g0m1q7Vu8PcdSdT9ak6jWwX3w==}
     hasBin: true
 
+  '@agentos-software/common@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-tRs8205IAVtWNWrLRr6PKAZ9FYgYRwYOzweo8eh9TnDVht9YqJUPB/bSd99puG6JNasrf0ixLfRYwe60nK62eA==}
+
   '@agentos-software/coreutils@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-Gjh/SPjhfbNX6mCaM/WCnW/jT3IBXO21jXMgfscjPs+C/9E0+60leT1xab8+om1v4KzK7+yiEChVUpk4M99M6A==}
 
+  '@agentos-software/curl@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-w9nX+7Ui8emfRQ3Q2A6w2Rw/eTbKqhmppsSn9Q6JwXteunj8fFNJ3JgqIqN2QS/ROAbLVYGcl76HuwbL3II7fw==}
+
+  '@agentos-software/diffutils@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-KZEpoZ9tNKOpA51s7NwaaZx8yGJoDWwbNSPNY1w0e8JD1QtfzdPJbWtP7prF6by1fRYlYlCWLDSYv37/au/p8g==}
+
+  '@agentos-software/findutils@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-ERBGgaYDJ1TstlMWopt29WoNf8wPpq9dTZiYxR/cfevVqrPvR+JFcAzcarDq8Mgj3q3VVffQjHHJQ7FdWRMq1Q==}
+
+  '@agentos-software/gawk@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-WBZH2czLaajhn0satFTrHovAINYbmbEmOfvpTuzugPBOSBO/O/pgXS37d/QTRbc6TrEuDQ3N0agGVdm9uVpgkg==}
+
   '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-O4ubhuNoHQ7JVoPuUusOKHbk93XAH5OkRNC7C78VV3lchlzf5WeTLY+JM7QoNOyJqEuT2ZOz5JM88QJ7LmoyPg==}
+
+  '@agentos-software/grep@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-w9V0HmYphfJHdmkp4gep2Ph5dMH7XF/ITkvde8ctEky5qHyQvh+NW3ZNkBEeI6evPOaU+2WfeqzuA8rXxdIiPw==}
+
+  '@agentos-software/gzip@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-PF4K7kjukPUHLWW7OGTJPXSRUwsCFxuv7gc4algeDWwg8rELftP5YJ7jKYgq4+AAiny7ZoxbQU85lsjhJtlXIQ==}
 
   '@agentos-software/jq@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-2QSqWxzmOC4iv19PdTAd9IfLN35s+2VXosHVmU3AhK7KPixfc8On9PDM8FaNGRruqzSkH+DbR6xK8dmNOS8q7w==}
@@ -2756,6 +2856,15 @@ packages:
 
   '@agentos-software/ripgrep@0.0.0-nathan-agentos-package-resolution.42d8146':
     resolution: {integrity: sha512-mUYipQCElmjxlBqcI4tlTfHcm2Sc4qeAKBVmaenVy4orn3Kyxs77vygt8m38gwR5XMHw35utgOstnqcvsjXnJA==}
+
+  '@agentos-software/sed@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-Ty1OMZxkRHmbXigmu0JpemTBB8X1vvVTyT+PjxuD6HevTE9f4N6AfBnW8gZ2Q0pu9Jzp/MOAh4VKfz0ub9rd4A==}
+
+  '@agentos-software/sqlite3@0.0.0-nathan-agentos-package-resolution.efc374f':
+    resolution: {integrity: sha512-5UzJJwpUbOk6ZQJobk+jUiNQN5pM5IndFg0j35CQnYzScw+5EiDLi7T+f+0tBvoqZXN2FF1Gszbw5nkiVOJyNQ==}
+
+  '@agentos-software/tar@0.0.0-nathan-agentos-package-resolution.42d8146':
+    resolution: {integrity: sha512-yLg9BLFhqN7eSFEhEL4FOdk7tF7pLRlSFnjs25laYDvqLkHKfVwdfgYNNwZm5XD0o+4Mjs8P/RdnB5Lu9maHBA==}
 
   '@ai-sdk/amazon-bedrock@3.0.93':
     resolution: {integrity: sha512-57cP3Ume6DdQP05xPYl2g554EqPrQgKRW/eE3BGm1ktK1k71e35HGzNl1GZHIYKct82QrY/iQuheanSonI88Dg==}
@@ -6488,6 +6597,11 @@ packages:
     resolution: {integrity: sha512-6FqVXeETqWPoGcfzrXb37E50NP0LXT8kAMu5ooZayhWWdgEY4lBEEcbQNXtkuKQsGduxiIcI4gOTsxTmuq/bSg==}
     engines: {node: '>= 14'}
 
+  concurrently@9.2.3:
+    resolution: {integrity: sha512-ihjs0E2SxvDgq/MK418hX6YycQgKhsqxpbZuZbHo0yKfqDWdymWMjWYIpCIzqDDLLKClHlXev8whW/8WXmJ0BA==}
+    engines: {node: '>=18'}
+    hasBin: true
+
   confbox@0.1.8:
     resolution: {integrity: sha512-RMtmw0iFkeR4YV+fUOSucriAQNb9g8zFR52MWCtl+cCZOFRNL6zeB395vPzFhEjjn4fMxXudmELnl/KF/WrK6w==}
 
@@ -9076,6 +9190,9 @@ packages:
   rw@1.3.3:
     resolution: {integrity: sha512-PdhdWy89SiZogBLaw42zdeqtRJ//zFd2PgQavcICDUgJT5oW10QCRKbJ6bg4r0/UY2M6BWd5tkxuGFRvCkgfHQ==}
 
+  rxjs@7.8.2:
+    resolution: {integrity: sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==}
+
   safe-buffer@5.1.2:
     resolution: {integrity: sha512-Gd2UZBJDkXlY7GbJxfsE8/nvKkUEU1G38c1siN6QP6a9PT9MmHB8GnpscSmMJSoF8LOIrt8ud/wPtojys4G6+g==}
 
@@ -9172,6 +9289,10 @@ packages:
   shebang-regex@3.0.0:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
+
+  shell-quote@1.8.4:
+    resolution: {integrity: sha512-VsC6n6vz1ihYYyZZwX7YZSF5l5x36ca17OC+a69h94YqB7X6XLwf+5MOgynYir2SLFUbl8gIYvBo8K8RoNQ6bQ==}
+    engines: {node: '>= 0.4'}
 
   shiki@3.23.0:
     resolution: {integrity: sha512-55Dj73uq9ZXL5zyeRPzHQsK7Nbyt6Y10k5s7OjuFZGMhpp4r/rsLBH0o/0fstIzX1Lep9VxefWljK/SKCzygIA==}
@@ -9357,6 +9478,10 @@ packages:
   supports-color@7.2.0:
     resolution: {integrity: sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==}
     engines: {node: '>=8'}
+
+  supports-color@8.1.1:
+    resolution: {integrity: sha512-MpUEN2OodtUzxvKQl72cUF7RQ5EiHsGvSsVG0ia9c5RbWGL2CI4C7EpPS8UTBIplnlzZiNuV56w+FuNxy3ty2Q==}
+    engines: {node: '>=10'}
 
   supports-preserve-symlinks-flag@1.0.0:
     resolution: {integrity: sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==}
@@ -10095,9 +10220,32 @@ snapshots:
       - '@cfworker/json-schema'
       - supports-color
 
+  '@agentos-software/common@0.0.0-nathan-agentos-package-resolution.42d8146':
+    dependencies:
+      '@agentos-software/coreutils': 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/diffutils': 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/findutils': 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/gawk': 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/grep': 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/gzip': 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/sed': 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/tar': 0.0.0-nathan-agentos-package-resolution.42d8146
+
   '@agentos-software/coreutils@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
+  '@agentos-software/curl@0.0.0-nathan-agentos-package-resolution.42d8146': {}
+
+  '@agentos-software/diffutils@0.0.0-nathan-agentos-package-resolution.42d8146': {}
+
+  '@agentos-software/findutils@0.0.0-nathan-agentos-package-resolution.42d8146': {}
+
+  '@agentos-software/gawk@0.0.0-nathan-agentos-package-resolution.42d8146': {}
+
   '@agentos-software/git@0.0.0-nathan-agentos-package-resolution.42d8146': {}
+
+  '@agentos-software/grep@0.0.0-nathan-agentos-package-resolution.42d8146': {}
+
+  '@agentos-software/gzip@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
   '@agentos-software/jq@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
@@ -10118,6 +10266,12 @@ snapshots:
       - zod
 
   '@agentos-software/ripgrep@0.0.0-nathan-agentos-package-resolution.42d8146': {}
+
+  '@agentos-software/sed@0.0.0-nathan-agentos-package-resolution.42d8146': {}
+
+  '@agentos-software/sqlite3@0.0.0-nathan-agentos-package-resolution.efc374f': {}
+
+  '@agentos-software/tar@0.0.0-nathan-agentos-package-resolution.42d8146': {}
 
   '@ai-sdk/amazon-bedrock@3.0.93(zod@4.3.6)':
     dependencies:
@@ -14840,6 +14994,15 @@ snapshots:
       normalize-path: 3.0.0
       readable-stream: 4.7.0
 
+  concurrently@9.2.3:
+    dependencies:
+      chalk: 4.1.2
+      rxjs: 7.8.2
+      shell-quote: 1.8.4
+      supports-color: 8.1.1
+      tree-kill: 1.2.2
+      yargs: 17.7.2
+
   confbox@0.1.8: {}
 
   consola@3.4.2: {}
@@ -18001,6 +18164,10 @@ snapshots:
 
   rw@1.3.3: {}
 
+  rxjs@7.8.2:
+    dependencies:
+      tslib: 2.8.1
+
   safe-buffer@5.1.2: {}
 
   safe-buffer@5.2.1: {}
@@ -18124,6 +18291,8 @@ snapshots:
       shebang-regex: 3.0.0
 
   shebang-regex@3.0.0: {}
+
+  shell-quote@1.8.4: {}
 
   shiki@3.23.0:
     dependencies:
@@ -18331,6 +18500,10 @@ snapshots:
       ts-interface-checker: 0.1.13
 
   supports-color@7.2.0:
+    dependencies:
+      has-flag: 4.0.0
+
+  supports-color@8.1.1:
     dependencies:
       has-flag: 4.0.0
 

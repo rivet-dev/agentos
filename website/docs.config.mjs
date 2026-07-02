@@ -214,7 +214,10 @@ export const siteConfig = {
 				},
 				{
 					title: "Processes & Shell",
-					pages: [{ title: "Processes", href: "/cookbooks/processes" }],
+					pages: [
+						{ title: "Processes", href: "/cookbooks/processes" },
+						{ title: "Browser Terminal", href: "/cookbooks/browser-terminal" },
+					],
 				},
 				{
 					title: "Networking",
