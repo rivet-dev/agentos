@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
-import { hasRegistryCommands, REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
+import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
 
 // End-to-end coverage for the Pyodide-powered `python` / `python3` CLI exposed
 // by secure-exec, driven through the public AgentOs API. `python` resolves as a
@@ -114,7 +114,7 @@ describe("python CLI (Pyodide runtime)", () => {
 
 	// The guest-shell path needs the WASM `sh` from the registry. `python` resolves
 	// on the shell PATH via its `/bin/python` stub, so `sh -c`/pipelines work.
-	test.runIf(hasRegistryCommands)(
+	test(
 		"python runs through the guest shell and pipelines",
 		async () => {
 			const shellVm = await AgentOs.create({ software: REGISTRY_SOFTWARE });

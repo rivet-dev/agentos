@@ -4,7 +4,6 @@ import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import common from "@agentos-software/common";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-import { hasRegistryCommands } from "./helpers/registry-commands.js";
 import {
 	createAnthropicFixture,
 	startLlmock,
@@ -49,7 +48,7 @@ async function createPiVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		software: hasRegistryCommands ? [common] : [],
+		software: [common],
 	});
 }
 

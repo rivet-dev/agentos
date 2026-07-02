@@ -6,19 +6,18 @@ import {
 } from "node:http";
 import coreutils from "@agentos-software/coreutils";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import duckdb from "../../../registry/software/duckdb/dist/index.js";
-import httpGet from "../../../registry/software/http-get/dist/index.js";
+import duckdb from "@agentos-software/duckdb";
+import httpGet from "@agentos-software/http-get";
 import { AgentOs } from "../dist/index.js";
-import {
-	commandPackageSkipReason,
-	withFallbackCommandDir,
-} from "./helpers/registry-commands.js";
+import { cSysrootPackageSkipReason } from "./helpers/registry-commands.js";
 
-const DUCKDB_PACKAGE = withFallbackCommandDir(duckdb);
-const HTTP_GET_PACKAGE = withFallbackCommandDir(httpGet);
-const duckdbPackageSkipReason = commandPackageSkipReason(
-	DUCKDB_PACKAGE,
-	HTTP_GET_PACKAGE,
+const DUCKDB_PACKAGE = duckdb;
+const HTTP_GET_PACKAGE = httpGet;
+// C-sysroot packages are the ONE sanctioned skip: they need the patched wasi C
+// sysroot most checkouts don't build (see helpers/registry-commands.ts).
+const duckdbPackageSkipReason = cSysrootPackageSkipReason(
+	{ pkg: DUCKDB_PACKAGE, name: "duckdb" },
+	{ pkg: HTTP_GET_PACKAGE, name: "http-get" },
 );
 
 function closeServer(server: Server) {

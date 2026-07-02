@@ -1,7 +1,6 @@
 import common from "@agentos-software/common";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-import { hasRegistryCommands } from "./helpers/registry-commands.js";
 
 describe("child_process detached", () => {
 	let vm: AgentOs;
@@ -330,13 +329,6 @@ test(
 // directly with detached: true and piped output, and kill the whole process
 // group on timeout via process.kill(-pid, "SIGKILL").
 function registerPiShapedShellBackendTests(): void {
-	if (!hasRegistryCommands) {
-		test("pi-shaped shell backend coverage requires registry command artifacts", () => {
-			expect(hasRegistryCommands).toBe(false);
-		});
-		return;
-	}
-
 	describe("pi-shaped detached shell backend", () => {
 		let vm: AgentOs;
 
