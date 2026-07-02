@@ -28,7 +28,7 @@ use secure_exec_vm_config as vm_config;
 use crate::config::{
     AgentOsConfig, AgentOsLimits, HostTool, MountConfig, PermissionMode, Permissions,
     RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode as ConfigRootFilesystemMode,
-    RootLowerInput, SidecarJsBridgeCall, SidecarJsBridgeCallback, SoftwareKind,
+    RootLowerInput, SidecarJsBridgeCall, SidecarJsBridgeCallback,
     TimerScheduleDriver, ToolKit,
 };
 use crate::cron::CronManager;
@@ -68,6 +68,8 @@ pub(crate) struct ProcessEntry {
     /// The entry retains its own `stdout_tx`/`stderr_tx` clones for late subscribers, so these tasks
     /// never observe the broadcast `Closed`; `shutdown` aborts them when draining the registry.
     pub output_tasks: Vec<JoinHandle<()>>,
+    /// Epoch milliseconds captured when `spawn` registered this process (TS `Date.now()`).
+    pub started_at: i64,
 }
 
 /// A PTY-backed shell (TS `_shells` value). Keyed by synthetic `shell-N` id.
@@ -292,7 +294,6 @@ impl AgentOs {
             | wire::ResponsePayload::StdinClosedResponse(_)
             | wire::ResponsePayload::ProcessKilledResponse(_)
             | wire::ResponsePayload::ProcessSnapshotResponse(_)
-            | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::ListenerSnapshotResponse(_)
             | wire::ResponsePayload::BoundUdpSnapshotResponse(_)
             | wire::ResponsePayload::SignalStateResponse(_)
@@ -303,7 +304,6 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_)
-            | wire::ResponsePayload::GuestKernelResultResponse(_)
             | wire::ResponsePayload::PackageLinkedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected open_session response".to_string(),
@@ -360,7 +360,6 @@ impl AgentOs {
             | wire::ResponsePayload::StdinClosedResponse(_)
             | wire::ResponsePayload::ProcessKilledResponse(_)
             | wire::ResponsePayload::ProcessSnapshotResponse(_)
-            | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::ListenerSnapshotResponse(_)
             | wire::ResponsePayload::BoundUdpSnapshotResponse(_)
             | wire::ResponsePayload::SignalStateResponse(_)
@@ -371,7 +370,6 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_)
-            | wire::ResponsePayload::GuestKernelResultResponse(_)
             | wire::ResponsePayload::PackageLinkedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected create_vm response".to_string(),
@@ -388,37 +386,26 @@ impl AgentOs {
         // an unresolvable package is an explicit error rather than a silent no-op. Wasm command
         // packages additionally become `/__secure_exec/commands/{index}/` mounts so the sidecar can
         // discover and resolve guest commands.
-        let resolved_software = resolve_software(&config)?;
-        let command_mounts = build_command_mounts(&resolved_software)?;
-        let software: Vec<wire::SoftwareDescriptor> = resolved_software
-            .into_iter()
-            .map(|entry| entry.descriptor)
-            .collect();
+        // Build the package-projection descriptors from the configured package dirs.
+        // Each package's name (and optional ACP entrypoint) is read from its
+        // `agentos-package.json`; the sidecar reads commands/version from the dir and
+        // builds the `/opt/agentos` projection. Runtime `link_software` appends to it.
+        let packages = build_package_descriptors(&config)?;
 
-        // Native plugin mounts configured on the client, combined with the wasm command-dir mounts.
-        let mut mounts = serialize_mounts(&config)?;
-        mounts.extend(command_mounts);
+        // Native plugin mounts configured on the client.
+        let mounts = serialize_mounts(&config)?;
 
         // 6. Configure the VM (vm scope). The sidecar owns the `/opt/agentos` package
         // projection: it builds the staging dir + registers the read-only host_dir
-        // mount itself from the forwarded `packages` (`{ packageDir }` dirs from
-        // `config.packages`); an empty `packages` list still yields a live
-        // `/opt/agentos` mount that runtime `link_software` can append to.
-        let packages: Vec<wire::PackageDescriptor> = config
-            .packages
-            .iter()
-            .map(|dir| wire::PackageDescriptor { dir: dir.clone() })
-            .collect();
-        let packages_mount_at = config
-            .packages_mount_at
-            .clone()
-            .unwrap_or_else(|| String::from("/opt/agentos"));
+        // mount itself from the forwarded `packages`.
         match transport
             .request_wire(
                 wire_vm_ownership(&connection_id, &session_id, &vm_id),
                 wire::RequestPayload::ConfigureVmRequest(wire::ConfigureVmRequest {
                     mounts,
-                    software,
+                    // The legacy `software`/SoftwareDescriptor provisioning path is
+                    // retired: all boot software is projected via `packages`.
+                    software: Vec::new(),
                     permissions: Some(permissions),
                     module_access_cwd: config.module_access_cwd.clone(),
                     instructions: config.additional_instructions.clone().into_iter().collect(),
@@ -426,7 +413,7 @@ impl AgentOs {
                     command_permissions: HashMap::new(),
                     loopback_exempt_ports: config.loopback_exempt_ports.clone(),
                     packages,
-                    packages_mount_at,
+                    packages_mount_at: config.packages_mount_at.clone().unwrap_or_default(),
                 }),
             )
             .await?
@@ -454,7 +441,6 @@ impl AgentOs {
             | wire::ResponsePayload::StdinClosedResponse(_)
             | wire::ResponsePayload::ProcessKilledResponse(_)
             | wire::ResponsePayload::ProcessSnapshotResponse(_)
-            | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::ListenerSnapshotResponse(_)
             | wire::ResponsePayload::BoundUdpSnapshotResponse(_)
             | wire::ResponsePayload::SignalStateResponse(_)
@@ -465,7 +451,6 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_)
-            | wire::ResponsePayload::GuestKernelResultResponse(_)
             | wire::ResponsePayload::PackageLinkedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected configure_vm response".to_string(),
@@ -533,7 +518,6 @@ impl AgentOs {
                     | wire::ResponsePayload::StdinClosedResponse(_)
                     | wire::ResponsePayload::ProcessKilledResponse(_)
                     | wire::ResponsePayload::ProcessSnapshotResponse(_)
-                    | wire::ResponsePayload::ResourceSnapshotResponse(_)
                     | wire::ResponsePayload::ListenerSnapshotResponse(_)
                     | wire::ResponsePayload::BoundUdpSnapshotResponse(_)
                     | wire::ResponsePayload::SignalStateResponse(_)
@@ -544,7 +528,6 @@ impl AgentOs {
                     | wire::ResponsePayload::PersistenceFlushedResponse(_)
                     | wire::ResponsePayload::VmFetchResponse(_)
                     | wire::ResponsePayload::ExtEnvelope(_)
-                    | wire::ResponsePayload::GuestKernelResultResponse(_)
                     | wire::ResponsePayload::PackageLinkedResponse(_) => {
                         return Err(ClientError::Sidecar(
                             "unexpected register_host_callbacks response".to_string(),
@@ -650,10 +633,12 @@ impl AgentOs {
             .request_wire(
                 wire_vm_ownership(&inner.connection_id, &inner.session_id, &inner.vm_id),
                 wire::RequestPayload::LinkPackageRequest(wire::LinkPackageRequest {
-                    // The wire descriptor is dir-only: the sidecar derives the package
-                    // name/commands/manifest from the package directory itself.
+                    // The wire `PackageDescriptor` carries `{ name, dir, acpEntrypoint? }`;
+                    // forward all three from the client-side descriptor.
                     package: wire::PackageDescriptor {
+                        name: descriptor.name,
                         dir: descriptor.dir,
+                        acp_entrypoint: descriptor.acp_entrypoint,
                     },
                 }),
             )
@@ -835,44 +820,26 @@ impl AgentOs {
         self.inner.sidecar.clone()
     }
 
-    /// The commands each configured `wasm-commands` package *ships*, keyed by
-    /// the package string used in the config — i.e. the wasm binaries in the
-    /// package's resolved command directory (`entry.descriptor.root`, which is
-    /// exactly what `build_command_mounts` mounts at `/__secure_exec/commands/
-    /// {index}/`), with `_stubs`/dotfiles filtered, sorted. Non-`wasm-commands`
-    /// packages contribute nothing.
+    /// The commands each configured package *ships*, keyed by the package's
+    /// manifest name (matching [`SoftwareInfoDto::package`] on the actor-plugin
+    /// side). Read from each package dir the same way the sidecar's
+    /// `command_targets` does (`package.json` `bin`, else the `bin/` dir). An agent
+    /// package (no shipped commands) contributes an empty list.
     ///
-    /// WORKAROUND: agent-os owns command *provisioning* (it resolves each
-    /// package and mounts its dir), so it knows the host dirs and can read them
-    /// here. But the authoritative *resolved* command set — deduping when two
-    /// packages provide the same command, priority order, and which files are
-    /// actually executable — is owned by secure-exec's command discovery
-    /// (`discover_command_guest_paths`). This reads the raw package contents and
-    /// re-derives a slice of that. TODO: replace with a secure-exec API that
-    /// reports discovered commands per package instead of us re-reading dirs.
+    /// WORKAROUND: agent-os owns command *provisioning* (it forwards each package
+    /// dir), so it can read the host dirs here. The authoritative *resolved* set —
+    /// deduping when two packages provide the same command, priority order, and
+    /// executability — is owned by secure-exec's projection. This re-derives a
+    /// slice of that. TODO: replace with a secure-exec API that reports discovered
+    /// commands per package instead of us re-reading dirs.
     pub fn provided_commands(&self) -> Vec<(String, Vec<String>)> {
-        let resolved = match resolve_software(&self.inner.config) {
-            Ok(resolved) => resolved,
-            Err(_) => return Vec::new(),
-        };
-        resolved
-            .into_iter()
-            .filter(|entry| entry.kind == SoftwareKind::WasmCommands)
-            .map(|entry| {
-                // `root` IS the command directory (mounted verbatim as the
-                // guest command dir), so the command binaries live directly in
-                // it — do not descend into a `wasm/` subdir.
-                let mut commands: Vec<String> = std::fs::read_dir(&entry.descriptor.root)
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .filter_map(|dirent| dirent.file_name().into_string().ok())
-                    // `_stubs` is a secure-exec support entry, not a command;
-                    // dotfiles are metadata. Everything else is a command name.
-                    .filter(|name| !name.starts_with('_') && !name.starts_with('.'))
-                    .collect();
-                commands.sort();
-                (entry.descriptor.package_name, commands)
+        self.inner
+            .config
+            .packages
+            .iter()
+            .filter_map(|package| {
+                let manifest = read_agentos_package_manifest(&package.dir).ok()?;
+                Some((manifest.name, package_command_names(&package.dir)))
             })
             .collect()
     }
@@ -3605,78 +3572,92 @@ fn json_object<const N: usize>(entries: [(&str, Value); N]) -> Value {
     ))
 }
 
-/// A software package resolved to its host root, paired with the kind that decides how it is mounted.
-struct ResolvedSoftware {
-    descriptor: wire::SoftwareDescriptor,
-    kind: SoftwareKind,
+/// The `agentos-package.json` manifest that lives at the root of every projected
+/// package dir: the bare package name plus an optional agent block (its ACP
+/// entrypoint command). The sidecar reads commands/version from the dir itself.
+#[derive(serde::Deserialize)]
+struct AgentosPackageManifest {
+    name: String,
+    #[serde(default)]
+    agent: Option<AgentosPackageAgent>,
 }
 
-/// Resolve `config.software` package inputs to host roots, each rooted at its host `node_modules`
-/// directory under `module_access_cwd` (default `.`). An absolute `package` path bypasses the
-/// `node_modules` prefix (via `Path::join` semantics), which is how wasm command directories are
-/// passed directly. Mirrors the TS `processSoftware` mapping. An unresolvable package is an explicit
-/// error, not a silent no-op.
-fn resolve_software(config: &AgentOsConfig) -> Result<Vec<ResolvedSoftware>, ClientError> {
-    if config.software.is_empty() {
-        return Ok(Vec::new());
-    }
-    let module_access_cwd = config
-        .module_access_cwd
-        .clone()
-        .unwrap_or_else(|| ".".to_string());
-    let mut resolved = Vec::with_capacity(config.software.len());
-    for input in &config.software {
-        let root = std::path::Path::new(&module_access_cwd)
-            .join("node_modules")
-            .join(&input.package);
-        if !root.exists() {
-            return Err(ClientError::Sidecar(format!(
-                "software package not found: {} (looked in {})",
-                input.package,
-                root.display()
-            )));
-        }
-        resolved.push(ResolvedSoftware {
-            descriptor: wire::SoftwareDescriptor {
-                package_name: input.package.clone(),
-                root: root.to_string_lossy().into_owned(),
-            },
-            kind: input.kind,
+#[derive(serde::Deserialize)]
+struct AgentosPackageAgent {
+    #[serde(rename = "acpEntrypoint")]
+    acp_entrypoint: Option<String>,
+}
+
+/// Read `<dir>/agentos-package.json` (name + optional agent block). An unreadable or
+/// malformed manifest is an explicit error, not a silent skip.
+fn read_agentos_package_manifest(dir: &str) -> Result<AgentosPackageManifest, ClientError> {
+    let manifest_path = std::path::Path::new(dir).join("agentos-package.json");
+    let text = std::fs::read_to_string(&manifest_path).map_err(|error| {
+        ClientError::Sidecar(format!(
+            "package manifest not found at {}: {error}",
+            manifest_path.display()
+        ))
+    })?;
+    serde_json::from_str(&text).map_err(|error| {
+        ClientError::Sidecar(format!(
+            "invalid agentos-package.json at {}: {error}",
+            manifest_path.display()
+        ))
+    })
+}
+
+/// Build the wire [`wire::PackageDescriptor`]s for the `/opt/agentos` projection from
+/// the configured package dirs. `name` (and the optional agent `acpEntrypoint`) come
+/// from each dir's `agentos-package.json`; the sidecar reads the payload from `dir`.
+fn build_package_descriptors(
+    config: &AgentOsConfig,
+) -> Result<Vec<wire::PackageDescriptor>, ClientError> {
+    let mut descriptors = Vec::with_capacity(config.packages.len());
+    for package in &config.packages {
+        let manifest = read_agentos_package_manifest(&package.dir)?;
+        descriptors.push(wire::PackageDescriptor {
+            name: manifest.name,
+            dir: package.dir.clone(),
+            acp_entrypoint: manifest.agent.and_then(|agent| agent.acp_entrypoint),
         });
     }
-    Ok(resolved)
+    Ok(descriptors)
 }
 
-/// Build the `host_dir` mount descriptors that expose each wasm command directory at
-/// `/__secure_exec/commands/{index}/` in the guest, so the sidecar's `discover_command_guest_paths` can
-/// resolve guest commands. Indices are zero-padded so the sidecar's lexical sort preserves numeric
-/// resolution priority past nine packages. Agent/tool packages are skipped here (they are not
-/// command directories). Mirrors the TS `commandDirs` mount loop in `agent-os.ts`.
-fn build_command_mounts(
-    resolved: &[ResolvedSoftware],
-) -> Result<Vec<wire::MountDescriptor>, ClientError> {
-    let mut mounts = Vec::new();
-    for entry in resolved {
-        match entry.kind {
-            SoftwareKind::WasmCommands => {
-                let index = mounts.len();
-                let config = serde_json::json!({
-                    "hostPath": entry.descriptor.root,
-                    "readOnly": true,
-                });
-                mounts.push(wire::MountDescriptor {
-                    guest_path: format!("/__secure_exec/commands/{index:03}"),
-                    read_only: true,
-                    plugin: wire::MountPluginDescriptor {
-                        id: String::from("host_dir"),
-                        config: json_utf8(&config, "wasm command mount config")?,
-                    },
-                });
+/// The command names a projected package *ships*, mirroring the sidecar's
+/// `command_targets`: the keys of `<dir>/package.json`'s `bin` map (or the unscoped
+/// package name for a string `bin`), else the entries of `<dir>/bin/`. Sorted.
+fn package_command_names(dir: &str) -> Vec<String> {
+    let dir_path = std::path::Path::new(dir);
+    // Prefer the package.json `bin` field.
+    if let Ok(text) = std::fs::read_to_string(dir_path.join("package.json")) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+            match value.get("bin") {
+                Some(serde_json::Value::String(_)) => {
+                    if let Some(name) = value.get("name").and_then(|v| v.as_str()) {
+                        let unscoped = name.rsplit('/').next().unwrap_or(name).to_owned();
+                        return vec![unscoped];
+                    }
+                }
+                Some(serde_json::Value::Object(map)) => {
+                    let mut names: Vec<String> = map.keys().cloned().collect();
+                    names.sort();
+                    return names;
+                }
+                _ => {}
             }
-            SoftwareKind::Agent | SoftwareKind::Tool => {}
         }
     }
-    Ok(mounts)
+    // Fall back to the `bin/` directory listing.
+    let mut names: Vec<String> = std::fs::read_dir(dir_path.join("bin"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| !name.starts_with('_') && !name.starts_with('.'))
+        .collect();
+    names.sort();
+    names
 }
 
 fn serialize_mounts(config: &AgentOsConfig) -> Result<Vec<wire::MountDescriptor>, ClientError> {

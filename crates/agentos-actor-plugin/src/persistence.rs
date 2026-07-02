@@ -367,9 +367,13 @@ async fn ensure_fs_root(host: &HostCtx) -> Result<()> {
 
 async fn lookup_entry(host: &HostCtx, path: &str) -> Result<Option<FsEntry>> {
     let path = normalize_path(path)?;
+    // `NULL AS content`: stat/exists/readdir/mkdir all go through here and only
+    // need metadata. Reading the file BLOB on every metadata lookup made `stat`
+    // O(file-size) (and a burst of them could wedge the actor). `read_file`
+    // fetches content with a dedicated query.
     let rows = query_rows(
         host,
-        "SELECT path, is_directory, content, mode, uid, gid, size, atime_ms, mtime_ms, ctime_ms, birthtime_ms, symlink_target, nlink
+        "SELECT path, is_directory, NULL AS content, mode, uid, gid, size, atime_ms, mtime_ms, ctime_ms, birthtime_ms, symlink_target, nlink
 			FROM agent_os_fs_entries WHERE path = ?",
         &[json!(path)],
     )
@@ -388,7 +392,18 @@ async fn read_file(host: &HostCtx, path: &str) -> Result<String> {
     if entry.is_directory {
         bail!("EISDIR is a directory: {}", entry.path);
     }
-    Ok(entry.content.unwrap_or_default())
+    // Fetch the content BLOB only here (lookup_entry is metadata-only now).
+    let mut rows = query_rows(
+        host,
+        "SELECT content FROM agent_os_fs_entries WHERE path = ?",
+        &[json!(entry.path)],
+    )
+    .await?;
+    let content = match rows.first_mut() {
+        Some(row) => optional_content_col(row, "content")?,
+        None => None,
+    };
+    Ok(content.unwrap_or_default())
 }
 
 // --- ctx-free helpers (copied verbatim from rivetkit-agent-os::persistence) ---
@@ -621,11 +636,24 @@ async fn read_dir_entries(host: &HostCtx, path: &str) -> Result<Vec<FsEntry>> {
     } else {
         format!("{path}/")
     };
+    // Two perf fixes vs the naive subtree query:
+    //   1. `NULL AS content` — never read the file BLOB; readdir/stat only need
+    //      metadata, and selecting `content` pulled every descendant file's full
+    //      contents into memory (catastrophic for `readdir("/")`).
+    //   2. `AND path NOT LIKE ?` (prefix + "%/%") — restrict to IMMEDIATE
+    //      children at the SQL layer instead of scanning the whole subtree and
+    //      discarding deeper rows in Rust.
+    // The `path` PRIMARY KEY indexes the prefix `LIKE`. The Rust parent-path
+    // filter below stays as a correctness guard for LIKE wildcard edge cases.
     let rows = query_rows(
         host,
-        "SELECT path, is_directory, content, mode, uid, gid, size, atime_ms, mtime_ms, ctime_ms, birthtime_ms, symlink_target, nlink
-			FROM agent_os_fs_entries WHERE path LIKE ? AND path != ? ORDER BY path",
-        &[json!(format!("{prefix}%")), json!(path)],
+        "SELECT path, is_directory, NULL AS content, mode, uid, gid, size, atime_ms, mtime_ms, ctime_ms, birthtime_ms, symlink_target, nlink
+			FROM agent_os_fs_entries WHERE path LIKE ? AND path != ? AND path NOT LIKE ? ORDER BY path",
+        &[
+            json!(format!("{prefix}%")),
+            json!(path),
+            json!(format!("{prefix}%/%")),
+        ],
     )
     .await?;
     rows.into_iter()

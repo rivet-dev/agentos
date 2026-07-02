@@ -527,15 +527,10 @@ impl AgentOs {
         let result = self
             .guest_fs_call(Self::fs_request(GuestFilesystemOperation::ReadDir, path))
             .await?;
-        // The converged protocol returns rich dir entries (name + is_directory +
-        // is_symbolic_link); this name-only accessor projects the names. The
-        // richer fields back the Docker-style readdir-with-types path.
-        Ok(result
-            .entries
-            .unwrap_or_default()
-            .into_iter()
-            .map(|entry| entry.name)
-            .collect())
+        // secure-exec's READ_DIR returns basenames only (`entries: list<str>`);
+        // the typed [`Self::read_dir_with_types`] path derives each entry's type
+        // with a per-child `lstat`.
+        Ok(result.entries.unwrap_or_default())
     }
 
     async fn kernel_stat(&self, path: &str) -> Result<VirtualStat> {
@@ -802,29 +797,12 @@ impl AgentOs {
         Ok(entries)
     }
 
-    /// Fast typed directory listing: ONE guest filesystem round-trip that returns every child with
-    /// its type, instead of a `readdir` plus an `lstat` per entry (the [`Self::acp_read_dir_with_types`]
-    /// path, which wedges on large/virtual dirs). The native `READ_DIR` op returns the typed children
-    /// directly in the `entries` list (`GuestDirEntry`); this keeps the type fields (`kernel_readdir`
-    /// projects the same list to names only). `.`/`..` are filtered. Goes through the kernel, so mounts
-    /// are listed correctly.
+    /// Typed directory listing: each child reported with its resolved type. secure-exec's native
+    /// `READ_DIR` returns basenames only (`entries: list<str>`), so the type of each entry is derived
+    /// with a per-child `lstat` (a symlink is reported as such, lstat-style, not followed). Goes
+    /// through the kernel, so mounts are listed correctly. `.`/`..` are filtered.
     pub async fn read_dir_with_types(&self, path: &str) -> Result<Vec<VirtualDirEntry>> {
-        Self::assert_safe_absolute_path(path)?;
-        let result = self
-            .guest_fs_call(Self::fs_request(GuestFilesystemOperation::ReadDir, path))
-            .await?;
-        let mut entries = Vec::new();
-        for entry in result.entries.unwrap_or_default() {
-            if entry.name == "." || entry.name == ".." {
-                continue;
-            }
-            entries.push(VirtualDirEntry {
-                name: entry.name,
-                is_directory: entry.is_directory,
-                is_symbolic_link: entry.is_symbolic_link,
-            });
-        }
-        Ok(entries)
+        self.acp_read_dir_with_types(path).await
     }
 
     /// Recursive BFS listing; symlinks recorded but NOT descended; a stat failure aborts the call.

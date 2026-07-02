@@ -9,8 +9,8 @@
 //! fail loud, enforced by `deny_unknown_fields`.
 
 use agentos_client::{
-    AgentOsConfig, AgentOsLimits, AgentOsSidecarConfig, MountConfig, MountPlugin, Permissions,
-    RootFilesystemConfig, SoftwareInput,
+    AgentOsConfig, AgentOsLimits, AgentOsSidecarConfig, MountConfig, MountPlugin, PackageRef,
+    Permissions, RootFilesystemConfig, SoftwareInput,
 };
 use anyhow::{Context, Result};
 
@@ -27,17 +27,18 @@ use anyhow::{Context, Result};
 pub(crate) struct AgentOsConfigJson {
     #[serde(default)]
     software: Vec<SoftwareInput>,
-    /// `{ packageDir }` boot packages (the current TS `buildConfigJson` shape).
+    /// Package dirs to project into `/opt/agentos` (secure-exec package
+    /// projection). Each `dir` holds an `agentos-package.json` manifest + payload.
     #[serde(default)]
-    packages: Vec<PackageDirJson>,
-    /// Guest mount root for the package projection (`/opt/agentos`).
+    packages: Vec<PackageJson>,
+    /// Guest mount point for the projection (JS sends `OPT_AGENTOS_ROOT`).
     #[serde(default)]
     packages_mount_at: Option<String>,
-    /// Agent ACP adapter configs derived from package manifests. Accepted for
-    /// schema parity with the TS `buildConfigJson`; adapter registration is not
-    /// yet ported to the plugin, so a non-empty list logs a warning at
-    /// bring-up.
+    /// Agent adapter configs emitted by the JS layer. The client resolves agent
+    /// adapters from its own table, so these are accepted (so `deny_unknown_fields`
+    /// does not reject the JS envelope) but intentionally not consumed here.
     #[serde(default)]
+    #[allow(dead_code)]
     agent_configs: Vec<serde_json::Value>,
     #[serde(default)]
     additional_instructions: Option<String>,
@@ -61,12 +62,6 @@ pub(crate) struct AgentOsConfigJson {
 
 #[derive(serde::Deserialize, Clone)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct PackageDirJson {
-    dir: String,
-}
-
-#[derive(serde::Deserialize, Clone)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct NativeMountJson {
     path: String,
     plugin: MountPlugin,
@@ -79,6 +74,13 @@ struct NativeMountJson {
 struct SidecarJson {
     #[serde(default)]
     pool: Option<String>,
+}
+
+/// One `{ dir }` entry from the JS `packages` list (the projected package dir).
+#[derive(serde::Deserialize, Clone)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PackageJson {
+    dir: String,
 }
 
 /// Reply DTO for the `listMounts` action: one configured mount, flattened so the
@@ -151,7 +153,9 @@ impl AgentOsConfigJson {
             packages: self
                 .packages
                 .iter()
-                .map(|package| package.dir.clone())
+                .map(|package| PackageRef {
+                    dir: package.dir.clone(),
+                })
                 .collect(),
             packages_mount_at: self.packages_mount_at.clone(),
             loopback_exempt_ports: self.loopback_exempt_ports.clone(),
@@ -189,22 +193,46 @@ impl AgentOsConfigJson {
             .collect()
     }
 
-    /// Configured software packages, for the `listSoftware` action. `kind` is the
-    /// kebab-case [`SoftwareKind`] serde tag (`wasm-commands` / `agent` / `tool`).
+    /// Configured software packages, for the `listSoftware` action. Each package's
+    /// `package` name + optional agent block come from `<dir>/agentos-package.json`;
+    /// the `version` from `<dir>/package.json`. `kind` is `agent` when the manifest
+    /// declares an agent block, else `wasm-commands`. A package whose manifest is
+    /// unreadable is skipped rather than aborting the whole listing.
     pub(crate) fn list_software(&self) -> Vec<SoftwareInfoDto> {
-        self.software
+        self.packages
             .iter()
-            .map(|software| SoftwareInfoDto {
-                package: software.package.clone(),
-                kind: serde_json::to_value(software.kind)
-                    .ok()
-                    .and_then(|value| value.as_str().map(str::to_owned))
-                    .unwrap_or_else(|| "wasm-commands".to_owned()),
-                version: software.version.clone(),
-                // Filled from the live VM in the dispatch arm (config alone does
-                // not carry the packages' command binaries).
-                commands: Vec::new(),
-            })
+            .filter_map(|package| read_package_software_info(&package.dir))
             .collect()
     }
+}
+
+/// Read a projected package dir into a [`SoftwareInfoDto`] (sans `commands`, which
+/// are filled from the live VM in the dispatch arm). Returns `None` if the required
+/// `agentos-package.json` manifest is missing or malformed.
+fn read_package_software_info(dir: &str) -> Option<SoftwareInfoDto> {
+    let manifest_path = std::path::Path::new(dir).join("agentos-package.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(manifest_path).ok()?).ok()?;
+    let name = manifest.get("name").and_then(|v| v.as_str())?.to_owned();
+    let kind = if manifest.get("agent").is_some_and(|v| v.is_object()) {
+        "agent"
+    } else {
+        "wasm-commands"
+    }
+    .to_owned();
+    // Version is best-effort from the package's `package.json`.
+    let version = std::fs::read_to_string(std::path::Path::new(dir).join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|pkg| {
+            pkg.get("version")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+        });
+    Some(SoftwareInfoDto {
+        package: name,
+        kind,
+        version,
+        commands: Vec::new(),
+    })
 }

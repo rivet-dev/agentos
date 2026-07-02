@@ -60,8 +60,6 @@ const SECURE_EXEC_REL = process.env.SECURE_EXEC_LOCAL_PATH ?? "../secure-exec";
 const SWAPPABLE_SCOPED = {
 	"@secure-exec/core": "packages/core",
 	"@secure-exec/browser": "packages/browser",
-	"@secure-exec/s3": "registry/file-system/s3",
-	"@secure-exec/google-drive": "registry/file-system/google-drive",
 	"@secure-exec/sandbox": "registry/tool/sandbox",
 };
 // Agent packages are owned by secure-exec under registry/agent/*; generic VM

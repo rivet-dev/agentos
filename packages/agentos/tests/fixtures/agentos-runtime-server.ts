@@ -5,6 +5,13 @@ import { setup } from "rivetkit";
 import { agentOs } from "../../src/index.js";
 import { buildNativeRegistry } from "../../../../../r6/rivetkit-typescript/packages/rivetkit/src/registry/native";
 
+// Load the pi agent package ONLY when an Anthropic key is present. Import it
+// lazily (not a static top-level import) so the demo and CI boot without
+// requiring @agentos-software/pi's `dist/` to be built when no key is set.
+const pi = process.env.ANTHROPIC_API_KEY
+	? (await import("@agentos-software/pi")).default
+	: undefined;
+
 const fixtureDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(fixtureDir, "../../../..");
 const r6Root = resolve(repoRoot, "../r6");
@@ -30,6 +37,25 @@ const registry = setup({
 					kind: "shared",
 					pool: process.env.AGENTOS_TEST_SIDECAR_POOL,
 				},
+				// Add the pi agent ONLY when an Anthropic key is present (i.e. the
+				// inspector demo run) so the Transcript tab can show a real session;
+				// CI/test runs have no key and stay agent-free.
+				software: pi ? [pi] : [],
+				// Demo mounts so the "Mounts" inspector tab is richly populated
+				// (declarative config; memory + a read-only host_dir, no host risk).
+				mounts: [
+					{ path: "/scratch", plugin: { id: "memory", config: {} } },
+					{ path: "/cache", plugin: { id: "memory", config: {} } },
+					{ path: "/data", plugin: { id: "memory", config: {} } },
+					{
+						path: "/host-tmp",
+						plugin: {
+							id: "host_dir",
+							config: { hostPath: "/tmp/host-tmp", readOnly: true },
+						},
+						readOnly: true,
+					},
+				],
 			},
 		}),
 	},
