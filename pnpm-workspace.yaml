@@ -58,6 +58,7 @@ catalog:
   '@agentos-software/http-get': 0.0.0-nathan-agentos-package-resolution.efc374f
   '@agentos-software/jq': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/make': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/manifest': 0.0.260331072558
   '@agentos-software/opencode': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/pi': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/pi-cli': 0.0.0-nathan-agentos-package-resolution.42d8146

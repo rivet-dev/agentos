@@ -5,7 +5,6 @@ import common from "@agentos-software/common";
 import piCli from "@agentos-software/pi-cli";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-import { hasRegistryCommands } from "./helpers/registry-commands.js";
 import {
 	createAnthropicFixture,
 	startLlmock,
@@ -50,7 +49,7 @@ async function createPiCliVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		software: hasRegistryCommands ? [common, piCli] : [piCli],
+		software: [common, piCli],
 	});
 }
 

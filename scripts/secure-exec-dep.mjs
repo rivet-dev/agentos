@@ -75,7 +75,8 @@ const AGENT_PACKAGE_SUBPATHS = {
 	"@agentos-software/pi-cli": "registry/agent/pi-cli",
 };
 const SOFTWARE_PACKAGE_SUBPATHS = {
-	"@agentos-software/codex-cli": "registry/software/codex",
+	// The manifest is a secure-exec workspace package, not registry software.
+	"@agentos-software/manifest": "packages/manifest",
 };
 const softwareSubpath = (name) =>
 	SOFTWARE_PACKAGE_SUBPATHS[name] ?? `registry/software/${name.split("/")[1]}`;

@@ -9,7 +9,6 @@ import {
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
-import { hasRegistryCommands } from "./helpers/registry-commands.js";
 
 /**
  * REPRO / REGRESSION: "onSessionUpdate not delivered live mid-turn with Pi".
@@ -119,7 +118,7 @@ describe("REPRO: Pi session/update live delivery", () => {
 			loopbackExemptPorts: [Number(new URL(url).port)],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
 			// pi is pre-packed + projected by default; only add WASM commands here.
-			software: hasRegistryCommands ? [common] : [],
+			software: [common],
 		});
 
 		let sessionId: string | undefined;

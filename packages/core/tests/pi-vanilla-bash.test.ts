@@ -9,10 +9,6 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
-import {
-	hasRegistryCommands,
-	registrySkipReason,
-} from "./helpers/registry-commands.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
 
@@ -121,11 +117,6 @@ function captureSessionEventText(
  * asserting behavior the runtime cannot yet deliver.
  */
 describe("vanilla Pi bash tool inside the VM", () => {
-	if (!hasRegistryCommands) {
-		test.skip(`skipped: ${registrySkipReason}`, () => {});
-		return;
-	}
-
 	test("runs the vanilla bash backend in the session working directory", async () => {
 		const fixtures = createBashFixtures(
 			bashToolCall({ command: "pwd", timeout: 10 }),

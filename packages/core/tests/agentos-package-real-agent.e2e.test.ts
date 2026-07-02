@@ -87,18 +87,16 @@ describe.skipIf(!ENABLED).each(AGENTS)(
 );
 
 /**
- * The built-in agents shipped PRE-PACKED + projected by DEFAULT: pack them into
- * `<core>/agents` (the shipped location), boot with default software (no explicit
- * agent package), and launch by friendly id — no runtime npm dep on the SDKs.
+ * The built-in agents projected by DEFAULT: the @agentos-software/* agent
+ * package deps (each ships its registry-built dist/package), boot with default
+ * software (no explicit agent package), and launch by friendly id — no runtime
+ * npm dep on the SDKs and no packing step.
  */
-describe.skipIf(!ENABLED)("default pre-packed agents", () => {
+describe.skipIf(!ENABLED)("default built-in agents", () => {
 	let vm: AgentOs;
 
 	beforeAll(async () => {
-		execFileSync("node", [resolve(here, "../scripts/pack-agents.mjs"), "--agent", "pi", "--agent", "claude"], {
-			stdio: "ignore",
-		});
-		vm = await AgentOs.create({}); // default software — includes the pre-packed agents
+		vm = await AgentOs.create({}); // default software — includes the built-in agent packages
 	}, 240_000);
 
 	afterAll(async () => {
