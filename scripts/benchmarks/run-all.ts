@@ -19,6 +19,10 @@ const FAMILY_FILTER = process.env.BENCH_FAMILIES
 export async function runLatencyMatrix(): Promise<OpResult[]> {
 	const vm = await AgentOs.create({
 		permissions: { fs: "allow", network: "allow", childProcess: "allow", process: "allow" },
+		// Benchmark VM: opt in to the µs-resolution guest clock so sub-ms guest
+		// samples are real instead of 1ms-floor artifacts. Never enable this for
+		// untrusted workloads (timing side channels) — off by default everywhere.
+		highResolutionTime: true,
 	});
 	try {
 		const results: OpResult[] = [];

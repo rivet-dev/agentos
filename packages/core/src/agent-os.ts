@@ -595,6 +595,14 @@ export interface AgentOsOptions {
 	 * Defaults to the hardened builtin set used by the native sidecar bridge.
 	 */
 	allowedNodeBuiltins?: string[];
+	/**
+	 * Opt in to a high-resolution monotonic guest clock (microsecond class)
+	 * for guest Node processes. Default `false` keeps the security-oriented
+	 * 1ms timer resolution — untrusted guest code should not get a precise
+	 * timer (timing side channels). Enable only for trusted benchmarking or
+	 * profiling workloads.
+	 */
+	highResolutionTime?: boolean;
 	/** Root filesystem configuration. Defaults to an overlay with the bundled base snapshot as its deepest lower. */
 	rootFilesystem?: RootFilesystemConfig;
 	/** Filesystems to mount at boot time. */
@@ -2910,6 +2918,7 @@ export class AgentOs {
 					// emulation), matching the prior behavior where Agent OS only
 					// constrained the builtin allow-list.
 					...(options?.allowedNodeBuiltins !== undefined ||
+					options?.highResolutionTime !== undefined ||
 					snapshotUserlandCode !== undefined
 						? {
 								jsRuntime: {
@@ -2917,6 +2926,9 @@ export class AgentOs {
 									moduleResolution: "node" as const,
 									...(options?.allowedNodeBuiltins !== undefined
 										? { allowedBuiltins: options.allowedNodeBuiltins }
+										: {}),
+									...(options?.highResolutionTime !== undefined
+										? { highResolutionTime: options.highResolutionTime }
 										: {}),
 									...(snapshotUserlandCode !== undefined
 										? { snapshotUserlandCode }

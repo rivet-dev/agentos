@@ -270,6 +270,7 @@ export const agentOsOptionFieldSchemas = {
 	defaultSoftware: z.boolean().optional(),
 	loopbackExemptPorts: z.array(z.number().int().min(0).max(65535)).optional(),
 	allowedNodeBuiltins: stringArray.optional(),
+	highResolutionTime: z.boolean().optional(),
 	rootFilesystem: rootFilesystemConfigSchema.optional(),
 	mounts: z.array(mountConfigSchema).optional(),
 	moduleAccessCwd: z.string().optional(),
