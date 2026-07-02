@@ -1,22 +1,51 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	copyFileSync,
+	existsSync,
+	mkdtempSync,
+	mkdirSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { AgentOs, createHostDirBackend } from "@rivet-dev/agentos-core";
 import type { NativeOp } from "./native.js";
 import { runNativeLayer } from "./native.js";
 import { nowMs, round, stats, type Stats } from "./perf-utils.js";
+
+const DEFAULT_NATIVE_BASELINE_WASM =
+	"/home/nathan/.herdr/workspaces/agent-os/secure-exec-perf-rules/target/wasm32-wasip1/release/native-baseline.wasm";
+const WASM_COMMAND_NAME = "native-baseline";
+const WASM_COMMAND_PATH = `/__secure_exec/commands/0/${WASM_COMMAND_NAME}`;
+const WASM_BASE_DIR = "/mnt/native-baseline-wasm";
+const WASM_SUPPORTED_OPS = new Set<NativeOp>([
+	"fs_stat",
+	"fs_write",
+	"fs_read",
+	"fs_open_close",
+	"fs_mkdir_rmdir",
+	"fs_rename",
+	"fs_readdir",
+	"fs_fsync",
+	"cpu_loop",
+	"alloc_free",
+]);
+let wasmCommandDir: string | undefined;
+let wasmWritableDir: string | undefined;
 
 export interface LayerSamples {
 	native: number[];
 	node: number[];
 	guest: number[];
+	wasm?: number[];
 }
 
 export interface LayerStats {
 	native: Stats;
 	node: Stats;
 	guest: Stats;
+	wasm?: Stats;
 }
 
 export interface BenchmarkOp {
@@ -46,7 +75,35 @@ export interface OpResult {
 	tax: {
 		emulation: number;
 		total: number;
+		wasm?: number;
 	};
+}
+
+export function supportsWasmLayer(op: NativeOp): boolean {
+	return WASM_SUPPORTED_OPS.has(op);
+}
+
+export function wasmLayerMounts():
+	| { path: string; plugin: ReturnType<typeof createHostDirBackend> }[]
+	| undefined {
+	const wasm = resolveNativeBaselineWasm();
+	if (!wasm) return undefined;
+	return [
+		{
+			path: "/__secure_exec/commands/0",
+			plugin: createHostDirBackend({
+				hostPath: ensureWasmCommandDir(wasm),
+				readOnly: true,
+			}),
+		},
+		{
+			path: WASM_BASE_DIR,
+			plugin: createHostDirBackend({
+				hostPath: ensureWasmWritableDir(),
+				readOnly: false,
+			}),
+		},
+	];
 }
 
 export function timedProgram(operationSource: string, setupSource?: string): string {
@@ -163,6 +220,67 @@ export async function runGuestSpawn(
 	return samples;
 }
 
+function resolveNativeBaselineWasm(): string | undefined {
+	const wasm = process.env.NATIVE_BASELINE_WASM ?? DEFAULT_NATIVE_BASELINE_WASM;
+	if (!wasm || !existsSync(wasm)) return undefined;
+	return wasm;
+}
+
+function ensureWasmCommandDir(wasmPath: string): string {
+	if (wasmCommandDir) return wasmCommandDir;
+	const dir = mkdtempSync(join(tmpdir(), "agentos-native-baseline-wasm-cmd-"));
+	mkdirSync(dir, { recursive: true });
+	copyFileSync(wasmPath, join(dir, WASM_COMMAND_NAME));
+	wasmCommandDir = dir;
+	return wasmCommandDir;
+}
+
+function ensureWasmWritableDir(): string {
+	if (wasmWritableDir) return wasmWritableDir;
+	wasmWritableDir = mkdtempSync(join(tmpdir(), "agentos-native-baseline-wasm-data-"));
+	return wasmWritableDir;
+}
+
+export async function runWasmLayer(
+	vm: AgentOs,
+	nativeOp: NativeOp,
+	iters: number,
+	warmup: number,
+): Promise<number[] | undefined> {
+	if (!supportsWasmLayer(nativeOp)) return undefined;
+	if (!resolveNativeBaselineWasm()) return undefined;
+	const hostBaseDir = join(ensureWasmWritableDir(), nativeOp);
+	rmSync(hostBaseDir, { recursive: true, force: true });
+	mkdirSync(hostBaseDir, { recursive: true });
+	const guestBaseDir = `${WASM_BASE_DIR}/${nativeOp}`;
+	const result = await vm.execArgv(WASM_COMMAND_PATH, [
+		"--op",
+		nativeOp,
+		"--iters",
+		String(iters),
+		"--warmup",
+		String(warmup),
+		"--base-dir",
+		guestBaseDir,
+	]);
+	if (result.exitCode !== 0) {
+		throw new Error(`wasm native-baseline ${nativeOp} exited ${result.exitCode}\n${result.stderr}`);
+	}
+	const parsed = JSON.parse(result.stdout) as {
+		unit?: string;
+		samples?: number[];
+		unsupported?: boolean;
+		op?: string;
+	};
+	if (parsed.unsupported) {
+		throw new Error(`wasm native-baseline unexpectedly returned unsupported for ${nativeOp}`);
+	}
+	if (parsed.unit !== "ns" || !Array.isArray(parsed.samples)) {
+		throw new Error(`wasm native-baseline emitted unexpected output: ${result.stdout}`);
+	}
+	return parsed.samples.map((ns) => ns / 1e6);
+}
+
 export async function runOp(
 	op: BenchmarkOp,
 	vm: AgentOs,
@@ -182,10 +300,12 @@ export async function runOp(
 				warmup,
 				`${op.family}-${op.name}`,
 			);
+	const wasm = await runWasmLayer(vm, op.nativeOp, iters, warmup);
 	const layers = {
 		native: stats(native),
 		node: stats(node),
 		guest: stats(guest),
+		...(wasm ? { wasm: stats(wasm) } : {}),
 	};
 	return {
 		family: op.family,
@@ -197,6 +317,7 @@ export async function runOp(
 		tax: {
 			emulation: round(layers.guest.p50 / layers.node.p50),
 			total: round(layers.guest.p50 / layers.native.p50),
+			...(layers.wasm ? { wasm: round(layers.wasm.p50 / layers.native.p50) } : {}),
 		},
 	};
 }

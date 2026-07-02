@@ -57,6 +57,26 @@ build_native_baseline() {
   echo "Using native baseline: $NATIVE_BASELINE_BIN" >&2
 }
 
+build_native_baseline_wasm() {
+  local secure_exec_root
+  secure_exec_root="$(resolve_secure_exec_root)"
+  if command -v rustup >/dev/null 2>&1 && ! rustup target list --installed | grep -qx "wasm32-wasip1"; then
+    echo "=== Skipping vm-wasm lane: Rust target wasm32-wasip1 is not installed ===" >&2
+    echo "Install it with: rustup target add wasm32-wasip1" >&2
+    export NATIVE_BASELINE_WASM=""
+    return
+  fi
+  echo "" >&2
+  echo "=== Building native-baseline wasm32-wasip1 ===" >&2
+  cargo build --release --target wasm32-wasip1 -p native-baseline --manifest-path "$secure_exec_root/Cargo.toml" >&2
+  if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+    export NATIVE_BASELINE_WASM="${NATIVE_BASELINE_WASM:-$CARGO_TARGET_DIR/wasm32-wasip1/release/native-baseline.wasm}"
+  else
+    export NATIVE_BASELINE_WASM="${NATIVE_BASELINE_WASM:-$secure_exec_root/target/wasm32-wasip1/release/native-baseline.wasm}"
+  fi
+  echo "Using wasm native baseline: $NATIVE_BASELINE_WASM" >&2
+}
+
 run() {
   local name="$1"
   shift
@@ -332,6 +352,7 @@ fi
 # leak, footprint, findings, and regression diff.
 if should_run "fuzz-perf"; then
   build_native_baseline
+  build_native_baseline_wasm
   export NODE_OPTIONS="${NODE_OPTIONS:---expose-gc}"
   export BENCH_ITERATIONS="${BENCH_FUZZ_PERF_ITERATIONS:-${BENCH_ITERATIONS:-20}}"
   export BENCH_WARMUP="${BENCH_FUZZ_PERF_WARMUP:-${BENCH_WARMUP:-5}}"

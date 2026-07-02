@@ -1,6 +1,11 @@
 import { AgentOs } from "@rivet-dev/agentos-core";
 import { allOps } from "./families/index.js";
-import { runOp, type OpResult } from "./lib/layers.js";
+import {
+	runOp,
+	supportsWasmLayer,
+	wasmLayerMounts,
+	type OpResult,
+} from "./lib/layers.js";
 import { findingsFromLatency, refutedFromLatency, writeJson } from "./lib/report.js";
 import { getHardware, printTable } from "./lib/perf-utils.js";
 import { runFuzz } from "./fuzz/run.js";
@@ -17,8 +22,13 @@ const FAMILY_FILTER = process.env.BENCH_FAMILIES
 	.filter(Boolean);
 
 export async function runLatencyMatrix(): Promise<OpResult[]> {
+	const wasmMounts = wasmLayerMounts();
+	if (!wasmMounts) {
+		console.error("vm-wasm lane disabled: native-baseline wasm artifact was not found");
+	}
 	const vm = await AgentOs.create({
 		permissions: { fs: "allow", network: "allow", childProcess: "allow", process: "allow" },
+		...(wasmMounts ? { mounts: wasmMounts } : {}),
 		// Benchmark VM: opt in to the µs-resolution guest clock so sub-ms guest
 		// samples are real instead of 1ms-floor artifacts. Never enable this for
 		// untrusted workloads (timing side channels) — off by default everywhere.
@@ -31,6 +41,9 @@ export async function runLatencyMatrix(): Promise<OpResult[]> {
 			: allOps;
 		for (const op of ops) {
 			console.error(`latency ${op.family}/${op.name}`);
+			if (supportsWasmLayer(op.nativeOp)) {
+				console.error("  wasm lane: guest JS measured first, wasm native-baseline after");
+			}
 			results.push(await runOp(op, vm, ITERATIONS, WARMUP));
 		}
 		return results;
@@ -84,6 +97,18 @@ async function main(): Promise<void> {
 	const baselinePath = `${RESULTS_DIR}/baseline/findings-baseline.json`;
 	const diff = compareBaselineFile(`${RESULTS_DIR}/findings.json`, baselinePath);
 	writeJson(`${RESULTS_DIR}/regression-diff.json`, diff);
+
+	printTable(
+		["family", "op", "native p50", "node p50", "guest p50", "wasm p50"],
+		latency.map((result) => [
+			result.family,
+			result.op,
+			`${result.layers.native.p50}ms`,
+			`${result.layers.node.p50}ms`,
+			`${result.layers.guest.p50}ms`,
+			result.layers.wasm ? `${result.layers.wasm.p50}ms` : "-",
+		]),
+	);
 
 	printTable(
 		["family", "op", "guest/node", "guest/native", "file:line"],

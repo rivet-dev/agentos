@@ -40,6 +40,14 @@ are:
 
 Set `BENCH_FAMILIES=net,fs` with `BENCH_ONLY=fuzz-perf` to run only those latency-matrix families and skip the fuzz/leak/footprint stages.
 
+The `fuzz-perf` latency matrix reports native, host Node, guest VM JS, and
+optional vm-wasm p50s. The vm-wasm lane runs the same Rust `native-baseline`
+CLI as a `wasm32-wasip1` command inside the benchmark VM for supported
+filesystem/control ops. Its in-VM clock is 1ms-quantized, so fast samples may
+show millisecond buckets; the runner reports those samples as-is and relies on
+the benchmark iteration count for amplification rather than fabricating
+sub-millisecond precision.
+
 - `coldstart-sleep`
 - `echo-cold-warm`
 - `memory-sleep`
