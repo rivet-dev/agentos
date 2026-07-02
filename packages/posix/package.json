@@ -23,7 +23,7 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "@secure-exec/core": "link:../../../secure-exec/packages/core"
+    "@secure-exec/core": "link:../../../secure-exec-provides/packages/core"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

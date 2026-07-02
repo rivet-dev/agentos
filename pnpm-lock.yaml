@@ -30,17 +30,17 @@ importers:
   .:
     devDependencies:
       '@agentos-software/claude-code':
-        specifier: link:../secure-exec/registry/agent/claude
-        version: link:../secure-exec/registry/agent/claude
+        specifier: link:../secure-exec-provides/registry/agent/claude
+        version: link:../secure-exec-provides/registry/agent/claude
       '@agentos-software/codex':
-        specifier: link:../secure-exec/registry/agent/codex
-        version: link:../secure-exec/registry/agent/codex
+        specifier: link:../secure-exec-provides/registry/agent/codex
+        version: link:../secure-exec-provides/registry/agent/codex
       '@agentos-software/common':
-        specifier: link:../secure-exec/registry/software/common
-        version: link:../secure-exec/registry/software/common
+        specifier: link:../secure-exec-provides/registry/software/common
+        version: link:../secure-exec-provides/registry/software/common
       '@agentos-software/pi':
-        specifier: link:../secure-exec/registry/agent/pi
-        version: link:../secure-exec/registry/agent/pi
+        specifier: link:../secure-exec-provides/registry/agent/pi
+        version: link:../secure-exec-provides/registry/agent/pi
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
@@ -54,8 +54,8 @@ importers:
         specifier: workspace:*
         version: link:packages/core
       '@secure-exec/core':
-        specifier: link:../secure-exec/packages/core
-        version: link:../secure-exec/packages/core
+        specifier: link:../secure-exec-provides/packages/core
+        version: link:../secure-exec-provides/packages/core
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -75,17 +75,17 @@ importers:
   examples/agent-to-agent:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -140,17 +140,17 @@ importers:
   examples/approvals:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -189,17 +189,17 @@ importers:
   examples/authentication:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -238,17 +238,17 @@ importers:
   examples/bindings:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -287,23 +287,23 @@ importers:
   examples/browser-terminal:
     dependencies:
       '@agentos-software/common':
-        specifier: link:../../../secure-exec/registry/software/common
-        version: link:../../../secure-exec/registry/software/common
+        specifier: link:../../../secure-exec-provides/registry/software/common
+        version: link:../../../secure-exec-provides/registry/software/common
       '@agentos-software/curl':
-        specifier: link:../../../secure-exec/registry/software/curl
-        version: link:../../../secure-exec/registry/software/curl
+        specifier: link:../../../secure-exec-provides/registry/software/curl
+        version: link:../../../secure-exec-provides/registry/software/curl
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/jq':
-        specifier: link:../../../secure-exec/registry/software/jq
-        version: link:../../../secure-exec/registry/software/jq
+        specifier: link:../../../secure-exec-provides/registry/software/jq
+        version: link:../../../secure-exec-provides/registry/software/jq
       '@agentos-software/ripgrep':
-        specifier: link:../../../secure-exec/registry/software/ripgrep
-        version: link:../../../secure-exec/registry/software/ripgrep
+        specifier: link:../../../secure-exec-provides/registry/software/ripgrep
+        version: link:../../../secure-exec-provides/registry/software/ripgrep
       '@agentos-software/sqlite3':
-        specifier: link:../../../secure-exec/registry/software/sqlite3
-        version: link:../../../secure-exec/registry/software/sqlite3
+        specifier: link:../../../secure-exec-provides/registry/software/sqlite3
+        version: link:../../../secure-exec-provides/registry/software/sqlite3
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -351,17 +351,17 @@ importers:
   examples/claude:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -400,17 +400,17 @@ importers:
   examples/codex:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -449,17 +449,17 @@ importers:
   examples/core:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -498,17 +498,17 @@ importers:
   examples/crash-course:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -547,17 +547,17 @@ importers:
   examples/cron:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -596,17 +596,17 @@ importers:
   examples/custom:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -645,17 +645,17 @@ importers:
   examples/debugging:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -694,17 +694,17 @@ importers:
   examples/filesystem:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -743,17 +743,17 @@ importers:
   examples/js-runtime:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -792,17 +792,17 @@ importers:
   examples/llm-credentials:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -841,17 +841,17 @@ importers:
   examples/multiplayer:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -890,17 +890,17 @@ importers:
   examples/networking:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -939,17 +939,17 @@ importers:
   examples/opencode:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -988,17 +988,17 @@ importers:
   examples/permissions:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1037,17 +1037,17 @@ importers:
   examples/persistence:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1086,17 +1086,17 @@ importers:
   examples/pi:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1135,17 +1135,17 @@ importers:
   examples/processes:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1184,17 +1184,17 @@ importers:
   examples/quickstart:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1233,17 +1233,17 @@ importers:
   examples/quickstart-app:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1925,17 +1925,17 @@ importers:
   examples/resource-limits:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1974,17 +1974,17 @@ importers:
   examples/sandbox:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2023,17 +2023,17 @@ importers:
   examples/sessions:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2072,26 +2072,26 @@ importers:
   examples/software:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/coreutils':
-        specifier: link:../../../secure-exec/registry/software/coreutils
-        version: link:../../../secure-exec/registry/software/coreutils
+        specifier: link:../../../secure-exec-provides/registry/software/coreutils
+        version: link:../../../secure-exec-provides/registry/software/coreutils
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/jq':
-        specifier: link:../../../secure-exec/registry/software/jq
-        version: link:../../../secure-exec/registry/software/jq
+        specifier: link:../../../secure-exec-provides/registry/software/jq
+        version: link:../../../secure-exec-provides/registry/software/jq
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@agentos-software/ripgrep':
-        specifier: link:../../../secure-exec/registry/software/ripgrep
-        version: link:../../../secure-exec/registry/software/ripgrep
+        specifier: link:../../../secure-exec-provides/registry/software/ripgrep
+        version: link:../../../secure-exec-provides/registry/software/ripgrep
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2130,17 +2130,17 @@ importers:
   examples/webhooks:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2182,17 +2182,17 @@ importers:
   examples/workflows:
     dependencies:
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2231,8 +2231,8 @@ importers:
   packages/agentos:
     dependencies:
       '@agentos-software/common':
-        specifier: link:../../../secure-exec/registry/software/common
-        version: link:../../../secure-exec/registry/software/common
+        specifier: link:../../../secure-exec-provides/registry/software/common
+        version: link:../../../secure-exec-provides/registry/software/common
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
@@ -2313,8 +2313,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       '@secure-exec/sandbox':
-        specifier: link:../../../secure-exec/registry/tool/sandbox
-        version: link:../../../secure-exec/registry/tool/sandbox
+        specifier: link:../../../secure-exec-provides/registry/tool/sandbox
+        version: link:../../../secure-exec-provides/registry/tool/sandbox
       sandbox-agent:
         specifier: ^0.4.2
         version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
@@ -2323,8 +2323,8 @@ importers:
         version: 4.3.6
     devDependencies:
       '@agentos-software/common':
-        specifier: link:../../../secure-exec/registry/software/common
-        version: link:../../../secure-exec/registry/software/common
+        specifier: link:../../../secure-exec-provides/registry/software/common
+        version: link:../../../secure-exec-provides/registry/software/common
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -2338,11 +2338,11 @@ importers:
   packages/browser:
     dependencies:
       '@secure-exec/browser':
-        specifier: link:../../../secure-exec/packages/browser
-        version: link:../../../secure-exec/packages/browser
+        specifier: link:../../../secure-exec-provides/packages/browser
+        version: link:../../../secure-exec-provides/packages/browser
       '@secure-exec/core':
-        specifier: link:../../../secure-exec/packages/core
-        version: link:../../../secure-exec/packages/core
+        specifier: link:../../../secure-exec-provides/packages/core
+        version: link:../../../secure-exec-provides/packages/core
       sucrase:
         specifier: ^3.35.0
         version: 3.35.1
@@ -2371,24 +2371,12 @@ importers:
 
   packages/core:
     dependencies:
-      '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
       '@agentos-software/common':
-        specifier: link:../../../secure-exec/registry/software/common
-        version: link:../../../secure-exec/registry/software/common
+        specifier: link:../../../secure-exec-provides/registry/software/common
+        version: link:../../../secure-exec-provides/registry/software/common
       '@agentos-software/manifest':
-        specifier: link:../../../secure-exec/packages/manifest
-        version: link:../../../secure-exec/packages/manifest
-      '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
-      '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
-      '@agentos-software/pi-cli':
-        specifier: link:../../../secure-exec/registry/agent/pi-cli
-        version: link:../../../secure-exec/registry/agent/pi-cli
+        specifier: link:../../../secure-exec-provides/packages/manifest
+        version: link:../../../secure-exec-provides/packages/manifest
       '@aws-sdk/client-s3':
         specifier: ^3.1019.0
         version: 3.1020.0
@@ -2399,8 +2387,8 @@ importers:
         specifier: ^0.6.2
         version: 0.6.2
       '@secure-exec/core':
-        specifier: link:../../../secure-exec/packages/core
-        version: link:../../../secure-exec/packages/core
+        specifier: link:../../../secure-exec-provides/packages/core
+        version: link:../../../secure-exec-provides/packages/core
       '@xterm/headless':
         specifier: ^6.0.0
         version: 6.0.0
@@ -2429,66 +2417,78 @@ importers:
         specifier: ^3.25.2
         version: 3.25.2(zod@4.3.6)
     devDependencies:
+      '@agentos-software/claude-code':
+        specifier: link:../../../secure-exec-provides/registry/agent/claude
+        version: link:../../../secure-exec-provides/registry/agent/claude
       '@agentos-software/codex':
-        specifier: link:../../../secure-exec/registry/agent/codex
-        version: link:../../../secure-exec/registry/agent/codex
+        specifier: link:../../../secure-exec-provides/registry/agent/codex
+        version: link:../../../secure-exec-provides/registry/agent/codex
       '@agentos-software/codex-cli':
-        specifier: link:../../../secure-exec/registry/software/codex-cli
-        version: link:../../../secure-exec/registry/software/codex-cli
+        specifier: link:../../../secure-exec-provides/registry/software/codex-cli
+        version: link:../../../secure-exec-provides/registry/software/codex-cli
       '@agentos-software/coreutils':
-        specifier: link:../../../secure-exec/registry/software/coreutils
-        version: link:../../../secure-exec/registry/software/coreutils
+        specifier: link:../../../secure-exec-provides/registry/software/coreutils
+        version: link:../../../secure-exec-provides/registry/software/coreutils
       '@agentos-software/curl':
-        specifier: link:../../../secure-exec/registry/software/curl
-        version: link:../../../secure-exec/registry/software/curl
+        specifier: link:../../../secure-exec-provides/registry/software/curl
+        version: link:../../../secure-exec-provides/registry/software/curl
       '@agentos-software/diffutils':
-        specifier: link:../../../secure-exec/registry/software/diffutils
-        version: link:../../../secure-exec/registry/software/diffutils
+        specifier: link:../../../secure-exec-provides/registry/software/diffutils
+        version: link:../../../secure-exec-provides/registry/software/diffutils
       '@agentos-software/duckdb':
-        specifier: link:../../../secure-exec/registry/software/duckdb
-        version: link:../../../secure-exec/registry/software/duckdb
+        specifier: link:../../../secure-exec-provides/registry/software/duckdb
+        version: link:../../../secure-exec-provides/registry/software/duckdb
       '@agentos-software/fd':
-        specifier: link:../../../secure-exec/registry/software/fd
-        version: link:../../../secure-exec/registry/software/fd
+        specifier: link:../../../secure-exec-provides/registry/software/fd
+        version: link:../../../secure-exec-provides/registry/software/fd
       '@agentos-software/file':
-        specifier: link:../../../secure-exec/registry/software/file
-        version: link:../../../secure-exec/registry/software/file
+        specifier: link:../../../secure-exec-provides/registry/software/file
+        version: link:../../../secure-exec-provides/registry/software/file
       '@agentos-software/findutils':
-        specifier: link:../../../secure-exec/registry/software/findutils
-        version: link:../../../secure-exec/registry/software/findutils
+        specifier: link:../../../secure-exec-provides/registry/software/findutils
+        version: link:../../../secure-exec-provides/registry/software/findutils
       '@agentos-software/gawk':
-        specifier: link:../../../secure-exec/registry/software/gawk
-        version: link:../../../secure-exec/registry/software/gawk
+        specifier: link:../../../secure-exec-provides/registry/software/gawk
+        version: link:../../../secure-exec-provides/registry/software/gawk
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/grep':
-        specifier: link:../../../secure-exec/registry/software/grep
-        version: link:../../../secure-exec/registry/software/grep
+        specifier: link:../../../secure-exec-provides/registry/software/grep
+        version: link:../../../secure-exec-provides/registry/software/grep
       '@agentos-software/gzip':
-        specifier: link:../../../secure-exec/registry/software/gzip
-        version: link:../../../secure-exec/registry/software/gzip
+        specifier: link:../../../secure-exec-provides/registry/software/gzip
+        version: link:../../../secure-exec-provides/registry/software/gzip
       '@agentos-software/http-get':
-        specifier: link:../../../secure-exec/registry/software/http-get
-        version: link:../../../secure-exec/registry/software/http-get
+        specifier: link:../../../secure-exec-provides/registry/software/http-get
+        version: link:../../../secure-exec-provides/registry/software/http-get
       '@agentos-software/jq':
-        specifier: link:../../../secure-exec/registry/software/jq
-        version: link:../../../secure-exec/registry/software/jq
+        specifier: link:../../../secure-exec-provides/registry/software/jq
+        version: link:../../../secure-exec-provides/registry/software/jq
+      '@agentos-software/opencode':
+        specifier: link:../../../secure-exec-provides/registry/agent/opencode
+        version: link:../../../secure-exec-provides/registry/agent/opencode
+      '@agentos-software/pi':
+        specifier: link:../../../secure-exec-provides/registry/agent/pi
+        version: link:../../../secure-exec-provides/registry/agent/pi
+      '@agentos-software/pi-cli':
+        specifier: link:../../../secure-exec-provides/registry/agent/pi-cli
+        version: link:../../../secure-exec-provides/registry/agent/pi-cli
       '@agentos-software/ripgrep':
-        specifier: link:../../../secure-exec/registry/software/ripgrep
-        version: link:../../../secure-exec/registry/software/ripgrep
+        specifier: link:../../../secure-exec-provides/registry/software/ripgrep
+        version: link:../../../secure-exec-provides/registry/software/ripgrep
       '@agentos-software/sed':
-        specifier: link:../../../secure-exec/registry/software/sed
-        version: link:../../../secure-exec/registry/software/sed
+        specifier: link:../../../secure-exec-provides/registry/software/sed
+        version: link:../../../secure-exec-provides/registry/software/sed
       '@agentos-software/tar':
-        specifier: link:../../../secure-exec/registry/software/tar
-        version: link:../../../secure-exec/registry/software/tar
+        specifier: link:../../../secure-exec-provides/registry/software/tar
+        version: link:../../../secure-exec-provides/registry/software/tar
       '@agentos-software/tree':
-        specifier: link:../../../secure-exec/registry/software/tree
-        version: link:../../../secure-exec/registry/software/tree
+        specifier: link:../../../secure-exec-provides/registry/software/tree
+        version: link:../../../secure-exec-provides/registry/software/tree
       '@agentos-software/yq':
-        specifier: link:../../../secure-exec/registry/software/yq
-        version: link:../../../secure-exec/registry/software/yq
+        specifier: link:../../../secure-exec-provides/registry/software/yq
+        version: link:../../../secure-exec-provides/registry/software/yq
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.87
         version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
@@ -2629,77 +2629,77 @@ importers:
   packages/shell:
     dependencies:
       '@agentos-software/codex-cli':
-        specifier: link:../../../secure-exec/registry/software/codex-cli
-        version: link:../../../secure-exec/registry/software/codex-cli
+        specifier: link:../../../secure-exec-provides/registry/software/codex-cli
+        version: link:../../../secure-exec-provides/registry/software/codex-cli
       '@agentos-software/coreutils':
-        specifier: link:../../../secure-exec/registry/software/coreutils
-        version: link:../../../secure-exec/registry/software/coreutils
+        specifier: link:../../../secure-exec-provides/registry/software/coreutils
+        version: link:../../../secure-exec-provides/registry/software/coreutils
       '@agentos-software/curl':
-        specifier: link:../../../secure-exec/registry/software/curl
-        version: link:../../../secure-exec/registry/software/curl
+        specifier: link:../../../secure-exec-provides/registry/software/curl
+        version: link:../../../secure-exec-provides/registry/software/curl
       '@agentos-software/diffutils':
-        specifier: link:../../../secure-exec/registry/software/diffutils
-        version: link:../../../secure-exec/registry/software/diffutils
+        specifier: link:../../../secure-exec-provides/registry/software/diffutils
+        version: link:../../../secure-exec-provides/registry/software/diffutils
       '@agentos-software/duckdb':
-        specifier: link:../../../secure-exec/registry/software/duckdb
-        version: link:../../../secure-exec/registry/software/duckdb
+        specifier: link:../../../secure-exec-provides/registry/software/duckdb
+        version: link:../../../secure-exec-provides/registry/software/duckdb
       '@agentos-software/fd':
-        specifier: link:../../../secure-exec/registry/software/fd
-        version: link:../../../secure-exec/registry/software/fd
+        specifier: link:../../../secure-exec-provides/registry/software/fd
+        version: link:../../../secure-exec-provides/registry/software/fd
       '@agentos-software/file':
-        specifier: link:../../../secure-exec/registry/software/file
-        version: link:../../../secure-exec/registry/software/file
+        specifier: link:../../../secure-exec-provides/registry/software/file
+        version: link:../../../secure-exec-provides/registry/software/file
       '@agentos-software/findutils':
-        specifier: link:../../../secure-exec/registry/software/findutils
-        version: link:../../../secure-exec/registry/software/findutils
+        specifier: link:../../../secure-exec-provides/registry/software/findutils
+        version: link:../../../secure-exec-provides/registry/software/findutils
       '@agentos-software/gawk':
-        specifier: link:../../../secure-exec/registry/software/gawk
-        version: link:../../../secure-exec/registry/software/gawk
+        specifier: link:../../../secure-exec-provides/registry/software/gawk
+        version: link:../../../secure-exec-provides/registry/software/gawk
       '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
+        specifier: link:../../../secure-exec-provides/registry/software/git
+        version: link:../../../secure-exec-provides/registry/software/git
       '@agentos-software/grep':
-        specifier: link:../../../secure-exec/registry/software/grep
-        version: link:../../../secure-exec/registry/software/grep
+        specifier: link:../../../secure-exec-provides/registry/software/grep
+        version: link:../../../secure-exec-provides/registry/software/grep
       '@agentos-software/gzip':
-        specifier: link:../../../secure-exec/registry/software/gzip
-        version: link:../../../secure-exec/registry/software/gzip
+        specifier: link:../../../secure-exec-provides/registry/software/gzip
+        version: link:../../../secure-exec-provides/registry/software/gzip
       '@agentos-software/http-get':
-        specifier: link:../../../secure-exec/registry/software/http-get
-        version: link:../../../secure-exec/registry/software/http-get
+        specifier: link:../../../secure-exec-provides/registry/software/http-get
+        version: link:../../../secure-exec-provides/registry/software/http-get
       '@agentos-software/jq':
-        specifier: link:../../../secure-exec/registry/software/jq
-        version: link:../../../secure-exec/registry/software/jq
+        specifier: link:../../../secure-exec-provides/registry/software/jq
+        version: link:../../../secure-exec-provides/registry/software/jq
       '@agentos-software/make':
-        specifier: link:../../../secure-exec/registry/software/make
-        version: link:../../../secure-exec/registry/software/make
+        specifier: link:../../../secure-exec-provides/registry/software/make
+        version: link:../../../secure-exec-provides/registry/software/make
       '@agentos-software/ripgrep':
-        specifier: link:../../../secure-exec/registry/software/ripgrep
-        version: link:../../../secure-exec/registry/software/ripgrep
+        specifier: link:../../../secure-exec-provides/registry/software/ripgrep
+        version: link:../../../secure-exec-provides/registry/software/ripgrep
       '@agentos-software/sed':
-        specifier: link:../../../secure-exec/registry/software/sed
-        version: link:../../../secure-exec/registry/software/sed
+        specifier: link:../../../secure-exec-provides/registry/software/sed
+        version: link:../../../secure-exec-provides/registry/software/sed
       '@agentos-software/sqlite3':
-        specifier: link:../../../secure-exec/registry/software/sqlite3
-        version: link:../../../secure-exec/registry/software/sqlite3
+        specifier: link:../../../secure-exec-provides/registry/software/sqlite3
+        version: link:../../../secure-exec-provides/registry/software/sqlite3
       '@agentos-software/tar':
-        specifier: link:../../../secure-exec/registry/software/tar
-        version: link:../../../secure-exec/registry/software/tar
+        specifier: link:../../../secure-exec-provides/registry/software/tar
+        version: link:../../../secure-exec-provides/registry/software/tar
       '@agentos-software/tree':
-        specifier: link:../../../secure-exec/registry/software/tree
-        version: link:../../../secure-exec/registry/software/tree
+        specifier: link:../../../secure-exec-provides/registry/software/tree
+        version: link:../../../secure-exec-provides/registry/software/tree
       '@agentos-software/unzip':
-        specifier: link:../../../secure-exec/registry/software/unzip
-        version: link:../../../secure-exec/registry/software/unzip
+        specifier: link:../../../secure-exec-provides/registry/software/unzip
+        version: link:../../../secure-exec-provides/registry/software/unzip
       '@agentos-software/wget':
-        specifier: link:../../../secure-exec/registry/software/wget
-        version: link:../../../secure-exec/registry/software/wget
+        specifier: link:../../../secure-exec-provides/registry/software/wget
+        version: link:../../../secure-exec-provides/registry/software/wget
       '@agentos-software/yq':
-        specifier: link:../../../secure-exec/registry/software/yq
-        version: link:../../../secure-exec/registry/software/yq
+        specifier: link:../../../secure-exec-provides/registry/software/yq
+        version: link:../../../secure-exec-provides/registry/software/yq
       '@agentos-software/zip':
-        specifier: link:../../../secure-exec/registry/software/zip
-        version: link:../../../secure-exec/registry/software/zip
+        specifier: link:../../../secure-exec-provides/registry/software/zip
+        version: link:../../../secure-exec-provides/registry/software/zip
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
