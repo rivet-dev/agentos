@@ -1,10 +1,12 @@
 // Guard against committing dependencies that point at a local path *outside*
-// this repository. In-repo local links are legitimate (the registry links to
-// ../packages/core, test fixtures use file:./vendor/..., cargo crates use
-// path = "../sibling-crate"). What must never land on a branch is a link:/file:/
-// path: dependency that escapes the repo root — e.g. a `link:../../secure-exec`
-// override left over from local-dev mode, which resolves to nothing in CI and
-// breaks the build. This check fails on exactly those escaping local deps.
+// this repository, EXCEPT the sibling ../secure-exec checkout. The committed
+// dependency state is deliberately file-based: every @secure-exec/* /
+// @agentos-software/* npm dep is a link: into ../secure-exec and every
+// secure-exec-* crate a path dep there (CI materializes the sibling at the
+// committed .github/refs/secure-exec sha via `prepare-build`; publishes swap to real
+// versions transiently via `release-swap`). Any OTHER escaping local dep —
+// a stray link into some scratch checkout — still fails this check, as does
+// an escape pointing anywhere but the sibling secure-exec dir.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,6 +55,12 @@ function isInsideRoot(root, target) {
 	return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
+// The one sanctioned escape: the sibling secure-exec checkout (see header).
+function isInsideSiblingSecureExec(root, target) {
+	const sibling = resolve(root, "../secure-exec");
+	return target === sibling || isInsideRoot(sibling, target);
+}
+
 function localPathFromSpecifier(specifier) {
 	for (const protocol of localProtocols) {
 		if (specifier.startsWith(protocol)) {
@@ -78,9 +86,9 @@ function checkPackageManifest(root, manifestPath, relPath, violations) {
 			const localPath = localPathFromSpecifier(specifier);
 			if (localPath === null) continue;
 			const resolved = resolve(manifestDir, localPath);
-			if (!isInsideRoot(root, resolved)) {
+			if (!isInsideRoot(root, resolved) && !isInsideSiblingSecureExec(root, resolved)) {
 				violations.push(
-					`${relPath} ${section}."${name}" uses local dep "${specifier}" that escapes the repo`,
+					`${relPath} ${section}."${name}" uses local dep "${specifier}" that escapes the repo (and is not the sibling ../secure-exec)`,
 				);
 			}
 		}
@@ -99,9 +107,9 @@ function checkCargoManifest(root, manifestPath, relPath, violations) {
 	while ((match = cargoPathPattern.exec(source))) {
 		const localPath = match[2];
 		const resolved = resolve(manifestDir, localPath);
-		if (!isInsideRoot(root, resolved)) {
+		if (!isInsideRoot(root, resolved) && !isInsideSiblingSecureExec(root, resolved)) {
 			violations.push(
-				`${relPath} uses cargo path = "${localPath}" that escapes the repo`,
+				`${relPath} uses cargo path = "${localPath}" that escapes the repo (and is not the sibling ../secure-exec)`,
 			);
 		}
 	}

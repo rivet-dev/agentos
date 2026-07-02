@@ -42,13 +42,31 @@ test("passes in-repo local deps (link/file/path inside the repo)", () => {
 	});
 });
 
-test("rejects a package.json local dep that escapes the repo", () => {
+test("accepts the sanctioned sibling ../secure-exec escape (npm + cargo)", () => {
 	withFixture((root) => {
 		write(
 			root,
 			"packages/core/package.json",
 			JSON.stringify({
 				dependencies: { "@secure-exec/core": "link:../../../secure-exec/packages/core" },
+			}),
+		);
+		write(
+			root,
+			"crates/sidecar/Cargo.toml",
+			'[dependencies]\nsecure-exec-core = { path = "../../../secure-exec/crates/core" }\n',
+		);
+		execFileSync(process.execPath, [scriptPath, "--root", root], { stdio: "pipe" });
+	});
+});
+
+test("rejects a package.json local dep that escapes to a non-sibling checkout", () => {
+	withFixture((root) => {
+		write(
+			root,
+			"packages/core/package.json",
+			JSON.stringify({
+				dependencies: { "@secure-exec/core": "link:../../../secure-exec-scratch/packages/core" },
 			}),
 		);
 		const result = spawnSync(process.execPath, [scriptPath, "--root", root], { encoding: "utf8" });
@@ -58,12 +76,12 @@ test("rejects a package.json local dep that escapes the repo", () => {
 	});
 });
 
-test("rejects a cargo path dep that escapes the repo", () => {
+test("rejects a cargo path dep that escapes to a non-sibling checkout", () => {
 	withFixture((root) => {
 		write(
 			root,
 			"crates/sidecar/Cargo.toml",
-			'[dependencies]\nsecure-exec-core = { path = "../../../secure-exec/crates/core" }\n',
+			'[dependencies]\nsecure-exec-core = { path = "../../../other-repo/crates/core" }\n',
 		);
 		const result = spawnSync(process.execPath, [scriptPath, "--root", root], { encoding: "utf8" });
 		assert.notEqual(result.status, 0);
