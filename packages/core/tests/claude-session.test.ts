@@ -17,7 +17,14 @@ import {
 	startLlmock,
 	stopLlmock,
 } from "./helpers/llmock-helper.js";
-import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
+import {
+	REGISTRY_SOFTWARE,
+	testOnlyCommandSoftware,
+} from "./helpers/registry-commands.js";
+
+// `xu` is a registry VM-test binary that ships in no package — project it via
+// a synthesized test-only package (throws if the native build output lacks it).
+const TEST_COMMAND_SOFTWARE = testOnlyCommandSoftware(["xu"]);
 import { AGENT_CONFIGS } from "../src/agents.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
@@ -161,7 +168,7 @@ describe("full createSession('claude')", () => {
 		vm = await AgentOs.create({
 			loopbackExemptPorts: [mockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
 		});
 	});
 
@@ -236,7 +243,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {
@@ -305,7 +312,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {
@@ -382,7 +389,7 @@ describe("full createSession('claude')", () => {
 		const promptVm = await AgentOs.create({
 			loopbackExemptPorts: [promptMockPort],
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [...REGISTRY_SOFTWARE],
+			software: [...REGISTRY_SOFTWARE, TEST_COMMAND_SOFTWARE],
 		});
 		let sessionId: string | undefined;
 		try {

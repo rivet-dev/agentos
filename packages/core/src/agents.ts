@@ -32,6 +32,12 @@ export interface AgentConfig {
 	defaultEnv?: Record<string, string>;
 }
 
+/**
+ * @deprecated npm-era legacy. Agents are `/opt/agentos` packages resolved from
+ * `@agentos-software/*` dependency manifests (see `default-software.ts`); this
+ * table is no longer consulted by agent resolution and exists only for the
+ * exported `AgentType` union and legacy registry-listing metadata.
+ */
 export const AGENT_CONFIGS = {
 	pi: {
 		acpAdapter: "@agentos-software/pi",

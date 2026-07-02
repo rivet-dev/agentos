@@ -75,7 +75,8 @@ const AGENT_PACKAGE_SUBPATHS = {
 	"@agentos-software/pi-cli": "registry/agent/pi-cli",
 };
 const SOFTWARE_PACKAGE_SUBPATHS = {
-	"@agentos-software/codex-cli": "registry/software/codex",
+	// The manifest is a secure-exec workspace package, not registry software.
+	"@agentos-software/manifest": "packages/manifest",
 };
 const softwareSubpath = (name) =>
 	SOFTWARE_PACKAGE_SUBPATHS[name] ?? `registry/software/${name.split("/")[1]}`;
@@ -604,6 +605,14 @@ switch (cmd) {
 		console.log("installing secure-exec workspace deps...");
 		execFileSync("pnpm", ["install", "--frozen-lockfile"], { cwd: abs, stdio: "inherit" });
 		if (process.argv.includes("--build")) {
+			// Bootstrap: the registry packages' build scripts invoke the
+			// `agentos-toolchain` bin, whose symlinks pnpm only creates once the
+			// toolchain's dist exists — build it, then re-install to create them.
+			execFileSync("npx", ["turbo", "build", "--filter=@rivet-dev/agentos-toolchain"], {
+				cwd: abs,
+				stdio: "inherit",
+			});
+			execFileSync("pnpm", ["install", "--frozen-lockfile"], { cwd: abs, stdio: "inherit" });
 			// Native wasm commands (skipped when already built — cache hit).
 			const commandsDir = path.join(abs, "registry/native/target/wasm32-wasip1/release/commands");
 			if (!existsSync(commandsDir)) {
