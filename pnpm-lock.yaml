@@ -2680,9 +2680,6 @@ importers:
       '@agentos-software/jq':
         specifier: link:../../../secure-exec/registry/software/jq
         version: link:../../../secure-exec/registry/software/jq
-      '@agentos-software/make':
-        specifier: link:../../../secure-exec/registry/software/make
-        version: link:../../../secure-exec/registry/software/make
       '@agentos-software/ripgrep':
         specifier: link:../../../secure-exec/registry/software/ripgrep
         version: link:../../../secure-exec/registry/software/ripgrep

@@ -159,7 +159,6 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 | `@agentos-software/gzip` | gzip | GNU gzip compression (gzip, gunzip, zcat) | rust | - | - |
 | `@agentos-software/http-get` | http-get | Minimal HTTP GET fetch helper | c | - | - |
 | `@agentos-software/jq` | jq | jq JSON processor | rust | - | - |
-| `@agentos-software/make` | make | GNU make build tool (planned) *(planned)* | rust | - | - |
 | `@agentos-software/ripgrep` | ripgrep | ripgrep fast recursive search | rust | - | - |
 | `@agentos-software/sed` | sed | GNU sed stream editor | rust | - | - |
 | `@agentos-software/sqlite3` | sqlite3 | SQLite3 command-line interface | c | - | - |

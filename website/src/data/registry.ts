@@ -126,7 +126,7 @@ export const registry: RegistryEntry[] = [
 		status: "available",
 		package: "@agentos-software/build-essential",
 		description:
-			"Meta-package: common + make + git + curl.",
+			"Meta-package: common + git + curl.",
 		types: ["software"],
 	},
 	{

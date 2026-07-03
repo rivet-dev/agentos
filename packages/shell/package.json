@@ -28,7 +28,6 @@
 		"@agentos-software/gzip": "link:../../../secure-exec/registry/software/gzip",
 		"@agentos-software/http-get": "link:../../../secure-exec/registry/software/http-get",
 		"@agentos-software/jq": "link:../../../secure-exec/registry/software/jq",
-		"@agentos-software/make": "link:../../../secure-exec/registry/software/make",
 		"@agentos-software/ripgrep": "link:../../../secure-exec/registry/software/ripgrep",
 		"@agentos-software/sed": "link:../../../secure-exec/registry/software/sed",
 		"@agentos-software/sqlite3": "link:../../../secure-exec/registry/software/sqlite3",
