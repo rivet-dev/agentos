@@ -4,11 +4,6 @@ members = [
     "crates/agentos-protocol",
     "crates/agentos-sidecar-core",
     "crates/agentos-sidecar",
-    # LOCAL-DEV (web/wasm convergence): re-added because the converged
-    # `secure-exec-sidecar-browser` is provided via the local ../secure-exec
-    # link. Before a real push this must go back to excluded (or be pinned to a
-    # published browser crate) — secure-exec does not publish it to crates.io yet.
-    "crates/agentos-sidecar-browser",
     "crates/client",
     "crates/agentos-actor-plugin",
 ]
