@@ -21,6 +21,8 @@ const TABS: Record<string, () => Promise<{ default: ComponentType<{ actorId: str
 		import("./tabs/mounts").then((m) => ({ default: m.MountsTabConnected })),
 	transcript: () =>
 		import("./tabs/transcript").then((m) => ({ default: m.TranscriptTabConnected })),
+	terminal: () =>
+		import("./tabs/terminal").then((m) => ({ default: m.TerminalTabConnected })),
 };
 
 const queryClient = new QueryClient({
