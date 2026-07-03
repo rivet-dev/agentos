@@ -76,6 +76,13 @@ catalog:
   '@secure-exec/sandbox': 0.0.0-nathan-agentos-package-resolution.0bf7dcb
 # <<< secure-exec catalog <<<
 
+# rivetkit runtime + react bindings. Same-version lockstep with the sidecar;
+# pinned once here and referenced everywhere via `catalog:rivetkit`.
+catalogs:
+  rivetkit:
+    rivetkit: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
+    '@rivetkit/react': 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0
+
 overrides:
   '@rivetkit/rivetkit-wasm': 2.3.2
   '@mariozechner/pi-tui': 0.60.0

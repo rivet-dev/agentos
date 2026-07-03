@@ -57,8 +57,8 @@
 		"@agentos-software/common": "catalog:",
 		"@rivet-dev/agentos-core": "workspace:*",
 		"@rivet-dev/agentos-sidecar": "workspace:*",
-		"@rivetkit/react": "0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585",
-		"rivetkit": "0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585",
+		"@rivetkit/react": "catalog:rivetkit",
+		"rivetkit": "catalog:rivetkit",
 		"zod": "^4.1.11"
 	},
 	"peerDependencies": {

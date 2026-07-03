@@ -20,12 +20,12 @@
 		"@agentos-software/ripgrep": "catalog:",
 		"@agentos-software/sqlite3": "catalog:",
 		"@rivet-dev/agentos": "workspace:*",
-		"@rivetkit/react": "0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585",
+		"@rivetkit/react": "catalog:rivetkit",
 		"@xterm/addon-fit": "^0.10.0",
 		"@xterm/xterm": "^5.5.0",
 		"react": "^19.0.0",
 		"react-dom": "^19.0.0",
-		"rivetkit": "0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585"
+		"rivetkit": "catalog:rivetkit"
 	},
 	"devDependencies": {
 		"@types/react": "^19.0.0",
