@@ -1,6 +1,6 @@
 {
 	"name": "@rivet-dev/agentos",
-	"version": "0.2.0-rc.3",
+	"version": "0.2.5-rc.1",
 	"description": "Agent OS actor for RivetKit - thin TS forwarder that loads the native actor plugin via RivetKit's native-plugin ABI.",
 	"license": "Apache-2.0",
 	"keywords": [

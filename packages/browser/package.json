@@ -1,47 +1,47 @@
 {
-  "name": "@rivet-dev/agentos-browser",
-  "version": "0.2.0-rc.3",
-  "type": "module",
-  "license": "Apache-2.0",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
-    }
-  },
-  "scripts": {
-    "check-types": "pnpm check:converged-gates && tsc --noEmit",
-    "check:converged-gates": "node ./scripts/check-converged-gates.mjs",
-    "dev": "vite",
-    "build": "tsc && pnpm build:dist-wasm",
-    "build:dist-wasm": "node ./scripts/build-dist-wasm.mjs",
-    "build:sidecar-wasm": "node ./scripts/build-sidecar-wasm.mjs",
-    "build:wasm-test-assets": "node ./scripts/build-wasm-test-assets.mjs",
-    "verify:real-language-model": "node ./scripts/verify-real-language-model.mjs",
-    "verify:real-pi-tui": "node ./scripts/verify-real-pi-tui.mjs",
-    "verify:real-pi-model": "node ./scripts/verify-real-pi-model.mjs",
-    "test:browser-wasm": "playwright test --config=playwright.wasm.config.ts",
-    "test": "pnpm check:converged-gates && pnpm build && vitest run tests/runtime-driver && pnpm run test:browser-wasm"
-  },
-  "dependencies": {
-    "@secure-exec/browser": "link:../../../secure-exec/packages/browser",
-    "@secure-exec/core": "link:../../../secure-exec/packages/core",
-    "sucrase": "^3.35.0"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.54.2",
-    "@types/node": "^22.10.2",
-    "@xterm/addon-fit": "0.10.0",
-    "@xterm/xterm": "5.5.0",
-    "typescript": "^5.7.2",
-    "vite": "^6.4.3",
-    "vitest": "^2.1.8"
-  }
+	"name": "@rivet-dev/agentos-browser",
+	"version": "0.2.5-rc.1",
+	"type": "module",
+	"license": "Apache-2.0",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"check-types": "pnpm check:converged-gates && tsc --noEmit",
+		"check:converged-gates": "node ./scripts/check-converged-gates.mjs",
+		"dev": "vite",
+		"build": "tsc && pnpm build:dist-wasm",
+		"build:dist-wasm": "node ./scripts/build-dist-wasm.mjs",
+		"build:sidecar-wasm": "node ./scripts/build-sidecar-wasm.mjs",
+		"build:wasm-test-assets": "node ./scripts/build-wasm-test-assets.mjs",
+		"verify:real-language-model": "node ./scripts/verify-real-language-model.mjs",
+		"verify:real-pi-tui": "node ./scripts/verify-real-pi-tui.mjs",
+		"verify:real-pi-model": "node ./scripts/verify-real-pi-model.mjs",
+		"test:browser-wasm": "playwright test --config=playwright.wasm.config.ts",
+		"test": "pnpm check:converged-gates && pnpm build && vitest run tests/runtime-driver && pnpm run test:browser-wasm"
+	},
+	"dependencies": {
+		"@secure-exec/browser": "link:../../../secure-exec/packages/browser",
+		"@secure-exec/core": "link:../../../secure-exec/packages/core",
+		"sucrase": "^3.35.0"
+	},
+	"devDependencies": {
+		"@playwright/test": "^1.54.2",
+		"@types/node": "^22.10.2",
+		"@xterm/addon-fit": "0.10.0",
+		"@xterm/xterm": "5.5.0",
+		"typescript": "^5.7.2",
+		"vite": "^6.4.3",
+		"vitest": "^2.1.8"
+	}
 }

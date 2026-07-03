@@ -1,6 +1,6 @@
 {
 	"name": "@rivet-dev/agentos-plugin-linux-arm64-gnu",
-	"version": "0.2.0-rc.3",
+	"version": "0.2.5-rc.1",
 	"description": "Agent OS actor plugin cdylib for Linux arm64 (glibc)",
 	"license": "Apache-2.0",
 	"repository": {
