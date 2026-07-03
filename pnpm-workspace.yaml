@@ -68,6 +68,8 @@ catalog:
   '@agentos-software/tar': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/tree': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/unzip': 0.0.0-nathan-agentos-package-resolution.efc374f
+  '@agentos-software/vim': 0.0.260331072558
+  '@agentos-software/vix': 0.0.260331072558
   '@agentos-software/wget': 0.0.0-nathan-agentos-package-resolution.efc374f
   '@agentos-software/yq': 0.0.0-nathan-agentos-package-resolution.42d8146
   '@agentos-software/zip': 0.0.0-nathan-agentos-package-resolution.efc374f

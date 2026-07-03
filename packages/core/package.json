@@ -97,6 +97,7 @@
 		"@agentos-software/sed": "link:../../../secure-exec/registry/software/sed",
 		"@agentos-software/tar": "link:../../../secure-exec/registry/software/tar",
 		"@agentos-software/tree": "link:../../../secure-exec/registry/software/tree",
+		"@agentos-software/vim": "link:../../../secure-exec/registry/software/vim",
 		"@agentos-software/yq": "link:../../../secure-exec/registry/software/yq",
 		"@anthropic-ai/claude-agent-sdk": "^0.2.87",
 		"@anthropic-ai/claude-code": "^2.1.86",
