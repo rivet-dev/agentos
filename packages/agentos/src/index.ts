@@ -17,6 +17,7 @@ import {
 } from "./actor.js";
 import type {
 	AgentOsActorConfigInput,
+	AgentOsCreateOptions,
 	NativeAgentOsOptions,
 } from "./config.js";
 
@@ -51,6 +52,8 @@ export {
 export {
 	type AgentOsActorConfig,
 	type AgentOsActorConfigInput,
+	type AgentOsCreateOptions,
+	type AgentOsCreateOptionsResult,
 	type NativeAgentOsOptions,
 	agentOsActorConfigSchema,
 	nativeAgentOsOptionsSchema,
@@ -100,6 +103,7 @@ export type AgentOSActorConfigInput<TConnParams = undefined> =
 		Omit<AgentOsActorConfigInput<TConnParams>, "options">;
 
 export type AgentOSConfigInput<TConnParams = undefined> = AgentOsOptions & {
+	createOptions?: AgentOsCreateOptions<TConnParams>;
 	preview?: AgentOsActorConfigInput<TConnParams>["preview"];
 	onBeforeConnect?: AgentOsActorConfigInput<TConnParams>["onBeforeConnect"];
 	onSessionEvent?: (
@@ -112,19 +116,38 @@ export type AgentOSConfigInput<TConnParams = undefined> = AgentOsOptions & {
 	) => void | Promise<void>;
 };
 
+function hasSandboxClient(options: AgentOsOptions): boolean {
+	return Boolean(
+		options.sandbox &&
+			typeof options.sandbox === "object" &&
+			"client" in options.sandbox,
+	);
+}
+
+function rejectTopLevelSandboxClient(options: AgentOsOptions): void {
+	if (hasSandboxClient(options)) {
+		throw new Error(
+			"agentOS({ sandbox: { client } }) is not allowed because it would reuse the same sandbox client across actor instances. Use sandbox: { provider } at the top level, or return a manually managed client from createOptions.",
+		);
+	}
+}
+
 export function agentOS<TConnParams = undefined>(
 	config: AgentOSConfigInput<TConnParams> = {},
 ): AgentOsActorDefinition<TConnParams> {
 	const {
 		preview,
+		createOptions,
 		onBeforeConnect,
 		onSessionEvent,
 		onPermissionRequest,
 		...options
 	} = config;
+	rejectTopLevelSandboxClient(options as AgentOsOptions);
 
 	return createAgentOS({
 		options,
+		createOptions,
 		preview,
 		onBeforeConnect,
 		onSessionEvent: onSessionEvent

@@ -29,25 +29,54 @@ The sandbox integration ships as the `@rivet-dev/agentos-sandbox` package. It wo
 - **Filesystem mount**: Projects the sandbox into the VM as a native directory, like mounting a hard drive on your own machine. Read and write files through the mount directly.
 - **Bindings**: Exposes sandbox process management as the `agentos-sandbox` command inside the VM.
 
-Both are powered by [Sandbox Agent](https://sandboxagent.dev), and you can swap providers without changing agent code. Install both packages:
+Both are powered by [Sandbox Agent](https://sandboxagent.dev), and you can swap providers without changing agent code. Install the agentOS sandbox package:
 
 ```bash
-npm install @rivet-dev/agentos-sandbox sandbox-agent
+npm install @rivet-dev/agentos-sandbox
 ```
 
-`createSandboxFs` and `createSandboxBindings` come from `@rivet-dev/agentos-sandbox`. `SandboxAgent` and the provider helpers (such as `docker`) come from the `sandbox-agent` package.
+Provider helpers such as `docker` come from `@rivet-dev/agentos-sandbox`. You should not install or import `sandbox-agent` directly for normal usage.
 
-**Warning:** do not create one `SandboxAgent` at module scope and reuse it for multiple actor instances. Direct `AgentOs.create(...)` examples should start one sandbox for the one VM they create and dispose both together. Dynamic per-actor sandbox creation for `agentOS(...)` needs a future actor-scoped options hook; no `createOptions` callback is supported today.
+Pass a provider as `sandbox: { provider: docker() }`. Agent OS starts a Sandbox Agent client, mounts it at `/sandbox`, registers the process bindings, and disposes the sandbox client when the VM is disposed. In RivetKit actors, pass the provider directly to `agentOS(...)`; the provider starts a fresh client for each actor VM.
 
+<CodeGroup>
 <CodeSnippet file="examples/sandbox/server.ts" />
 
 <CodeSnippet file="examples/sandbox/client.ts" />
+</CodeGroup>
 
-## Calling the mounted bindings
+## Configuration
+
+Use `mountPath` to choose where the sandbox appears inside agentOS, and `sandboxRoot` to scope the external sandbox directory exposed there:
+
+```ts
+sandbox: {
+	provider: docker(),
+	mountPath: "/sandbox",
+	sandboxRoot: "/app",
+	readOnly: true,
+}
+```
+
+## Advanced
+
+### Core API
+
+Core can use the same provider API directly with `AgentOs.create(...)`:
+
+<CodeSnippet file="examples/quickstart/sandbox/index.ts" />
+
+### Custom Sandbox Agent Client
+
+If you provision a Sandbox Agent client yourself, pass it with `client`. This is the manual lifecycle path, so Agent OS will not dispose the client unless you opt in with `dispose: true` or provide a custom dispose function.
+
+In RivetKit actors, manually managed clients must come from `createOptions` so a running client is never shared across actor instances. Use the flat `sandbox: { provider }` form unless you need tenant-specific setup or custom lifecycle control.
+
+<CodeSnippet file="examples/quickstart/sandbox/advanced.ts" />
+
+### Binding Reference
 
 Once the sandbox is mounted, write code through the filesystem and run it inside the sandbox. The sandbox bindings are exposed inside the VM as a CLI command, so you call them through the same `exec`/`spawn` surface as any other command.
-
-## Bindings reference
 
 The bindings expose these commands inside the VM:
 

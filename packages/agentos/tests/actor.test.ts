@@ -373,19 +373,21 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		expect(calls[0].configJson).not.toContain("onSessionEvent");
 	});
 
-	test("rejects native actor options that cannot cross the NAPI config boundary", () => {
-		expect(() =>
+	test("agentOS flat config uses JS actor path for create options and bindings", () => {
+		expect(
+			agentOS({
+				createOptions: () => ({ defaultSoftware: false }),
+			}).nativeFactoryBuilder,
+		).toBeUndefined();
+
+		expect(
 			agentOS({
 				bindings: [],
-			} as never),
-		).toThrow(/bindings/);
+			}).nativeFactoryBuilder,
+		).toBeUndefined();
+	});
 
-		expect(() =>
-			agentOS({
-				createOptions: () => ({}),
-			} as never),
-		).toThrow(/createOptions/);
-
+	test("rejects native actor options that cannot cross the NAPI config boundary", () => {
 		expect(() =>
 			agentOS({
 				mounts: [{ path: "/data", driver: {} }],
@@ -487,7 +489,7 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 						packageDir: "/abs/project/node_modules/@agentos-software/pi",
 						agent: {},
 					},
-					{ packageDir: "/abs/tool-package", hostTool: {} },
+					{ packageDir: "/abs/binding-package", hostBinding: {} },
 				],
 			},
 			preview: {
@@ -502,7 +504,7 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 				package: "/abs/project/node_modules/@agentos-software/pi",
 				kind: "agent",
 			},
-			{ package: "/abs/tool-package", kind: "tool" },
+			{ package: "/abs/binding-package", kind: "tool" },
 		]);
 	});
 

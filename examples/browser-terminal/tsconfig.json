@@ -12,7 +12,13 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": false
+    "verbatimModuleSyntax": false,
+    "baseUrl": ".",
+    "paths": {
+      "@rivet-dev/agentos": ["../../packages/agentos/src/index.ts"],
+      "@rivet-dev/agentos/client": ["../../packages/agentos/src/client.ts"],
+      "@rivet-dev/agentos/react": ["../../packages/agentos/src/react.ts"]
+    }
   },
   "include": ["server.ts", "vite.config.ts", "src"]
 }

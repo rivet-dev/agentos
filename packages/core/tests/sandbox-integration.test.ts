@@ -1,8 +1,5 @@
 import common from "@agentos-software/common";
-import {
-	createSandboxBindings,
-	createSandboxFs,
-} from "@rivet-dev/agentos-sandbox";
+import { createSandboxBindings } from "@rivet-dev/agentos-sandbox";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
 import type { MockSandboxAgentHandle } from "../src/test/sandbox-agent.js";
@@ -46,21 +43,16 @@ describe("sandbox quickstart truth test", () => {
 		}
 	});
 
-	test("mounts createSandboxFs and exercises sandbox bindings", async () => {
+	test("mounts sandbox option and exercises sandbox bindings", async () => {
 		if (!sandbox) {
 			throw new Error("Sandbox test harness did not start.");
 		}
 
 		vm = await AgentOs.create({
 			permissions: SANDBOX_QUICKSTART_PERMISSIONS,
+			defaultSoftware: false,
 			software: [common],
-			mounts: [
-				{
-					path: SANDBOX_MOUNT_PATH,
-					plugin: createSandboxFs({ client: sandbox.client }),
-				},
-			],
-			bindings: [createSandboxBindings({ client: sandbox.client })],
+			sandbox: { client: sandbox.client },
 		});
 
 		await sandbox.client.writeFsFile(

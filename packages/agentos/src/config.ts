@@ -50,7 +50,17 @@ export const agentOsActorOptionsSchema = z
 
 export const agentOsActorConfigSchema = z
 	.object({
-		options: nativeAgentOsOptionsSchema.optional(),
+		options: z
+			.custom<AgentOsOptions>(
+				(value) =>
+					value === undefined ||
+					(typeof value === "object" &&
+						value !== null &&
+						!Array.isArray(value)),
+				{ message: "Expected AgentOsOptions object" },
+			)
+			.optional(),
+		createOptions: zFunction().optional(),
 		actorOptions: agentOsActorOptionsSchema,
 		preview: z
 			.object({
@@ -120,18 +130,37 @@ interface AgentOsActorConfigCallbacks<TConnParams> {
 	) => void | Promise<void>;
 }
 
+export type AgentOsCreateOptionsResult =
+	| AgentOsOptions
+	| {
+			options: AgentOsOptions;
+			dispose?: () => void | Promise<void>;
+	  };
+
+export type AgentOsCreateOptions<TConnParams = undefined> = (
+	c: AgentOsActorContext<TConnParams>,
+) => AgentOsCreateOptionsResult | Promise<AgentOsCreateOptionsResult>;
+
 // Parsed config (after Zod defaults/transforms applied).
 export type AgentOsActorConfig<TConnParams = undefined> = Omit<
 	z.infer<typeof agentOsActorConfigSchema>,
-	"options" | "onBeforeConnect" | "onSessionEvent" | "onPermissionRequest"
+	| "options"
+	| "createOptions"
+	| "onBeforeConnect"
+	| "onSessionEvent"
+	| "onPermissionRequest"
 > &
-	{ options?: NativeAgentOsOptions } &
+	{ options?: AgentOsOptions; createOptions?: AgentOsCreateOptions<TConnParams> } &
 	AgentOsActorConfigCallbacks<TConnParams>;
 
 // Input config (what users pass in before Zod transforms).
 export type AgentOsActorConfigInput<TConnParams = undefined> = Omit<
 	z.input<typeof agentOsActorConfigSchema>,
-	"options" | "onBeforeConnect" | "onSessionEvent" | "onPermissionRequest"
+	| "options"
+	| "createOptions"
+	| "onBeforeConnect"
+	| "onSessionEvent"
+	| "onPermissionRequest"
 > &
-	{ options?: NativeAgentOsOptions } &
+	{ options?: AgentOsOptions; createOptions?: AgentOsCreateOptions<TConnParams> } &
 	AgentOsActorConfigCallbacks<TConnParams>;

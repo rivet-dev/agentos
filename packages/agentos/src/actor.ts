@@ -15,12 +15,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import common from "@agentos-software/common";
 import {
+	AgentOs,
+	type AgentOsOptions,
 	OPT_AGENTOS_BIN,
 	OPT_AGENTOS_ROOT,
+	parseAgentOsOptions,
 } from "@rivet-dev/agentos-core";
 import { getSidecarPath } from "@rivet-dev/agentos-sidecar";
 import {
 	actor,
+	event,
 	type ActorDefinition,
 	type ActorFactoryHandle,
 	type CoreRuntime,
@@ -35,8 +39,18 @@ import {
 	nativeAgentOsOptionsSchema,
 } from "./config.js";
 import { getPluginPath } from "./plugin-binary.js";
-import type { AgentOsActions } from "./actor-actions.js";
-import type { AgentOsActorState, AgentOsActorVars } from "./types.js";
+import type {
+	AgentOsActions,
+	DirEntry,
+	MountInfo,
+	SoftwareInfo,
+	VmFetchOptions,
+} from "./actor-actions.js";
+import type {
+	AgentOsActorState,
+	AgentOsActorVars,
+	AgentOsEvents,
+} from "./types.js";
 
 /**
  * Build the JSON envelope the Rust plugin consumes. The Rust deserializer
@@ -325,7 +339,7 @@ function serializeNativeMounts(input: unknown): NativeMountLike[] | undefined {
 		if (!mount || typeof mount !== "object") {
 			throw new Error(`agentOS() options.mounts[${index}] must be an object`);
 		}
-		const record = mount as Record<string, unknown>;
+		const record = mount as unknown as Record<string, unknown>;
 		if (record.driver !== undefined) {
 			throw new Error(
 				"agentOS() only supports Native mounts across the NAPI boundary; Plain mounts with driver callbacks are not serializable",
@@ -504,12 +518,380 @@ const AGENTOS_INSPECTOR_CONFIG = {
 	],
 };
 
+const AGENTOS_EVENTS = {
+	sessionEvent: event<AgentOsEvents["sessionEvent"]>(),
+	permissionRequest: event<AgentOsEvents["permissionRequest"]>(),
+	vmBooted: event<AgentOsEvents["vmBooted"]>(),
+	vmShutdown: event<AgentOsEvents["vmShutdown"]>(),
+	processOutput: event<AgentOsEvents["processOutput"]>(),
+	processExit: event<AgentOsEvents["processExit"]>(),
+	shellData: event<AgentOsEvents["shellData"]>(),
+	shellStderr: event<AgentOsEvents["shellStderr"]>(),
+	shellExit: event<AgentOsEvents["shellExit"]>(),
+	cronEvent: event<AgentOsEvents["cronEvent"]>(),
+};
+
+function requiresJsActor<TConnParams>(
+	parsed: AgentOsActorConfig<TConnParams>,
+): boolean {
+	return Boolean(
+		parsed.createOptions || parsed.options?.bindings || parsed.options?.sandbox,
+	);
+}
+
+function hasSandboxClient(options: AgentOsOptions | undefined): boolean {
+	return Boolean(
+		options?.sandbox &&
+			typeof options.sandbox === "object" &&
+			"client" in options.sandbox,
+	);
+}
+
+function splitCreateOptionsResult(
+	result: unknown,
+): { options: AgentOsOptions; dispose?: () => void | Promise<void> } {
+	if (
+		result &&
+		typeof result === "object" &&
+		!Array.isArray(result) &&
+		"options" in result
+	) {
+		const record = result as {
+			options?: AgentOsOptions;
+			dispose?: () => void | Promise<void>;
+		};
+		return {
+			options: record.options ?? {},
+			dispose: record.dispose,
+		};
+	}
+	return { options: (result ?? {}) as AgentOsOptions };
+}
+
+async function resolveActorVmOptions<TConnParams>(
+	parsed: AgentOsActorConfig<TConnParams>,
+	c: unknown,
+): Promise<{ options: AgentOsOptions; dispose?: () => void | Promise<void> }> {
+	const created = parsed.createOptions
+		? splitCreateOptionsResult(await parsed.createOptions(c as never))
+		: { options: {} };
+	return {
+		options: parseAgentOsOptions({
+			...(parsed.options ?? {}),
+			...created.options,
+		}),
+		dispose: created.dispose,
+	};
+}
+
+function requireActorVm(c: { vars: AgentOsActorVars }): AgentOs {
+	if (!c.vars.agentOs) {
+		throw new Error("agentOS VM is not running");
+	}
+	return c.vars.agentOs;
+}
+
+function dirEntryType(stat: { isSymbolicLink?: boolean; isDirectory?: boolean }): DirEntry["type"] {
+	if (stat.isSymbolicLink) return "symlink";
+	if (stat.isDirectory) return "directory";
+	return "file";
+}
+
+async function readdirEntries(vm: AgentOs, path: string): Promise<DirEntry[]> {
+	const names = await vm.readdir(path);
+	return Promise.all(
+		names
+			.filter((name) => name !== "." && name !== "..")
+			.map(async (name) => {
+				const childPath = path === "/" ? `/${name}` : `${path}/${name}`;
+				const stat = await vm.stat(childPath);
+				return {
+					path: childPath,
+					name,
+					type: dirEntryType(stat),
+				};
+			}),
+	);
+}
+
+function unsupportedDynamicAction(name: string): never {
+	throw new Error(`agentOS createOptions actor does not support ${name} yet`);
+}
+
+async function disposeActorVm(
+	c: { vars: AgentOsActorVars; broadcast: (name: string, payload: unknown) => void },
+	reason: AgentOsEvents["vmShutdown"]["reason"],
+): Promise<void> {
+	const vm = c.vars.agentOs;
+	const disposeCreateOptions = c.vars.disposeCreateOptions;
+	c.vars.agentOs = null;
+	c.vars.disposeCreateOptions = undefined;
+	await Promise.allSettled([
+		vm?.dispose(),
+		disposeCreateOptions?.(),
+		...c.vars.activeHooks,
+	]);
+	c.broadcast("vmShutdown", { reason });
+}
+
+function toMountInfo(options: AgentOsOptions): MountInfo[] {
+	return (options.mounts ?? []).map((mount) => {
+		const record = mount as unknown as Record<string, unknown>;
+		const plugin = record.plugin as Record<string, unknown> | undefined;
+		return {
+			path: String(record.path ?? ""),
+			kind:
+				typeof plugin?.id === "string"
+					? (plugin.id as MountInfo["kind"])
+					: "host_dir",
+			config: plugin?.config ?? null,
+			readOnly: record.readOnly === true,
+		};
+	});
+}
+
+function toSoftwareInfo(options: AgentOsOptions): SoftwareInfo[] {
+	const software = Array.isArray(options.software) ? options.software.flat() : [];
+	return software.map((entry) => {
+		const record =
+			entry && typeof entry === "object"
+				? (entry as unknown as Record<string, unknown>)
+				: {};
+		return {
+			package:
+				typeof record.name === "string"
+					? record.name
+					: typeof entry === "string"
+						? entry
+						: typeof record.packageDir === "string"
+							? record.packageDir
+							: typeof record.dir === "string"
+								? record.dir
+								: "unknown",
+			kind: "tool",
+			version: typeof record.version === "string" ? record.version : null,
+		};
+	});
+}
+
+const jsActorActions: AgentOsActions = {
+	readFile: async (c, path) => requireActorVm(c).readFile(path),
+	writeFile: async (c, path, content) => requireActorVm(c).writeFile(path, content),
+	stat: async (c, path) => requireActorVm(c).stat(path),
+	mkdir: async (c, path) => requireActorVm(c).mkdir(path, { recursive: true }),
+	readdir: async (c, path) => readdirEntries(requireActorVm(c), path),
+	exists: async (c, path) => requireActorVm(c).exists(path),
+	move: async (c, from, to) => requireActorVm(c).move(from, to),
+	deleteFile: async (c, path, options) => requireActorVm(c).delete(path, options),
+	writeFiles: async (c, entries) =>
+		(await requireActorVm(c).writeFiles(entries)).map((result) => ({
+			path: result.path,
+			ok: result.success,
+			error: result.error,
+		})),
+	readFiles: async (c, paths) =>
+		(await requireActorVm(c).readFiles(paths)).map((result) => ({
+			path: result.path,
+			...(result.content ? { content: result.content } : {}),
+			error: result.error,
+		})),
+	readdirRecursive: async (c, path) =>
+		(await requireActorVm(c).readdirRecursive(path)).map((entry) => ({
+			path: entry.path,
+			name: entry.path.split("/").filter(Boolean).at(-1) ?? entry.path,
+			type: entry.type,
+		})),
+
+	exec: async (c, command) => requireActorVm(c).exec(command),
+	spawn: async (c, command, args, options) => {
+		const vm = requireActorVm(c);
+		let pid = 0;
+		const spawned = vm.spawn(command, args, {
+			...options,
+			onStdout: (data) => c.broadcast("processOutput", { pid, stream: "stdout", data }),
+			onStderr: (data) => c.broadcast("processOutput", { pid, stream: "stderr", data }),
+		});
+		pid = spawned.pid;
+		c.vars.activeProcesses.add(pid);
+		const hook = vm.waitProcess(pid).then((exitCode) => {
+			c.vars.activeProcesses.delete(pid);
+			c.broadcast("processExit", { pid, exitCode });
+		});
+		c.vars.activeHooks.add(hook);
+		void hook.finally(() => c.vars.activeHooks.delete(hook));
+		return { pid };
+	},
+	waitProcess: async (c, pid) => requireActorVm(c).waitProcess(pid),
+	killProcess: async (c, pid) => {
+		requireActorVm(c).killProcess(pid);
+	},
+	stopProcess: async (c, pid) => {
+		requireActorVm(c).stopProcess(pid);
+	},
+	listProcesses: async (c) => requireActorVm(c).listProcesses() as never,
+	allProcesses: async (c) => requireActorVm(c).allProcesses(),
+	processTree: async (c) => requireActorVm(c).processTree() as never,
+	getProcess: async (c, pid) => requireActorVm(c).getProcess(pid) as never,
+	writeProcessStdin: async (c, pid, data) => requireActorVm(c).writeProcessStdin(pid, data),
+	closeProcessStdin: async (c, pid) => requireActorVm(c).closeProcessStdin(pid),
+
+	openShell: async (c, options) => {
+		const vm = requireActorVm(c);
+		let shellId = "";
+		const opened = vm.openShell({
+			...options,
+			onStderr: (data) => c.broadcast("shellStderr", { shellId, data }),
+		});
+		shellId = opened.shellId;
+		c.vars.activeShells.add(shellId);
+		vm.onShellData(shellId, (data) => c.broadcast("shellData", { shellId, data }));
+		const hook = vm.waitShell(shellId).then((exitCode) => {
+			c.vars.activeShells.delete(shellId);
+			c.broadcast("shellExit", { shellId, exitCode });
+		});
+		c.vars.activeHooks.add(hook);
+		void hook.finally(() => c.vars.activeHooks.delete(hook));
+		return { shellId };
+	},
+	writeShell: async (c, shellId, data) => requireActorVm(c).writeShell(shellId, data),
+	resizeShell: async (c, shellId, cols, rows) => {
+		requireActorVm(c).resizeShell(shellId, cols, rows);
+	},
+	closeShell: async (c, shellId) => {
+		requireActorVm(c).closeShell(shellId);
+	},
+	waitShell: async (c, shellId) => requireActorVm(c).waitShell(shellId),
+
+	vmFetch: async (c, port, url, options?: VmFetchOptions) => {
+		const response = await requireActorVm(c).fetch(
+			port,
+			new Request(url, options as RequestInit),
+		);
+		const headers: Record<string, string> = {};
+		response.headers.forEach((value, key) => {
+			headers[key] = value;
+		});
+		return {
+			status: response.status,
+			statusText: response.statusText,
+			headers,
+			body: new Uint8Array(await response.arrayBuffer()),
+		};
+	},
+
+	scheduleCron: async (c, options) => {
+		const action = options.action;
+		const job = requireActorVm(c).scheduleCron({
+			...options,
+			action: {
+				type: "callback",
+				fn:
+					action.type === "exec"
+						? async () => {
+								await requireActorVm(c).exec([
+									action.command,
+									...(action.args ?? []),
+								].join(" "));
+							}
+						: async () => {
+								const { sessionId } = await requireActorVm(c).createSession(
+									action.agentType,
+									{ cwd: action.cwd },
+								);
+								await requireActorVm(c).prompt(sessionId, action.prompt);
+							},
+			},
+		});
+		return { id: job.id };
+	},
+	listCronJobs: async (c) => requireActorVm(c).listCronJobs() as never,
+	cancelCronJob: async (c, id) => {
+		requireActorVm(c).cancelCronJob(id);
+	},
+
+	createSession: async (c, agentType, options) => {
+		const vm = requireActorVm(c);
+		const { sessionId } = await vm.createSession(agentType, options);
+		c.vars.sessions.add(sessionId);
+		c.vars.activeSessionIds.add(sessionId);
+		vm.onSessionEvent(sessionId, (sessionEvent) => {
+			c.broadcast("sessionEvent", { sessionId, event: sessionEvent });
+		});
+		vm.onPermissionRequest(sessionId, (request) => {
+			c.broadcast("permissionRequest", { sessionId, request });
+		});
+		return sessionId;
+	},
+	sendPrompt: async (c, sessionId, text) => requireActorVm(c).prompt(sessionId, text),
+	closeSession: async (c, sessionId) => {
+		await requireActorVm(c).destroySession(sessionId);
+		c.vars.activeSessionIds.delete(sessionId);
+	},
+	listPersistedSessions: async (c) =>
+		requireActorVm(c).listSessions().map((session) => ({
+			...session,
+			capabilities: {},
+			agentInfo: null,
+			createdAt: Date.now(),
+		})),
+	getSessionEvents: async () => [],
+
+	createSignedPreviewUrl: async () => unsupportedDynamicAction("createSignedPreviewUrl"),
+	expireSignedPreviewUrl: async () => unsupportedDynamicAction("expireSignedPreviewUrl"),
+
+	listMounts: async (c) => toMountInfo(c.vars.options),
+	listSoftware: async (c) => toSoftwareInfo(c.vars.options),
+};
+
+function createJsAgentOS<TConnParams>(
+	parsed: AgentOsActorConfig<TConnParams>,
+	actorOptions: Record<string, unknown>,
+): AgentOsActorDefinition<TConnParams> {
+	return actor({
+		events: AGENTOS_EVENTS,
+		actions: jsActorActions,
+		options: actorOptions,
+		inspector: AGENTOS_INSPECTOR_CONFIG,
+		onBeforeConnect: parsed.onBeforeConnect,
+		createVars: async (c) => {
+			const { options, dispose } = await resolveActorVmOptions(parsed, c);
+			let vm: AgentOs | undefined;
+			try {
+				vm = await AgentOs.create(options);
+				return {
+					agentOs: vm,
+					activeSessionIds: new Set<string>(),
+					activeProcesses: new Set<number>(),
+					activeHooks: new Set<Promise<void>>(),
+					activeShells: new Set<string>(),
+					sessions: new Set<string>(),
+					options,
+					disposeCreateOptions: dispose,
+				};
+			} catch (error) {
+				await Promise.allSettled([vm?.dispose(), dispose?.()]);
+				throw error;
+			}
+		},
+		onWake: (c) => {
+			c.broadcast("vmBooted", {});
+		},
+		onSleep: (c) => disposeActorVm(c as never, "sleep"),
+		onDestroy: (c) => disposeActorVm(c as never, "destroy"),
+	} as Parameters<typeof actor>[0]) as unknown as AgentOsActorDefinition<TConnParams>;
+}
+
 export function createAgentOS<TConnParams = undefined>(
 	config: AgentOsActorConfigInput<TConnParams>,
 ): AgentOsActorDefinition<TConnParams> {
 	const parsed = agentOsActorConfigSchema.parse(
 		config,
 	) as AgentOsActorConfig<TConnParams>;
+	if (hasSandboxClient(parsed.options)) {
+		throw new Error(
+			"agentOS actor sandbox clients must be returned from createOptions so each actor instance gets its own sandbox client. Top-level sandbox: { provider } is allowed.",
+		);
+	}
 
 	// Construct a minimal definition through the existing actor() helper, then
 	// attach the Rust factory builder marker. The actions block stays empty
@@ -523,6 +905,10 @@ export function createAgentOS<TConnParams = undefined>(
 		...DEFAULT_AGENTOS_ACTOR_OPTIONS,
 		...(userActorOptions ?? {}),
 	};
+	if (requiresJsActor(parsed)) {
+		return createJsAgentOS(parsed, actorOptions);
+	}
+	nativeAgentOsOptionsSchema.parse(parsed.options ?? {});
 	const definition = actor({
 		actions: {},
 		options: actorOptions,

@@ -11,7 +11,7 @@ import {
 	expect,
 	it,
 } from "vitest";
-import { createSandboxBindings, createSandboxFs } from "../src/index.js";
+import { createSandboxBindings } from "../src/index.js";
 
 let sandbox: MockSandboxAgentHandle;
 
@@ -37,19 +37,14 @@ describe("VM integration", () => {
 	beforeEach(async () => {
 		vm = await AgentOs.create({
 			permissions: SANDBOX_TEST_PERMISSIONS,
+			defaultSoftware: false,
 			software: [common],
-			mounts: [
-				{
-					path: "/sandbox",
-					plugin: createSandboxFs({ client: sandbox.client }),
-				},
-			],
-			bindings: [createSandboxBindings({ client: sandbox.client })],
+			sandbox: { client: sandbox.client },
 		});
 	});
 
 	afterEach(async () => {
-		await vm.dispose();
+		await vm?.dispose();
 	});
 
 	// -- Filesystem mount tests --

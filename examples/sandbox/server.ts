@@ -1,32 +1,18 @@
-import { AgentOs } from "@rivet-dev/agentos-core";
-import {
-	createSandboxBindings,
-	createSandboxFs,
-} from "@rivet-dev/agentos-sandbox";
-import { SandboxAgent } from "sandbox-agent";
-import { docker } from "sandbox-agent/docker";
+import { agentOS, setup } from "@rivet-dev/agentos";
+import { docker } from "@rivet-dev/agentos-sandbox";
 
-export async function createSandboxVm() {
-	const sandbox = await SandboxAgent.start({ sandbox: docker() });
-	try {
-		const vm = await AgentOs.create({
-			mounts: [
-				{
-					path: "/home/agentos/sandbox",
-					plugin: createSandboxFs({ client: sandbox }),
-				},
-			],
-			bindings: [createSandboxBindings({ client: sandbox })],
-		});
-		return { vm, sandbox };
-	} catch (error) {
-		await sandbox.dispose();
-		throw error;
-	}
-}
+const vm = agentOS({
+	permissions: {
+		fs: "allow",
+		network: "allow",
+		childProcess: "allow",
+		env: "allow",
+		binding: "allow",
+	},
+	sandbox: {
+		provider: docker(),
+	},
+});
 
-export async function disposeSandboxVm(
-	handle: Awaited<ReturnType<typeof createSandboxVm>>,
-) {
-	await Promise.allSettled([handle.vm.dispose(), handle.sandbox.dispose()]);
-}
+export const registry = setup({ use: { vm } });
+registry.start();

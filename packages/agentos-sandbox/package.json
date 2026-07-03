@@ -22,7 +22,9 @@
 	},
 	"dependencies": {
 		"@rivet-dev/agentos-core": "workspace:*",
-		"@secure-exec/sandbox": "link:../../../secure-exec/registry/tool/sandbox",
+		"@fly/sprites": ">=0.0.1",
+		"dockerode": "^4.0.9",
+		"get-port": "^7.1.0",
 		"sandbox-agent": "^0.4.2",
 		"zod": "^4.1.11"
 	},

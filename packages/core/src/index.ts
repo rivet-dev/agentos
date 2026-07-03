@@ -32,6 +32,12 @@ export {
 	sidecarConfigSchema,
 } from "./options-schema.js";
 export {
+	createSandboxBindings,
+	createSandboxFs,
+	getSandboxDisposeHooks,
+	resolveSandboxOptions,
+} from "./sandbox.js";
+export {
 	createInMemoryLayerStore,
 	createSnapshotExport,
 } from "./layers.js";

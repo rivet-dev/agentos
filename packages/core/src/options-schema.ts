@@ -280,6 +280,14 @@ export const agentOsOptionFieldSchemas = {
 	highResolutionTime: z.boolean().optional(),
 	rootFilesystem: rootFilesystemConfigSchema.optional(),
 	mounts: z.array(mountConfigSchema).optional(),
+	sandbox: z
+		.custom(
+			(value) =>
+				value === undefined ||
+				(typeof value === "object" && value !== null && !Array.isArray(value)),
+			{ message: "Expected sandbox options object" },
+		)
+		.optional(),
 	moduleAccessCwd: z.string().optional(),
 	additionalInstructions: z.string().optional(),
 	scheduleDriver: z

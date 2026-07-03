@@ -2,6 +2,7 @@ import type {
 	AgentCapabilities,
 	AgentInfo,
 	AgentOs,
+	AgentOsOptions,
 	CronEvent,
 	JsonRpcNotification,
 	JsonRpcResponse,
@@ -23,6 +24,8 @@ export interface AgentOsActorVars {
 	activeHooks: Set<Promise<void>>;
 	activeShells: Set<string>;
 	sessions: Set<string>;
+	options: AgentOsOptions;
+	disposeCreateOptions?: () => void | Promise<void>;
 }
 
 // --- Event payloads ---

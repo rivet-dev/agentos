@@ -49,6 +49,11 @@ import type {
 	JsonRpcResponse,
 } from "./json-rpc.js";
 import { parseAgentOsOptions } from "./options-schema.js";
+import {
+	getSandboxDisposeHooks,
+	resolveSandboxOptions,
+	type AgentOsSandboxInput,
+} from "./sandbox.js";
 import type {
 	ConnectTerminalOptions,
 	Kernel,
@@ -615,6 +620,8 @@ export interface AgentOsOptions {
 	rootFilesystem?: RootFilesystemConfig;
 	/** Filesystems to mount at boot time. */
 	mounts?: MountConfig[];
+	/** Sandbox Agent integration. Adds a filesystem mount and sandbox process bindings. */
+	sandbox?: AgentOsSandboxInput;
 	/**
 	 * @deprecated Use `mounts: [nodeModulesMount(path)]` instead.
 	 * Compatibility alias for mounting `<moduleAccessCwd>/node_modules` at `/root/node_modules`.
@@ -2756,6 +2763,7 @@ export class AgentOs {
 	private readonly _agentStderrHandler?: AgentStderrHandler;
 	private readonly _agentExitHandler?: AgentExitHandler;
 	private readonly _limitWarningHandler?: LimitWarningHandler;
+	private readonly _disposeHooks: Array<() => void | Promise<void>> = [];
 
 	private constructor(
 		kernel: Kernel,
@@ -2812,6 +2820,8 @@ export class AgentOs {
 
 	static async create(options?: AgentOsOptions): Promise<AgentOs> {
 		options = parseAgentOsOptions(options);
+		options = await resolveSandboxOptions(options);
+		const sandboxDisposeHooks = getSandboxDisposeHooks(options);
 		// Default software is FULLY DYNAMIC: this package's own NON-agent
 		// @agentos-software/* dependencies (e.g. common), each default-exporting
 		// its registry-built descriptor. Agent packages are NOT projected here —
@@ -3153,6 +3163,7 @@ export class AgentOs {
 			vm._bindingGroups = vmAdmin.bindingGroups;
 			vm._bindingReference = vmAdmin.bindingReference;
 			vm._permissions = vmAdmin.permissions;
+			vm._disposeHooks.push(...sandboxDisposeHooks);
 			vm._installSidecarRequestHandler();
 			vm._cronManager = new CronManager(
 				vm,
@@ -3162,6 +3173,7 @@ export class AgentOs {
 			return vm;
 		} catch (error) {
 			await sidecarLease?.dispose().catch(() => {});
+			await Promise.allSettled(sandboxDisposeHooks.map((hook) => hook()));
 			throw error;
 		}
 	}
@@ -5684,10 +5696,14 @@ export class AgentOs {
 
 		const sidecarLease = this._sidecarLease;
 		this._sidecarLease = null;
-		if (sidecarLease) {
-			return sidecarLease.dispose();
+		const disposeVm =
+			sidecarLease ? sidecarLease.dispose() : this.#kernel.dispose();
+		try {
+			await disposeVm;
+		} finally {
+			const hooks = this._disposeHooks.splice(0);
+			await Promise.allSettled(hooks.map((hook) => hook()));
 		}
-		return this.#kernel.dispose();
 	}
 }
 

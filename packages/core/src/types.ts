@@ -49,6 +49,19 @@ export type {
 	SessionModeState,
 	SpawnedProcessInfo,
 } from "./agent-os.js";
+export type {
+	AgentOsSandboxClient,
+	AgentOsSandboxClientOptions,
+	AgentOsSandboxCommonOptions,
+	AgentOsSandboxInput,
+	AgentOsSandboxOptions,
+	AgentOsSandboxProvider,
+	AgentOsSandboxProviderOptions,
+	AgentOsSandboxProcessInfo,
+	AgentOsSandboxProcessLogs,
+	AgentOsSandboxProcessResult,
+	SandboxMountPluginConfig,
+} from "./sandbox.js";
 export type { AgentConfig, AgentType } from "./agents.js";
 export type {
 	CronAction,

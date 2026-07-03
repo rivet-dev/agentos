@@ -102,18 +102,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -167,18 +158,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -216,18 +198,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -265,18 +238,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -363,18 +327,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -412,18 +367,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -461,18 +407,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -510,18 +447,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -559,18 +487,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -608,18 +527,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -657,18 +567,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -706,18 +607,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -755,18 +647,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -804,18 +687,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -853,18 +727,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -902,18 +767,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -951,18 +807,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1000,18 +847,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1049,18 +887,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1098,18 +927,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1147,18 +967,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1196,18 +1007,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1245,21 +1047,12 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       react:
         specifier: ^18.3.1
         version: 18.3.1
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1300,18 +1093,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1349,18 +1133,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1398,18 +1173,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1447,18 +1213,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1496,18 +1253,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1545,18 +1293,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1594,18 +1333,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1643,18 +1373,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1692,18 +1413,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1741,18 +1453,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1790,18 +1493,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1839,18 +1533,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1888,18 +1573,12 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@fly/sprites@0.0.1)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1937,18 +1616,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -1980,24 +1650,12 @@ importers:
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2035,18 +1693,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2093,18 +1742,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2142,21 +1782,12 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       hono:
         specifier: ^4.6.0
         version: 4.12.9
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2194,18 +1825,9 @@ importers:
       '@rivet-dev/agentos-sandbox':
         specifier: workspace:*
         version: link:../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
       rivetkit:
         specifier: catalog:rivetkit
         version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2301,15 +1923,21 @@ importers:
 
   packages/agentos-sandbox:
     dependencies:
+      '@fly/sprites':
+        specifier: '>=0.0.1'
+        version: 0.0.1
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
-      '@secure-exec/sandbox':
-        specifier: link:../../../secure-exec/registry/tool/sandbox
-        version: link:../../../secure-exec/registry/tool/sandbox
+      dockerode:
+        specifier: ^4.0.9
+        version: 4.0.10
+      get-port:
+        specifier: ^7.1.0
+        version: 7.2.0
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@fly/sprites@0.0.1)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       zod:
         specifier: ^4.1.11
         version: 4.3.6
@@ -2519,7 +2147,7 @@ importers:
         version: 0.0.23
       sandbox-agent:
         specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+        version: 0.4.2(@fly/sprites@0.0.1)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -3790,6 +3418,10 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@fly/sprites@0.0.1':
+    resolution: {integrity: sha512-1s+dIVi/pTMP4Aj4Mkg+4LoZ/+a0Kp6l9piPRxvpgEKm11b/eRiZgJwVytwAHeI/vtg2fuwcFExjtXOEfny/TA==}
+    engines: {node: '>=24.0.0'}
 
   '@google/genai@1.47.0':
     resolution: {integrity: sha512-0VV7AaXm5rQu3oRHNZNEubRAOL2lv5u+YA72eWnDwcOx3B1jFRbvtgL4drRHlocRHOnludvr3xmbQGbR+/RQAQ==}
@@ -8782,6 +8414,8 @@ snapshots:
   '@esbuild/win32-x64@0.27.4':
     optional: true
 
+  '@fly/sprites@0.0.1': {}
+
   '@google/genai@1.47.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)':
     dependencies:
       google-auth-library: 10.6.2
@@ -12109,11 +11743,12 @@ snapshots:
 
   safer-buffer@2.1.2: {}
 
-  sandbox-agent@0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6):
+  sandbox-agent@0.4.2(@fly/sprites@0.0.1)(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6):
     dependencies:
       '@sandbox-agent/cli-shared': 0.4.2
       acp-http-client: 0.4.2(zod@4.3.6)
     optionalDependencies:
+      '@fly/sprites': 0.0.1
       '@sandbox-agent/cli': 0.4.2
       dockerode: 4.0.10
       get-port: 7.2.0

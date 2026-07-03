@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 
@@ -26,7 +27,6 @@ const bytes = await agent.readFile("/home/agentos/seed.json");
 console.log("host readFile:", new TextDecoder().decode(bytes));
 
 // The same path on the real host disk does not exist. The VFS is isolated.
-const { existsSync } = await import("node:fs");
 console.log(
   "host disk sees /home/agentos/seed.json?",
   existsSync("/home/agentos/seed.json") ? "YES (unexpected!)" : "NO - isolated from host",

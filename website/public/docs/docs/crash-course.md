@@ -82,6 +82,6 @@ Schedule recurring commands and agent sessions with cron expressions.
 
 ### Sandbox Mounting
 
-agentOS uses a hybrid model: agents run in a lightweight VM by default and can mount a full sandbox for heavy workloads like browsers, compilation, and desktop automation. Sandboxes are powered by [Sandbox Agent](https://sandboxagent.dev), so you can swap providers without changing agent code. In direct `AgentOs.create(...)` code, start one sandbox for that VM, mount its filesystem, expose its process management as bindings, and dispose both resources together.
+agentOS uses a hybrid model: agents run in a lightweight VM by default and can mount a full sandbox for heavy workloads like browsers, compilation, and desktop automation. Sandboxes are powered by [Sandbox Agent](https://sandboxagent.dev), so you can swap providers without changing agent code. In RivetKit, pass `sandbox: { provider }` directly to `agentOS(...)`; the provider starts a fresh sandbox client for each actor VM, and Agent OS disposes it with that VM.
 
 [Documentation](/docs/sandbox)
