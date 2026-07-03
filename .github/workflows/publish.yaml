@@ -117,7 +117,7 @@ jobs:
             fi
             case "$v" in 0.0.0-*) echo "::error::secure_exec_version must be a real release, not a preview"; exit 1;; esac
             npm view "@secure-exec/core@$v" version >/dev/null
-            curl -sf "https://crates.io/api/v1/crates/secure-exec-sidecar/$v" >/dev/null               || { echo "::error::secure-exec-sidecar@$v is not on crates.io"; exit 1; }
+            curl -sf "https://index.crates.io/se/cu/secure-exec-sidecar" | grep -q "\"vers\":\"$v\"" || { echo "::error::secure-exec-sidecar@$v is not on crates.io"; exit 1; }
             echo "version=$v" >> "$GITHUB_OUTPUT"
             echo "registry_tag=latest" >> "$GITHUB_OUTPUT"
             exit 0
