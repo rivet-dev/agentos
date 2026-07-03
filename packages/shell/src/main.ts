@@ -39,6 +39,8 @@ import jq from "@agentos-software/jq";
 import ripgrep from "@agentos-software/ripgrep";
 import sed from "@agentos-software/sed";
 import sqlite3 from "@agentos-software/sqlite3";
+import vim from "@agentos-software/vim";
+import vix from "@agentos-software/vix";
 import tar from "@agentos-software/tar";
 import tree from "@agentos-software/tree";
 import unzip from "@agentos-software/unzip";
@@ -151,72 +153,23 @@ const software: SoftwareInput[] = [
 	.map(withLocalCommandFallback)
 	.filter((input): input is SoftwareInput => input !== null);
 
-// Local-only: minimal vi-like editors (vix, vim) built to wasm32-wasip1, used to
-// prove raw-mode PTY round-trips (insert mode, :wq, file written). The raw
-// binaries live in a workspace-local command dir; the sidecar wants a
-// self-contained package directory, so materialize one with a `bin/<cmd>` layout
-// and an `agentos-package.json`, then reference it via `{ packageDir }`.
-const VIX_COMMAND_DIR = resolve(workspaceRoot, ".local-cmds");
-const localEditors = (["vix", "vim"] as const).filter((name) =>
-	existsSync(resolve(VIX_COMMAND_DIR, name)),
-);
-
-// Bare `vim` sources `$VIMRUNTIME/defaults.vim` on startup; without a runtime
-// tree in the VM it fails with `E1187: Failed to source defaults.vim` and drops
-// to the "Press ENTER" prompt. Provide a host vim runtime read-only through the
-// package `provides` field and point `VIMRUNTIME` straight at it (which bypasses
-// vim's version-dir search, so a 9.0/9.1 runtime sources cleanly under our 9.2
-// binary).
-const VIM_RUNTIME_GUEST_DIR = "/usr/local/share/vim/vim92";
-const vimRuntimeHostDir = localEditors.includes("vim")
-	? [
-			resolve(VIX_COMMAND_DIR, "vim-runtime"),
-			"/usr/share/vim/vim92",
-			"/usr/share/vim/vim91",
-			"/usr/share/vim/vim90",
-			"/usr/local/share/vim/vim92",
-		].find((dir) => existsSync(resolve(dir, "defaults.vim")))
-	: undefined;
-
-if (localEditors.length > 0) {
-	// Assemble the package directory: bin/<cmd> for each editor, a package.json,
-	// and an agentos-package.json carrying the runtime `provides` (env + files).
-	const packageDir = mkdtempSync(join(tmpdir(), "agentos-local-editors-"));
-	const binDir = join(packageDir, "bin");
-	mkdirSync(binDir, { recursive: true });
-	for (const name of localEditors) {
-		cpSync(resolve(VIX_COMMAND_DIR, name), join(binDir, name));
+// The vi-like editors ship as registry packages: vix, and vim (which carries
+// its runtime tree + VIMRUNTIME via the manifest `provides`). An unbuilt
+// package is a valid empty placeholder — skip it rather than projecting a
+// command-less package (build them in ../secure-exec: drop the wasm binaries
+// into registry/native/target/.../commands and run `just registry-build`).
+for (const editor of [vix, vim]) {
+	const packageDir = editor.packageDir;
+	try {
+		const bin = JSON.parse(
+			readFileSync(join(packageDir, "package.json"), "utf8"),
+		).bin as Record<string, string> | undefined;
+		if (bin && Object.keys(bin).length > 0) {
+			software.push({ packageDir });
+		}
+	} catch {
+		// placeholder/unreadable — leave the editor out
 	}
-	writeFileSync(
-		join(packageDir, "package.json"),
-		JSON.stringify({ name: "local-editors", version: "0.0.0" }),
-	);
-	// The runtime tree is overlaid read-only into the package under `runtime/`,
-	// so `provides.files.source` is a package-relative path the sidecar can read.
-	let provides:
-		| {
-				env: Record<string, string>;
-				files: Array<{ source: string; target: string }>;
-		  }
-		| undefined;
-	if (vimRuntimeHostDir) {
-		cpSync(vimRuntimeHostDir, join(packageDir, "runtime"), { recursive: true });
-		provides = {
-			env: {
-				VIMRUNTIME: VIM_RUNTIME_GUEST_DIR,
-				VIM: "/usr/local/share/vim",
-			},
-			files: [{ source: "runtime", target: VIM_RUNTIME_GUEST_DIR }],
-		};
-	}
-	writeFileSync(
-		join(packageDir, "agentos-package.json"),
-		JSON.stringify({
-			name: "local-editors",
-			...(provides ? { provides } : {}),
-		}),
-	);
-	software.push({ packageDir });
 }
 
 function createShellDiagnosticStripper(): (

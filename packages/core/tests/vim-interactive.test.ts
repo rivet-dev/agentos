@@ -21,8 +21,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
 // Local-fixture locations, overridable so the suite is not tied to one
 // machine's layout (CI skips via the fixture gate below).
+// The vim binary comes from the @agentos-software/vim registry package (an
+// unbuilt placeholder has no bin/vim -> the suite skips). Overridable for
+// one-off fixture builds.
+const VIM_PACKAGE_DIR = resolve(
+	REPO_ROOT,
+	"../secure-exec/registry/software/vim/dist/package",
+);
 const VIM_COMMAND_DIR =
-	process.env.AGENTOS_VIM_FIXTURE_DIR ?? resolve(REPO_ROOT, ".local-cmds");
+	process.env.AGENTOS_VIM_FIXTURE_DIR ?? resolve(VIM_PACKAGE_DIR, "bin");
 const VIM_BINARY = resolve(VIM_COMMAND_DIR, "vim");
 const SNAP_DIR =
 	process.env.AGENTOS_VIM_SNAPSHOT_DIR ??
