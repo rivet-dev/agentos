@@ -1,7 +1,7 @@
 import common from "@agentos-software/common";
 import {
+	createSandboxBindings,
 	createSandboxFs,
-	createSandboxToolkit,
 } from "@rivet-dev/agentos-sandbox";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
@@ -46,7 +46,7 @@ describe("sandbox quickstart truth test", () => {
 		}
 	});
 
-	test("mounts createSandboxFs and exercises run-command plus list-processes from createSandboxToolkit", async () => {
+	test("mounts createSandboxFs and exercises sandbox bindings", async () => {
 		if (!sandbox) {
 			throw new Error("Sandbox test harness did not start.");
 		}
@@ -60,7 +60,7 @@ describe("sandbox quickstart truth test", () => {
 					plugin: createSandboxFs({ client: sandbox.client }),
 				},
 			],
-			toolKits: [createSandboxToolkit({ client: sandbox.client })],
+			bindings: [createSandboxBindings({ client: sandbox.client })],
 		});
 
 		await sandbox.client.writeFsFile(
@@ -70,8 +70,10 @@ describe("sandbox quickstart truth test", () => {
 		const content = await vm.readFile(SANDBOX_FILE_PATH);
 		expect(new TextDecoder().decode(content)).toBe(SANDBOX_FILE_CONTENT);
 
-		const toolkit = createSandboxToolkit({ client: sandbox.client });
-		const runCommandResponse = (await toolkit.tools["run-command"].execute({
+		const sandboxBindings = createSandboxBindings({ client: sandbox.client });
+		const runCommandResponse = (await sandboxBindings.bindings[
+			"run-command"
+		].execute({
 			command: "echo",
 			args: ["hello from sandbox"],
 		})) as {
@@ -83,7 +85,9 @@ describe("sandbox quickstart truth test", () => {
 		expect(runCommandResponse.stderr).toBe("");
 		expect(runCommandResponse.stdout.trim()).toBe("hello from sandbox");
 
-		const createdProcess = (await toolkit.tools["create-process"].execute({
+		const createdProcess = (await sandboxBindings.bindings[
+			"create-process"
+		].execute({
 			command: "sleep",
 			args: ["60"],
 		})) as {
@@ -92,7 +96,7 @@ describe("sandbox quickstart truth test", () => {
 		};
 		expect(createdProcess.status).toBe("running");
 
-		const listProcessesResponse = (await toolkit.tools[
+		const listProcessesResponse = (await sandboxBindings.bindings[
 			"list-processes"
 		].execute({})) as {
 			processes: Array<{
@@ -110,6 +114,8 @@ describe("sandbox quickstart truth test", () => {
 			),
 		).toBe(true);
 
-		await toolkit.tools["kill-process"].execute({ id: createdProcess.id });
+		await sandboxBindings.bindings["kill-process"].execute({
+			id: createdProcess.id,
+		});
 	}, 150_000);
 });

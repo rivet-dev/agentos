@@ -6,7 +6,7 @@ Expose your host JavaScript functions (defined with Zod input schemas) to agents
 
 ## Getting started
 
-Define a bindings group with Zod input schemas and pass it to `agentOS()`. Each binding becomes a CLI command inside the VM.
+Define a bindings group with Zod input schemas and pass it to `agentOS({ bindings: [...] })`. Each binding becomes a CLI command inside the VM.
 
 Each binding can set an explicit `timeout` (in milliseconds) for long-running work. Bindings run without a timeout unless one is set.
 

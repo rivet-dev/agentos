@@ -6,7 +6,12 @@ import type {
 	LimitWarningHandler,
 	NativeMountConfig,
 } from "./agent-os.js";
-import type { HostTool, ToolKit } from "./host-tools.js";
+import type {
+	BindingGroup,
+	BindingGroupInput,
+	HostTool,
+	ToolKit,
+} from "./host-tools.js";
 
 const stringArray = z.array(z.string());
 const nonNegativeInteger = z.number().int().nonnegative();
@@ -257,6 +262,19 @@ export const toolKitSchema = z
 	})
 	.strict() as z.ZodType<ToolKit>;
 
+export const bindingGroupSchema = z
+	.object({
+		name: z.string(),
+		description: z.string(),
+		bindings: z.record(z.string(), hostToolSchema),
+	})
+	.strict() as z.ZodType<BindingGroup>;
+
+const bindingGroupInputSchema = z.union([
+	bindingGroupSchema,
+	toolKitSchema,
+]) as z.ZodType<BindingGroupInput>;
+
 /**
  * Shared AgentOsOptions field schemas.
  *
@@ -280,6 +298,7 @@ export const agentOsOptionFieldSchemas = {
 			message: "Expected schedule driver object",
 		})
 		.optional(),
+	bindings: z.array(bindingGroupInputSchema).optional(),
 	toolKits: z.array(toolKitSchema).optional(),
 	permissions: permissionsSchema.optional(),
 	sidecar: sidecarConfigSchema.optional(),

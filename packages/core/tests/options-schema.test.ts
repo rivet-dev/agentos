@@ -19,4 +19,26 @@ describe("AgentOsOptions validation", () => {
 			}),
 		).toThrow(/filesystem/);
 	});
+
+	test("rejects create option factories on the one-shot core constructor", () => {
+		expect(() =>
+			agentOsOptionsSchema.parse({
+				createOptions: () => ({}),
+			}),
+		).toThrow(/createOptions/);
+	});
+
+	test("accepts bindings as the public name for host binding groups", () => {
+		expect(
+			agentOsOptionsSchema.safeParse({
+				bindings: [
+					{
+						name: "weather",
+						description: "Weather bindings",
+						bindings: {},
+					},
+				],
+			}).success,
+		).toBe(true);
+	});
 });

@@ -66,9 +66,8 @@ Override the web→server endpoint with `VITE_AGENTOS_ENDPOINT` (default
 
 ## Notes
 
-- Software: `@agentos-software/common` (provides `sh` + coreutils) plus `git`,
-  `curl`, `ripgrep`, `jq`, and `sqlite3`. Agent OS has no vim/editor package, so
-  there is no in-VM editor.
+- Software: `@agentos-software/common` provides `sh` plus the standard shell
+  tools. Agent OS has no vim/editor package, so there is no in-VM editor.
 - The shipped actor has no `listShells` action and keeps no server-side
   scrollback, so reconnect re-adopts saved shell ids and resumes **live** output
   only (history from before the reload is not replayed). Stale ids (VM recreated)

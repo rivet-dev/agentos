@@ -72,6 +72,12 @@ When you use the [`agentOS()` actor](/docs/quickstart), all VM configuration is 
 
 The top-level fields are documented inline above. See [Mounts](#mounts), [Software](/docs/software), and (for the hooks) [Approvals](/docs/approvals).
 
+### Dynamic per-actor resources
+
+Dynamic per-actor VM options are not exposed yet. The native RivetKit actor config crosses a JSON boundary today, so every value in `agentOS(...)` must be serializable at actor-definition time. There is no supported `createOptions` callback on `AgentOs.create(...)` or `agentOS(...)` today.
+
+Do not create one host client, such as a Sandbox Agent client, and pass it into static actor config for multiple actors; that would share the same backing resource across actor instances.
+
 ### Lifecycle hooks
 
 `onPermissionRequest(sessionId, request)` fires when an agent requests permission. `onSessionEvent(sessionId, event)` is a server-side hook called once for every session event: unlike the client-side `sessionEvent` connection subscription, it runs in the actor for every event regardless of connected clients, making it the place for server-side logging, persistence, or side effects.

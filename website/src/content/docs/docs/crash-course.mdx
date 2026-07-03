@@ -150,7 +150,7 @@ Schedule recurring commands and agent sessions with cron expressions.
 
 ### Sandbox Mounting
 
-agentOS uses a hybrid model: agents run in a lightweight VM by default and mount a full sandbox on demand for heavy workloads like browsers, compilation, and desktop automation. Sandboxes are powered by [Sandbox Agent](https://sandboxagent.dev), so you can swap providers without changing agent code. Mount the sandbox as a filesystem and expose its process management as bindings.
+agentOS uses a hybrid model: agents run in a lightweight VM by default and can mount a full sandbox for heavy workloads like browsers, compilation, and desktop automation. Sandboxes are powered by [Sandbox Agent](https://sandboxagent.dev), so you can swap providers without changing agent code. In direct `AgentOs.create(...)` code, start one sandbox for that VM, mount its filesystem, expose its process management as bindings, and dispose both resources together.
 
 <CodeSnippet file="examples/crash-course/sandbox.ts" />
 

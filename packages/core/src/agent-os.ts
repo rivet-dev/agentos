@@ -35,7 +35,13 @@ import type {
 	SessionInitData,
 	SessionModeState,
 } from "./agent-session-types.js";
-import { type HostTool, type ToolKit, validateToolkits } from "./host-tools.js";
+import {
+	type BindingGroupInput,
+	type HostTool,
+	type ToolKit,
+	normalizeBindingGroups,
+	validateToolkits,
+} from "./host-tools.js";
 import { zodToJsonSchema } from "./host-tools-zod.js";
 import type {
 	JsonRpcNotification,
@@ -618,7 +624,9 @@ export interface AgentOsOptions {
 	additionalInstructions?: string;
 	/** Custom schedule driver for cron jobs. Defaults to TimerScheduleDriver. */
 	scheduleDriver?: ScheduleDriver;
-	/** Host-side toolkits available to agents inside the VM. */
+	/** Host-side bindings available to agents inside the VM. */
+	bindings?: BindingGroupInput[];
+	/** @deprecated Use `bindings` instead. */
 	toolKits?: ToolKit[];
 	/**
 	 * Custom permission policy for the kernel. Controls access to filesystem,
@@ -2798,9 +2806,15 @@ export class AgentOs {
 			packageRefs.map((ref) => ({ packageDir: ref.dir })),
 		);
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
-		const toolKits = options?.toolKits;
-		if (toolKits && toolKits.length > 0) {
-			validateToolkits(toolKits);
+		if (options?.bindings && options.toolKits) {
+			throw new Error("Use either bindings or toolKits, not both.");
+		}
+		const bindingInputs = options?.bindings ?? options?.toolKits;
+		const toolKits = bindingInputs
+			? normalizeBindingGroups(bindingInputs)
+			: undefined;
+		if (bindingInputs && bindingInputs.length > 0) {
+			validateToolkits(bindingInputs);
 		}
 
 		// Resolve the sidecar handle up front so every VM created here leases the

@@ -2,11 +2,11 @@
 
 Extend agentOS with full sandboxes for heavy workloads like browsers, desktop automation, and compilation.
 
-For heavy workloads like browsers, desktop automation, and compilation, pair agentOS with a full sandbox on demand. Its filesystem mounts into the VM as a native directory, and its process management is exposed as [bindings](/docs/bindings), all provider-agnostic through [Sandbox Agent](https://sandboxagent.dev).
+For heavy workloads like browsers, desktop automation, and compilation, pair agentOS with a full sandbox on demand. Its filesystem mounts into the VM as a native directory, and its process management is exposed through host bindings, all provider-agnostic through [Sandbox Agent](https://sandboxagent.dev).
 
 ## Why use agentOS with a sandbox?
 
-agentOS is an alternative to sandboxes that covers most use cases, but some workloads need a full sandbox for special kinds of software (browsers, desktop automation, heavy compilation). Sandbox mounting lets you lazily start a sandbox on demand, only when it is needed, and project it into the VM. The hybrid model means one agent session can handle both lightweight coding tasks and heavy system operations, using the right tool for each.
+agentOS is an alternative to sandboxes that covers most use cases, but some workloads need a full sandbox for special kinds of software (browsers, desktop automation, heavy compilation). Sandbox mounting lets you lazily start a sandbox on demand, only when it is needed, and project it into the VM. The hybrid model means one agent session can handle both lightweight coding tasks and heavy system operations, using the right binding for each.
 
 See [agentOS vs Sandbox](/docs/versus-sandbox) for a detailed comparison.
 
@@ -25,7 +25,7 @@ Start with the default agentOS VM for all workloads, and only spin up a sandbox 
 The sandbox integration ships as the `@rivet-dev/agentos-sandbox` package. It works through two mechanisms:
 
 - **Filesystem mount**: Projects the sandbox into the VM as a native directory, like mounting a hard drive on your own machine. Read and write files through the mount directly.
-- **Bindings**: Exposes sandbox process management as [bindings](/docs/bindings). Execute commands on the sandbox from within the VM.
+- **Bindings**: Exposes sandbox process management as the `agentos-sandbox` command inside the VM.
 
 Both are powered by [Sandbox Agent](https://sandboxagent.dev), and you can swap providers without changing agent code. Install both packages:
 
@@ -35,9 +35,11 @@ npm install @rivet-dev/agentos-sandbox sandbox-agent
 
 `createSandboxFs` and `createSandboxBindings` come from `@rivet-dev/agentos-sandbox`. `SandboxAgent` and the provider helpers (such as `docker`) come from the `sandbox-agent` package.
 
+**Warning:** do not create one `SandboxAgent` at module scope and reuse it for multiple actor instances. Direct `AgentOs.create(...)` examples should start one sandbox for the one VM they create and dispose both together. Dynamic per-actor sandbox creation for `agentOS(...)` needs a future actor-scoped options hook; no `createOptions` callback is supported today.
+
 ## Calling the mounted bindings
 
-Once the sandbox is mounted, write code through the filesystem and run it inside the sandbox. The sandbox bindings are exposed inside the VM as a CLI command, so you call it through the same `exec`/`spawn` surface as any other command.
+Once the sandbox is mounted, write code through the filesystem and run it inside the sandbox. The sandbox bindings are exposed inside the VM as a CLI command, so you call them through the same `exec`/`spawn` surface as any other command.
 
 ## Bindings reference
 

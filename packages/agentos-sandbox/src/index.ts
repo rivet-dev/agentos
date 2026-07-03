@@ -4,5 +4,5 @@ export type {
 } from "@secure-exec/sandbox";
 export { createSandboxFs } from "@secure-exec/sandbox";
 
-export type { SandboxToolkitOptions } from "./toolkit.js";
-export { createSandboxToolkit } from "./toolkit.js";
+export type { SandboxBindingsOptions } from "./bindings.js";
+export { createSandboxBindings } from "./bindings.js";

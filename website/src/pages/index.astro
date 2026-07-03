@@ -12,14 +12,14 @@ import type { registry } from "./server";
 const client = createClient<typeof registry>("http://localhost:6420");
 const agent = client.vm.getOrCreate("my-agent").connect();
 
-// Stream events (tool calls, text output, etc.)
+// Stream events (binding calls, text output, etc.)
 agent.on("sessionEvent", (data) => console.log(data.event));
 
 // Create a session and send a prompt
 const session = await agent.createSession("pi", { env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! } });
 await agent.sendPrompt(session.sessionId, "Write a Python script that calculates pi");` },
 
-	{ key: 'tools', fileName: 'tools.ts', code: `// server.ts
+	{ key: 'bindings', fileName: 'bindings.ts', code: `// server.ts
 import { agentOS, setup } from "@rivet-dev/agentos";
 import common from "@agentos-software/common";
 import { z } from "zod";
@@ -291,38 +291,35 @@ await agent.exec("git -C /home/agentos/repo commit -m 'add feature'");
 const content = await agent.readFile("/home/agentos/repo/feature.txt");
 console.log(new TextDecoder().decode(content));` },
 
-	{ key: 'sandbox', fileName: 'sandbox.ts', code: `// server.ts
-import { agentOS, setup } from "@rivet-dev/agentos";
-import { createSandboxFs, createSandboxBindings } from "@rivet-dev/agentos-sandbox";
+	{ key: 'sandbox', fileName: 'server.ts', code: `// server.ts
+import { AgentOs } from "@rivet-dev/agentos-core";
+import { createSandboxBindings, createSandboxFs } from "@rivet-dev/agentos-sandbox";
 import { SandboxAgent } from "sandbox-agent";
 import { docker } from "sandbox-agent/docker";
 
-// Start a Docker-backed sandbox
-const sandbox = await SandboxAgent.start({ sandbox: docker() });
-
-// Mount its filesystem and register the sandbox bindings
-const vm = agentOS({
-  mounts: [{ path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) }],
-  bindings: [createSandboxBindings({ client: sandbox })],
-});
-export const registry = setup({ use: { vm } });
-registry.start();
+export async function createSandboxVm() {
+  const sandbox = await SandboxAgent.start({ sandbox: docker() });
+  const vm = await AgentOs.create({
+    mounts: [
+      { path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) },
+    ],
+    bindings: [createSandboxBindings({ client: sandbox })],
+  });
+  return { vm, sandbox };
+}
 
 // client.ts
-import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
+import { createSandboxVm } from "./server";
 
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate("my-agent");
+const { vm, sandbox } = await createSandboxVm();
 
 // Write a file through the mounted sandbox filesystem
-await agent.writeFile("/home/agentos/sandbox/hello.txt", "Hello from agentOS!");
-const content = await agent.readFile("/home/agentos/sandbox/hello.txt");
+await vm.writeFile("/home/agentos/sandbox/hello.txt", "Hello from agentOS!");
+const content = await vm.readFile("/home/agentos/sandbox/hello.txt");
 console.log(new TextDecoder().decode(content));
 
-// Run a command inside the Docker sandbox via the mounted toolkit
-const result = await agent.exec("agentos-sandbox run-command --command echo --json '{\\"args\\": [\\"hello from Docker\\"]}'");
-console.log(result.stdout);` },
+await vm.dispose();
+await sandbox.dispose();` },
 
 	{ key: 'permissions', fileName: 'permissions.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";

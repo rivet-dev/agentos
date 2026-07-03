@@ -11,6 +11,9 @@ import {
 	TimerScheduleDriver,
 	agentOsLimitsSchema,
 	agentOsOptionsSchema,
+	binding,
+	bindingGroup,
+	bindingGroupSchema,
 	createHostDirBackend,
 	createInMemoryFileSystem,
 	createInMemoryLayerStore,
@@ -19,17 +22,13 @@ import {
 	isPackageDescriptor,
 	OPT_AGENTOS_BIN,
 	OPT_AGENTOS_ROOT,
-	hostTool,
-	hostToolSchema,
 	isAcpTimeoutErrorData,
 	isUnknownSessionErrorData,
 	mountConfigSchema,
 	nodeModulesMount,
 	parseAgentOsOptions,
 	rootFilesystemConfigSchema,
-	toolKit,
-	toolKitSchema,
-	validateToolkits,
+	validateBindings,
 	type AcpTimeoutErrorData,
 	type AgentOsLimits,
 	type ExecOptions,
@@ -58,16 +57,15 @@ describe("root public API exports", () => {
 		expect(CronManager).toBeTypeOf("function");
 		expect(TimerScheduleDriver).toBeTypeOf("function");
 		expect(createHostDirBackend).toBeTypeOf("function");
-		expect(hostTool).toBeTypeOf("function");
-		expect(toolKit).toBeTypeOf("function");
-		expect(validateToolkits).toBeTypeOf("function");
+		expect(binding).toBeTypeOf("function");
+		expect(bindingGroup).toBeTypeOf("function");
+		expect(validateBindings).toBeTypeOf("function");
 		expect(MAX_TOOL_DESCRIPTION_LENGTH).toBeGreaterThan(0);
 		expect(agentOsLimitsSchema.safeParse({}).success).toBe(true);
 		expect(agentOsOptionsSchema.safeParse({ defaultSoftware: false }).success).toBe(
 			true,
 		);
-		expect(hostToolSchema).toBeTypeOf("object");
-		expect(toolKitSchema).toBeTypeOf("object");
+		expect(bindingGroupSchema).toBeTypeOf("object");
 		expect(mountConfigSchema).toBeTypeOf("object");
 		expect(rootFilesystemConfigSchema).toBeTypeOf("object");
 		expect(parseAgentOsOptions({ defaultSoftware: false })).toEqual({

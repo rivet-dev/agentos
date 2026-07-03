@@ -16,6 +16,12 @@ interface ShellExitPayload {
 	shellId: string;
 }
 
+interface ShellEventConnection {
+	on(name: "shellData", cb: (payload: ShellDataPayload) => void): () => void;
+	on(name: "shellStderr", cb: (payload: ShellDataPayload) => void): () => void;
+	on(name: "shellExit", cb: (payload: ShellExitPayload) => void): () => void;
+}
+
 function toBytes(data: unknown): Uint8Array {
 	if (data instanceof Uint8Array) return data;
 	if (data instanceof ArrayBuffer) return new Uint8Array(data);
@@ -89,9 +95,7 @@ export function ActorView({ actorId }: { actorId: string }) {
 
 	useEffect(() => {
 		if (!conn) return;
-		const events = conn as unknown as {
-			on(name: string, cb: (p: never) => void): () => void;
-		};
+		const events = conn as ShellEventConnection;
 		const offData = events.on("shellData", (p: ShellDataPayload) =>
 			dispatchData(p.shellId, toBytes(p.data)),
 		);

@@ -10,15 +10,21 @@ export {
 } from "./cron/index.js";
 export { createHostDirBackend, nodeModulesMount } from "./host-dir-mount.js";
 export {
+	binding,
+	bindingGroup,
 	hostTool,
 	MAX_TOOL_DESCRIPTION_LENGTH,
+	normalizeBindingGroup,
+	normalizeBindingGroups,
 	toolKit,
+	validateBindings,
 	validateToolkits,
 } from "./host-tools.js";
 export {
 	agentOsLimitsSchema,
 	agentOsOptionFieldSchemas,
 	agentOsOptionsSchema,
+	bindingGroupSchema,
 	hostToolSchema,
 	mountConfigSchema,
 	nativeMountConfigSchema,

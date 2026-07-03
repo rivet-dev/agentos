@@ -296,21 +296,6 @@ importers:
       '@agentos-software/common':
         specifier: link:../../../secure-exec/registry/software/common
         version: link:../../../secure-exec/registry/software/common
-      '@agentos-software/curl':
-        specifier: link:../../../secure-exec/registry/software/curl
-        version: link:../../../secure-exec/registry/software/curl
-      '@agentos-software/git':
-        specifier: link:../../../secure-exec/registry/software/git
-        version: link:../../../secure-exec/registry/software/git
-      '@agentos-software/jq':
-        specifier: link:../../../secure-exec/registry/software/jq
-        version: link:../../../secure-exec/registry/software/jq
-      '@agentos-software/ripgrep':
-        specifier: link:../../../secure-exec/registry/software/ripgrep
-        version: link:../../../secure-exec/registry/software/ripgrep
-      '@agentos-software/sqlite3':
-        specifier: link:../../../secure-exec/registry/software/sqlite3
-        version: link:../../../secure-exec/registry/software/sqlite3
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1390,6 +1375,55 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  examples/quickstart/bindings:
+    dependencies:
+      '@agentos-software/claude-code':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
+      '@agentos-software/git':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/opencode':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146
+      '@agentos-software/pi':
+        specifier: 'catalog:'
+        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../../packages/agentos
+      '@rivet-dev/agentos-core':
+        specifier: workspace:*
+        version: link:../../../packages/core
+      '@rivet-dev/agentos-sandbox':
+        specifier: workspace:*
+        version: link:../../../packages/agentos-sandbox
+      dockerode:
+        specifier: ^4.0.9
+        version: 4.0.10
+      get-port:
+        specifier: ^7.1.0
+        version: 7.2.0
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+      sandbox-agent:
+        specifier: ^0.4.2
+        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
+      zod:
+        specifier: ^4.1.11
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   examples/quickstart/cron:
     dependencies:
       '@agentos-software/claude-code':
@@ -1832,55 +1866,6 @@ importers:
         version: 5.9.3
 
   examples/quickstart/sandbox:
-    dependencies:
-      '@agentos-software/claude-code':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@cfworker/json-schema@4.1.1)
-      '@agentos-software/git':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
-      '@agentos-software/opencode':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146
-      '@agentos-software/pi':
-        specifier: 'catalog:'
-        version: 0.0.0-nathan-agentos-package-resolution.42d8146(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.20.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@rivet-dev/agentos':
-        specifier: workspace:*
-        version: link:../../../packages/agentos
-      '@rivet-dev/agentos-core':
-        specifier: workspace:*
-        version: link:../../../packages/core
-      '@rivet-dev/agentos-sandbox':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-sandbox
-      dockerode:
-        specifier: ^4.0.9
-        version: 4.0.10
-      get-port:
-        specifier: ^7.1.0
-        version: 7.2.0
-      rivetkit:
-        specifier: catalog:rivetkit
-        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
-      sandbox-agent:
-        specifier: ^0.4.2
-        version: 0.4.2(dockerode@4.0.10)(get-port@7.2.0)(zod@4.3.6)
-      zod:
-        specifier: ^4.1.11
-        version: 4.3.6
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      tsx:
-        specifier: ^4.19.0
-        version: 4.21.0
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  examples/quickstart/tools:
     dependencies:
       '@agentos-software/claude-code':
         specifier: 'catalog:'
