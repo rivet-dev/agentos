@@ -6,7 +6,7 @@ Expose your host JavaScript functions (defined with Zod input schemas) to agents
 
 ## Getting started
 
-Define a bindings group with Zod input schemas and pass it to `agentOS()`. Each binding becomes a CLI command inside the VM.
+Define a bindings group with Zod input schemas and pass it to `agentOS({ bindings: [...] })`. Each binding becomes a CLI command inside the VM.
 
 Each binding can set an explicit `timeout` (in milliseconds) for long-running work. Bindings run without a timeout unless one is set.
 
@@ -30,14 +30,12 @@ When bindings are registered, CLI shims are installed at `/usr/local/bin/agentos
 
 The agent interacts with bindings as shell commands:
 
-The listing subcommand is still named `list-tools` for CLI compatibility.
-
 ```bash
 # List all available bindings groups
-agentos list-tools
+agentos list-bindings
 
 # List bindings in a specific group
-agentos list-tools weather
+agentos list-bindings weather
 
 # Get help for a binding
 agentos-weather forecast --help

@@ -399,7 +399,7 @@ What lives here:
 
 ### Native sidecar tool virtualization
 
-This is the subsystem that makes registered toolkits show up as VM commands.
+This is the subsystem that makes registered binding groups show up as VM commands.
 
 Relevant files:
 - `crates/sidecar/src/tools.rs`
@@ -408,9 +408,9 @@ Relevant files:
 
 What lives here:
 - Toolkit registration.
-- Prompt/reference markdown generation for toolkits.
+- Prompt/reference markdown generation for binding groups.
 - CLI-style flag parsing from JSON Schema.
-- Resolution of `agentos`, toolkit commands, and tool invocations into sidecar-dispatched virtual processes.
+- Resolution of `agentos`, binding group commands, and tool invocations into sidecar-dispatched virtual processes.
 
 ### Native sidecar process/runtime dispatch
 

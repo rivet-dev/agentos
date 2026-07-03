@@ -46,11 +46,11 @@ const importSpecifierPatterns = [
 ];
 const agentOsFacadeSymbolPatterns = [
 	{ label: "AgentOs", pattern: /\bAgentOs\b/ },
-	{ label: "HostTool", pattern: /\bHostTool\b/ },
-	{ label: "ToolKit", pattern: /\bToolKit\b/ },
+	{ label: "Binding", pattern: /\bBinding\b/ },
+	{ label: "BindingGroup", pattern: /\bBindingGroup\b/ },
 	{ label: "registerToolkit", pattern: /\bregisterToolkit\b/ },
-	{ label: "register_toolkit", pattern: /\bregister_toolkit\b/ },
-	{ label: "toolkit_registered", pattern: /\btoolkit_registered\b/ },
+	{ label: "register_binding_group", pattern: /\bregister_binding_group\b/ },
+	{ label: "binding_group_registered", pattern: /\bbinding_group_registered\b/ },
 	{
 		label: "SidecarRegisteredToolDefinition",
 		pattern: /\bSidecarRegisteredToolDefinition\b/,
@@ -276,7 +276,7 @@ function checkAgentOsFacadeSymbols(root, packageDir, packageName, errors) {
 			pattern.lastIndex = 0;
 			if (pattern.test(source)) {
 				errors.push(
-					`${packageName} must not expose Agent OS facade/toolkit symbol ${label} (${formatPath(root, filePath)})`,
+					`${packageName} must not expose Agent OS facade/binding symbol ${label} (${formatPath(root, filePath)})`,
 				);
 			}
 		}

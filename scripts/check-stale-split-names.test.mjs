@@ -117,11 +117,11 @@ test("rejects stale host callback registration docs", () => {
 		write(
 			root,
 			"packages/core/CLAUDE.md",
-			"- Host tool registration still uses register_toolkit on the wire.\n",
+			"- Host binding registration still uses register_binding_group on the wire.\n",
 		);
 
 		assert.deepEqual(checkStaleSplitNames({ root }), [
-			"packages/core/CLAUDE.md:1:37 uses legacy host callback registration wire name register_toolkit; use registerHostCallbacks or RegisterHostCallbacks",
+			"packages/core/CLAUDE.md:1:37 uses legacy host callback registration wire name register_binding_group; use registerHostCallbacks or RegisterHostCallbacks",
 		]);
 	});
 });

@@ -6,15 +6,15 @@ import pi from "@agentos-software/pi";
 // The reviewer is its own isolated agent VM.
 const reviewer = agentOS({ software: [pi] });
 
-// The coder gets a `review` toolkit it can call itself: it copies a file from the
+// The coder gets a `review` binding it can call itself: it copies a file from the
 // coder's VM into the reviewer's VM and asks the reviewer to review it.
 const coder = agentOS({
   software: [pi],
-  toolKits: [
+  bindings: [
     {
       name: "review",
       description: "Send a file to the reviewer agent and get back a review.",
-      tools: {
+      bindings: {
         submit: {
           description: "Submit a file path for review by the reviewer agent.",
           inputSchema: z.object({ path: z.string() }),

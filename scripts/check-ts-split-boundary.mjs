@@ -20,8 +20,8 @@ const requiredAgentOsExports = [
 	"AgentOs",
 	"AgentOsSidecar",
 	"CronManager",
-	"hostTool",
-	"toolKit",
+	"binding",
+	"bindingGroup",
 	"defineSoftware",
 ];
 const requiredAgentOsMethods = [
@@ -191,7 +191,7 @@ export function auditTsSplitBoundary(options = {}) {
 	const forbiddenSecureExecMatch = hasAnySourceMatch(secureExecCoreRoot, [
 		{ label: "@rivet-dev/agentos import", pattern: /@rivet-dev\/agent-os/g },
 		{ label: "AgentOs facade", pattern: /\bclass\s+AgentOs\b|\bexport\s+\{\s*AgentOs\b/g },
-		{ label: "Agent OS host-tools sugar", pattern: /\bhostTool\b|\btoolKit\b|\bzodToJsonSchema\b/g },
+		{ label: "Agent OS host-bindings sugar", pattern: /\bbinding\b|\bbindingGroup\b|\bzodToJsonSchema\b/g },
 		{ label: "Agent OS cron sugar", pattern: /\bCronManager\b|\bTimerScheduleDriver\b/g },
 		{ label: "Agent OS defineSoftware sugar", pattern: /\bdefineSoftware\b/g },
 	]);
@@ -240,8 +240,8 @@ export function auditTsSplitBoundary(options = {}) {
 	);
 
 	for (const file of [
-		"src/host-tools.ts",
-		"src/host-tools-zod.ts",
+		"src/host-bindings.ts",
+		"src/host-bindings-zod.ts",
 		"src/packages.ts",
 		"src/cron/index.ts",
 		"src/cron/cron-manager.ts",

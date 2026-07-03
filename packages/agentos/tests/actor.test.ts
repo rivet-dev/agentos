@@ -376,9 +376,15 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 	test("rejects native actor options that cannot cross the NAPI config boundary", () => {
 		expect(() =>
 			agentOS({
-				toolKits: [],
+				bindings: [],
 			} as never),
-		).toThrow(/toolKits/);
+		).toThrow(/bindings/);
+
+		expect(() =>
+			agentOS({
+				createOptions: () => ({}),
+			} as never),
+		).toThrow(/createOptions/);
 
 		expect(() =>
 			agentOS({

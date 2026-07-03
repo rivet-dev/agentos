@@ -122,7 +122,7 @@ const stalePatterns = [
 	},
 	{
 		name: "legacy host callback registration wire name",
-		pattern: /\bregister_toolkit\b/g,
+		pattern: /\bregister_binding_group\b/g,
 		replacement: "registerHostCallbacks or RegisterHostCallbacks",
 	},
 	{

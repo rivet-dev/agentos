@@ -8,7 +8,7 @@ const sessionId = await writerAgent.createSession("claude", {
   env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY! },
 });
 
-// The writer calls the `review` toolkit, which bridges to the reviewer VM.
+// The writer calls the `review` binding, which bridges to the reviewer VM.
 await writerAgent.sendPrompt(
   sessionId,
   "Write a small REST API, then send it to the review agent for review.",

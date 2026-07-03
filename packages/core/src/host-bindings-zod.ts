@@ -21,7 +21,7 @@ const UNSUPPORTED_TYPES = new Set([
 
 type JsonObject = Record<string, unknown>;
 
-export class HostToolSchemaConversionError extends Error {
+export class BindingSchemaConversionError extends Error {
 	readonly path: string;
 	readonly zodType: string;
 
@@ -34,7 +34,7 @@ export class HostToolSchemaConversionError extends Error {
 				.filter(Boolean)
 				.join(" "),
 		);
-		this.name = "HostToolSchemaConversionError";
+		this.name = "BindingSchemaConversionError";
 		this.path = path;
 		this.zodType = zodType;
 	}
@@ -130,7 +130,7 @@ function isCustomRefinement(check: unknown): boolean {
 
 function validateChecks(schema: ZodType, path: string, typeName: string) {
 	if (getChecks(schema).some(isCustomRefinement)) {
-		throw new HostToolSchemaConversionError(
+		throw new BindingSchemaConversionError(
 			path,
 			displayTypeName(typeName),
 			"custom refinements cannot be represented faithfully in JSON Schema",
@@ -142,7 +142,7 @@ function validateSchema(schema: ZodType, path: string) {
 	const typeName = normalizeTypeName(schema);
 
 	if (metadataProducesRefs(schema)) {
-		throw new HostToolSchemaConversionError(
+		throw new BindingSchemaConversionError(
 			path,
 			displayTypeName(typeName),
 			"metadata that emits $ref/$defs is not supported",
@@ -150,17 +150,17 @@ function validateSchema(schema: ZodType, path: string) {
 	}
 
 	if (UNSUPPORTED_TYPES.has(typeName)) {
-		throw new HostToolSchemaConversionError(path, displayTypeName(typeName));
+		throw new BindingSchemaConversionError(path, displayTypeName(typeName));
 	}
 
 	if (typeName === "discriminatedunion") {
-		throw new HostToolSchemaConversionError(path, displayTypeName(typeName));
+		throw new BindingSchemaConversionError(path, displayTypeName(typeName));
 	}
 
 	if (TRANSPARENT_WRAPPER_TYPES.has(typeName)) {
 		const inner = getInnerSchema(schema);
 		if (!inner) {
-			throw new HostToolSchemaConversionError(
+			throw new BindingSchemaConversionError(
 				path,
 				displayTypeName(typeName),
 				"wrapper schema is missing its inner schema",
@@ -173,7 +173,7 @@ function validateSchema(schema: ZodType, path: string) {
 	if (typeName === "nullable") {
 		const inner = getInnerSchema(schema);
 		if (!inner) {
-			throw new HostToolSchemaConversionError(
+			throw new BindingSchemaConversionError(
 				path,
 				displayTypeName(typeName),
 				"nullable schema is missing its inner schema",
@@ -202,7 +202,7 @@ function validateSchema(schema: ZodType, path: string) {
 		const def = getSchemaDef(schema);
 		const itemSchema = (def.element ?? def.type) as ZodType | undefined;
 		if (!itemSchema) {
-			throw new HostToolSchemaConversionError(
+			throw new BindingSchemaConversionError(
 				path,
 				displayTypeName(typeName),
 				"array schema is missing its item schema",
@@ -217,7 +217,7 @@ function validateSchema(schema: ZodType, path: string) {
 		const keySchema = def.keyType as ZodType | undefined;
 		const valueSchema = def.valueType as ZodType | undefined;
 		if (!keySchema || !valueSchema) {
-			throw new HostToolSchemaConversionError(
+			throw new BindingSchemaConversionError(
 				path,
 				displayTypeName(typeName),
 				"record schema is missing its key or value schema",
@@ -225,7 +225,7 @@ function validateSchema(schema: ZodType, path: string) {
 		}
 		const keyTypeName = normalizeTypeName(keySchema);
 		if (keyTypeName !== "string" || getChecks(keySchema).length > 0) {
-			throw new HostToolSchemaConversionError(
+			throw new BindingSchemaConversionError(
 				path,
 				displayTypeName(typeName),
 				"record keys must be unconstrained strings",
@@ -238,7 +238,7 @@ function validateSchema(schema: ZodType, path: string) {
 	if (typeName === "union") {
 		const options = getSchemaDef(schema).options;
 		if (!Array.isArray(options) || options.length === 0) {
-			throw new HostToolSchemaConversionError(
+			throw new BindingSchemaConversionError(
 				path,
 				displayTypeName(typeName),
 				"union schema is missing its options",
@@ -262,7 +262,7 @@ function validateSchema(schema: ZodType, path: string) {
 			literalValues.length !== 1 ||
 			!("string number boolean".split(" ").includes(typeof literalValue) || literalValue === null)
 		) {
-			throw new HostToolSchemaConversionError(
+			throw new BindingSchemaConversionError(
 				path,
 				displayTypeName(typeName),
 				"literal values must be JSON primitives",
@@ -281,7 +281,7 @@ function validateSchema(schema: ZodType, path: string) {
 		return;
 	}
 
-	throw new HostToolSchemaConversionError(path, displayTypeName(typeName));
+	throw new BindingSchemaConversionError(path, displayTypeName(typeName));
 }
 
 function sanitizeJsonSchema(value: unknown): unknown {
@@ -353,7 +353,7 @@ function generateJsonSchema(schema: ZodType): unknown {
 		target: "jsonSchema7",
 	});
 	if (!generated || (typeof generated === "object" && Object.keys(generated).length === 0)) {
-		throw new HostToolSchemaConversionError(
+		throw new BindingSchemaConversionError(
 			"$",
 			displayTypeName(normalizeTypeName(schema)),
 			"schema cannot be converted to JSON Schema",
@@ -369,7 +369,7 @@ export function zodToJsonSchema(schema: ZodType): unknown {
 
 	const unsupportedKeyword = findUnsupportedGeneratedKeyword(jsonSchema, "$");
 	if (unsupportedKeyword) {
-		throw new HostToolSchemaConversionError(
+		throw new BindingSchemaConversionError(
 			"$",
 			displayTypeName(normalizeTypeName(schema)),
 			`${unsupportedKeyword.keyword} emitted at ${unsupportedKeyword.path} is not supported`,

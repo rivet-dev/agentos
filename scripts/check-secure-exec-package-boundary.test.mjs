@@ -280,7 +280,7 @@ test("rejects Agent OS source imports", () => {
 	});
 });
 
-test("rejects Agent OS facade and toolkit symbols in secure-exec sources", () => {
+test("rejects Agent OS facade and binding symbols in secure-exec sources", () => {
 	withFixture((root) => {
 		writePackage(
 			root,
@@ -295,17 +295,17 @@ test("rejects Agent OS facade and toolkit symbols in secure-exec sources", () =>
 			},
 			{
 				"src/index.ts":
-					"export class AgentOs {}\nexport function registerToolkit(tool: HostTool): ToolKit { return tool; }\nexport const type = 'register_toolkit';\nexport const result = 'toolkit_registered';\n",
+					"export class AgentOs {}\nexport function registerToolkit(tool: Binding): BindingGroup { return tool; }\nexport const type = 'register_binding_group';\nexport const result = 'binding_group_registered';\n",
 			},
 		);
 
 		assert.deepEqual(checkSecureExecPackageBoundary({ root }), [
-			"@secure-exec/core must not expose Agent OS facade/toolkit symbol AgentOs (packages/secure-exec-core/src/index.ts)",
-			"@secure-exec/core must not expose Agent OS facade/toolkit symbol HostTool (packages/secure-exec-core/src/index.ts)",
-			"@secure-exec/core must not expose Agent OS facade/toolkit symbol ToolKit (packages/secure-exec-core/src/index.ts)",
-			"@secure-exec/core must not expose Agent OS facade/toolkit symbol registerToolkit (packages/secure-exec-core/src/index.ts)",
-			"@secure-exec/core must not expose Agent OS facade/toolkit symbol register_toolkit (packages/secure-exec-core/src/index.ts)",
-			"@secure-exec/core must not expose Agent OS facade/toolkit symbol toolkit_registered (packages/secure-exec-core/src/index.ts)",
+			"@secure-exec/core must not expose Agent OS facade/binding symbol AgentOs (packages/secure-exec-core/src/index.ts)",
+			"@secure-exec/core must not expose Agent OS facade/binding symbol Binding (packages/secure-exec-core/src/index.ts)",
+			"@secure-exec/core must not expose Agent OS facade/binding symbol BindingGroup (packages/secure-exec-core/src/index.ts)",
+			"@secure-exec/core must not expose Agent OS facade/binding symbol registerToolkit (packages/secure-exec-core/src/index.ts)",
+			"@secure-exec/core must not expose Agent OS facade/binding symbol register_binding_group (packages/secure-exec-core/src/index.ts)",
+			"@secure-exec/core must not expose Agent OS facade/binding symbol binding_group_registered (packages/secure-exec-core/src/index.ts)",
 		]);
 	});
 });

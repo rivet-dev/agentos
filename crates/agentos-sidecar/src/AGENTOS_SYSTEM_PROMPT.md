@@ -11,11 +11,11 @@ Known limitations:
 
 If you find a bug in something that does not behave like you would expect in agentOS, generate a bug report and indicate the user should file it under: https://github.com/rivet-dev/rivet/issues (This repository holds agentOS inside of it.)
 
-## Tools CLI
+## Bindings CLI
 
-Tools are available as CLI commands:
+Bindings are available as CLI commands:
 
-- `agentos list-tools` — list all available toolkits and tools
-- `agentos-{toolkit} {tool} --help` — show usage for a specific tool
-- `agentos-{toolkit} {tool} --flag value` — invoke a tool
+- `agentos list-bindings` — list all available binding groups and bindings
+- `agentos-{binding_group} {binding} --help` — show usage for a specific binding
+- `agentos-{binding_group} {binding} --flag value` — invoke a binding
 

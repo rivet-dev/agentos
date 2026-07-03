@@ -28,14 +28,14 @@ async function reviewCode(code: string): Promise<string> {
   return result.text;
 }
 
-// The writer agent gets a `review` toolkit. When the writer runs
+// The writer agent gets a `review` binding group. When the writer runs
 // `agentos-review submit`, the bridge above executes on the host.
 const writer = agentOS({
-  toolKits: [
+  bindings: [
     {
       name: "review",
       description: "Send code to the reviewer agent and get back a review.",
-      tools: {
+      bindings: {
         submit: {
           description:
             "Submit the full contents of a file to the reviewer agent for review. Returns the reviewer's feedback as text.",

@@ -74,7 +74,7 @@ function seedReadyFixture(root) {
 		[
 			'export { AgentOs, AgentOsSidecar } from "./agent-os.js";',
 			'export { CronManager } from "./cron/index.js";',
-			'export { hostTool, toolKit } from "./host-tools.js";',
+			'export { binding, bindingGroup } from "./host-bindings.js";',
 			'export { defineSoftware } from "./packages.js";',
 			"",
 		].join("\n"),
@@ -134,8 +134,8 @@ function seedReadyFixture(root) {
 		'import { NativeSidecarProcessClient } from "@secure-exec/core/sidecar-client";\n',
 	);
 	for (const file of [
-		"host-tools.ts",
-		"host-tools-zod.ts",
+		"host-bindings.ts",
+		"host-bindings-zod.ts",
 		"packages.ts",
 		"cron/index.ts",
 		"cron/cron-manager.ts",
@@ -171,7 +171,7 @@ test("reports Agent OS facade regressions in secure-exec core", () => {
 				'export * as protocol from "./generated-protocol.js";',
 				'export * from "./generated-protocol.js";',
 				"export class AgentOs {}",
-				"export function hostTool() {}",
+				"export function binding() {}",
 				"",
 			].join("\n"),
 		);
@@ -182,6 +182,6 @@ test("reports Agent OS facade regressions in secure-exec core", () => {
 		);
 		assert(boundaryCheck);
 		assert.equal(boundaryCheck.ok, false);
-		assert.match(boundaryCheck.details, /AgentOs facade|Agent OS host-tools sugar/);
+		assert.match(boundaryCheck.details, /AgentOs facade|Agent OS host-bindings sugar/);
 	});
 });
