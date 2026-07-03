@@ -32,7 +32,7 @@
     "test": "pnpm build && vitest run --fileParallelism=false"
   },
   "dependencies": {
-    "@secure-exec/core": "link:../../../secure-exec/packages/core",
+    "@secure-exec/core": "link:../../../secure-exec-provides/packages/core",
     "pyodide": "^0.28.3"
   },
   "peerDependencies": {

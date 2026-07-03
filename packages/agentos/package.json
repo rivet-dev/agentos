@@ -54,7 +54,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@agentos-software/common": "link:../../../secure-exec/registry/software/common",
+		"@agentos-software/common": "link:../../../secure-exec-provides/registry/software/common",
 		"@rivet-dev/agentos-core": "workspace:*",
 		"@rivet-dev/agentos-sidecar": "workspace:*",
 		"@rivetkit/react": "0.0.0-stack-feat-react-support-connecting-to-actors-by-id-in-useactor-ykouompz.5720585",

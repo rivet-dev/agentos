@@ -31,8 +31,8 @@
     "test": "pnpm check:converged-gates && pnpm build && vitest run tests/runtime-driver && pnpm run test:browser-wasm"
   },
   "dependencies": {
-    "@secure-exec/browser": "link:../../../secure-exec/packages/browser",
-    "@secure-exec/core": "link:../../../secure-exec/packages/core",
+    "@secure-exec/browser": "link:../../../secure-exec-provides/packages/browser",
+    "@secure-exec/core": "link:../../../secure-exec-provides/packages/core",
     "sucrase": "^3.35.0"
   },
   "devDependencies": {
