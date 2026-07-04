@@ -4,6 +4,7 @@ members = [
     "crates/agentos-protocol",
     "crates/agentos-sidecar-core",
     "crates/agentos-sidecar",
+    "crates/agentos-sidecar-browser",
     "crates/client",
     "crates/agentos-actor-plugin",
 ]
@@ -29,7 +30,6 @@ agentos-v8-runtime = { package = "secure-exec-v8-runtime", path = "../secure-exe
 secure-exec-client = { path = "../secure-exec/crates/secure-exec-client", version = "0.3.0-rc.1" }
 secure-exec-bridge = { path = "../secure-exec/crates/bridge", version = "0.3.0-rc.1" }
 secure-exec-sidecar = { path = "../secure-exec/crates/sidecar", version = "0.3.0-rc.1" }
-# LOCAL-DEV: unpublished converged browser crate (web/wasm work).
 secure-exec-sidecar-browser = { path = "../secure-exec/crates/sidecar-browser", version = "0.3.0-rc.1" }
 secure-exec-vm-config = { path = "../secure-exec/crates/vm-config", version = "0.3.0-rc.1" }
 vbare = "0.0.4"

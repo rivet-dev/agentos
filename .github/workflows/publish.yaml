@@ -404,6 +404,10 @@ jobs:
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
             --version ${{ needs.context.outputs.version }} \
             --version-only
+      - name: Install wasm-pack (for @rivet-dev/agentos-browser wasm build)
+        run: |
+          rustup target add wasm32-unknown-unknown
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - name: Build TypeScript packages
         run: |
           npx turbo build \
