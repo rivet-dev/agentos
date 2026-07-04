@@ -1,6 +1,6 @@
 {
 	"name": "@rivet-dev/agentos-plugin-darwin-arm64",
-	"version": "0.2.5-rc.2",
+	"version": "0.2.5-rc.3",
 	"description": "Agent OS actor plugin cdylib for macOS arm64 (Apple Silicon)",
 	"license": "Apache-2.0",
 	"repository": {
