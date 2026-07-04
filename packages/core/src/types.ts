@@ -49,7 +49,13 @@ export type {
 	SessionModeState,
 	SpawnedProcessInfo,
 } from "./agent-os.js";
-export type { AgentConfig, AgentType } from "./agents.js";
+/**
+ * An agent type id — the `name` of an `/opt/agentos` agent package manifest
+ * (e.g. `"pi"`, `"claude"`). Agents are resolved by the SIDECAR from the projected
+ * package manifest (`/opt/agentos/<name>/current/agentos-package.json`); the client
+ * passes only the name, so any manifest `name` is a valid agent type.
+ */
+export type AgentType = string;
 export type {
 	CronAction,
 	CronEvent,

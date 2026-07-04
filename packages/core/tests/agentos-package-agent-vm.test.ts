@@ -109,12 +109,14 @@ describe("agentos agent package (VM)", () => {
 		if (root) rmSync(root, { recursive: true, force: true });
 	});
 
-	test("lists the packaged agent as installed", () => {
-		const agents = vm.listAgents();
+	test("lists the packaged agent as installed", async () => {
+		// listAgents() is a sidecar ACP RPC: the sidecar enumerates the projected
+		// `/opt/agentos` packages. The entry is just id + installed (no client-side
+		// entrypoint resolution).
+		const agents = await vm.listAgents();
 		const entry = agents.find((a) => a.id === "mock-agent");
 		expect(entry).toBeDefined();
 		expect(entry?.installed).toBe(true);
-		expect(entry?.adapterEntrypoint).toBe("/opt/agentos/bin/mock-agent-acp");
 	});
 
 	test("createSession launches the packaged agent via /opt/agentos/bin", async () => {

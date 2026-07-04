@@ -3584,23 +3584,16 @@ fn json_object<const N: usize>(entries: [(&str, Value); N]) -> Value {
 }
 
 /// The `agentos-package.json` manifest that lives at the root of every projected
-/// package dir: the bare package name plus an optional agent block (its ACP
-/// entrypoint command). The sidecar reads commands/version from the dir itself.
+/// package dir. The client only needs the bare package `name` (for
+/// `provided_commands`); the sidecar owns agent resolution and reads
+/// commands/version from the dir itself.
 #[derive(serde::Deserialize)]
 struct AgentosPackageManifest {
     name: String,
-    #[serde(default)]
-    agent: Option<AgentosPackageAgent>,
 }
 
-#[derive(serde::Deserialize)]
-struct AgentosPackageAgent {
-    #[serde(rename = "acpEntrypoint")]
-    acp_entrypoint: Option<String>,
-}
-
-/// Read `<dir>/agentos-package.json` (name + optional agent block). An unreadable or
-/// malformed manifest is an explicit error, not a silent skip.
+/// Read `<dir>/agentos-package.json` (name only). An unreadable or malformed
+/// manifest is an explicit error, not a silent skip.
 fn read_agentos_package_manifest(dir: &str) -> Result<AgentosPackageManifest, ClientError> {
     let manifest_path = std::path::Path::new(dir).join("agentos-package.json");
     let text = std::fs::read_to_string(&manifest_path).map_err(|error| {

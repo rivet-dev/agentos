@@ -12,7 +12,6 @@ type AcpRuntimeKind enum {
 type AcpCreateSessionRequest struct {
   agentType: str
   runtime: AcpRuntimeKind
-  adapterEntrypoint: str
   cwd: str
   args: list<str>
   env: map<str><str>
@@ -27,6 +26,21 @@ type AcpSessionRequest struct {
   sessionId: str
   method: str
   params: optional<JsonUtf8>
+}
+
+# Enumerate the agents available in this VM. The sidecar answers from the already
+# projected `/opt/agentos` packages (client parses no manifests).
+type AcpListAgentsRequest struct {
+  reserved: bool
+}
+
+type AcpAgentEntry struct {
+  id: str
+  installed: bool
+}
+
+type AcpListAgentsResponse struct {
+  agents: list<AcpAgentEntry>
 }
 
 type AcpGetSessionStateRequest struct {
@@ -69,7 +83,8 @@ type AcpRequest union {
   AcpGetSessionStateRequest |
   AcpCloseSessionRequest |
   AcpResumeSessionRequest |
-  AcpDeliverAgentOutputRequest
+  AcpDeliverAgentOutputRequest |
+  AcpListAgentsRequest
 }
 
 type AcpSessionCreatedResponse struct {
@@ -134,7 +149,8 @@ type AcpResponse union {
   AcpSessionClosedResponse |
   AcpSessionResumedResponse |
   AcpErrorResponse |
-  AcpPendingResponse
+  AcpPendingResponse |
+  AcpListAgentsResponse
 }
 
 type AcpSessionEvent struct {

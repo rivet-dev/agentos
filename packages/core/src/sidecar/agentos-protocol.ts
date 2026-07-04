@@ -112,7 +112,6 @@ function write2(bc: bare.ByteCursor, x: string | null): void {
 export type AcpCreateSessionRequest = {
     readonly agentType: string
     readonly runtime: AcpRuntimeKind
-    readonly adapterEntrypoint: string
     readonly cwd: string
     readonly args: readonly string[]
     readonly env: ReadonlyMap<string, string>
@@ -127,7 +126,6 @@ export function readAcpCreateSessionRequest(bc: bare.ByteCursor): AcpCreateSessi
     return {
         agentType: bare.readString(bc),
         runtime: readAcpRuntimeKind(bc),
-        adapterEntrypoint: bare.readString(bc),
         cwd: bare.readString(bc),
         args: read0(bc),
         env: read1(bc),
@@ -142,7 +140,6 @@ export function readAcpCreateSessionRequest(bc: bare.ByteCursor): AcpCreateSessi
 export function writeAcpCreateSessionRequest(bc: bare.ByteCursor, x: AcpCreateSessionRequest): void {
     bare.writeString(bc, x.agentType)
     writeAcpRuntimeKind(bc, x.runtime)
-    bare.writeString(bc, x.adapterEntrypoint)
     bare.writeString(bc, x.cwd)
     write0(bc, x.args)
     write1(bc, x.env)
@@ -182,6 +179,74 @@ export function writeAcpSessionRequest(bc: bare.ByteCursor, x: AcpSessionRequest
     bare.writeString(bc, x.sessionId)
     bare.writeString(bc, x.method)
     write3(bc, x.params)
+}
+
+/**
+ * Enumerate the agents available in this VM. The sidecar answers from the already
+ * projected `/opt/agentos` packages (client parses no manifests).
+ */
+export type AcpListAgentsRequest = {
+    readonly reserved: boolean
+}
+
+export function readAcpListAgentsRequest(bc: bare.ByteCursor): AcpListAgentsRequest {
+    return {
+        reserved: bare.readBool(bc),
+    }
+}
+
+export function writeAcpListAgentsRequest(bc: bare.ByteCursor, x: AcpListAgentsRequest): void {
+    bare.writeBool(bc, x.reserved)
+}
+
+export type AcpAgentEntry = {
+    readonly id: string
+    readonly installed: boolean
+}
+
+export function readAcpAgentEntry(bc: bare.ByteCursor): AcpAgentEntry {
+    return {
+        id: bare.readString(bc),
+        installed: bare.readBool(bc),
+    }
+}
+
+export function writeAcpAgentEntry(bc: bare.ByteCursor, x: AcpAgentEntry): void {
+    bare.writeString(bc, x.id)
+    bare.writeBool(bc, x.installed)
+}
+
+function read4(bc: bare.ByteCursor): readonly AcpAgentEntry[] {
+    const len = bare.readUintSafe(bc)
+    if (len === 0) {
+        return []
+    }
+    const result = [readAcpAgentEntry(bc)]
+    for (let i = 1; i < len; i++) {
+        result[i] = readAcpAgentEntry(bc)
+    }
+    return result
+}
+
+function write4(bc: bare.ByteCursor, x: readonly AcpAgentEntry[]): void {
+    bare.writeUintSafe(bc, x.length)
+    for (let i = 0; i < x.length; i++) {
+        writeAcpAgentEntry(bc, x[i])
+    }
+}
+
+export type AcpListAgentsResponse = {
+    readonly agents: readonly AcpAgentEntry[]
+}
+
+export function readAcpListAgentsResponse(bc: bare.ByteCursor): AcpListAgentsResponse {
+    return {
+        agents: read4(bc),
+    }
+}
+
+export function writeAcpListAgentsResponse(bc: bare.ByteCursor, x: AcpListAgentsResponse): void {
+    write4(bc, x.agents)
 }
 
 export type AcpGetSessionStateRequest = {
@@ -279,6 +344,7 @@ export type AcpRequest =
     | { readonly tag: "AcpCloseSessionRequest"; readonly val: AcpCloseSessionRequest }
     | { readonly tag: "AcpResumeSessionRequest"; readonly val: AcpResumeSessionRequest }
     | { readonly tag: "AcpDeliverAgentOutputRequest"; readonly val: AcpDeliverAgentOutputRequest }
+    | { readonly tag: "AcpListAgentsRequest"; readonly val: AcpListAgentsRequest }
 
 export function readAcpRequest(bc: bare.ByteCursor): AcpRequest {
     const offset = bc.offset
@@ -296,6 +362,8 @@ export function readAcpRequest(bc: bare.ByteCursor): AcpRequest {
             return { tag: "AcpResumeSessionRequest", val: readAcpResumeSessionRequest(bc) }
         case 5:
             return { tag: "AcpDeliverAgentOutputRequest", val: readAcpDeliverAgentOutputRequest(bc) }
+        case 6:
+            return { tag: "AcpListAgentsRequest", val: readAcpListAgentsRequest(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -335,6 +403,11 @@ export function writeAcpRequest(bc: bare.ByteCursor, x: AcpRequest): void {
             writeAcpDeliverAgentOutputRequest(bc, x.val)
             break
         }
+        case "AcpListAgentsRequest": {
+            bare.writeU8(bc, 6)
+            writeAcpListAgentsRequest(bc, x.val)
+            break
+        }
     }
 }
 
@@ -357,18 +430,18 @@ export function decodeAcpRequest(bytes: Uint8Array): AcpRequest {
     return result
 }
 
-function read4(bc: bare.ByteCursor): u32 | null {
+function read5(bc: bare.ByteCursor): u32 | null {
     return bare.readBool(bc) ? bare.readU32(bc) : null
 }
 
-function write4(bc: bare.ByteCursor, x: u32 | null): void {
+function write5(bc: bare.ByteCursor, x: u32 | null): void {
     bare.writeBool(bc, x != null)
     if (x != null) {
         bare.writeU32(bc, x)
     }
 }
 
-function read5(bc: bare.ByteCursor): readonly JsonUtf8[] {
+function read6(bc: bare.ByteCursor): readonly JsonUtf8[] {
     const len = bare.readUintSafe(bc)
     if (len === 0) {
         return []
@@ -380,7 +453,7 @@ function read5(bc: bare.ByteCursor): readonly JsonUtf8[] {
     return result
 }
 
-function write5(bc: bare.ByteCursor, x: readonly JsonUtf8[]): void {
+function write6(bc: bare.ByteCursor, x: readonly JsonUtf8[]): void {
     bare.writeUintSafe(bc, x.length)
     for (let i = 0; i < x.length; i++) {
         writeJsonUtf8(bc, x[i])
@@ -399,9 +472,9 @@ export type AcpSessionCreatedResponse = {
 export function readAcpSessionCreatedResponse(bc: bare.ByteCursor): AcpSessionCreatedResponse {
     return {
         sessionId: bare.readString(bc),
-        pid: read4(bc),
+        pid: read5(bc),
         modes: read3(bc),
-        configOptions: read5(bc),
+        configOptions: read6(bc),
         agentCapabilities: read3(bc),
         agentInfo: read3(bc),
     }
@@ -409,9 +482,9 @@ export function readAcpSessionCreatedResponse(bc: bare.ByteCursor): AcpSessionCr
 
 export function writeAcpSessionCreatedResponse(bc: bare.ByteCursor, x: AcpSessionCreatedResponse): void {
     bare.writeString(bc, x.sessionId)
-    write4(bc, x.pid)
+    write5(bc, x.pid)
     write3(bc, x.modes)
-    write5(bc, x.configOptions)
+    write6(bc, x.configOptions)
     write3(bc, x.agentCapabilities)
     write3(bc, x.agentInfo)
 }
@@ -433,11 +506,11 @@ export function writeAcpSessionRpcResponse(bc: bare.ByteCursor, x: AcpSessionRpc
     writeJsonUtf8(bc, x.response)
 }
 
-function read6(bc: bare.ByteCursor): i32 | null {
+function read7(bc: bare.ByteCursor): i32 | null {
     return bare.readBool(bc) ? bare.readI32(bc) : null
 }
 
-function write6(bc: bare.ByteCursor, x: i32 | null): void {
+function write7(bc: bare.ByteCursor, x: i32 | null): void {
     bare.writeBool(bc, x != null)
     if (x != null) {
         bare.writeI32(bc, x)
@@ -462,11 +535,11 @@ export function readAcpSessionStateResponse(bc: bare.ByteCursor): AcpSessionStat
         sessionId: bare.readString(bc),
         agentType: bare.readString(bc),
         processId: bare.readString(bc),
-        pid: read4(bc),
+        pid: read5(bc),
         closed: bare.readBool(bc),
-        exitCode: read6(bc),
+        exitCode: read7(bc),
         modes: read3(bc),
-        configOptions: read5(bc),
+        configOptions: read6(bc),
         agentCapabilities: read3(bc),
         agentInfo: read3(bc),
     }
@@ -476,11 +549,11 @@ export function writeAcpSessionStateResponse(bc: bare.ByteCursor, x: AcpSessionS
     bare.writeString(bc, x.sessionId)
     bare.writeString(bc, x.agentType)
     bare.writeString(bc, x.processId)
-    write4(bc, x.pid)
+    write5(bc, x.pid)
     bare.writeBool(bc, x.closed)
-    write6(bc, x.exitCode)
+    write7(bc, x.exitCode)
     write3(bc, x.modes)
-    write5(bc, x.configOptions)
+    write6(bc, x.configOptions)
     write3(bc, x.agentCapabilities)
     write3(bc, x.agentInfo)
 }
@@ -569,6 +642,7 @@ export type AcpResponse =
     | { readonly tag: "AcpSessionResumedResponse"; readonly val: AcpSessionResumedResponse }
     | { readonly tag: "AcpErrorResponse"; readonly val: AcpErrorResponse }
     | { readonly tag: "AcpPendingResponse"; readonly val: AcpPendingResponse }
+    | { readonly tag: "AcpListAgentsResponse"; readonly val: AcpListAgentsResponse }
 
 export function readAcpResponse(bc: bare.ByteCursor): AcpResponse {
     const offset = bc.offset
@@ -588,6 +662,8 @@ export function readAcpResponse(bc: bare.ByteCursor): AcpResponse {
             return { tag: "AcpErrorResponse", val: readAcpErrorResponse(bc) }
         case 6:
             return { tag: "AcpPendingResponse", val: readAcpPendingResponse(bc) }
+        case 7:
+            return { tag: "AcpListAgentsResponse", val: readAcpListAgentsResponse(bc) }
         default: {
             bc.offset = offset
             throw new bare.BareError(offset, "invalid tag")
@@ -630,6 +706,11 @@ export function writeAcpResponse(bc: bare.ByteCursor, x: AcpResponse): void {
         case "AcpPendingResponse": {
             bare.writeU8(bc, 6)
             writeAcpPendingResponse(bc, x.val)
+            break
+        }
+        case "AcpListAgentsResponse": {
+            bare.writeU8(bc, 7)
+            writeAcpListAgentsResponse(bc, x.val)
             break
         }
     }
@@ -723,7 +804,7 @@ export function readAcpAgentExitedEvent(bc: bare.ByteCursor): AcpAgentExitedEven
         sessionId: bare.readString(bc),
         agentType: bare.readString(bc),
         processId: bare.readString(bc),
-        exitCode: read6(bc),
+        exitCode: read7(bc),
         restart: bare.readString(bc),
         restartCount: bare.readU32(bc),
         maxRestarts: bare.readU32(bc),
@@ -734,7 +815,7 @@ export function writeAcpAgentExitedEvent(bc: bare.ByteCursor, x: AcpAgentExitedE
     bare.writeString(bc, x.sessionId)
     bare.writeString(bc, x.agentType)
     bare.writeString(bc, x.processId)
-    write6(bc, x.exitCode)
+    write7(bc, x.exitCode)
     bare.writeString(bc, x.restart)
     bare.writeU32(bc, x.restartCount)
     bare.writeU32(bc, x.maxRestarts)

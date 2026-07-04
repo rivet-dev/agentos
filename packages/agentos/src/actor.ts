@@ -10,14 +10,10 @@
  * config envelope across the bridge — it owns no agent-os runtime logic.
  */
 
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import common from "@agentos-software/common";
-import {
-	OPT_AGENTOS_BIN,
-	OPT_AGENTOS_ROOT,
-} from "@rivet-dev/agentos-core";
+import { OPT_AGENTOS_ROOT } from "@rivet-dev/agentos-core";
 import { getSidecarPath } from "@rivet-dev/agentos-sidecar";
 import {
 	actor,
@@ -73,13 +69,6 @@ interface PackageManifest {
 interface NormalizedPackageRef {
 	dir: string;
 	legacyManifest?: PackageManifest;
-}
-
-interface SerializedAgentConfig {
-	name: string;
-	adapterEntrypoint: string;
-	launchArgs?: string[];
-	defaultEnv?: Record<string, string>;
 }
 
 /**
@@ -167,86 +156,6 @@ function legacyPackageManifest(
 	return manifest;
 }
 
-function readPackageManifestForClient(
-	ref: NormalizedPackageRef,
-): PackageManifest | undefined {
-	return tryReadAgentosPackageManifest(ref.dir) ?? ref.legacyManifest;
-}
-
-function tryReadAgentosPackageManifest(
-	dir: string,
-): PackageManifest | undefined {
-	try {
-		return readAgentosPackageManifest(dir);
-	} catch (error) {
-		if (error instanceof Error && errorCode(error) === "ENOENT") {
-			return undefined;
-		}
-		throw error;
-	}
-}
-
-function readAgentosPackageManifest(dir: string): PackageManifest {
-	const manifestPath = join(dir, "agentos-package.json");
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
-	} catch (error) {
-		const wrapped = new Error(
-			`Failed to read agentOS package manifest at ${manifestPath}: ${error instanceof Error ? error.message : String(error)}`,
-		);
-		const code = errorCode(error);
-		if (code !== undefined) {
-			Object.assign(wrapped, { code });
-		}
-		throw wrapped;
-	}
-	return validateAgentosPackageManifest(parsed, manifestPath);
-}
-
-function errorCode(error: unknown): string | undefined {
-	if (!isPlainObject(error)) {
-		return undefined;
-	}
-	return typeof error.code === "string" ? error.code : undefined;
-}
-
-function validateAgentosPackageManifest(
-	value: unknown,
-	source: string,
-): PackageManifest {
-	if (!isPlainObject(value) || typeof value.name !== "string") {
-		throw new Error(`Invalid agentOS package manifest at ${source}: missing name`);
-	}
-	const manifest: PackageManifest = { name: value.name };
-	if (value.agent !== undefined) {
-		if (
-			!isPlainObject(value.agent) ||
-			typeof value.agent.acpEntrypoint !== "string"
-		) {
-			throw new Error(
-				`Invalid agentOS package manifest at ${source}: invalid agent.acpEntrypoint`,
-			);
-		}
-		manifest.agent = {
-			acpEntrypoint: value.agent.acpEntrypoint,
-			...(isStringRecord(value.agent.env) ? { env: value.agent.env } : {}),
-			...(Array.isArray(value.agent.launchArgs) &&
-			value.agent.launchArgs.every((arg) => typeof arg === "string")
-				? { launchArgs: value.agent.launchArgs }
-				: {}),
-			...(typeof value.agent.snapshot === "boolean"
-				? { snapshot: value.agent.snapshot }
-				: {}),
-		};
-	}
-	return manifest;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isStringRecord(value: unknown): value is Record<string, string> {
 	return (
 		value !== null &&
@@ -268,23 +177,6 @@ function normalizedPackageRefs(software: unknown[]): NormalizedPackageRef[] {
 	return refs;
 }
 
-function serializedAgentConfigs(
-	packageRefs: NormalizedPackageRef[],
-): SerializedAgentConfig[] {
-	const configs: SerializedAgentConfig[] = [];
-	for (const ref of packageRefs) {
-		const manifest = readPackageManifestForClient(ref);
-		if (!manifest?.agent) continue;
-		configs.push({
-			name: manifest.name,
-			adapterEntrypoint: `${OPT_AGENTOS_BIN}/${manifest.agent.acpEntrypoint}`,
-			launchArgs: manifest.agent.launchArgs,
-			defaultEnv: manifest.agent.env,
-		});
-	}
-	return configs;
-}
-
 export function buildConfigJson<TConnParams>(
 	parsed: AgentOsActorConfig<TConnParams>,
 ): string {
@@ -297,13 +189,14 @@ export function buildConfigJson<TConnParams>(
 		defaultSoftwareEnabled ? [common, ...softwareInput] : softwareInput,
 	);
 	const packages = packageRefs.map((ref) => ({ dir: ref.dir }));
-	const agentConfigs = serializedAgentConfigs(packageRefs);
 	const mounts = serializeNativeMounts(options.mounts);
 	const sidecar = serializeSidecar(options.sidecar);
 	return JSON.stringify({
+		// The actor forwards ONLY package dirs; the sidecar resolves each agent from
+		// the projected `/opt/agentos/<name>/current/agentos-package.json` (no
+		// client-side adapter-entrypoint resolution — see root CLAUDE.md).
 		packages,
 		packagesMountAt: OPT_AGENTOS_ROOT,
-		agentConfigs,
 		additionalInstructions: options.additionalInstructions,
 		loopbackExemptPorts: options.loopbackExemptPorts,
 		allowedNodeBuiltins: options.allowedNodeBuiltins,

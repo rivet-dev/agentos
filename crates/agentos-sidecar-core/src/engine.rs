@@ -31,10 +31,6 @@ const SESSION_CLOSE_TIMEOUT_MS: u64 = 5_000;
 const INITIALIZE_TIMEOUT_MS: u64 = 10_000;
 const SESSION_NEW_TIMEOUT_MS: u64 = 30_000;
 
-/// Reserved `env` key on `AcpResumeSessionRequest` carrying the adapter entrypoint
-/// (the resume wire request stays minimal; the caller forwards it through env).
-/// Matches the native `RESUME_ADAPTER_ENTRYPOINT_ENV`.
-const RESUME_ADAPTER_ENTRYPOINT_ENV: &str = "AGENT_OS_RESUME_ADAPTER_ENTRYPOINT";
 /// Matches the native `ACP_RESUME_PROTOCOL_VERSION`.
 const ACP_RESUME_PROTOCOL_VERSION: i32 = 1;
 /// Matches the native `DEFAULT_RESUME_CLIENT_CAPABILITIES`.
@@ -42,6 +38,62 @@ const DEFAULT_RESUME_CLIENT_CAPABILITIES: &str = "{}";
 /// Transcript-continuation preamble armed by the resume fallback tier; matches the
 /// native `CONTINUATION_PREAMBLE`.
 const CONTINUATION_PREAMBLE: &str = "You are continuing an earlier session. The full prior transcript is at `{path}`. Read it with your file tools if you need context before answering.";
+
+/// Agent launch parameters resolved from a projected `/opt/agentos` package
+/// manifest. The npm-agnostic client sends only the agent name; the sidecar owns
+/// the name -> package -> entrypoint/env/launchArgs resolution. Mirrors the native
+/// sidecar's `ResolvedAgent`.
+struct ResolvedAgent {
+    entrypoint: String,
+    env: BTreeMap<String, String>,
+    launch_args: Vec<String>,
+}
+
+/// The subset of `agentos-package.json` the sidecar needs to launch an agent.
+#[derive(serde::Deserialize)]
+struct AgentPackageManifest {
+    #[serde(default)]
+    agent: Option<AgentPackageAgentBlock>,
+}
+
+#[derive(serde::Deserialize)]
+struct AgentPackageAgentBlock {
+    #[serde(rename = "acpEntrypoint", default)]
+    acp_entrypoint: String,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+    #[serde(rename = "launchArgs", default)]
+    launch_args: Vec<String>,
+}
+
+/// Resolve an agent name to its launch parameters by reading the projected
+/// manifest at `/opt/agentos/<name>/current/agentos-package.json` over the host
+/// filesystem seam. A missing file, a missing `agent` block, or an empty
+/// `agent.acpEntrypoint` all map to a single typed "unknown agent" error. Mirrors
+/// the native sidecar `resolve_agent`.
+fn resolve_agent<H: AcpHost>(
+    host: &mut H,
+    agent_type: &str,
+) -> Result<ResolvedAgent, AcpCoreError> {
+    let unknown = || {
+        AcpCoreError::InvalidState(format!(
+            "unknown agent type \"{agent_type}\": no projected /opt/agentos/{agent_type} package \
+             with an agent.acpEntrypoint — pass its package to AgentOs software"
+        ))
+    };
+    let path = format!("/opt/agentos/{agent_type}/current/agentos-package.json");
+    let bytes = host.read_file(&path).map_err(|_| unknown())?;
+    let manifest: AgentPackageManifest = serde_json::from_slice(&bytes).map_err(|_| unknown())?;
+    let agent = manifest.agent.ok_or_else(|| unknown())?;
+    if agent.acp_entrypoint.is_empty() {
+        return Err(unknown());
+    }
+    Ok(ResolvedAgent {
+        entrypoint: format!("/opt/agentos/bin/{}", agent.acp_entrypoint),
+        env: agent.env,
+        launch_args: agent.launch_args,
+    })
+}
 
 /// Host-free ACP session engine. The native and browser sidecars each hold one of
 /// these and feed it decoded requests plus the caller's connection id (for the
@@ -200,16 +252,24 @@ impl AcpCore {
         caller_connection_id: &str,
         request: &AcpCreateSessionRequest,
     ) -> Result<AcpResponse, AcpCoreError> {
+        let resolved = resolve_agent(host, &request.agent_type)?;
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
         env.insert(String::from("SECURE_EXEC_KEEP_STDIN_OPEN"), String::from("1"));
+        // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
+        for (key, value) in &resolved.env {
+            env.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+        // Manifest launch args first, then any caller-supplied args.
+        let mut args = resolved.launch_args.clone();
+        args.extend(request.args.iter().cloned());
 
         let spawned = host.spawn_agent(SpawnAgentRequest {
             process_id: process_id.clone(),
             runtime: request.runtime.clone(),
-            entrypoint: Some(request.adapter_entrypoint.clone()),
+            entrypoint: Some(resolved.entrypoint.clone()),
             command: None,
-            args: request.args.clone(),
+            args,
             env,
             cwd: Some(request.cwd.clone()),
         })?;
@@ -257,16 +317,24 @@ impl AcpCore {
         caller_connection_id: &str,
         request: &AcpCreateSessionRequest,
     ) -> Result<String, AcpCoreError> {
+        let resolved = resolve_agent(host, &request.agent_type)?;
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
         env.insert(String::from("SECURE_EXEC_KEEP_STDIN_OPEN"), String::from("1"));
+        // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
+        for (key, value) in &resolved.env {
+            env.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+        // Manifest launch args first, then any caller-supplied args.
+        let mut args = resolved.launch_args.clone();
+        args.extend(request.args.iter().cloned());
 
         let spawned = host.spawn_agent(SpawnAgentRequest {
             process_id: process_id.clone(),
             runtime: request.runtime.clone(),
-            entrypoint: Some(request.adapter_entrypoint.clone()),
+            entrypoint: Some(resolved.entrypoint.clone()),
             command: None,
-            args: request.args.clone(),
+            args,
             env,
             cwd: Some(request.cwd.clone()),
         })?;
@@ -671,27 +739,22 @@ impl AcpCore {
         caller_connection_id: &str,
         request: &AcpResumeSessionRequest,
     ) -> Result<AcpResponse, AcpCoreError> {
-        let adapter_entrypoint = request
-            .env
-            .get(RESUME_ADAPTER_ENTRYPOINT_ENV)
-            .cloned()
-            .ok_or_else(|| {
-                AcpCoreError::InvalidState(format!(
-                    "resume request missing reserved env `{RESUME_ADAPTER_ENTRYPOINT_ENV}` (adapter entrypoint)"
-                ))
-            })?;
+        let resolved = resolve_agent(host, &request.agent_type)?;
 
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
-        env.remove(RESUME_ADAPTER_ENTRYPOINT_ENV);
         env.insert(String::from("SECURE_EXEC_KEEP_STDIN_OPEN"), String::from("1"));
+        // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
+        for (key, value) in &resolved.env {
+            env.entry(key.clone()).or_insert_with(|| value.clone());
+        }
 
         let spawned = host.spawn_agent(SpawnAgentRequest {
             process_id: process_id.clone(),
             runtime: AcpRuntimeKind::JavaScript,
-            entrypoint: Some(adapter_entrypoint),
+            entrypoint: Some(resolved.entrypoint.clone()),
             command: None,
-            args: Vec::new(),
+            args: resolved.launch_args.clone(),
             env,
             cwd: Some(request.cwd.clone()),
         })?;
@@ -874,6 +937,15 @@ impl AcpCore {
             AcpRequest::AcpDeliverAgentOutputRequest(request) => {
                 self.deliver_agent_output(host, &request)
             }
+            // Agent enumeration needs a directory listing of `/opt/agentos`, which
+            // the host-free `AcpHost` seam does not expose (it has `read_file`, not
+            // `read_dir`). The native sidecar answers `list_agents` directly from the
+            // projected packages; the browser resumable path does not support it yet.
+            AcpRequest::AcpListAgentsRequest(_) => Err(AcpCoreError::InvalidState(
+                "list_agents is not handled by the host-free ACP core; the native sidecar answers \
+                 it from the projected /opt/agentos packages"
+                    .to_string(),
+            )),
         }
     }
 
@@ -1157,7 +1229,7 @@ mod tests {
             Ok(())
         }
         fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-            Ok(Vec::new())
+            Ok(br#"{"name":"echo","agent":{"acpEntrypoint":"echo-agent"}}"#.to_vec())
         }
         fn now_ms(&self) -> u64 {
             0
@@ -1284,7 +1356,7 @@ mod tests {
                 Ok(())
             }
             fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-                Ok(Vec::new())
+                Ok(br#"{"name":"echo","agent":{"acpEntrypoint":"echo-agent"}}"#.to_vec())
             }
             fn now_ms(&self) -> u64 {
                 self.clock
@@ -1375,7 +1447,7 @@ mod tests {
                 Ok(())
             }
             fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-                Ok(Vec::new())
+                Ok(br#"{"name":"echo","agent":{"acpEntrypoint":"echo-agent"}}"#.to_vec())
             }
             fn now_ms(&self) -> u64 {
                 self.clock
@@ -1384,17 +1456,12 @@ mod tests {
 
         let mut core = AcpCore::new();
         let mut host = ResumeHost::default();
-        let mut env = HashMap::new();
-        env.insert(
-            RESUME_ADAPTER_ENTRYPOINT_ENV.to_string(),
-            "/bin/echo-agent".to_string(),
-        );
         let request = AcpResumeSessionRequest {
             session_id: "old-session".into(),
             agent_type: "echo".into(),
             transcript_path: Some("/transcripts/old.jsonl".into()),
             cwd: "/workspace".into(),
-            env,
+            env: HashMap::new(),
         };
 
         let response = core
@@ -1477,7 +1544,7 @@ mod tests {
                 Ok(())
             }
             fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-                Ok(Vec::new())
+                Ok(br#"{"name":"echo","agent":{"acpEntrypoint":"echo-agent"}}"#.to_vec())
             }
             fn now_ms(&self) -> u64 {
                 self.clock
@@ -1488,7 +1555,6 @@ mod tests {
         let mut host = CreateHost::default();
         let request = AcpCreateSessionRequest {
             agent_type: "echo".into(),
-            adapter_entrypoint: "/bin/echo-agent".into(),
             runtime: AcpRuntimeKind::JavaScript,
             protocol_version: 1,
             cwd: "/workspace".into(),
@@ -1570,7 +1636,7 @@ mod tests {
             Ok(())
         }
         fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-            Ok(Vec::new())
+            Ok(br#"{"name":"echo","agent":{"acpEntrypoint":"echo-agent"}}"#.to_vec())
         }
         fn now_ms(&self) -> u64 {
             0
@@ -1580,7 +1646,6 @@ mod tests {
     fn echo_create_request() -> AcpCreateSessionRequest {
         AcpCreateSessionRequest {
             agent_type: "echo".into(),
-            adapter_entrypoint: "/bin/echo-agent".into(),
             runtime: AcpRuntimeKind::JavaScript,
             protocol_version: 1,
             cwd: "/workspace".into(),

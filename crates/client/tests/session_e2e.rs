@@ -107,10 +107,10 @@ async fn session_surface_create_prompt_events_close() {
     // dynamically from the configured `/opt/agentos` package manifests (there is NO hardcoded
     // agent registry), and every session operation on an unknown id reports SessionNotFound.
     assert!(os.list_sessions().is_empty(), "a fresh VM has no sessions");
-    // This VM configures no `/opt/agentos` agent packages, so no agents are listed. (The TS
-    // client can additionally surface not-yet-linked npm dependency agents via Node module
-    // resolution — a runtime concept a compiled Rust binary has no equivalent of.)
-    let agents = os.list_agents();
+    // This VM configures no `/opt/agentos` agent packages, so no agents are listed. `list_agents`
+    // is a sidecar ACP RPC that enumerates the projected `/opt/agentos` packages; with none
+    // projected it returns empty.
+    let agents = os.list_agents().await.expect("list_agents");
     assert!(
         agents.is_empty(),
         "with no agent packages configured, list_agents must be empty (dynamic resolution)"

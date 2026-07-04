@@ -1,48 +1,65 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-import { OPT_AGENTOS_BIN } from "../src/index.js";
 
-// Agents are resolved DYNAMICALLY from the configured `/opt/agentos` package
-// manifests (keyed by manifest `name`) plus the `@agentos-software/*` dependency
-// agents linked lazily on first `createSession`. There is no hardcoded registry.
+// `listAgents()` is a sidecar ACP RPC: the sidecar enumerates the projected
+// `/opt/agentos` packages (those whose `agentos-package.json` carries an
+// `agent.acpEntrypoint`). The client parses NO manifests and makes no npm/
+// node_modules assumptions. A bare `create()` projects no agent packages.
 describe("listAgents()", () => {
 	let vm: AgentOs;
+	let root: string;
 
-	beforeEach(async () => {
-		vm = await AgentOs.create();
-	});
-
-	afterEach(async () => {
-		await vm.dispose();
-	});
-
-	test("lists the shipped dependency agents", () => {
-		const agents = vm.listAgents();
-		const ids = agents.map((a) => a.id);
-		expect(ids).toContain("pi");
-		expect(ids).toContain("pi-cli");
-		expect(ids).toContain("opencode");
-		expect(ids).toContain("claude");
-	});
-
-	test("each entry exposes a pre-resolved /opt/agentos adapter entrypoint", () => {
-		const agents = vm.listAgents();
-		for (const id of ["pi", "pi-cli", "opencode", "claude"]) {
-			const agent = agents.find((entry) => entry.id === id);
-			expect(agent).toBeDefined();
-			// Every agent is an `/opt/agentos` package: the entry carries a
-			// pre-resolved guest command path and no legacy npm adapter metadata.
-			expect(agent?.adapterEntrypoint?.startsWith(`${OPT_AGENTOS_BIN}/`)).toBe(
-				true,
+	beforeAll(async () => {
+		root = mkdtempSync(join(tmpdir(), "agentos-list-agents-"));
+		// Two self-contained /opt/agentos agent packages projected via `software`.
+		for (const name of ["alpha-agent", "beta-agent"]) {
+			const pkgDir = join(root, name);
+			mkdirSync(join(pkgDir, "bin"), { recursive: true });
+			writeFileSync(
+				join(pkgDir, "package.json"),
+				JSON.stringify({ name, version: "1.0.0" }, null, 2),
 			);
-			expect(agent?.acpAdapter).toBeUndefined();
-			expect(agent?.agentPackage).toBeUndefined();
-			expect(typeof agent?.installed).toBe("boolean");
+			writeFileSync(
+				join(pkgDir, "agentos-package.json"),
+				JSON.stringify(
+					{ name, agent: { acpEntrypoint: `${name}-acp` } },
+					null,
+					2,
+				),
+			);
+			const binPath = join(pkgDir, "bin", `${name}-acp`);
+			writeFileSync(binPath, "#!/usr/bin/env node\n");
+			chmodSync(binPath, 0o755);
 		}
+		vm = await AgentOs.create({
+			defaultSoftware: false,
+			software: [join(root, "alpha-agent"), join(root, "beta-agent")],
+		});
+	}, 60_000);
+
+	afterAll(async () => {
+		await vm?.dispose();
+		if (root) rmSync(root, { recursive: true, force: true });
 	});
 
-	test("every agent package is materialized at boot, so installed is true", () => {
-		const agents = vm.listAgents();
+	test("lists the projected agent packages, sorted by id", async () => {
+		const agents = await vm.listAgents();
+		const ids = agents.map((a) => a.id);
+		expect(ids).toContain("alpha-agent");
+		expect(ids).toContain("beta-agent");
+	});
+
+	test("every projected agent package is installed", async () => {
+		const agents = await vm.listAgents();
 		for (const agent of agents) {
 			expect(agent.installed).toBe(true);
 		}

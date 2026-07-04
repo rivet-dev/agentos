@@ -92,14 +92,6 @@ export type { ConnectTerminalOptions } from "./runtime-compat.js";
 const ACP_PROTOCOL_VERSION = 1;
 const ACP_EXTENSION_NAMESPACE = "dev.rivet.agent-os.acp";
 const SHELL_DISPOSE_TIMEOUT_MS = 5_000;
-/**
- * Reserved `env` key on `AcpResumeSessionRequest` carrying the resolved adapter
- * bin entrypoint. The resume wire request omits a dedicated `adapterEntrypoint`
- * field; the sidecar reads the entrypoint from this key and strips it before
- * launching the adapter. Must stay in sync with the sidecar constant of the same
- * name in `crates/agentos-sidecar/src/acp_extension.rs`.
- */
-const RESUME_ADAPTER_ENTRYPOINT_ENV = "AGENT_OS_RESUME_ADAPTER_ENTRYPOINT";
 
 function defaultAcpClientCapabilities(): Record<string, unknown> {
 	return {
@@ -170,16 +162,10 @@ export interface BatchReadResult {
 /** Entry in the agent registry, describing an available agent type. */
 export interface AgentRegistryEntry {
 	id: string;
-	/** npm adapter package (legacy agents) — absent for `/opt/agentos` packages. */
-	acpAdapter?: string;
-	/** npm agent package (legacy agents) — absent for `/opt/agentos` packages. */
-	agentPackage?: string;
-	/** Pre-resolved adapter command path for an `/opt/agentos` agent package. */
-	adapterEntrypoint?: string;
 	installed: boolean;
 }
 
-import type { AgentConfig, AgentType } from "./agents.js";
+import type { AgentType } from "./types.js";
 import { getBaseEnvironment } from "./base-filesystem.js";
 import { CronManager } from "./cron/cron-manager.js";
 import type { ScheduleDriver } from "./cron/schedule-driver.js";
@@ -214,16 +200,12 @@ import {
 	type SoftwareRoot,
 } from "./packages.js";
 import {
-	OPT_AGENTOS_BIN,
 	OPT_AGENTOS_ROOT,
 	type PackageRef,
 	type SoftwarePackageRef,
 	tryReadAgentosPackageManifest,
 } from "./agentos-package.js";
-import {
-	resolveDefaultSoftware,
-	resolveDependencyAgents,
-} from "./default-software.js";
+import { resolveDefaultSoftware } from "./default-software.js";
 import type { PermissionTier } from "./runtime.js";
 import { allowAll, createNodeHostNetworkAdapter } from "./runtime-compat.js";
 import {
@@ -865,12 +847,6 @@ function legacyPackageManifest(
 		};
 	}
 	return manifest;
-}
-
-function readPackageManifestForClient(
-	ref: NormalizedPackageRef,
-): AgentosPackageManifest | undefined {
-	return tryReadAgentosPackageManifest(ref.dir) ?? ref.legacyManifest;
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {
@@ -2677,7 +2653,6 @@ export class AgentOs {
 	private _acpTerminals = new Map<string, AcpTerminalEntry>();
 	private _acpTerminalCounter = 0;
 	private _softwareRoots: SoftwareRoot[];
-	private _softwareAgentConfigs: Map<string, AgentConfig>;
 	private _cronManager!: CronManager;
 	private _toolKits: ToolKit[] = [];
 	private _toolReference = "";
@@ -2699,7 +2674,6 @@ export class AgentOs {
 		kernel: Kernel,
 		sidecar: AgentOsSidecar,
 		softwareRoots: SoftwareRoot[],
-		softwareAgentConfigs: Map<string, AgentConfig>,
 		hostMounts: HostMountInfo[],
 		env: Record<string, string>,
 		rootFilesystem: VirtualFileSystem,
@@ -2714,7 +2688,6 @@ export class AgentOs {
 		this.#kernel = kernel;
 		this.sidecar = sidecar;
 		this._softwareRoots = softwareRoots;
-		this._softwareAgentConfigs = softwareAgentConfigs;
 		this._hostMounts = hostMounts;
 		this._env = env;
 		this._rootFilesystem = rootFilesystem;
@@ -2758,7 +2731,7 @@ export class AgentOs {
 		// enter VMs that run them. Unbuilt packages throw with build
 		// instructions; opt out via defaultSoftware: false.
 		const defaultSoftware =
-			options?.defaultSoftware === false ? [] : await resolveDefaultSoftware();
+			options?.defaultSoftware === false ? [] : resolveDefaultSoftware();
 		const software: unknown[] =
 			options?.defaultSoftware === false
 				? (options.software ?? [])
@@ -2773,20 +2746,9 @@ export class AgentOs {
 		});
 		const sidecarPackages = packageRefs.map((ref) => ({ dir: ref.dir }));
 		// All package software is projected into `/opt/agentos` by the sidecar. The
-		// client stages nothing host-side; it only derives the agent configs.
-		const agentConfigs = new Map<string, AgentConfig>();
-		// Register `/opt/agentos` agent packages so `createSession(<name>)`
-		// launches via `/opt/agentos/bin/<acpEntrypoint>`. The wire no longer
-		// carries agent metadata; read it from the package manifest.
-		for (const ref of packageRefs) {
-			const manifest = readPackageManifestForClient(ref);
-			if (!manifest?.agent) continue;
-			agentConfigs.set(manifest.name, {
-				adapterEntrypoint: `${OPT_AGENTOS_BIN}/${manifest.agent.acpEntrypoint}`,
-				launchArgs: manifest.agent.launchArgs,
-				defaultEnv: manifest.agent.env,
-			});
-		}
+		// client stages nothing host-side and parses NO package manifests: the
+		// sidecar owns both agent resolution (createSession) and agent enumeration
+		// (listAgents) from the projected `/opt/agentos` manifests.
 		// Agent-SDK snapshot bundle (loaded once per sidecar into the V8 startup
 		// snapshot, reused across sessions) for any snapshot-enabled agent.
 		const snapshotUserlandCode = resolveAgentSnapshotBundle(
@@ -3059,7 +3021,6 @@ export class AgentOs {
 				vmAdmin.kernel,
 				sidecar,
 				[],
-				agentConfigs,
 				vmAdmin.hostMounts,
 				vmAdmin.env,
 				vmAdmin.rootView,
@@ -3743,76 +3704,29 @@ export class AgentOs {
 		for (const command of commands) {
 			this._linkedCommands.add(command);
 		}
-		const manifest = readPackageManifestForClient(ref);
-		if (manifest?.agent) {
-			this._softwareAgentConfigs.set(manifest.name, {
-				adapterEntrypoint: `${OPT_AGENTOS_BIN}/${manifest.agent.acpEntrypoint}`,
-				launchArgs: manifest.agent.launchArgs,
-				defaultEnv: manifest.agent.env,
-			});
-		}
+		// The client parses no manifests: an `agent` block in the linked package is
+		// picked up by the sidecar (it owns the projected `/opt/agentos` and answers
+		// createSession/listAgents from it). Nothing to record client-side.
 	}
 
-	/** Returns all registered agents with their installation status. */
-	listAgents(): AgentRegistryEntry[] {
-		// Collect agent IDs from package configs, the hardcoded configs, and the
-		// @agentos-software/* agent dependencies (linked lazily on first
-		// createSession — see createSession).
-		const dependencyAgents = resolveDependencyAgents();
-		const allIds = new Set<string>([
-			...this._softwareAgentConfigs.keys(),
-			...dependencyAgents.keys(),
-		]);
-
-		return [...allIds]
-			.map((id): AgentRegistryEntry | null => {
-				let config = this._resolveAgentConfig(id);
-				if (!config) {
-					// Dependency agent not linked yet — report it from its manifest.
-					const dependencyAgent = dependencyAgents.get(id);
-					if (!dependencyAgent) return null;
-					config = {
-						adapterEntrypoint: `${OPT_AGENTOS_BIN}/${dependencyAgent.acpEntrypoint}`,
-					};
-				}
-
-				// An `/opt/agentos` agent package is materialized into the VM at
-				// boot, so it is always "installed" — its adapter is a real command.
-				if (config.adapterEntrypoint || !config.acpAdapter) {
-					return {
-						id,
-						adapterEntrypoint: config.adapterEntrypoint,
-						installed: true,
-					};
-				}
-
-				let installed = false;
-				try {
-					// Check the software roots that provide this adapter package.
-					const vmPrefix = `/root/node_modules/${config.acpAdapter}`;
-					let hostPkgJsonPath: string | null = null;
-					for (const root of this._softwareRoots) {
-						if (root.vmPath === vmPrefix) {
-							hostPkgJsonPath = join(root.hostPath, "package.json");
-							break;
-						}
-					}
-					if (!hostPkgJsonPath) {
-						throw new Error("no package source");
-					}
-					readFileSync(hostPkgJsonPath);
-					installed = true;
-				} catch {
-					// Package not installed
-				}
-				return {
-					id,
-					acpAdapter: config.acpAdapter,
-					agentPackage: config.agentPackage,
-					installed,
-				};
-			})
-			.filter((entry): entry is AgentRegistryEntry => entry !== null);
+	/**
+	 * Returns all registered agents with their installation status. Thin forwarder:
+	 * sends `AcpListAgentsRequest` and maps the response. The sidecar enumerates the
+	 * projected `/opt/agentos` packages (the client parses no manifests). Every such
+	 * agent is a package materialized into the VM, so `installed` is always `true`.
+	 */
+	async listAgents(): Promise<AgentRegistryEntry[]> {
+		const response = await this._sendAcpRequest({
+			tag: "AcpListAgentsRequest",
+			val: { reserved: false },
+		});
+		if (response.tag !== "AcpListAgentsResponse") {
+			throw new Error(`unexpected list_agents response: ${response.tag}`);
+		}
+		return response.val.agents.map((agent) => ({
+			id: agent.id,
+			installed: agent.installed,
+		}));
 	}
 
 	private _syncSessionState(
@@ -4459,46 +4373,22 @@ export class AgentOs {
 		agentType: AgentType,
 		options?: CreateSessionOptions,
 	): Promise<{ sessionId: string }> {
-		let config = this._resolveAgentConfig(agentType);
-		if (!config) {
-			// Lazily link an agent dependency on first use: agent packages are not
-			// projected by default (each carries a full node closure), so resolve
-			// the @agentos-software/* dep whose packed manifest name matches and
-			// link it into the running VM now. linkSoftware registers its
-			// entrypoint/env from the package's own agentos-package.json.
-			const dependencyAgent = resolveDependencyAgents().get(String(agentType));
-			if (dependencyAgent) {
-				await this.linkSoftware({ packageDir: dependencyAgent.packageDir });
-				config = this._resolveAgentConfig(agentType);
-			}
-		}
-		if (!config) {
-			throw new Error(`Unknown agent type: ${agentType}`);
-		}
-
-		// System-prompt assembly and injection (launch args / OPENCODE_CONTEXTPATHS) are owned by
-		// the sidecar at AcpCreateSessionRequest. The host only forwards additionalInstructions /
-		// skipOsInstructions plus the agent's static launch args and env.
-		const launchArgs = [...(config.launchArgs ?? [])];
-		const launchEnv = { ...config.defaultEnv, ...options?.env };
+		// The client is npm-agnostic: it sends only the agent NAME. The sidecar
+		// resolves the name -> package -> entrypoint/env/launchArgs from the
+		// projected `/opt/agentos/<name>/current/agentos-package.json` and spawns
+		// (including the agent's static launch args and manifest env defaults).
+		// System-prompt assembly/injection (launch args / OPENCODE_CONTEXTPATHS) is
+		// owned by the sidecar; the host only forwards additionalInstructions /
+		// skipOsInstructions plus the caller's env.
+		const launchEnv = { ...options?.env };
 		const sessionCwd = options?.cwd ?? "/workspace";
-		// Every agent is an `/opt/agentos` package now: the config carries a
-		// pre-resolved guest command path (`adapterEntrypoint`) that the sidecar
-		// spawns directly. There is no npm adapter resolution.
-		const adapterEntrypoint = config.adapterEntrypoint;
-		if (!adapterEntrypoint) {
-			throw new Error(
-				`agent "${String(agentType)}" config has no adapterEntrypoint`,
-			);
-		}
 
 		const response = await this._sendAcpRequest({
 			tag: "AcpCreateSessionRequest",
 			val: {
 				agentType: String(agentType),
 				runtime: AcpRuntimeKind.JavaScript,
-				adapterEntrypoint,
-				args: launchArgs,
+				args: [],
 				env: new Map(Object.entries(launchEnv)),
 				cwd: sessionCwd,
 				mcpServers: JSON.stringify(options?.mcpServers ?? []),
@@ -4573,29 +4463,11 @@ export class AgentOs {
 		agentType: AgentType,
 		options?: ResumeSessionOptions,
 	): Promise<ResumeSessionResult> {
-		const config = this._resolveAgentConfig(agentType);
-		if (!config) {
-			throw new Error(`Unknown agent type: ${agentType}`);
-		}
-
-		// Every agent is an `/opt/agentos` package now: the config carries a
-		// pre-resolved guest command path (`adapterEntrypoint`). There is no npm
-		// adapter resolution.
-		const adapterEntrypoint = config.adapterEntrypoint;
-		if (!adapterEntrypoint) {
-			throw new Error(
-				`agent "${String(agentType)}" config has no adapterEntrypoint`,
-			);
-		}
+		// The client is npm-agnostic: it sends only the agent NAME. The sidecar
+		// resolves the name -> package -> entrypoint/env/launchArgs from the
+		// projected manifest, exactly as createSession does.
 		const sessionCwd = options?.cwd ?? "/workspace";
-		// The resume wire request has no dedicated `adapterEntrypoint` field; carry
-		// the resolved entrypoint through env under the sidecar's reserved key. The
-		// sidecar reads it and strips it before launching the adapter.
-		const launchEnv = {
-			...config.defaultEnv,
-			...options?.env,
-			[RESUME_ADAPTER_ENTRYPOINT_ENV]: adapterEntrypoint,
-		};
+		const launchEnv = { ...options?.env };
 
 		const response = await this._sendAcpRequest({
 			tag: "AcpResumeSessionRequest",
@@ -5338,15 +5210,6 @@ export class AgentOs {
 		} catch {
 			return "reject";
 		}
-	}
-
-	/**
-	 * Resolve an agent config by ID. Agents are /opt/agentos packages
-	 * registered from their manifests (explicit software at create, or lazily
-	 * linked dependency agents) — there is no hardcoded fallback config.
-	 */
-	private _resolveAgentConfig(agentType: string): AgentConfig | undefined {
-		return this._softwareAgentConfigs.get(agentType);
 	}
 
 	/**

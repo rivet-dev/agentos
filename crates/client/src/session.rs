@@ -10,7 +10,6 @@
 //! [`JsonRpcResponse`] whose `error` field may be set.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 
@@ -20,15 +19,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use agentos_protocol::generated::v1::{
-    AcpCloseSessionRequest, AcpCreateSessionRequest, AcpGetSessionStateRequest, AcpRequest,
-    AcpResponse, AcpResumeSessionRequest, AcpRuntimeKind, AcpSessionCreatedResponse,
-    AcpSessionRequest, AcpSessionStateResponse,
+    AcpCloseSessionRequest, AcpCreateSessionRequest, AcpGetSessionStateRequest,
+    AcpListAgentsRequest, AcpRequest, AcpResponse, AcpResumeSessionRequest, AcpRuntimeKind,
+    AcpSessionCreatedResponse, AcpSessionRequest, AcpSessionStateResponse,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_client::wire;
 
 use crate::agent_os::{AgentOs, SessionEntry};
-use crate::config::{AgentOsConfig, ToolKit};
+use crate::config::ToolKit;
 use crate::error::ClientError;
 use crate::json_rpc::{JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcResponse};
 use crate::stream::Subscription;
@@ -36,13 +35,6 @@ use crate::{CLOSED_SESSION_ID_RETENTION_LIMIT, PERMISSION_TIMEOUT_MS};
 
 /// ACP method name for legacy permission requests/responses.
 const LEGACY_PERMISSION_METHOD: &str = "request/permission";
-
-/// Reserved `env` key on `AcpResumeSessionRequest` carrying the resolved adapter
-/// bin entrypoint. The resume wire request omits a dedicated `adapterEntrypoint`
-/// field; the sidecar reads the entrypoint from this key and strips it before
-/// launching the adapter. Must stay in sync with the sidecar constant of the same
-/// name in `crates/agentos-sidecar/src/acp_extension.rs`.
-const RESUME_ADAPTER_ENTRYPOINT_ENV: &str = "AGENT_OS_RESUME_ADAPTER_ENTRYPOINT";
 
 /// ACP method name for permission requests issued by the agent to the host (TS
 /// `ACP_PERMISSION_METHOD`). Used by the host-request ACP dispatcher in `agent_os.rs`.
@@ -130,81 +122,15 @@ pub struct SessionInfo {
     pub agent_type: String,
 }
 
-/// A registry agent entry from `list_agents`. Mirrors the TS `AgentRegistryEntry`:
-/// every agent is an `/opt/agentos` package, so `adapter_entrypoint` is the
-/// pre-resolved guest command path and the legacy npm `acp_adapter`/`agent_package`
-/// fields are absent. `installed` is always `true` (the package is materialized into
+/// A registry agent entry from `list_agents`. Mirrors the TS `AgentRegistryEntry`.
+/// The client is npm-agnostic and parses no manifests: `list_agents` is a sidecar
+/// ACP RPC that enumerates the projected `/opt/agentos` packages. The entry is just
+/// the agent `id`; `installed` is always `true` (the package is materialized into
 /// the VM at boot).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRegistryEntry {
     pub id: String,
-    #[serde(rename = "acpAdapter", skip_serializing_if = "Option::is_none")]
-    pub acp_adapter: Option<String>,
-    #[serde(rename = "agentPackage", skip_serializing_if = "Option::is_none")]
-    pub agent_package: Option<String>,
-    #[serde(rename = "adapterEntrypoint", skip_serializing_if = "Option::is_none")]
-    pub adapter_entrypoint: Option<String>,
     pub installed: bool,
-}
-
-/// The symlink farm on `$PATH` inside the VM (mirrors TS `OPT_AGENTOS_BIN`). Every
-/// agent adapter is spawned via `/opt/agentos/bin/<acpEntrypoint>`.
-const OPT_AGENTOS_BIN: &str = "/opt/agentos/bin";
-
-/// An agent config resolved dynamically from an `/opt/agentos` package manifest
-/// (port of the TS `AgentConfig` for an `/opt/agentos` agent). `adapter_entrypoint`
-/// is the pre-resolved guest command path the sidecar spawns directly.
-struct ResolvedAgentConfig {
-    adapter_entrypoint: String,
-    default_env: BTreeMap<String, String>,
-    launch_args: Vec<String>,
-}
-
-/// The `agentos-package.json` manifest, read host-side to resolve agents: the bare
-/// package `name` (the `create_session(name)` id) plus an optional agent block.
-#[derive(serde::Deserialize)]
-struct AgentPackageManifest {
-    name: String,
-    #[serde(default)]
-    agent: Option<AgentPackageAgentBlock>,
-}
-
-#[derive(serde::Deserialize)]
-struct AgentPackageAgentBlock {
-    #[serde(rename = "acpEntrypoint")]
-    acp_entrypoint: String,
-    #[serde(default)]
-    env: BTreeMap<String, String>,
-    #[serde(default, rename = "launchArgs")]
-    launch_args: Vec<String>,
-}
-
-/// Read `<dir>/agentos-package.json` host-side, tolerating a missing/malformed
-/// manifest by returning `None` (mirrors the TS `tryReadAgentosPackageManifest` +
-/// `if (!manifest?.agent) continue` registration behavior).
-fn read_agent_package_manifest(dir: &str) -> Option<AgentPackageManifest> {
-    let manifest_path = Path::new(dir).join("agentos-package.json");
-    let text = std::fs::read_to_string(manifest_path).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-/// Resolve an agent type to its config by scanning the configured `/opt/agentos`
-/// package manifests for one whose `name` matches and that carries an agent block
-/// (the TS `_softwareAgentConfigs.get(agentType)` lookup). Spawns via
-/// `/opt/agentos/bin/<acpEntrypoint>`. There is NO hardcoded agent registry.
-fn resolve_agent_config(config: &AgentOsConfig, agent_type: &str) -> Option<ResolvedAgentConfig> {
-    config.packages.iter().find_map(|package| {
-        let manifest = read_agent_package_manifest(&package.dir)?;
-        if manifest.name != agent_type {
-            return None;
-        }
-        let agent = manifest.agent?;
-        Some(ResolvedAgentConfig {
-            adapter_entrypoint: format!("{OPT_AGENTOS_BIN}/{}", agent.acp_entrypoint),
-            default_env: agent.env,
-            launch_args: agent.launch_args,
-        })
-    })
 }
 
 /// MCP server config used by `create_session`.
@@ -1206,30 +1132,27 @@ impl AgentOs {
         sessions
     }
 
-    /// List available agents. Dynamically scans the configured `/opt/agentos` package
-    /// manifests (keyed by manifest `name`) for those carrying an agent block — the
-    /// same resolution the TS client uses. Every such agent is an `/opt/agentos`
-    /// package materialized into the VM at boot, so `installed` is always `true` and
-    /// the entry carries the pre-resolved `adapter_entrypoint`.
-    pub fn list_agents(&self) -> Vec<AgentRegistryEntry> {
-        self.config()
-            .packages
-            .iter()
-            .filter_map(|package| {
-                let manifest = read_agent_package_manifest(&package.dir)?;
-                let agent = manifest.agent?;
-                Some(AgentRegistryEntry {
-                    id: manifest.name,
-                    acp_adapter: None,
-                    agent_package: None,
-                    adapter_entrypoint: Some(format!(
-                        "{OPT_AGENTOS_BIN}/{}",
-                        agent.acp_entrypoint
-                    )),
-                    installed: true,
-                })
+    /// List available agents. A thin forwarder: sends `AcpListAgentsRequest` and
+    /// maps the sidecar's response. The sidecar enumerates the projected
+    /// `/opt/agentos` packages (client parses no manifests). Every such agent is a
+    /// package materialized into the VM at boot, so `installed` is always `true`.
+    pub async fn list_agents(&self) -> Result<Vec<AgentRegistryEntry>> {
+        let response = self
+            .send_acp_request(AcpRequest::AcpListAgentsRequest(AcpListAgentsRequest {
+                reserved: false,
+            }))
+            .await?;
+        let AcpResponse::AcpListAgentsResponse(listed) = response else {
+            return Err(unexpected_acp_response("AcpListAgentsRequest", response).into());
+        };
+        Ok(listed
+            .agents
+            .into_iter()
+            .map(|agent| AgentRegistryEntry {
+                id: agent.id,
+                installed: agent.installed,
             })
-            .collect()
+            .collect())
     }
 
     /// Create an ACP session. Resolves the agent config, merges env (user wins), creates the session
@@ -1242,18 +1165,10 @@ impl AgentOs {
         agent_type: &str,
         options: CreateSessionOptions,
     ) -> Result<SessionId> {
-        // Resolve the agent dynamically from the configured `/opt/agentos` package
-        // manifests (keyed by manifest `name`). The config carries a pre-resolved
-        // guest command path (`adapter_entrypoint`) the sidecar spawns directly.
-        let config = resolve_agent_config(self.config(), agent_type)
-            .ok_or_else(|| ClientError::Sidecar(format!("Unknown agent type: {agent_type}")))?;
-        let adapter_entrypoint = config.adapter_entrypoint;
-
-        // Merge env: agent manifest default_env (lowest) -> user env (wins).
-        let mut env: BTreeMap<String, String> = config.default_env;
-        for (key, value) in &options.env {
-            env.insert(key.clone(), value.clone());
-        }
+        // The client is npm-agnostic: it sends only the agent name. The sidecar
+        // resolves the name -> package -> entrypoint/env/launchArgs from the
+        // projected `/opt/agentos/<name>/current/agentos-package.json` and spawns.
+        let env: BTreeMap<String, String> = options.env.clone();
 
         let cwd = options
             .cwd
@@ -1277,8 +1192,7 @@ impl AgentOs {
                 AcpCreateSessionRequest {
                     agent_type: agent_type.to_string(),
                     runtime: AcpRuntimeKind::JavaScript,
-                    adapter_entrypoint,
-                    args: config.launch_args,
+                    args: Vec::new(),
                     env: env.into_iter().collect(),
                     cwd,
                     mcp_servers: serde_json::to_string(&mcp_servers).map_err(|error| {
@@ -1380,23 +1294,10 @@ impl AgentOs {
         agent_type: &str,
         options: ResumeSessionOptions,
     ) -> Result<ResumeSessionResult> {
-        // Resolve the agent dynamically from the configured `/opt/agentos` package
-        // manifests (keyed by manifest `name`), exactly as `create_session` does.
-        let config = resolve_agent_config(self.config(), agent_type)
-            .ok_or_else(|| ClientError::Sidecar(format!("Unknown agent type: {agent_type}")))?;
-        let adapter_entrypoint = config.adapter_entrypoint;
-
-        // Merge env: agent manifest default_env (lowest) -> user env (wins), then carry
-        // the resolved adapter entrypoint under the sidecar's reserved key (the resume
-        // wire request has no dedicated `adapterEntrypoint` field).
-        let mut env: BTreeMap<String, String> = config.default_env;
-        for (key, value) in &options.env {
-            env.insert(key.clone(), value.clone());
-        }
-        env.insert(
-            RESUME_ADAPTER_ENTRYPOINT_ENV.to_string(),
-            adapter_entrypoint,
-        );
+        // The client is npm-agnostic: it sends only the agent name. The sidecar
+        // resolves the name -> package -> entrypoint/env/launchArgs from the
+        // projected manifest, exactly as `create_session` does.
+        let env: BTreeMap<String, String> = options.env.clone();
 
         let cwd = options
             .cwd
