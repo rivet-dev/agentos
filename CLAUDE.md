@@ -85,6 +85,7 @@ Every limit, timeout, bounded queue/buffer, and per-entity collection MUST be bo
 - Subscription methods are delivered through actor events; lifecycle behavior belongs in actor sleep/destroy hooks.
 - Agent adapters must use real upstream agent SDKs. Do not replace SDK adapters with direct API-call stubs.
 - Host-native agent wrappers are not allowed; agents run through the VM runtime supplied by secure-exec.
+- **The Rust (`crates/client`) and TypeScript (`packages/core`) clients MUST behave IDENTICALLY.** They are two implementations of the same client surface; any change to one must be mirrored in the other in the same change. In particular, agent resolution is DYNAMIC and manifest-name-keyed with NO hardcoded agent list: an agent type is the `name` of a configured `/opt/agentos` package's `agentos-package.json` manifest, resolved to `adapterEntrypoint = /opt/agentos/bin/<agent.acpEntrypoint>` (plus the manifest's `env`/`launchArgs`) and spawned directly — never a hardcoded `AGENT_CONFIGS`/`BUILTIN_AGENT_IDS` table or a legacy `/root/node_modules/<adapter>` npm lookup. The only sanctioned divergence is TS-runtime-only conveniences a compiled Rust binary has no equivalent of (e.g. lazily linking a not-yet-configured `@agentos-software/*` agent via Node module resolution in `resolveDependencyAgents()`); the resolution semantics for configured packages, the public method surface, and the wire behavior must match exactly.
 
 ## Extension Authoring
 

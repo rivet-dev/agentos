@@ -43,7 +43,7 @@
 - Currently configured agents: PI (`@agentos-software/pi`), PI CLI (`@agentos-software/pi-cli`), OpenCode (`@agentos-software/opencode`), Claude (`@agentos-software/claude-code`), and Codex (`@agentos-software/codex` + `@agentos-software/codex-cli`).
 - **No host agent exceptions.** Host-native wrappers and host binary launch paths are not allowed. OpenCode support must use the real upstream OpenCode implementation rebuilt into the VM adapter package and executed inside the VM.
 - `createSession("pi")` spawns the ACP adapter inside the VM, which calls the Pi SDK directly
-- Keep `src/agents.ts` aligned with the shipped registry agent packages. Derive the built-in `AgentType` union from `AGENT_CONFIGS` instead of maintaining a separate manual list, and verify launch args/env with the mock-adapter session tests when adding or changing an agent.
+- Agents are resolved DYNAMICALLY, with NO hardcoded registry. There is no `AGENT_CONFIGS` table; `AgentType` is just `string` (a manifest `name`). `createSession(name)`/`listAgents()` resolve agents from the configured `/opt/agentos` package manifests (keyed by manifest `name`, `adapterEntrypoint = /opt/agentos/bin/<agent.acpEntrypoint>`) plus the `@agentos-software/*` dependency agents linked lazily on first use (`resolveDependencyAgents()` in `default-software.ts`). Adding/changing an agent = changing its package manifest (in the secure-exec registry), not this file; verify launch args/env with the mock-adapter session tests. The Rust client (`crates/client`) MUST resolve agents the SAME dynamic, manifest-name-keyed way — see the root `CLAUDE.md` client-parity rule.
 - In `createSession()`, treat `skipOsInstructions` as "skip the base `/etc/agentos/instructions.md` text" only. Still call agent `prepareInstructions(...)` when session-level `additionalInstructions` or tool-reference content exists, and forward `skipBase` through the options object instead of blanking out the caller's extra instructions.
 - ACP agents that issue live `session/request_permission` calls during `session/prompt` cannot rely on queued session events alone. Route those permission round-trips through the sidecar callback channel (`SidecarRequestPayload`) so the host can answer them before the prompt request completes.
 - Native-sidecar inbound ACP host callbacks are explicit sidecar-request payloads now. If Rust forwards an unknown ACP JSON-RPC request, answer it through `SidecarRequestPayload.type === "acp_request"` with an `acp_request_result` JSON-RPC response; otherwise the sidecar will only synthesize `-32601` after the callback transport is unavailable or times out.
@@ -63,7 +63,7 @@ Each agent type needs:
 - `acpAdapter`: npm package name for the ACP adapter (e.g., `@agentos-software/pi`)
 - `agentPackage`: npm package name for the underlying agent (e.g., `@mariozechner/pi-coding-agent`)
 - Any environment variables or flags needed
-- Package-provided agent descriptors registered through `processSoftware()` override the hardcoded `AGENT_CONFIGS` entries at session launch time. If a default shell/env tweak matters for both built-in and packaged flows, keep the two config surfaces in sync.
+- An agent's launch config (adapter entrypoint, launch args, default env) lives entirely in its `/opt/agentos` package `agentos-package.json` manifest (`agent.acpEntrypoint`/`launchArgs`/`env`), which the client reads at registration time. There is no second hardcoded config surface to keep in sync — a default shell/env tweak is a manifest change.
 
 ## Testing
 

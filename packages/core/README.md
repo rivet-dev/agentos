@@ -112,7 +112,7 @@ await vm.dispose();
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `createSession` | `createSession(agentType: AgentType \| string, options?: CreateSessionOptions): Promise<{ sessionId: string }>` | Launch an agent and return a session ID |
+| `createSession` | `createSession(agentType: AgentType, options?: CreateSessionOptions): Promise<{ sessionId: string }>` | Launch an agent and return a session ID |
 | `listSessions` | `listSessions(): SessionInfo[]` | List active sessions |
 | `destroySession` | `destroySession(sessionId: string): Promise<void>` | Gracefully cancel and close a session |
 
@@ -177,8 +177,8 @@ await vm.dispose();
 - `BatchReadResult` — Result of a batch read (path, content, error?)
 
 **Agent**
-- `AgentType` — `"pi" | "pi-cli" | "opencode" | "claude"`
-- `AgentConfig` — Agent configuration (acpAdapter, agentPackage, prepareInstructions)
+- `AgentType` — `string` (a package manifest `name`, e.g. `"pi"`, `"claude"`); agents are resolved dynamically from the configured `/opt/agentos` package manifests, so any manifest `name` is valid
+- `AgentConfig` — Agent configuration (adapterEntrypoint, launchArgs, defaultEnv)
 - `AgentRegistryEntry` — Registry entry (id, acpAdapter, agentPackage, installed)
 
 **Session**

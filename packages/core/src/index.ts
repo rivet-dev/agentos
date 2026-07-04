@@ -1,7 +1,6 @@
 // @rivet-dev/agentos
 
 export { AgentOs, AgentOsSidecar } from "./agent-os.js";
-export { AGENT_CONFIGS } from "./agents.js";
 export {
 	CronManager,
 	InvalidScheduleError,

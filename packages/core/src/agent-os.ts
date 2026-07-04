@@ -4456,7 +4456,7 @@ export class AgentOs {
 	}
 
 	async createSession(
-		agentType: AgentType | string,
+		agentType: AgentType,
 		options?: CreateSessionOptions,
 	): Promise<{ sessionId: string }> {
 		let config = this._resolveAgentConfig(agentType);
@@ -4570,7 +4570,7 @@ export class AgentOs {
 	 */
 	async resumeSession(
 		sessionId: string,
-		agentType: AgentType | string,
+		agentType: AgentType,
 		options?: ResumeSessionOptions,
 	): Promise<ResumeSessionResult> {
 		const config = this._resolveAgentConfig(agentType);

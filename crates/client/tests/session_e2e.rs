@@ -103,31 +103,17 @@ async fn session_surface_create_prompt_events_close() {
     let os = common::new_vm_with_loopback_ports(vec![mock.port]).await;
 
     // --- Runtime-independent session surface (no agents/V8 needed) --------------------------------
-    // Real assertions against the real sidecar: the registry starts empty, the built-in agent set is
-    // listed, and every session operation on an unknown id reports SessionNotFound.
+    // Real assertions against the real sidecar: the registry starts empty, agents are resolved
+    // dynamically from the configured `/opt/agentos` package manifests (there is NO hardcoded
+    // agent registry), and every session operation on an unknown id reports SessionNotFound.
     assert!(os.list_sessions().is_empty(), "a fresh VM has no sessions");
+    // This VM configures no `/opt/agentos` agent packages, so no agents are listed. (The TS
+    // client can additionally surface not-yet-linked npm dependency agents via Node module
+    // resolution — a runtime concept a compiled Rust binary has no equivalent of.)
     let agents = os.list_agents();
-    let expected_agent_ids = ["pi", "pi-cli", "opencode", "claude"];
-    assert_eq!(
-        agents.len(),
-        expected_agent_ids.len(),
-        "only the active built-in agents must be listed"
-    );
-    for expected_agent_id in expected_agent_ids {
-        assert!(
-            agents.iter().any(|agent| agent.id == expected_agent_id),
-            "list_agents must include the {expected_agent_id} agent config"
-        );
-    }
     assert!(
-        agents.iter().all(|agent| agent.id != "codex"),
-        "list_agents must not include a codex built-in agent config"
-    );
-    assert!(
-        agents
-            .iter()
-            .any(|a| a.id == "pi" && a.acp_adapter == "@agentos-software/pi"),
-        "list_agents must include the pi agent config"
+        agents.is_empty(),
+        "with no agent packages configured, list_agents must be empty (dynamic resolution)"
     );
     assert!(
         matches!(

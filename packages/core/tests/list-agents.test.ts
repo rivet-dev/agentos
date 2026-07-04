@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-import { AGENT_CONFIGS } from "../src/agents.js";
+import { OPT_AGENTOS_BIN } from "../src/index.js";
 
+// Agents are resolved DYNAMICALLY from the configured `/opt/agentos` package
+// manifests (keyed by manifest `name`) plus the `@agentos-software/*` dependency
+// agents linked lazily on first `createSession`. There is no hardcoded registry.
 describe("listAgents()", () => {
 	let vm: AgentOs;
 
@@ -13,7 +16,7 @@ describe("listAgents()", () => {
 		await vm.dispose();
 	});
 
-	test("returns the shipped built-in agents", () => {
+	test("lists the shipped dependency agents", () => {
 		const agents = vm.listAgents();
 		const ids = agents.map((a) => a.id);
 		expect(ids).toContain("pi");
@@ -22,36 +25,26 @@ describe("listAgents()", () => {
 		expect(ids).toContain("claude");
 	});
 
-	test("each entry exposes the current built-in adapter metadata", () => {
+	test("each entry exposes a pre-resolved /opt/agentos adapter entrypoint", () => {
 		const agents = vm.listAgents();
-		for (const [id, config] of Object.entries(AGENT_CONFIGS)) {
+		for (const id of ["pi", "pi-cli", "opencode", "claude"]) {
 			const agent = agents.find((entry) => entry.id === id);
 			expect(agent).toBeDefined();
-			expect(agent?.acpAdapter).toBe(config.acpAdapter);
-			expect(agent?.agentPackage).toBe(config.agentPackage);
+			// Every agent is an `/opt/agentos` package: the entry carries a
+			// pre-resolved guest command path and no legacy npm adapter metadata.
+			expect(agent?.adapterEntrypoint?.startsWith(`${OPT_AGENTOS_BIN}/`)).toBe(
+				true,
+			);
+			expect(agent?.acpAdapter).toBeUndefined();
+			expect(agent?.agentPackage).toBeUndefined();
 			expect(typeof agent?.installed).toBe("boolean");
 		}
 	});
 
-	test("installed is true when adapter package exists", () => {
+	test("every agent package is materialized at boot, so installed is true", () => {
 		const agents = vm.listAgents();
-		for (const id of Object.keys(AGENT_CONFIGS)) {
-			expect(agents.find((agent) => agent.id === id)?.installed).toBe(true);
-		}
-	});
-
-	test("installed is false when adapter package is missing", async () => {
-		// Create a VM with no /root/node_modules mount, so no adapter packages
-		// are resolvable and every agent must report installed: false.
-		const vm2 = await AgentOs.create({});
-		try {
-			const agents = vm2.listAgents();
-			// No packages installed in /tmp
-			for (const agent of agents) {
-				expect(agent.installed).toBe(false);
-			}
-		} finally {
-			await vm2.dispose();
+		for (const agent of agents) {
+			expect(agent.installed).toBe(true);
 		}
 	});
 });

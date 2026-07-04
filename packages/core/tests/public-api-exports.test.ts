@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import {
-	AGENT_CONFIGS,
 	AgentOs,
 	AgentOsSidecar,
 	CronManager,
@@ -54,7 +53,6 @@ describe("root public API exports", () => {
 	test("re-exports the main public value surface from the root entrypoint", () => {
 		expect(AgentOs).toBeTypeOf("function");
 		expect(AgentOsSidecar).toBeTypeOf("function");
-		expect(AGENT_CONFIGS).toBeTypeOf("object");
 		expect(CronManager).toBeTypeOf("function");
 		expect(TimerScheduleDriver).toBeTypeOf("function");
 		expect(createHostDirBackend).toBeTypeOf("function");
