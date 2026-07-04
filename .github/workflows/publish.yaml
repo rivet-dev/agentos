@@ -408,7 +408,6 @@ jobs:
         run: |
           npx turbo build \
             --filter='!@rivet-dev/agentos-playground' \
-            --filter='!@agentos/website' \
             --filter='!./examples/*' \
             --filter='!./examples/quickstart/*'
       - name: Finalize package versions for publish (inject optionalDeps)
