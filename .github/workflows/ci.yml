@@ -6,7 +6,10 @@ on:
     branches: [main]
 
 jobs:
-  ci:
+  # Cheap job — TypeScript/boundary/metadata checks + rustfmt. No heavy cargo
+  # compile, so it runs on GitHub-hosted runners (small, dynamic), NOT the
+  # self-hosted pool (which is reserved for the cache-heavy rust build below).
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,37 +21,23 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            . -> target
-      # The website consumes the shared docs theme as a workspace member at
-      # website/vendor/theme (a gitignored local symlink for dev). Materialize it
-      # from the published theme at the pinned sha so the root workspace resolves
-      # and the lockfile validates. The website itself is NOT built in CI — it
-      # deploys via website/Dockerfile (which clones + builds the theme and
-      # generates the FA Pro icons); CI only needs the member present to install.
+          components: rustfmt
       - run: |
           git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
           git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
           rm -rf website/vendor/theme && mkdir -p website/vendor
           cp -r /tmp/docs-theme/packages/theme website/vendor/theme
-      # The committed dependency state is FILE-BASED: @secure-exec/* and
-      # @agentos-software/* resolve via link:/path into the sibling
-      # ../secure-exec, materialized here at the committed .github/refs/secure-exec sha.
-      # The whole built sibling is cached on that sha, so only a ref bump pays
-      # the full secure-exec build (native wasm included).
-      - run: node scripts/verify-file-deps.mjs
-      - name: Cache secure-exec sibling
-        uses: actions/cache@v4
-        with:
-          path: ../secure-exec
-          key: secure-exec-sibling-${{ runner.os }}-${{ hashFiles('.github/refs/secure-exec') }}
-      - name: Prepare secure-exec sibling (clone at .github/refs/secure-exec + build)
-        run: node scripts/secure-exec-dep.mjs prepare-build --build
       - run: pnpm install --frozen-lockfile
-      - run: npx turbo build --filter='!@agentos/website'
+      # website deploys via its own Dockerfile and is NOT built in CI. It is a
+      # workspace member only in local dev (commented out of pnpm-workspace.yaml
+      # when committed), so `--filter='!@agentos/website'` errors with "No package
+      # found in workspace" in CI. Apply the exclusion only when website is a member.
+      - run: |
+          if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
+            npx turbo build --filter='!@agentos/website'
+          else
+            npx turbo build
+          fi
       - run: pnpm --dir scripts/publish run check-types
       - run: pnpm --dir scripts/publish test
       - run: bash scripts/check-secure-exec-rust-boundary.test.sh
@@ -63,9 +52,50 @@ jobs:
       - run: node scripts/check-secure-exec-package-boundary.mjs
       - run: node --test scripts/check-no-escaping-local-deps.test.mjs
       - run: node scripts/check-no-escaping-local-deps.mjs
-      # The committed cargo deps are path deps into ../secure-exec, prepared by
-      # the sibling step above (which also syncs the crate version requirement).
       - run: cargo fmt --check
+      - run: pnpm check-types
+      - run: pnpm lint
+        continue-on-error: true
+
+  # Heavy job — compiles the secure-exec crates (via prepare-build), runs clippy,
+  # the Rust test suites, and the sidecar-heavy e2e tests. CPU/mem intensive and
+  # relies on the warm cargo/sccache cache, so it runs on the self-hosted
+  # agentos-builder pool. On self-hosted the persistent on-disk target/ +
+  # CARGO_HOME + sccache replace the GHA cache steps (absent here).
+  rust:
+    runs-on: [self-hosted, agentos-builder]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: |
+          git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
+          git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
+          rm -rf website/vendor/theme && mkdir -p website/vendor
+          cp -r /tmp/docs-theme/packages/theme website/vendor/theme
+      - run: pnpm install --frozen-lockfile
+      # website deploys via its own Dockerfile and is NOT built in CI. It is a
+      # workspace member only in local dev (commented out of pnpm-workspace.yaml
+      # when committed), so `--filter='!@agentos/website'` errors with "No package
+      # found in workspace" in CI. Apply the exclusion only when website is a member.
+      - run: |
+          if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
+            npx turbo build --filter='!@agentos/website'
+          else
+            npx turbo build
+          fi
+      # Build the Rust crates against the pinned secure-exec. For a preview pin this
+      # clones secure-exec at the pinned <sha> and switches cargo to local path deps
+      # (crates.io has no preview track, so an unreleased crate API — e.g. a new
+      # Extension hook — is only reachable via the clone); no-op for release pins.
+      # Mirrors the same step in publish.yaml so PR CI matches the build.
+      - name: Prepare secure-exec crates
+        run: node scripts/secure-exec-dep.mjs prepare-build
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test -p agentos-protocol -- --test-threads=1
       - run: cargo test -p agentos-sidecar -- --test-threads=1
@@ -75,9 +105,6 @@ jobs:
       - run: cargo test -p agentos-client -- --test-threads=1
         env:
           AGENT_OS_CLIENT_ALLOW_E2E_SKIPS: '1'
-      - run: pnpm check-types
-      - run: pnpm lint
-        continue-on-error: true
       - if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         run: pnpm test
         env:
