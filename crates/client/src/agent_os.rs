@@ -419,6 +419,8 @@ impl AgentOs {
                     loopback_exempt_ports: config.loopback_exempt_ports.clone(),
                     packages,
                     packages_mount_at: config.packages_mount_at.clone().unwrap_or_default(),
+                    bootstrap_commands: Vec::new(),
+                    tool_shim_commands: Vec::new(),
                 }),
             )
             .await?
@@ -1024,6 +1026,13 @@ fn serialize_create_vm_config_for_sidecar(
                 high_resolution_time: None,
             }
         }),
+        bootstrap_commands: Some(vec![
+            String::from("node"),
+            String::from("npm"),
+            String::from("npx"),
+            String::from("python"),
+            String::from("python3"),
+        ]),
     })
 }
 

@@ -3,13 +3,9 @@ import { randomUUID } from "node:crypto";
 import {
 	existsSync,
 	mkdirSync,
-	mkdtempSync,
 	readdirSync,
-	rmSync,
 	statSync,
-	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import {
 	join,
 	posix as posixPath,
@@ -1303,7 +1299,6 @@ const RUNTIME_BOOTSTRAP_COMMANDS = [
 	"python",
 	"python3",
 ] as const;
-const KERNEL_COMMAND_STUB = "#!/bin/sh\n# kernel command stub\n";
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
 const SIDECAR_BUILD_INPUTS = [
@@ -1358,7 +1353,6 @@ function findBootstrapSeedEntry(
 
 function createKernelBootstrapLower(
 	config: RootFilesystemConfig | undefined,
-	commandNames: string[],
 	extraEntries: FilesystemEntry[] = [],
 ): RootSnapshotExport | null {
 	const includesBundledBaseLayer = !(config?.disableDefaultBaseLayer ?? false);
@@ -1402,25 +1396,6 @@ function createKernelBootstrapLower(
 			gid: 0,
 			content: "AA==",
 			encoding: "base64",
-		});
-	}
-
-	const uniqueCommands = [...new Set(commandNames)].sort((a, b) =>
-		a.localeCompare(b),
-	);
-	for (const command of uniqueCommands) {
-		const stubPath = `/bin/${command}`;
-		if (existingPaths.has(stubPath)) {
-			continue;
-		}
-		entries.push({
-			path: stubPath,
-			type: "file",
-			mode: "755",
-			uid: 0,
-			gid: 0,
-			content: KERNEL_COMMAND_STUB,
-			encoding: "utf8",
 		});
 	}
 
@@ -1629,7 +1604,6 @@ async function resolveCompatLocalMounts(
 
 function collectSidecarMountPlan(options: {
 	mounts?: MountConfig[];
-	shimDir: string | null;
 }): {
 	sidecarMounts: Array<ReturnType<typeof serializeMountConfigForSidecar>>;
 	hostMounts: HostMountInfo[];
@@ -1689,37 +1663,11 @@ function collectSidecarMountPlan(options: {
 		pushMount(mount);
 	}
 
-	if (options.shimDir) {
-		pushMount({
-			path: "/usr/local/bin",
-			plugin: createHostDirBackend({
-				hostPath: options.shimDir,
-				readOnly: true,
-			}),
-			readOnly: true,
-		});
-	}
-
 	hostMounts.sort((left, right) => right.vmPath.length - left.vmPath.length);
 	hostPathMappings.sort(
 		(left, right) => right.vmPath.length - left.vmPath.length,
 	);
 	return { sidecarMounts, hostMounts, hostPathMappings };
-}
-
-function materializeToolShimDir(toolKits: ToolKit[]): string {
-	const shimDir = mkdtempSync(join(tmpdir(), "agentos-host-tools-shims-"));
-	writeFileSync(join(shimDir, "agentos"), KERNEL_COMMAND_STUB, { mode: 0o755 });
-
-	for (const toolKit of toolKits) {
-		writeFileSync(
-			join(shimDir, `agentos-${toolKit.name}`),
-			KERNEL_COMMAND_STUB,
-			{ mode: 0o755 },
-		);
-	}
-
-	return shimDir;
 }
 
 function collectToolkitBootstrapCommands(toolKits: ToolKit[]): string[] {
@@ -2763,17 +2711,17 @@ export class AgentOs {
 			const toolBootstrapCommands = collectToolkitBootstrapCommands(
 				toolKits ?? [],
 			);
-			const bootstrapLower = createKernelBootstrapLower(
-				options?.rootFilesystem,
-				[...RUNTIME_BOOTSTRAP_COMMANDS, ...toolBootstrapCommands],
-			);
+			const bootstrapCommands = [
+				...RUNTIME_BOOTSTRAP_COMMANDS,
+				...toolBootstrapCommands,
+			];
+			const bootstrapLower = createKernelBootstrapLower(options?.rootFilesystem);
 			let toolReference = "";
 			let rootBridge: NativeSidecarKernelProxy | null = null;
 			let kernel: Kernel | null = null;
 			let client: SidecarProcess | null = null;
 			let createdNativeVm: CreatedVm | null = null;
 			let nativeSession: AuthenticatedSession | null = null;
-			let toolShimDir: string | null = null;
 			let cleanedUp = false;
 
 			const cleanup = async (): Promise<void> => {
@@ -2781,17 +2729,10 @@ export class AgentOs {
 					return;
 				}
 				cleanedUp = true;
-				if (toolShimDir) {
-					rmSync(toolShimDir, { recursive: true, force: true });
-					toolShimDir = null;
-				}
 			};
 
 			try {
 				const env: Record<string, string> = getBaseEnvironment();
-				if (toolKits && toolKits.length > 0) {
-					toolShimDir = materializeToolShimDir(toolKits);
-				}
 				// Guest command paths. The sidecar owns the `/opt/agentos` projection and
 				// reports the exact projected package commands after `configureVm`.
 				// Tool-shim commands are added below.
@@ -2799,7 +2740,6 @@ export class AgentOs {
 				const { sidecarMounts, hostMounts, hostPathMappings } =
 					collectSidecarMountPlan({
 						mounts: options?.mounts,
-						shimDir: toolShimDir,
 					});
 				// Reuse the sidecar handle's single shared native process; this VM
 				// becomes another tenant of it rather than spawning its own process.
@@ -2822,6 +2762,7 @@ export class AgentOs {
 					permissions: sidecarPermissions,
 					limits: options?.limits,
 					loopbackExemptPorts: options?.loopbackExemptPorts ?? [],
+					bootstrapCommands,
 					// 0.3: the Node builtin allow-list moved from configureVm to
 					// VM creation. `undefined` => engine default allow-list;
 					// `[]` => deny all; `[..]` => exactly those. Platform and
@@ -2866,6 +2807,7 @@ export class AgentOs {
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 					packages: sidecarPackages,
 					packagesMountAt: OPT_AGENTOS_ROOT,
+					toolShimCommands: toolBootstrapCommands,
 				});
 				for (const command of configuredVm.projectedCommands) {
 					commandGuestPaths.set(command.name, command.guestPath);

@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
-import { tmpdir } from "node:os";
 import * as path from "node:path";
 import * as posixPath from "node:path/posix";
 import { fileURLToPath } from "node:url";
@@ -34,7 +33,6 @@ const S_IFREG = 0o100000;
 const S_IFDIR = 0o040000;
 const S_IFLNK = 0o120000;
 const MAX_SYMLINK_DEPTH = 40;
-const KERNEL_COMMAND_STUB = "#!/bin/sh\n# kernel command stub\n";
 const NODE_RUNTIME_BOOTSTRAP_COMMANDS = [
 	"node",
 	"npm",
@@ -1865,8 +1863,8 @@ function rootEntryExecutable(
 	return kind === "file" && (mode & 0o111) !== 0;
 }
 
-function createBootstrapEntries(commandNames: string[]): RootFilesystemEntry[] {
-	const entries: RootFilesystemEntry[] = [
+function createBootstrapEntries(): RootFilesystemEntry[] {
+	return [
 		{
 			path: "/",
 			kind: "directory",
@@ -1894,21 +1892,6 @@ function createBootstrapEntries(commandNames: string[]): RootFilesystemEntry[] {
 			executable: false,
 		},
 	];
-	for (const command of [...new Set(commandNames)].sort((left, right) =>
-		left.localeCompare(right),
-	)) {
-		entries.push({
-			path: `/bin/${command}`,
-			kind: "file",
-			mode: 0o755,
-			uid: 0,
-			gid: 0,
-			content: KERNEL_COMMAND_STUB,
-			encoding: "utf8",
-			executable: true,
-		});
-	}
-	return entries;
 }
 
 function mergeRootFilesystemEntries(
@@ -2105,18 +2088,6 @@ function collectGuestCommandPaths(
 		}
 	}
 	return guestPaths;
-}
-
-async function ensureCommandStubs(
-	proxy: NativeSidecarKernelProxy,
-	commands: Iterable<string>,
-): Promise<void> {
-	const rootView = proxy.createRootView();
-	for (const command of commands) {
-		const stubPath = `/bin/${command}`;
-		await rootView.writeFile(stubPath, KERNEL_COMMAND_STUB);
-		await rootView.chmod(stubPath, 0o755);
-	}
 }
 
 class DeferredFileSystem implements VirtualFileSystem {
@@ -2540,37 +2511,14 @@ class NativeKernel implements Kernel {
 		return this.proxy?.zombieTimerCount ?? 0;
 	}
 
-	async mount(driver: KernelRuntimeDriver): Promise<void> {
-		await this.ensureReady();
-		if (!this.proxy || !this.client || !this.session || !this.vm) {
+	private async configureRuntimeCommandStubs(
+		commands: Iterable<string>,
+		commandDirs: string[] = this.mountedCommandDirs,
+	): Promise<void> {
+		if (!this.client || !this.session || !this.vm) {
 			throw new Error("kernel is not ready");
 		}
-		await driver.init?.(this);
-		if (driver.kind === "node") {
-			for (const command of driver.commands) {
-				this.commands.set(command, "node");
-			}
-			this.mountedRuntimeDrivers.push(driver);
-			await ensureCommandStubs(this.proxy, driver.commands);
-			return;
-		}
-
-		const commandDirs = driver.commandDirs ?? [];
-		if (commandDirs.length === 0) {
-			for (const command of driver.commands) {
-				this.commands.set(command, "wasmvm");
-			}
-			this.mountedRuntimeDrivers.push(driver);
-			await ensureCommandStubs(this.proxy, driver.commands);
-			return;
-		}
-
-		const startIndex = this.mountedCommandDirs.length;
-		const newGuestPaths =
-			driver.getGuestCommandPaths?.(startIndex) ??
-			collectGuestCommandPaths(commandDirs, startIndex);
-		const allCommandDirs = [...this.mountedCommandDirs, ...commandDirs];
-		const sidecarMounts = allCommandDirs.map((commandDir, index) =>
+		const sidecarMounts = commandDirs.map((commandDir, index) =>
 			serializeMountConfigForSidecar({
 				path: `/__secure_exec/commands/${index}`,
 				readOnly: true,
@@ -2589,7 +2537,43 @@ class NativeKernel implements Kernel {
 		await this.client.configureVm(this.session, this.vm, {
 			mounts: [...localMounts, ...sidecarMounts],
 			loopbackExemptPorts: this.loopbackExemptPorts,
+			bootstrapCommands: [...new Set(commands)].sort((left, right) =>
+				left.localeCompare(right),
+			),
 		});
+	}
+
+	async mount(driver: KernelRuntimeDriver): Promise<void> {
+		await this.ensureReady();
+		if (!this.proxy || !this.client || !this.session || !this.vm) {
+			throw new Error("kernel is not ready");
+		}
+		await driver.init?.(this);
+		if (driver.kind === "node") {
+			for (const command of driver.commands) {
+				this.commands.set(command, "node");
+			}
+			this.mountedRuntimeDrivers.push(driver);
+			await this.configureRuntimeCommandStubs(driver.commands);
+			return;
+		}
+
+		const commandDirs = driver.commandDirs ?? [];
+		if (commandDirs.length === 0) {
+			for (const command of driver.commands) {
+				this.commands.set(command, "wasmvm");
+			}
+			this.mountedRuntimeDrivers.push(driver);
+			await this.configureRuntimeCommandStubs(driver.commands);
+			return;
+		}
+
+		const startIndex = this.mountedCommandDirs.length;
+		const newGuestPaths =
+			driver.getGuestCommandPaths?.(startIndex) ??
+			collectGuestCommandPaths(commandDirs, startIndex);
+		const allCommandDirs = [...this.mountedCommandDirs, ...commandDirs];
+		await this.configureRuntimeCommandStubs(newGuestPaths.keys(), allCommandDirs);
 		this.proxy.registerCommandGuestPaths(newGuestPaths);
 		this.mountedCommandDirs.push(...commandDirs);
 		this.mountedRuntimeDrivers.push(driver);
@@ -2597,7 +2581,6 @@ class NativeKernel implements Kernel {
 		for (const command of newGuestPaths.keys()) {
 			this.commands.set(command, "wasmvm");
 		}
-		await ensureCommandStubs(this.proxy, newGuestPaths.keys());
 	}
 
 	async dispose(): Promise<void> {
@@ -2855,7 +2838,7 @@ class NativeKernel implements Kernel {
 					kind: "snapshot" as const,
 					entries: rootFilesystemEntriesForConfig(
 						mergeRootFilesystemEntries(
-							createBootstrapEntries([...NODE_RUNTIME_BOOTSTRAP_COMMANDS]),
+							createBootstrapEntries(),
 							snapshotEntries,
 						),
 					),
@@ -2878,6 +2861,7 @@ class NativeKernel implements Kernel {
 				? serializePermissionsForSidecar(bootstrapPermissions)
 				: undefined,
 			loopbackExemptPorts: this.loopbackExemptPorts,
+			bootstrapCommands: [...NODE_RUNTIME_BOOTSTRAP_COMMANDS],
 		};
 		const vm = await client.createVm(session, {
 			runtime: "java_script",
