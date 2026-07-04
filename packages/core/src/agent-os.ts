@@ -5,7 +5,6 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
-	readFileSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -2648,8 +2647,6 @@ export class AgentOs {
 	);
 	private _pendingShellExitPromises = new Set<Promise<number>>();
 	private _shellCounter = 0;
-	/** Command names linked into `/opt/agentos/bin` at runtime (via the sidecar). */
-	private _linkedCommands = new Set<string>();
 	private _acpTerminals = new Map<string, AcpTerminalEntry>();
 	private _acpTerminalCounter = 0;
 	private _softwareRoots: SoftwareRoot[];
@@ -2801,40 +2798,10 @@ export class AgentOs {
 				if (toolKits && toolKits.length > 0) {
 					toolShimDir = materializeToolShimDir(toolKits);
 				}
-				// Guest command paths. The sidecar owns the `/opt/agentos` projection,
-				// but the client's command map (rpc-client) still needs to KNOW the
-				// projected command names so its shell-exec guard (`this.commands.has("sh")`)
-				// and wasmvm routing work. Seed each projected package's commands from its
-				// `bin` map (mirroring the sidecar projection's command derivation), mapped
-				// to their projected `/opt/agentos/bin/<cmd>` path. Tool-shim commands are
-				// added below.
+				// Guest command paths. The sidecar owns the `/opt/agentos` projection and
+				// reports the exact projected package commands after `configureVm`.
+				// Tool-shim commands are added below.
 				const commandGuestPaths = new Map<string, string>();
-				const deriveProjectedCommandNames = (dir: string): string[] => {
-					try {
-						const pkg = JSON.parse(
-							readFileSync(join(dir, "package.json"), "utf8"),
-						) as { bin?: Record<string, string> | string; name?: string };
-						if (pkg.bin && typeof pkg.bin === "object") {
-							return Object.keys(pkg.bin);
-						}
-						if (typeof pkg.bin === "string") {
-							const base = pkg.name?.split("/").pop();
-							if (base) return [base];
-						}
-					} catch {
-						// no/invalid package.json — fall through to the bin/ scan
-					}
-					try {
-						return readdirSync(join(dir, "bin"));
-					} catch {
-						return [];
-					}
-				};
-				for (const ref of packageRefs) {
-					for (const cmd of deriveProjectedCommandNames(ref.dir)) {
-						commandGuestPaths.set(cmd, `/opt/agentos/bin/${cmd}`);
-					}
-				}
 				const { sidecarMounts, hostMounts, hostPathMappings } =
 					collectSidecarMountPlan({
 						mounts: options?.mounts,
@@ -2902,7 +2869,7 @@ export class AgentOs {
 						event.ownership.vm_id === nativeVm.vmId,
 					10_000,
 				);
-				await client.configureVm(session, nativeVm, {
+				const configuredVm = await client.configureVm(session, nativeVm, {
 					mounts: sidecarMounts,
 					permissions: sidecarPermissions,
 					commandPermissions: {},
@@ -2910,6 +2877,9 @@ export class AgentOs {
 					packages: sidecarPackages,
 					packagesMountAt: OPT_AGENTOS_ROOT,
 				});
+				for (const command of configuredVm.projectedCommands) {
+					commandGuestPaths.set(command.name, command.guestPath);
+				}
 				if (toolKits && toolKits.length > 0) {
 					toolReference = await registerToolkitsOnSidecar(
 						client,
@@ -3701,8 +3671,10 @@ export class AgentOs {
 			this._sidecarVm,
 			{ dir: ref.dir },
 		);
-		for (const command of commands) {
-			this._linkedCommands.add(command);
+		if (this.#kernel instanceof NativeSidecarKernelProxy) {
+			this.#kernel.registerCommandGuestPaths(
+				new Map(commands.map((command) => [command.name, command.guestPath])),
+			);
 		}
 		// The client parses no manifests: an `agent` block in the linked package is
 		// picked up by the sidecar (it owns the projected `/opt/agentos` and answers

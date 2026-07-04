@@ -28,8 +28,7 @@ use secure_exec_vm_config as vm_config;
 use crate::config::{
     AgentOsConfig, AgentOsLimits, HostTool, MountConfig, PermissionMode, Permissions,
     RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode as ConfigRootFilesystemMode,
-    RootLowerInput, SidecarJsBridgeCall, SidecarJsBridgeCallback,
-    TimerScheduleDriver, ToolKit,
+    RootLowerInput, SidecarJsBridgeCall, SidecarJsBridgeCallback, TimerScheduleDriver, ToolKit,
 };
 use crate::cron::CronManager;
 use crate::error::ClientError;
@@ -175,9 +174,8 @@ pub(crate) struct AgentOsInner {
     pub(crate) session_id: String,
     pub(crate) vm_id: String,
     pub(crate) request_counter: AtomicI64,
-    /// Command names linked at runtime via `link_software` (the sidecar owns the
-    /// `/opt/agentos` staging dir; this just tracks what we've asked it to link).
-    pub(crate) linked_commands: parking_lot::Mutex<std::collections::HashSet<String>>,
+    /// Projected command names and guest entrypoints reported by the sidecar.
+    pub(crate) projected_commands: parking_lot::Mutex<BTreeMap<String, String>>,
 
     // Process registries.
     pub(crate) process_registry_lock: parking_lot::Mutex<()>,
@@ -402,7 +400,7 @@ impl AgentOs {
         // 6. Configure the VM (vm scope). The sidecar owns the `/opt/agentos` package
         // projection: it builds the staging dir + registers the read-only host_dir
         // mount itself from the forwarded `packages`.
-        match transport
+        let projected_commands = match transport
             .request_wire(
                 wire_vm_ownership(&connection_id, &session_id, &vm_id),
                 wire::RequestPayload::ConfigureVmRequest(wire::ConfigureVmRequest {
@@ -425,7 +423,11 @@ impl AgentOs {
             )
             .await?
         {
-            wire::ResponsePayload::VmConfiguredResponse(_) => {}
+            wire::ResponsePayload::VmConfiguredResponse(configured) => configured
+                .projected_commands
+                .into_iter()
+                .map(|command| (command.name, command.guest_path))
+                .collect(),
             wire::ResponsePayload::RejectedResponse(rejected) => {
                 return Err(rejected_to_error(rejected));
             }
@@ -465,7 +467,7 @@ impl AgentOs {
                     "unexpected configure_vm response".to_string(),
                 ));
             }
-        }
+        };
 
         // 6b. Register host tool kits (if any): forward each tool definition via `register_host_callbacks`,
         //     record the host execute callbacks in the per-VM registry, and install the shared
@@ -575,7 +577,7 @@ impl AgentOs {
             session_id,
             vm_id,
             request_counter: AtomicI64::new(1),
-            linked_commands: parking_lot::Mutex::new(std::collections::HashSet::new()),
+            projected_commands: parking_lot::Mutex::new(projected_commands),
             process_registry_lock: parking_lot::Mutex::new(()),
             processes: SccHashMap::new(),
             process_counter: AtomicU64::new(1),
@@ -655,9 +657,9 @@ impl AgentOs {
             .await?;
         match response {
             wire::ResponsePayload::PackageLinkedResponse(linked) => {
-                let mut guard = inner.linked_commands.lock();
-                for cmd in linked.commands {
-                    guard.insert(cmd);
+                let mut guard = inner.projected_commands.lock();
+                for command in linked.projected_commands {
+                    guard.insert(command.name, command.guest_path);
                 }
                 Ok(())
             }
@@ -828,30 +830,6 @@ impl AgentOs {
     /// `AgentOs.sidecar` (e.g. `describe()` reports `active_vm_count` across VMs sharing a pool).
     pub fn sidecar(&self) -> Arc<AgentOsSidecar> {
         self.inner.sidecar.clone()
-    }
-
-    /// The commands each configured package *ships*, keyed by the package's
-    /// manifest name (matching [`SoftwareInfoDto::package`] on the actor-plugin
-    /// side). Read from each package dir the same way the sidecar's
-    /// `command_targets` does (`package.json` `bin`, else the `bin/` dir). An agent
-    /// package (no shipped commands) contributes an empty list.
-    ///
-    /// WORKAROUND: agent-os owns command *provisioning* (it forwards each package
-    /// dir), so it can read the host dirs here. The authoritative *resolved* set —
-    /// deduping when two packages provide the same command, priority order, and
-    /// executability — is owned by secure-exec's projection. This re-derives a
-    /// slice of that. TODO: replace with a secure-exec API that reports discovered
-    /// commands per package instead of us re-reading dirs.
-    pub fn provided_commands(&self) -> Vec<(String, Vec<String>)> {
-        self.inner
-            .config
-            .packages
-            .iter()
-            .filter_map(|package| {
-                let manifest = read_agentos_package_manifest(&package.dir).ok()?;
-                Some((manifest.name, package_command_names(&package.dir)))
-            })
-            .collect()
     }
 }
 
@@ -3584,13 +3562,10 @@ fn json_object<const N: usize>(entries: [(&str, Value); N]) -> Value {
 }
 
 /// The `agentos-package.json` manifest that lives at the root of every projected
-/// package dir. The client only needs the bare package `name` (for
-/// `provided_commands`); the sidecar owns agent resolution and reads
-/// commands/version from the dir itself.
+/// package dir. The client validates that the package manifest exists; the
+/// sidecar owns agent resolution and reads commands/version from the dir itself.
 #[derive(serde::Deserialize)]
-struct AgentosPackageManifest {
-    name: String,
-}
+struct AgentosPackageManifest {}
 
 /// Read `<dir>/agentos-package.json` (name only). An unreadable or malformed
 /// manifest is an explicit error, not a silent skip.
@@ -3626,42 +3601,6 @@ fn build_package_descriptors(
         });
     }
     Ok(descriptors)
-}
-
-/// The command names a projected package *ships*, mirroring the sidecar's
-/// `command_targets`: the keys of `<dir>/package.json`'s `bin` map (or the unscoped
-/// package name for a string `bin`), else the entries of `<dir>/bin/`. Sorted.
-fn package_command_names(dir: &str) -> Vec<String> {
-    let dir_path = std::path::Path::new(dir);
-    // Prefer the package.json `bin` field.
-    if let Ok(text) = std::fs::read_to_string(dir_path.join("package.json")) {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-            match value.get("bin") {
-                Some(serde_json::Value::String(_)) => {
-                    if let Some(name) = value.get("name").and_then(|v| v.as_str()) {
-                        let unscoped = name.rsplit('/').next().unwrap_or(name).to_owned();
-                        return vec![unscoped];
-                    }
-                }
-                Some(serde_json::Value::Object(map)) => {
-                    let mut names: Vec<String> = map.keys().cloned().collect();
-                    names.sort();
-                    return names;
-                }
-                _ => {}
-            }
-        }
-    }
-    // Fall back to the `bin/` directory listing.
-    let mut names: Vec<String> = std::fs::read_dir(dir_path.join("bin"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| !name.starts_with('_') && !name.starts_with('.'))
-        .collect();
-    names.sort();
-    names
 }
 
 fn serialize_mounts(config: &AgentOsConfig) -> Result<Vec<wire::MountDescriptor>, ClientError> {
