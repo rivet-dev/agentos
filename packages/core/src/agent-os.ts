@@ -3118,35 +3118,6 @@ export class AgentOs {
 		return (this.#kernel as unknown as { vfs: VirtualFileSystem }).vfs;
 	}
 
-	private async _copyPath(from: string, to: string): Promise<void> {
-		const stat = await this._vfs().lstat(from);
-		if (stat.isSymbolicLink) {
-			const target = await this._vfs().readlink(from);
-			await this._vfs().symlink(target, to);
-			return;
-		}
-		if (stat.isDirectory) {
-			await this._mkdirp(posixPath.dirname(to));
-			if (!(await this.#kernel.exists(to))) {
-				await this.#kernel.mkdir(to);
-			}
-			await this._vfs().chmod(to, stat.mode);
-			await this._vfs().chown(to, stat.uid, stat.gid);
-			const entries = await this.#kernel.readdir(from);
-			for (const entry of entries) {
-				if (entry === "." || entry === "..") continue;
-				const fromPath = from === "/" ? `/${entry}` : `${from}/${entry}`;
-				const toPath = to === "/" ? `/${entry}` : `${to}/${entry}`;
-				await this._copyPath(fromPath, toPath);
-			}
-			return;
-		}
-		const content = await this.#kernel.readFile(from);
-		await this.writeFile(to, content);
-		await this._vfs().chmod(to, stat.mode);
-		await this._vfs().chown(to, stat.uid, stat.gid);
-	}
-
 	async readFile(path: string): Promise<Uint8Array> {
 		this._assertSafeAbsolutePath(path);
 		return this.#kernel.readFile(path);
@@ -3228,49 +3199,36 @@ export class AgentOs {
 		options?: ReaddirRecursiveOptions,
 	): Promise<DirEntry[]> {
 		this._assertSafeAbsolutePath(path);
-		const maxDepth = options?.maxDepth;
 		const exclude = options?.exclude ? new Set(options.exclude) : undefined;
+		const entries = await this.#kernel.readdirRecursive(path, {
+			maxDepth: options?.maxDepth,
+		});
+		const excludedPrefixes: string[] = [];
 		const results: DirEntry[] = [];
 
-		// BFS queue: [dirPath, currentDepth]
-		const queue: [string, number][] = [[path, 0]];
-
-		while (queue.length > 0) {
-			const item = queue.shift();
-			if (!item) break;
-			const [dirPath, depth] = item;
-			const entries = await this.#kernel.readdir(dirPath);
-
-			for (const name of entries) {
-				if (name === "." || name === "..") continue;
-				if (exclude?.has(name)) continue;
-
-				const fullPath = dirPath === "/" ? `/${name}` : `${dirPath}/${name}`;
-				const s = await this.#kernel.stat(fullPath);
-
-				if (s.isSymbolicLink) {
-					results.push({
-						path: fullPath,
-						type: "symlink",
-						size: s.size,
-					});
-				} else if (s.isDirectory) {
-					results.push({
-						path: fullPath,
-						type: "directory",
-						size: s.size,
-					});
-					if (maxDepth === undefined || depth < maxDepth) {
-						queue.push([fullPath, depth + 1]);
-					}
-				} else {
-					results.push({
-						path: fullPath,
-						type: "file",
-						size: s.size,
-					});
-				}
+		for (const entry of entries) {
+			if (
+				excludedPrefixes.some(
+					(prefix) => entry.path === prefix || entry.path.startsWith(`${prefix}/`),
+				)
+			) {
+				continue;
 			}
+			if (exclude?.has(entry.name)) {
+				if (entry.isDirectory && !entry.isSymbolicLink) {
+					excludedPrefixes.push(entry.path);
+				}
+				continue;
+			}
+			results.push({
+				path: entry.path,
+				type: entry.isSymbolicLink
+					? "symlink"
+					: entry.isDirectory
+						? "directory"
+						: "file",
+				size: entry.size,
+			});
 		}
 
 		return results;
@@ -3312,30 +3270,14 @@ export class AgentOs {
 	}
 
 	async move(from: string, to: string): Promise<void> {
-		this._assertSafeAbsolutePath(from);
-		this._assertSafeAbsolutePath(to);
-		const sourceStat = await this._vfs().lstat(from);
-		if (!sourceStat.isDirectory || sourceStat.isSymbolicLink) {
-			return this.#kernel.rename(from, to);
-		}
-		await this._copyPath(from, to);
-		await this.delete(from, { recursive: true });
+		this._assertWritableAbsolutePath(from);
+		this._assertWritableAbsolutePath(to);
+		await this.#kernel.movePath(from, to);
 	}
 
 	async delete(path: string, options?: { recursive?: boolean }): Promise<void> {
-		this._assertSafeAbsolutePath(path);
-		const s = await this._vfs().lstat(path);
-		if (s.isDirectory) {
-			if (options?.recursive) {
-				const entries = await this.#kernel.readdir(path);
-				for (const entry of entries) {
-					if (entry === "." || entry === "..") continue;
-					await this.delete(`${path}/${entry}`, { recursive: true });
-				}
-			}
-			return this.#kernel.removeDir(path);
-		}
-		return this.#kernel.removeFile(path);
+		this._assertWritableAbsolutePath(path);
+		await this.#kernel.removePath(path, { recursive: options?.recursive ?? false });
 	}
 
 	async fetch(port: number, request: Request): Promise<Response> {

@@ -377,15 +377,6 @@ impl AgentOs {
         })
     }
 
-    /// Posix `dirname` over an already-normalized absolute path (mirrors `posixPath.dirname`).
-    fn posix_dirname(path: &str) -> String {
-        match path.rfind('/') {
-            None => String::from("."),
-            Some(0) => String::from("/"),
-            Some(idx) => path[..idx].to_string(),
-        }
-    }
-
     /// Join a parent directory with a child basename the way the TS fs code does (special-casing the
     /// root so it does not produce a leading `//`).
     fn join_child(dir: &str, child: &str) -> String {
@@ -435,6 +426,7 @@ impl AgentOs {
             content: None,
             encoding: None,
             recursive: false,
+            max_depth: None,
             mode: None,
             uid: None,
             gid: None,
@@ -539,6 +531,17 @@ impl AgentOs {
             .collect())
     }
 
+    async fn kernel_readdir_recursive(
+        &self,
+        path: &str,
+        max_depth: Option<u32>,
+    ) -> Result<Vec<wire::GuestDirEntry>> {
+        let mut request = Self::fs_request(GuestFilesystemOperation::ReadDirRecursive, path);
+        request.max_depth = max_depth;
+        let result = self.guest_fs_call(request).await?;
+        Ok(result.entries.unwrap_or_default())
+    }
+
     async fn kernel_stat(&self, path: &str) -> Result<VirtualStat> {
         let result = self
             .guest_fs_call(Self::fs_request(GuestFilesystemOperation::Stat, path))
@@ -555,51 +558,18 @@ impl AgentOs {
         Ok(Self::virtual_stat_from(stat))
     }
 
-    async fn kernel_readlink(&self, path: &str) -> Result<String> {
-        let result = self
-            .guest_fs_call(Self::fs_request(GuestFilesystemOperation::ReadLink, path))
-            .await?;
-        result.target.context("readlink response missing target")
-    }
-
-    async fn kernel_symlink(&self, target: &str, path: &str) -> Result<()> {
-        let mut request = Self::fs_request(GuestFilesystemOperation::Symlink, path);
-        request.target = Some(target.to_string());
+    async fn kernel_remove_path(&self, path: &str, recursive: bool) -> Result<()> {
+        let mut request = Self::fs_request(GuestFilesystemOperation::Remove, path);
+        request.recursive = recursive;
         self.guest_fs_call(request).await?;
         Ok(())
     }
 
-    async fn kernel_rename(&self, from: &str, to: &str) -> Result<()> {
-        let mut request = Self::fs_request(GuestFilesystemOperation::Rename, from);
+    async fn kernel_move_path(&self, from: &str, to: &str) -> Result<()> {
+        let mut request = Self::fs_request(GuestFilesystemOperation::Move, from);
         request.destination_path = Some(to.to_string());
+        request.recursive = true;
         self.guest_fs_call(request).await?;
-        Ok(())
-    }
-
-    async fn kernel_chmod(&self, path: &str, mode: u32) -> Result<()> {
-        let mut request = Self::fs_request(GuestFilesystemOperation::Chmod, path);
-        request.mode = Some(mode);
-        self.guest_fs_call(request).await?;
-        Ok(())
-    }
-
-    async fn kernel_chown(&self, path: &str, uid: u32, gid: u32) -> Result<()> {
-        let mut request = Self::fs_request(GuestFilesystemOperation::Chown, path);
-        request.uid = Some(uid);
-        request.gid = Some(gid);
-        self.guest_fs_call(request).await?;
-        Ok(())
-    }
-
-    async fn kernel_remove_file(&self, path: &str) -> Result<()> {
-        self.guest_fs_call(Self::fs_request(GuestFilesystemOperation::RemoveFile, path))
-            .await?;
-        Ok(())
-    }
-
-    async fn kernel_remove_dir(&self, path: &str) -> Result<()> {
-        self.guest_fs_call(Self::fs_request(GuestFilesystemOperation::RemoveDir, path))
-            .await?;
         Ok(())
     }
 
@@ -616,75 +586,6 @@ impl AgentOs {
             }
         }
         Ok(())
-    }
-
-    /// Recursive copy preserving mode/uid/gid and replicating symlinks (mirrors TS `_copyPath`).
-    /// Boxed because it recurses across an `async fn` boundary.
-    fn copy_path<'a>(
-        &'a self,
-        from: &'a str,
-        to: &'a str,
-    ) -> futures::future::BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            Self::assert_writable_absolute_path(to)?;
-            let stat = self.kernel_lstat(from).await?;
-            if stat.is_symbolic_link {
-                let target = self.kernel_readlink(from).await?;
-                self.kernel_symlink(&target, to).await?;
-                return Ok(());
-            }
-            if stat.is_directory {
-                self.mkdirp(&Self::posix_dirname(to)).await?;
-                if !self.kernel_exists(to).await? {
-                    self.kernel_mkdir(to).await?;
-                }
-                self.kernel_chmod(to, stat.mode).await?;
-                self.kernel_chown(to, stat.uid, stat.gid).await?;
-                let entries = self.kernel_readdir(from).await?;
-                for entry in entries {
-                    if entry == "." || entry == ".." {
-                        continue;
-                    }
-                    let from_path = Self::join_child(from, &entry);
-                    let to_path = Self::join_child(to, &entry);
-                    self.copy_path(&from_path, &to_path).await?;
-                }
-                return Ok(());
-            }
-            let content = self.kernel_read_file(from).await?;
-            self.write_file(to, content).await?;
-            self.kernel_chmod(to, stat.mode).await?;
-            self.kernel_chown(to, stat.uid, stat.gid).await?;
-            Ok(())
-        })
-    }
-
-    /// `delete`, boxed so the recursive child walk can cross the `async fn` boundary.
-    fn delete_inner<'a>(
-        &'a self,
-        path: &'a str,
-        recursive: bool,
-    ) -> futures::future::BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            let stat = self.kernel_lstat(path).await?;
-            if stat.is_directory {
-                if recursive {
-                    let entries = self.kernel_readdir(path).await?;
-                    for entry in entries {
-                        if entry == "." || entry == ".." {
-                            continue;
-                        }
-                        let child = format!("{path}/{entry}");
-                        // Mirror TS `delete` recursion, which re-runs the safe-path guard on each
-                        // child via the public `this.delete(...)` call before recursing.
-                        Self::assert_safe_absolute_path(&child)?;
-                        self.delete_inner(&child, true).await?;
-                    }
-                }
-                return self.kernel_remove_dir(path).await;
-            }
-            self.kernel_remove_file(path).await
-        })
     }
 }
 
@@ -818,50 +719,39 @@ impl AgentOs {
         options: ReaddirRecursiveOptions,
     ) -> Result<Vec<DirEntry>> {
         Self::assert_safe_absolute_path(path)?;
-        let max_depth = options.max_depth;
         let exclude: std::collections::HashSet<&str> =
             options.exclude.iter().map(String::as_str).collect();
+        let entries = self
+            .kernel_readdir_recursive(path, options.max_depth)
+            .await?;
+        let mut excluded_prefixes: Vec<String> = Vec::new();
         let mut results: Vec<DirEntry> = Vec::new();
 
-        // BFS queue of `(dir_path, current_depth)`.
-        let mut queue: std::collections::VecDeque<(String, u32)> =
-            std::collections::VecDeque::new();
-        queue.push_back((path.to_string(), 0));
-
-        while let Some((dir_path, depth)) = queue.pop_front() {
-            let entries = self.kernel_readdir(&dir_path).await?;
-            for name in entries {
-                if name == "." || name == ".." {
-                    continue;
-                }
-                if exclude.contains(name.as_str()) {
-                    continue;
-                }
-                let full_path = Self::join_child(&dir_path, &name);
-                let s = self.kernel_lstat(&full_path).await?;
-                if s.is_symbolic_link {
-                    results.push(DirEntry {
-                        path: full_path,
-                        entry_type: DirEntryType::Symlink,
-                        size: s.size,
-                    });
-                } else if s.is_directory {
-                    results.push(DirEntry {
-                        path: full_path.clone(),
-                        entry_type: DirEntryType::Directory,
-                        size: s.size,
-                    });
-                    if max_depth.is_none() || depth < max_depth.unwrap() {
-                        queue.push_back((full_path, depth + 1));
-                    }
-                } else {
-                    results.push(DirEntry {
-                        path: full_path,
-                        entry_type: DirEntryType::File,
-                        size: s.size,
-                    });
-                }
+        for entry in entries {
+            if excluded_prefixes.iter().any(|prefix| {
+                entry.path == *prefix || entry.path.starts_with(&format!("{prefix}/"))
+            }) {
+                continue;
             }
+            if exclude.contains(entry.name.as_str()) {
+                if entry.is_directory && !entry.is_symbolic_link {
+                    excluded_prefixes.push(entry.path);
+                }
+                continue;
+            }
+
+            let entry_type = if entry.is_symbolic_link {
+                DirEntryType::Symlink
+            } else if entry.is_directory {
+                DirEntryType::Directory
+            } else {
+                DirEntryType::File
+            };
+            results.push(DirEntry {
+                path: entry.path,
+                entry_type,
+                size: entry.size,
+            });
         }
 
         Ok(results)
@@ -942,24 +832,19 @@ impl AgentOs {
         Ok(())
     }
 
-    /// Move a path. `lstat(from)` no-follow; symlink/non-dir -> rename; real dir -> recursive copy
-    /// (preserve mode/uid/gid/symlinks) + recursive delete. (TS `move`.)
+    /// Move a path through the sidecar primitive. The kernel attempts rename first, then falls back
+    /// to recursive copy+remove on EXDEV.
     pub async fn move_path(&self, from: &str, to: &str) -> Result<()> {
         Self::assert_writable_absolute_path(from)?;
         Self::assert_writable_absolute_path(to)?;
-        let source_stat = self.kernel_lstat(from).await?;
-        if !source_stat.is_directory || source_stat.is_symbolic_link {
-            return self.kernel_rename(from, to).await;
-        }
-        self.copy_path(from, to).await?;
-        self.delete(from, DeleteOptions { recursive: true }).await
+        self.kernel_move_path(from, to).await
     }
 
-    /// Delete a path. `lstat` to discriminate; recursive manually recurses children then `remove_dir`;
-    /// non-recursive dir -> `remove_dir` (ENOTEMPTY if non-empty).
+    /// Delete a path through the sidecar primitive. Non-recursive directory deletes preserve
+    /// ENOTEMPTY semantics.
     pub async fn delete(&self, path: &str, options: DeleteOptions) -> Result<()> {
         Self::assert_writable_absolute_path(path)?;
-        self.delete_inner(path, options.recursive).await
+        self.kernel_remove_path(path, options.recursive).await
     }
 
     /// Convert a wire [`RootFilesystemEntry`] into the public snapshot [`FilesystemEntry`],

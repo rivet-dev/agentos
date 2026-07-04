@@ -401,6 +401,14 @@ export interface KernelInterface {
 	vfs: VirtualFileSystem;
 }
 
+export interface KernelRecursiveDirEntry {
+	name: string;
+	path: string;
+	isDirectory: boolean;
+	isSymbolicLink: boolean;
+	size: number;
+}
+
 export interface Kernel extends KernelInterface {
 	mount(driver: KernelRuntimeDriver): Promise<void>;
 	dispose(): Promise<void>;
@@ -422,11 +430,17 @@ export interface Kernel extends KernelInterface {
 	writeFile(path: string, content: string | Uint8Array): Promise<void>;
 	mkdir(path: string): Promise<void>;
 	readdir(path: string): Promise<string[]>;
+	readdirRecursive(
+		path: string,
+		options?: { maxDepth?: number },
+	): Promise<KernelRecursiveDirEntry[]>;
 	stat(path: string): Promise<VirtualStat>;
 	exists(path: string): Promise<boolean>;
 	removeFile(path: string): Promise<void>;
 	removeDir(path: string): Promise<void>;
+	removePath(path: string, options?: { recursive?: boolean }): Promise<void>;
 	rename(oldPath: string, newPath: string): Promise<void>;
+	movePath(oldPath: string, newPath: string): Promise<void>;
 	readonly commands: ReadonlyMap<string, string>;
 	readonly processes: ReadonlyMap<number, ProcessInfo>;
 	readonly env: Record<string, string>;
@@ -2746,6 +2760,14 @@ class NativeKernel implements Kernel {
 		return this.proxy!.readdir(targetPath);
 	}
 
+	async readdirRecursive(
+		targetPath: string,
+		options?: { maxDepth?: number },
+	): Promise<KernelRecursiveDirEntry[]> {
+		await this.ensureReady();
+		return this.proxy!.readdirRecursive(targetPath, options);
+	}
+
 	async stat(targetPath: string): Promise<VirtualStat> {
 		await this.ensureReady();
 		return this.proxy!.stat(targetPath);
@@ -2766,9 +2788,22 @@ class NativeKernel implements Kernel {
 		return this.proxy!.removeDir(targetPath);
 	}
 
+	async removePath(
+		targetPath: string,
+		options?: { recursive?: boolean },
+	): Promise<void> {
+		await this.ensureReady();
+		return this.proxy!.removePath(targetPath, options);
+	}
+
 	async rename(oldPath: string, newPath: string): Promise<void> {
 		await this.ensureReady();
 		return this.proxy!.rename(oldPath, newPath);
+	}
+
+	async movePath(oldPath: string, newPath: string): Promise<void> {
+		await this.ensureReady();
+		return this.proxy!.movePath(oldPath, newPath);
 	}
 
 	private tryResolveMountedCommand(command: string): boolean {

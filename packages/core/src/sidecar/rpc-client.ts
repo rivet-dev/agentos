@@ -1383,6 +1383,29 @@ export class NativeSidecarKernelProxy {
 		);
 	}
 
+	async readdirRecursive(
+		path: string,
+		options?: { maxDepth?: number },
+	): Promise<
+		Array<{
+			name: string;
+			path: string;
+			isDirectory: boolean;
+			isSymbolicLink: boolean;
+			size: number;
+		}>
+	> {
+		const local = this.resolveLocalMount(path);
+		if (local) {
+			return this.readdirRecursiveLocal(
+				local.mount.fs,
+				local.relativePath,
+				options?.maxDepth,
+			);
+		}
+		return this.client.readdirRecursive(this.session, this.vm, path, options);
+	}
+
 	async removeFile(path: string): Promise<void> {
 		return this.dispatchWrite(
 			path,
@@ -1397,6 +1420,48 @@ export class NativeSidecarKernelProxy {
 			(mount, relativePath) => mount.fs.removeDir(relativePath),
 			() => this.client.removeDir(this.session, this.vm, path),
 		);
+	}
+
+	async removePath(
+		path: string,
+		options?: { recursive?: boolean },
+	): Promise<void> {
+		return this.dispatchWrite(
+			path,
+			(mount, relativePath) =>
+				this.removePathLocal(mount.fs, relativePath, options?.recursive ?? false),
+			() =>
+				this.client.removePath(this.session, this.vm, path, {
+					recursive: options?.recursive ?? false,
+				}),
+		);
+	}
+
+	async copyPath(
+		fromPath: string,
+		toPath: string,
+		options?: { recursive?: boolean },
+	): Promise<void> {
+		const from = this.resolveLocalMount(fromPath);
+		const to = this.resolveLocalMount(toPath);
+		if (!!from !== !!to) {
+			throw errnoError("EXDEV", "cross-device link not permitted");
+		}
+		if (from && to) {
+			if (from.mount.path !== to.mount.path) {
+				throw errnoError("EXDEV", "cross-device link not permitted");
+			}
+			this.assertLocalWritable(to.mount);
+			return this.copyPathLocal(
+				from.mount.fs,
+				from.relativePath,
+				to.relativePath,
+				options?.recursive ?? false,
+			);
+		}
+		return this.client.copyPath(this.session, this.vm, fromPath, toPath, {
+			recursive: options?.recursive ?? false,
+		});
 	}
 
 	async rename(oldPath: string, newPath: string): Promise<void> {
@@ -1415,6 +1480,24 @@ export class NativeSidecarKernelProxy {
 		}
 
 		return this.client.rename(this.session, this.vm, oldPath, newPath);
+	}
+
+	async movePath(oldPath: string, newPath: string): Promise<void> {
+		const from = this.resolveLocalMount(oldPath);
+		const to = this.resolveLocalMount(newPath);
+
+		if (!!from !== !!to) {
+			throw errnoError("EXDEV", "cross-device link not permitted");
+		}
+		if (from && to) {
+			if (from.mount.path !== to.mount.path) {
+				throw errnoError("EXDEV", "cross-device link not permitted");
+			}
+			this.assertLocalWritable(from.mount);
+			return from.mount.fs.rename(from.relativePath, to.relativePath);
+		}
+
+		return this.client.movePath(this.session, this.vm, oldPath, newPath);
 	}
 
 	mountFs(
@@ -1958,6 +2041,107 @@ export class NativeSidecarKernelProxy {
 		for (const handler of entry.onStderr) {
 			handler(stderr);
 		}
+	}
+
+	private async readdirRecursiveLocal(
+		fs: VirtualFileSystem,
+		path: string,
+		maxDepth: number | undefined,
+	): Promise<
+		Array<{
+			name: string;
+			path: string;
+			isDirectory: boolean;
+			isSymbolicLink: boolean;
+			size: number;
+		}>
+	> {
+		const results: Array<{
+			name: string;
+			path: string;
+			isDirectory: boolean;
+			isSymbolicLink: boolean;
+			size: number;
+		}> = [];
+		const queue: Array<{ path: string; depth: number }> = [{ path, depth: 0 }];
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) break;
+			for (const name of await fs.readDir(current.path)) {
+				if (name === "." || name === "..") continue;
+				const child = posixPath.join(current.path, name);
+				const stat = await fs.lstat(child);
+				results.push({
+					name,
+					path: child,
+					isDirectory: stat.isDirectory,
+					isSymbolicLink: stat.isSymbolicLink,
+					size: stat.size,
+				});
+				if (
+					stat.isDirectory &&
+					!stat.isSymbolicLink &&
+					(maxDepth === undefined || current.depth < maxDepth)
+				) {
+					queue.push({ path: child, depth: current.depth + 1 });
+				}
+			}
+		}
+		return results;
+	}
+
+	private async removePathLocal(
+		fs: VirtualFileSystem,
+		path: string,
+		recursive: boolean,
+	): Promise<void> {
+		const stat = await fs.lstat(path);
+		if (stat.isDirectory && !stat.isSymbolicLink) {
+			if (recursive) {
+				for (const name of await fs.readDir(path)) {
+					if (name === "." || name === "..") continue;
+					await this.removePathLocal(fs, posixPath.join(path, name), true);
+				}
+			}
+			return fs.removeDir(path);
+		}
+		return fs.removeFile(path);
+	}
+
+	private async copyPathLocal(
+		fs: VirtualFileSystem,
+		fromPath: string,
+		toPath: string,
+		recursive: boolean,
+	): Promise<void> {
+		const stat = await fs.lstat(fromPath);
+		if (stat.isSymbolicLink) {
+			return fs.symlink(await fs.readlink(fromPath), toPath);
+		}
+		if (stat.isDirectory) {
+			if (!recursive) {
+				throw errnoError("EISDIR", "illegal operation on a directory");
+			}
+			await fs.mkdir(posixPath.dirname(toPath), { recursive: true });
+			if (!(await fs.exists(toPath))) {
+				await fs.createDir(toPath);
+			}
+			await fs.chmod(toPath, stat.mode);
+			await fs.chown(toPath, stat.uid, stat.gid);
+			for (const name of await fs.readDir(fromPath)) {
+				if (name === "." || name === "..") continue;
+				await this.copyPathLocal(
+					fs,
+					posixPath.join(fromPath, name),
+					posixPath.join(toPath, name),
+					true,
+				);
+			}
+			return;
+		}
+		await fs.writeFile(toPath, await fs.readFile(fromPath));
+		await fs.chmod(toPath, stat.mode);
+		await fs.chown(toPath, stat.uid, stat.gid);
 	}
 
 	private createFilesystemView(includeLocalMounts: boolean): VirtualFileSystem {
