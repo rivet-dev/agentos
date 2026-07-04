@@ -540,10 +540,6 @@ export class NativeSidecarKernelProxy {
 		const stderrChunks: Uint8Array[] = [];
 		const effectiveCwd = options?.cwd ?? this.defaultExecCwd ?? this.cwd;
 		const parsedCommand = parseSimpleExecCommand(command);
-		const resolveExecPath = (targetPath: string) =>
-			targetPath.startsWith("/")
-				? posixPath.normalize(targetPath)
-				: posixPath.normalize(posixPath.join(effectiveCwd, targetPath));
 		const runAndCapture = async (
 			proc: ManagedProcess,
 			stdinOverride?: string | Uint8Array,
@@ -591,54 +587,6 @@ export class NativeSidecarKernelProxy {
 				).toString("utf8"),
 			};
 		};
-		if (
-			parsedCommand &&
-			(parsedCommand[0] === "sh" || parsedCommand[0] === "/bin/sh") &&
-			parsedCommand[1] === "-c" &&
-			parsedCommand.length === 3
-		) {
-			const shellScript = parsedCommand[2].trim();
-			const exitMatch = shellScript.match(/^exit(?:\s+(-?\d+))?$/);
-			if (exitMatch) {
-				return {
-					exitCode: Number.parseInt(exitMatch[1] ?? "0", 10),
-					stdout: "",
-					stderr: "",
-				};
-			}
-			return this.exec(parsedCommand[2], options);
-		}
-		if (
-			parsedCommand &&
-			parsedCommand[0] === "chmod" &&
-			parsedCommand.length >= 3 &&
-			/^[0-7]{3,4}$/.test(parsedCommand[1] ?? "")
-		) {
-			const mode = Number.parseInt(parsedCommand[1]!, 8);
-			for (const target of parsedCommand.slice(2)) {
-				await this.client.chmod(
-					this.session,
-					this.vm,
-					resolveExecPath(target),
-					mode,
-				);
-			}
-			return { exitCode: 0, stdout: "", stderr: "" };
-		}
-		if (
-			parsedCommand &&
-			parsedCommand[0] === "stat" &&
-			parsedCommand.length === 4 &&
-			parsedCommand[1] === "-c" &&
-			parsedCommand[2] === "%a"
-		) {
-			const stat = await this.stat(resolveExecPath(parsedCommand[3]!));
-			return {
-				exitCode: 0,
-				stdout: `${(stat.mode & 0o777).toString(8)}\n`,
-				stderr: "",
-			};
-		}
 		const parsedCommandDriver = parsedCommand
 			? this.commands.get(parsedCommand[0])
 			: undefined;
