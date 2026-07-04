@@ -304,6 +304,8 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_)
+            | wire::ResponsePayload::GuestKernelResultResponse(_)
+            | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::PackageLinkedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected open_session response".to_string(),
@@ -370,6 +372,8 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_)
+            | wire::ResponsePayload::GuestKernelResultResponse(_)
+            | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::PackageLinkedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected create_vm response".to_string(),
@@ -451,6 +455,8 @@ impl AgentOs {
             | wire::ResponsePayload::PersistenceFlushedResponse(_)
             | wire::ResponsePayload::VmFetchResponse(_)
             | wire::ResponsePayload::ExtEnvelope(_)
+            | wire::ResponsePayload::GuestKernelResultResponse(_)
+            | wire::ResponsePayload::ResourceSnapshotResponse(_)
             | wire::ResponsePayload::PackageLinkedResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected configure_vm response".to_string(),
@@ -528,6 +534,8 @@ impl AgentOs {
                     | wire::ResponsePayload::PersistenceFlushedResponse(_)
                     | wire::ResponsePayload::VmFetchResponse(_)
                     | wire::ResponsePayload::ExtEnvelope(_)
+                    | wire::ResponsePayload::GuestKernelResultResponse(_)
+                    | wire::ResponsePayload::ResourceSnapshotResponse(_)
                     | wire::ResponsePayload::PackageLinkedResponse(_) => {
                         return Err(ClientError::Sidecar(
                             "unexpected register_host_callbacks response".to_string(),
@@ -633,12 +641,11 @@ impl AgentOs {
             .request_wire(
                 wire_vm_ownership(&inner.connection_id, &inner.session_id, &inner.vm_id),
                 wire::RequestPayload::LinkPackageRequest(wire::LinkPackageRequest {
-                    // The wire `PackageDescriptor` carries `{ name, dir, acpEntrypoint? }`;
-                    // forward all three from the client-side descriptor.
+                    // The wire `PackageDescriptor` carries only `{ dir }`; the
+                    // sidecar reads `name`/`acpEntrypoint` from the package's
+                    // `agentos-package.json` at `dir`.
                     package: wire::PackageDescriptor {
-                        name: descriptor.name,
                         dir: descriptor.dir,
-                        acp_entrypoint: descriptor.acp_entrypoint,
                     },
                 }),
             )
@@ -1039,6 +1046,7 @@ fn serialize_create_vm_config_for_sidecar(
                 // it forwards no snapshot. TODO: expose a snapshot bundle input on
                 // the Rust client config for parity if a Rust consumer needs it.
                 snapshot_userland_code: None,
+                high_resolution_time: None,
             }
         }),
     })
@@ -3614,11 +3622,11 @@ fn build_package_descriptors(
 ) -> Result<Vec<wire::PackageDescriptor>, ClientError> {
     let mut descriptors = Vec::with_capacity(config.packages.len());
     for package in &config.packages {
-        let manifest = read_agentos_package_manifest(&package.dir)?;
+        // Validate the package dir has a manifest, but the wire descriptor now
+        // carries only `dir`; the sidecar re-reads name/acpEntrypoint from it.
+        let _manifest = read_agentos_package_manifest(&package.dir)?;
         descriptors.push(wire::PackageDescriptor {
-            name: manifest.name,
             dir: package.dir.clone(),
-            acp_entrypoint: manifest.agent.and_then(|agent| agent.acp_entrypoint),
         });
     }
     Ok(descriptors)
