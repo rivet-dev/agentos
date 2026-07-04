@@ -8,7 +8,7 @@ mod common;
 
 use std::path::PathBuf;
 
-use agentos_client::{AgentOs, AgentOsConfig, OpenShellOptions, StdinInput};
+use agentos_client::{AgentOs, AgentOsConfig, OpenShellOptions, PackageRef, StdinInput};
 use futures::StreamExt;
 
 fn coreutils_package_dir() -> Option<PathBuf> {
@@ -33,7 +33,10 @@ async fn pty_shell_round_trip_via_boot_packages() {
 
     common::ensure_sidecar_env();
     let os = AgentOs::create(AgentOsConfig {
-        packages: vec![package_dir.to_string_lossy().into_owned()],
+        packages: vec![PackageRef {
+            dir: Some(package_dir.to_string_lossy().into_owned()),
+            tar: None,
+        }],
         ..Default::default()
     })
     .await

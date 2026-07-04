@@ -16,7 +16,7 @@ const SANDBOX_QUICKSTART_PERMISSIONS = {
 	binding: "allow",
 } as const;
 
-const SANDBOX_MOUNT_PATH = "/sandbox";
+const SANDBOX_MOUNT_PATH = "/mnt/sandbox";
 const SANDBOX_FILE_PATH = `${SANDBOX_MOUNT_PATH}/hello.txt`;
 const SANDBOX_FILE_CONTENT = "Hello from agentOS!";
 

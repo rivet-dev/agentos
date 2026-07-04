@@ -28,16 +28,16 @@ const TOOLCHAIN_CLI = resolve(
 
 /** Real published agent adapters, packed flat with native addons pruned. */
 const AGENTS = [
-	{ pkg: "@agentos-software/pi", acpEntrypoint: "pi-sdk-acp" },
-	{ pkg: "@agentos-software/claude-code", acpEntrypoint: "claude-sdk-acp" },
+	{ pkg: "@agentos-software/pi", agentId: "pi", acpEntrypoint: "pi-sdk-acp" },
+	{ pkg: "@agentos-software/claude-code", agentId: "claude", acpEntrypoint: "claude-sdk-acp" },
 ];
 
 describe.skipIf(!ENABLED).each(AGENTS)(
 	"real agent package end-to-end ($pkg)",
-	({ pkg, acpEntrypoint }) => {
+	({ pkg, agentId, acpEntrypoint }) => {
 		let vm: AgentOs;
 		let outRoot: string;
-		let packageDir: string;
+		let packageTar: string;
 
 		beforeAll(async () => {
 			outRoot = mkdtempSync(join(tmpdir(), "agentos-real-agent-"));
@@ -53,17 +53,17 @@ describe.skipIf(!ENABLED).each(AGENTS)(
 					acpEntrypoint,
 					"--prune-native",
 					"--out",
-					outRoot,
+					join(outRoot, "package.tar"),
 				],
 				{ encoding: "utf8" },
 			);
 			const match = stdout.match(/→\s+(\S+)/);
 			if (!match) throw new Error(`could not parse pack output: ${stdout}`);
-			packageDir = match[1];
+			packageTar = match[1];
 
 			vm = await AgentOs.create({
 				defaultSoftware: false,
-				software: [packageDir],
+				software: [{ packageTar }],
 			});
 		}, 120_000);
 
@@ -73,13 +73,13 @@ describe.skipIf(!ENABLED).each(AGENTS)(
 		});
 
 		test("lists the real agent as installed", () => {
-			const entry = vm.listAgents().find((a) => a.id === pkg);
+			const entry = vm.listAgents().find((a) => a.id === agentId);
 			expect(entry?.installed).toBe(true);
 			expect(entry?.adapterEntrypoint).toBe(`/opt/agentos/bin/${acpEntrypoint}`);
 		});
 
 		test("createSession launches the real adapter and returns a session", async () => {
-			const session = await vm.createSession(pkg);
+			const session = await vm.createSession(agentId);
 			expect(session.sessionId).toBeTruthy();
 			await vm.closeSession(session.sessionId);
 		}, 60_000);

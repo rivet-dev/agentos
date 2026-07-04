@@ -431,7 +431,10 @@ pub async fn close_session(
     if let Some(task) = vars.permission_tasks.remove(&live_session_id) {
         task.abort();
     }
-    if let Some(task) = vars.capture_tasks.remove(&exit_capture_key(&live_session_id)) {
+    if let Some(task) = vars
+        .capture_tasks
+        .remove(&exit_capture_key(&live_session_id))
+    {
         task.abort();
     }
     vars.live_sessions.remove(session_id);

@@ -37,6 +37,9 @@ npm install @rivet-dev/agentos-sandbox sandbox-agent
 
 `createSandboxFs` and `createSandboxBindings` come from `@rivet-dev/agentos-sandbox`. `SandboxAgent` and the provider helpers (such as `docker`) come from the `sandbox-agent` package.
 
+Pass a provider as `sandbox: { provider: docker() }`. Agent OS starts a Sandbox Agent client, mounts it at `/mnt/sandbox`, registers the process bindings, and disposes the sandbox client when the VM is disposed. In RivetKit actors, pass the provider directly to `agentOS(...)`; the provider starts a fresh client for each actor VM.
+
+<CodeGroup>
 <CodeSnippet file="examples/sandbox/server.ts" />
 
 ## Calling the mounted bindings
@@ -73,4 +76,3 @@ agentos-sandbox send-input --id "proc_abc123" --data "yes"
 ## Sandbox providers
 
 The extension works with any [Sandbox Agent](https://sandboxagent.dev) provider. See the [Sandbox Agent documentation](https://sandboxagent.dev) for available providers and setup instructions.
-

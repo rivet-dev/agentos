@@ -1,4 +1,7 @@
 import type { SoftwarePackageRef } from "./agentos-package.js";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { tryReadAgentosPackageManifest } from "./agentos-package.js";
 
 // ── Software Descriptor Types ────────────────────────────────────────
 
@@ -25,4 +28,29 @@ export interface SoftwareRoot {
  */
 export function defineSoftware<T extends SoftwareEntry>(desc: T): T {
 	return desc;
+}
+
+/**
+ * Resolve the agent-SDK snapshot bundle (an esbuild IIFE at
+ * `<dir>/dist/sdk-snapshot.js`) for the first snapshot-enabled agent package in
+ * the software set. Returns its source so it can be evaluated once into the
+ * per-sidecar V8 startup snapshot (`jsRuntime.snapshotUserlandCode`) and reused
+ * across sessions. Returns `undefined` when no agent opts in (`agent.snapshot`)
+ * or the bundle is absent -- the runtime then keeps the per-session import path.
+ */
+export function resolveAgentSnapshotBundle(
+	software: SoftwareInput[],
+): string | undefined {
+	const descriptors = software.flat();
+	for (const entry of descriptors) {
+		const dir = entry.packageDir;
+		if (dir === undefined) continue;
+		const manifest = tryReadAgentosPackageManifest(dir);
+		if (!manifest?.agent?.snapshot) continue;
+		const bundlePath = join(dir, "dist", "sdk-snapshot.js");
+		if (existsSync(bundlePath)) {
+			return readFileSync(bundlePath, "utf-8");
+		}
+	}
+	return undefined;
 }

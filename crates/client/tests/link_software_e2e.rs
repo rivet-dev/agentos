@@ -37,10 +37,10 @@ async fn link_software_makes_command_resolve_live() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("bin")).expect("mkdir bin");
     std::fs::write(
-        dir.join("package.json"),
+        dir.join("agentos-package.json"),
         r#"{"name":"linked-tool","version":"1.0.0"}"#,
     )
-    .expect("write package.json");
+    .expect("write agentos-package.json");
     let bin = dir.join("bin").join("linked-cmd");
     std::fs::write(
         &bin,
@@ -57,9 +57,8 @@ async fn link_software_makes_command_resolve_live() {
     .expect("create VM");
 
     os.link_software(PackageDescriptor {
-        name: "linked-tool".to_string(),
-        dir: dir.to_string_lossy().into_owned(),
-        acp_entrypoint: None,
+        dir: Some(dir.to_string_lossy().into_owned()),
+        tar: None,
     })
     .await
     .expect("link_software");

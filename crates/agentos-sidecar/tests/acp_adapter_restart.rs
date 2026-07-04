@@ -498,8 +498,7 @@ fn decode_single_agent_exited_event(events: &[EventFrame]) -> AcpAgentExitedEven
         if envelope.namespace != ACP_EXTENSION_NAMESPACE {
             continue;
         }
-        let event: AcpEvent =
-            serde_bare::from_slice(&envelope.payload).expect("decode ACP event");
+        let event: AcpEvent = serde_bare::from_slice(&envelope.payload).expect("decode ACP event");
         if let AcpEvent::AcpAgentExitedEvent(event) = event {
             exited.push(event);
         }
