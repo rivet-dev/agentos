@@ -31,6 +31,7 @@ export type {
 	TimingMitigation,
 	VirtualFileSystem,
 } from "@rivet-dev/agentos-core/internal/runtime-compat";
+export type { NodeModulesMountConfig } from "@rivet-dev/agentos-core";
 export {
 	allowAll,
 	allowAllChildProcess,
@@ -54,3 +55,4 @@ export {
 	rename,
 	stat,
 } from "@rivet-dev/agentos-core/internal/runtime-compat";
+export { nodeModulesMount } from "@rivet-dev/agentos-core";

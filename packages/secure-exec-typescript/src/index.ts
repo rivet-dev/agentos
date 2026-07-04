@@ -94,9 +94,14 @@ type CompilerResponse =
 type RuntimeCompilerEnvelope =
 	| { ok: true; result: CompilerResponse }
 	| { ok: false; errorMessage?: string };
+interface RuntimeNodeModulesMount {
+	guestPath: string;
+	hostPath: string;
+}
 
 const DEFAULT_COMPILER_SPECIFIER = "typescript";
 const moduleRequire = createRequire(import.meta.url);
+const GUEST_NODE_PATH_DELIMITER = ":";
 let nextRuntimeRequestId = 0;
 
 export function createTypeScriptTools(
@@ -165,8 +170,8 @@ async function runCompilerInRuntime(
 		);
 	}
 
-	const hostNodeModules = findNearestNodeModules(process.cwd());
-	if (!hostNodeModules) {
+	const nodeModulesMount = resolveNodeModulesMount(options);
+	if (!nodeModulesMount) {
 		throw new Error(
 			"Unable to locate host node_modules for TypeScript runtime",
 		);
@@ -190,7 +195,7 @@ async function runCompilerInRuntime(
 		} catch {}
 	}
 
-	return runCompilerWithKernelRuntime(options, request, hostNodeModules);
+	return runCompilerWithKernelRuntime(options, request, nodeModulesMount);
 }
 
 async function runCompilerWithRuntimeDriver(
@@ -222,7 +227,7 @@ function isUnavailableRuntimeDriverError(error: unknown): boolean {
 async function runCompilerWithKernelRuntime(
 	options: TypeScriptToolsOptions,
 	request: CompilerRequest,
-	hostNodeModules: string,
+	nodeModulesMount: RuntimeNodeModulesMount,
 ): Promise<CompilerResponse> {
 	const filesystem = options.systemDriver.filesystem;
 	if (!filesystem) {
@@ -244,12 +249,12 @@ async function runCompilerWithKernelRuntime(
 	const kernel = createKernel({
 		filesystem,
 		permissions: normalizeKernelPermissions(options.systemDriver.permissions),
-		env: buildRuntimeEnv(options),
+		env: buildRuntimeEnv(options, nodeModulesMount.guestPath),
 		cwd: request.options.cwd ?? "/root",
 		mounts: [
 			{
-				path: "/node_modules",
-				fs: new NodeFileSystem({ root: hostNodeModules }),
+				path: nodeModulesMount.guestPath,
+				fs: new NodeFileSystem({ root: nodeModulesMount.hostPath }),
 				readOnly: true,
 			},
 		],
@@ -326,6 +331,28 @@ function findNearestNodeModules(startDir: string): string | null {
 	}
 }
 
+function resolveNodeModulesMount(
+	options: TypeScriptToolsOptions,
+): RuntimeNodeModulesMount | null {
+	for (const mount of options.systemDriver.mounts) {
+		const config = mount.plugin.config;
+		if (
+			mount.plugin.id === "host_dir" &&
+			config &&
+			typeof config.hostPath === "string" &&
+			mount.path.endsWith("/node_modules")
+		) {
+			return {
+				guestPath: mount.path,
+				hostPath: config.hostPath,
+			};
+		}
+	}
+
+	const hostPath = findNearestNodeModules(process.cwd());
+	return hostPath ? { guestPath: "/node_modules", hostPath } : null;
+}
+
 function createFailureResult<TResult extends CompilerResponse>(
 	kind: CompilerRequest["kind"],
 	errorMessage?: string,
@@ -371,8 +398,12 @@ function normalizeCompilerFailureMessage(errorMessage?: string): string {
 
 function buildRuntimeEnv(
 	options: TypeScriptToolsOptions,
+	nodeModulesGuestPath: string,
 ): Record<string, string> {
 	const env = { ...(options.systemDriver.runtime.process.env ?? {}) };
+	env.NODE_PATH = [env.NODE_PATH, nodeModulesGuestPath]
+		.filter(Boolean)
+		.join(GUEST_NODE_PATH_DELIMITER);
 	if (options.memoryLimit !== undefined) {
 		const limit = Math.max(1, Math.floor(options.memoryLimit));
 		env.NODE_OPTIONS = [env.NODE_OPTIONS, `--max-old-space-size=${limit}`]

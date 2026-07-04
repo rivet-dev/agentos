@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { anthropic } from "@ai-sdk/anthropic";
 import { createTypeScriptTools } from "@secure-exec/typescript";
 import { generateText, stepCountIs, tool } from "ai";
@@ -8,15 +9,14 @@ import {
 	createNodeDriver,
 	createNodeRuntime,
 	createNodeRuntimeDriverFactory,
+	nodeModulesMount,
 } from "secure-exec";
 import { z } from "zod";
 
 const filesystem = createInMemoryFileSystem();
 const systemDriver = createNodeDriver({
 	filesystem,
-	moduleAccess: {
-		cwd: process.cwd(),
-	},
+	mounts: [nodeModulesMount(join(process.cwd(), "node_modules"))],
 	permissions: allowAll,
 });
 const runtimeDriverFactory = createNodeRuntimeDriverFactory();

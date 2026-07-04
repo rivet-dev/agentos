@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createTypeScriptTools } from "@secure-exec/typescript";
 import {
@@ -8,6 +8,7 @@ import {
 	createNodeDriver,
 	createNodeRuntime,
 	createNodeRuntimeDriverFactory,
+	nodeModulesMount,
 	type NodeRuntimeDriverFactory,
 } from "secure-exec";
 import { describe, expect, it } from "vitest";
@@ -23,7 +24,7 @@ function createTools() {
 		tools: createTypeScriptTools({
 			systemDriver: createNodeDriver({
 				filesystem,
-				moduleAccess: { cwd: workspaceRoot },
+				mounts: [nodeModulesMount(join(workspaceRoot, "node_modules"))],
 				permissions: allowAllFs,
 			}),
 			runtimeDriverFactory: createNodeRuntimeDriverFactory(),
@@ -214,7 +215,7 @@ describe("@secure-exec/typescript", () => {
 		const brokenTools = createTypeScriptTools({
 			systemDriver: createNodeDriver({
 				filesystem: createInMemoryFileSystem(),
-				moduleAccess: { cwd: workspaceRoot },
+				mounts: [nodeModulesMount(join(workspaceRoot, "node_modules"))],
 				permissions: allowAllFs,
 			}),
 			runtimeDriverFactory: createNodeRuntimeDriverFactory(),

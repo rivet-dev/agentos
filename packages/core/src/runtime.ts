@@ -264,6 +264,7 @@ export interface SystemDriver {
 	network?: NetworkAdapter;
 	commandExecutor?: CommandExecutor;
 	permissions?: Permissions;
+	mounts: readonly NodeModulesMountConfig[];
 	runtime: {
 		process: ProcessConfig;
 		os: OSConfig;
@@ -368,11 +369,18 @@ export interface BindingTree {
 
 export type BindingFunction = (...args: unknown[]) => unknown;
 
+export interface NodeModulesMountConfig {
+	path: string;
+	plugin: { id: "host_dir"; config: { hostPath: string; readOnly: boolean } };
+	readOnly: boolean;
+}
+
 export interface NodeDriverOptions {
 	filesystem?: VirtualFileSystem;
 	networkAdapter?: NetworkAdapter;
 	commandExecutor?: CommandExecutor;
 	permissions?: Permissions;
+	mounts?: readonly NodeModulesMountConfig[];
 	processConfig?: ProcessConfig;
 	osConfig?: OSConfig;
 }

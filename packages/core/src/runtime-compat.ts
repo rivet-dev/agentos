@@ -22,6 +22,7 @@ import {
 	type SidecarMountDescriptor,
 	serializeMountConfigForSidecar,
 } from "./sidecar/rpc-client.js";
+import type { NodeModulesMountConfig } from "./host-dir-mount.js";
 
 export const AF_INET = 2;
 export const AF_UNIX = 1;
@@ -359,6 +360,7 @@ export interface SystemDriver {
 	network?: NetworkAdapter;
 	commandExecutor?: CommandExecutor;
 	permissions?: Permissions;
+	mounts: readonly NodeModulesMountConfig[];
 	runtime: {
 		process: ProcessConfig;
 		os: OSConfig;
@@ -468,6 +470,7 @@ export interface NodeDriverOptions {
 	networkAdapter?: NetworkAdapter;
 	commandExecutor?: CommandExecutor;
 	permissions?: Permissions;
+	mounts?: readonly NodeModulesMountConfig[];
 	processConfig?: ProcessConfig;
 	osConfig?: OSConfig;
 }
@@ -1355,6 +1358,7 @@ export function createNodeDriver(
 		network: options.networkAdapter,
 		commandExecutor: options.commandExecutor,
 		permissions: options.permissions,
+		mounts: options.mounts ?? [],
 		runtime: {
 			process: options.processConfig ?? {},
 			os: options.osConfig ?? {},
