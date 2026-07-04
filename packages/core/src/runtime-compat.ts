@@ -1649,7 +1649,6 @@ function normalizeCommandLookup(command: string): string {
 interface DiscoveredWasmCommandEntry {
 	name: string;
 	hostPath: string;
-	dirOffset: number;
 }
 
 function isWasmBinaryFile(filePath: string): boolean {
@@ -1672,14 +1671,14 @@ function discoverWasmCommandEntries(
 ): DiscoveredWasmCommandEntry[] {
 	const discovered: DiscoveredWasmCommandEntry[] = [];
 	const seen = new Set<string>();
-	commandDirs.forEach((commandDir, dirOffset) => {
+	for (const commandDir of commandDirs) {
 		let entries: string[];
 		try {
 			entries = fsSync
 				.readdirSync(commandDir)
 				.sort((left, right) => left.localeCompare(right));
 		} catch {
-			return;
+			continue;
 		}
 		for (const entry of entries) {
 			if (entry.startsWith(".")) continue;
@@ -1690,7 +1689,6 @@ function discoverWasmCommandEntries(
 				discovered.push({
 					name: entry,
 					hostPath: fullPath,
-					dirOffset,
 				});
 				continue;
 			}
@@ -1701,12 +1699,11 @@ function discoverWasmCommandEntries(
 					discovered.push({
 						name: entry,
 						hostPath: fullPath,
-						dirOffset,
 					});
 				}
 			} catch {}
 		}
-	});
+	}
 	return discovered;
 }
 
@@ -1717,7 +1714,6 @@ class WasmVmRuntimeDescriptor implements KernelRuntimeDriver {
 	readonly commandDirs?: string[];
 	readonly _commandPaths = new Map<string, string>();
 	readonly _moduleCache = new Map<string, true>();
-	private readonly commandDirOffsets = new Map<string, number>();
 
 	constructor(options: WasmVmRuntimeOptions) {
 		this.commandDirs =
@@ -1754,21 +1750,6 @@ class WasmVmRuntimeDescriptor implements KernelRuntimeDriver {
 		return this._commandPaths.has(normalized);
 	}
 
-	getGuestCommandPaths(startIndex: number): ReadonlyMap<string, string> {
-		const guestPaths = new Map<string, string>();
-		for (const [name] of this._commandPaths) {
-			const dirOffset = this.commandDirOffsets.get(name);
-			if (dirOffset === undefined) {
-				continue;
-			}
-			guestPaths.set(
-				name,
-				`/__secure_exec/commands/${startIndex + dirOffset}/${name}`,
-			);
-		}
-		return guestPaths;
-	}
-
 	recordModuleExecution(command: string): void {
 		const normalized = normalizeCommandLookup(command);
 		if (
@@ -1787,11 +1768,9 @@ class WasmVmRuntimeDescriptor implements KernelRuntimeDriver {
 		const discovered = discoverWasmCommandEntries(this.commandDirs);
 		this.commands.length = 0;
 		this._commandPaths.clear();
-		this.commandDirOffsets.clear();
 		for (const entry of discovered) {
 			this.commands.push(entry.name);
 			this._commandPaths.set(entry.name, entry.hostPath);
-			this.commandDirOffsets.set(entry.name, entry.dirOffset);
 		}
 	}
 }
@@ -2086,22 +2065,6 @@ function planNodeFilesystemPassthroughMounts(
 		mounts,
 		passthroughDirectories,
 	};
-}
-
-function collectGuestCommandPaths(
-	commandDirs: string[],
-	startIndex = 0,
-): Map<string, string> {
-	const guestPaths = new Map<string, string>();
-	for (const entry of discoverWasmCommandEntries(commandDirs)) {
-		if (!guestPaths.has(entry.name)) {
-			guestPaths.set(
-				entry.name,
-				`/__secure_exec/commands/${startIndex + entry.dirOffset}/${entry.name}`,
-			);
-		}
-	}
-	return guestPaths;
 }
 
 class DeferredFileSystem implements VirtualFileSystem {
@@ -2464,10 +2427,6 @@ class NativeKernel implements Kernel {
 	private readonly pendingLocalMounts: LocalCompatMount[] = [];
 	private mountedCommandDirs: string[] = [];
 	private readonly mountedRuntimeDrivers: KernelRuntimeDriver[] = [];
-	private readonly runtimeDriverCommandDirStarts = new Map<
-		KernelRuntimeDriver,
-		number
-	>();
 	private readonly loopbackExemptPorts: number[];
 
 	constructor(
@@ -2528,7 +2487,7 @@ class NativeKernel implements Kernel {
 	private async configureRuntimeCommandStubs(
 		commands: Iterable<string>,
 		commandDirs: string[] = this.mountedCommandDirs,
-	): Promise<void> {
+	): Promise<Map<string, string>> {
 		if (!this.client || !this.session || !this.vm) {
 			throw new Error("kernel is not ready");
 		}
@@ -2548,13 +2507,19 @@ class NativeKernel implements Kernel {
 		const localMounts = this.pendingLocalMounts.map((mount) =>
 			serializeLocalCompatMountForSidecar(mount),
 		);
-		await this.client.configureVm(this.session, this.vm, {
+		const configuredVm = await this.client.configureVm(this.session, this.vm, {
 			mounts: [...localMounts, ...sidecarMounts],
 			loopbackExemptPorts: this.loopbackExemptPorts,
 			bootstrapCommands: [...new Set(commands)].sort((left, right) =>
 				left.localeCompare(right),
 			),
 		});
+		return new Map(
+			configuredVm.projectedCommands.map((command) => [
+				command.name,
+				command.guestPath,
+			]),
+		);
 	}
 
 	async mount(driver: KernelRuntimeDriver): Promise<void> {
@@ -2582,17 +2547,15 @@ class NativeKernel implements Kernel {
 			return;
 		}
 
-		const startIndex = this.mountedCommandDirs.length;
-		const newGuestPaths =
-			driver.getGuestCommandPaths?.(startIndex) ??
-			collectGuestCommandPaths(commandDirs, startIndex);
 		const allCommandDirs = [...this.mountedCommandDirs, ...commandDirs];
-		await this.configureRuntimeCommandStubs(newGuestPaths.keys(), allCommandDirs);
-		this.proxy.registerCommandGuestPaths(newGuestPaths);
+		const projectedCommands = await this.configureRuntimeCommandStubs(
+			driver.commands,
+			allCommandDirs,
+		);
+		this.proxy.registerCommandGuestPaths(projectedCommands);
 		this.mountedCommandDirs.push(...commandDirs);
 		this.mountedRuntimeDrivers.push(driver);
-		this.runtimeDriverCommandDirStarts.set(driver, startIndex);
-		for (const command of newGuestPaths.keys()) {
+		for (const command of projectedCommands.keys()) {
 			this.commands.set(command, "wasmvm");
 		}
 	}
@@ -2813,17 +2776,6 @@ class NativeKernel implements Kernel {
 				continue;
 			}
 			this.commands.set(normalized, driver.kind);
-			if (driver.kind === "wasmvm" && this.proxy) {
-				const startIndex = this.runtimeDriverCommandDirStarts.get(driver);
-				if (startIndex !== undefined) {
-					const guestPaths = driver.getGuestCommandPaths?.(startIndex);
-					if (guestPaths?.has(normalized)) {
-						this.proxy.registerCommandGuestPaths(
-							new Map([[normalized, guestPaths.get(normalized)!]]),
-						);
-					}
-				}
-			}
 			return true;
 		}
 		return false;
