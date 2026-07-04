@@ -1021,12 +1021,6 @@ fn serialize_create_vm_config_for_sidecar(
                 platform: vm_config::JsRuntimePlatform::default(),
                 module_resolution: vm_config::JsModuleResolution::default(),
                 allowed_builtins: Some(allowed.clone()),
-                // Agent SDK snapshotting is driven by the TypeScript client
-                // (`packages/core` resolves the per-agent `dist/sdk-snapshot.js`
-                // bundle). The Rust client does not resolve npm package bundles, so
-                // it forwards no snapshot. TODO: expose a snapshot bundle input on
-                // the Rust client config for parity if a Rust consumer needs it.
-                snapshot_userland_code: None,
                 high_resolution_time: None,
             }
         }),

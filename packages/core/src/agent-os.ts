@@ -194,7 +194,6 @@ import {
 	type SnapshotLayerHandle,
 } from "./layers.js";
 import {
-	resolveAgentSnapshotBundle,
 	type SoftwareInput,
 	type SoftwareRoot,
 } from "./packages.js";
@@ -2744,13 +2743,8 @@ export class AgentOs {
 		const sidecarPackages = packageRefs.map((ref) => ({ dir: ref.dir }));
 		// All package software is projected into `/opt/agentos` by the sidecar. The
 		// client stages nothing host-side and parses NO package manifests: the
-		// sidecar owns both agent resolution (createSession) and agent enumeration
-		// (listAgents) from the projected `/opt/agentos` manifests.
-		// Agent-SDK snapshot bundle (loaded once per sidecar into the V8 startup
-		// snapshot, reused across sessions) for any snapshot-enabled agent.
-		const snapshotUserlandCode = resolveAgentSnapshotBundle(
-			packageRefs.map((ref) => ({ packageDir: ref.dir })),
-		);
+		// sidecar owns agent resolution, agent enumeration, and agent snapshot
+		// bundle loading from the projected package dirs.
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
 		const toolKits = options?.toolKits;
 		if (toolKits && toolKits.length > 0) {
@@ -2835,8 +2829,7 @@ export class AgentOs {
 					// emulation), matching the prior behavior where Agent OS only
 					// constrained the builtin allow-list.
 					...(options?.allowedNodeBuiltins !== undefined ||
-					options?.highResolutionTime !== undefined ||
-					snapshotUserlandCode !== undefined
+					options?.highResolutionTime !== undefined
 						? {
 								jsRuntime: {
 									platform: "node" as const,
@@ -2846,9 +2839,6 @@ export class AgentOs {
 										: {}),
 									...(options?.highResolutionTime !== undefined
 										? { highResolutionTime: options.highResolutionTime }
-										: {}),
-									...(snapshotUserlandCode !== undefined
-										? { snapshotUserlandCode }
 										: {}),
 								},
 							}
