@@ -12,7 +12,6 @@ import {
 	resolve as resolveHostPath,
 } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentosPackageManifest } from "@agentos-software/manifest";
 import type {
 	MountConfigJsonObject,
 	MountConfigJsonValue,
@@ -798,7 +797,6 @@ function toRecord(value: unknown): Record<string, unknown> {
 
 interface NormalizedPackageRef {
 	dir: string;
-	legacyManifest?: AgentosPackageManifest;
 }
 
 function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
@@ -807,49 +805,12 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	}
 	const record = toRecord(value);
 	if (typeof record.packageDir === "string") {
-		return {
-			dir: record.packageDir,
-			legacyManifest: legacyPackageManifest(record),
-		};
+		return { dir: record.packageDir };
 	}
 	if (typeof record.dir === "string") {
-		return {
-			dir: record.dir,
-			legacyManifest: legacyPackageManifest(record),
-		};
+		return { dir: record.dir };
 	}
 	return undefined;
-}
-
-function legacyPackageManifest(
-	record: Record<string, unknown>,
-): AgentosPackageManifest | undefined {
-	if (typeof record.name !== "string") {
-		return undefined;
-	}
-	const manifest: AgentosPackageManifest = { name: record.name };
-	const agent = toRecord(record.agent);
-	if (typeof agent.acpEntrypoint === "string") {
-		manifest.agent = {
-			acpEntrypoint: agent.acpEntrypoint,
-			...(isStringRecord(agent.env) ? { env: agent.env } : {}),
-			...(Array.isArray(agent.launchArgs) &&
-			agent.launchArgs.every((arg) => typeof arg === "string")
-				? { launchArgs: agent.launchArgs }
-				: {}),
-			...(typeof agent.snapshot === "boolean" ? { snapshot: agent.snapshot } : {}),
-		};
-	}
-	return manifest;
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-	return (
-		value !== null &&
-		typeof value === "object" &&
-		!Array.isArray(value) &&
-		Object.values(value).every((entry) => typeof entry === "string")
-	);
 }
 
 type AcpResponseValue<TTag extends AcpResponse["tag"]> = Extract<

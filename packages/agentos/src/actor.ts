@@ -54,21 +54,8 @@ interface NativeMountLike {
 	readOnly?: boolean;
 }
 
-interface PackageAgentManifest {
-	acpEntrypoint: string;
-	env?: Record<string, string>;
-	launchArgs?: string[];
-	snapshot?: boolean;
-}
-
-interface PackageManifest {
-	name: string;
-	agent?: PackageAgentManifest;
-}
-
 interface NormalizedPackageRef {
 	dir: string;
-	legacyManifest?: PackageManifest;
 }
 
 /**
@@ -120,49 +107,12 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	}
 	const record = toRecord(value);
 	if (typeof record.packageDir === "string") {
-		return {
-			dir: record.packageDir,
-			legacyManifest: legacyPackageManifest(record),
-		};
+		return { dir: record.packageDir };
 	}
 	if (typeof record.dir === "string") {
-		return {
-			dir: record.dir,
-			legacyManifest: legacyPackageManifest(record),
-		};
+		return { dir: record.dir };
 	}
 	return undefined;
-}
-
-function legacyPackageManifest(
-	record: Record<string, unknown>,
-): PackageManifest | undefined {
-	if (typeof record.name !== "string") {
-		return undefined;
-	}
-	const manifest: PackageManifest = { name: record.name };
-	const agent = toRecord(record.agent);
-	if (typeof agent.acpEntrypoint === "string") {
-		manifest.agent = {
-			acpEntrypoint: agent.acpEntrypoint,
-			...(isStringRecord(agent.env) ? { env: agent.env } : {}),
-			...(Array.isArray(agent.launchArgs) &&
-			agent.launchArgs.every((arg) => typeof arg === "string")
-				? { launchArgs: agent.launchArgs }
-				: {}),
-			...(typeof agent.snapshot === "boolean" ? { snapshot: agent.snapshot } : {}),
-		};
-	}
-	return manifest;
-}
-
-function isStringRecord(value: unknown): value is Record<string, string> {
-	return (
-		value !== null &&
-		typeof value === "object" &&
-		!Array.isArray(value) &&
-		Object.values(value).every((entry) => typeof entry === "string")
-	);
 }
 
 function normalizedPackageRefs(software: unknown[]): NormalizedPackageRef[] {
