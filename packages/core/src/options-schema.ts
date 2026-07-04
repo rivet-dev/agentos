@@ -93,59 +93,66 @@ export const agentOsLimitsSchema = z
 			.strict()
 			.optional(),
 		http: z
-			.object({ maxFetchResponseBytes: nonNegativeInteger.optional() })
+			.object({ maxFetchResponseBytes: positiveInteger.optional() })
 			.strict()
 			.optional(),
 		tools: z
 			.object({
 				defaultToolTimeoutMs: nonNegativeInteger.optional(),
 				maxToolTimeoutMs: nonNegativeInteger.optional(),
-				maxRegisteredToolkits: nonNegativeInteger.optional(),
-				maxRegisteredToolsPerVm: nonNegativeInteger.optional(),
-				maxToolsPerToolkit: nonNegativeInteger.optional(),
-				maxToolSchemaBytes: nonNegativeInteger.optional(),
+				maxRegisteredToolkits: positiveInteger.optional(),
+				maxRegisteredToolsPerVm: positiveInteger.optional(),
+				maxToolsPerToolkit: positiveInteger.optional(),
+				maxToolSchemaBytes: positiveInteger.optional(),
 				maxToolExamplesPerTool: nonNegativeInteger.optional(),
-				maxToolExampleInputBytes: nonNegativeInteger.optional(),
+				maxToolExampleInputBytes: positiveInteger.optional(),
 			})
 			.strict()
 			.optional(),
 		plugins: z
 			.object({
-				maxPersistedManifestBytes: nonNegativeInteger.optional(),
+				maxPersistedManifestBytes: positiveInteger.optional(),
 				maxPersistedManifestFileBytes: nonNegativeInteger.optional(),
 			})
 			.strict()
 			.optional(),
 		acp: z
 			.object({
-				maxReadLineBytes: nonNegativeInteger.optional(),
-				stdoutBufferByteLimit: nonNegativeInteger.optional(),
+				maxReadLineBytes: positiveInteger.optional(),
+				stdoutBufferByteLimit: positiveInteger.optional(),
 			})
 			.strict()
 			.optional(),
 		jsRuntime: z
 			.object({
-				v8HeapLimitMb: nonNegativeInteger.optional(),
-				capturedOutputLimitBytes: nonNegativeInteger.optional(),
-				stdinBufferLimitBytes: nonNegativeInteger.optional(),
-				eventPayloadLimitBytes: nonNegativeInteger.optional(),
-				v8IpcMaxFrameBytes: nonNegativeInteger.optional(),
+				v8HeapLimitMb: positiveInteger.optional(),
+				syncRpcWaitTimeoutMs: nonNegativeInteger.optional(),
+				cpuTimeLimitMs: nonNegativeInteger.optional(),
+				wallClockLimitMs: nonNegativeInteger.optional(),
+				importCacheMaterializeTimeoutMs: positiveInteger.optional(),
+				capturedOutputLimitBytes: positiveInteger.optional(),
+				stdinBufferLimitBytes: positiveInteger.optional(),
+				eventPayloadLimitBytes: positiveInteger.optional(),
+				v8IpcMaxFrameBytes: positiveInteger.optional(),
 			})
 			.strict()
 			.optional(),
 		python: z
 			.object({
-				outputBufferMaxBytes: nonNegativeInteger.optional(),
-				executionTimeoutMs: nonNegativeInteger.optional(),
-				vfsRpcTimeoutMs: nonNegativeInteger.optional(),
+				outputBufferMaxBytes: positiveInteger.optional(),
+				executionTimeoutMs: positiveInteger.optional(),
+				maxOldSpaceMb: nonNegativeInteger.optional(),
+				vfsRpcTimeoutMs: positiveInteger.optional(),
 			})
 			.strict()
 			.optional(),
 		wasm: z
 			.object({
-				maxModuleFileBytes: nonNegativeInteger.optional(),
-				capturedOutputLimitBytes: nonNegativeInteger.optional(),
-				syncReadLimitBytes: nonNegativeInteger.optional(),
+				maxModuleFileBytes: positiveInteger.optional(),
+				capturedOutputLimitBytes: positiveInteger.optional(),
+				syncReadLimitBytes: positiveInteger.optional(),
+				prewarmTimeoutMs: positiveInteger.optional(),
+				runnerHeapLimitMb: positiveInteger.optional(),
 			})
 			.strict()
 			.optional(),

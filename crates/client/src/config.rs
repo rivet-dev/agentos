@@ -483,6 +483,30 @@ pub struct JsRuntimeLimits {
     pub v8_heap_limit_mb: Option<u64>,
     #[serde(
         default,
+        rename = "syncRpcWaitTimeoutMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sync_rpc_wait_timeout_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "cpuTimeLimitMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cpu_time_limit_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "wallClockLimitMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub wall_clock_limit_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "importCacheMaterializeTimeoutMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub import_cache_materialize_timeout_ms: Option<u64>,
+    #[serde(
+        default,
         rename = "capturedOutputLimitBytes",
         skip_serializing_if = "Option::is_none"
     )]
@@ -523,6 +547,12 @@ pub struct PythonLimits {
     pub execution_timeout_ms: Option<u64>,
     #[serde(
         default,
+        rename = "maxOldSpaceMb",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_old_space_mb: Option<u64>,
+    #[serde(
+        default,
         rename = "vfsRpcTimeoutMs",
         skip_serializing_if = "Option::is_none"
     )]
@@ -549,6 +579,18 @@ pub struct WasmLimits {
         skip_serializing_if = "Option::is_none"
     )]
     pub sync_read_limit_bytes: Option<u64>,
+    #[serde(
+        default,
+        rename = "prewarmTimeoutMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub prewarm_timeout_ms: Option<u64>,
+    #[serde(
+        default,
+        rename = "runnerHeapLimitMb",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub runner_heap_limit_mb: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
