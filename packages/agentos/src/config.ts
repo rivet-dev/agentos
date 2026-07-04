@@ -28,7 +28,6 @@ export const nativeAgentOsOptionsSchema = z
 		allowedNodeBuiltins: agentOsOptionFieldSchemas.allowedNodeBuiltins,
 		rootFilesystem: agentOsOptionFieldSchemas.rootFilesystem,
 		mounts: z.array(nativeMountConfigSchema).optional(),
-		moduleAccessCwd: agentOsOptionFieldSchemas.moduleAccessCwd,
 		additionalInstructions: agentOsOptionFieldSchemas.additionalInstructions,
 		permissions: agentOsOptionFieldSchemas.permissions,
 		sidecar: sharedSidecarConfigSchema.optional(),
@@ -80,7 +79,6 @@ export type NativeAgentOsOptions = Pick<
 	| "loopbackExemptPorts"
 	| "allowedNodeBuiltins"
 	| "rootFilesystem"
-	| "moduleAccessCwd"
 	| "additionalInstructions"
 	| "permissions"
 	| "limits"

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Once;
 
 use agentos_client::config::{
-    AgentOsConfig, AgentOsSidecarConfig, MountConfig, MountPlugin, Permissions,
+    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, MountConfig, MountPlugin, Permissions,
 };
 use agentos_client::AgentOs;
 
@@ -68,12 +68,12 @@ pub async fn new_vm() -> AgentOs {
 pub async fn new_vm_with_sidecar_pool(pool: impl Into<String>) -> AgentOs {
     ensure_sidecar_env();
     AgentOs::create(AgentOsConfig {
-        module_access_cwd: Some(
+        mounts: vec![node_modules_mount(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
+                .join("../../node_modules")
                 .to_string_lossy()
                 .into_owned(),
-        ),
+        )],
         sidecar: Some(AgentOsSidecarConfig::Shared {
             pool: Some(pool.into()),
         }),
@@ -107,15 +107,16 @@ async fn new_vm_with_config(
     permissions: Option<Permissions>,
 ) -> AgentOs {
     ensure_sidecar_env();
+    let mut all_mounts = vec![node_modules_mount(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../node_modules")
+            .to_string_lossy()
+            .into_owned(),
+    )];
+    all_mounts.extend(mounts);
     AgentOs::create(AgentOsConfig {
         loopback_exempt_ports,
-        module_access_cwd: Some(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .to_string_lossy()
-                .into_owned(),
-        ),
-        mounts,
+        mounts: all_mounts,
         permissions,
         ..Default::default()
     })

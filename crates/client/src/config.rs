@@ -33,8 +33,6 @@ pub struct AgentOsConfig {
     pub loopback_exempt_ports: Vec<u16>,
     /// Allowed Node.js builtins. Default: the hardened native-bridge set.
     pub allowed_node_builtins: Option<Vec<String>>,
-    /// Working directory used for guest module resolution. Default: host cwd.
-    pub module_access_cwd: Option<String>,
     /// Root filesystem configuration. Default: overlay + bundled base snapshot.
     pub root_filesystem: RootFilesystemConfig,
     /// Additional mounts.
@@ -88,11 +86,6 @@ impl AgentOsConfigBuilder {
 
     pub fn allowed_node_builtins(mut self, builtins: Vec<String>) -> Self {
         self.config.allowed_node_builtins = Some(builtins);
-        self
-    }
-
-    pub fn module_access_cwd(mut self, cwd: impl Into<String>) -> Self {
-        self.config.module_access_cwd = Some(cwd.into());
         self
     }
 
@@ -722,6 +715,27 @@ pub struct MountPlugin {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<serde_json::Value>,
+}
+
+/// Mount a host `node_modules` directory into the VM at `/root/node_modules`.
+///
+/// Rust mirror of TS `nodeModulesMount(...)` (`packages/core/src/host-dir-mount.ts`).
+/// This is the explicit, mount-based replacement for the removed `moduleAccessCwd`
+/// option: the guest module resolver reads the mounted tree through the kernel VFS,
+/// so the caller supplies exactly the `node_modules` directory whose packages should
+/// be resolvable in the guest. The mount is read-only.
+pub fn node_modules_mount(host_node_modules_dir: impl Into<String>) -> MountConfig {
+    MountConfig::Native {
+        path: "/root/node_modules".to_string(),
+        plugin: MountPlugin {
+            id: "host_dir".to_string(),
+            config: Some(serde_json::json!({
+                "hostPath": host_node_modules_dir.into(),
+                "readOnly": true,
+            })),
+        },
+        read_only: true,
+    }
 }
 
 /// Overlay mount filesystem config.

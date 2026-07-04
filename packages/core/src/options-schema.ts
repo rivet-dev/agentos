@@ -273,7 +273,6 @@ export const agentOsOptionFieldSchemas = {
 	highResolutionTime: z.boolean().optional(),
 	rootFilesystem: rootFilesystemConfigSchema.optional(),
 	mounts: z.array(mountConfigSchema).optional(),
-	moduleAccessCwd: z.string().optional(),
 	additionalInstructions: z.string().optional(),
 	scheduleDriver: z
 		.custom((value) => typeof value === "object" && value !== null, {

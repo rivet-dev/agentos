@@ -43,8 +43,6 @@ pub(crate) struct AgentOsConfigJson {
     #[serde(default)]
     additional_instructions: Option<String>,
     #[serde(default)]
-    module_access_cwd: Option<String>,
-    #[serde(default)]
     loopback_exempt_ports: Vec<u16>,
     #[serde(default)]
     allowed_node_builtins: Option<Vec<String>>,
@@ -160,7 +158,6 @@ impl AgentOsConfigJson {
             packages_mount_at: self.packages_mount_at.clone(),
             loopback_exempt_ports: self.loopback_exempt_ports.clone(),
             allowed_node_builtins: self.allowed_node_builtins.clone(),
-            module_access_cwd: self.module_access_cwd.clone(),
             additional_instructions: self.additional_instructions.clone(),
             permissions: self.permissions.clone(),
             mounts: self

@@ -73,7 +73,7 @@ pub use config::{
     RootFilesystemKind, RootFilesystemMode, RootLowerInput, RulePermissions, ScheduleCallback,
     ScheduleDriver, ScheduleEntry, ScheduleHandle, SidecarJsBridgeCall, SidecarJsBridgeCallback,
     SoftwareInput, SoftwareKind, TimerScheduleDriver, ToolCallback, ToolKit, ToolLimits,
-    WasmLimits,
+    WasmLimits, node_modules_mount,
 };
 
 pub use process::{

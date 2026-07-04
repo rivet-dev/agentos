@@ -23,7 +23,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use agentos_client::config::{AgentOsConfig, PatternPermissions, PermissionMode, Permissions};
+use agentos_client::config::{
+    node_modules_mount, AgentOsConfig, PatternPermissions, PermissionMode, Permissions,
+};
 use agentos_client::fs::MkdirOptions;
 use agentos_client::{AgentOs, CreateSessionOptions};
 
@@ -127,7 +129,12 @@ async fn pi_session_create_prompt_close() {
 
     common::ensure_sidecar_env();
     let os = AgentOs::create(AgentOsConfig {
-        module_access_cwd: Some(module_cwd),
+        mounts: vec![node_modules_mount(
+            Path::new(&module_cwd)
+                .join("node_modules")
+                .to_string_lossy()
+                .into_owned(),
+        )],
         loopback_exempt_ports: vec![port],
         permissions: Some(Permissions {
             network: Some(PatternPermissions::Mode(PermissionMode::Allow)),

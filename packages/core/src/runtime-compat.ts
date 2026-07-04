@@ -451,10 +451,6 @@ export interface BindingTree {
 
 export type BindingFunction = (...args: unknown[]) => unknown;
 
-export interface ModuleAccessOptions {
-	cwd?: string;
-}
-
 export interface NodeDriverOptions {
 	filesystem?: VirtualFileSystem;
 	networkAdapter?: NetworkAdapter;
@@ -462,7 +458,6 @@ export interface NodeDriverOptions {
 	permissions?: Permissions;
 	processConfig?: ProcessConfig;
 	osConfig?: OSConfig;
-	moduleAccess?: ModuleAccessOptions;
 }
 
 export interface DefaultNetworkAdapterOptions {

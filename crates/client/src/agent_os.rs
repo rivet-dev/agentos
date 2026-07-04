@@ -411,7 +411,10 @@ impl AgentOs {
                     // retired: all boot software is projected via `packages`.
                     software: Vec::new(),
                     permissions: Some(permissions),
-                    module_access_cwd: config.module_access_cwd.clone(),
+                    // Client-side `moduleAccessCwd` was removed in favor of an
+                    // explicit `nodeModulesMount(...)` entry in `mounts`; the
+                    // secure-exec wire field is left unset.
+                    module_access_cwd: None,
                     instructions: config.additional_instructions.clone().into_iter().collect(),
                     projected_modules: Vec::new(),
                     command_permissions: HashMap::new(),

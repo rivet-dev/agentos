@@ -609,11 +609,6 @@ export interface AgentOsOptions {
 	rootFilesystem?: RootFilesystemConfig;
 	/** Filesystems to mount at boot time. */
 	mounts?: MountConfig[];
-	/**
-	 * @deprecated Use `mounts: [nodeModulesMount(path)]` instead.
-	 * Compatibility alias for mounting `<moduleAccessCwd>/node_modules` at `/root/node_modules`.
-	 */
-	moduleAccessCwd?: string;
 	/** Additional instructions appended to the base OS system prompt injected at session start. */
 	additionalInstructions?: string;
 	/** Custom schedule driver for cron jobs. Defaults to TimerScheduleDriver. */
@@ -2878,22 +2873,9 @@ export class AgentOs {
 						commandGuestPaths.set(cmd, `/opt/agentos/bin/${cmd}`);
 					}
 				}
-				const requestedMounts = options?.moduleAccessCwd
-					? [
-							...(options.mounts ?? []),
-							{
-								path: "/root/node_modules",
-								plugin: createHostDirBackend({
-									hostPath: join(options.moduleAccessCwd, "node_modules"),
-									readOnly: true,
-								}),
-								readOnly: true,
-							},
-						]
-					: options?.mounts;
 				const { sidecarMounts, hostMounts, hostPathMappings } =
 					collectSidecarMountPlan({
-						mounts: requestedMounts,
+						mounts: options?.mounts,
 						shimDir: toolShimDir,
 					});
 				// Reuse the sidecar handle's single shared native process; this VM

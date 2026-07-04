@@ -199,28 +199,16 @@ fn agent_config(agent_type: &str) -> Option<AgentConfigDef> {
 }
 
 /// Resolve a package's VM bin entrypoint from the host `node_modules` (port of
-/// TS `_resolvePackageBin`). Prefer legacy `module_access_cwd/node_modules`,
-/// then fall back to the host directory backing a native `/root/node_modules`
-/// mount. The latter is the RivetKit actor path: the TS shim no longer forwards
-/// `moduleAccessCwd`; callers explicitly mount the desired `node_modules`
-/// directory instead.
+/// TS `_resolvePackageBin`). Resolves against the host directory backing a
+/// native `/root/node_modules` mount: callers explicitly mount the desired
+/// `node_modules` directory (via `nodeModulesMount(...)`) instead of the removed
+/// `moduleAccessCwd` option.
 fn resolve_package_bin(
     config: &AgentOsConfig,
     package_name: &str,
     bin_name: Option<&str>,
 ) -> std::result::Result<String, ClientError> {
-    let mut candidates = Vec::new();
-    let module_access_cwd = config
-        .module_access_cwd
-        .clone()
-        .unwrap_or_else(|| ".".to_string());
-    candidates.push(
-        Path::new(&module_access_cwd)
-            .join("node_modules")
-            .join(package_name)
-            .join("package.json"),
-    );
-    candidates.extend(node_modules_mount_package_json_paths(config, package_name));
+    let candidates = node_modules_mount_package_json_paths(config, package_name);
 
     let contents = candidates
         .iter()

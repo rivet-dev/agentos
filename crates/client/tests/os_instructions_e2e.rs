@@ -14,8 +14,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use agentos_client::config::{
-    AgentOsConfig, AgentOsSidecarConfig, FsPermissions, HostTool, PatternPermissions,
-    PermissionMode, Permissions, ToolKit,
+    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, FsPermissions, HostTool,
+    PatternPermissions, PermissionMode, Permissions, ToolKit,
 };
 use agentos_client::{AgentOs, CreateSessionOptions};
 use serde_json::json;
@@ -79,8 +79,8 @@ fn allow_all_permissions() -> Permissions {
 /// Lay out a fake `node_modules/@agentos-software/pi` whose `bin` resolves to the mock adapter,
 /// so the client's `resolve_package_bin("pi")` path projects it into the guest at
 /// `/root/node_modules/@agentos-software/pi/adapter.mjs` and the sidecar launches it.
-fn write_mock_pi_adapter(module_access_cwd: &std::path::Path) {
-    let package_dir = module_access_cwd
+fn write_mock_pi_adapter(module_root: &std::path::Path) {
+    let package_dir = module_root
         .join("node_modules")
         .join("@agentos-software")
         .join("pi");
@@ -122,7 +122,12 @@ async fn run_session(
     tool_kits: Vec<ToolKit>,
 ) -> Vec<String> {
     let os = AgentOs::create(AgentOsConfig {
-        module_access_cwd: Some(module_access_dir.to_string_lossy().into_owned()),
+        mounts: vec![node_modules_mount(
+            module_access_dir
+                .join("node_modules")
+                .to_string_lossy()
+                .into_owned(),
+        )],
         sidecar: Some(AgentOsSidecarConfig::Shared {
             pool: Some(format!("os-instructions-{}", Uuid::new_v4())),
         }),

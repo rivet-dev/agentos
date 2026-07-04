@@ -13,8 +13,8 @@
 // inside the VM before creating the session.
 
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
-import { AgentOs } from "@rivet-dev/agentos-core";
+import { dirname, join, resolve } from "node:path";
+import { AgentOs, nodeModulesMount } from "@rivet-dev/agentos-core";
 import pi from "@agentos-software/pi";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -59,7 +59,7 @@ const vm = await AgentOs.create({
 				loopbackExemptPorts: [Number(new URL(ANTHROPIC_BASE_URL).port)],
 			}
 		: {}),
-	moduleAccessCwd: MODULE_ACCESS_CWD,
+	mounts: [nodeModulesMount(join(MODULE_ACCESS_CWD, "node_modules"))],
 	software: [pi],
 });
 

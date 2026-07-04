@@ -305,7 +305,6 @@ export function buildConfigJson<TConnParams>(
 		packagesMountAt: OPT_AGENTOS_ROOT,
 		agentConfigs,
 		additionalInstructions: options.additionalInstructions,
-		moduleAccessCwd: options.moduleAccessCwd,
 		loopbackExemptPorts: options.loopbackExemptPorts,
 		allowedNodeBuiltins: options.allowedNodeBuiltins,
 		permissions: options.permissions,
