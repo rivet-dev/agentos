@@ -2,6 +2,10 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { JsonRpcNotification } from "../src/index.js";
 import { AgentOs } from "../src/index.js";
 import { encodeAcpEvent } from "../src/sidecar/agentos-protocol.js";
+import {
+	createProjectedAgentPackage,
+	type ProjectedAgentPackage,
+} from "./helpers/projected-agent-package.js";
 
 // agent-os.ts keeps this namespace as a module-private const; mirror the literal.
 const ACP_EXTENSION_NAMESPACE = "dev.rivet.agent-os.acp";
@@ -84,24 +88,30 @@ function sessionUpdateNotification(text: string): string {
 
 describe("colliding adapter sessionId isolation (I.4 / J.4)", () => {
 	let vm: AgentOs | null = null;
+	let agentPackage: ProjectedAgentPackage | null = null;
 
 	afterEach(async () => {
 		await vm?.dispose();
 		vm = null;
+		agentPackage?.cleanup();
+		agentPackage = null;
 	});
 
 	test("a second createSession returning a colliding sessionId must not orphan the first session's handlers", async () => {
-		vm = await AgentOs.create({ defaultSoftware: false });
+		agentPackage = createProjectedAgentPackage({
+			name: "mock",
+			adapterScript: "process.stdin.resume();",
+		});
+		vm = await AgentOs.create({
+			defaultSoftware: false,
+			software: [agentPackage.software],
+		});
 
 		const internal = vm as unknown as {
-			_resolveAgentConfig(t: string): unknown;
 			_sendAcpRequest(req: { tag: string }): Promise<unknown>;
 		};
 
 		// The adapter (untrusted) always reports the same sessionId.
-		vi.spyOn(internal, "_resolveAgentConfig").mockReturnValue({
-			adapterEntrypoint: "/root/node_modules/@mock/adapter/bin.js",
-		});
 		vi.spyOn(internal, "_sendAcpRequest").mockImplementation(
 			async (req: { tag: string }) => {
 				if (req.tag === "AcpCreateSessionRequest") {
@@ -159,16 +169,19 @@ describe("colliding adapter sessionId isolation (I.4 / J.4)", () => {
 	});
 
 	test("resumeSession returning a colliding live sessionId is rejected without orphaning handlers", async () => {
-		vm = await AgentOs.create({ defaultSoftware: false });
+		agentPackage = createProjectedAgentPackage({
+			name: "mock",
+			adapterScript: "process.stdin.resume();",
+		});
+		vm = await AgentOs.create({
+			defaultSoftware: false,
+			software: [agentPackage.software],
+		});
 
 		const internal = vm as unknown as {
-			_resolveAgentConfig(t: string): unknown;
 			_sendAcpRequest(req: { tag: string }): Promise<unknown>;
 		};
 
-		vi.spyOn(internal, "_resolveAgentConfig").mockReturnValue({
-			adapterEntrypoint: "/root/node_modules/@mock/adapter/bin.js",
-		});
 		vi.spyOn(internal, "_sendAcpRequest").mockImplementation(
 			async (req: { tag: string }) => {
 				if (req.tag === "AcpCreateSessionRequest") {

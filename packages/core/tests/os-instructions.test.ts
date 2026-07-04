@@ -2,7 +2,10 @@ import * as fs from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-import type { AgentConfig } from "../src/agents.js";
+import {
+	createProjectedAgentPackage,
+	type ProjectedAgentPackage,
+} from "./helpers/projected-agent-package.js";
 
 const OS_INSTRUCTIONS_FIXTURE = resolve(
 	import.meta.dirname,
@@ -87,197 +90,137 @@ process.stdin.on('data', (chunk) => {
 
 describe("createSession OS instructions integration", () => {
 	let vm: AgentOs;
+	let agentPackages: ProjectedAgentPackage[];
 
 	beforeEach(async () => {
+		agentPackages = ["pi", "opencode"].map((name) =>
+			createProjectedAgentPackage({ name, adapterScript: MOCK_ACP_ADAPTER }),
+		);
 		vm = await AgentOs.create({
 			defaultSoftware: false,
+			software: agentPackages.map((agentPackage) => agentPackage.software),
 		});
 	});
 
 	afterEach(async () => {
 		await vm.dispose();
+		for (const agentPackage of agentPackages) {
+			agentPackage.cleanup();
+		}
 	});
 
-	/**
-	 * Patch _resolveAgentConfig to inject a mock adapter entrypoint instead of
-	 * launching the real `/opt/agentos` adapter.
-	 */
-	function useMockAdapterBin(scriptPath: string): () => void {
-		const priv = vm as unknown as {
-			_resolveAgentConfig: (id: string) => AgentConfig | undefined;
-		};
-		const originalConfig = priv._resolveAgentConfig.bind(priv);
-		priv._resolveAgentConfig = (id: string) => {
-			const c = originalConfig(id);
-			return c
-				? { ...c, adapterEntrypoint: scriptPath }
-				: { adapterEntrypoint: scriptPath };
-		};
-		return () => {
-			priv._resolveAgentConfig = originalConfig;
-		};
-	}
-
 	test("createSession with PI passes --append-system-prompt in spawn args", async () => {
-		const scriptPath = "/tmp/mock-adapter.mjs";
-		await vm.writeFile(scriptPath, MOCK_ACP_ADAPTER);
-		const restore = useMockAdapterBin(scriptPath);
+		const { sessionId } = await vm.createSession("pi");
+		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+			argv?: string[];
+		};
+		const argv = agentInfo.argv ?? [];
 
-		try {
-			const { sessionId } = await vm.createSession("pi");
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-				argv?: string[];
-			};
-			const argv = agentInfo.argv ?? [];
+		expect(argv).toContain("--append-system-prompt");
+		const argIdx = argv.indexOf("--append-system-prompt");
+		const instructionsArg = argv[argIdx + 1];
+		expect(instructionsArg).toBeTruthy();
+		expect(instructionsArg.length).toBeGreaterThan(0);
+		// The sidecar injects the embedded base prompt, not a guest-read file.
+		expect(instructionsArg).toContain("# agentOS");
 
-			expect(argv).toContain("--append-system-prompt");
-			const argIdx = argv.indexOf("--append-system-prompt");
-			const instructionsArg = argv[argIdx + 1];
-			expect(instructionsArg).toBeTruthy();
-			expect(instructionsArg.length).toBeGreaterThan(0);
-			// The sidecar injects the embedded base prompt, not a guest-read file.
-			expect(instructionsArg).toContain("# agentOS");
-
-			vm.closeSession(sessionId);
-		} finally {
-			restore();
-		}
+		vm.closeSession(sessionId);
 	});
 
 	test("createSession with OpenCode passes the sidecar-materialized prompt path in OPENCODE_CONTEXTPATHS", async () => {
-		const scriptPath = "/tmp/mock-opencode-adapter.mjs";
-		await vm.writeFile(scriptPath, MOCK_ACP_ADAPTER);
-		const restore = useMockAdapterBin(scriptPath);
+		const { sessionId } = await vm.createSession("opencode");
 
-		try {
-			const { sessionId } = await vm.createSession("opencode");
+		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+			contextPaths?: string;
+			argv?: string[];
+		};
+		const contextPaths = JSON.parse(agentInfo.contextPaths as string);
+		expect(agentInfo.argv ?? []).not.toContain("acp");
+		// The base prompt is injected through a sidecar-materialized file, not the old baked path.
+		expect(contextPaths).toContain("/tmp/agentos-system-prompt.md");
+		expect(contextPaths).not.toContain("/etc/agentos/instructions.md");
+		// Default opencode repo-relative markers are still present.
+		expect(contextPaths).toContain("CLAUDE.md");
+		expect(contextPaths).toContain("opencode.md");
 
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-				contextPaths?: string;
-				argv?: string[];
-			};
-			const contextPaths = JSON.parse(agentInfo.contextPaths as string);
-			expect(agentInfo.argv ?? []).not.toContain("acp");
-			// The base prompt is injected through a sidecar-materialized file, not the old baked path.
-			expect(contextPaths).toContain("/tmp/agentos-system-prompt.md");
-			expect(contextPaths).not.toContain("/etc/agentos/instructions.md");
-			// Default opencode repo-relative markers are still present.
-			expect(contextPaths).toContain("CLAUDE.md");
-			expect(contextPaths).toContain("opencode.md");
+		// The materialized prompt file holds the base prompt text.
+		const promptData = await vm.readFile("/tmp/agentos-system-prompt.md");
+		const promptText = new TextDecoder().decode(promptData);
+		expect(promptText).toContain("# agentOS");
 
-			// The materialized prompt file holds the base prompt text.
-			const promptData = await vm.readFile("/tmp/agentos-system-prompt.md");
-			const promptText = new TextDecoder().decode(promptData);
-			expect(promptText).toContain("# agentOS");
+		// No .agent-os/ directory created in cwd
+		const agentOsDirExists = await vm.exists("/home/agentos/.agent-os");
+		expect(agentOsDirExists).toBe(false);
 
-			// No .agent-os/ directory created in cwd
-			const agentOsDirExists = await vm.exists("/home/agentos/.agent-os");
-			expect(agentOsDirExists).toBe(false);
-
-			vm.closeSession(sessionId);
-		} finally {
-			restore();
-		}
+		vm.closeSession(sessionId);
 	});
 
 	test("createSession with skipOsInstructions:true does not inject args or env", async () => {
-		const scriptPath = "/tmp/mock-adapter.mjs";
-		await vm.writeFile(scriptPath, MOCK_ACP_ADAPTER);
-		const restore = useMockAdapterBin(scriptPath);
+		const { sessionId } = await vm.createSession("pi", {
+			skipOsInstructions: true,
+		});
+		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+			argv?: string[];
+		};
+		const argv = agentInfo.argv ?? [];
 
-		try {
-			const { sessionId } = await vm.createSession("pi", {
-				skipOsInstructions: true,
-			});
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-				argv?: string[];
-			};
-			const argv = agentInfo.argv ?? [];
+		expect(argv).not.toContain("--append-system-prompt");
 
-			expect(argv).not.toContain("--append-system-prompt");
-
-			vm.closeSession(sessionId);
-		} finally {
-			restore();
-		}
+		vm.closeSession(sessionId);
 	});
 
 	test("createSession with skipOsInstructions:true still forwards additionalInstructions", async () => {
-		const scriptPath = "/tmp/mock-adapter.mjs";
-		await vm.writeFile(scriptPath, MOCK_ACP_ADAPTER);
-		const restore = useMockAdapterBin(scriptPath);
-
 		const additionalText = "CUSTOM_MARKER: skip base, keep extras.";
 
-		try {
-			const { sessionId } = await vm.createSession("pi", {
-				skipOsInstructions: true,
-				additionalInstructions: additionalText,
-			});
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-				argv?: string[];
-			};
-			const argv = agentInfo.argv ?? [];
+		const { sessionId } = await vm.createSession("pi", {
+			skipOsInstructions: true,
+			additionalInstructions: additionalText,
+		});
+		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+			argv?: string[];
+		};
+		const argv = agentInfo.argv ?? [];
 
-			const argIdx = argv.indexOf("--append-system-prompt");
-			expect(argIdx).toBeGreaterThan(-1);
-			const instructionsArg = argv[argIdx + 1];
-			expect(instructionsArg).toContain(additionalText);
-			expect(instructionsArg).not.toContain("# agentOS");
+		const argIdx = argv.indexOf("--append-system-prompt");
+		expect(argIdx).toBeGreaterThan(-1);
+		const instructionsArg = argv[argIdx + 1];
+		expect(instructionsArg).toContain(additionalText);
+		expect(instructionsArg).not.toContain("# agentOS");
 
-			vm.closeSession(sessionId);
-		} finally {
-			restore();
-		}
+		vm.closeSession(sessionId);
 	});
 
 	test("user-provided env vars override instruction env vars", async () => {
-		const scriptPath = "/tmp/mock-opencode-adapter.mjs";
-		await vm.writeFile(scriptPath, MOCK_ACP_ADAPTER);
-		const restore = useMockAdapterBin(scriptPath);
+		const userContextPaths = '["my-custom-paths.md"]';
+		const { sessionId } = await vm.createSession("opencode", {
+			env: { OPENCODE_CONTEXTPATHS: userContextPaths },
+		});
 
-		try {
-			const userContextPaths = '["my-custom-paths.md"]';
-			const { sessionId } = await vm.createSession("opencode", {
-				env: { OPENCODE_CONTEXTPATHS: userContextPaths },
-			});
+		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+			contextPaths?: string;
+		};
+		expect(agentInfo.contextPaths).toBe(userContextPaths);
 
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-				contextPaths?: string;
-			};
-			expect(agentInfo.contextPaths).toBe(userContextPaths);
-
-			vm.closeSession(sessionId);
-		} finally {
-			restore();
-		}
+		vm.closeSession(sessionId);
 	});
 
 	test("additionalInstructions content appears in injected text", async () => {
-		const scriptPath = "/tmp/mock-adapter.mjs";
-		await vm.writeFile(scriptPath, MOCK_ACP_ADAPTER);
-		const restore = useMockAdapterBin(scriptPath);
-
 		const additionalText = "CUSTOM_MARKER: Always use pnpm for this project.";
 
-		try {
-			const { sessionId } = await vm.createSession("pi", {
-				additionalInstructions: additionalText,
-			});
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-				argv?: string[];
-			};
-			const argv = agentInfo.argv ?? [];
+		const { sessionId } = await vm.createSession("pi", {
+			additionalInstructions: additionalText,
+		});
+		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+			argv?: string[];
+		};
+		const argv = agentInfo.argv ?? [];
 
-			const argIdx = argv.indexOf("--append-system-prompt");
-			expect(argIdx).toBeGreaterThan(-1);
-			const instructionsArg = argv[argIdx + 1];
-			expect(instructionsArg).toContain(additionalText);
+		const argIdx = argv.indexOf("--append-system-prompt");
+		expect(argIdx).toBeGreaterThan(-1);
+		const instructionsArg = argv[argIdx + 1];
+		expect(instructionsArg).toContain(additionalText);
 
-			vm.closeSession(sessionId);
-		} finally {
-			restore();
-		}
+		vm.closeSession(sessionId);
 	});
 
 	test("AgentOs.create additionalInstructions are included in created sessions", async () => {
@@ -287,27 +230,20 @@ describe("createSession OS instructions integration", () => {
 		vm = await AgentOs.create({
 			defaultSoftware: false,
 			additionalInstructions: vmLevelInstructions,
+			software: agentPackages.map((agentPackage) => agentPackage.software),
 		});
 
-		const scriptPath = "/tmp/mock-adapter.mjs";
-		await vm.writeFile(scriptPath, MOCK_ACP_ADAPTER);
-		const restore = useMockAdapterBin(scriptPath);
+		const { sessionId } = await vm.createSession("pi");
+		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+			argv?: string[];
+		};
+		const argv = agentInfo.argv ?? [];
 
-		try {
-			const { sessionId } = await vm.createSession("pi");
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-				argv?: string[];
-			};
-			const argv = agentInfo.argv ?? [];
+		const argIdx = argv.indexOf("--append-system-prompt");
+		expect(argIdx).toBeGreaterThan(-1);
+		const instructionsArg = argv[argIdx + 1];
+		expect(instructionsArg).toContain(vmLevelInstructions);
 
-			const argIdx = argv.indexOf("--append-system-prompt");
-			expect(argIdx).toBeGreaterThan(-1);
-			const instructionsArg = argv[argIdx + 1];
-			expect(instructionsArg).toContain(vmLevelInstructions);
-
-			vm.closeSession(sessionId);
-		} finally {
-			restore();
-		}
+		vm.closeSession(sessionId);
 	});
 });

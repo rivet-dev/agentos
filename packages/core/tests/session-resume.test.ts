@@ -1,9 +1,6 @@
-import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { AgentOs } from "../src/agent-os.js";
-import type { AgentConfig } from "../src/agents.js";
-import type { SoftwareInput } from "../src/packages.js";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
+import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
 
 // L2 (agent-os side): exercise the sidecar resume orchestration state machine
 // end-to-end against the REAL agentos-sidecar with a MOCK ACP adapter (no LLM).
@@ -16,21 +13,6 @@ import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 //     -> fall through to Tier 2.
 //   - Tier 2 (fallback): `session/new`, mode "fallback", new live id, and a
 //     continuation preamble prepended to the next `session/prompt`.
-
-const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
-const MOCK_ADAPTER_PATH = "/tmp/mock-session-resume-adapter.mjs";
-
-const SYNTHETIC_AGENT = {
-	name: "session-resume-mock",
-	type: "agent" as const,
-	packageDir: MODULE_ACCESS_CWD,
-	requires: [],
-	agent: {
-		id: "synthetic",
-		acpAdapter: "session-resume-mock-adapter",
-		agentPackage: "session-resume-mock-agent",
-	},
-};
 
 // Single configurable mock ACP adapter. Its behavior is selected at launch time
 // via the `MOCK_RESUME_SCENARIO` env var, which the host forwards through
@@ -169,38 +151,30 @@ process.stdin.on("data", (chunk) => {
 });
 `;
 
-function useMockAdapterBin(vm: AgentOs, scriptPath: string): () => void {
-	const priv = vm as AgentOs & {
-		_resolveAgentConfig: (id: string) => AgentConfig | undefined;
-	};
-	const originalConfig = priv._resolveAgentConfig.bind(priv);
-	priv._resolveAgentConfig = (id: string) => {
-		const c = originalConfig(id);
-		return c
-			? { ...c, adapterEntrypoint: scriptPath }
-			: { adapterEntrypoint: scriptPath };
-	};
-	return () => {
-		priv._resolveAgentConfig = originalConfig;
-	};
-}
-
-async function createMockAgentVm(software: SoftwareInput[]): Promise<AgentOs> {
-	return AgentOs.create({
-		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		software,
+async function createMockAgentVm(): Promise<{
+	vm: AgentOs;
+	cleanup(): void;
+}> {
+	const agentPackage = createProjectedAgentPackage({
+		name: "synthetic",
+		adapterScript: MOCK_ACP_ADAPTER,
 	});
+	const vm = await AgentOs.create({
+		defaultSoftware: false,
+		software: [agentPackage.software],
+	});
+	return {
+		vm,
+		cleanup: agentPackage.cleanup,
+	};
 }
 
 describe("sidecar resume orchestration (mock ACP adapter)", () => {
 	test("Tier 1 native: loadSession advertised + session/load ok -> mode native, id preserved", async () => {
-		const vm = await createMockAgentVm([SYNTHETIC_AGENT]);
-		const restore = useMockAdapterBin(vm, MOCK_ADAPTER_PATH);
+		const { vm, cleanup } = await createMockAgentVm();
 		let liveSessionId: string | undefined;
 
 		try {
-			await vm.writeFile(MOCK_ADAPTER_PATH, MOCK_ACP_ADAPTER);
-
 			const externalSessionId = "external-session-native";
 			const result = await vm.resumeSession(externalSessionId, "synthetic", {
 				env: { MOCK_RESUME_SCENARIO: "native" },
@@ -211,22 +185,19 @@ describe("sidecar resume orchestration (mock ACP adapter)", () => {
 			// Native load reuses the requested id: external == live.
 			expect(result.sessionId).toBe(externalSessionId);
 		} finally {
-			restore();
 			if (liveSessionId) {
 				vm.closeSession(liveSessionId);
 			}
 			await vm.dispose();
+			cleanup();
 		}
 	});
 
 	test("Tier 1 native: resume advertised + session/resume ok -> mode native, id preserved", async () => {
-		const vm = await createMockAgentVm([SYNTHETIC_AGENT]);
-		const restore = useMockAdapterBin(vm, MOCK_ADAPTER_PATH);
+		const { vm, cleanup } = await createMockAgentVm();
 		let liveSessionId: string | undefined;
 
 		try {
-			await vm.writeFile(MOCK_ADAPTER_PATH, MOCK_ACP_ADAPTER);
-
 			const externalSessionId = "external-session-resume-only";
 			const result = await vm.resumeSession(externalSessionId, "synthetic", {
 				env: { MOCK_RESUME_SCENARIO: "resume-only" },
@@ -236,22 +207,19 @@ describe("sidecar resume orchestration (mock ACP adapter)", () => {
 			expect(result.mode).toBe("native");
 			expect(result.sessionId).toBe(externalSessionId);
 		} finally {
-			restore();
 			if (liveSessionId) {
 				vm.closeSession(liveSessionId);
 			}
 			await vm.dispose();
+			cleanup();
 		}
 	});
 
 	test("unknown_session fallthrough: session/load NotFoundError -> mode fallback, new live id, preamble prepended", async () => {
-		const vm = await createMockAgentVm([SYNTHETIC_AGENT]);
-		const restore = useMockAdapterBin(vm, MOCK_ADAPTER_PATH);
+		const { vm, cleanup } = await createMockAgentVm();
 		let liveSessionId: string | undefined;
 
 		try {
-			await vm.writeFile(MOCK_ADAPTER_PATH, MOCK_ACP_ADAPTER);
-
 			const externalSessionId = "external-session-fallthrough";
 			const transcriptPath = "/root/.agentos/threads/external-session-fallthrough.md";
 			const result = await vm.resumeSession(externalSessionId, "synthetic", {
@@ -294,22 +262,19 @@ describe("sidecar resume orchestration (mock ACP adapter)", () => {
 			expect(secondBlocks.length).toBe(1);
 			expect(secondBlocks[0].text).toBe("second turn");
 		} finally {
-			restore();
 			if (liveSessionId) {
 				vm.closeSession(liveSessionId);
 			}
 			await vm.dispose();
+			cleanup();
 		}
 	});
 
 	test("no loadSession capability -> straight to fallback (session/new)", async () => {
-		const vm = await createMockAgentVm([SYNTHETIC_AGENT]);
-		const restore = useMockAdapterBin(vm, MOCK_ADAPTER_PATH);
+		const { vm, cleanup } = await createMockAgentVm();
 		let liveSessionId: string | undefined;
 
 		try {
-			await vm.writeFile(MOCK_ADAPTER_PATH, MOCK_ACP_ADAPTER);
-
 			const externalSessionId = "external-session-nocap";
 			const result = await vm.resumeSession(externalSessionId, "synthetic", {
 				env: { MOCK_RESUME_SCENARIO: "no-loadsession" },
@@ -326,11 +291,11 @@ describe("sidecar resume orchestration (mock ACP adapter)", () => {
 			expect(blocks.length).toBe(1);
 			expect(blocks[0].text).toBe("hello");
 		} finally {
-			restore();
 			if (liveSessionId) {
 				vm.closeSession(liveSessionId);
 			}
 			await vm.dispose();
+			cleanup();
 		}
 	});
 });

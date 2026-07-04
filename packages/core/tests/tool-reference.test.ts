@@ -1,11 +1,10 @@
-import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { z } from "zod";
 import { AgentOs, hostTool, toolKit } from "../src/index.js";
-import type { AgentConfig } from "../src/agents.js";
-
-const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
+import {
+	createProjectedAgentPackage,
+	type ProjectedAgentPackage,
+} from "./helpers/projected-agent-package.js";
 
 /**
  * Mock ACP adapter that answers initialize/session/new and echoes its launch argv in agentInfo so
@@ -70,33 +69,24 @@ const mathToolKit = toolKit({
 
 describe("tool reference registration", () => {
 	let vm: AgentOs;
+	let agentPackage: ProjectedAgentPackage;
 
 	beforeEach(async () => {
+		agentPackage = createProjectedAgentPackage({
+			name: "pi",
+			adapterScript: MOCK_ACP_ADAPTER,
+		});
 		vm = await AgentOs.create({
-			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
+			defaultSoftware: false,
+			software: [agentPackage.software],
 			toolKits: [mathToolKit],
 		});
 	});
 
 	afterEach(async () => {
 		await vm.dispose();
+		agentPackage.cleanup();
 	});
-
-	function useMockAdapterBin(scriptPath: string): () => void {
-		const priv = vm as unknown as {
-			_resolveAgentConfig: (id: string) => AgentConfig | undefined;
-		};
-		const originalConfig = priv._resolveAgentConfig.bind(priv);
-		priv._resolveAgentConfig = (id: string) => {
-			const c = originalConfig(id);
-			return c
-				? { ...c, adapterEntrypoint: scriptPath }
-				: { adapterEntrypoint: scriptPath };
-		};
-		return () => {
-			priv._resolveAgentConfig = originalConfig;
-		};
-	}
 
 	test("stores generated tool reference markdown on the VM", () => {
 		const toolReference = (vm as unknown as { _toolReference: string })
@@ -115,27 +105,19 @@ describe("tool reference registration", () => {
 	});
 
 	test("createSession injects the registered tool reference into the system prompt", async () => {
-		const scriptPath = "/tmp/mock-tool-reference-adapter.mjs";
-		await vm.writeFile(scriptPath, MOCK_ACP_ADAPTER);
-		const restore = useMockAdapterBin(scriptPath);
+		const { sessionId } = await vm.createSession("pi");
+		const agentInfo = vm.getSessionAgentInfo(sessionId) as {
+			argv?: string[];
+		};
+		const argv = agentInfo.argv ?? [];
 
-		try {
-			const { sessionId } = await vm.createSession("pi");
-			const agentInfo = vm.getSessionAgentInfo(sessionId) as {
-				argv?: string[];
-			};
-			const argv = agentInfo.argv ?? [];
+		const argIndex = argv.indexOf("--append-system-prompt");
+		expect(argIndex).toBeGreaterThan(-1);
+		const prompt = argv[argIndex + 1];
+		expect(prompt).toContain("## Available Host Tools");
+		expect(prompt).toContain("`agentos-math add --a <number> --b <number>`");
+		expect(prompt).toContain("### math");
 
-			const argIndex = argv.indexOf("--append-system-prompt");
-			expect(argIndex).toBeGreaterThan(-1);
-			const prompt = argv[argIndex + 1];
-			expect(prompt).toContain("## Available Host Tools");
-			expect(prompt).toContain("`agentos-math add --a <number> --b <number>`");
-			expect(prompt).toContain("### math");
-
-			vm.closeSession(sessionId);
-		} finally {
-			restore();
-		}
+		vm.closeSession(sessionId);
 	});
 });

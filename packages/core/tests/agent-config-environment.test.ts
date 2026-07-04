@@ -1,13 +1,10 @@
 import { resolve } from "node:path";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
-import piCli from "@agentos-software/pi-cli";
 import { describe, expect, test } from "vitest";
 import { AgentOs, type AgentInfo } from "../src/agent-os.js";
-import type { AgentConfig } from "../src/agents.js";
-import type { SoftwareInput } from "../src/packages.js";
+import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
-const MOCK_ADAPTER_PATH = "/tmp/mock-agent-config-adapter.mjs";
 const CAPTURED_ENV_KEYS = [
 	"PI_ACP_PI_COMMAND",
 	"CLAUDE_CODE_DISABLE_CWD_PERSIST",
@@ -81,44 +78,34 @@ type LaunchProbe = AgentInfo & {
 	env?: Partial<Record<(typeof CAPTURED_ENV_KEYS)[number], string | null>>;
 };
 
-// The new model launches `config.adapterEntrypoint` directly, so override the
-// resolved config to point it at the mock adapter while preserving the config's
-// env + launch args.
-function useMockAdapterBin(vm: AgentOs, scriptPath: string): () => void {
-	const priv = vm as AgentOs & {
-		_resolveAgentConfig: (id: string) => AgentConfig | undefined;
-	};
-	const originalConfig = priv._resolveAgentConfig.bind(priv);
-	priv._resolveAgentConfig = (id: string) => {
-		const config = originalConfig(id);
-		return config ? { ...config, adapterEntrypoint: scriptPath } : config;
-	};
-	return () => {
-		priv._resolveAgentConfig = originalConfig;
-	};
-}
-
 async function inspectLaunch(
 	agentType: string,
-	software: SoftwareInput[] = [],
+	agentManifest: {
+		env?: Record<string, string>;
+		launchArgs?: string[];
+	} = {},
 ): Promise<LaunchProbe> {
+	const agentPackage = createProjectedAgentPackage({
+		name: agentType,
+		adapterScript: MOCK_ACP_ADAPTER,
+		...agentManifest,
+	});
 	const vm = await AgentOs.create({
+		defaultSoftware: false,
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		software,
+		software: [agentPackage.software],
 	});
 	let sessionId: string | undefined;
-	const restore = useMockAdapterBin(vm, MOCK_ADAPTER_PATH);
 
 	try {
-		await vm.writeFile(MOCK_ADAPTER_PATH, MOCK_ACP_ADAPTER);
 		sessionId = (await vm.createSession(agentType)).sessionId;
 		return vm.getSessionAgentInfo(sessionId) as LaunchProbe;
 	} finally {
-		restore();
 		if (sessionId) {
 			vm.closeSession(sessionId);
 		}
 		await vm.dispose();
+		agentPackage.cleanup();
 	}
 }
 
@@ -134,7 +121,9 @@ describe("agent launch args and env", () => {
 	test("Pi CLI injects the system prompt flag and resolved pi binary", async () => {
 		// pi-cli is still the legacy two-package CLI adapter that spawns the pi CLI
 		// via PI_ACP_PI_COMMAND.
-		const agentInfo = await inspectLaunch("pi-cli", [piCli]);
+		const agentInfo = await inspectLaunch("pi-cli", {
+			env: { PI_ACP_PI_COMMAND: "pi" },
+		});
 
 		expect(agentInfo.argv).toContain("--append-system-prompt");
 		// The {name,dir} model projects the pi CLI onto $PATH as /opt/agentos/bin/pi,
@@ -144,7 +133,17 @@ describe("agent launch args and env", () => {
 	});
 
 	test("Claude injects shell-safe launch env defaults", async () => {
-		const agentInfo = await inspectLaunch("claude");
+		const agentInfo = await inspectLaunch("claude", {
+			env: {
+				CLAUDE_CODE_DISABLE_CWD_PERSIST: "1",
+				CLAUDE_CODE_DISABLE_DEV_NULL_REDIRECT: "1",
+				CLAUDE_CODE_NODE_SHELL_WRAPPER: "1",
+				CLAUDE_CODE_SHELL: "/bin/sh",
+				CLAUDE_CODE_SIMPLE_SHELL_EXEC: "1",
+				CLAUDE_CODE_SWAP_STDIO: "0",
+				SHELL: "/bin/sh",
+			},
+		});
 
 		expect(agentInfo.argv).toContain("--append-system-prompt");
 		expect(agentInfo.env).toMatchObject({

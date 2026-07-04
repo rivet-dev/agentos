@@ -1,23 +1,6 @@
-import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
-import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import { AgentOs } from "../src/agent-os.js";
-import type { AgentConfig } from "../src/agents.js";
-import type { SoftwareInput } from "../src/packages.js";
-
-const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
-const MOCK_ADAPTER_PATH = "/tmp/mock-synthetic-session-updates-adapter.mjs";
-const SYNTHETIC_AGENT = {
-	name: "synthetic-session-updates",
-	type: "agent" as const,
-	packageDir: MODULE_ACCESS_CWD,
-	requires: [],
-	agent: {
-		id: "synthetic",
-		acpAdapter: "synthetic-session-updates-adapter",
-		agentPackage: "synthetic-session-updates-agent",
-	},
-};
+import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
 
 const MOCK_ACP_ADAPTER = `
 let buffer = "";
@@ -146,37 +129,19 @@ process.stdin.on("data", (chunk) => {
 });
 `;
 
-function useMockAdapterBin(vm: AgentOs, scriptPath: string): () => void {
-	const priv = vm as AgentOs & {
-		_resolveAgentConfig: (id: string) => AgentConfig | undefined;
-	};
-	const originalConfig = priv._resolveAgentConfig.bind(priv);
-	priv._resolveAgentConfig = (id: string) => {
-		const c = originalConfig(id);
-		return c
-			? { ...c, adapterEntrypoint: scriptPath }
-			: { adapterEntrypoint: scriptPath };
-	};
-	return () => {
-		priv._resolveAgentConfig = originalConfig;
-	};
-}
-
-async function createMockAgentVm(software: SoftwareInput[]): Promise<AgentOs> {
-	return AgentOs.create({
-		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		software,
-	});
-}
-
 describe("synthetic session/update compatibility", () => {
 	test("surfaces synthetic mode and config updates when the ACP adapter omits notifications", async () => {
-		const vm = await createMockAgentVm([SYNTHETIC_AGENT]);
-		const restore = useMockAdapterBin(vm, MOCK_ADAPTER_PATH);
+		const agentPackage = createProjectedAgentPackage({
+			name: "synthetic",
+			adapterScript: MOCK_ACP_ADAPTER,
+		});
+		const vm = await AgentOs.create({
+			defaultSoftware: false,
+			software: [agentPackage.software],
+		});
 		let sessionId: string | undefined;
 
 		try {
-			await vm.writeFile(MOCK_ADAPTER_PATH, MOCK_ACP_ADAPTER);
 			sessionId = (await vm.createSession("synthetic")).sessionId;
 
 			const receivedEvents: string[] = [];
@@ -214,11 +179,11 @@ describe("synthetic session/update compatibility", () => {
 				).length,
 			).toBeGreaterThanOrEqual(2);
 		} finally {
-			restore();
 			if (sessionId) {
 				vm.closeSession(sessionId);
 			}
 			await vm.dispose();
+			agentPackage.cleanup();
 		}
 	});
 });

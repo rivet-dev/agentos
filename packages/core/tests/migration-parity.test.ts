@@ -5,22 +5,10 @@ import common from "@agentos-software/common";
 import { afterEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { AgentOs, hostTool, toolKit } from "../src/index.js";
-import type { AgentConfig } from "../src/agents.js";
+import { createProjectedAgentPackage } from "./helpers/projected-agent-package.js";
 
 const MODULE_ACCESS_CWD = resolve(import.meta.dirname, "..");
-const MOCK_ADAPTER_PATH = "/tmp/mock-migration-parity-adapter.mjs";
 const textDecoder = new TextDecoder();
-const SYNTHETIC_AGENT = {
-	name: "migration-parity-agent",
-	type: "agent" as const,
-	packageDir: MODULE_ACCESS_CWD,
-	requires: [],
-	agent: {
-		id: "migration-parity",
-		acpAdapter: "migration-parity-adapter",
-		agentPackage: "migration-parity-agent",
-	},
-};
 const MOCK_ACP_ADAPTER = `
 let buffer = "";
 
@@ -187,22 +175,6 @@ async function runSpawnedProcess(
 
 function getRequestPath(req: IncomingMessage): string {
 	return req.url ?? "/";
-}
-
-function useMockAdapterBin(vm: AgentOs, scriptPath: string): () => void {
-	const priv = vm as AgentOs & {
-		_resolveAgentConfig: (id: string) => AgentConfig | undefined;
-	};
-	const originalConfig = priv._resolveAgentConfig.bind(priv);
-	priv._resolveAgentConfig = (id: string) => {
-		const c = originalConfig(id);
-		return c
-			? { ...c, adapterEntrypoint: scriptPath }
-			: { adapterEntrypoint: scriptPath };
-	};
-	return () => {
-		priv._resolveAgentConfig = originalConfig;
-	};
 }
 
 describe("native sidecar migration parity gate", () => {
@@ -386,9 +358,18 @@ describe("native sidecar migration parity gate", () => {
 	}, 60_000);
 
 	test("covers session lifecycle and agent prompt flow on the Rust sidecar path", async () => {
+		const agentPackage = createProjectedAgentPackage({
+			name: "migration-parity",
+			adapterScript: MOCK_ACP_ADAPTER,
+		});
+		cleanups.add(async () => {
+			agentPackage.cleanup();
+		});
+
 		const vm = await AgentOs.create({
 			mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-			software: [SYNTHETIC_AGENT],
+			defaultSoftware: false,
+			software: [agentPackage.software],
 			permissions: {
 				fs: "allow",
 				childProcess: "allow",
@@ -399,12 +380,6 @@ describe("native sidecar migration parity gate", () => {
 			await vm.dispose();
 		});
 		assertNativeSidecar(vm);
-
-		const restoreAdapter = useMockAdapterBin(vm, MOCK_ADAPTER_PATH);
-		cleanups.add(async () => {
-			restoreAdapter();
-		});
-		await vm.writeFile(MOCK_ADAPTER_PATH, MOCK_ACP_ADAPTER);
 
 		const { sessionId } = await vm.createSession("migration-parity");
 
