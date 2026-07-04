@@ -527,10 +527,16 @@ impl AgentOs {
         let result = self
             .guest_fs_call(Self::fs_request(GuestFilesystemOperation::ReadDir, path))
             .await?;
-        // secure-exec's READ_DIR returns basenames only (`entries: list<str>`);
-        // the typed [`Self::read_dir_with_types`] path derives each entry's type
-        // with a per-child `lstat`.
-        Ok(result.entries.unwrap_or_default())
+        // secure-exec's READ_DIR now returns rich entries (`entries:
+        // list<GuestDirEntry>` with name + is_directory + is_symbolic_link);
+        // this name-only accessor projects the basenames. The richer fields back
+        // the typed [`Self::read_dir_with_types`] path.
+        Ok(result
+            .entries
+            .unwrap_or_default()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect())
     }
 
     async fn kernel_stat(&self, path: &str) -> Result<VirtualStat> {
