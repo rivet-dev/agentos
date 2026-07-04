@@ -1,6 +1,6 @@
 {
 	"name": "@rivet-dev/agentos-core",
-	"version": "0.2.5-rc.1",
+	"version": "0.2.5-rc.2",
 	"type": "module",
 	"license": "Apache-2.0",
 	"main": "./dist/index.js",

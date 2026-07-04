@@ -1,6 +1,6 @@
 {
 	"name": "@rivet-dev/agentos-sidecar-darwin-arm64",
-	"version": "0.2.5-rc.1",
+	"version": "0.2.5-rc.2",
 	"description": "Agent OS native sidecar binary for macOS arm64 (Apple Silicon)",
 	"license": "Apache-2.0",
 	"repository": {

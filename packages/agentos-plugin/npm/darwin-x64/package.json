@@ -1,6 +1,6 @@
 {
 	"name": "@rivet-dev/agentos-plugin-darwin-x64",
-	"version": "0.2.5-rc.1",
+	"version": "0.2.5-rc.2",
 	"description": "Agent OS actor plugin cdylib for macOS x64",
 	"license": "Apache-2.0",
 	"repository": {
