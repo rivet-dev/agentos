@@ -95,7 +95,8 @@ const CRATES = {
 	"secure-exec-vm-config": "crates/vm-config",
 };
 
-// Seed versions (heterogeneous today; `set-version` unifies them after a publish).
+// Seed versions for published npm pins. Local secure-exec crate deps mirror the
+// committed secure-exec workspace version, which is fixed at 0.0.1.
 const SEED_VERSIONS = {
 	"@secure-exec/core": "0.2.1",
 	"@secure-exec/browser": "0.2.1",
@@ -103,7 +104,7 @@ const SEED_VERSIONS = {
 	"@secure-exec/sandbox": "0.2.0-rc.3",
 };
 const SEED_SOFTWARE_VERSION = "0.0.260331072558";
-const SEED_CRATE_VERSION = "0.2.0-rc.3";
+const SEED_CRATE_VERSION = "0.0.1";
 
 const CATALOG_BEGIN = "# >>> secure-exec catalog (managed by scripts/secure-exec-dep.mjs) >>>";
 const CATALOG_END = "# <<< secure-exec catalog <<<";
@@ -300,8 +301,9 @@ function rewriteCargo(mode, setVersion) {
 		const pkg = (body.match(/package\s*=\s*"([^"]+)"/) || [])[1];
 		const crate = pkg || key;
 		if (!(crate in CRATES)) return line;
+		const existing = (body.match(/version\s*=\s*"([^"]+)"/) || [])[1];
 		const ver =
-			setVersion || (body.match(/version\s*=\s*"([^"]+)"/) || [])[1] || SEED_CRATE_VERSION;
+			setVersion ?? (mode === "local" ? SEED_CRATE_VERSION : existing || SEED_CRATE_VERSION);
 		const parts = [];
 		if (pkg) parts.push(`package = "${pkg}"`);
 		if (mode === "local") parts.push(`path = "${SECURE_EXEC_REL}/${CRATES[crate]}"`);

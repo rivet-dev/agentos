@@ -23,19 +23,19 @@ repository = "https://github.com/rivet-dev/agent-os"
 # normal crates.io dependencies so CI/publish builds do not need a sibling
 # checkout.
 [workspace.dependencies]
-agentos-bridge = { package = "secure-exec-bridge", path = "../secure-exec/crates/bridge", version = "0.3.4-rc.1" }
+agentos-bridge = { package = "secure-exec-bridge", path = "../secure-exec/crates/bridge", version = "0.0.1" }
 agentos-protocol = { path = "crates/agentos-protocol", version = "0.0.1" }
 agentos-sidecar-core = { path = "crates/agentos-sidecar-core", version = "0.0.1" }
 agentos-sidecar = { path = "crates/agentos-sidecar", version = "0.0.1" }
 agentos-sidecar-browser = { path = "crates/agentos-sidecar-browser", version = "0.0.1" }
-agentos-kernel = { package = "secure-exec-kernel", path = "../secure-exec/crates/kernel", version = "0.3.4-rc.1" }
-agentos-execution = { package = "secure-exec-execution", path = "../secure-exec/crates/execution", version = "0.3.4-rc.1" }
-agentos-v8-runtime = { package = "secure-exec-v8-runtime", path = "../secure-exec/crates/v8-runtime", version = "0.3.4-rc.1" }
-secure-exec-client = { path = "../secure-exec/crates/secure-exec-client", version = "0.3.4-rc.1" }
-secure-exec-bridge = { path = "../secure-exec/crates/bridge", version = "0.3.4-rc.1" }
-secure-exec-sidecar = { path = "../secure-exec/crates/sidecar", version = "0.3.4-rc.1" }
+agentos-kernel = { package = "secure-exec-kernel", path = "../secure-exec/crates/kernel", version = "0.0.1" }
+agentos-execution = { package = "secure-exec-execution", path = "../secure-exec/crates/execution", version = "0.0.1" }
+agentos-v8-runtime = { package = "secure-exec-v8-runtime", path = "../secure-exec/crates/v8-runtime", version = "0.0.1" }
+secure-exec-client = { path = "../secure-exec/crates/secure-exec-client", version = "0.0.1" }
+secure-exec-bridge = { path = "../secure-exec/crates/bridge", version = "0.0.1" }
+secure-exec-sidecar = { path = "../secure-exec/crates/sidecar", version = "0.0.1" }
 # LOCAL-DEV: unpublished converged browser crate (web/wasm work).
-secure-exec-sidecar-browser = { path = "../secure-exec/crates/sidecar-browser", version = "0.3.4-rc.1" }
-secure-exec-vm-config = { path = "../secure-exec/crates/vm-config", version = "0.3.4-rc.1" }
+secure-exec-sidecar-browser = { path = "../secure-exec/crates/sidecar-browser", version = "0.0.1" }
+secure-exec-vm-config = { path = "../secure-exec/crates/vm-config", version = "0.0.1" }
 vbare = "0.0.4"
 vbare-compiler = { package = "rivet-vbare-compiler", version = "0.0.5" }
