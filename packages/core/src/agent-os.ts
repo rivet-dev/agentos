@@ -444,6 +444,10 @@ export interface AgentOsLimits {
 	/** Guest JavaScript runtime buffering limits. */
 	jsRuntime?: {
 		v8HeapLimitMb?: number;
+		syncRpcWaitTimeoutMs?: number;
+		cpuTimeLimitMs?: number;
+		wallClockLimitMs?: number;
+		importCacheMaterializeTimeoutMs?: number;
 		capturedOutputLimitBytes?: number;
 		stdinBufferLimitBytes?: number;
 		eventPayloadLimitBytes?: number;
@@ -453,6 +457,7 @@ export interface AgentOsLimits {
 	python?: {
 		outputBufferMaxBytes?: number;
 		executionTimeoutMs?: number;
+		maxOldSpaceMb?: number;
 		vfsRpcTimeoutMs?: number;
 	};
 	/** Guest WASM runtime limits. */
@@ -460,6 +465,8 @@ export interface AgentOsLimits {
 		maxModuleFileBytes?: number;
 		capturedOutputLimitBytes?: number;
 		syncReadLimitBytes?: number;
+		prewarmTimeoutMs?: number;
+		runnerHeapLimitMb?: number;
 	};
 }
 

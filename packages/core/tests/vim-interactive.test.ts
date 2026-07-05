@@ -264,11 +264,10 @@ describe.skipIf(!existsSync(VIM_BINARY))("interactive vim over VM PTY", () => {
 	);
 
 	// Regression guard for the idle full-screen raw-mode case: the guest must
-	// survive a long idle stretch on the DEFAULT CPU watchdog (no
-	// AGENTOS_V8_CPU_TIME_LIMIT_MS override) and still consume a keystroke
-	// afterwards. Guards both the event-driven kernel wait servicing (idle must
-	// accrue ~zero active CPU) and the poll/read wake path (the keystroke must
-	// land promptly, not after a polling slice).
+	// survive a long idle stretch on the default typed CPU watchdog and still
+	// consume a keystroke afterwards. Guards both the event-driven kernel wait
+	// servicing (idle must accrue ~zero active CPU) and the poll/read wake path
+	// (the keystroke must land promptly, not after a polling slice).
 	it(
 		"idles 60s+ in raw mode on the default CPU watchdog, then consumes a keystroke",
 		async () => {

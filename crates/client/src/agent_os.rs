@@ -3817,9 +3817,9 @@ mod tests {
     };
     use crate::config::{
         AgentOsConfig, AgentOsLimits, FsPermissionRule, FsPermissions, HttpLimits, JsRuntimeLimits,
-        MountPlugin, PatternPermissions, PermissionMode, Permissions, ResourceLimits,
+        MountPlugin, PatternPermissions, PermissionMode, Permissions, PythonLimits, ResourceLimits,
         RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode, RootLowerInput,
-        RulePermissions, ToolLimits,
+        RulePermissions, ToolLimits, WasmLimits,
     };
     use crate::fs::{
         DirEntryType, FilesystemEntry, FilesystemEntryEncoding, FilesystemSnapshotEntries,
@@ -4104,6 +4104,19 @@ mod tests {
                 }),
                 js_runtime: Some(JsRuntimeLimits {
                     v8_heap_limit_mb: Some(64),
+                    sync_rpc_wait_timeout_ms: Some(2_000),
+                    cpu_time_limit_ms: Some(30_000),
+                    wall_clock_limit_ms: Some(0),
+                    import_cache_materialize_timeout_ms: Some(30_000),
+                    ..Default::default()
+                }),
+                python: Some(PythonLimits {
+                    max_old_space_mb: Some(256),
+                    ..Default::default()
+                }),
+                wasm: Some(WasmLimits {
+                    prewarm_timeout_ms: Some(30_000),
+                    runner_heap_limit_mb: Some(2_048),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -4138,9 +4151,22 @@ mod tests {
         assert_eq!(
             limits
                 .js_runtime
+                .as_ref()
                 .expect("js runtime limits")
                 .v8_heap_limit_mb,
             Some(64)
         );
+        let js_runtime = limits.js_runtime.expect("js runtime limits");
+        assert_eq!(js_runtime.sync_rpc_wait_timeout_ms, Some(2_000));
+        assert_eq!(js_runtime.cpu_time_limit_ms, Some(30_000));
+        assert_eq!(js_runtime.wall_clock_limit_ms, Some(0));
+        assert_eq!(js_runtime.import_cache_materialize_timeout_ms, Some(30_000));
+        assert_eq!(
+            limits.python.expect("python limits").max_old_space_mb,
+            Some(256)
+        );
+        let wasm = limits.wasm.expect("wasm limits");
+        assert_eq!(wasm.prewarm_timeout_ms, Some(30_000));
+        assert_eq!(wasm.runner_heap_limit_mb, Some(2_048));
     }
 }
