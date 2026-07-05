@@ -52,6 +52,9 @@ jobs:
       - run: node scripts/check-secure-exec-package-boundary.mjs
       - run: node --test scripts/check-no-escaping-local-deps.test.mjs
       - run: node scripts/check-no-escaping-local-deps.mjs
+      - run: node scripts/verify-file-deps.mjs
+      - run: node --test scripts/verify-fixed-versions.test.mjs
+      - run: node scripts/verify-fixed-versions.mjs
       - run: cargo fmt --check
       - run: pnpm check-types
       - run: pnpm lint

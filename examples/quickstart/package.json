@@ -1,6 +1,6 @@
 {
 	"name": "@rivet-dev/agentos-quickstart",
-	"version": "0.1.0",
+	"version": "0.0.1",
 	"private": true,
 	"description": "Quickstart examples for Agent OS. The scripts in this package are the supported example entrypoints.",
 	"type": "module",

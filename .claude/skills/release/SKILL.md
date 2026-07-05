@@ -27,18 +27,25 @@ just release --secure-exec-version <v> --version 0.2.0-rc.1  # rc (npm tag `rc`)
 just release --secure-exec-version <v> --patch               # semver bump from latest git tag
 ```
 
-`just release` runs `scripts/publish/src/local/cut-release.ts`, which:
+`just release` runs `scripts/publish/src/local/cut-release.ts`, which is a
+**pure trigger** — it never mutates or commits version files:
 1. Resolves the version and the `latest` flag (auto-detected from git tags).
 2. Validates the working tree is clean and prints a plan to confirm.
-3. Rewrites `Cargo.toml` + every publishable `package.json` version.
-4. Runs a local core build + type-check fail-fast (`--skip-checks` to skip).
-5. Commits + pushes the version bump.
-6. Triggers `publish.yaml` with the version + `secure_exec_version`, which
-   verifies the secure-exec release, release-swaps the file deps to it in the
-   CI checkout (never committed), builds release binaries, publishes npm +
-   crates.io, uploads release assets, and tags `v<version>`.
+3. Runs a local core build + type-check fail-fast (`--skip-checks` to skip).
+4. Triggers `publish.yaml` with the version + `secure_exec_version`, which
+   verifies the secure-exec release, release-swaps the file deps to it AND
+   bumps the committed `0.0.1` product versions to `<version>` — all in the
+   ephemeral CI checkout, never committed — then builds release binaries,
+   publishes npm + crates.io, uploads release assets, and tags `v<version>`.
 
-Flags: `--latest` / `--no-latest`, `--dry-run` (mutate files only), `-y`.
+The committed tree always stays at product version `0.0.1` (enforced by
+`scripts/verify-fixed-versions.mjs`); the real version lives only in the
+workflow input and the resulting `v<version>` git tag. `resolveVersion` reads
+those git tags — not any committed `package.json` — so pinning at `0.0.1` never
+affects version resolution.
+
+Flags: `--latest` / `--no-latest`, `--dry-run` (print the resolved plan only —
+no file changes, no workflow trigger), `-y`.
 
 ## Release-preview
 

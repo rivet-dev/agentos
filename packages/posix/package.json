@@ -1,6 +1,6 @@
 {
   "name": "@rivet-dev/agentos-posix",
-  "version": "0.2.0-rc.3",
+  "version": "0.0.1",
   "description": "POSIX runtime driver — WASI-based Unix userland for Agent OS",
   "type": "module",
   "main": "./dist/index.js",

@@ -1,6 +1,6 @@
 {
 	"name": "@rivet-dev/agentos-typecheck-example",
-	"version": "0.1.0",
+	"version": "0.0.1",
 	"private": true,
 	"description": "Type-checking example that exercises the @rivet-dev/agentos public type surface.",
 	"type": "module",

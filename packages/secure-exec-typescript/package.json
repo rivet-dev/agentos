@@ -1,6 +1,6 @@
 {
 	"name": "@secure-exec/typescript",
-	"version": "0.2.1",
+	"version": "0.0.1",
 	"private": true,
 	"description": "Secure-Exec TypeScript companion tools backed by Agent OS runtime primitives.",
 	"type": "module",

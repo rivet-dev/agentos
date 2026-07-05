@@ -1,6 +1,6 @@
 {
 	"name": "@rivet-dev/agentos-example-browser-terminal",
-	"version": "0.1.0",
+	"version": "0.0.1",
 	"private": true,
 	"type": "module",
 	"description": "Browser terminal for Agent OS VMs — RivetKit actor + xterm.js.",

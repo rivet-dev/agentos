@@ -7,11 +7,8 @@
  *   2. Auto-detect or confirm `latest` flag
  *   3. Validate git working tree is clean
  *   4. Print release plan and confirm
- *   5. Rewrite Cargo.toml + example source files
- *   6. Rewrite every publishable package.json version (version-only)
- *   7. Optional local type-check fail-fast
- *   8. Commit + push
- *   9. Trigger the publish.yaml workflow
+ *   5. Optional local type-check fail-fast
+ *   6. Trigger the publish.yaml workflow
  *
  * Debugging: comment out any step. No `--only-steps`, no phases.
  */
@@ -24,13 +21,10 @@ import { $ } from "execa";
 import { validateClean } from "../lib/git.js";
 import { scoped } from "../lib/logger.js";
 import {
-	bumpCargoVersions,
-	bumpPackageJsons,
 	getLatestGitVersion,
 	listRecentVersions,
 	resolveVersion,
 	shouldTagAsLatest,
-	updateSourceFiles,
 } from "../lib/version.js";
 
 const log = scoped("release");
@@ -85,7 +79,7 @@ async function main() {
 		.option("--patch", "Bump patch")
 		.option("--latest", "Mark as latest dist-tag")
 		.option("--no-latest", "Do not mark as latest")
-		.option("--dry-run", "Do not commit/push/trigger (still mutates source files)")
+		.option("--dry-run", "Resolve and print the release plan without triggering the workflow")
 		.option("-y, --yes", "Skip interactive confirmation")
 		.option("--skip-checks", "Skip local type-check fail-fast")
 		.parse();
@@ -133,7 +127,7 @@ async function main() {
 	console.log(`  Latest:   ${latest}`);
 	console.log(`  Branch:   ${branch.trim()}`);
 	console.log(`  Previous: ${latestGit ?? "(none)"}`);
-	if (opts.dryRun) console.log("  Dry run:  no git commit / push / workflow trigger");
+	if (opts.dryRun) console.log("  Dry run:  no workflow trigger");
 	console.log("");
 	if (recent.length > 0) {
 		console.log("Recent versions:");
@@ -144,6 +138,11 @@ async function main() {
 		console.log("");
 	}
 
+	if (opts.dryRun) {
+		log.info("dry run complete — workflow not triggered");
+		return;
+	}
+
 	if (!opts.yes) {
 		const ok = await confirmPrompt("Proceed with release? (yes/no): ");
 		if (!ok) {
@@ -152,19 +151,7 @@ async function main() {
 		}
 	}
 
-	// 5. Update Cargo.toml + example source files.
-	log.info("updating Cargo.toml + example source files");
-	await bumpCargoVersions(repoRoot, version);
-	await updateSourceFiles(repoRoot, version);
-
-	// 6. Rewrite package.json version fields via discovery. Uses versionOnly
-	// mode so `workspace:*` dep specs are preserved — the lockfile depends on
-	// them. CI runs the full publish-time bump (with dep rewriting +
-	// optionalDependencies injection) after `pnpm install --frozen-lockfile`.
-	log.info("rewriting package.json versions");
-	await bumpPackageJsons(repoRoot, version, { versionOnly: true });
-
-	// 7. Local type-check fail-fast.
+	// 5. Local type-check fail-fast.
 	if (!opts.skipChecks) {
 		log.info("running local core build + type-check (fail-fast)");
 		await $({ stdio: "inherit", cwd: repoRoot })`pnpm --dir packages/core build`;
@@ -174,28 +161,10 @@ async function main() {
 		})`pnpm --dir packages/core check-types`;
 	}
 
-	if (opts.dryRun) {
-		log.info("dry run complete — source files mutated, nothing committed");
-		return;
-	}
-
-	// 8. Commit + push.
-	log.info("committing version bump");
-	await $({ stdio: "inherit", cwd: repoRoot })`git add -A`;
-	await $({
-		stdio: "inherit",
-		cwd: repoRoot,
-		shell: true,
-	})`git commit --allow-empty -m "chore(release): update version to ${version}"`;
-
-	const currentBranch = (
-		await $`git rev-parse --abbrev-ref HEAD`
-	).stdout.trim();
-	await $({ stdio: "inherit", cwd: repoRoot })`git push origin ${currentBranch}`;
-
-	// 9. Trigger the workflow.
+	// 6. Trigger the workflow.
 	log.info("triggering publish.yaml workflow");
 	const latestFlag = latest ? "true" : "false";
+	const currentBranch = branch.trim();
 	await $({
 		stdio: "inherit",
 		cwd: repoRoot,

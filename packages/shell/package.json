@@ -1,6 +1,6 @@
 {
 	"name": "@rivet-dev/agentos-shell",
-	"version": "0.2.0-rc.3",
+	"version": "0.0.1",
 	"private": false,
 	"type": "module",
 	"bin": {

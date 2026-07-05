@@ -10,15 +10,15 @@
  *   the lock-step internal crate `version` fields under `[workspace.dependencies]`
  *   so the crates.io publish chain stays consistent.
  *
- * - `updateSourceFiles` — rewrites non-package.json, non-Cargo source files
- *   (example dependency specs). Called only by the local `cut-release.ts`.
- *
  * - `resolveVersion` / `shouldTagAsLatest` — semver helpers for the local cut.
+ *
+ * All bump functions run ONLY in the CI publish checkout (via the `bump-versions`
+ * subcommand). The committed tree stays pinned at product version `0.0.1`; the
+ * local `cut-release.ts` cutter is a pure trigger and never calls them.
  */
 import * as fs from "node:fs/promises";
-import { join, resolve as resolvePath } from "node:path";
+import { join } from "node:path";
 import { $ } from "execa";
-import { glob } from "glob";
 import * as semver from "semver";
 import { scoped } from "./logger.js";
 import { buildMetaPlatformMap, discoverPackages } from "./packages.js";
@@ -97,8 +97,9 @@ export interface BumpOptions {
  * `workspace:*`, not literal versions.
  *
  * In version-only mode (`versionOnly: true`): only rewrites the `version`
- * field. Safe to commit. Used by `cut-release.ts` so the repo records the
- * new version in package.jsons without breaking the lockfile.
+ * field, preserving `workspace:*`/`catalog:` dep specs so the lockfile still
+ * resolves. Used by the CI `bump-versions` build step before `turbo build` so
+ * the built JS carries the real version; never committed.
  *
  * Returns the number of files written.
  */
@@ -206,58 +207,6 @@ export async function bumpCargoVersions(
 	} else {
 		await fs.writeFile(cargoTomlPath, next);
 		log.info(`updated Cargo.toml Rust versions -> ${version}`);
-	}
-}
-
-/**
- * Rewrite non-package.json, non-Cargo source files to the given version.
- * Called only by the local release cutter. Examples that pin `@rivet-dev/agentos-*`
- * to a literal version (rather than `workspace:*`) get updated so released
- * examples carry the new version. `required: false` because a6 examples use
- * `workspace:*` today, so a no-match is expected and not an error.
- */
-export async function updateSourceFiles(
-	repoRoot: string,
-	version: string,
-): Promise<void> {
-	const findReplace: Array<{
-		path: string;
-		find: RegExp;
-		replace: string;
-		required?: boolean;
-	}> = [
-		{
-			path: "examples/**/package.json",
-			find: /"(@rivet-dev\/agentos-[^"]+)": "\^?[0-9]+\.[0-9]+\.[0-9]+(?:-[^"]+)?"/g,
-			replace: `"$1": "^${version}"`,
-			required: false,
-		},
-	];
-
-	for (const { path: globPath, find, replace, required = true } of findReplace) {
-		const paths = await glob(globPath, {
-			cwd: repoRoot,
-			ignore: ["**/node_modules/**"],
-		});
-		if (paths.length === 0) {
-			if (required) {
-				throw new Error(`no paths matched: ${globPath}`);
-			}
-			continue;
-		}
-		for (const fileRelPath of paths) {
-			const filePath = resolvePath(repoRoot, fileRelPath);
-			const file = await fs.readFile(filePath, "utf-8");
-
-			find.lastIndex = 0;
-			const hasMatch = find.test(file);
-			if (!hasMatch) continue;
-
-			find.lastIndex = 0;
-			const newFile = file.replace(find, replace);
-			await fs.writeFile(filePath, newFile);
-			log.info(`updated ${fileRelPath}`);
-		}
 	}
 }
 
