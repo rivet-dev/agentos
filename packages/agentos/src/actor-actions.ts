@@ -129,6 +129,7 @@ export interface SoftwareInfo {
 	/** Kebab-case `SoftwareKind` tag. */
 	kind: "wasm-commands" | "agent" | "tool";
 	version: string | null;
+	commands: string[];
 }
 
 /**

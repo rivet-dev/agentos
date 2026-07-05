@@ -408,6 +408,14 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      # @rivet-dev/agentos-browser's build compiles a wasm crate that path-depends
+      # on the secure-exec crates, so the sibling must be materialized before
+      # `turbo build` invokes cargo (the prepare-build-before-every-cargo invariant).
+      # No-op on releases (release-swap pinned the crates to the real release).
+      - name: Prepare secure-exec sibling
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/secure-exec-dep.mjs prepare-build
       - name: Build TypeScript packages
         run: |
           npx turbo build \
