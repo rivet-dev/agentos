@@ -10,12 +10,31 @@ use agentos_client::{
 use anyhow::Result;
 use serde::Serialize;
 
-/// `exec(command)` — port of [`AgentOs::exec`] with default options.
-/// Returns an [`ExecResultDto`] with camelCase `exitCode` for the JS side.
-pub async fn exec(vm: &AgentOs, command: &str) -> Result<ExecResultDto> {
-    vm.exec(command, ExecOptions::default())
-        .await
-        .map(ExecResultDto::from)
+/// JSON options for the `exec` action — the serializable subset of the TS
+/// `ExecOptions` (env + cwd). Mirrors [`SpawnActionOptions`] minus the
+/// stream-stdin flag, which only applies to long-running spawns.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecActionOptions {
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+    pub cwd: Option<String>,
+}
+
+/// `exec(command, options?)` — port of [`AgentOs::exec`]. Forwards the optional
+/// `env`/`cwd` so callers can run a command with credentials without dropping to
+/// `spawn`. Returns an [`ExecResultDto`] with camelCase `exitCode` for the JS side.
+pub async fn exec(
+    vm: &AgentOs,
+    command: &str,
+    options: ExecActionOptions,
+) -> Result<ExecResultDto> {
+    let mut base = ExecOptions::default();
+    base.env = options.env;
+    if options.cwd.is_some() {
+        base.cwd = options.cwd;
+    }
+    vm.exec(command, base).await.map(ExecResultDto::from)
 }
 
 /// JSON options for the `spawn` action — the serializable subset of the TS

@@ -355,6 +355,31 @@ importers:
         specifier: ^6.0.0
         version: 6.4.3(@types/node@24.13.2)(jiti@1.21.7)(tsx@4.21.0)(yaml@2.9.0)
 
+  examples/browserbase:
+    dependencies:
+      '@agentos-software/browserbase':
+        specifier: link:../../../secure-exec/registry/software/browserbase
+        version: link:../../../secure-exec/registry/software/browserbase
+      '@agentos-software/claude-code':
+        specifier: link:../../../secure-exec/registry/agent/claude
+        version: link:../../../secure-exec/registry/agent/claude
+      '@rivet-dev/agentos':
+        specifier: workspace:*
+        version: link:../../packages/agentos
+      rivetkit:
+        specifier: catalog:rivetkit
+        version: 0.0.0-stack-feat-rivetkit-forward-inspector-tabs-to-native-plugin-actors-qkwmksyy.d2859b0(@opentelemetry/api@1.9.0)(better-sqlite3@12.8.0)(ws@8.20.0(bufferutil@4.1.0))
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   examples/claude:
     dependencies:
       '@agentos-software/claude-code':

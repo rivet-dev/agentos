@@ -1,0 +1,22 @@
+{
+  "name": "@rivet-dev/agentos-example-browserbase",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --import tsx server.ts",
+    "client": "node --import tsx client.ts",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rivet-dev/agentos": "workspace:*",
+    "rivetkit": "catalog:rivetkit",
+    "@agentos-software/claude-code": "link:../../../secure-exec/registry/agent/claude",
+    "@agentos-software/browserbase": "link:../../../secure-exec/registry/software/browserbase"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.2"
+  }
+}

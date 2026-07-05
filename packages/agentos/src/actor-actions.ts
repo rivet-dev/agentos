@@ -44,6 +44,12 @@ export interface SpawnedProcess {
 	pid: number;
 }
 
+/** Options accepted by `exec` (mirrors the env/cwd subset of `ExecOptions`). */
+export interface ExecActionOptions {
+	env?: Record<string, string>;
+	cwd?: string;
+}
+
 /** Options accepted by `spawn` (mirrors `SpawnActionOptions`). */
 export interface SpawnActionOptions {
 	env?: Record<string, string>;
@@ -156,7 +162,11 @@ export type AgentOsActions = {
 	readdirRecursive: (c: Ctx, path: string) => Promise<DirEntry[]>;
 
 	// ── Processes ─────────────────────────────────────────────────────
-	exec: (c: Ctx, command: string) => Promise<ExecResult>;
+	exec: (
+		c: Ctx,
+		command: string,
+		options?: ExecActionOptions,
+	) => Promise<ExecResult>;
 	// Output streams to connected clients as `processOutput` events; the exit
 	// code also broadcasts as `processExit`.
 	spawn: (

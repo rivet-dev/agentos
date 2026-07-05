@@ -217,13 +217,21 @@ pub(crate) async fn dispatch(
             },
             Err(error) => reply_err(host, token, error),
         },
-        "exec" => match decode_as::<(String,)>(args) {
-            Ok((command,)) => match process::exec(vm, &command).await {
-                Ok(result) => reply_ok(host, token, &result),
+        "exec" => {
+            // The trailing options object is optional on the TS side, so a
+            // 1-arg call decodes via the fallback (mirrors `spawn`).
+            let decoded = decode_as::<(String, Option<process::ExecActionOptions>)>(args)
+                .or_else(|_| decode_as::<(String,)>(args).map(|(command,)| (command, None)));
+            match decoded {
+                Ok((command, options)) => {
+                    match process::exec(vm, &command, options.unwrap_or_default()).await {
+                        Ok(result) => reply_ok(host, token, &result),
+                        Err(error) => reply_err(host, token, error),
+                    }
+                }
                 Err(error) => reply_err(host, token, error),
-            },
-            Err(error) => reply_err(host, token, error),
-        },
+            }
+        }
         "spawn" => {
             // The trailing options object is optional on the TS side, so a
             // 2-arg call decodes via the fallback.

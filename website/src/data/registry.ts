@@ -130,6 +130,17 @@ export const registry: RegistryEntry[] = [
 		types: ["software"],
 	},
 	{
+		slug: "browserbase",
+		title: "Browserbase",
+		status: "available",
+		package: "@agentos-software/browserbase",
+		description:
+			"The Browserbase `browse` CLI: let agents browse the web with a cloud browser, no sandbox required.",
+		types: ["software"],
+		icon: "Globe",
+		beta: true,
+	},
+	{
 		slug: "coreutils",
 		title: "Coreutils",
 		status: "available",
