@@ -28,16 +28,25 @@ const TOOLCHAIN_CLI = resolve(
 
 /** Real published agent adapters, packed flat with native addons pruned. */
 const AGENTS = [
-	{ pkg: "@agentos-software/pi", agentId: "pi", acpEntrypoint: "pi-sdk-acp" },
-	{ pkg: "@agentos-software/claude-code", agentId: "claude", acpEntrypoint: "claude-sdk-acp" },
+	// `agentType` is the unscoped `agentos-package.json` name (the agent id the
+	// sidecar projects at /opt/agentos/pkgs/<name>/ and resolves createSession on);
+	// `pkg` is only the npm package name used to pack the adapter.
+	{ pkg: "@agentos-software/pi", agentType: "pi", acpEntrypoint: "pi-sdk-acp" },
+	// claude is intentionally NOT here: this block packs from the PUBLISHED npm
+	// package, and `@agentos-software/claude-code` does not yet ship
+	// `agentos-package.json`, so `pack` falls back to the unscoped npm name
+	// "claude-code" instead of the friendly id "claude". Re-enable once that
+	// package is republished with `agentos-package.json` in its `files`.
+	// See the deferred-skip test below and
+	// ~/.agents/todo/agentos-agent-resolution-followups.md.
 ];
 
 describe.skipIf(!ENABLED).each(AGENTS)(
 	"real agent package end-to-end ($pkg)",
-	({ pkg, agentId, acpEntrypoint }) => {
+	({ pkg, agentType, acpEntrypoint }) => {
 		let vm: AgentOs;
 		let outRoot: string;
-		let packageTar: string;
+		let packageDir: string;
 
 		beforeAll(async () => {
 			outRoot = mkdtempSync(join(tmpdir(), "agentos-real-agent-"));
@@ -53,17 +62,17 @@ describe.skipIf(!ENABLED).each(AGENTS)(
 					acpEntrypoint,
 					"--prune-native",
 					"--out",
-					join(outRoot, "package.tar"),
+					outRoot,
 				],
 				{ encoding: "utf8" },
 			);
 			const match = stdout.match(/→\s+(\S+)/);
 			if (!match) throw new Error(`could not parse pack output: ${stdout}`);
-			packageTar = match[1];
+			packageDir = match[1];
 
 			vm = await AgentOs.create({
 				defaultSoftware: false,
-				software: [{ packageTar }],
+				software: [packageDir],
 			});
 		}, 120_000);
 
@@ -72,50 +81,52 @@ describe.skipIf(!ENABLED).each(AGENTS)(
 			if (outRoot) rmSync(outRoot, { recursive: true, force: true });
 		});
 
-		test("lists the real agent as installed", () => {
-			const entry = vm.listAgents().find((a) => a.id === agentId);
+		test("lists the real agent as installed", async () => {
+			const entry = (await vm.listAgents()).find((a) => a.id === agentType);
 			expect(entry?.installed).toBe(true);
 			expect(entry?.adapterEntrypoint).toBe(`/opt/agentos/bin/${acpEntrypoint}`);
 		});
 
 		test("createSession launches the real adapter and returns a session", async () => {
-			const session = await vm.createSession(agentId);
+			const session = await vm.createSession(agentType);
 			expect(session.sessionId).toBeTruthy();
 			await vm.closeSession(session.sessionId);
 		}, 60_000);
 	},
 );
 
+// Deferred: block-1 claude packs from the PUBLISHED `@agentos-software/claude-code`,
+// which does not yet ship `agentos-package.json`, so its manifest name resolves to
+// "claude-code" instead of "claude". Re-enable in the AGENTS list above once that
+// package is republished with `agentos-package.json` in `files`.
+describe.skipIf(!ENABLED)("real agent package end-to-end ('@agentos-software/claude-code')", () => {
+	test.skip("deferred until @agentos-software/claude-code republishes with agentos-package.json (name → 'claude')", () => {});
+});
+
 /**
- * The built-in agents projected by DEFAULT: the @agentos-software/* agent
- * package deps (each ships its registry-built dist/package), boot with default
- * software (no explicit agent package), and launch by friendly id — no runtime
- * npm dep on the SDKs and no packing step.
+ * Default software is coreutils-only ([common]) — it ships NO agents by design
+ * (see default-software.ts). This guards that decision: a bare `AgentOs.create()`
+ * projects no agent, and asking for one by id fails with the clear "unknown agent
+ * type" error rather than silently resolving. Agents must be passed via `software:`.
  */
-describe.skipIf(!ENABLED)("default built-in agents", () => {
+describe.skipIf(!ENABLED)("default software ships no agents", () => {
 	let vm: AgentOs;
 
 	beforeAll(async () => {
-		vm = await AgentOs.create({}); // default software — includes the built-in agent packages
-	}, 240_000);
+		vm = await AgentOs.create({}); // default software — coreutils only, no agents
+	}, 120_000);
 
 	afterAll(async () => {
 		await vm?.dispose();
 	});
 
-	test("lists pi + claude by friendly id, installed", () => {
-		const ids = vm.listAgents().filter((a) => a.installed).map((a) => a.id);
-		expect(ids).toContain("pi");
-		expect(ids).toContain("claude");
+	test("lists no built-in agents", async () => {
+		const ids = (await vm.listAgents()).map((a) => a.id);
+		expect(ids).not.toContain("pi");
+		expect(ids).not.toContain("claude");
 	});
 
-	test.each(["pi", "claude"])(
-		"createSession('%s') launches via the default projection",
-		async (id) => {
-			const session = await vm.createSession(id);
-			expect(session.sessionId).toBeTruthy();
-			await vm.closeSession(session.sessionId);
-		},
-		60_000,
-	);
+	test("createSession('pi') fails with unknown agent type", async () => {
+		await expect(vm.createSession("pi")).rejects.toThrow(/unknown agent type/i);
+	});
 });

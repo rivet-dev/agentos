@@ -77,11 +77,11 @@ fn resolve_agent<H: AcpHost>(
 ) -> Result<ResolvedAgent, AcpCoreError> {
     let unknown = || {
         AcpCoreError::InvalidState(format!(
-            "unknown agent type \"{agent_type}\": no projected /opt/agentos/{agent_type} package \
+            "unknown agent type \"{agent_type}\": no projected /opt/agentos/pkgs/{agent_type} package \
              with an agent.acpEntrypoint — pass its package to AgentOs software"
         ))
     };
-    let path = format!("/opt/agentos/{agent_type}/current/agentos-package.json");
+    let path = format!("/opt/agentos/pkgs/{agent_type}/current/agentos-package.json");
     let bytes = host.read_file(&path).map_err(|_| unknown())?;
     let manifest: AgentPackageManifest = serde_json::from_slice(&bytes).map_err(|_| unknown())?;
     let agent = manifest.agent.ok_or_else(|| unknown())?;
@@ -770,7 +770,6 @@ impl AcpCore {
 
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
-        env.remove(RESUME_ADAPTER_ENTRYPOINT_ENV);
         env.insert(
             String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
             String::from("1"),

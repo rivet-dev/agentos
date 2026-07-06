@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	mkdirSync,
@@ -11,12 +12,15 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { AgentOs } from "../src/index.js";
 
 /**
- * End-to-end Phase-1 proof: a `defineSoftware({name, dir})` package is
- * materialized into the single `/opt/agentos` projection, mounted, and its
+ * End-to-end Phase-1 proof: a package is projected into the single `/opt/agentos`
+ * tree, mounted GUEST-NATIVE from its `package.tar` (no extraction), and its
  * `bin/` command resolves through a real `$PATH` walk + header dispatch.
  *
- * The package is hand-built (no npm) so the test is deterministic; it mirrors
- * the toolchain's on-disk format (manifest + `bin/` + `current`).
+ * The package is hand-built (no npm) so the test is deterministic; it mirrors the
+ * toolchain's output shape: a directory containing `package.tar`, whose root holds
+ * `agentos-package.json` (name + version) + `bin/<cmd>`. The sidecar mounts the tar
+ * directly and projects `/opt/agentos/pkgs/<name>/<version>` + `pkgs/<name>/current`
+ * + `bin/<cmd>` leaf mounts.
  */
 describe("agentos package projection (VM)", () => {
 	let vm: AgentOs;
@@ -24,17 +28,13 @@ describe("agentos package projection (VM)", () => {
 
 	beforeAll(async () => {
 		root = mkdtempSync(join(tmpdir(), "agentos-pkg-vm-"));
-		// A self-contained, dependency-free package dir (the toolchain's output
-		// shape): agentos-package.json + bin/<cmd> with a `#!node` shebang.
+		// Build the package tree, then tar it into `<packDir>/package.tar` — the
+		// projection input the sidecar mounts (directory projection is not supported).
 		const pkgDir = join(root, "pkg");
 		mkdirSync(join(pkgDir, "bin"), { recursive: true });
 		writeFileSync(
-			join(pkgDir, "package.json"),
-			JSON.stringify({ name: "hello-cmd", version: "1.0.0" }, null, 2),
-		);
-		writeFileSync(
 			join(pkgDir, "agentos-package.json"),
-			JSON.stringify({ name: "hello-cmd" }, null, 2),
+			JSON.stringify({ name: "hello-cmd", version: "1.0.0" }, null, 2),
 		);
 		const binPath = join(pkgDir, "bin", "hello-cmd");
 		writeFileSync(
@@ -44,10 +44,21 @@ describe("agentos package projection (VM)", () => {
 		// Commands must be executable (Linux x-bit) — a non-executable PATH match
 		// is skipped (ENOENT) and a direct non-executable path is denied (EACCES).
 		chmodSync(binPath, 0o755);
+		const packDir = join(root, "packed");
+		mkdirSync(packDir, { recursive: true });
+		// `-C pkgDir .` roots the entries at the tar's top level (./agentos-package.json,
+		// ./bin/hello-cmd), preserving the executable bit.
+		execFileSync("tar", [
+			"-cf",
+			join(packDir, "package.tar"),
+			"-C",
+			pkgDir,
+			".",
+		]);
 
 		vm = await AgentOs.create({
 			defaultSoftware: false,
-			software: [pkgDir],
+			software: [packDir],
 		});
 	}, 60_000);
 
@@ -57,9 +68,9 @@ describe("agentos package projection (VM)", () => {
 	});
 
 	test("projects the package tree under /opt/agentos", async () => {
-		expect(await vm.exists("/opt/agentos/hello-cmd/1.0.0/bin/hello-cmd")).toBe(
-			true,
-		);
+		expect(
+			await vm.exists("/opt/agentos/pkgs/hello-cmd/1.0.0/bin/hello-cmd"),
+		).toBe(true);
 		expect(await vm.exists("/opt/agentos/bin/hello-cmd")).toBe(true);
 	});
 

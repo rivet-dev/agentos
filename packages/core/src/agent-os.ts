@@ -1,11 +1,6 @@
 import { execFileSync, spawn as spawnChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import {
-	existsSync,
-	mkdirSync,
-	readdirSync,
-	statSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import {
 	join,
 	posix as posixPath,
@@ -157,6 +152,8 @@ export interface BatchReadResult {
 export interface AgentRegistryEntry {
 	id: string;
 	installed: boolean;
+	/** Guest entrypoint the sidecar launches for this agent (`/opt/agentos/bin/<acpEntrypoint>`). */
+	adapterEntrypoint: string;
 }
 
 import type { AgentType } from "./types.js";
@@ -188,15 +185,12 @@ import {
 	type RootSnapshotExport,
 	type SnapshotLayerHandle,
 } from "./layers.js";
-import {
-	resolveAgentSnapshotBundle,
-	type SoftwareInput,
-	type SoftwareRoot,
-} from "./packages.js";
+import { type SoftwareInput, type SoftwareRoot } from "./packages.js";
 import {
 	OPT_AGENTOS_ROOT,
 	type PackageRef,
 	type SoftwarePackageRef,
+	tryReadAgentosPackageManifest,
 } from "./agentos-package.js";
 import { resolveDefaultSoftware } from "./default-software.js";
 import type { PermissionTier } from "./runtime.js";
@@ -803,26 +797,27 @@ function toRecord(value: unknown): Record<string, unknown> {
 }
 
 interface NormalizedPackageRef {
-	dir?: string;
-	tar?: string;
+	dir: string;
 }
 
 function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	if (typeof value === "string") {
-		return value.endsWith(".tar") ? { tar: value } : { dir: value };
+		return { dir: value };
 	}
 	const record = toRecord(value);
-	if (typeof record.packageTar === "string") {
-		return { tar: record.packageTar };
-	}
-	if (typeof record.tar === "string") {
-		return { tar: record.tar };
-	}
 	if (typeof record.packageDir === "string") {
 		return { dir: record.packageDir };
 	}
 	if (typeof record.dir === "string") {
 		return { dir: record.dir };
+	}
+	if (typeof record.packageTar === "string") {
+		// Registry-built packages export `{ packageTar }` pointing at the
+		// `<pkg>/dist/package.tar` the sidecar mounts directly (tar-vfs; directory
+		// projection is no longer supported). The sidecar locates the tar as
+		// `<dir>/package.tar` and reads the manifest from inside it, so forward the
+		// directory that CONTAINS the tar, not the tar file itself.
+		return { dir: record.packageTar.replace(/\/[^/]*$/, "") };
 	}
 	return undefined;
 }
@@ -1577,9 +1572,7 @@ async function resolveCompatLocalMounts(
 	return resolved;
 }
 
-function collectSidecarMountPlan(options: {
-	mounts?: MountConfig[];
-}): {
+function collectSidecarMountPlan(options: { mounts?: MountConfig[] }): {
 	sidecarMounts: Array<ReturnType<typeof serializeMountConfigForSidecar>>;
 	hostMounts: HostMountInfo[];
 	hostPathMappings: HostMountInfo[];
@@ -2659,24 +2652,24 @@ export class AgentOs {
 		// `{dir}` over `configureVm` and the sidecar reads package metadata from
 		// `<dir>/agentos-package.json`.
 		const flatSoftware = software.flat();
-		const packageRefs = flatSoftware.flatMap((entry) => {
+		// Honor the AgentOsOptions.defaultSoftware contract ("entries already present
+		// in `software` are not duplicated"): the default bundle and an explicitly
+		// passed one resolve to the same package dirs, so dedup by dir. Without this
+		// the sidecar rejects the second projection with a duplicate-command error
+		// (e.g. coreutils' `[`).
+		const seenPackageDirs = new Set<string>();
+		const sidecarPackages = flatSoftware.flatMap((entry) => {
 			const ref = normalizePackageRef(entry);
-			return ref ? [ref] : [];
+			if (!ref || seenPackageDirs.has(ref.dir)) {
+				return [];
+			}
+			seenPackageDirs.add(ref.dir);
+			return [{ dir: ref.dir }];
 		});
-		const sidecarPackages = packageRefs.map((ref) => ({
-			dir: ref.dir,
-			tar: ref.tar,
-		}));
-			// All package software is projected into `/opt/agentos` by the sidecar. The
-			// client stages nothing host-side; the sidecar owns agent resolution and
-			// enumeration from the projection.
-			// Agent-SDK snapshot bundle (loaded once per sidecar into the V8 startup
-			// snapshot, reused across sessions) for any snapshot-enabled agent.
-			const snapshotUserlandCode = resolveAgentSnapshotBundle(
-				packageRefs
-					.filter((ref) => ref.dir !== undefined)
-					.map((ref) => ({ packageDir: ref.dir! })),
-			);
+		// All package software is projected into `/opt/agentos` by the sidecar. The
+		// client stages nothing host-side and parses NO package manifests: the
+		// sidecar owns agent resolution, agent enumeration, and agent snapshot
+		// bundle loading from the projected package dirs.
 		const localMounts = await resolveCompatLocalMounts(options?.mounts);
 		const toolKits = options?.toolKits;
 		if (toolKits && toolKits.length > 0) {
@@ -2699,7 +2692,9 @@ export class AgentOs {
 				...RUNTIME_BOOTSTRAP_COMMANDS,
 				...toolBootstrapCommands,
 			];
-			const bootstrapLower = createKernelBootstrapLower(options?.rootFilesystem);
+			const bootstrapLower = createKernelBootstrapLower(
+				options?.rootFilesystem,
+			);
 			let toolReference = "";
 			let rootBridge: NativeSidecarKernelProxy | null = null;
 			let kernel: Kernel | null = null;
@@ -2715,16 +2710,16 @@ export class AgentOs {
 				cleanedUp = true;
 			};
 
-				try {
-					const env: Record<string, string> = getBaseEnvironment();
-					// Guest command paths. The sidecar owns the `/opt/agentos` projection and
-					// reports the exact projected package commands after `configureVm`.
-					// Tool-shim commands are added below.
-					const commandGuestPaths = new Map<string, string>();
-					const { sidecarMounts, hostMounts, hostPathMappings } =
-						collectSidecarMountPlan({
-							mounts: options?.mounts,
-						});
+			try {
+				const env: Record<string, string> = getBaseEnvironment();
+				// Guest command paths. The sidecar owns the `/opt/agentos` projection and
+				// reports the exact projected package commands after `configureVm`.
+				// Tool-shim commands are added below.
+				const commandGuestPaths = new Map<string, string>();
+				const { sidecarMounts, hostMounts, hostPathMappings } =
+					collectSidecarMountPlan({
+						mounts: options?.mounts,
+					});
 				// Reuse the sidecar handle's single shared native process; this VM
 				// becomes another tenant of it rather than spawning its own process.
 				const shared = await ensureSharedSidecarNativeProcess(sidecar);
@@ -2784,23 +2779,23 @@ export class AgentOs {
 						event.ownership.vm_id === nativeVm.vmId,
 					10_000,
 				);
-					const configuredVm = await client.configureVm(session, nativeVm, {
-						mounts: sidecarMounts,
-						permissions: sidecarPermissions,
-						commandPermissions: {},
+				const configuredVm = await client.configureVm(session, nativeVm, {
+					mounts: sidecarMounts,
+					permissions: sidecarPermissions,
+					commandPermissions: {},
 					loopbackExemptPorts: options?.loopbackExemptPorts,
 					packages: sidecarPackages,
 					packagesMountAt: OPT_AGENTOS_ROOT,
-						toolShimCommands: toolBootstrapCommands,
-					});
-					for (const command of configuredVm.projectedCommands) {
-						commandGuestPaths.set(command.name, command.guestPath);
-					}
-					if (toolKits && toolKits.length > 0) {
-						toolReference = await registerToolkitsOnSidecar(
-							client,
-							session,
-							nativeVm,
+					toolShimCommands: toolBootstrapCommands,
+				});
+				for (const command of configuredVm.projectedCommands) {
+					commandGuestPaths.set(command.name, command.guestPath);
+				}
+				if (toolKits && toolKits.length > 0) {
+					toolReference = await registerToolkitsOnSidecar(
+						client,
+						session,
+						nativeVm,
 						toolKits,
 					);
 					commandGuestPaths.set("agentos", "/bin/agentos");
@@ -3193,7 +3188,8 @@ export class AgentOs {
 		for (const entry of entries) {
 			if (
 				excludedPrefixes.some(
-					(prefix) => entry.path === prefix || entry.path.startsWith(`${prefix}/`),
+					(prefix) =>
+						entry.path === prefix || entry.path.startsWith(`${prefix}/`),
 				)
 			) {
 				continue;
@@ -3261,7 +3257,9 @@ export class AgentOs {
 
 	async delete(path: string, options?: { recursive?: boolean }): Promise<void> {
 		this._assertWritableAbsolutePath(path);
-		await this.#kernel.removePath(path, { recursive: options?.recursive ?? false });
+		await this.#kernel.removePath(path, {
+			recursive: options?.recursive ?? false,
+		});
 	}
 
 	async fetch(port: number, request: Request): Promise<Response> {
@@ -3515,7 +3513,9 @@ export class AgentOs {
 	 * block registers the package for `createSession(name)`. Persists for the VM's
 	 * lifetime (and across a snapshot iff the volume persists).
 	 */
-	async linkSoftware(descriptor: PackageRef | SoftwarePackageRef): Promise<void> {
+	async linkSoftware(
+		descriptor: PackageRef | SoftwarePackageRef,
+	): Promise<void> {
 		const ref = normalizePackageRef(descriptor);
 		if (!ref) {
 			throw new Error("Invalid agentOS package reference");
@@ -3524,24 +3524,24 @@ export class AgentOs {
 		// appends the package to its live host-backed staging dir; the commands
 		// appear under `/opt/agentos/bin` immediately. The sidecar rejects a
 		// duplicate command, surfaced here as a thrown error.
-			const linked = await this._sidecarClient.linkPackage(
-				this._sidecarSession,
-				this._sidecarVm,
-				{ dir: ref.dir, tar: ref.tar },
+		const commands = await this._sidecarClient.linkPackage(
+			this._sidecarSession,
+			this._sidecarVm,
+			{ dir: ref.dir },
+		);
+		if (this.#kernel instanceof NativeSidecarKernelProxy) {
+			this.#kernel.registerCommandGuestPaths(
+				new Map(
+					commands.projectedCommands.map((command) => [
+						command.name,
+						command.guestPath,
+					]),
+				),
 			);
-			if (this.#kernel instanceof NativeSidecarKernelProxy) {
-				this.#kernel.registerCommandGuestPaths(
-					new Map(
-						linked.projectedCommands.map((command) => [
-							command.name,
-							command.guestPath,
-						]),
-					),
-				);
-			}
-			// The client parses no manifests: an `agent` block in the linked package is
-			// picked up by the sidecar (it owns the projected `/opt/agentos` and answers
-			// createSession/listAgents from it). Nothing to record client-side.
+		}
+		// The client parses no manifests: an `agent` block in the linked package is
+		// picked up by the sidecar (it owns the projected `/opt/agentos` and answers
+		// createSession/listAgents from it). Nothing to record client-side.
 	}
 
 	async providedCommands(): Promise<
@@ -3567,11 +3567,12 @@ export class AgentOs {
 		if (response.tag !== "AcpListAgentsResponse") {
 			throw new Error(`unexpected list_agents response: ${response.tag}`);
 		}
-			return response.val.agents.map((agent) => ({
-				id: agent.id,
-				installed: agent.installed,
-			}));
-		}
+		return response.val.agents.map((agent) => ({
+			id: agent.id,
+			installed: agent.installed,
+			adapterEntrypoint: agent.adapterEntrypoint,
+		}));
+	}
 
 	private _syncSessionState(
 		session: AgentSessionEntry,
@@ -5436,10 +5437,14 @@ function ensureSidecarProcessExitCleanup(): void {
 	});
 }
 
-function sidecarChildHandle(client: unknown): SidecarEventLoopHandle | undefined {
+function sidecarChildHandle(
+	client: unknown,
+): SidecarEventLoopHandle | undefined {
 	// SidecarProcess -> StdioSidecarProtocolClient.child (the spawned ChildProcess).
 	const protocolClient = (
-		client as { protocolClient?: { child?: SidecarEventLoopHandle } } | undefined
+		client as
+			| { protocolClient?: { child?: SidecarEventLoopHandle } }
+			| undefined
 	)?.protocolClient;
 	return protocolClient?.child ?? undefined;
 }
