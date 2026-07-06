@@ -37,10 +37,11 @@ await agent.mkdir("/home/agentos/projects");
 // List directory contents
 const entries = await agent.readdir("/home/agentos/projects");
 
-// Recursive listing (entries carry path, name, and type)
+// Recursive listing (entries carry path, type, and size)
 const tree = await agent.readdirRecursive("/home/agentos");
 for (const entry of tree) {
-  console.log(entry.type, entry.path, entry.name);
+  const name = entry.path.split("/").pop() ?? entry.path;
+  console.log(entry.type, entry.path, name);
 }
 // docs:end directories
 

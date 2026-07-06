@@ -17,7 +17,10 @@
  */
 import type {
 	ExecResult,
+	PermissionReply,
 	ProcessInfo,
+	ProcessTreeNode,
+	SpawnedProcessInfo,
 	VirtualStat,
 } from "@rivet-dev/agentos-core";
 import type {
@@ -35,8 +38,15 @@ type Ctx = any;
 /** Directory entry returned by `readdir` / `readdirRecursive`. */
 export interface DirEntry {
 	path: string;
-	name: string;
 	type: "file" | "directory" | "symlink";
+	size: number;
+}
+
+/** Raw `readdirEntries` entry — one typed child in a single round-trip. */
+export interface ReaddirEntry {
+	name: string;
+	isDirectory: boolean;
+	isSymbolicLink: boolean;
 }
 
 /** A process started via `spawn` (mirrors the Rust spawn handle DTO). */
@@ -87,8 +97,9 @@ export interface CreateSessionOptions {
 
 /** Result of `createSignedPreviewUrl` (mirrors `SignedPreviewUrlDto`). */
 export interface SignedPreviewUrl {
-	url: string;
+	path: string;
 	token: string;
+	port: number;
 	expiresAt: number;
 }
 
@@ -150,7 +161,8 @@ export type AgentOsActions = {
 	writeFile: (c: Ctx, path: string, content: string | Uint8Array) => Promise<void>;
 	stat: (c: Ctx, path: string) => Promise<VirtualStat>;
 	mkdir: (c: Ctx, path: string) => Promise<void>;
-	readdir: (c: Ctx, path: string) => Promise<DirEntry[]>;
+	readdir: (c: Ctx, path: string) => Promise<string[]>;
+	readdirEntries: (c: Ctx, path: string) => Promise<ReaddirEntry[] | null>;
 	exists: (c: Ctx, path: string) => Promise<boolean>;
 	move: (c: Ctx, from: string, to: string) => Promise<void>;
 	deleteFile: (c: Ctx, path: string, options?: { recursive?: boolean }) => Promise<void>;
@@ -178,10 +190,10 @@ export type AgentOsActions = {
 	waitProcess: (c: Ctx, pid: number) => Promise<number>;
 	killProcess: (c: Ctx, pid: number) => Promise<void>;
 	stopProcess: (c: Ctx, pid: number) => Promise<void>;
-	listProcesses: (c: Ctx) => Promise<ProcessInfo[]>;
+	listProcesses: (c: Ctx) => Promise<SpawnedProcessInfo[]>;
 	allProcesses: (c: Ctx) => Promise<ProcessInfo[]>;
-	processTree: (c: Ctx) => Promise<ProcessInfo[]>;
-	getProcess: (c: Ctx, pid: number) => Promise<ProcessInfo>;
+	processTree: (c: Ctx) => Promise<ProcessTreeNode[]>;
+	getProcess: (c: Ctx, pid: number) => Promise<SpawnedProcessInfo>;
 	writeProcessStdin: (c: Ctx, pid: number, data: string | Uint8Array) => Promise<void>;
 	closeProcessStdin: (c: Ctx, pid: number) => Promise<void>;
 
@@ -213,6 +225,12 @@ export type AgentOsActions = {
 	closeSession: (c: Ctx, sessionId: string) => Promise<void>;
 	listPersistedSessions: (c: Ctx) => Promise<PersistedSessionRecord[]>;
 	getSessionEvents: (c: Ctx, sessionId: string) => Promise<PersistedSessionEvent[]>;
+	respondPermission: (
+		c: Ctx,
+		sessionId: string,
+		permissionId: string,
+		reply: PermissionReply,
+	) => Promise<void>;
 
 	// ── Preview URLs ──────────────────────────────────────────────────
 	createSignedPreviewUrl: (c: Ctx, port: number, ttlSeconds: number) => Promise<SignedPreviewUrl>;

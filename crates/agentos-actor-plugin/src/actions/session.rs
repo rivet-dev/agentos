@@ -11,7 +11,9 @@ use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::host_ctx::HostCtx;
-use agentos_client::{AgentOs, CreateSessionOptions, PermissionReply};
+use agentos_client::{
+    AgentExitEvent, AgentOs, CreateSessionOptions, JsonRpcResponse, PermissionReply,
+};
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -40,6 +42,7 @@ pub struct CreateSessionOptionsDto {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptResultDto {
+    pub response: JsonRpcResponse,
     pub text: String,
 }
 
@@ -125,11 +128,13 @@ fn spawn_event_capture(
             // "length over 4294967295".) Without this broadcast the events were
             // only written to SQLite and never reached live subscribers, so
             // `sessionEvent` streaming silently delivered nothing.
-            let mut cbor = Vec::new();
-            if ciborium::into_writer(&serde_json::json!([{ "event": event_value }]), &mut cbor)
-                .is_ok()
-            {
-                let _ = ctx.broadcast(b"sessionEvent".to_vec(), cbor);
+            match encode_session_event(&external, &event_value) {
+                Ok(cbor) => {
+                    let _ = ctx.broadcast(b"sessionEvent".to_vec(), cbor);
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "failed to encode session event broadcast");
+                }
             }
             let event_json = event_value.to_string();
             if let Err(error) = insert_session_event(&ctx, &external, &event_json).await {
@@ -149,20 +154,48 @@ fn spawn_event_capture(
 /// `PermissionRequestPayload` — `{ sessionId, request: { permissionId,
 /// description?, params } }` — and the body is `[ <that object> ]`. The
 /// `sessionId` is the client-facing external id (== live for native sessions).
-fn permission_event_body(
+pub(crate) fn session_event_payload(external_session_id: &str, event: &JsonValue) -> JsonValue {
+    json!({
+        "sessionId": external_session_id,
+        "event": event,
+    })
+}
+
+pub(crate) fn encode_session_event(
+    external_session_id: &str,
+    event: &JsonValue,
+) -> Result<Vec<u8>> {
+    super::encode_event_arg(&session_event_payload(external_session_id, event))
+}
+
+fn permission_event_payload(
     external_session_id: &str,
     permission_id: &str,
     description: Option<&str>,
     params: &JsonValue,
 ) -> JsonValue {
-    json!([{
+    json!({
         "sessionId": external_session_id,
         "request": {
             "permissionId": permission_id,
             "description": description,
             "params": params,
         },
-    }])
+    })
+}
+
+pub(crate) fn encode_permission_request_event(
+    external_session_id: &str,
+    permission_id: &str,
+    description: Option<&str>,
+    params: &JsonValue,
+) -> Result<Vec<u8>> {
+    super::encode_event_arg(&permission_event_payload(
+        external_session_id,
+        permission_id,
+        description,
+        params,
+    ))
 }
 
 /// Map the wire reply string to a [`PermissionReply`] (`"once"` / `"always"` /
@@ -217,15 +250,19 @@ fn spawn_permission_pump(
         // (on abort / channel close) is the unsubscribe.
         let _subscription = subscription;
         while let Some(request) = stream.next().await {
-            let body = permission_event_body(
+            let body = encode_permission_request_event(
                 &external,
                 &request.permission_id,
                 request.description.as_deref(),
                 &request.params,
             );
-            let mut cbor = Vec::new();
-            if ciborium::into_writer(&body, &mut cbor).is_ok() {
-                let _ = ctx.broadcast(b"permissionRequest".to_vec(), cbor);
+            match body {
+                Ok(cbor) => {
+                    let _ = ctx.broadcast(b"permissionRequest".to_vec(), cbor);
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "failed to encode permission request broadcast");
+                }
             }
         }
     });
@@ -306,13 +343,13 @@ fn spawn_exit_capture(
                     continue;
                 }
             };
-            // Same CBOR handler-arguments shape as `sessionEvent` (see
-            // spawn_event_capture): the body is `[{"event": <event>}]`.
-            let mut cbor = Vec::new();
-            if ciborium::into_writer(&serde_json::json!([{ "event": event_value }]), &mut cbor)
-                .is_ok()
-            {
-                let _ = ctx.broadcast(b"agentCrashed".to_vec(), cbor);
+            match encode_agent_crashed_event_value(&external, event_value) {
+                Ok(cbor) => {
+                    let _ = ctx.broadcast(b"agentCrashed".to_vec(), cbor);
+                }
+                Err(error) => {
+                    tracing::warn!(?error, "failed to encode agent crash broadcast");
+                }
             }
         }
     });
@@ -372,6 +409,34 @@ pub async fn create_session(
     Ok(session_id)
 }
 
+fn agent_crashed_event_payload_value(external_session_id: &str, mut event: JsonValue) -> JsonValue {
+    if let JsonValue::Object(map) = &mut event {
+        map.insert("sessionId".to_owned(), json!(external_session_id));
+    }
+    json!({
+        "sessionId": external_session_id,
+        "event": event,
+    })
+}
+
+fn encode_agent_crashed_event_value(
+    external_session_id: &str,
+    event: JsonValue,
+) -> Result<Vec<u8>> {
+    super::encode_event_arg(&agent_crashed_event_payload_value(
+        external_session_id,
+        event,
+    ))
+}
+
+pub(crate) fn encode_agent_crashed_event(
+    external_session_id: &str,
+    event: &AgentExitEvent,
+) -> Result<Vec<u8>> {
+    let event = serde_json::to_value(event)?;
+    encode_agent_crashed_event_value(external_session_id, event)
+}
+
 pub async fn send_prompt(
     ctx: &HostCtx,
     vm: &AgentOs,
@@ -409,7 +474,10 @@ pub async fn send_prompt(
     // Forward to the live id (== external for native/not-yet-resumed sessions).
     let live_session_id = vars.live_id(session_id).to_owned();
     let result = vm.prompt(&live_session_id, text).await?;
-    Ok(PromptResultDto { text: result.text })
+    Ok(PromptResultDto {
+        response: result.response,
+        text: result.text,
+    })
 }
 
 pub async fn close_session(
@@ -642,12 +710,7 @@ mod tests {
             "toolCall": { "title": "Bash", "kind": "execute" },
             "options": [{ "optionId": "allow_once" }],
         });
-        let body = permission_event_body("sess-1", "perm-7", Some("run a command"), &params);
-
-        // Body is the args array spread into the listener: exactly one argument.
-        let args = body.as_array().expect("body is an array");
-        assert_eq!(args.len(), 1, "exactly one handler argument");
-        let data = &args[0];
+        let data = permission_event_payload("sess-1", "perm-7", Some("run a command"), &params);
 
         assert_eq!(data["sessionId"], json!("sess-1"));
         assert_eq!(data["request"]["permissionId"], json!("perm-7"));
@@ -658,8 +721,8 @@ mod tests {
 
     #[test]
     fn permission_event_body_serializes_absent_description_as_null() {
-        let body = permission_event_body("sess-1", "perm-1", None, &json!({}));
-        assert_eq!(body[0]["request"]["description"], JsonValue::Null);
+        let body = permission_event_payload("sess-1", "perm-1", None, &json!({}));
+        assert_eq!(body["request"]["description"], JsonValue::Null);
     }
 
     #[test]

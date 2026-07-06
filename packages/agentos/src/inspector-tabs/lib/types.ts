@@ -95,10 +95,9 @@ export interface JsonRpcNotification {
 	params?: unknown;
 }
 /** Live `sessionEvent` broadcast payload (the websocket stream). Unlike the
- * persisted record it carries no `seq`/`createdAt`. `sessionId` is optional
- * because the broadcast does not always include it. */
+ * persisted record it carries no `seq`/`createdAt`. */
 export interface SessionEventPayload {
-	sessionId?: string;
+	sessionId: string;
 	event: JsonRpcNotification;
 }
 /** Raw `getSessionEvents` row — the full persisted event, not just the bare

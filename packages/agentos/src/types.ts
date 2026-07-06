@@ -1,8 +1,8 @@
 import type {
 	AgentCapabilities,
+	AgentExitEvent,
 	AgentInfo,
 	AgentOs,
-	CronEvent,
 	JsonRpcNotification,
 	JsonRpcResponse,
 	PermissionRequest,
@@ -37,6 +37,11 @@ export interface PermissionRequestPayload {
 	request: PermissionRequest;
 }
 
+export interface AgentCrashedPayload {
+	sessionId: string;
+	event: AgentExitEvent;
+}
+
 export type VmBootedPayload = Record<string, never>;
 
 export interface VmShutdownPayload {
@@ -64,8 +69,13 @@ export interface ShellExitPayload {
 	exitCode: number;
 }
 
+export type SerializableCronEvent =
+	| { type: "cron:fire"; jobId: string; time: number }
+	| { type: "cron:complete"; jobId: string; time: number; durationMs: number }
+	| { type: "cron:error"; jobId: string; time: number; error: string };
+
 export interface CronEventPayload {
-	event: CronEvent;
+	event: SerializableCronEvent;
 }
 
 // --- Event schema map (used by actor() events config) ---
@@ -73,6 +83,7 @@ export interface CronEventPayload {
 export interface AgentOsEvents {
 	sessionEvent: SessionEventPayload;
 	permissionRequest: PermissionRequestPayload;
+	agentCrashed: AgentCrashedPayload;
 	vmBooted: VmBootedPayload;
 	vmShutdown: VmShutdownPayload;
 	processOutput: ProcessOutputPayload;
@@ -109,9 +120,8 @@ export interface SessionRecord {
 export interface PersistedSessionRecord {
 	sessionId: string;
 	agentType: string;
-	capabilities: AgentCapabilities;
-	agentInfo: AgentInfo | null;
 	createdAt: number;
+	status: "running" | "idle";
 }
 
 export interface PersistedSessionEvent {
@@ -137,12 +147,9 @@ export interface SerializableCronJobOptions {
 export interface SerializableCronJobInfo {
 	id: string;
 	schedule: string;
-	action: SerializableCronAction;
 	overlap: "allow" | "skip" | "queue";
-	lastRun?: string;
-	nextRun?: string;
-	runCount: number;
-	running: boolean;
+	lastRun?: number;
+	nextRun?: number;
 }
 
 // --- Action context alias ---

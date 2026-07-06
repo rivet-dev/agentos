@@ -369,7 +369,10 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 
 		expect(handle).toBe(expectedHandle);
 		expect(calls).toHaveLength(1);
-		expect(JSON.parse(calls[0].configJson)).toEqual({ software: [] });
+		expect(JSON.parse(calls[0].configJson)).toEqual({
+			packages: [],
+			packagesMountAt: "/opt/agentos",
+		});
 		expect(calls[0].configJson).not.toContain("onSessionEvent");
 	});
 
@@ -464,24 +467,73 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		definition.nativeFactoryBuilder?.(runtime);
 
 		expect(JSON.parse(calls[0].configJson)).toMatchObject({
-			software: [],
+			packages: [],
+			packagesMountAt: "/opt/agentos",
 			additionalInstructions: "flat public config",
 			loopbackExemptPorts: [3000],
 		});
 		expect(JSON.parse(calls[0].configJson)).not.toHaveProperty("preview");
 	});
+
+	test("inspector action calls target declared actor actions", () => {
+		const actorActions = readFileSync(
+			join(repoRoot, "packages", "agentos", "src", "actor-actions.ts"),
+			"utf8",
+		);
+		const inspectorSource = readFileSync(
+			join(
+				repoRoot,
+				"packages",
+				"agentos",
+				"src",
+				"inspector-tabs",
+				"lib",
+				"source.ts",
+			),
+			"utf8",
+		);
+		const declared = new Set(
+			[...actorActions.matchAll(/^\s*([a-zA-Z][\w]*):\s*\(/gm)].map(
+				(match) => match[1],
+			),
+		);
+		const calls = [
+			...inspectorSource.matchAll(/callAction(?:<[^>]+>)?\("([^"]+)",\s*\[([^\]]*)\]/g),
+		].map((match) => ({
+			name: match[1],
+			args: match[2].trim(),
+		}));
+
+		expect(calls.map((call) => call.name).sort()).toEqual([
+			"getSessionEvents",
+			"listMounts",
+			"listPersistedSessions",
+			"listProcesses",
+			"listSoftware",
+			"readFile",
+			"readdirEntries",
+			"stat",
+		]);
+		for (const call of calls) {
+			expect(declared.has(call.name), `${call.name} is declared`).toBe(true);
+		}
+		expect(calls.find((call) => call.name === "readdirEntries")?.args).toBe(
+			"path",
+		);
+		expect(calls.find((call) => call.name === "getSessionEvents")?.args).toBe(
+			"sessionId",
+		);
+	});
+
 	test("buildConfigJson keeps software descriptors pointed at package roots", () => {
 		const configJson = buildConfigJson({
 			options: {
 				// Disable the default bundle so this stays focused on the mapping.
 				defaultSoftware: false,
 				software: [
-					{ commandDir: "/abs/wasm-command" },
-					{
-						packageDir: "/abs/project/node_modules/@agentos-software/pi",
-						agent: {},
-					},
-					{ packageDir: "/abs/tool-package", hostTool: {} },
+					"/abs/wasm-command.aospkg",
+					{ packagePath: "/abs/project/node_modules/@agentos-software/pi" },
+					{ packagePath: "/abs/tool-package.aospkg" },
 				],
 			},
 			preview: {
@@ -490,94 +542,57 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 			},
 		} as never);
 
-		expect(JSON.parse(configJson).software).toEqual([
-			{ package: "/abs/wasm-command" },
-			{
-				package: "/abs/project/node_modules/@agentos-software/pi",
-				kind: "agent",
-			},
-			{ package: "/abs/tool-package", kind: "tool" },
+		expect(JSON.parse(configJson).packages).toEqual([
+			{ packagePath: "/abs/wasm-command.aospkg" },
+			{ packagePath: "/abs/project/node_modules/@agentos-software/pi" },
+			{ packagePath: "/abs/tool-package.aospkg" },
 		]);
 	});
 
 	test("auto-injects the default common software bundle unless disabled", () => {
 		const withDefault = JSON.parse(
 			buildConfigJson({
-				options: { software: [{ commandDir: "/x/wasm" }] },
+				options: { software: ["/x/wasm.aospkg"] },
 			} as never),
 		);
-		const pkgs = withDefault.software.map(
-			(s: { package: string }) => s.package,
+		const pkgs = withDefault.packages.map(
+			(s: { packagePath: string }) => s.packagePath,
 		);
-		expect(pkgs).toContain("/x/wasm");
+		expect(pkgs).toContain("/x/wasm.aospkg");
 		// common (sh + coreutils + tools) is injected from the software registry.
 		expect(pkgs.some((p: string) => p.includes("coreutils"))).toBe(
 			true,
 		);
-		expect(withDefault.software.length).toBeGreaterThan(1);
+		expect(withDefault.packages.length).toBeGreaterThan(1);
 
 		const noDefault = JSON.parse(
 			buildConfigJson({
 				options: {
-					software: [{ commandDir: "/x/wasm" }],
+					software: ["/x/wasm.aospkg"],
 					defaultSoftware: false,
 				},
 			} as never),
 		);
-		expect(noDefault.software).toEqual([{ package: "/x/wasm" }]);
+		expect(noDefault.packages).toEqual([{ packagePath: "/x/wasm.aospkg" }]);
 	});
 
 	test("does not duplicate an explicitly-provided default package", () => {
 		const onlyDefault = JSON.parse(buildConfigJson({ options: {} } as never))
-			.software.length;
+			.packages.length;
 		const withExplicitCommon = JSON.parse(
 			buildConfigJson({ options: { software: [common] } } as never),
-		).software.length;
+		).packages.length;
 		// Passing common explicitly must not double the injected bundle.
 		expect(withExplicitCommon).toBe(onlyDefault);
 	});
 
-	test("auto-derives /root/node_modules mount from an agent's installed package dir", () => {
+	test("explicit /root/node_modules mount serializes with package refs", () => {
 		const config = JSON.parse(
 			buildConfigJson({
 				options: {
 					software: [
 						{
-							commandDir: "/proj/node_modules/@agentos-software/coreutils/wasm",
-						},
-						{
-							packageDir: "/proj/node_modules/@agentos-software/pi",
-							requires: [
-								"@agentos-software/pi",
-								"@mariozechner/pi-coding-agent",
-							],
-							agent: { id: "pi" },
-						},
-					],
-				},
-			} as never),
-		);
-
-		expect(config.mounts).toEqual([
-			{
-				path: "/root/node_modules",
-				plugin: {
-					id: "host_dir",
-					config: { hostPath: "/proj/node_modules", readOnly: true },
-				},
-				readOnly: true,
-			},
-		]);
-	});
-
-	test("explicit /root/node_modules mount overrides the auto-derived one", () => {
-		const config = JSON.parse(
-			buildConfigJson({
-				options: {
-					software: [
-						{
-							packageDir: "/proj/node_modules/@agentos-software/pi",
-							agent: { id: "pi" },
+							packagePath: "/proj/node_modules/@agentos-software/pi",
 						},
 					],
 					mounts: [nodeModulesMount("/custom/node_modules")],
@@ -591,22 +606,16 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		);
 	});
 
-	test("throws a clear error when an agent package is not inside node_modules", () => {
-		expect(() =>
-			buildConfigJson({
-				options: {
-					software: [
-						{
-							packageDir: "/abs/agent-package",
-							requires: ["@agentos-software/pi"],
-							agent: { id: "x" },
-						},
-					],
-				},
-			} as never),
-		).toThrow(
-			"agentOs() could not auto-mount agent node_modules: agent packageDir /abs/agent-package is not inside a node_modules install",
-		);
+	test("rejects removed software descriptor fields instead of dropping them", () => {
+		for (const legacy of ["packageTar", "packageDir", "commandDir", "dir"]) {
+			expect(() =>
+				buildConfigJson({
+					options: {
+						software: [{ [legacy]: "/abs/old-package" }],
+					},
+				} as never),
+			).toThrow(`removed field "${legacy}"`);
+		}
 	});
 
 	// Boots the dylib actor through the rivet engine + r6 rivetkit runtime server,
