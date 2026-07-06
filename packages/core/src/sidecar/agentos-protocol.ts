@@ -202,18 +202,21 @@ export function writeAcpListAgentsRequest(bc: bare.ByteCursor, x: AcpListAgentsR
 export type AcpAgentEntry = {
     readonly id: string
     readonly installed: boolean
+    readonly adapterEntrypoint: string
 }
 
 export function readAcpAgentEntry(bc: bare.ByteCursor): AcpAgentEntry {
     return {
         id: bare.readString(bc),
         installed: bare.readBool(bc),
+        adapterEntrypoint: bare.readString(bc),
     }
 }
 
 export function writeAcpAgentEntry(bc: bare.ByteCursor, x: AcpAgentEntry): void {
     bare.writeString(bc, x.id)
     bare.writeBool(bc, x.installed)
+    bare.writeString(bc, x.adapterEntrypoint)
 }
 
 function read4(bc: bare.ByteCursor): readonly AcpAgentEntry[] {

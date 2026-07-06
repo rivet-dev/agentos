@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	mkdirSync,
@@ -31,7 +32,8 @@ export function createProjectedAgentPackage(
 	const packageDir = join(root, "pkg");
 	const binDir = join(packageDir, "bin");
 	const acpEntrypoint =
-		options.acpEntrypoint ?? `${options.name.replace(/[^a-zA-Z0-9_-]/g, "-")}-acp`;
+		options.acpEntrypoint ??
+		`${options.name.replace(/[^a-zA-Z0-9_-]/g, "-")}-acp`;
 
 	mkdirSync(binDir, { recursive: true });
 	writeFileSync(
@@ -43,6 +45,7 @@ export function createProjectedAgentPackage(
 		JSON.stringify(
 			{
 				name: options.name,
+				version: "1.0.0",
 				agent: {
 					acpEntrypoint,
 					...(options.env ? { env: options.env } : {}),
@@ -58,9 +61,21 @@ export function createProjectedAgentPackage(
 	writeFileSync(binPath, `#!/usr/bin/env node\n${options.adapterScript}\n`);
 	chmodSync(binPath, 0o755);
 
+	// The sidecar mounts packages from `<dir>/package.tar` (directory projection is
+	// not supported); tar the built tree and hand back the dir that contains it.
+	const packDir = join(root, "packed");
+	mkdirSync(packDir, { recursive: true });
+	execFileSync("tar", [
+		"-cf",
+		join(packDir, "package.tar"),
+		"-C",
+		packageDir,
+		".",
+	]);
+
 	return {
 		packageDir,
-		software: { packageDir },
+		software: { packageDir: packDir },
 		binPath,
 		cleanup: () => rmSync(root, { recursive: true, force: true }),
 	};

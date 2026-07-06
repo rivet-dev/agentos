@@ -37,6 +37,7 @@ type AcpListAgentsRequest struct {
 type AcpAgentEntry struct {
   id: str
   installed: bool
+  adapterEntrypoint: str
 }
 
 type AcpListAgentsResponse struct {

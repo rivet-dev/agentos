@@ -404,10 +404,16 @@ impl AcpExtension {
     /// client parses no manifests — the sidecar owns agent enumeration too. Sorted
     /// by id.
     async fn list_agents(&self, mut ctx: ExtensionContext<'_>) -> AcpHandlerOutput {
+        // The guest-native projected filesystem is the SOURCE OF TRUTH for
+        // installed packages (they can be added dynamically via `linkSoftware`),
+        // so enumerate by reading the live projection: each package is a dir under
+        // `/opt/agentos/pkgs/<name>`, and an agent is any package whose
+        // `<name>/current/agentos-package.json` carries a non-empty
+        // `agent.acpEntrypoint`.
         let listing = ctx
             .guest_filesystem_call_wire(GuestFilesystemCallRequest {
                 operation: GuestFilesystemOperation::ReadDir,
-                path: String::from("/opt/agentos"),
+                path: String::from("/opt/agentos/pkgs"),
                 destination_path: None,
                 target: None,
                 content: None,
@@ -433,11 +439,9 @@ impl AcpExtension {
             if entry.name == "bin" {
                 continue;
             }
-            if read_projected_agent_block(&mut ctx, &entry.name)
-                .await
-                .is_some()
-            {
+            if let Some(block) = read_projected_agent_block(&mut ctx, &entry.name).await {
                 agents.push(AcpAgentEntry {
+                    adapter_entrypoint: format!("/opt/agentos/bin/{}", block.acp_entrypoint),
                     id: entry.name,
                     installed: true,
                 });
@@ -2487,7 +2491,7 @@ async fn read_projected_agent_block(
     let result = ctx
         .guest_filesystem_call_wire(GuestFilesystemCallRequest {
             operation: GuestFilesystemOperation::ReadFile,
-            path: format!("/opt/agentos/{agent_type}/current/agentos-package.json"),
+            path: format!("/opt/agentos/pkgs/{agent_type}/current/agentos-package.json"),
             destination_path: None,
             target: None,
             content: None,
@@ -2554,7 +2558,7 @@ async fn resolve_agent(
             launch_args: agent.launch_args,
         }),
         None => Err(SidecarError::InvalidState(format!(
-            "unknown agent type \"{agent_type}\": no projected /opt/agentos/{agent_type} package \
+            "unknown agent type \"{agent_type}\": no projected /opt/agentos/pkgs/{agent_type} package \
              with an agent.acpEntrypoint — pass its package to AgentOs software"
         ))),
     }

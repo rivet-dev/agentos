@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { Fixture, ToolCall } from "@copilotkit/llmock";
 import { moduleAccessMounts } from "./helpers/node-modules-mount.js";
 import common from "@agentos-software/common";
+import pi from "@agentos-software/pi";
 import { describe, expect, test } from "vitest";
 import type { AgentCapabilities, AgentInfo } from "../src/agent-os.js";
 import { AgentOs } from "../src/agent-os.js";
@@ -49,7 +50,8 @@ async function createPiVm(mockUrl: string): Promise<AgentOs> {
 	return AgentOs.create({
 		loopbackExemptPorts: [Number(new URL(mockUrl).port)],
 		mounts: moduleAccessMounts(MODULE_ACCESS_CWD),
-		software: [common],
+		// Default software ships no agents; pass the pi agent package explicitly.
+		software: [common, pi],
 	});
 }
 
