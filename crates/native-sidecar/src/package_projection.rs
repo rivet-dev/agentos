@@ -11,34 +11,47 @@
 //! at `/opt/agentos/pkgs/<pkg>/<version>`, and each managed command/current
 //! alias is its own root-symlink leaf. The containing dirs stay writable overlay
 //! dirs so user-installed commands can coexist beside managed package entries.
+//!
+//! This code runs during VM startup. Keep tar projection on metadata plus the
+//! small manifest/package metadata entries only: do not read payloads unrelated
+//! to projection, and do not reintroduce a whole-archive read or content hash.
+//! If a package digest is ever required, compute it at pack time and store it in
+//! a sidecar index instead of on this cold-start path.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::state::SidecarError;
-use serde::Deserialize;
+use vfs::package_format::{
+    generated::v1, parse_aospkg_header_from_prefix, versioned, AOSPKG_HEADER_LEN,
+};
 use vfs::posix::{normalize_path, TarFileSystem, VirtualFileSystem};
 
 /// Root of the agentOS package tree inside the VM.
 pub const OPT_AGENTOS_ROOT: &str = "/opt/agentos";
 /// The symlink farm on `$PATH`.
 pub const OPT_AGENTOS_BIN: &str = "/opt/agentos/bin";
-const AGENT_SNAPSHOT_BUNDLE: &str = "dist/sdk-snapshot.js";
-pub const DEFAULT_PACKAGE_TAR_NAME: &str = "package.tar";
+pub const DEFAULT_PACKAGE_TAR_NAME: &str = "package.aospkg";
 pub const MAX_AGENTOS_PACKAGE_MOUNTS: usize = 4096;
 
-/// A package to project, derived from `agentos-package.json` in a package dir or tar.
+/// A package to project, derived from chunk1 of `package.aospkg`.
 #[derive(Debug, Clone)]
 pub struct PackageDescriptor {
     pub name: String,
     pub version: String,
     pub dir: String,
     pub tar_path: Option<String>,
-    pub tar_digest: Option<String>,
     /// `bin/` command that speaks ACP, if this is an agent package.
     pub acp_entrypoint: Option<String>,
+    /// Agent launch env from the packed manifest's agent block.
+    pub agent_env: HashMap<String, String>,
+    /// Agent launch args from the packed manifest's agent block.
+    pub agent_launch_args: Vec<String>,
     pub snapshot: bool,
+    pub snapshot_bundle_path: Option<String>,
     pub provides: Option<PackageProvidesDescriptor>,
     pub commands: Vec<PackageCommandTarget>,
     pub man_pages: Vec<PackageManPageTarget>,
@@ -61,7 +74,6 @@ pub enum PackageLeafMount {
     Tar {
         guest_path: String,
         tar_path: String,
-        digest: String,
         root: String,
     },
     HostDir {
@@ -74,67 +86,49 @@ pub enum PackageLeafMount {
     },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PackageProvidesDescriptor {
-    #[serde(default)]
     pub env: HashMap<String, String>,
-    #[serde(default)]
     pub files: Vec<PackageProvidesFileDescriptor>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PackageProvidesFileDescriptor {
     pub source: String,
     pub target: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct AgentosPackageManifest {
-    name: String,
-    version: String,
-    #[serde(default)]
-    agent: Option<PackageAgentDescriptor>,
-    #[serde(default)]
-    provides: Option<PackageProvidesDescriptor>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PackageAgentDescriptor {
-    #[serde(rename = "acpEntrypoint")]
-    acp_entrypoint: String,
-    #[serde(default)]
-    snapshot: bool,
-}
-
 impl PackageDescriptor {
-    fn from_parts(
+    fn from_manifest(
         dir: String,
         tar_path: Option<String>,
-        tar_digest: Option<String>,
-        manifest: AgentosPackageManifest,
-        commands: Vec<PackageCommandTarget>,
-        man_pages: Vec<PackageManPageTarget>,
+        manifest: v1::PackageManifest,
     ) -> Result<Self, SidecarError> {
         if manifest.name.is_empty() {
             return Err(SidecarError::InvalidState(format!(
-                "agentos-package.json in {dir} is missing a valid \"name\""
+                "package manifest in {dir} is missing a valid \"name\""
             )));
         }
         if manifest.version.is_empty() {
             return Err(SidecarError::InvalidState(format!(
-                "agentos-package.json in {dir} is missing a valid \"version\""
+                "package manifest in {dir} is missing a valid \"version\""
             )));
         }
-        let (acp_entrypoint, snapshot) = match manifest.agent {
-            Some(agent) => (Some(agent.acp_entrypoint), agent.snapshot),
-            None => (None, false),
+        let (acp_entrypoint, agent_env, agent_launch_args, snapshot) = match manifest.agent {
+            Some(agent) => (
+                Some(agent.acp_entrypoint),
+                agent.env,
+                agent.launch_args,
+                agent.snapshot,
+            ),
+            None => (None, HashMap::new(), Vec::new(), false),
         };
         if acp_entrypoint
             .as_ref()
             .is_some_and(|entry| entry.is_empty())
         {
             return Err(SidecarError::InvalidState(format!(
-                "agentos-package.json in {dir} has an empty agent.acpEntrypoint"
+                "package manifest in {dir} has an empty agent.acpEntrypoint"
             )));
         }
         Ok(Self {
@@ -142,28 +136,47 @@ impl PackageDescriptor {
             version: manifest.version,
             dir,
             tar_path,
-            tar_digest,
             acp_entrypoint,
+            agent_env,
+            agent_launch_args,
             snapshot,
-            provides: manifest.provides,
-            commands,
-            man_pages,
+            snapshot_bundle_path: manifest.snapshot_bundle_path,
+            provides: manifest.provides.map(convert_provides),
+            commands: manifest
+                .commands
+                .into_iter()
+                .map(|target| PackageCommandTarget {
+                    command: target.command,
+                    entry: target.entry,
+                })
+                .collect(),
+            man_pages: manifest
+                .man_pages
+                .into_iter()
+                .map(|page| PackageManPageTarget {
+                    section: page.section,
+                    page: page.page,
+                })
+                .collect(),
         })
     }
 
-    fn tar_ref(&self) -> Result<Option<(&str, &str)>, SidecarError> {
-        match (self.tar_path.as_deref(), self.tar_digest.as_deref()) {
-            (Some(tar_path), Some(digest)) => Ok(Some((tar_path, digest))),
-            (Some(_), None) => Err(SidecarError::InvalidState(format!(
-                "package `{}` is missing tar digest",
-                self.name
-            ))),
-            (None, Some(_)) => Err(SidecarError::InvalidState(format!(
-                "package `{}` is missing {DEFAULT_PACKAGE_TAR_NAME}",
-                self.name
-            ))),
-            (None, None) => Ok(None),
-        }
+    fn tar_ref(&self) -> Option<&str> {
+        self.tar_path.as_deref()
+    }
+}
+
+fn convert_provides(provides: v1::ProvidesBlock) -> PackageProvidesDescriptor {
+    PackageProvidesDescriptor {
+        env: provides.env,
+        files: provides
+            .files
+            .into_iter()
+            .map(|file| PackageProvidesFileDescriptor {
+                source: file.source,
+                target: file.target,
+            })
+            .collect(),
     }
 }
 
@@ -171,68 +184,113 @@ fn io_err(context: &str, error: std::io::Error) -> SidecarError {
     SidecarError::Io(format!("{context}: {error}"))
 }
 
-fn read_agentos_package_manifest(dir: &str) -> Result<AgentosPackageManifest, SidecarError> {
+/// Read the sidecar-owned package manifest from `<dir>/package.aospkg`, or
+/// fall back to scanning the unpacked dir for transition fixtures without a
+/// packed `.aospkg` (projected as a read-only `HostDir` package leaf).
+pub fn read_package_manifest(dir: &str) -> Result<PackageDescriptor, SidecarError> {
+    match package_tar_for_dir(dir) {
+        Some(package) => read_package_manifest_from_tar_with_dir(&package, dir.to_owned()),
+        None => read_package_manifest_from_dir(dir),
+    }
+}
+
+const AGENT_SNAPSHOT_BUNDLE: &str = "dist/sdk-snapshot.js";
+
+#[derive(serde::Deserialize)]
+struct DirPackageManifest {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    version: String,
+    #[serde(default)]
+    agent: Option<DirAgentBlock>,
+    #[serde(default)]
+    provides: Option<DirProvidesBlock>,
+}
+
+#[derive(serde::Deserialize)]
+struct DirAgentBlock {
+    #[serde(rename = "acpEntrypoint")]
+    acp_entrypoint: String,
+    #[serde(default)]
+    snapshot: bool,
+    #[serde(default)]
+    env: HashMap<String, String>,
+    #[serde(default, rename = "launchArgs")]
+    launch_args: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct DirProvidesBlock {
+    #[serde(default)]
+    env: HashMap<String, String>,
+    #[serde(default)]
+    files: Vec<DirProvidesFile>,
+}
+
+#[derive(serde::Deserialize)]
+struct DirProvidesFile {
+    source: String,
+    target: String,
+}
+
+/// Transition path: project an unpacked package dir (no `.aospkg`) by reading
+/// `agentos-package.json` and scanning `bin/` and `share/man/` on the host.
+fn read_package_manifest_from_dir(dir: &str) -> Result<PackageDescriptor, SidecarError> {
     let path = Path::new(dir).join("agentos-package.json");
     if !path.exists() {
         return Err(SidecarError::InvalidState(format!(
-            "missing required agentos-package.json in package dir {dir}"
+            "missing required {DEFAULT_PACKAGE_TAR_NAME} in package dir {dir}"
         )));
     }
     let text = fs::read_to_string(&path).map_err(|e| io_err("read agentos-package.json", e))?;
-    serde_json::from_str(&text).map_err(|e| {
+    let manifest: DirPackageManifest = serde_json::from_str(&text).map_err(|e| {
         SidecarError::InvalidState(format!("invalid agentos-package.json in {dir}: {e}"))
-    })
-}
-
-/// Read the sidecar-owned package manifest from `<dir>/agentos-package.json`.
-pub fn read_package_manifest(dir: &str) -> Result<PackageDescriptor, SidecarError> {
-    let manifest = read_agentos_package_manifest(dir)?;
-    let tar_path = package_tar_for_dir(dir);
-    let tar_digest = tar_path
+    })?;
+    let snapshot_bundle_path = manifest
+        .agent
         .as_ref()
-        .map(|path| digest_file(path))
-        .transpose()?;
-    PackageDescriptor::from_parts(
-        dir.to_owned(),
-        tar_path.map(|path| path.to_string_lossy().into_owned()),
-        tar_digest,
-        manifest,
-        command_targets_from_dir(dir)?,
-        man_pages_from_dir(dir)?,
-    )
+        .filter(|agent| agent.snapshot)
+        .map(|_| format!("/{AGENT_SNAPSHOT_BUNDLE}"));
+    let manifest = v1::PackageManifest {
+        name: manifest.name,
+        version: manifest.version,
+        agent: manifest.agent.map(|agent| v1::AgentBlock {
+            acp_entrypoint: agent.acp_entrypoint,
+            snapshot: agent.snapshot,
+            env: agent.env,
+            launch_args: agent.launch_args,
+        }),
+        provides: manifest.provides.map(|provides| v1::ProvidesBlock {
+            env: provides.env,
+            files: provides
+                .files
+                .into_iter()
+                .map(|file| v1::ProvidesFile {
+                    source: file.source,
+                    target: file.target,
+                })
+                .collect(),
+        }),
+        commands: command_targets_from_dir(dir)?
+            .into_iter()
+            .map(|target| v1::CommandTarget {
+                command: target.command,
+                entry: target.entry,
+            })
+            .collect(),
+        man_pages: man_pages_from_dir(dir)?
+            .into_iter()
+            .map(|page| v1::ManPage {
+                section: page.section,
+                page: page.page,
+            })
+            .collect(),
+        snapshot_bundle_path,
+    };
+    PackageDescriptor::from_manifest(dir.to_owned(), None, manifest)
 }
 
-/// Read the first snapshot-enabled agent package's bundled SDK snapshot source.
-pub fn read_agent_snapshot_bundle(
-    package: &PackageDescriptor,
-) -> Result<Option<String>, SidecarError> {
-    if !package.snapshot {
-        return Ok(None);
-    }
-    let path = Path::new(&package.dir).join(AGENT_SNAPSHOT_BUNDLE);
-    if !path.exists() {
-        return Ok(None);
-    }
-    fs::read_to_string(&path)
-        .map(Some)
-        .map_err(|e| io_err("read agent snapshot bundle", e))
-}
-
-/// Read the package's `version` from `agentos-package.json`.
-pub fn read_package_version(dir: &str) -> Result<String, SidecarError> {
-    Ok(read_agentos_package_manifest(dir)?.version)
-}
-
-pub fn read_package_name(dir: &str) -> Result<String, SidecarError> {
-    Ok(read_agentos_package_manifest(dir)?.name)
-}
-
-fn package_tar_for_dir(dir: &str) -> Option<PathBuf> {
-    let tar = Path::new(dir).join(DEFAULT_PACKAGE_TAR_NAME);
-    tar.is_file().then_some(tar)
-}
-
-/// Map each command name to its entry path relative to the package root.
 fn command_targets_from_dir(dir: &str) -> Result<Vec<PackageCommandTarget>, SidecarError> {
     let pkg_json = Path::new(dir).join("package.json");
     if pkg_json.exists() {
@@ -263,34 +321,6 @@ fn command_targets_from_dir(dir: &str) -> Result<Vec<PackageCommandTarget>, Side
     }
     targets.sort_by(|a, b| a.command.cmp(&b.command));
     Ok(targets)
-}
-
-fn man_pages_from_dir(dir: &str) -> Result<Vec<PackageManPageTarget>, SidecarError> {
-    let man = Path::new(dir).join("share").join("man");
-    if !man.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut pages = Vec::new();
-    for section in fs::read_dir(&man).map_err(|e| io_err("read man/", e))? {
-        let section = section.map_err(|e| io_err("man section", e))?;
-        if !section.path().is_dir() {
-            continue;
-        }
-        let Some(section_name) = section.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
-        for page in fs::read_dir(section.path()).map_err(|e| io_err("man pages", e))? {
-            let page = page.map_err(|e| io_err("man page", e))?;
-            if let Some(page_name) = page.file_name().to_str() {
-                pages.push(PackageManPageTarget {
-                    section: section_name.clone(),
-                    page: page_name.to_owned(),
-                });
-            }
-        }
-    }
-    pages.sort_by(|a, b| (&a.section, &a.page).cmp(&(&b.section, &b.page)));
-    Ok(pages)
 }
 
 fn command_targets_from_package_json(
@@ -339,129 +369,144 @@ fn normalize_rel(path: &str) -> String {
     path.strip_prefix("./").unwrap_or(path).to_owned()
 }
 
+fn man_pages_from_dir(dir: &str) -> Result<Vec<PackageManPageTarget>, SidecarError> {
+    let man = Path::new(dir).join("share").join("man");
+    if !man.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut pages = Vec::new();
+    for section in fs::read_dir(&man).map_err(|e| io_err("read man/", e))? {
+        let section = section.map_err(|e| io_err("man section", e))?;
+        if !section.path().is_dir() {
+            continue;
+        }
+        let Some(section_name) = section.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        for page in fs::read_dir(section.path()).map_err(|e| io_err("man pages", e))? {
+            let page = page.map_err(|e| io_err("man page", e))?;
+            if let Some(page_name) = page.file_name().to_str() {
+                pages.push(PackageManPageTarget {
+                    section: section_name.clone(),
+                    page: page_name.to_owned(),
+                });
+            }
+        }
+    }
+    pages.sort_by(|a, b| (&a.section, &a.page).cmp(&(&b.section, &b.page)));
+    Ok(pages)
+}
+
+/// Read the first snapshot-enabled agent package's bundled SDK snapshot source from `.aospkg`.
+pub fn read_agent_snapshot_bundle(
+    package: &PackageDescriptor,
+) -> Result<Option<String>, SidecarError> {
+    if !package.snapshot {
+        return Ok(None);
+    }
+    let Some(path) = package.snapshot_bundle_path.as_deref() else {
+        return Ok(None);
+    };
+    let Some(tar_path) = package.tar_ref() else {
+        let host_path = Path::new(&package.dir).join(path.trim_start_matches('/'));
+        if !host_path.exists() {
+            return Ok(None);
+        }
+        return fs::read_to_string(&host_path)
+            .map(Some)
+            .map_err(|e| io_err("read agent snapshot bundle", e));
+    };
+    let mut fs = TarFileSystem::open(tar_path)
+        .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
+    match fs.read_file(path) {
+        Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|error| {
+            SidecarError::InvalidState(format!("snapshot bundle is not UTF-8: {error}"))
+        }),
+        Err(error) if error.code() == "ENOENT" => Ok(None),
+        Err(error) => Err(SidecarError::InvalidState(error.to_string())),
+    }
+}
+
+fn package_tar_for_dir(dir: &str) -> Option<PathBuf> {
+    let tar = Path::new(dir).join(DEFAULT_PACKAGE_TAR_NAME);
+    tar.is_file().then_some(tar)
+}
+
 /// Derive command names for the package (sorted).
 pub fn derive_commands(dir: &str) -> Result<Vec<String>, SidecarError> {
-    Ok(command_targets_from_dir(dir)?
+    Ok(read_package_manifest(dir)?
+        .commands
         .into_iter()
         .map(|target| target.command)
         .collect())
 }
 
-pub fn read_package_manifest_from_ref(
-    dir: Option<&str>,
-    tar: Option<&str>,
-) -> Result<PackageDescriptor, SidecarError> {
-    if let Some(tar) = tar.filter(|value| !value.is_empty()) {
-        return read_package_manifest_from_tar(tar);
+/// Read a package manifest from the single wire `path`.
+///
+/// A file path is a packed `.aospkg` (the normal case). A directory path is a
+/// local transition fixture: it is scanned via its `agentos-package.json`
+/// (packed packages no longer ship that JSON — the vbare chunk1 manifest is
+/// the only runtime manifest), or via a `package.aospkg` inside the dir.
+pub fn read_package_manifest_from_path(path: &str) -> Result<PackageDescriptor, SidecarError> {
+    if path.is_empty() {
+        return Err(SidecarError::InvalidState(String::from(
+            "package descriptor must include a package path",
+        )));
     }
-    if let Some(dir) = dir.filter(|value| !value.is_empty()) {
-        let path = Path::new(dir);
-        if path.is_file() {
-            return read_package_manifest_from_tar(dir);
-        }
-        if let Some(package_tar) = package_tar_for_dir(dir) {
-            return read_package_manifest_from_tar_with_dir(&package_tar, dir.to_owned());
-        }
-        return read_package_manifest(dir);
+    let fs_path = Path::new(path);
+    if fs_path.is_file() {
+        let dir = fs_path
+            .parent()
+            .map(|parent| parent.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_owned());
+        return read_package_manifest_from_tar_with_dir(fs_path, dir);
     }
-    Err(SidecarError::InvalidState(String::from(
-        "package descriptor must include a package tar or dir",
-    )))
-}
-
-fn read_package_manifest_from_tar(tar: &str) -> Result<PackageDescriptor, SidecarError> {
-    read_package_manifest_from_tar_with_dir(Path::new(tar), tar.to_owned())
+    read_package_manifest(path)
 }
 
 fn read_package_manifest_from_tar_with_dir(
     tar: &Path,
     dir: String,
 ) -> Result<PackageDescriptor, SidecarError> {
-    let digest = digest_file(tar)?;
-    let mut fs = TarFileSystem::open(tar, digest.clone())
-        .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
-    let manifest_bytes = fs
-        .read_file("/agentos-package.json")
-        .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
-    let manifest =
-        serde_json::from_slice::<AgentosPackageManifest>(&manifest_bytes).map_err(|error| {
-            SidecarError::InvalidState(format!(
-                "invalid agentos-package.json in {}: {error}",
-                tar.display()
-            ))
-        })?;
-    let commands = command_targets_from_tar(&mut fs)?;
-    let man_pages = man_pages_from_tar(&mut fs)?;
-    PackageDescriptor::from_parts(
+    // Projection is startup-critical and reads chunk1 only: 16-byte header,
+    // then the versioned vbare PackageManifest. Do not parse tar headers, open
+    // TarFileSystem, decode chunk2, or touch chunk3 here.
+    let manifest = read_aospkg_manifest_chunk(tar)?;
+    PackageDescriptor::from_manifest(
         dir,
         Some(tar.to_string_lossy().into_owned()),
-        Some(digest),
         manifest,
-        commands,
-        man_pages,
     )
 }
 
-fn command_targets_from_tar(
-    fs: &mut TarFileSystem,
-) -> Result<Vec<PackageCommandTarget>, SidecarError> {
-    match fs.read_file("/package.json") {
-        Ok(bytes) => {
-            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                if let Some(targets) = command_targets_from_package_json(&value) {
-                    return Ok(targets);
-                }
-            }
-        }
-        Err(error) if error.code() == "ENOENT" => {}
-        Err(error) => return Err(SidecarError::InvalidState(error.to_string())),
-    }
-
-    let entries = match fs.read_dir("/bin") {
-        Ok(entries) => entries,
-        Err(error) if error.code() == "ENOENT" => return Ok(Vec::new()),
-        Err(error) => return Err(SidecarError::InvalidState(error.to_string())),
-    };
-    let mut targets = entries
-        .into_iter()
-        .filter_map(|command| {
-            is_projectable_command_name(&command).then(|| PackageCommandTarget {
-                entry: format!("bin/{command}"),
-                command,
-            })
-        })
-        .collect::<Vec<_>>();
-    targets.sort_by(|a, b| a.command.cmp(&b.command));
-    Ok(targets)
-}
-
-fn man_pages_from_tar(fs: &mut TarFileSystem) -> Result<Vec<PackageManPageTarget>, SidecarError> {
-    let sections = match fs.read_dir("/share/man") {
-        Ok(entries) => entries,
-        Err(error) if error.code() == "ENOENT" => return Ok(Vec::new()),
-        Err(error) => return Err(SidecarError::InvalidState(error.to_string())),
-    };
-    let mut pages = Vec::new();
-    for section in sections {
-        let section_path = format!("/share/man/{section}");
-        let Ok(stat) = fs.stat(&section_path) else {
-            continue;
-        };
-        if !stat.is_directory {
-            continue;
-        }
-        for page in fs
-            .read_dir(&section_path)
-            .map_err(|error| SidecarError::InvalidState(error.to_string()))?
-        {
-            pages.push(PackageManPageTarget {
-                section: section.clone(),
-                page,
-            });
-        }
-    }
-    pages.sort_by(|a, b| (&a.section, &a.page).cmp(&(&b.section, &b.page)));
-    Ok(pages)
+fn read_aospkg_manifest_chunk(path: &Path) -> Result<v1::PackageManifest, SidecarError> {
+    let mut file = File::open(path).map_err(|e| io_err("open package.aospkg", e))?;
+    let file_len = file
+        .metadata()
+        .map_err(|e| io_err("stat package.aospkg", e))?
+        .len();
+    let file_len = usize::try_from(file_len).map_err(|_| {
+        SidecarError::InvalidState(format!(
+            "{} is too large to address on this platform",
+            path.display()
+        ))
+    })?;
+    let mut header = [0u8; AOSPKG_HEADER_LEN];
+    file.read_exact(&mut header)
+        .map_err(|e| io_err("read package.aospkg header", e))?;
+    let parsed = parse_aospkg_header_from_prefix(&header, file_len)
+        .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
+    let mut manifest = vec![0u8; parsed.manifest.len()];
+    file.seek(SeekFrom::Start(parsed.manifest.start as u64))
+        .map_err(|e| io_err("seek package.aospkg manifest", e))?;
+    file.read_exact(&mut manifest)
+        .map_err(|e| io_err("read package.aospkg manifest", e))?;
+    versioned::decode_package_manifest(&manifest).map_err(|error| {
+        SidecarError::InvalidState(format!(
+            "decode package manifest in {}: {error}",
+            path.display()
+        ))
+    })
 }
 
 pub fn build_package_leaf_mounts(
@@ -489,13 +534,12 @@ pub fn build_package_leaf_mounts(
 
         let package_root = package_guest_root(&mount_at, &package.name);
         let version_path = normalize_path(&format!("{package_root}/{}", package.version));
-        if let Some((tar_path, digest)) = package.tar_ref()? {
+        if let Some(tar_path) = package.tar_ref() {
             push_mount(
                 &mut mounts,
                 PackageLeafMount::Tar {
                     guest_path: version_path,
                     tar_path: tar_path.to_owned(),
-                    digest: digest.to_owned(),
                     root: String::from("/"),
                 },
             )?;
@@ -558,15 +602,14 @@ pub fn package_provides_file_mount(
     source: &str,
     target: &str,
 ) -> Result<Option<PackageLeafMount>, SidecarError> {
-    if let Some((tar_path, digest)) = package.tar_ref()? {
+    if let Some(tar_path) = package.tar_ref() {
         let root = normalize_package_source(source);
-        let mut fs = TarFileSystem::open_at(tar_path, digest, &root)
+        let mut fs = TarFileSystem::open_at(tar_path, &root)
             .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
         match fs.stat("/") {
             Ok(stat) if stat.is_directory => Ok(Some(PackageLeafMount::Tar {
                 guest_path: normalize_path(target),
                 tar_path: tar_path.to_owned(),
-                digest: digest.to_owned(),
                 root,
             })),
             Ok(_) => Ok(None),
@@ -638,9 +681,4 @@ fn normalize_package_source(source: &str) -> String {
     } else {
         normalize_path(source)
     }
-}
-
-fn digest_file(path: impl AsRef<Path>) -> Result<String, SidecarError> {
-    let bytes = fs::read(path.as_ref()).map_err(|error| io_err("read package tar", error))?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
 }

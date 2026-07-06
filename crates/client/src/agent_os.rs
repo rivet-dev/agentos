@@ -150,13 +150,13 @@ pub(crate) struct SessionEntry {
 // ---------------------------------------------------------------------------
 
 /// A self-contained agentOS package to link into a running VM via
-/// [`AgentOs::link_software`]. The descriptor is forwarded to the sidecar, which
-/// owns the `/opt/agentos` projection (builds the staging tree, derives commands,
-/// reads package metadata from `agentos-package.json`).
+/// [`AgentOs::link_software`]. `path` is normally the packed `.aospkg` file;
+/// a directory is accepted only for local transition fixtures. The descriptor
+/// is forwarded to the sidecar, which owns the `/opt/agentos` projection and
+/// reads package metadata from the packed vbare manifest.
 #[derive(Debug, Clone)]
 pub struct PackageDescriptor {
-    pub dir: Option<String>,
-    pub tar: Option<String>,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -656,11 +656,10 @@ impl AgentOs {
             .request_wire(
                 wire_vm_ownership(&inner.connection_id, &inner.session_id, &inner.vm_id),
                 wire::RequestPayload::LinkPackageRequest(wire::LinkPackageRequest {
-                    // The wire `PackageDescriptor` carries `{ dir, tar }`; the sidecar
-                    // reads metadata from the package payload.
+                    // The wire `PackageDescriptor` carries the packed package
+                    // `path`; the sidecar reads metadata from that payload.
                     package: wire::PackageDescriptor {
-                        dir: descriptor.dir,
-                        tar: descriptor.tar,
+                        path: descriptor.path,
                     },
                 }),
             )
@@ -3603,14 +3602,13 @@ fn json_object<const N: usize>(entries: [(&str, Value); N]) -> Value {
 }
 
 /// Build the wire [`wire::PackageDescriptor`]s for the `/opt/agentos` projection.
-/// The sidecar reads package metadata from the forwarded dir or tar payload.
+/// The sidecar reads package metadata from the forwarded package path.
 fn build_package_descriptors(config: &AgentOsConfig) -> Vec<wire::PackageDescriptor> {
     config
         .packages
         .iter()
         .map(|package| wire::PackageDescriptor {
-            dir: package.dir.clone(),
-            tar: package.tar.clone(),
+            path: package.path.clone(),
         })
         .collect()
 }

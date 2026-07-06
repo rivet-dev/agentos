@@ -14,3 +14,8 @@ export {
 	type PublishResult,
 } from "./publish.js";
 export { readManifest, type AgentosPackageManifest } from "./manifest.js";
+export {
+	packAospkgFromTar,
+	packAospkgFromTarBytes,
+	type AospkgSummary,
+} from "./aospkg.js";

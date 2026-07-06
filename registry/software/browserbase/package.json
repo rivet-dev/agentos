@@ -17,7 +17,9 @@
 		}
 	},
 	"files": [
-		"dist"
+		"dist",
+		"!dist/package",
+		"!dist/package.tar"
 	],
 	"scripts": {
 		"build": "tsc && rm -rf dist/package dist/package.tar && agentos-toolchain pack . --out dist/package --prune-native",

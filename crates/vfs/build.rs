@@ -9,6 +9,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
 
     println!("cargo:rerun-if-changed=build.rs");
+    stage_package_format_schema(&manifest_dir, &out_dir);
 
     let workspace_fixtures = [
         manifest_dir.join("../../packages/runtime-core/fixtures/base-filesystem.json"),
@@ -31,4 +32,23 @@ fn main() {
             error
         )
     });
+}
+
+fn stage_package_format_schema(manifest_dir: &PathBuf, out_dir: &PathBuf) {
+    let source_schema = manifest_dir.join("package-format").join("v1.bare");
+    println!("cargo:rerun-if-changed={}", source_schema.display());
+
+    let schema_dir = out_dir.join("package-format-schema");
+    fs::create_dir_all(&schema_dir).expect("failed to create generated package schema dir");
+    fs::copy(&source_schema, schema_dir.join("v1.bare")).unwrap_or_else(|error| {
+        panic!(
+            "failed to stage package schema from {}: {}",
+            source_schema.display(),
+            error
+        )
+    });
+
+    let cfg = vbare_compiler::Config::default();
+    vbare_compiler::process_schemas_with_config(&schema_dir, &cfg)
+        .expect("failed to generate package format BARE schema");
 }

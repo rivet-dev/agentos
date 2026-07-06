@@ -75,7 +75,7 @@ Register the package on the server with `software`. Sessions are then created fr
 import { agentOS, setup, defineSoftware } from "@rivet-dev/agentos";
 
 const myAgent = defineSoftware({
-  packageDir,   // the packaged agent directory; its agentos-package.json carries the agent block
+  packagePath,  // the packed agent .aospkg; its embedded manifest carries the agent block
 });
 
 const vm = agentOS({ software: [myAgent] });

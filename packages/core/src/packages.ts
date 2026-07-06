@@ -1,5 +1,5 @@
 import type { SoftwarePackageRef } from "./agentos-package.js";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tryReadAgentosPackageManifest } from "./agentos-package.js";
 
@@ -43,14 +43,26 @@ export function resolveAgentSnapshotBundle(
 ): string | undefined {
 	const descriptors = software.flat();
 	for (const entry of descriptors) {
-		const dir = entry.packageDir;
-		if (dir === undefined) continue;
-		const manifest = tryReadAgentosPackageManifest(dir);
+		// Only transition package DIRS are readable host-side (their
+		// agentos-package.json is the toolchain-input manifest). Packed
+		// `.aospkg` refs carry the bundle inside the mount tar; the sidecar
+		// reads it from the packed vbare manifest's snapshotBundlePath.
+		const path = entry.packagePath;
+		if (path === undefined || !statIsDirectory(path)) continue;
+		const manifest = tryReadAgentosPackageManifest(path);
 		if (!manifest?.agent?.snapshot) continue;
-		const bundlePath = join(dir, "dist", "sdk-snapshot.js");
+		const bundlePath = join(path, "dist", "sdk-snapshot.js");
 		if (existsSync(bundlePath)) {
 			return readFileSync(bundlePath, "utf-8");
 		}
 	}
 	return undefined;
+}
+
+function statIsDirectory(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch {
+		return false;
+	}
 }

@@ -19,6 +19,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { packAospkgFromTar } from "./aospkg.js";
 import { detectExecutableKind, isNativeKind } from "./header.js";
 
 export interface PackOptions {
@@ -48,6 +49,8 @@ export interface PackResult {
 	name: string;
 	version: string;
 	packageTar: string;
+	/** The packed `.aospkg` runtime artifact (empty when `out` was a directory). */
+	packageAospkg?: string;
 	commands: string[];
 }
 
@@ -395,7 +398,12 @@ export function pack(options: PackOptions): PackResult {
 		dereferenceEscapingSymlinks(packageDir);
 		const packageTar = out.endsWith(".tar") ? out : `${out}.tar`;
 		createPackageTar(packageDir, packageTar);
-		return { name, version, packageTar, commands };
+		// Pack the runtime artifact next to the tar. agentos-package.json is
+		// consumed at pack time and stripped from the packed mount tar; the
+		// vbare chunk1 manifest is the single runtime manifest.
+		const packageAospkg = packageTar.replace(/\.tar$/, ".aospkg");
+		packAospkgFromTar(packageTar, packageAospkg);
+		return { name, version, packageTar, packageAospkg, commands };
 	} finally {
 		rmSync(tmp, { recursive: true, force: true });
 	}

@@ -18,6 +18,7 @@ crate-type = ["cdylib"]
 # `rivetkit@0.0.0-feat-dylib-actor-plugin.5d959bc` npm preview the TS forwarder uses.
 rivet-actor-plugin-abi = "=2.3.2"
 agentos-client = { path = "../client" }
+vfs = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 tokio-util = "0.7"
 anyhow = "1"

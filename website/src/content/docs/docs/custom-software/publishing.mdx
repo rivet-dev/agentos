@@ -12,7 +12,7 @@ Every package is an npm package whose default export points at a self-contained 
 | Command | What it does |
 |---|---|
 | `stage --commands-dir <dir>` | Populate `bin/` from a directory of compiled binaries, per the `commands` / `aliases` / `stubs` lists in the package's `agentos-package.json`. |
-| `build` | Assemble `dist/package/` from `bin/` (+ optional `share/`): a clean `package.json` with a `bin` command map, plus the runtime `agentos-package.json`. |
+| `build` | Assemble `dist/package/` from `bin/` (+ optional `share/`) and pack it into `dist/package.aospkg` — the runtime artifact with the embedded manifest (the `agentos-package.json` is pack-time input, not shipped). |
 | `pack` | Build a self-contained node-closure package from an npm package or local dir (JS agents; validates headers, rejects native addons). |
 | `publish` | Publish the built package to npm. Dist-tag is **`dev` by default**; the `latest` pointer only moves with an explicit `--latest`. |
 

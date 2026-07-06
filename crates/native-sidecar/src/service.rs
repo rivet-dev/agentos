@@ -2844,6 +2844,29 @@ where
         Box::pin(async move { NativeSidecar::poll_event(self, &ownership, timeout).await })
     }
 
+    fn projected_agents<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, Vec<crate::extension::ProjectedAgentLaunchEntry>> {
+        Box::pin(async move {
+            let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
+            self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
+            let vm = self.vms.get(&vm_id).ok_or_else(|| {
+                SidecarError::InvalidState(format!("unknown VM {vm_id}"))
+            })?;
+            Ok(vm
+                .projected_agent_launch
+                .iter()
+                .map(|(id, launch): (&String, &crate::state::ProjectedAgentLaunch)| crate::extension::ProjectedAgentLaunchEntry {
+                    id: id.clone(),
+                    acp_entrypoint: launch.acp_entrypoint.clone(),
+                    env: launch.env.clone(),
+                    launch_args: launch.launch_args.clone(),
+                })
+                .collect())
+        })
+    }
+
     fn guest_filesystem_call<'a>(
         &'a mut self,
         ownership: OwnershipScope,

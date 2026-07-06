@@ -797,27 +797,19 @@ function toRecord(value: unknown): Record<string, unknown> {
 }
 
 interface NormalizedPackageRef {
-	dir: string;
+	path: string;
 }
 
 function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
+	// The single package reference is `packagePath`: the packed `.aospkg` file
+	// (registry-built packages export `{ packagePath }`), or a package dir for
+	// local transition fixtures. A raw string is shorthand for the same path.
 	if (typeof value === "string") {
-		return { dir: value };
+		return { path: value };
 	}
 	const record = toRecord(value);
-	if (typeof record.packageDir === "string") {
-		return { dir: record.packageDir };
-	}
-	if (typeof record.dir === "string") {
-		return { dir: record.dir };
-	}
-	if (typeof record.packageTar === "string") {
-		// Registry-built packages export `{ packageTar }` pointing at the
-		// `<pkg>/dist/package.tar` the sidecar mounts directly (tar-vfs; directory
-		// projection is no longer supported). The sidecar locates the tar as
-		// `<dir>/package.tar` and reads the manifest from inside it, so forward the
-		// directory that CONTAINS the tar, not the tar file itself.
-		return { dir: record.packageTar.replace(/\/[^/]*$/, "") };
+	if (typeof record.packagePath === "string") {
+		return { path: record.packagePath };
 	}
 	return undefined;
 }
@@ -2648,23 +2640,23 @@ export class AgentOs {
 			options?.defaultSoftware === false
 				? (options.software ?? [])
 				: [...defaultSoftware, ...(options?.software ?? [])];
-		// Package dirs are projected by the SIDECAR: the client forwards only
-		// `{dir}` over `configureVm` and the sidecar reads package metadata from
-		// `<dir>/agentos-package.json`.
+		// Packages are projected by the SIDECAR: the client forwards only the
+		// package `path` over `configureVm` and the sidecar reads metadata from
+		// the packed vbare manifest (chunk1 of the `.aospkg`).
 		const flatSoftware = software.flat();
 		// Honor the AgentOsOptions.defaultSoftware contract ("entries already present
 		// in `software` are not duplicated"): the default bundle and an explicitly
-		// passed one resolve to the same package dirs, so dedup by dir. Without this
-		// the sidecar rejects the second projection with a duplicate-command error
-		// (e.g. coreutils' `[`).
-		const seenPackageDirs = new Set<string>();
+		// passed one resolve to the same package paths, so dedup by path. Without
+		// this the sidecar rejects the second projection with a duplicate-command
+		// error (e.g. coreutils' `[`).
+		const seenPackagePaths = new Set<string>();
 		const sidecarPackages = flatSoftware.flatMap((entry) => {
 			const ref = normalizePackageRef(entry);
-			if (!ref || seenPackageDirs.has(ref.dir)) {
+			if (!ref || seenPackagePaths.has(ref.path)) {
 				return [];
 			}
-			seenPackageDirs.add(ref.dir);
-			return [{ dir: ref.dir }];
+			seenPackagePaths.add(ref.path);
+			return [{ path: ref.path }];
 		});
 		// All package software is projected into `/opt/agentos` by the sidecar. The
 		// client stages nothing host-side and parses NO package manifests: the
@@ -3527,7 +3519,7 @@ export class AgentOs {
 		const commands = await this._sidecarClient.linkPackage(
 			this._sidecarSession,
 			this._sidecarVm,
-			{ dir: ref.dir },
+			{ path: ref.path },
 		);
 		if (this.#kernel instanceof NativeSidecarKernelProxy) {
 			this.#kernel.registerCommandGuestPaths(

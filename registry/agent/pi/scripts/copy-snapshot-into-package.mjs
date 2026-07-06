@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { packAospkgFromTar } from "@rivet-dev/agentos-toolchain";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, "..");
@@ -43,6 +44,13 @@ for (const f of files) {
 execFileSync("tar", ["-cf", join(pkgRoot, "dist", "package.tar"), "-C", join(pkgRoot, "dist", "package"), "."], {
 	stdio: "pipe",
 });
+// The .aospkg is the runtime artifact and was packed BEFORE the snapshot was
+// mirrored in — re-pack it from the refreshed tar so snapshotBundlePath and
+// the bundle bytes land in the packed manifest + mount tar.
+packAospkgFromTar(
+	join(pkgRoot, "dist", "package.tar"),
+	join(pkgRoot, "dist", "package.aospkg"),
+);
 console.log(
-	`copy-snapshot-into-package: mirrored ${files.join(", ")} -> dist/package/dist/ and refreshed dist/package.tar`,
+	`copy-snapshot-into-package: mirrored ${files.join(", ")} -> dist/package/dist/, refreshed dist/package.tar, re-packed dist/package.aospkg`,
 );

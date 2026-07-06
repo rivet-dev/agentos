@@ -2,6 +2,7 @@
 import { existsSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { build } from "./build.js";
+import { packAospkgFromTar } from "./aospkg.js";
 import { pack } from "./pack.js";
 import { publish } from "./publish.js";
 import { stage } from "./stage.js";
@@ -98,6 +99,19 @@ function main(): void {
 	const args = parseArgs(rest);
 
 	switch (cmd) {
+		case "pack-aospkg": {
+			requireKnownFlags(args, []);
+			const sourceTar = args.positional[0];
+			const dest = args.positional[1];
+			if (!sourceTar || !dest) {
+				throw new Error("pack-aospkg requires <source-tar> <dest-aospkg> arguments");
+			}
+			const summary = packAospkgFromTar(resolve(sourceTar), resolve(dest));
+			process.stdout.write(
+				`packed ${summary.name}@${summary.version} → ${dest}\n`,
+			);
+			return;
+		}
 		case "pack": {
 			requireKnownFlags(args, ["--agent", "--out", "--prune-native"]);
 			const source = args.positional[0];

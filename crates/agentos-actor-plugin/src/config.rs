@@ -74,11 +74,13 @@ struct SidecarJson {
     pool: Option<String>,
 }
 
-/// One `{ dir }` entry from the JS `packages` list (the projected package dir).
+/// One `{ path }` entry from the JS `packages` list: the packed `.aospkg`
+/// file (normal case) or a transition package dir.
 #[derive(serde::Deserialize, Clone)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct PackageJson {
-    dir: String,
+    #[serde(alias = "packagePath")]
+    path: String,
 }
 
 /// Reply DTO for the `listMounts` action: one configured mount, flattened so the
@@ -152,8 +154,7 @@ impl AgentOsConfigJson {
                 .packages
                 .iter()
                 .map(|package| PackageRef {
-                    dir: Some(package.dir.clone()),
-                    tar: None,
+                    path: package.path.clone(),
                 })
                 .collect(),
             packages_mount_at: self.packages_mount_at.clone(),
@@ -191,23 +192,59 @@ impl AgentOsConfigJson {
             .collect()
     }
 
-    /// Configured software packages, for the `listSoftware` action. Each package's
-    /// `package` name + optional agent block come from `<dir>/agentos-package.json`;
-    /// the `version` from `<dir>/package.json`. `kind` is `agent` when the manifest
-    /// declares an agent block, else `wasm-commands`. A package whose manifest is
-    /// unreadable is skipped rather than aborting the whole listing.
+    /// Configured software packages, for the `listSoftware` action. For a packed
+    /// `.aospkg` the name/agent/version come from the vbare chunk1 manifest; a
+    /// transition dir still reads `<dir>/agentos-package.json` (toolchain input)
+    /// plus `<dir>/package.json` for the version. `kind` is `agent` when the
+    /// manifest declares an agent block, else `wasm-commands`. A package whose
+    /// manifest is unreadable is skipped rather than aborting the whole listing.
     pub(crate) fn list_software(&self) -> Vec<SoftwareInfoDto> {
         self.packages
             .iter()
-            .filter_map(|package| read_package_software_info(&package.dir))
+            .filter_map(|package| read_package_software_info(&package.path))
             .collect()
     }
 }
 
-/// Read a projected package dir into a [`SoftwareInfoDto`] (sans `commands`, which
-/// are filled from the live VM in the dispatch arm). Returns `None` if the required
-/// `agentos-package.json` manifest is missing or malformed.
-fn read_package_software_info(dir: &str) -> Option<SoftwareInfoDto> {
+/// Read a projected package into a [`SoftwareInfoDto`] (sans `commands`, which
+/// are filled from the live VM in the dispatch arm). Returns `None` if the
+/// package manifest is missing or malformed.
+fn read_package_software_info(path: &str) -> Option<SoftwareInfoDto> {
+    if std::path::Path::new(path).is_file() {
+        return read_aospkg_software_info(path);
+    }
+    read_package_dir_software_info(path)
+}
+
+/// Packed `.aospkg`: decode the chunk1 vbare manifest (the runtime manifest —
+/// packed packages ship no `agentos-package.json`).
+fn read_aospkg_software_info(path: &str) -> Option<SoftwareInfoDto> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let file_len = usize::try_from(file.metadata().ok()?.len()).ok()?;
+    let mut header = [0u8; vfs::package_format::AOSPKG_HEADER_LEN];
+    file.read_exact(&mut header).ok()?;
+    let parsed = vfs::package_format::parse_aospkg_header_from_prefix(&header, file_len).ok()?;
+    let mut manifest = vec![0u8; parsed.manifest.len()];
+    file.seek(SeekFrom::Start(parsed.manifest.start as u64)).ok()?;
+    file.read_exact(&mut manifest).ok()?;
+    let manifest = vfs::package_format::versioned::decode_package_manifest(&manifest).ok()?;
+    Some(SoftwareInfoDto {
+        package: manifest.name,
+        kind: if manifest.agent.is_some() {
+            "agent"
+        } else {
+            "wasm-commands"
+        }
+        .to_owned(),
+        version: Some(manifest.version),
+        commands: Vec::new(),
+    })
+}
+
+/// Transition package dir: `agentos-package.json` is the toolchain-input
+/// manifest and `package.json` carries the best-effort version.
+fn read_package_dir_software_info(dir: &str) -> Option<SoftwareInfoDto> {
     let manifest_path = std::path::Path::new(dir).join("agentos-package.json");
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(manifest_path).ok()?).ok()?;

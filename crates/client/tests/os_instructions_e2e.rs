@@ -135,8 +135,7 @@ async fn run_session(
                 .into_owned(),
         )],
         packages: vec![PackageRef {
-            dir: Some(package_dir.to_string_lossy().into_owned()),
-            tar: None,
+            path: package_dir.to_string_lossy().into_owned(),
         }],
         sidecar: Some(AgentOsSidecarConfig::Shared {
             pool: Some(format!("os-instructions-{}", Uuid::new_v4())),

@@ -357,6 +357,7 @@ where
                 detached_child_processes: BTreeSet::new(),
                 signal_states: BTreeMap::new(),
                 packages_staging_root: None,
+                projected_agent_launch: BTreeMap::new(),
             },
         );
 
@@ -549,6 +550,7 @@ where
         let configured_software = payload.software.len() as u32;
         let projected_commands = projected_commands_from_guest_paths(&vm.command_guest_paths);
         let agents = projected_agents_from_descriptors(&package_descriptors);
+        vm.projected_agent_launch = projected_agent_launch_from_descriptors(&package_descriptors);
         let _ = vm;
         // Pre-warm the agent-SDK snapshot when a configured package opts in with
         // `agent.snapshot`. The sidecar reads the bundle from the host package dir
@@ -588,10 +590,8 @@ where
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
         let vm = self.vms.get_mut(&vm_id).expect("owned VM should exist");
-        let descriptor = crate::package_projection::read_package_manifest_from_ref(
-            payload.package.dir.as_deref(),
-            payload.package.tar.as_deref(),
-        )?;
+        let descriptor =
+            crate::package_projection::read_package_manifest_from_path(&payload.package.path)?;
         let new_mounts = build_packages_projection(
             &vm_id,
             std::slice::from_ref(&descriptor),
@@ -655,6 +655,11 @@ where
             })
             .collect();
         let agents = projected_agents_from_descriptors(std::slice::from_ref(&descriptor));
+        if let Some(vm) = self.vms.get_mut(&vm_id) {
+            vm.projected_agent_launch.extend(
+                projected_agent_launch_from_descriptors(std::slice::from_ref(&descriptor)),
+            );
+        }
 
         Ok(DispatchResult {
             response: package_linked_response(request, projected_commands, agents),
@@ -1348,7 +1353,6 @@ fn package_leaf_mount_to_descriptor(
         crate::package_projection::PackageLeafMount::Tar {
             guest_path,
             tar_path,
-            digest,
             root,
         } => MountDescriptor {
             guest_path,
@@ -1358,7 +1362,6 @@ fn package_leaf_mount_to_descriptor(
                 config: serde_json::json!({
                     "kind": "tar",
                     "tarPath": tar_path,
-                    "digest": digest,
                     "root": root,
                     "readOnly": true,
                 })
@@ -1405,10 +1408,26 @@ fn package_descriptors_from_wire(
     packages
         .iter()
         .map(|package| {
-            crate::package_projection::read_package_manifest_from_ref(
-                package.dir.as_deref(),
-                package.tar.as_deref(),
-            )
+            crate::package_projection::read_package_manifest_from_path(&package.path)
+        })
+        .collect()
+}
+
+fn projected_agent_launch_from_descriptors(
+    packages: &[crate::package_projection::PackageDescriptor],
+) -> BTreeMap<String, crate::state::ProjectedAgentLaunch> {
+    packages
+        .iter()
+        .filter_map(|package| {
+            let acp_entrypoint = package.acp_entrypoint.clone()?;
+            Some((
+                package.name.clone(),
+                crate::state::ProjectedAgentLaunch {
+                    acp_entrypoint,
+                    env: package.agent_env.clone().into_iter().collect(),
+                    launch_args: package.agent_launch_args.clone(),
+                },
+            ))
         })
         .collect()
 }
@@ -1422,25 +1441,15 @@ fn projected_agents_from_descriptors(
             let Some(acp_entrypoint) = package.acp_entrypoint.as_ref() else {
                 return Vec::new();
             };
-            let mut ids = vec![package.name.clone()];
-            if let Ok(package_json_name) =
-                crate::package_projection::read_package_name(&package.dir)
-            {
-                if package_json_name != package.name {
-                    ids.push(package_json_name);
-                }
-            }
-            ids.into_iter()
-                .map(|id| AgentosProjectedAgent {
-                    id,
-                    acp_entrypoint: acp_entrypoint.clone(),
-                    adapter_entrypoint: format!(
-                        "{}/{}",
-                        crate::package_projection::OPT_AGENTOS_BIN,
-                        acp_entrypoint
-                    ),
-                })
-                .collect::<Vec<_>>()
+            vec![AgentosProjectedAgent {
+                id: package.name.clone(),
+                acp_entrypoint: acp_entrypoint.clone(),
+                adapter_entrypoint: format!(
+                    "{}/{}",
+                    crate::package_projection::OPT_AGENTOS_BIN,
+                    acp_entrypoint
+                ),
+            }]
         })
         .collect()
 }

@@ -1,11 +1,11 @@
 ---
 title: "Software Definition"
-description: "The software-package definition for custom commands and agents in an agentOS VM: a package is a directory, declared with defineSoftware({ packageDir })."
+description: "The software-package definition for custom commands and agents in an agentOS VM: a package is a packed .aospkg (or a package directory), declared with defineSoftware({ packagePath })."
 ---
 
 **Software** is anything you install into a VM — **commands** (executables in a package's `bin/`) or an **agent** (a package that also exposes an ACP session).
 
-A package is a **self-contained directory**: package it first, then point `defineSoftware()` at it with `{ packageDir }`. The package's name, optional agent block, and any files/env it provides all live in an `agentos-package.json` at the root of that directory — the sidecar reads it when it mounts the package, so the client only forwards the directory. Pick the quickstart that matches what you're packaging.
+A package is **self-contained**: package it first, then point `defineSoftware()` at it with `{ packagePath }` — the packed `.aospkg` the toolchain emits, or (for local development) the package directory itself. The package's name, optional agent block, and any files/env it provides are authored in an `agentos-package.json` next to your sources; the toolchain compiles that JSON into the `.aospkg`'s embedded manifest at pack time (the JSON itself is never shipped into the VM). Pick the quickstart that matches what you're packaging.
 
 ## Quickstart
 
@@ -98,39 +98,41 @@ An agent is a Node.js or WASM package (packaged exactly as above) whose `agentos
 
 ### The descriptor
 
-A software entry is just a pointer to the packaged directory:
+A software entry is just a pointer to the packed package:
 
 ```ts
 defineSoftware({
-  packageDir: string,    // absolute host path to the self-contained package directory
+  packagePath: string,   // absolute host path to the packed .aospkg
+                         // (or a package directory, for local development)
 })
 ```
 
-`packageDir` must contain **only the package** — a `package.json` with a `bin` map, the runtime
-files (`bin/`, a flat `node_modules`), and an `agentos-package.json`. It is mounted read-only, so
-**don't point it at a source root**: that drags `src/`, dev `node_modules/`, `tsconfig`, and build
-caches into the VM. Point it at a clean build output — `pack` and the WASM assemble step both emit
-one.
+The normal `packagePath` is the `dist/package.aospkg` that `agentos-toolchain build`/`pack` emit —
+a single file holding the package manifest, a precomputed mount index, and the package's mount tar.
+A directory is accepted for local development; it must contain **only the package** — a
+`package.json` with a `bin` map, the runtime files (`bin/`, a flat `node_modules`), and an
+`agentos-package.json`. It is mounted read-only, so **don't point it at a source root**: that drags
+`src/`, dev `node_modules/`, `tsconfig`, and build caches into the VM.
 
 <Note>
-`pack` already emits a clean directory. For a package you build by hand (e.g. compiled WASM),
-assemble a `dist/package/` holding just `package.json` + `bin/` and point `packageDir` there —
-never at the workspace root:
+`pack` already emits the packed `.aospkg`. For a package you build by hand (e.g. compiled WASM),
+run `agentos-toolchain build` to assemble `dist/package/` and pack `dist/package.aospkg`, then
+point `packagePath` there — never at the workspace root:
 
 ```ts
-// dist/package/  ←  { package.json (name, version, bin), bin/<cmd>…, agentos-package.json }
-const packageDir = resolve(import.meta.dirname, "dist/package");
-export default defineSoftware({ packageDir });
+const packagePath = resolve(import.meta.dirname, "dist/package.aospkg");
+export default defineSoftware({ packagePath });
 ```
 </Note>
 
 ### `agentos-package.json`
 
-The package's name, optional agent block, and any files/env it provides live in an
-`agentos-package.json` at the root of `packageDir`. The sidecar reads it when it mounts the
-package, so this metadata never travels on the wire. For command/WASM packages it is **generated**
-for you (name from `package.json`); for agents you author the `agent` block (or
-`agentos-toolchain pack --agent <cmd>` writes it).
+The package's name, optional agent block, and any files/env it provides are authored in an
+`agentos-package.json` at the package root. It is **toolchain input**: at pack time it is compiled
+into the `.aospkg`'s embedded manifest (which is what the sidecar reads) and stripped from the
+packed files, so the JSON never ships into the VM and the metadata never travels on the wire. For
+command/WASM packages it is **generated** for you (name from `package.json`); for agents you
+author the `agent` block (or `agentos-toolchain pack --agent <cmd>` writes it).
 
 ```jsonc
 {

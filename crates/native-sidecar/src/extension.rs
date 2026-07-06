@@ -12,7 +12,23 @@ use crate::state::{SharedEventSink, SharedSidecarRequestClient, SidecarError};
 
 pub type ExtensionFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, SidecarError>> + 'a>>;
 
+/// One projected agent package's launch surface, served from sidecar-owned VM
+/// state (sourced from packed vbare manifests; packed packages ship no
+/// `agentos-package.json` for extensions to read from the guest filesystem).
+#[derive(Debug, Clone)]
+pub struct ProjectedAgentLaunchEntry {
+    pub id: String,
+    pub acp_entrypoint: String,
+    pub env: std::collections::BTreeMap<String, String>,
+    pub launch_args: Vec<String>,
+}
+
 pub trait ExtensionHost {
+    fn projected_agents<'a>(
+        &'a mut self,
+        ownership: OwnershipScope,
+    ) -> ExtensionFuture<'a, Vec<ProjectedAgentLaunchEntry>>;
+
     fn spawn_process<'a>(
         &'a mut self,
         ownership: OwnershipScope,
@@ -451,6 +467,16 @@ impl<'a> ExtensionContext<'a> {
         self.host
             .guest_filesystem_call(self.snapshot.ownership.clone(), request)
             .await
+    }
+
+    /// Enumerate the VM's projected agent packages (id + launch surface) from
+    /// sidecar-owned state. This is the agent source of truth for extensions;
+    /// it reflects `ConfigureVm` and live `LinkPackage` updates.
+    pub async fn projected_agents(
+        &mut self,
+    ) -> Result<Vec<ProjectedAgentLaunchEntry>, SidecarError> {
+        let ownership = self.snapshot.ownership().clone();
+        self.host.projected_agents(ownership).await
     }
 
     pub async fn guest_filesystem_call_wire(

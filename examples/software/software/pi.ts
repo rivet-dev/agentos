@@ -6,7 +6,7 @@
  * the `software: [...]` config field.
  */
 const pi = {
-	packageDir: "/opt/example-agentos-software/pi",
+	packagePath: "/opt/example-agentos-software/pi",
 } as const;
 
 export default pi;

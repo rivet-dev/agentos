@@ -55,7 +55,7 @@ interface NativeMountLike {
 }
 
 interface NormalizedPackageRef {
-	dir: string;
+	path: string;
 }
 
 /**
@@ -102,15 +102,14 @@ function toRecord(value: unknown): Record<string, unknown> {
 }
 
 function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
+	// Single package reference: `packagePath` (packed `.aospkg` file, or a
+	// transition package dir); a raw string is shorthand for the same path.
 	if (typeof value === "string") {
-		return { dir: value };
+		return { path: value };
 	}
 	const record = toRecord(value);
-	if (typeof record.packageDir === "string") {
-		return { dir: record.packageDir };
-	}
-	if (typeof record.dir === "string") {
-		return { dir: record.dir };
+	if (typeof record.packagePath === "string") {
+		return { path: record.packagePath };
 	}
 	return undefined;
 }
@@ -120,8 +119,8 @@ function normalizedPackageRefs(software: unknown[]): NormalizedPackageRef[] {
 	const seen = new Set<string>();
 	for (const entry of software.flat()) {
 		const ref = normalizePackageRef(entry);
-		if (!ref || seen.has(ref.dir)) continue;
-		seen.add(ref.dir);
+		if (!ref || seen.has(ref.path)) continue;
+		seen.add(ref.path);
 		refs.push(ref);
 	}
 	return refs;
@@ -138,7 +137,7 @@ export function buildConfigJson<TConnParams>(
 	const packageRefs = normalizedPackageRefs(
 		defaultSoftwareEnabled ? [common, ...softwareInput] : softwareInput,
 	);
-	const packages = packageRefs.map((ref) => ({ dir: ref.dir }));
+	const packages = packageRefs.map((ref) => ({ path: ref.path }));
 	const mounts = serializeNativeMounts(options.mounts);
 	const sidecar = serializeSidecar(options.sidecar);
 	return JSON.stringify({

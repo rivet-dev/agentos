@@ -2,37 +2,41 @@
 
 use super::vfs::{
     normalize_path, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
-    VirtualUtimeSpec, S_IFDIR, S_IFLNK, S_IFREG,
+    VirtualUtimeSpec,
+};
+use crate::package_format::{
+    generated::v1::{self, TarEntryKind},
+    parse_aospkg_header, validate_mount_range, AospkgHeader,
 };
 use memmap2::Mmap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
-use tar::EntryType;
 
 const MAX_TAR_INDEX_ENTRIES: usize = 200_000;
 const MAX_TAR_CACHE_ARCHIVES: usize = 64;
 const MAX_TAR_SYMLINKS: usize = 40;
 
-/// Read-only filesystem backed directly by an uncompressed package tar.
+/// Read-only filesystem backed by the mount chunk of a `.aospkg` package.
 ///
-/// The package tar already contains each file's bytes at a stable byte range,
-/// so mounting it is cheaper and simpler than extracting it: we scan headers
-/// once, store `path -> offset/size/metadata`, and serve reads from a shared
-/// `mmap` slice. Extraction would create a duplicate host tree, thousands of
-/// physical inodes, and a cleanup problem before reading the same bytes again.
+/// The package container is `header + manifest + mount index + mount.tar`.
+/// `TarFileSystem::open` decodes only the precomputed mount index and serves
+/// reads from the uncompressed `mount.tar` chunk at `mountBase + offset`.
+/// Extraction would create a duplicate host tree, thousands of physical inodes,
+/// and a cleanup problem before reading the same bytes again.
 ///
-/// Performance is intentionally front-loaded into a small index scan over tar
-/// headers. File reads are an O(1) map lookup plus a page-cache-backed memory
+/// File reads are an O(log n) index lookup plus a page-cache-backed memory
 /// slice; metadata and directory listings come from the in-memory index. The
-/// mmap is keyed by content digest and shared across VMs, so RSS follows the
-/// pages actually touched rather than the full archive size. The caller must
-/// pass an immutable registry/package file: replacing by rename is fine because
-/// this filesystem holds the opened file, but truncating the same inode during
-/// a live VM would violate the mmap lifecycle and can SIGBUS on Unix.
+/// index must be pre-sorted by canonical path, and load performs a release-safe
+/// adjacent-order check before any binary-search-dependent path can run. The
+/// mmap is keyed by file identity and shared across VMs, so RSS follows the
+/// pages actually touched rather than the full archive size. This open path is
+/// on VM startup (`configure_vm`), so it must stay O(index decode): never parse
+/// tar headers, read/hash the whole archive, or recover metadata from legacy
+/// in-archive JSON here.
 ///
 /// This filesystem is mounted only as a granular package-version leaf such as
 /// `/opt/agentos/pkgs/<pkg>/<version>`. Managed commands and `current` aliases
@@ -44,18 +48,13 @@ pub struct TarFileSystem {
 }
 
 impl TarFileSystem {
-    pub fn open(path: impl AsRef<Path>, digest: impl Into<String>) -> VfsResult<Self> {
-        Self::open_at(path, digest, "/")
+    pub fn open(path: impl AsRef<Path>) -> VfsResult<Self> {
+        Self::open_at(path, "/")
     }
 
-    pub fn open_at(
-        path: impl AsRef<Path>,
-        digest: impl Into<String>,
-        root: &str,
-    ) -> VfsResult<Self> {
-        let digest = digest.into();
+    pub fn open_at(path: impl AsRef<Path>, root: &str) -> VfsResult<Self> {
         let path = path.as_ref().to_path_buf();
-        let archive = cached_archive(path, digest)?;
+        let archive = cached_archive(path)?;
         let root = normalize_path(root);
         let node = archive.node(&root)?;
         if !matches!(node.kind, TarNodeKind::Directory) {
@@ -67,8 +66,9 @@ impl TarFileSystem {
         Ok(Self { archive, root })
     }
 
-    pub fn digest(&self) -> &str {
-        &self.archive.digest
+    #[doc(hidden)]
+    pub fn archive_ptr(&self) -> usize {
+        Arc::as_ptr(&self.archive) as usize
     }
 
     pub fn source_path(&self) -> &Path {
@@ -198,23 +198,8 @@ impl VirtualFileSystem for TarFileSystem {
             });
         };
         self.archive.validate_backing_file()?;
-        let start = usize::try_from(offset)
-            .map_err(|_| VfsError::new("EOVERFLOW", format!("tar offset too large: {offset}")))?;
-        let len = usize::try_from(size)
-            .map_err(|_| VfsError::new("EOVERFLOW", format!("tar member too large: {size}")))?;
-        let end = start
-            .checked_add(len)
-            .ok_or_else(|| VfsError::new("EOVERFLOW", "tar member byte range overflows usize"))?;
-        if end > self.archive.mmap.len() {
-            return Err(VfsError::new(
-                "EIO",
-                format!(
-                    "tar member range exceeds archive size: offset {offset} bytes + size {size} bytes > {} bytes",
-                    self.archive.mmap.len()
-                ),
-            ));
-        }
-        Ok(self.archive.mmap[start..end].to_vec())
+        let range = validate_mount_range(&self.archive.container, offset, size)?;
+        Ok(self.archive.mmap[range].to_vec())
     }
 
     fn read_dir(&mut self, path: &str) -> VfsResult<Vec<String>> {
@@ -357,22 +342,43 @@ impl VirtualFileSystem for TarFileSystem {
     }
 
     fn pread(&mut self, path: &str, offset: u64, length: usize) -> VfsResult<Vec<u8>> {
-        let content = self.read_file(path)?;
-        let start = usize::try_from(offset)
-            .map_err(|_| VfsError::new("EOVERFLOW", format!("pread offset too large: {offset}")))?;
-        if start >= content.len() {
+        let resolved = self.resolve_path(path, true)?;
+        let node = self.archive.node(&resolved)?;
+        let TarNodeKind::File {
+            offset: file_offset,
+            size,
+        } = node.kind
+        else {
+            return Err(if matches!(node.kind, TarNodeKind::Directory) {
+                VfsError::new(
+                    "EISDIR",
+                    format!("illegal operation on a directory, pread '{path}'"),
+                )
+            } else {
+                VfsError::new("EINVAL", format!("not a regular file, pread '{path}'"))
+            });
+        };
+        if offset >= size {
             return Ok(Vec::new());
         }
-        let end = start.saturating_add(length).min(content.len());
-        Ok(content[start..end].to_vec())
+        let readable = (size - offset).min(length as u64);
+        self.archive.validate_backing_file()?;
+        let range = validate_mount_range(
+            &self.archive.container,
+            file_offset
+                .checked_add(offset)
+                .ok_or_else(|| VfsError::new("EOVERFLOW", "pread offset overflows u64"))?,
+            readable,
+        )?;
+        Ok(self.archive.mmap[range].to_vec())
     }
 }
 
 struct CachedTarArchive {
-    digest: String,
     path: PathBuf,
     file: File,
     mmap: Mmap,
+    container: AospkgHeader,
     identity: FileIdentity,
     nodes: BTreeMap<String, TarNode>,
     children: BTreeMap<String, BTreeSet<String>>,
@@ -448,14 +454,13 @@ enum TarNodeKind {
     Symlink { target: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct FileIdentity {
     len: u64,
-    modified_ms: u128,
-    #[cfg(unix)]
     dev: u64,
-    #[cfg(unix)]
     ino: u64,
+    mtime_nsec: i128,
+    ctime_nsec: i128,
 }
 
 impl FileIdentity {
@@ -464,43 +469,63 @@ impl FileIdentity {
     }
 
     fn from_metadata(metadata: std::fs::Metadata) -> VfsResult<Self> {
-        let modified_ms = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|duration| duration.as_millis())
-            .unwrap_or_default();
+        #[cfg(unix)]
+        let (dev, ino, mtime_nsec, ctime_nsec) = {
+            use std::os::unix::fs::MetadataExt;
+            (
+                metadata.dev(),
+                metadata.ino(),
+                unix_time_nsec(metadata.mtime(), metadata.mtime_nsec()),
+                unix_time_nsec(metadata.ctime(), metadata.ctime_nsec()),
+            )
+        };
+        #[cfg(not(unix))]
+        let (dev, ino, mtime_nsec, ctime_nsec) = {
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos() as i128)
+                .unwrap_or_default();
+            (0, 0, modified, 0)
+        };
         Ok(Self {
             len: metadata.len(),
-            modified_ms,
-            #[cfg(unix)]
-            dev: {
-                use std::os::unix::fs::MetadataExt;
-                metadata.dev()
-            },
-            #[cfg(unix)]
-            ino: {
-                use std::os::unix::fs::MetadataExt;
-                metadata.ino()
-            },
+            dev,
+            ino,
+            mtime_nsec,
+            ctime_nsec,
         })
     }
 }
 
-fn cached_archive(path: PathBuf, digest: String) -> VfsResult<Arc<CachedTarArchive>> {
+#[cfg(unix)]
+fn unix_time_nsec(sec: i64, nsec: i64) -> i128 {
+    i128::from(sec) * 1_000_000_000 + i128::from(nsec)
+}
+
+fn cached_archive(path: PathBuf) -> VfsResult<Arc<CachedTarArchive>> {
+    let file = File::open(&path).map_err(io_to_vfs)?;
+    let identity = FileIdentity::from_file(&file)?;
     let cache = archive_cache();
     let mut guard = cache
         .lock()
         .map_err(|_| VfsError::new("EIO", "tar archive cache mutex poisoned"))?;
 
-    if let Some(existing) = guard.archives.get(&digest).and_then(Weak::upgrade) {
+    // A cache hit means the Weak upgraded to a live archive that still holds
+    // the source fd open. On Unix that fd pins the inode, so `(dev, ino)` cannot
+    // be reused for a different file while the cached entry is alive. Including
+    // `ctime_nsec` catches in-place rewrites even when build tools normalize or
+    // preserve mtime; including nanosecond mtime avoids the old millisecond
+    // collision window. The mutex covers lookup, load, and insert.
+    if let Some(existing) = guard.archives.get(&identity).and_then(Weak::upgrade) {
         if existing.path == path {
             return Ok(existing);
         }
         return Err(VfsError::new(
             "EINVAL",
             format!(
-                "tar digest collision or moved source: digest {digest} already maps to {} not {}",
+                "tar identity collision or moved source: identity {identity:?} already maps to {} not {}",
                 existing.path.display(),
                 path.display()
             ),
@@ -511,7 +536,7 @@ fn cached_archive(path: PathBuf, digest: String) -> VfsResult<Arc<CachedTarArchi
         let live = weak.strong_count() > 0;
         if !live {
             tracing::warn!(
-                digest = key.as_str(),
+                identity = ?key,
                 "evicting unused tar archive cache entry"
             );
         }
@@ -529,8 +554,8 @@ fn cached_archive(path: PathBuf, digest: String) -> VfsResult<Arc<CachedTarArchi
         ));
     }
 
-    let archive = Arc::new(load_archive(&path, digest.clone())?);
-    guard.archives.insert(digest, Arc::downgrade(&archive));
+    let archive = Arc::new(load_archive(path, file, identity)?);
+    guard.archives.insert(identity, Arc::downgrade(&archive));
     Ok(archive)
 }
 
@@ -541,12 +566,10 @@ fn archive_cache() -> &'static Mutex<TarArchiveCache> {
 
 #[derive(Default)]
 struct TarArchiveCache {
-    archives: BTreeMap<String, Weak<CachedTarArchive>>,
+    archives: BTreeMap<FileIdentity, Weak<CachedTarArchive>>,
 }
 
-fn load_archive(path: &Path, digest: String) -> VfsResult<CachedTarArchive> {
-    let file = File::open(path).map_err(io_to_vfs)?;
-    let identity = FileIdentity::from_file(&file)?;
+fn load_archive(path: PathBuf, file: File, identity: FileIdentity) -> VfsResult<CachedTarArchive> {
     let mmap = unsafe {
         // SAFETY: TarFileSystem is only constructed for immutable package tar
         // artifacts. We hold the opened file for the lifetime of the mmap and
@@ -557,74 +580,46 @@ fn load_archive(path: &Path, digest: String) -> VfsResult<CachedTarArchive> {
     }
     .map_err(io_to_vfs)?;
 
-    let mut archive = tar::Archive::new(file.try_clone().map_err(io_to_vfs)?);
+    let container = parse_aospkg_header(&mmap)?;
+    let index = crate::package_format::versioned::decode_mount_index(&mmap[container.index.clone()])
+        .map_err(|error| VfsError::new("EINVAL", format!("decode .aospkg mount index: {error}")))?;
+    validate_sorted_entries(&index.tar_entries)?;
+
     let mut nodes = BTreeMap::new();
     let mut children = BTreeMap::<String, BTreeSet<String>>::new();
-    let dev = digest_device(&digest);
+    let dev = identity_device(&identity);
     let mut next_ino = 1u64;
 
-    nodes.insert(
-        String::from("/"),
-        TarNode {
-            kind: TarNodeKind::Directory,
-            mode: S_IFDIR | 0o755,
-            uid: 0,
-            gid: 0,
-            mtime_ms: 0,
-            ino: next_ino,
-            dev,
-        },
-    );
-    next_ino += 1;
-    children.entry(String::from("/")).or_default();
-
-    let entries = archive.entries().map_err(io_to_vfs)?;
-    for entry in entries {
-        let entry = entry.map_err(io_to_vfs)?;
-        let path = normalize_tar_member_path(&entry)?;
-        if path == "/" {
-            continue;
-        }
+    for entry in index.tar_entries {
+        let path = entry.path;
+        ensure_archive_path(&path)?;
         ensure_index_capacity(nodes.len() + 1)?;
-        synthesize_parent_dirs(&path, dev, &mut next_ino, &mut nodes, &mut children)?;
-
-        let header = entry.header();
-        let entry_type = header.entry_type();
-        let mode = header.mode().unwrap_or(0o755);
-        let uid = header.uid().unwrap_or(0) as u32;
-        let gid = header.gid().unwrap_or(0) as u32;
-        let mtime_ms = header.mtime().unwrap_or(0).saturating_mul(1_000);
-        let kind = if entry_type.is_dir() {
-            TarNodeKind::Directory
-        } else if entry_type.is_symlink() {
-            let target = entry
-                .link_name()
-                .map_err(io_to_vfs)?
-                .ok_or_else(|| VfsError::new("EINVAL", format!("missing linkname for {path}")))?
-                .to_string_lossy()
-                .into_owned();
-            TarNodeKind::Symlink { target }
-        } else if entry_type.is_file() || entry_type == EntryType::Continuous {
-            TarNodeKind::File {
-                offset: entry.raw_file_position(),
-                size: header.size().map_err(io_to_vfs)?,
-            }
-        } else {
-            continue;
+        if matches!(entry.kind, TarEntryKind::File) {
+            validate_mount_range(&container, entry.offset, entry.size)?;
+        }
+        let kind = match entry.kind {
+            TarEntryKind::File => TarNodeKind::File {
+                offset: entry.offset,
+                size: entry.size,
+            },
+            TarEntryKind::Directory => TarNodeKind::Directory,
+            TarEntryKind::Symlink => TarNodeKind::Symlink {
+                target: entry.link_target.ok_or_else(|| {
+                    VfsError::new("EINVAL", format!("missing linkTarget for symlink {path}"))
+                })?,
+            },
         };
-
-        let mode = match kind {
-            TarNodeKind::Directory => S_IFDIR | (mode & 0o7777),
-            TarNodeKind::File { .. } => S_IFREG | (mode & 0o7777),
-            TarNodeKind::Symlink { .. } => S_IFLNK | (mode & 0o7777).max(0o777),
-        };
+        let mtime_ms = u64::try_from(entry.mtime)
+            .map_err(|_| VfsError::new("EINVAL", format!("negative mtime for {path}")))?
+            .checked_mul(1_000)
+            .ok_or_else(|| VfsError::new("EOVERFLOW", format!("mtime overflows ms for {path}")))?;
         nodes.insert(
             path.clone(),
             TarNode {
                 kind,
-                mode,
-                uid,
-                gid,
+                mode: entry.mode,
+                uid: entry.uid,
+                gid: entry.gid,
                 mtime_ms,
                 ino: next_ino,
                 dev,
@@ -641,52 +636,21 @@ fn load_archive(path: &Path, digest: String) -> VfsResult<CachedTarArchive> {
     }
 
     Ok(CachedTarArchive {
-        digest,
-        path: path.to_path_buf(),
+        path,
         file,
         mmap,
+        container,
         identity,
         nodes,
         children,
     })
 }
 
-fn synthesize_parent_dirs(
-    path: &str,
-    dev: u64,
-    next_ino: &mut u64,
-    nodes: &mut BTreeMap<String, TarNode>,
-    children: &mut BTreeMap<String, BTreeSet<String>>,
-) -> VfsResult<()> {
-    let mut current = String::from("/");
-    let components = path_components(path);
-    let parent_count = components.len().saturating_sub(1);
-    for component in components.into_iter().take(parent_count) {
-        let parent = current.clone();
-        current = join_path(&current, &component);
-        if !nodes.contains_key(&current) {
-            ensure_index_capacity(nodes.len() + 1)?;
-            nodes.insert(
-                current.clone(),
-                TarNode {
-                    kind: TarNodeKind::Directory,
-                    mode: S_IFDIR | 0o755,
-                    uid: 0,
-                    gid: 0,
-                    mtime_ms: 0,
-                    ino: *next_ino,
-                    dev,
-                },
-            );
-            *next_ino += 1;
-        }
-        children.entry(parent).or_default().insert(component);
-        children.entry(current.clone()).or_default();
-    }
-    Ok(())
-}
-
 fn add_child(path: &str, children: &mut BTreeMap<String, BTreeSet<String>>) {
+    if path == "/" {
+        children.entry(String::from("/")).or_default();
+        return;
+    }
     let parent = parent_path(path);
     let name = basename(path);
     children.entry(parent).or_default().insert(name);
@@ -704,26 +668,22 @@ fn ensure_index_capacity(observed: usize) -> VfsResult<()> {
     Ok(())
 }
 
-fn normalize_tar_member_path(entry: &tar::Entry<'_, File>) -> VfsResult<String> {
-    let path = entry.path().map_err(io_to_vfs)?;
-    let mut parts = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(value) => parts.push(value.to_string_lossy().into_owned()),
-            Component::CurDir => {}
-            Component::RootDir | Component::Prefix(_) | Component::ParentDir => {
-                return Err(VfsError::new(
-                    "EINVAL",
-                    format!("tar member path escapes archive root: {}", path.display()),
-                ));
-            }
+fn validate_sorted_entries(entries: &[v1::TarEntry]) -> VfsResult<()> {
+    for pair in entries.windows(2) {
+        let [previous, current] = pair else {
+            continue;
+        };
+        if previous.path >= current.path {
+            return Err(VfsError::new(
+                "EINVAL",
+                format!(
+                    ".aospkg mount index is not sorted by canonical path: {:?} before {:?}",
+                    previous.path, current.path
+                ),
+            ));
         }
     }
-    if parts.is_empty() {
-        Ok(String::from("/"))
-    } else {
-        Ok(format!("/{}", parts.join("/")))
-    }
+    Ok(())
 }
 
 fn ensure_archive_path(path: &str) -> VfsResult<()> {
@@ -774,9 +734,14 @@ fn basename(path: &str) -> String {
         .unwrap_or_else(|| String::from("/"))
 }
 
-fn digest_device(digest: &str) -> u64 {
+fn identity_device(identity: &FileIdentity) -> u64 {
+    // Guest-visible `st_dev` must be stable for repeated opens of the same
+    // package and practically distinct across package files. Derive it from
+    // the host file identity rather than archive bytes so VM startup never
+    // reintroduces a whole-tar read/hash.
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    digest.hash(&mut hasher);
+    identity.dev.hash(&mut hasher);
+    identity.ino.hash(&mut hasher);
     hasher.finish().max(1)
 }
 
