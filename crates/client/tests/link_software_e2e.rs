@@ -57,8 +57,7 @@ async fn link_software_makes_command_resolve_live() {
     .expect("create VM");
 
     os.link_software(PackageDescriptor {
-        dir: Some(dir.to_string_lossy().into_owned()),
-        tar: None,
+        path: dir.to_string_lossy().into_owned(),
     })
     .await
     .expect("link_software");

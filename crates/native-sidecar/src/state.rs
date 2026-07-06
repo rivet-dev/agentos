@@ -352,6 +352,19 @@ pub(crate) struct VmState {
     /// The current `/opt/agentos` projection mounts package tars and synthetic
     /// symlink leaves directly, so this remains `None`.
     pub(crate) packages_staging_root: Option<PathBuf>,
+    /// Projected agent launch surface, keyed by agent id. Sourced from the
+    /// packed vbare manifests at `ConfigureVm`/`LinkPackage` time — packed
+    /// packages ship no `agentos-package.json`, so agent enumeration and
+    /// resolution read this instead of the guest filesystem.
+    pub(crate) projected_agent_launch: BTreeMap<String, ProjectedAgentLaunch>,
+}
+
+/// Launch parameters for one projected agent package.
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectedAgentLaunch {
+    pub(crate) acp_entrypoint: String,
+    pub(crate) env: BTreeMap<String, String>,
+    pub(crate) launch_args: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

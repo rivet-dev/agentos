@@ -54,6 +54,7 @@ name = "agentos-actor-plugin"
 version = "0.0.1"
 dependencies = [
  "agentos-client",
+ "agentos-vfs-core",
  "anyhow",
  "base64 0.22.1",
  "bytes",
@@ -171,7 +172,6 @@ dependencies = [
  "aws-credential-types",
  "aws-sdk-s3",
  "base64 0.22.1",
- "blake3",
  "bytes",
  "cap-std",
  "ctr",
@@ -347,15 +347,19 @@ dependencies = [
 name = "agentos-vfs-core"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.22.1",
  "blake3",
  "memmap2",
+ "rivet-vbare-compiler",
  "serde",
+ "serde_bare",
  "serde_json",
  "tar",
  "tokio",
  "tracing",
+ "vbare",
  "web-time",
 ]
 

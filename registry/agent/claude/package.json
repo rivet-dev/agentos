@@ -18,6 +18,8 @@
 	},
 	"files": [
 		"dist",
+		"!dist/package",
+		"!dist/package.tar",
 		"agentos-package.json"
 	],
 	"scripts": {

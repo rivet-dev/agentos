@@ -1132,28 +1132,28 @@ export function writeWasmPermissionTier(bc: bare.ByteCursor, x: WasmPermissionTi
 }
 
 /**
- * agentOS package descriptor. The sidecar reads `agentos-package.json`, projects
- * the self-contained package read-only under `<packagesMountAt>/<manifest.name>/<version>`,
- * and links its `bin/` commands onto $PATH. `tar`/`dir` are trusted host paths
- * (the client configures its own VM); the sidecar is the host-side TCB that builds
- * the staging tree. New clients send `tar`; `dir` remains accepted for local tests
- * and transition fixtures.
+ * agentOS package descriptor. `path` is the trusted host path of the package:
+ * normally the packed `.aospkg` file (header + vbare manifest + mount index +
+ * mount tar; see crates/vfs/package-format/v1.bare). The sidecar reads the
+ * vbare chunk1 manifest, projects the package read-only under
+ * `<packagesMountAt>/pkgs/<name>/<version>`, and links its `bin/` commands onto
+ * $PATH. A directory path is accepted only for local transition fixtures and is
+ * projected as a read-only host-dir leaf (manifest read from the dir's
+ * `agentos-package.json`, a toolchain-input file that packed packages no longer
+ * ship at runtime).
  */
 export type PackageDescriptor = {
-    readonly dir: string | null
-    readonly tar: string | null
+    readonly path: string
 }
 
 export function readPackageDescriptor(bc: bare.ByteCursor): PackageDescriptor {
     return {
-        dir: read0(bc),
-        tar: read0(bc),
+        path: bare.readString(bc),
     }
 }
 
 export function writePackageDescriptor(bc: bare.ByteCursor, x: PackageDescriptor): void {
-    write0(bc, x.dir)
-    write0(bc, x.tar)
+    bare.writeString(bc, x.path)
 }
 
 export type AgentosProjectedAgent = {

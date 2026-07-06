@@ -6,7 +6,7 @@
  * exercise the `software: [...]` config field.
  */
 const common = {
-	packageDir: "/opt/example-agentos-software/common",
+	packagePath: "/opt/example-agentos-software/common",
 } as const;
 
 export default common;

@@ -44,11 +44,15 @@ or structured trace paths, not stay trapped in the VM.
 - The projected `/opt/agentos` filesystem is the source of truth for software
   and agent resolution. Read it live; do not cache package lists captured at VM
   configuration time.
-- Packages live under `/opt/agentos/pkgs/<name>/current/agentos-package.json`;
-  commands are linked under `/opt/agentos/bin/`.
+- Packages are packed `.aospkg` files (`crates/vfs/package-format/v1.bare`:
+  header + vbare manifest + mount index + mount tar) projected under
+  `/opt/agentos/pkgs/<name>/<version>`; commands are linked under
+  `/opt/agentos/bin/`. The vbare chunk1 manifest is the only runtime manifest —
+  `agentos-package.json` is toolchain input, stripped at pack time and never
+  shipped or materialized into the guest.
 - Agent resolution and enumeration are sidecar-owned. Clients send agent names
-  and forward package dirs/tars; they do not scan `node_modules` or parse adapter
-  manifests for discovery.
+  and forward a single package `path` (the `.aospkg`, or a transition dir);
+  they do not scan `node_modules` or parse adapter manifests for discovery.
 - TypeScript and Rust clients must stay behaviorally identical. Any public
   method or wire behavior change in one client must be mirrored in the other.
 - Agent adapters must use real upstream SDKs. Do not replace SDK adapters with

@@ -2355,6 +2355,10 @@ importers:
         version: 2.1.9(@types/node@22.19.15)
 
   packages/agentos-toolchain:
+    dependencies:
+      '@rivetkit/bare-ts':
+        specifier: ^0.6.2
+        version: 0.6.2
     devDependencies:
       '@types/node':
         specifier: ^22.10.2

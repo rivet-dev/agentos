@@ -143,8 +143,7 @@ async fn session_surface_create_prompt_events_close() {
     common::ensure_sidecar_env();
     let os = agentos_client::AgentOs::create(AgentOsConfig {
         packages: vec![PackageRef {
-            dir: Some(package_dir.to_string_lossy().into_owned()),
-            tar: None,
+            path: package_dir.to_string_lossy().into_owned(),
         }],
         ..Default::default()
     })

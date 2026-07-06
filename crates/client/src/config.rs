@@ -170,14 +170,13 @@ pub struct SoftwareInput {
     pub kind: SoftwareKind,
 }
 
-/// A reference to a package tar for the `/opt/agentos` projection. `dir` remains
-/// accepted for local transition fixtures.
+/// A reference to a packed `.aospkg` package for the `/opt/agentos`
+/// projection. A directory path remains accepted for local transition
+/// fixtures.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageRef {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tar: Option<String>,
+    #[serde(alias = "packagePath")]
+    pub path: String,
 }
 
 /// A host-side tool execute callback. Receives the validated JSON input, returns a JSON result or an

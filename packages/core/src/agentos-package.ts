@@ -27,9 +27,7 @@ export const OPT_AGENTOS_BIN = "/opt/agentos/bin";
 
 export type AgentBlock = PackageAgentDescriptor;
 export type PackageRef = ManifestPackageRef;
-export type SoftwarePackageRef =
-	| { packageDir: string; packageTar?: string }
-	| { packageTar: string; packageDir?: string };
+export type SoftwarePackageRef = { packagePath: string };
 /** @deprecated Package software is now represented by its package directory. */
 export type PackageDescriptor = PackageRef;
 

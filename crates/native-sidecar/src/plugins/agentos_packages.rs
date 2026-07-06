@@ -36,7 +36,6 @@ enum AgentosPackagesMountConfig {
     Tar {
         #[serde(rename = "tarPath")]
         tar_path: String,
-        digest: String,
         #[serde(default)]
         root: Option<String>,
         #[serde(rename = "readOnly")]
@@ -75,16 +74,12 @@ where
         match config {
             AgentosPackagesMountConfig::Tar {
                 tar_path,
-                digest,
                 root,
                 read_only,
             } => {
-                let filesystem = vfs::posix::TarFileSystem::open_at(
-                    &tar_path,
-                    digest,
-                    root.as_deref().unwrap_or("/"),
-                )
-                .map_err(|error| PluginError::invalid_input(error.to_string()))?;
+                let filesystem =
+                    vfs::posix::TarFileSystem::open_at(&tar_path, root.as_deref().unwrap_or("/"))
+                        .map_err(|error| PluginError::invalid_input(error.to_string()))?;
                 let mounted = MountedVirtualFileSystem::new(filesystem);
                 if read_only.unwrap_or(true) {
                     Ok(Box::new(ReadOnlyFileSystem::new(mounted)))

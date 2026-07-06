@@ -87,44 +87,41 @@ interface CliOptions {
 }
 
 // The `@agentos-software/*` packages default-export a package descriptor
-// pointing at their self-contained package tar. Local transition builds may
-// still export a package directory, and older builds exported `{ name, dir }`.
+// pointing at their packed `.aospkg` via `packagePath`. Local transition
+// builds may still export a package directory as `packagePath`.
 interface RegistryPackage {
 	name?: string;
-	dir?: string;
-	packageDir?: string;
-	packageTar?: string;
+	packagePath?: string;
 }
 
-// The sidecar requires an agentos-package.json manifest in every package dir.
+// Transition package dirs must carry the toolchain-input manifest.
 function isUsablePackageDir(dir: string | undefined): dir is string {
 	return dir !== undefined && existsSync(resolve(dir, "agentos-package.json"));
 }
 
-function isUsablePackageTar(file: string | undefined): file is string {
+function isUsablePackageFile(file: string | undefined): file is string {
 	return file !== undefined && existsSync(file);
 }
 
-// Published packages ship their package dir materialized. Workspace packages
-// may not have run the native build yet, so their dir can be missing — fall
-// back to the native command-build output when it is. A package whose dir
-// exists but predates the agentos-package.json manifest requirement is skipped
-// (with a warning) rather than aborting VM creation for the whole shell.
+// Published packages ship their packed `.aospkg` materialized. Workspace
+// packages may not have run the native build yet, so the pack can be missing —
+// fall back to the native command-build output dir when it is. A package whose
+// dir exists but predates the agentos-package.json manifest requirement is
+// skipped (with a warning) rather than aborting VM creation for the shell.
 function withLocalCommandFallback(pkg: RegistryPackage): SoftwareInput | null {
-	if (isUsablePackageTar(pkg.packageTar)) {
-		return { packageTar: pkg.packageTar };
+	if (isUsablePackageFile(pkg.packagePath)) {
+		return { packagePath: pkg.packagePath };
 	}
-	const packageDir = pkg.packageDir ?? pkg.dir;
-	if (isUsablePackageDir(packageDir)) {
-		return { packageDir };
+	if (isUsablePackageDir(pkg.packagePath)) {
+		return { packagePath: pkg.packagePath };
 	}
 	const fallbackCommandDir = fallbackCommandDirs.find(isUsablePackageDir);
 	if (fallbackCommandDir !== undefined) {
-		return { packageDir: fallbackCommandDir };
+		return { packagePath: fallbackCommandDir };
 	}
 	console.warn(
-		`agentos-shell: skipping software package without agentos-package.json: ${
-			pkg.name ?? packageDir ?? "<unknown>"
+		`agentos-shell: skipping software package without a usable packagePath: ${
+			pkg.name ?? pkg.packagePath ?? "<unknown>"
 		}`,
 	);
 	return null;
@@ -162,18 +159,18 @@ const software: SoftwareInput[] = [
 // command-less package (build them locally: drop the wasm binaries into
 // registry/native/target/.../commands and run `just registry-build`).
 for (const editor of [vix, vim] as RegistryPackage[]) {
-	if (isUsablePackageTar(editor.packageTar)) {
-		software.push({ packageTar: editor.packageTar });
+	if (isUsablePackageFile(editor.packagePath)) {
+		software.push({ packagePath: editor.packagePath });
 		continue;
 	}
-	const packageDir = editor.packageDir;
-	if (packageDir === undefined) continue;
+	const packageDir = editor.packagePath;
+	if (packageDir === undefined || !isUsablePackageDir(packageDir)) continue;
 	try {
 		const bin = JSON.parse(
 			readFileSync(join(packageDir, "package.json"), "utf8"),
 		).bin as Record<string, string> | undefined;
 		if (bin && Object.keys(bin).length > 0) {
-			software.push({ packageDir });
+			software.push({ packagePath: packageDir });
 		}
 	} catch {
 		// placeholder/unreadable — leave the editor out

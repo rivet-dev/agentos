@@ -150,8 +150,7 @@ async fn pi_session_create_prompt_close() {
         )],
         loopback_exempt_ports: vec![port],
         packages: vec![PackageRef {
-            dir: Some(package_dir.to_string_lossy().into_owned()),
-            tar: None,
+            path: package_dir.to_string_lossy().into_owned(),
         }],
         permissions: Some(Permissions {
             network: Some(PatternPermissions::Mode(PermissionMode::Allow)),

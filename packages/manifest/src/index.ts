@@ -52,13 +52,12 @@ export interface AgentosPackageManifest {
 /** Runtime package reference passed by registry packages during the JSON manifest migration. */
 export type PackageRef = string;
 
-/** Client-facing software reference: points at a self-contained package tar.
+/** Client-facing software reference: points at the packed `.aospkg` package
+ *  file (or a package dir for local transition fixtures).
  *  Extensible — future fields can be added without breaking callers. */
 export interface SoftwarePackageRef {
-	/** Absolute path to the self-contained package tar. */
-	packageTar: string;
-	/** @deprecated Directory refs are accepted only for local transition fixtures. */
-	packageDir?: string;
+	/** Absolute path to the packed `.aospkg` package. */
+	packagePath: string;
 }
 
 /**

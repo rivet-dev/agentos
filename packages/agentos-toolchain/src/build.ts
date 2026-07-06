@@ -12,6 +12,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { packAospkgFromTar } from "./aospkg.js";
 import { readManifest, unscopedName } from "./manifest.js";
 
 export interface BuildResult {
@@ -20,6 +21,8 @@ export interface BuildResult {
 	commands: string[];
 	outDir: string;
 	outTar: string;
+	/** The packed `.aospkg` (header + vbare manifest + mount index + mount tar). */
+	outAospkg: string;
 }
 
 /**
@@ -33,9 +36,15 @@ export interface BuildResult {
  * holds ONLY what the package ships at runtime:
  *
  *   dist/package/
- *     agentos-package.json   runtime manifest (name, version, agent, provides)
+ *     agentos-package.json   pack-time manifest input (name, version, agent,
+ *                            provides) — consumed by the `.aospkg` packer and
+ *                            STRIPPED from the packed mount tar; the vbare
+ *                            chunk1 manifest is the single runtime manifest
  *     bin/<cmd>              the compiled command binaries (copied verbatim)
  *     share/...              (optional) man pages, if the source package ships them
+ *
+ * The runtime artifact is `dist/package.aospkg` (see aospkg.ts); the plain
+ * `dist/package.tar` is kept as the pack intermediate.
  *
  * Commands are derived from the source `bin/` directory's files (populate it
  * with `stage`); `name`/`version` come from the source `package.json`. A package
@@ -130,12 +139,19 @@ export function build(packageDirInput?: string): BuildResult {
 	rmSync(outTar, { force: true });
 	execFileSync("tar", ["-cf", outTar, "-C", outDir, "."], { stdio: "pipe" });
 
+	// Pack the runtime artifact. agentos-package.json is consumed as pack-time
+	// input and stripped from the packed mount tar — the vbare chunk1 manifest
+	// is the single runtime manifest the sidecar reads.
+	const outAospkg = join(packageDir, "dist", "package.aospkg");
+	rmSync(outAospkg, { force: true });
+	packAospkgFromTar(outTar, outAospkg);
+
 	process.stdout.write(
 		commands.length > 0
-			? `assembled ${name}@${version} -> ${outTar}\n` +
+			? `assembled ${name}@${version} -> ${outAospkg}\n` +
 					`  commands (${commands.length}): ${commands.join(", ")}\n`
-			: `assembled ${name}@${version} -> ${outTar} (PLANNED: empty placeholder, ` +
+			: `assembled ${name}@${version} -> ${outAospkg} (PLANNED: empty placeholder, ` +
 					`no bin/ yet — run stage with a commands dir to populate)\n`,
 	);
-	return { name, version, commands, outDir, outTar };
+	return { name, version, commands, outDir, outTar, outAospkg };
 }

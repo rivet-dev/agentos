@@ -10962,8 +10962,7 @@ if (child.status !== 0) {
                         command_permissions: std::collections::HashMap::new(),
                         loopback_exempt_ports: Vec::new(),
                         packages: vec![crate::protocol::PackageDescriptor {
-                            dir: Some(package.to_string_lossy().into_owned()),
-                            tar: None,
+                            path: package.to_string_lossy().into_owned(),
                         }],
                         packages_mount_at: String::from("/opt/agentos"),
                         bootstrap_commands: Vec::new(),

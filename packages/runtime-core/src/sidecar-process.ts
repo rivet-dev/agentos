@@ -291,8 +291,7 @@ export interface SidecarProjectedModuleDescriptor {
 }
 
 export interface SidecarPackageDescriptor {
-	dir?: string;
-	tar?: string;
+	path: string;
 }
 
 export interface SidecarProjectedAgent {
@@ -1786,12 +1785,10 @@ function toWireProjectedModuleDescriptor(
 }
 
 function toWirePackageDescriptor(descriptor: SidecarPackageDescriptor): {
-	dir?: string;
-	tar?: string;
+	path: string;
 } {
 	return {
-		dir: descriptor.dir,
-		tar: descriptor.tar,
+		path: descriptor.path,
 	};
 }
 

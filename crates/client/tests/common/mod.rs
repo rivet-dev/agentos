@@ -214,8 +214,7 @@ pub async fn new_vm_with_commands() -> Option<AgentOs> {
     let package_dir = coreutils_package_dir()?;
     let config = AgentOsConfig {
         packages: vec![PackageRef {
-            dir: Some(package_dir.to_string_lossy().into_owned()),
-            tar: None,
+            path: package_dir.to_string_lossy().into_owned(),
         }],
         ..Default::default()
     };

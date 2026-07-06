@@ -3802,7 +3802,9 @@ where
             .get(EXECUTION_REQUEST_TTY_ENV)
             .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
         let phase_start = Instant::now();
-        let resolved = resolve_execute_request(vm, &payload)?;
+        let mut resolved = resolve_execute_request(vm, &payload)?;
+        stage_agentos_package_command(vm, &mut resolved)?;
+        let resolved = resolved;
         record_execute_phase("resolve_execute_request", phase_start.elapsed());
         let phase_start = Instant::now();
         let mut env = resolved.env.clone();
@@ -6583,7 +6585,7 @@ where
     ) -> Result<Value, SidecarError> {
         let total_start = Instant::now();
         let phase_start = Instant::now();
-        let resolved = {
+        let mut resolved = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let parent = vm
                 .active_processes
@@ -6597,6 +6599,14 @@ where
                 &request,
             )?
         };
+        {
+            let vm = self
+                .vms
+                .get_mut(vm_id)
+                .ok_or_else(|| missing_vm_error(vm_id))?;
+            stage_agentos_package_command(vm, &mut resolved)?;
+        }
+        let resolved = resolved;
         record_execute_phase("child_process_resolve_execution", phase_start.elapsed());
         let (parent_kernel_pid, child_process_id) = {
             let vm = self
@@ -7069,7 +7079,7 @@ where
         let current_process_label =
             Self::child_process_path_label(process_id, current_process_path);
         let phase_start = Instant::now();
-        let (resolved, parent_kernel_pid) = {
+        let (mut resolved, parent_kernel_pid) = {
             let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
             let root = vm
                 .active_processes
@@ -7092,6 +7102,14 @@ where
                 parent.kernel_pid,
             )
         };
+        {
+            let vm = self
+                .vms
+                .get_mut(vm_id)
+                .ok_or_else(|| missing_vm_error(vm_id))?;
+            stage_agentos_package_command(vm, &mut resolved)?;
+        }
+        let resolved = resolved;
         record_execute_phase("child_process_resolve_execution", phase_start.elapsed());
 
         let sidecar_requests = self.sidecar_requests.clone();
@@ -11392,6 +11410,71 @@ fn expand_host_access_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
     }
 
     expanded
+}
+
+/// Package content is tar-mounted guest-native and never materialized on the
+/// host, so command resolution classifies package-mount entrypoints by
+/// extension only (`resolve_javascript_command_entrypoint`) and the resolved
+/// host path for a WebAssembly module may not exist. Correct both here, where
+/// the kernel is available: sniff the real entrypoint's magic through the
+/// kernel VFS, flip misclassified extensionless WebAssembly binaries from
+/// JavaScript to WebAssembly, and stage the module bytes into the VM shadow
+/// tree so the wasm engine (which loads modules from a host path) can read
+/// them. Staging is per-VM and write-once per resolved version path — package
+/// versions are immutable — and only commands that actually execute are
+/// materialized; filesystem reads stay on the zero-extraction tar mount.
+fn stage_agentos_package_command(
+    vm: &mut VmState,
+    resolved: &mut ResolvedChildProcessExecution,
+) -> Result<(), SidecarError> {
+    const WASM_MAGIC: &[u8] = b"\0asm";
+    if resolved.tool_command
+        || !matches!(
+            resolved.runtime,
+            GuestRuntimeKind::JavaScript | GuestRuntimeKind::WebAssembly
+        )
+    {
+        return Ok(());
+    }
+    let Some(guest_entrypoint) = resolved
+        .env
+        .get("AGENTOS_GUEST_ENTRYPOINT")
+        .filter(|path| path.starts_with('/'))
+        .map(|path| normalize_path(path))
+    else {
+        return Ok(());
+    };
+    if !guest_path_is_within_agentos_package_mount(vm, &guest_entrypoint) {
+        return Ok(());
+    }
+    let Ok(real_entrypoint) = vm.kernel.realpath(&guest_entrypoint) else {
+        return Ok(());
+    };
+    let real_entrypoint = normalize_path(&real_entrypoint);
+    let Ok(magic) = vm.kernel.pread_file(&real_entrypoint, 0, WASM_MAGIC.len()) else {
+        return Ok(());
+    };
+    if magic != WASM_MAGIC {
+        return Ok(());
+    }
+    let shadow_path = shadow_path_for_guest(vm, &real_entrypoint);
+    if !shadow_path.is_file() {
+        let bytes = vm.kernel.read_file(&real_entrypoint).map_err(kernel_error)?;
+        if let Some(parent) = shadow_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                SidecarError::Io(format!("failed to create wasm shadow parent: {error}"))
+            })?;
+        }
+        fs::write(&shadow_path, &bytes).map_err(|error| {
+            SidecarError::Io(format!(
+                "failed to stage wasm module {}: {error}",
+                shadow_path.display()
+            ))
+        })?;
+    }
+    resolved.runtime = GuestRuntimeKind::WebAssembly;
+    resolved.entrypoint = shadow_path.to_string_lossy().into_owned();
+    Ok(())
 }
 
 fn prepare_javascript_shadow(

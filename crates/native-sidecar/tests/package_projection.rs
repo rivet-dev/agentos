@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 
 use agentos_native_sidecar::package_projection::{
     build_package_leaf_mounts, derive_commands, package_provides_file_mount, read_package_manifest,
-    read_package_manifest_from_ref, read_package_version, PackageLeafMount,
-    DEFAULT_PACKAGE_TAR_NAME,
+    read_package_manifest_from_path, PackageLeafMount, DEFAULT_PACKAGE_TAR_NAME,
 };
 use tar::Builder;
+use vfs::package_format::pack::pack_aospkg_from_tar;
+
+const SOURCE_TAR_NAME: &str = "package.mount.tar";
 
 fn unique_dir(tag: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now()
@@ -36,20 +38,22 @@ fn write_package(root: &Path, name: &str, version: &str, commands: &[&str]) {
 }
 
 fn finalize_package_tar(root: &Path) {
-    let tar_path = root.join(DEFAULT_PACKAGE_TAR_NAME);
+    let tar_path = root.join(SOURCE_TAR_NAME);
     let _ = fs::remove_file(&tar_path);
     let file = fs::File::create(&tar_path).unwrap();
     let mut builder = Builder::new(file);
     append_tree(&mut builder, root, root).unwrap();
     builder.finish().unwrap();
     builder.into_inner().unwrap().flush().unwrap();
+    write_aospkg(root, &tar_path);
 }
 
 fn append_tree(builder: &mut Builder<fs::File>, root: &Path, path: &Path) -> std::io::Result<()> {
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let entry_path = entry.path();
-        if entry_path.file_name().and_then(|name| name.to_str()) == Some(DEFAULT_PACKAGE_TAR_NAME) {
+        let file_name = entry_path.file_name().and_then(|name| name.to_str());
+        if file_name == Some(DEFAULT_PACKAGE_TAR_NAME) || file_name == Some(SOURCE_TAR_NAME) {
             continue;
         }
         let name = entry_path.strip_prefix(root).unwrap();
@@ -63,17 +67,24 @@ fn append_tree(builder: &mut Builder<fs::File>, root: &Path, path: &Path) -> std
     Ok(())
 }
 
+fn write_aospkg(root: &Path, source_tar: &Path) {
+    pack_aospkg_from_tar(source_tar, &root.join(DEFAULT_PACKAGE_TAR_NAME), None)
+        .unwrap_or_else(|e| panic!("pack {} failed: {e}", source_tar.display()));
+}
+
+
 #[test]
 fn reads_version_from_agentos_package_json_and_errors_when_missing() {
     let pkg = unique_dir("ver");
     write_package(&pkg, "vt", "3.1.4", &["vt"]);
+    finalize_package_tar(&pkg);
     assert_eq!(
-        read_package_version(pkg.to_str().unwrap()).unwrap(),
+        read_package_manifest(pkg.to_str().unwrap()).unwrap().version,
         "3.1.4"
     );
 
     let empty = unique_dir("ver-missing");
-    assert!(read_package_version(empty.to_str().unwrap()).is_err());
+    assert!(read_package_manifest(empty.to_str().unwrap()).is_err());
 }
 
 #[test]
@@ -94,6 +105,7 @@ fn reads_name_agent_and_provides_from_agentos_package_json() {
         }"#,
     )
     .unwrap();
+    finalize_package_tar(&pkg);
 
     let descriptor = read_package_manifest(pkg.to_str().unwrap()).unwrap();
     assert_eq!(descriptor.name, "manifest-name");
@@ -111,6 +123,7 @@ fn reads_name_agent_and_provides_from_agentos_package_json() {
 fn derives_commands_from_bin_dir() {
     let pkg = unique_dir("cmds");
     write_package(&pkg, "tool", "1.0.0", &["foo", "bar"]);
+    finalize_package_tar(&pkg);
     let mut commands = derive_commands(pkg.to_str().unwrap()).unwrap();
     commands.sort();
     assert_eq!(commands, vec!["bar".to_string(), "foo".to_string()]);
@@ -122,7 +135,7 @@ fn reads_manifest_and_commands_from_package_tar_without_extracting() {
     write_package(&pkg, "demo", "2.0.0", &["demo"]);
     finalize_package_tar(&pkg);
 
-    let descriptor = read_package_manifest_from_ref(Some(pkg.to_str().unwrap()), None).unwrap();
+    let descriptor = read_package_manifest_from_path(pkg.to_str().unwrap()).unwrap();
     assert_eq!(descriptor.name, "demo");
     assert_eq!(descriptor.version, "2.0.0");
     assert!(descriptor
@@ -141,7 +154,7 @@ fn reads_symlink_commands_from_package_tar() {
     std::os::unix::fs::symlink("../adapter.mjs", pkg.join("bin/demo")).unwrap();
     finalize_package_tar(&pkg);
 
-    let descriptor = read_package_manifest_from_ref(Some(pkg.to_str().unwrap()), None).unwrap();
+    let descriptor = read_package_manifest_from_path(pkg.to_str().unwrap()).unwrap();
     assert_eq!(descriptor.commands[0].command, "demo");
     assert_eq!(descriptor.commands[0].entry, "bin/demo");
 }
@@ -153,7 +166,7 @@ fn builds_tar_current_bin_and_manpage_leaf_mounts() {
     fs::create_dir_all(pkg.join("share/man/man1")).unwrap();
     fs::write(pkg.join("share/man/man1/demo.1"), "manual").unwrap();
     finalize_package_tar(&pkg);
-    let descriptor = read_package_manifest_from_ref(Some(pkg.to_str().unwrap()), None).unwrap();
+    let descriptor = read_package_manifest_from_path(pkg.to_str().unwrap()).unwrap();
 
     let mounts = build_package_leaf_mounts(&[descriptor], "/opt/agentos").unwrap();
     assert!(mounts.iter().any(|mount| matches!(
@@ -184,7 +197,7 @@ fn builds_tar_current_bin_and_manpage_leaf_mounts() {
 fn builds_host_dir_leaf_mount_for_dir_only_transition_packages() {
     let pkg = unique_dir("dir-only");
     write_package(&pkg, "demo", "2.0.0", &["demo"]);
-    let descriptor = read_package_manifest_from_ref(Some(pkg.to_str().unwrap()), None).unwrap();
+    let descriptor = read_package_manifest_from_path(pkg.to_str().unwrap()).unwrap();
 
     let mounts = build_package_leaf_mounts(&[descriptor], "/opt/agentos").unwrap();
     assert!(mounts.iter().any(|mount| matches!(
@@ -215,8 +228,8 @@ fn duplicate_commands_are_rejected_before_mounting() {
     write_package(&pkg_b, "b", "1.0.0", &["tool"]);
     finalize_package_tar(&pkg_b);
 
-    let a = read_package_manifest_from_ref(Some(pkg_a.to_str().unwrap()), None).unwrap();
-    let b = read_package_manifest_from_ref(Some(pkg_b.to_str().unwrap()), None).unwrap();
+    let a = read_package_manifest_from_path(pkg_a.to_str().unwrap()).unwrap();
+    let b = read_package_manifest_from_path(pkg_b.to_str().unwrap()).unwrap();
     let err = build_package_leaf_mounts(&[a, b], "/opt/agentos").unwrap_err();
     assert!(err.to_string().contains("already provided"), "{err}");
 }
@@ -232,7 +245,7 @@ fn invalid_agent_entrypoint_is_rejected() {
     .unwrap();
     finalize_package_tar(&pkg);
 
-    let descriptor = read_package_manifest_from_ref(Some(pkg.to_str().unwrap()), None).unwrap();
+    let descriptor = read_package_manifest_from_path(pkg.to_str().unwrap()).unwrap();
     let err = build_package_leaf_mounts(&[descriptor], "/opt/agentos").unwrap_err();
     assert!(err.to_string().contains("acpEntrypoint"), "{err}");
 }
@@ -256,7 +269,7 @@ fn provides_files_mounts_tar_subtree() {
     .unwrap();
     finalize_package_tar(&pkg);
 
-    let descriptor = read_package_manifest_from_ref(Some(pkg.to_str().unwrap()), None).unwrap();
+    let descriptor = read_package_manifest_from_path(pkg.to_str().unwrap()).unwrap();
     let mount = package_provides_file_mount(&descriptor, "share/config", "/etc/provider")
         .unwrap()
         .expect("provides dir mount");
@@ -274,7 +287,7 @@ fn provides_files_mounts_host_dir_subtree_for_dir_only_packages() {
     fs::create_dir_all(pkg.join("share/config")).unwrap();
     fs::write(pkg.join("share/config/settings.json"), "{}").unwrap();
 
-    let descriptor = read_package_manifest_from_ref(Some(pkg.to_str().unwrap()), None).unwrap();
+    let descriptor = read_package_manifest_from_path(pkg.to_str().unwrap()).unwrap();
     let mount = package_provides_file_mount(&descriptor, "share/config", "/etc/provider")
         .unwrap()
         .expect("provides dir mount");
