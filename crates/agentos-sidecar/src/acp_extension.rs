@@ -401,49 +401,21 @@ impl AcpExtension {
     /// client parses no manifests — the sidecar owns agent enumeration too. Sorted
     /// by id.
     async fn list_agents(&self, mut ctx: ExtensionContext<'_>) -> AcpHandlerOutput {
-        // The guest-native projected filesystem is the SOURCE OF TRUTH for
-        // installed packages (they can be added dynamically via `linkSoftware`),
-        // so enumerate by reading the live projection: each package is a dir under
-        // `/opt/agentos/pkgs/<name>`, and an agent is any package whose
-        // `<name>/current/agentos-package.json` carries a non-empty
-        // `agent.acpEntrypoint`.
-        let listing = ctx
-            .guest_filesystem_call_wire(GuestFilesystemCallRequest {
-                operation: GuestFilesystemOperation::ReadDir,
-                path: String::from("/opt/agentos/pkgs"),
-                destination_path: None,
-                target: None,
-                content: None,
-                encoding: None,
-                recursive: false,
-                max_depth: None,
-                mode: None,
-                uid: None,
-                gid: None,
-                atime_ms: None,
-                mtime_ms: None,
-                len: None,
-                offset: None,
+        // The sidecar-owned projected-agent state is the SOURCE OF TRUTH for
+        // installed agents (it reflects `ConfigureVm` and live `linkSoftware`
+        // updates). Packed `.aospkg` packages ship no `agentos-package.json` in
+        // the mount tar — the vbare chunk1 manifest is the only runtime
+        // manifest — so agents are enumerated from that decoded state, not by
+        // reading manifest JSON out of the guest filesystem.
+        let launches = ctx.projected_agents().await.unwrap_or_default();
+        let mut agents = launches
+            .into_iter()
+            .map(|launch| AcpAgentEntry {
+                adapter_entrypoint: format!("/opt/agentos/bin/{}", launch.acp_entrypoint),
+                id: launch.id,
+                installed: true,
             })
-            .await;
-        // No projection (e.g. no packages) => no agents.
-        let entries = match listing {
-            Ok(result) => result.entries.unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
-        let mut agents = Vec::new();
-        for entry in entries {
-            if entry.name == "bin" {
-                continue;
-            }
-            if let Some(block) = read_projected_agent_block(&mut ctx, &entry.name).await {
-                agents.push(AcpAgentEntry {
-                    adapter_entrypoint: format!("/opt/agentos/bin/{}", block.acp_entrypoint),
-                    id: entry.name,
-                    installed: true,
-                });
-            }
-        }
+            .collect::<Vec<_>>();
         agents.sort_by(|a, b| a.id.cmp(&b.id));
         AcpHandlerOutput::response(Ok(AcpResponse::AcpListAgentsResponse(
             AcpListAgentsResponse { agents },
@@ -2474,67 +2446,23 @@ struct AgentPackageAgentBlock {
     launch_args: Vec<String>,
 }
 
-/// Read the projected manifest at `/opt/agentos/<name>/current/agentos-package.json`
-/// from the guest filesystem and return its `agent` block iff it exists and carries
-/// a non-empty `acpEntrypoint`. A missing/unreadable/malformed manifest, a missing
-/// `agent` block, or an empty `acpEntrypoint` all yield `None`.
+/// Look up an agent's launch surface from the sidecar-owned projected-agent
+/// state (decoded from the packed vbare manifest at configure/link time; packed
+/// packages ship no `agentos-package.json` in the guest filesystem). A package
+/// without an agent block yields `None`.
 async fn read_projected_agent_block(
     ctx: &mut ExtensionContext<'_>,
     agent_type: &str,
 ) -> Option<AgentPackageAgentBlock> {
-    let result = ctx
-        .guest_filesystem_call_wire(GuestFilesystemCallRequest {
-            operation: GuestFilesystemOperation::ReadFile,
-            path: format!("/opt/agentos/pkgs/{agent_type}/current/agentos-package.json"),
-            destination_path: None,
-            target: None,
-            content: None,
-            encoding: None,
-            recursive: false,
-            max_depth: None,
-            mode: None,
-            uid: None,
-            gid: None,
-            atime_ms: None,
-            mtime_ms: None,
-            len: None,
-            offset: None,
-        })
-        .await
-        .ok()?;
-    let text = result.content?;
-    let manifest: Value = serde_json::from_str(&text).ok()?;
-    let agent = manifest.get("agent")?;
-    let acp_entrypoint = agent.get("acpEntrypoint")?.as_str()?.to_string();
-    if acp_entrypoint.is_empty() {
+    let launches = ctx.projected_agents().await.ok()?;
+    let launch = launches.into_iter().find(|launch| launch.id == agent_type)?;
+    if launch.acp_entrypoint.is_empty() {
         return None;
     }
-    // Optional manifest launch env/args (defaults empty).
-    let env = agent
-        .get("env")
-        .and_then(Value::as_object)
-        .map(|map| {
-            map.iter()
-                .filter_map(|(key, value)| {
-                    value.as_str().map(|value| (key.clone(), value.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let launch_args = agent
-        .get("launchArgs")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
     Some(AgentPackageAgentBlock {
-        acp_entrypoint,
-        env,
-        launch_args,
+        acp_entrypoint: launch.acp_entrypoint,
+        env: launch.env,
+        launch_args: launch.launch_args,
     })
 }
 
