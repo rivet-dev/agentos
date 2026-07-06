@@ -10,10 +10,14 @@ import { InkChip, InkPanel } from "../../components/marketing/editorial/InkPanel
 import { highlightCode as highlightCodeHtml } from "@rivet-dev/docs-theme/lib/highlight";
 
 export function getStaticPaths() {
-	return registry.map((entry) => ({
-		params: { slug: entry.slug },
-		props: { entry },
-	}));
+	// External entries (deploy targets) link out from the index card and have
+	// no detail page.
+	return registry
+		.filter((entry) => entry.status !== "external")
+		.map((entry) => ({
+			params: { slug: entry.slug },
+			props: { entry },
+		}));
 }
 
 const { entry } = Astro.props;
@@ -24,6 +28,7 @@ const TYPE_LABELS: Record<string, string> = {
 	agent: "Agent",
 	"sandbox-extension": "Sandbox Mounting",
 	software: "Software",
+	browser: "Browser",
 };
 
 // Turn a package's last path segment into a JS identifier, e.g.
@@ -34,25 +39,33 @@ const toIdent = (s: string) =>
 const isComingSoon = entry.status === "coming-soon";
 const isConfig = entry.status === "config";
 const isDocs = entry.status === "docs";
-const isSoftware = entry.status === "available" && entry.types.includes("software");
+// Browser packages are installable software too — same registration example.
+const isSoftware =
+	entry.status === "available" &&
+	(entry.types.includes("software") || entry.types.includes("browser"));
 const isSandboxExt =
 	entry.status === "available" && entry.types.includes("sandbox-extension");
+const isTool =
+	entry.status === "available" &&
+	!isSoftware &&
+	!isSandboxExt &&
+	entry.types.includes("tool");
+const isAvailableAgent =
+	entry.status === "available" &&
+	entry.types.includes("agent") &&
+	!!entry.agentId;
 
 const npmHref =
 	entry.status === "available"
 		? `https://www.npmjs.com/package/${entry.package}`
 		: null;
 
-// Docs link: config entries, built-in docs entries, software, and sandbox
-// mounting providers each point at the relevant documentation page.
+// Docs link: an entry's own docsHref (always set for agents) wins; config
+// entries, built-in docs entries, software, and sandbox mounting providers
+// fall back to the relevant documentation page for their type.
 const docsHref =
-	entry.status === "config" || entry.status === "docs"
-		? entry.docsHref
-		: isSoftware
-			? "/docs/software"
-			: isSandboxExt
-				? "/docs/sandbox"
-				: null;
+	entry.docsHref ??
+	(isSoftware ? "/docs/software" : isSandboxExt ? "/docs/sandbox" : null);
 
 const configId = entry.status === "config" ? entry.configId : null;
 const agentId = entry.status === "docs" ? (entry.agentId ?? null) : null;
@@ -73,7 +86,7 @@ const vm = agentOS({ software: [${ident}] });
 export const registry = setup({ use: { vm } });`;
 } else if (isSandboxExt) {
 	exampleSource = `import { agentOS, setup } from "@rivet-dev/agentos";
-import { createSandboxFs, createSandboxBindings } from "@rivet-dev/agentos-sandbox";
+import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agentos-sandbox";
 import { SandboxAgent } from "sandbox-agent";
 import { ${entry.slug} } from "sandbox-agent/${entry.slug}";
 
@@ -82,10 +95,37 @@ const sandbox = await SandboxAgent.start({ sandbox: ${entry.slug}() });
 
 const vm = agentOS({
   mounts: [{ path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) }],
-  bindings: [createSandboxBindings({ client: sandbox })],
+  toolKits: [createSandboxToolkit({ client: sandbox })],
 });
 
 export const registry = setup({ use: { vm } });`;
+} else if (isTool) {
+	exampleSource = `import { agentOS, setup } from "@rivet-dev/agentos";
+import { createSandboxFs, createSandboxToolkit } from "@rivet-dev/agentos-sandbox";
+import { SandboxAgent } from "sandbox-agent";
+import { docker } from "sandbox-agent/docker";
+
+// Mount the sandbox filesystem and expose its process tools to the VM
+const sandbox = await SandboxAgent.start({ sandbox: docker() });
+
+const vm = agentOS({
+  mounts: [{ path: "/home/agentos/sandbox", plugin: createSandboxFs({ client: sandbox }) }],
+  toolKits: [createSandboxToolkit({ client: sandbox })],
+});
+
+export const registry = setup({ use: { vm } });`;
+} else if (isAvailableAgent) {
+	// An installable agent adapter (e.g. pi): npm package + session agent id.
+	exampleSource = `import { agentOS, setup } from "@rivet-dev/agentos";
+import ${entry.agentId} from "${entry.package}";
+
+// Register the ${entry.title} adapter as VM software
+const vm = agentOS({ software: [${entry.agentId}] });
+
+export const registry = setup({ use: { vm } });
+
+// Then start a session from your client with the "${entry.agentId}" agent id:
+// const session = await agent.createSession("${entry.agentId}", { env: { /* API keys */ } });`;
 } else if (isDocs && entry.status === "docs" && entry.package && entry.agentId) {
 	// Built-in agent adapter: register it as VM software, then open a session
 	// with its agent id. The import identifier matches the agent id (e.g.
@@ -233,7 +273,12 @@ const EntryIcon = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
 			) : isSoftware ? (
 				<>
 					<section>
-						<h2 class="mb-3 text-xl font-medium text-ink">Add to agentOS</h2>
+						<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
+						<InkChip command={`npm install ${entry.package}`} className="mb-8" />
+					</section>
+
+					<section>
+						<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
 						<p class="mb-4 text-sm text-ink-soft">
 							Register it with your VM's{" "}
 							<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">software: []</code>{" "}
@@ -261,13 +306,68 @@ const EntryIcon = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
 						</a>
 					</div>
 				</>
-			) : isSandboxExt ? (
+			) : isSandboxExt || isTool ? (
 				<>
 					<section>
-						<h2 class="mb-3 text-xl font-medium text-ink">Mount the sandbox</h2>
+						<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
+						<InkChip
+							command="npm install @rivet-dev/agentos-sandbox sandbox-agent"
+							className="mb-8"
+						/>
+					</section>
+
+					<section>
+						<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
 						<p class="mb-4 text-sm text-ink-soft">
-							Mount a {entry.title} sandbox into the VM with{" "}
-							<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">@rivet-dev/agentos-sandbox</code>.
+							{isSandboxExt ? (
+								<>
+									Mount a {entry.title} sandbox into the VM with{" "}
+									<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">@rivet-dev/agentos-sandbox</code>.
+								</>
+							) : (
+								<>
+									Mount the sandbox filesystem and register the process
+									bindings with{" "}
+									<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">@rivet-dev/agentos-sandbox</code>.
+								</>
+							)}
+						</p>
+						<InkPanel className="mb-6">
+							<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
+						</InkPanel>
+					</section>
+
+					<div class="flex flex-wrap gap-3">
+						<a
+							href={docsHref!}
+							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
+						>
+							View documentation
+						</a>
+						<a
+							href={npmHref!}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="inline-flex items-center justify-center rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
+						>
+							View on npm
+						</a>
+					</div>
+				</>
+			) : isAvailableAgent ? (
+				<>
+					<section>
+						<h2 class="mb-3 text-xl font-medium text-ink">1. Install</h2>
+						<InkChip command={`npm install ${entry.package}`} className="mb-8" />
+					</section>
+
+					<section>
+						<h2 class="mb-3 text-xl font-medium text-ink">2. Add to agentOS</h2>
+						<p class="mb-4 text-sm text-ink-soft">
+							Register the {entry.title} adapter as your VM's{" "}
+							<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">software: []</code>, then open a session with the{" "}
+							<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">{entry.agentId}</code>{" "}
+							agent id.
 						</p>
 						<InkPanel className="mb-6">
 							<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />

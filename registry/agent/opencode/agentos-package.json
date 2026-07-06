@@ -6,5 +6,12 @@
       "OPENCODE_DISABLE_CONFIG_DEP_INSTALL": "1",
       "OPENCODE_DISABLE_EMBEDDED_WEB_UI": "1"
     }
+  },
+  "registry": {
+    "title": "OpenCode",
+    "description": "Run OpenCode, an open-source coding agent, inside agentOS.",
+    "docsHref": "/docs/agents/opencode",
+    "image": "/images/registry/opencode.svg",
+    "priority": 70
   }
 }

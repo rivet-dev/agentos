@@ -117,5 +117,11 @@
 		"stty",
 		"sync",
 		"tty"
-	]
+	],
+	"registry": {
+		"title": "Coreutils",
+		"description": "sh, cat, ls, cp, mv, rm, sort, and 80+ essential POSIX commands.",
+		"priority": 45,
+		"image": "/images/registry/coreutils.svg"
+	}
 }

@@ -5,5 +5,11 @@
 	"aliases": {
 		"gunzip": "gzip",
 		"zcat": "gzip"
+	},
+	"registry": {
+		"title": "gzip",
+		"description": "GNU gzip compression (gzip, gunzip, zcat).",
+		"priority": 8,
+		"image": "/images/registry/gzip.svg"
 	}
 }

@@ -1,5 +1,11 @@
 {
 	"commands": [
 		"tar"
-	]
+	],
+	"registry": {
+		"title": "tar",
+		"description": "GNU tar archiver.",
+		"priority": 60,
+		"image": "/images/registry/tar.svg"
+	}
 }

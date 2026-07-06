@@ -13,16 +13,16 @@ const CATEGORY_ORDER: { type: string; label: string; description: string }[] = [
 			"Coding agents with programmatic API access and universal transcript format (ACP).",
 	},
 	{
-		type: "tool",
-		label: "Toolkits",
-		description:
-			"Host-side tools and integrations that extend agent capabilities.",
-	},
-	{
 		type: "file-system",
 		label: "File Systems",
 		description:
 			"Mount these file systems as the root or at any sub-path inside the agent's environment.",
+	},
+	{
+		type: "browser",
+		label: "Browsers",
+		description:
+			"Let agents browse the web from inside the VM with cloud browser providers.",
 	},
 	{
 		type: "sandbox-extension",
@@ -36,6 +36,18 @@ const CATEGORY_ORDER: { type: string; label: string; description: string }[] = [
 		description:
 			"Wasm command packages that run inside the agent's environment. Install individually or use meta-packages.",
 	},
+	{
+		type: "tool",
+		label: "Bindings",
+		description:
+			"Host-side tools and integrations that extend agent capabilities.",
+	},
+	{
+		type: "deploy",
+		label: "Deploy",
+		description:
+			"Run agentOS in production on the platform of your choice.",
+	},
 ];
 
 const MAX_GRID_ITEMS = 9;
@@ -43,8 +55,11 @@ const CAROUSEL_INTERVAL = 5000;
 
 type RegistryTheme = "dark" | "light";
 
-function entryHref(hrefBase: string, slug: string) {
-	return `${hrefBase}/${slug}`;
+function entryHref(hrefBase: string, entry: RegistryEntry) {
+	// External entries (deploy targets) link straight to their guide; there is
+	// no detail page for them.
+	if (entry.status === "external") return entry.href;
+	return `${hrefBase}/${entry.slug}`;
 }
 
 function EntryIcon({
@@ -96,12 +111,16 @@ function MonoIcon({
 	entry,
 	size = 24,
 	theme,
+	active = false,
 }: {
 	entry: RegistryEntry;
 	size?: number;
 	theme: RegistryTheme;
+	active?: boolean;
 }) {
 	if (entry.image) {
+		// Brand logos keep their colors when the item is selected and drop to
+		// grayscale when not (the parent button already dims inactive items).
 		return (
 			<img
 				src={entry.image}
@@ -109,11 +128,7 @@ function MonoIcon({
 				width={size}
 				height={size}
 				className="object-contain"
-				style={
-					theme === "light"
-						? { filter: "brightness(0)", opacity: 0.4 }
-						: { filter: "brightness(0) invert(1)", opacity: 0.6 }
-				}
+				style={active ? undefined : { filter: "grayscale(1)" }}
 			/>
 		);
 	}
@@ -194,7 +209,7 @@ function FeaturedCarousel({
 				<AnimatePresence mode="wait" custom={direction}>
 					<motion.a
 						key={entry.slug}
-						href={entryHref(hrefBase, entry.slug)}
+						href={entryHref(hrefBase, entry)}
 						custom={direction}
 						variants={variants}
 						initial="enter"
@@ -240,7 +255,12 @@ function FeaturedCarousel({
 						}`}
 					>
 						<div className="flex h-5 w-5 shrink-0 items-center justify-center">
-							<MonoIcon entry={candidate} size={16} theme={theme} />
+							<MonoIcon
+								entry={candidate}
+								size={16}
+								theme={theme}
+								active={candidateIndex === index}
+							/>
 						</div>
 						<span
 							className={
@@ -300,7 +320,7 @@ function CategorySection({
 				{visible.map((entry) => (
 					<a
 						key={entry.slug}
-						href={entryHref(hrefBase, entry.slug)}
+						href={entryHref(hrefBase, entry)}
 						className={`group flex h-36 flex-col rounded-xl border p-5 text-left no-underline transition-all duration-200 ${
 							entry.status === "coming-soon" ? "opacity-60" : ""
 						} ${

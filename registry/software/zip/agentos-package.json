@@ -1,5 +1,10 @@
 {
 	"commands": [
 		"zip"
-	]
+	],
+	"registry": {
+		"title": "zip",
+		"description": "Create zip archives.",
+		"priority": 12
+	}
 }

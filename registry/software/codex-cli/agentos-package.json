@@ -2,5 +2,10 @@
 	"commands": [
 		"codex",
 		"codex-exec"
-	]
+	],
+	"registry": {
+		"title": "Codex CLI",
+		"description": "OpenAI Codex CLI integration.",
+		"image": "/images/registry/codex.svg"
+	}
 }

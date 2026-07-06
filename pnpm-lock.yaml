@@ -350,6 +350,9 @@ importers:
       '@agentos-software/claude-code':
         specifier: workspace:*
         version: link:../../registry/agent/claude
+      '@agentos-software/pi':
+        specifier: workspace:*
+        version: link:../../registry/agent/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -10776,7 +10779,7 @@ snapshots:
       extract-zip: 2.0.1
       progress: 2.0.3
       proxy-agent: 6.5.0
-      semver: 7.7.4
+      semver: 7.8.5
       tar-fs: 3.1.2
       unbzip2-stream: 1.4.3
       yargs: 17.7.2
@@ -13287,7 +13290,7 @@ snapshots:
       chalk: 4.1.2
       console-table-printer: 2.15.0
       p-queue: 6.6.2
-      semver: 7.7.4
+      semver: 7.8.5
       uuid: 10.0.0
     optionalDependencies:
       '@opentelemetry/api': 1.9.0

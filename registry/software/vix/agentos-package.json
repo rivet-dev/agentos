@@ -2,5 +2,9 @@
 	"name": "vix",
 	"commands": [
 		"vix"
-	]
+	],
+	"registry": {
+		"title": "vix",
+		"description": "Lightweight vi-style text editor."
+	}
 }

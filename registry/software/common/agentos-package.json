@@ -1,0 +1,7 @@
+{
+	"registry": {
+		"title": "Common",
+		"description": "Meta-package: coreutils + sed + grep + gawk + findutils + diffutils + tar + gzip.",
+		"priority": 95
+	}
+}

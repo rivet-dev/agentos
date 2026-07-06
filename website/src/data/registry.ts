@@ -4,7 +4,15 @@ export interface RegistryEntryBase {
 	slug: string;
 	title: string;
 	description: string;
-	types: ("file-system" | "tool" | "agent" | "sandbox-extension" | "software")[];
+	types: (
+		| "file-system"
+		| "tool"
+		| "agent"
+		| "sandbox-extension"
+		| "software"
+		| "browser"
+		| "deploy"
+	)[];
 	featured?: boolean;
 	// Marks an entry as in beta — renders a "Beta" pill on the registry card
 	// and detail page.
@@ -14,6 +22,12 @@ export interface RegistryEntryBase {
 	// prop boundary.
 	icon?: RegistryIconName;
 	image?: string;
+	// Documentation page for this entry. Always set for agents (generated as
+	// /docs/agents/<agentId>); overrides the per-type docs fallback on the
+	// detail page.
+	docsHref?: string;
+	// The session agent id, set for all generated agent entries.
+	agentId?: string;
 }
 
 export interface RegistryEntryAvailable extends RegistryEntryBase {
@@ -52,231 +66,52 @@ export interface RegistryEntryConfig extends RegistryEntryBase {
 	docsHref: string;
 }
 
+// An entry whose card links straight to an external page (e.g. a deployment
+// guide on rivet.dev). No detail page is generated for it.
+export interface RegistryEntryExternal extends RegistryEntryBase {
+	status: "external";
+	href: string;
+}
+
 export type RegistryEntry =
 	| RegistryEntryAvailable
 	| RegistryEntryComingSoon
 	| RegistryEntryDocs
-	| RegistryEntryConfig;
+	| RegistryEntryConfig
+	| RegistryEntryExternal;
 
-export const registry: RegistryEntry[] = [
+// Agent and software entries are generated from the monorepo's registry/ tree
+// by scripts/gen-registry.mjs — a package is listed iff its
+// agentos-package.json has a `registry` block with title + description. Run
+// `pnpm dev`/`pnpm build` (or the script directly) to refresh after editing a
+// package. Only non-package capabilities (file systems, tools, sandbox
+// mounting) are curated by hand below.
+import generated from "../generated/registry.json";
+import { DEPLOY_TARGETS } from "./deploy-targets";
+
+// Featured is a website decision, not package metadata: generated entries
+// with a slug in this set get the featured treatment on the registry page.
+const FEATURED_GENERATED_SLUGS = new Set(["browserbase", "git", "duckdb"]);
+
+const generatedRegistry: RegistryEntry[] = generated.entries.map(
+	({ priority: _priority, ...entry }) =>
+		({
+			...entry,
+			featured: FEATURED_GENERATED_SLUGS.has(entry.slug) || undefined,
+		}) as RegistryEntry,
+);
+
+const curatedRegistry: RegistryEntry[] = [
 	// Agents
 	{
-		slug: "pi",
-		title: "PI",
-		status: "available",
-		package: "@agentos-software/pi",
-		description:
-			"Run the PI coding agent with lightweight, fast execution.",
-		types: ["agent"],
-		featured: true,
-		image: "/images/registry/pi.svg",
-	},
-	{
-		slug: "claude-code",
-		title: "Claude Code",
+		slug: "custom-agent",
+		title: "Custom Agent",
 		status: "docs",
-		beta: true,
-		docsHref: "/docs/agents/claude",
-		package: "@agentos-software/claude-code",
-		agentId: "claude",
+		docsHref: "/docs/agents/custom",
 		description:
-			"Run Claude Code as an agentOS agent with full tool access, file editing, and shell execution.",
+			"Bring your own coding agent to agentOS by speaking the Agent Client Protocol (ACP) inside the VM.",
 		types: ["agent"],
-		image: "/images/registry/claude-code.svg",
-	},
-	{
-		slug: "codex",
-		title: "Codex",
-		status: "docs",
-		beta: true,
-		docsHref: "/docs/agents/codex",
-		package: "@agentos-software/codex",
-		agentId: "codex",
-		description:
-			"Run OpenAI's Codex coding agent inside agentOS with programmatic API access.",
-		types: ["agent"],
-		image: "/images/registry/codex.svg",
-	},
-	{
-		slug: "opencode",
-		title: "OpenCode",
-		status: "docs",
-		docsHref: "/docs/agents/opencode",
-		package: "@agentos-software/opencode",
-		agentId: "opencode",
-		description:
-			"Run OpenCode, an open-source coding agent, inside agentOS.",
-		types: ["agent"],
-		image: "/images/registry/opencode.svg",
-	},
-
-	// Software
-	{
-		slug: "common",
-		title: "Common",
-		status: "available",
-		package: "@agentos-software/common",
-		description:
-			"Meta-package: coreutils + sed + grep + gawk + findutils + diffutils + tar + gzip.",
-		types: ["software"],
-	},
-	{
-		slug: "build-essential",
-		title: "Build Essential",
-		status: "available",
-		package: "@agentos-software/build-essential",
-		description:
-			"Meta-package: common + git + curl.",
-		types: ["software"],
-	},
-	{
-		slug: "browserbase",
-		title: "Browserbase",
-		status: "available",
-		package: "@agentos-software/browserbase",
-		description:
-			"The Browserbase `browse` CLI: let agents browse the web with a cloud browser, no sandbox required.",
-		types: ["software"],
-		icon: "Globe",
-		beta: true,
-	},
-	{
-		slug: "coreutils",
-		title: "Coreutils",
-		status: "available",
-		package: "@agentos-software/coreutils",
-		description:
-			"sh, cat, ls, cp, mv, rm, sort, and 80+ essential POSIX commands.",
-		types: ["software"],
-	},
-	{
-		slug: "sed",
-		title: "sed",
-		status: "available",
-		package: "@agentos-software/sed",
-		description: "GNU stream editor for text transformation.",
-		types: ["software"],
-	},
-	{
-		slug: "grep",
-		title: "grep",
-		status: "available",
-		package: "@agentos-software/grep",
-		description: "GNU grep pattern matching (grep, egrep, fgrep).",
-		types: ["software"],
-	},
-	{
-		slug: "gawk",
-		title: "gawk",
-		status: "available",
-		package: "@agentos-software/gawk",
-		description: "GNU awk text processing and data extraction.",
-		types: ["software"],
-	},
-	{
-		slug: "findutils",
-		title: "findutils",
-		status: "available",
-		package: "@agentos-software/findutils",
-		description: "GNU find and xargs for file searching and batch execution.",
-		types: ["software"],
-	},
-	{
-		slug: "diffutils",
-		title: "diffutils",
-		status: "available",
-		package: "@agentos-software/diffutils",
-		description: "GNU diff for comparing files.",
-		types: ["software"],
-	},
-	{
-		slug: "tar",
-		title: "tar",
-		status: "available",
-		package: "@agentos-software/tar",
-		description: "GNU tar archiver.",
-		types: ["software"],
-	},
-	{
-		slug: "gzip",
-		title: "gzip",
-		status: "available",
-		package: "@agentos-software/gzip",
-		description: "GNU gzip compression (gzip, gunzip, zcat).",
-		types: ["software"],
-	},
-	{
-		slug: "zip",
-		title: "zip",
-		status: "available",
-		package: "@agentos-software/zip",
-		description: "Create zip archives.",
-		types: ["software"],
-	},
-	{
-		slug: "unzip",
-		title: "unzip",
-		status: "available",
-		package: "@agentos-software/unzip",
-		description: "Extract zip archives.",
-		types: ["software"],
-	},
-	{
-		slug: "jq",
-		title: "jq",
-		status: "available",
-		package: "@agentos-software/jq",
-		description: "Lightweight JSON processor.",
-		types: ["software"],
-	},
-	{
-		slug: "yq",
-		title: "yq",
-		status: "available",
-		package: "@agentos-software/yq",
-		description: "YAML/JSON processor.",
-		types: ["software"],
-	},
-	{
-		slug: "ripgrep",
-		title: "ripgrep",
-		status: "available",
-		package: "@agentos-software/ripgrep",
-		description: "Fast recursive search (rg).",
-		types: ["software"],
-		featured: true,
-	},
-	{
-		slug: "fd",
-		title: "fd",
-		status: "available",
-		package: "@agentos-software/fd",
-		description: "Fast file finder.",
-		types: ["software"],
-	},
-	{
-		slug: "tree",
-		title: "tree",
-		status: "available",
-		package: "@agentos-software/tree",
-		description: "Display directory structure as a tree.",
-		types: ["software"],
-	},
-	{
-		slug: "file",
-		title: "file",
-		status: "available",
-		package: "@agentos-software/file",
-		description: "Detect file types.",
-		types: ["software"],
-	},
-	{
-		slug: "codex-wasm",
-		title: "Codex CLI",
-		status: "available",
-		package: "@agentos-software/codex",
-		description: "OpenAI Codex CLI integration.",
-		types: ["software"],
+		icon: "Wrench",
 	},
 
 	// File Systems
@@ -386,7 +221,11 @@ import pi from "@agentos-software/pi";
 const vm = agentOS({
   software: [pi],
   mounts: [
-    { path: "/home/agentos/scratch", plugin: { id: "memory", config: {} } },
+    // Ephemeral scratch space for large intermediate artifacts (build
+    // output, downloads, caches). Lives in memory only: it never touches
+    // the VM's persisted filesystem, so it stays out of snapshots and is
+    // discarded when the VM is disposed.
+    { path: "/tmp/scratch", plugin: { id: "memory", config: {} } },
   ],
 });
 
@@ -402,17 +241,8 @@ export const registry = setup({ use: { vm } });`,
 			"Mount a sandbox filesystem and expose process management tools. Works with any Sandbox Agent provider.",
 		types: ["tool", "file-system"],
 		icon: "Monitor",
+		docsHref: "/docs/sandbox",
 	},
-	{
-		slug: "browserbase",
-		title: "Browserbase",
-		status: "coming-soon",
-		description:
-			"Cloud browser infrastructure for web scraping, testing, and automation tasks.",
-		types: ["tool"],
-		image: "/images/registry/browserbase.svg",
-	},
-
 	// Sandbox Mounting
 	{
 		slug: "local",
@@ -468,8 +298,18 @@ export const registry = setup({ use: { vm } });`,
 			"Run sandboxes on Modal's serverless cloud infrastructure.",
 		beta: true,
 		types: ["sandbox-extension"],
-		featured: true,
 		image: "/images/registry/modal.svg",
+	},
+	{
+		slug: "cloudflare",
+		title: "Cloudflare",
+		status: "available",
+		package: "sandbox-agent",
+		description:
+			"Run sandboxes on Cloudflare's global network with Sandbox SDK containers.",
+		beta: true,
+		types: ["sandbox-extension"],
+		image: "/images/registry/cloudflare.svg",
 	},
 	{
 		slug: "vercel",
@@ -505,3 +345,35 @@ export const registry = setup({ use: { vm } });`,
 		image: "/images/registry/sprites.svg",
 	},
 ];
+
+// Deploy targets come from the shared data module (also rendered by the docs
+// <DeployTargets /> component). Their cards link straight to the external
+// deployment guides; the "deploy-" slug prefix avoids colliding with
+// same-named sandbox providers (e.g. vercel).
+const deployRegistry: RegistryEntry[] = DEPLOY_TARGETS.map((target) => ({
+	slug: `deploy-${target.slug}`,
+	title: target.title,
+	status: "external",
+	href: target.href,
+	description: target.description,
+	types: ["deploy"],
+	image: target.image,
+}));
+
+export const registry: RegistryEntry[] = [
+	...generatedRegistry,
+	...curatedRegistry,
+	...deployRegistry,
+];
+
+// A generated slug colliding with a curated one would silently shadow a
+// detail page; fail the build instead.
+{
+	const seen = new Set<string>();
+	for (const entry of registry) {
+		if (seen.has(entry.slug)) {
+			throw new Error(`registry: duplicate slug "${entry.slug}"`);
+		}
+		seen.add(entry.slug);
+	}
+}

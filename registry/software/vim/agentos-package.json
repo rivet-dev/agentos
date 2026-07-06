@@ -14,5 +14,11 @@
 				"target": "/usr/local/share/vim/vim92"
 			}
 		]
+	},
+	"registry": {
+		"title": "vim",
+		"description": "Vim text editor with bundled runtime.",
+		"priority": 65,
+		"image": "/images/registry/vim.svg"
 	}
 }

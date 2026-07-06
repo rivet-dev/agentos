@@ -1,0 +1,388 @@
+{
+	"entries": [
+		{
+			"slug": "pi",
+			"title": "PI",
+			"description": "Run the PI coding agent with lightweight, fast execution.",
+			"types": [
+				"agent"
+			],
+			"priority": 100,
+			"package": "@agentos-software/pi",
+			"status": "available",
+			"image": "/images/registry/pi.svg",
+			"docsHref": "/docs/agents/pi",
+			"agentId": "pi"
+		},
+		{
+			"slug": "claude-code",
+			"title": "Claude Code",
+			"description": "Run Claude Code as an agentOS agent with full tool access, file editing, and shell execution.",
+			"types": [
+				"agent"
+			],
+			"priority": 90,
+			"package": "@agentos-software/claude-code",
+			"status": "docs",
+			"beta": true,
+			"image": "/images/registry/claude-code.svg",
+			"docsHref": "/docs/agents/claude",
+			"agentId": "claude"
+		},
+		{
+			"slug": "codex",
+			"title": "Codex",
+			"description": "Run OpenAI's Codex coding agent inside agentOS with programmatic API access.",
+			"types": [
+				"agent"
+			],
+			"priority": 80,
+			"package": "@agentos-software/codex",
+			"status": "docs",
+			"beta": true,
+			"image": "/images/registry/codex.svg",
+			"docsHref": "/docs/agents/codex",
+			"agentId": "codex"
+		},
+		{
+			"slug": "opencode",
+			"title": "OpenCode",
+			"description": "Run OpenCode, an open-source coding agent, inside agentOS.",
+			"types": [
+				"agent"
+			],
+			"priority": 70,
+			"package": "@agentos-software/opencode",
+			"status": "docs",
+			"image": "/images/registry/opencode.svg",
+			"docsHref": "/docs/agents/opencode",
+			"agentId": "opencode"
+		},
+		{
+			"slug": "browserbase",
+			"title": "Browserbase",
+			"description": "The Browserbase `browse` CLI: let agents browse the web with a cloud browser, no sandbox required.",
+			"types": [
+				"browser"
+			],
+			"priority": 0,
+			"package": "@agentos-software/browserbase",
+			"status": "available",
+			"beta": true,
+			"image": "/images/registry/browserbase.svg"
+		},
+		{
+			"slug": "build-essential",
+			"title": "Build Essential",
+			"description": "Meta-package: common + git + curl.",
+			"types": [
+				"software"
+			],
+			"priority": 100,
+			"package": "@agentos-software/build-essential",
+			"status": "available"
+		},
+		{
+			"slug": "common",
+			"title": "Common",
+			"description": "Meta-package: coreutils + sed + grep + gawk + findutils + diffutils + tar + gzip.",
+			"types": [
+				"software"
+			],
+			"priority": 95,
+			"package": "@agentos-software/common",
+			"status": "available"
+		},
+		{
+			"slug": "git",
+			"title": "git",
+			"description": "Git version control (clone, commit, push, pull).",
+			"types": [
+				"software"
+			],
+			"priority": 90,
+			"package": "@agentos-software/git",
+			"status": "available",
+			"image": "/images/registry/git.svg"
+		},
+		{
+			"slug": "ripgrep",
+			"title": "ripgrep",
+			"description": "Fast recursive search (rg).",
+			"types": [
+				"software"
+			],
+			"priority": 85,
+			"package": "@agentos-software/ripgrep",
+			"status": "available"
+		},
+		{
+			"slug": "jq",
+			"title": "jq",
+			"description": "Lightweight JSON processor.",
+			"types": [
+				"software"
+			],
+			"priority": 80,
+			"package": "@agentos-software/jq",
+			"status": "available",
+			"image": "/images/registry/jq.svg"
+		},
+		{
+			"slug": "sqlite3",
+			"title": "SQLite3",
+			"description": "SQLite database command-line interface.",
+			"types": [
+				"software"
+			],
+			"priority": 75,
+			"package": "@agentos-software/sqlite3",
+			"status": "available",
+			"image": "/images/registry/sqlite3.svg"
+		},
+		{
+			"slug": "duckdb",
+			"title": "DuckDB",
+			"description": "In-process analytics database CLI.",
+			"types": [
+				"software"
+			],
+			"priority": 70,
+			"package": "@agentos-software/duckdb",
+			"status": "available",
+			"image": "/images/registry/duckdb.svg"
+		},
+		{
+			"slug": "vim",
+			"title": "vim",
+			"description": "Vim text editor with bundled runtime.",
+			"types": [
+				"software"
+			],
+			"priority": 65,
+			"package": "@agentos-software/vim",
+			"status": "available",
+			"image": "/images/registry/vim.svg"
+		},
+		{
+			"slug": "tar",
+			"title": "tar",
+			"description": "GNU tar archiver.",
+			"types": [
+				"software"
+			],
+			"priority": 60,
+			"package": "@agentos-software/tar",
+			"status": "available",
+			"image": "/images/registry/tar.svg"
+		},
+		{
+			"slug": "wget",
+			"title": "wget",
+			"description": "GNU wget file downloader.",
+			"types": [
+				"software"
+			],
+			"priority": 55,
+			"package": "@agentos-software/wget",
+			"status": "available",
+			"image": "/images/registry/wget.svg"
+		},
+		{
+			"slug": "curl",
+			"title": "curl",
+			"description": "HTTP(S) client for fetching URLs and APIs.",
+			"types": [
+				"software"
+			],
+			"priority": 50,
+			"package": "@agentos-software/curl",
+			"status": "available",
+			"image": "/images/registry/curl.svg"
+		},
+		{
+			"slug": "coreutils",
+			"title": "Coreutils",
+			"description": "sh, cat, ls, cp, mv, rm, sort, and 80+ essential POSIX commands.",
+			"types": [
+				"software"
+			],
+			"priority": 45,
+			"package": "@agentos-software/coreutils",
+			"status": "available",
+			"image": "/images/registry/coreutils.svg"
+		},
+		{
+			"slug": "grep",
+			"title": "grep",
+			"description": "GNU grep pattern matching (grep, egrep, fgrep).",
+			"types": [
+				"software"
+			],
+			"priority": 40,
+			"package": "@agentos-software/grep",
+			"status": "available",
+			"image": "/images/registry/grep.svg"
+		},
+		{
+			"slug": "sed",
+			"title": "sed",
+			"description": "GNU stream editor for text transformation.",
+			"types": [
+				"software"
+			],
+			"priority": 35,
+			"package": "@agentos-software/sed",
+			"status": "available",
+			"image": "/images/registry/sed.svg"
+		},
+		{
+			"slug": "fd",
+			"title": "fd",
+			"description": "Fast file finder.",
+			"types": [
+				"software"
+			],
+			"priority": 30,
+			"package": "@agentos-software/fd",
+			"status": "available"
+		},
+		{
+			"slug": "tree",
+			"title": "tree",
+			"description": "Display directory structure as a tree.",
+			"types": [
+				"software"
+			],
+			"priority": 25,
+			"package": "@agentos-software/tree",
+			"status": "available"
+		},
+		{
+			"slug": "gawk",
+			"title": "gawk",
+			"description": "GNU awk text processing and data extraction.",
+			"types": [
+				"software"
+			],
+			"priority": 20,
+			"package": "@agentos-software/gawk",
+			"status": "available",
+			"image": "/images/registry/gawk.svg"
+		},
+		{
+			"slug": "findutils",
+			"title": "findutils",
+			"description": "GNU find and xargs for file searching and batch execution.",
+			"types": [
+				"software"
+			],
+			"priority": 15,
+			"package": "@agentos-software/findutils",
+			"status": "available",
+			"image": "/images/registry/findutils.svg"
+		},
+		{
+			"slug": "zip",
+			"title": "zip",
+			"description": "Create zip archives.",
+			"types": [
+				"software"
+			],
+			"priority": 12,
+			"package": "@agentos-software/zip",
+			"status": "available"
+		},
+		{
+			"slug": "unzip",
+			"title": "unzip",
+			"description": "Extract zip archives.",
+			"types": [
+				"software"
+			],
+			"priority": 10,
+			"package": "@agentos-software/unzip",
+			"status": "available"
+		},
+		{
+			"slug": "gzip",
+			"title": "gzip",
+			"description": "GNU gzip compression (gzip, gunzip, zcat).",
+			"types": [
+				"software"
+			],
+			"priority": 8,
+			"package": "@agentos-software/gzip",
+			"status": "available",
+			"image": "/images/registry/gzip.svg"
+		},
+		{
+			"slug": "diffutils",
+			"title": "diffutils",
+			"description": "GNU diff for comparing files.",
+			"types": [
+				"software"
+			],
+			"priority": 6,
+			"package": "@agentos-software/diffutils",
+			"status": "available",
+			"image": "/images/registry/diffutils.svg"
+		},
+		{
+			"slug": "yq",
+			"title": "yq",
+			"description": "YAML/JSON processor.",
+			"types": [
+				"software"
+			],
+			"priority": 4,
+			"package": "@agentos-software/yq",
+			"status": "available"
+		},
+		{
+			"slug": "file",
+			"title": "file",
+			"description": "Detect file types.",
+			"types": [
+				"software"
+			],
+			"priority": 2,
+			"package": "@agentos-software/file",
+			"status": "available"
+		},
+		{
+			"slug": "codex-cli",
+			"title": "Codex CLI",
+			"description": "OpenAI Codex CLI integration.",
+			"types": [
+				"software"
+			],
+			"priority": 0,
+			"package": "@agentos-software/codex-cli",
+			"status": "available",
+			"image": "/images/registry/codex.svg"
+		},
+		{
+			"slug": "http-get",
+			"title": "http-get",
+			"description": "Minimal HTTP GET fetch helper.",
+			"types": [
+				"software"
+			],
+			"priority": 0,
+			"package": "@agentos-software/http-get",
+			"status": "available"
+		},
+		{
+			"slug": "vix",
+			"title": "vix",
+			"description": "Lightweight vi-style text editor.",
+			"types": [
+				"software"
+			],
+			"priority": 0,
+			"package": "@agentos-software/vix",
+			"status": "available"
+		}
+	]
+}

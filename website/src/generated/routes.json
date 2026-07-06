@@ -24,6 +24,10 @@
       "title": "Bindings",
       "description": "Expose custom host functions to agents as CLI commands inside the VM."
     },
+    "/docs/docs/browser": {
+      "title": "Browser",
+      "description": "Let agents read and search the web from an agentOS VM using Browserbase's cloud browser through the browse CLI — no local browser or sandbox required."
+    },
     "/docs/docs/core": {
       "title": "Core Package",
       "description": "Use @rivet-dev/agentos-core standalone for direct VM control without the Rivet Actor runtime."
@@ -106,7 +110,7 @@
     },
     "/docs/docs/resource-limits": {
       "title": "Resource Limits",
-      "description": "Cap per-VM processes, file descriptors, sockets, and filesystem bytes so guest code can never exhaust the host."
+      "description": "Cap per-VM resources, JavaScript CPU/wall-clock time, Python execution, and WASM runtime work so guest code can never exhaust the host."
     },
     "/docs/docs/sandbox": {
       "title": "Sandbox Mounting",
@@ -206,7 +210,11 @@
     },
     "/docs/docs/custom-software/definition": {
       "title": "Software Definition",
-      "description": "The software-package definition for custom commands and agents in an agentOS VM: a package is a directory, declared with defineSoftware({ packageDir })."
+      "description": "The software-package definition for custom commands and agents in an agentOS VM: a package is a packed .aospkg (or a package directory), declared with defineSoftware({ packagePath })."
+    },
+    "/docs/docs/custom-software/publishing": {
+      "title": "Publishing Packages",
+      "description": "Build, publish, and consume agentOS packages — locally, from npm, or from your own repo."
     }
   }
 }

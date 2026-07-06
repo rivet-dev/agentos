@@ -5,5 +5,11 @@
 	"aliases": {
 		"egrep": "grep",
 		"fgrep": "grep"
+	},
+	"registry": {
+		"title": "grep",
+		"description": "GNU grep pattern matching (grep, egrep, fgrep).",
+		"priority": 40,
+		"image": "/images/registry/grep.svg"
 	}
 }

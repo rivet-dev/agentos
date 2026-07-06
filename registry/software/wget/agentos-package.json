@@ -1,5 +1,11 @@
 {
 	"commands": [
 		"wget"
-	]
+	],
+	"registry": {
+		"title": "wget",
+		"description": "GNU wget file downloader.",
+		"priority": 55,
+		"image": "/images/registry/wget.svg"
+	}
 }

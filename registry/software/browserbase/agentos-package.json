@@ -1,3 +1,12 @@
 {
-  "name": "browserbase"
+  "name": "browserbase",
+  "registry": {
+    "title": "Browserbase",
+    "description": "The Browserbase `browse` CLI: let agents browse the web with a cloud browser, no sandbox required.",
+    "beta": true,
+    "types": [
+      "browser"
+    ],
+    "image": "/images/registry/browserbase.svg"
+  }
 }

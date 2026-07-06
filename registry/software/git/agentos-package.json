@@ -5,5 +5,11 @@
 	"aliases": {
 		"git-remote-http": "git",
 		"git-remote-https": "git"
+	},
+	"registry": {
+		"title": "git",
+		"description": "Git version control (clone, commit, push, pull).",
+		"priority": 90,
+		"image": "/images/registry/git.svg"
 	}
 }

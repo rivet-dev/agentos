@@ -116,7 +116,7 @@ export const siteConfig = {
 						{ title: "Processes & Shell", href: "/docs/processes", icon: faTerminal },
 						{ title: "Networking & Previews", href: "/docs/networking", icon: faGlobe },
 						{ title: "Cron Jobs", href: "/docs/cron", icon: faClock },
-						{ title: "Browser Support", href: "/docs/browser", badge: "Beta", icon: faWindowMaximize },
+						{ title: "Browser", href: "/docs/browser", badge: "Beta", icon: faWindowMaximize },
 						{ title: "Sandbox Mounting", href: "/docs/sandbox", badge: "Beta", icon: faHardDrive },
 						{ title: "JavaScript Runtime", href: "/docs/js-runtime", icon: faNodeJs },
 						{ title: "Permissions", href: "/docs/permissions", icon: faKey },

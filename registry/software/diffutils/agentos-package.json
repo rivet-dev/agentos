@@ -1,5 +1,11 @@
 {
 	"commands": [
 		"diff"
-	]
+	],
+	"registry": {
+		"title": "diffutils",
+		"description": "GNU diff for comparing files.",
+		"priority": 6,
+		"image": "/images/registry/diffutils.svg"
+	}
 }

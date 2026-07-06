@@ -1,5 +1,10 @@
 {
 	"commands": [
 		"fd"
-	]
+	],
+	"registry": {
+		"title": "fd",
+		"description": "Fast file finder.",
+		"priority": 30
+	}
 }

@@ -12,6 +12,7 @@
     "@rivet-dev/agentos": "workspace:*",
     "rivetkit": "catalog:rivetkit",
     "@agentos-software/claude-code": "workspace:*",
+    "@agentos-software/pi": "workspace:*",
     "@agentos-software/browserbase": "workspace:*"
   },
   "devDependencies": {

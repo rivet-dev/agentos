@@ -1,43 +1,61 @@
 ---
-title: "Browser Support"
+title: "Browser"
 description: "Let agents read and search the web from an agentOS VM using Browserbase's cloud browser through the browse CLI — no local browser or sandbox required."
 skill: true
 ---
 
-Agents can read and search the web directly from an agentOS VM using [Browserbase](https://www.browserbase.com). The Browserbase `browse` CLI reaches the web through Browserbase's **cloud** — the page is loaded by a real browser in Browserbase's infrastructure and returned to the VM as clean content. The VM itself never runs a browser: no display server, no sandbox, no native browser binaries. The CLI is installed as the `browse` command inside the VM, and agents use it the same way they use any other command — by shelling out.
+Agents can read and search the web with the [Browserbase](https://www.browserbase.com) `browse` CLI. The page loads in a real browser in Browserbase's cloud and comes back as clean content — the VM never runs a browser.
 
-This is the lightweight counterpart to [Sandbox Mounting](/docs/sandbox). Use `browse` when the agent needs to **pull page content, search, or manage cloud browser sessions** — it stays entirely within the default VM. Reach for a sandbox when the agent needs **interactive, step-by-step control of a live browser** (clicking, typing, snapshotting a page across many steps); see [Interactive browsing](#interactive-browsing) below.
+## Setup
 
-## How it works
+<Steps>
 
-- **The browser runs in the cloud.** `browse cloud fetch` and `browse cloud search` call Browserbase's cloud APIs over HTTPS. The page renders in Browserbase; the VM only makes an HTTPS request, so it works within the standard VM runtime.
-- **It is exposed as the `browse` command.** Installing `@agentos-software/browserbase` puts `browse` on `$PATH`, alongside the shell utilities agents already use.
-- **Credentials come from the environment.** `browse` reads `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID` from the command environment, which you pass through the session.
+1. **Create a Browserbase account**
 
-## Getting started
+   [Sign up](https://www.browserbase.com/sign-up) and grab your API key and project id from the [dashboard](https://www.browserbase.com/settings):
 
-Install agentOS, the Claude Code agent, and the Browserbase package:
+   ```bash
+   export BROWSERBASE_API_KEY=bb_...
+   export BROWSERBASE_PROJECT_ID=...
+   ```
 
-```bash
-npm install @rivet-dev/agentos @agentos-software/claude-code @agentos-software/browserbase
-```
+2. **Install**
 
-Add the `browse` CLI to the VM's `software` on the server, then, from a client, start an agent session and pass your Browserbase credentials into its environment. Get an API key and project id from the [Browserbase dashboard](https://www.browserbase.com/settings).
+   ```bash
+   npm install @rivet-dev/agentos @agentos-software/pi @agentos-software/browserbase
+   ```
 
-## Usage
+3. **Add `browse` to the VM**
 
-The server installs `browse` into the VM. The client shows both ways to use it: first driving `browse cloud fetch` yourself through the VM's process API (`browse` returns JSON with the page rendered as markdown), then letting a Claude Code agent use `browse` on its own. Either way, every command inherits the Browserbase credentials from the environment.
+   <CodeSnippet file="examples/browserbase/server-minimal.ts" />
 
-For the agent, the server mounts a local `skills/` folder into Claude Code's skills directory (`~/.claude/skills`). It holds the [`browse` CLI skill](https://github.com/browserbase/stagehand/tree/main/packages/cli) that Browserbase bundles (the one `browse skills install` installs), copied verbatim. The agent discovers it and reaches for `browse` on its own, so the prompt never mentions it.
+   <Accordion title="Optional: install the browse skill">
+     Mount the [`browse` CLI skill](https://github.com/browserbase/stagehand/tree/main/packages/cli) into the agent's skills directory so it reaches for `browse` unprompted ([copy the skill folder from the example](https://github.com/rivet-dev/agentos/tree/main/examples/browserbase/skills)):
 
-<CodeGroup>
-<CodeSnippet file="examples/browserbase/client.ts" />
-<CodeSnippet file="examples/browserbase/server.ts" />
-</CodeGroup>
+     <Tabs>
+     <Tab title="Pi">
+     <CodeSnippet file="examples/browserbase/server-skills-pi.ts" />
+     </Tab>
+     <Tab title="Claude Code">
+     <CodeSnippet file="examples/browserbase/server.ts" />
+     </Tab>
+     </Tabs>
+   </Accordion>
+
+4. **Use it**
+
+   <Tabs>
+   <Tab title="Agent uses browse">
+   <CodeSnippet file="examples/browserbase/client-agent.ts" />
+   </Tab>
+   <Tab title="Drive browse directly">
+   <CodeSnippet file="examples/browserbase/client-direct.ts" />
+   </Tab>
+   </Tabs>
+
+</Steps>
 
 ## Command reference
-
-The `browse cloud` commands run entirely over HTTPS and work inside the VM:
 
 ```bash
 browse cloud fetch https://example.com   # retrieve a page as markdown
@@ -46,13 +64,6 @@ browse cloud sessions list               # list cloud browser sessions
 browse cloud projects list               # list Browserbase projects
 ```
 
-## Interactive browsing
-
-`browse` also has an interactive driver mode — `browse open`, `browse snapshot`, `browse click`, `browse fill`, and friends — that drives a live browser session step by step. That mode runs a local **driver daemon** to hold the session open between commands, which the in-VM runtime does not host. For interactive, multi-step browser automation, run `browse` (or Playwright/Puppeteer) inside a full sandbox via [Sandbox Mounting](/docs/sandbox) instead.
-
-## Advanced
-
-`browse` is Browserbase's full platform CLI — beyond fetching and searching it also manages cloud sessions, contexts, extensions, serverless functions, and reusable skills. For the complete command set, configuration, and platform features, see the official documentation:
-
-- [Browserbase `browse` CLI docs](https://docs.browserbase.com/integrations/skills/browse-cli)
-- [Browserbase documentation](https://docs.browserbase.com)
+<Note>
+The [interactive driver mode](https://docs.browserbase.com/integrations/skills/browse-cli) (`browse open`, `browse click`, …) is not supported inside the VM yet ([#1631](https://github.com/rivet-dev/agentos/issues/1631)). For interactive automation, run `browse` inside a sandbox via [Sandbox Mounting](/docs/sandbox).
+</Note>

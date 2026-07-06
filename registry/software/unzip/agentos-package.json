@@ -1,5 +1,10 @@
 {
 	"commands": [
 		"unzip"
-	]
+	],
+	"registry": {
+		"title": "unzip",
+		"description": "Extract zip archives.",
+		"priority": 10
+	}
 }

@@ -1,5 +1,10 @@
 {
 	"commands": [
 		"tree"
-	]
+	],
+	"registry": {
+		"title": "tree",
+		"description": "Display directory structure as a tree.",
+		"priority": 25
+	}
 }

@@ -21,5 +21,14 @@
       "SHELL": "/bin/sh",
       "USE_BUILTIN_RIPGREP": "0"
     }
+  },
+  "registry": {
+    "slug": "claude-code",
+    "title": "Claude Code",
+    "description": "Run Claude Code as an agentOS agent with full tool access, file editing, and shell execution.",
+    "beta": true,
+    "docsHref": "/docs/agents/claude",
+    "image": "/images/registry/claude-code.svg",
+    "priority": 90
   }
 }
