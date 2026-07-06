@@ -47,6 +47,10 @@ const DEP_FIELDS = [
  * under a top-level `catalog:` key until the next non-indented key.
  */
 async function readPnpmCatalog(repoRoot: string): Promise<Map<string, string>> {
+	// Flattens the default `catalog:` block AND every named `catalogs:<name>:`
+	// block into one dep -> version map. Specs are `catalog:` (default) or
+	// `catalog:<name>` (named); dep names are unique across the catalogs this
+	// repo defines, so a flat map resolves both forms.
 	const map = new Map<string, string>();
 	let text: string;
 	try {
@@ -55,18 +59,25 @@ async function readPnpmCatalog(repoRoot: string): Promise<Map<string, string>> {
 		return map;
 	}
 	const lines = text.split("\n");
-	let inCatalog = false;
+	// depth 1 entries under `catalog:`; depth 2 under `catalogs:` -> `<name>:`.
+	let mode: "none" | "catalog" | "catalogs" = "none";
 	for (const line of lines) {
 		if (/^catalog:\s*$/.test(line)) {
-			inCatalog = true;
+			mode = "catalog";
 			continue;
 		}
-		if (inCatalog) {
-			// A non-indented, non-comment, non-blank line ends the block.
-			if (/^\S/.test(line) && !line.startsWith("#")) break;
-			const m = line.match(/^\s+'?([^':\s]+)'?\s*:\s*'?([^'\s#]+)'?/);
-			if (m) map.set(m[1], m[2]);
+		if (/^catalogs:\s*$/.test(line)) {
+			mode = "catalogs";
+			continue;
 		}
+		if (mode === "none") continue;
+		// A non-indented, non-comment, non-blank line ends the block.
+		if (/^\S/.test(line) && !line.startsWith("#")) {
+			mode = "none";
+			continue;
+		}
+		const m = line.match(/^\s+'?([^':\s]+)'?\s*:\s*'?([^'\s#]+)'?\s*$/);
+		if (m) map.set(m[1], m[2]);
 	}
 	return map;
 }
@@ -175,7 +186,14 @@ export async function bumpPackageJsons(
 					if (typeof spec !== "string") continue;
 					if (spec === "catalog:" || spec.startsWith("catalog:")) {
 						const resolved = catalog.get(dep);
-						if (resolved) deps[dep] = resolved;
+						if (!resolved) {
+							// A `catalog:` spec npm cannot install must never
+							// reach a published manifest — fail the publish.
+							throw new Error(
+								`cannot resolve catalog spec "${spec}" for dep "${dep}" in ${pkg.name}: not found in pnpm-workspace.yaml catalog(s)`,
+							);
+						}
+						deps[dep] = resolved;
 						continue;
 					}
 					if (!spec.startsWith("workspace:")) continue;
