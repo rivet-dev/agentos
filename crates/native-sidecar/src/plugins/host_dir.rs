@@ -22,6 +22,7 @@ use agentos_kernel::mount_table::{
     MountedFileSystem, MountedVirtualFileSystem, ReadOnlyFileSystem,
 };
 use agentos_kernel::resource_accounting::DEFAULT_MAX_PREAD_BYTES;
+use vfs::posix::TarFileSystem;
 use agentos_kernel::vfs::{
     normalize_path, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
     VirtualTimeSpec, VirtualUtimeSpec,
@@ -1020,7 +1021,50 @@ impl VirtualFileSystem for HostDirFilesystem {
 struct HostDirModuleMount {
     /// Normalized guest mount point, e.g. `/root/node_modules`.
     guest_prefix: String,
-    filesystem: HostDirFilesystem,
+    filesystem: ModuleMountBackend,
+}
+
+/// Backing filesystem for one module-reader mount: an anchored host dir
+/// (`host_dir`/`module_access` mounts) or a packed `.aospkg` tar
+/// (`agentos_packages` package-version leaves). Both are read-only and safe to
+/// use off the service loop — the tar reader serves mmap-backed byte ranges
+/// from the shared identity-keyed archive cache and never touches the kernel.
+#[allow(dead_code)]
+#[derive(Clone)]
+enum ModuleMountBackend {
+    Host(HostDirFilesystem),
+    Tar(TarFileSystem),
+}
+
+#[allow(dead_code)]
+impl ModuleMountBackend {
+    fn realpath(&self, path: &str) -> VfsResult<String> {
+        match self {
+            Self::Host(fs) => fs.realpath(path),
+            Self::Tar(fs) => VirtualFileSystem::realpath(fs, path),
+        }
+    }
+
+    fn read_file(&mut self, path: &str) -> VfsResult<Vec<u8>> {
+        match self {
+            Self::Host(fs) => fs.read_file(path),
+            Self::Tar(fs) => VirtualFileSystem::read_file(fs, path),
+        }
+    }
+
+    fn stat(&mut self, path: &str) -> VfsResult<VirtualStat> {
+        match self {
+            Self::Host(fs) => fs.stat(path),
+            Self::Tar(fs) => VirtualFileSystem::stat(fs, path),
+        }
+    }
+
+    fn exists(&self, path: &str) -> bool {
+        match self {
+            Self::Host(fs) => fs.exists(path),
+            Self::Tar(fs) => VirtualFileSystem::exists(fs, path),
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -1098,10 +1142,56 @@ impl HostDirModuleReader {
                 .ok()?;
                 Some(HostDirModuleMount {
                     guest_prefix: normalize_path(guest_path.as_ref()),
-                    filesystem,
+                    filesystem: ModuleMountBackend::Host(filesystem),
                 })
             })
             .collect::<Vec<_>>();
+        if entries.is_empty() {
+            return None;
+        }
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.guest_prefix.len()));
+        entries.dedup_by(|left, right| left.guest_prefix == right.guest_prefix);
+        Some(Self { mounts: entries })
+    }
+
+    /// Build a reader from host-dir pairs plus packed package-version tar
+    /// mounts (`(guest_path, aospkg_path, tar_root)`), so module resolution
+    /// reads packed `node_modules` content directly from the `.aospkg` mount
+    /// index off the service loop. Unopenable mounts are skipped.
+    pub(crate) fn from_mounts_and_package_tars<I, G, H>(
+        mounts: I,
+        package_tars: Vec<(String, String, String)>,
+    ) -> Option<Self>
+    where
+        I: IntoIterator<Item = (G, H)>,
+        G: AsRef<str>,
+        H: AsRef<Path>,
+    {
+        let mut entries = mounts
+            .into_iter()
+            .filter_map(|(guest_path, host_path)| {
+                let filesystem = HostDirFilesystem::new_with_read_limit(
+                    host_path.as_ref(),
+                    Some(MAX_HOST_DIR_READ_BYTES),
+                )
+                .ok()?;
+                Some(HostDirModuleMount {
+                    guest_prefix: normalize_path(guest_path.as_ref()),
+                    filesystem: ModuleMountBackend::Host(filesystem),
+                })
+            })
+            .collect::<Vec<_>>();
+        entries.extend(
+            package_tars
+                .into_iter()
+                .filter_map(|(guest_path, tar_path, root)| {
+                    let filesystem = TarFileSystem::open_at(&tar_path, &root).ok()?;
+                    Some(HostDirModuleMount {
+                        guest_prefix: normalize_path(&guest_path),
+                        filesystem: ModuleMountBackend::Tar(filesystem),
+                    })
+                }),
+        );
         if entries.is_empty() {
             return None;
         }
@@ -1286,5 +1376,49 @@ fn virtual_dirname(path: &str) -> String {
     match normalized.rsplit_once('/') {
         Some((head, _)) if !head.is_empty() => head.to_owned(),
         _ => String::from("/"),
+    }
+}
+
+#[cfg(test)]
+mod tar_module_reader_tests {
+    use super::*;
+    use agentos_execution::{ModuleResolveMode, ModuleResolver};
+
+    #[test]
+    fn tar_reader_resolves_packed_node_modules() {
+        let aospkg = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../registry/agent/pi/dist/package.aospkg");
+        if !aospkg.is_file() {
+            eprintln!("skip: pi aospkg not built");
+            return;
+        }
+        let mut reader = HostDirModuleReader::from_mounts_and_package_tars(
+            Vec::<(String, std::path::PathBuf)>::new(),
+            vec![(
+                String::from("/opt/agentos/pkgs/pi/0.2.1"),
+                aospkg.to_string_lossy().into_owned(),
+                String::from("/"),
+            )],
+        )
+        .expect("reader");
+        let probe = "/opt/agentos/pkgs/pi/0.2.1/node_modules/@anthropic-ai/sdk/package.json";
+        assert!(reader.path_exists(probe), "packed package.json must exist");
+        assert!(reader.read_to_string(probe).is_some(), "packed package.json must read");
+        let mut cache = Default::default();
+        let dyn_reader: &mut dyn ModuleFsReader = &mut reader;
+        let mut resolver = ModuleResolver::new(dyn_reader, &mut cache);
+        let resolved = resolver.resolve_module(
+            "@anthropic-ai/sdk",
+            "/opt/agentos/pkgs/pi/0.2.1/node_modules/@agentos-software/pi/dist/adapter.js",
+            ModuleResolveMode::Require,
+        );
+        assert!(resolved.is_some(), "require-mode resolution from the packed tar");
+        let resolved_import = resolver.resolve_module(
+            "@anthropic-ai/sdk",
+            "/opt/agentos/pkgs/pi/0.2.1/node_modules/@agentos-software/pi/dist/adapter.js",
+            ModuleResolveMode::Import,
+        );
+        assert!(resolved_import.is_some(), "import-mode resolution from the packed tar");
+        assert!(resolved.is_some(), "must resolve @anthropic-ai/sdk from the packed tar");
     }
 }

@@ -866,6 +866,27 @@ impl MountTable {
             .unwrap_or(false)
     }
 
+    /// Resolve a path for a LINK-LEAF operation (lstat/readlink) that must
+    /// follow INTERMEDIATE symlinks but not the final component. When the
+    /// lexical route lands inside a symlink-root leaf mount at a descendant
+    /// path, the component being operated on is not the mount's own symlink —
+    /// resolve the parent across mounts and re-route, keeping the leaf
+    /// unresolved. `relative == "/"` (the symlink itself) keeps the raw route
+    /// so `lstat(<pkg>/current)` still reports the symlink.
+    fn resolve_link_leaf_index(&self, path: &str) -> VfsResult<(usize, String)> {
+        let normalized = normalize_path(path);
+        let raw = self.resolve_index(&normalized)?;
+        if raw.1 == "/" || !self.mount_is_symlink_leaf(raw.0) {
+            return Ok(raw);
+        }
+        let parent = parent_path(&normalized);
+        let leaf = basename(&normalized);
+        match self.realpath(&parent) {
+            Ok(resolved_parent) => self.resolve_index(&join_path(&resolved_parent, &leaf)),
+            Err(_) => Ok(raw),
+        }
+    }
+
     fn resolve_content_index(&self, path: &str) -> VfsResult<(usize, String)> {
         let raw = self.resolve_index(&normalize_path(path))?;
         if !self.mount_is_symlink_leaf(raw.0) {
@@ -964,7 +985,12 @@ impl VirtualFileSystem for MountTable {
 
     fn read_dir(&mut self, path: &str) -> VfsResult<Vec<String>> {
         let normalized = normalize_path(path);
-        let (index, relative_path) = self.resolve_index(&normalized)?;
+        // Directory listings are content ops: a path that descends through a
+        // symlink-root leaf mount (`<pkg>/current -> <version>`) must be
+        // followed into the target mount, exactly like read_file/stat. Child
+        // mounts still merge on the LEXICAL path — mount points attach to the
+        // caller-visible path, not the resolved target.
+        let (index, relative_path) = self.resolve_content_index(&normalized)?;
         let mut entries = self.mounts[index].filesystem.read_dir(&relative_path)?;
         let child_mounts = self.child_mount_basenames(&normalized);
         if child_mounts.is_empty() {
@@ -979,7 +1005,7 @@ impl VirtualFileSystem for MountTable {
 
     fn read_dir_limited(&mut self, path: &str, max_entries: usize) -> VfsResult<Vec<String>> {
         let normalized = normalize_path(path);
-        let (index, relative_path) = self.resolve_index(&normalized)?;
+        let (index, relative_path) = self.resolve_content_index(&normalized)?;
         let mut entries = self.mounts[index]
             .filesystem
             .read_dir_limited(&relative_path, max_entries)?;
@@ -1004,7 +1030,7 @@ impl VirtualFileSystem for MountTable {
 
     fn read_dir_with_types(&mut self, path: &str) -> VfsResult<Vec<VirtualDirEntry>> {
         let normalized = normalize_path(path);
-        let (index, relative_path) = self.resolve_index(&normalized)?;
+        let (index, relative_path) = self.resolve_content_index(&normalized)?;
         let mut entries = self.mounts[index]
             .filesystem
             .read_dir_with_types(&relative_path)?;
@@ -1102,7 +1128,9 @@ impl VirtualFileSystem for MountTable {
     }
 
     fn exists(&self, path: &str) -> bool {
-        self.resolve_index(path)
+        // `exists` follows symlinks like POSIX access(); route through the
+        // content resolver so paths under a symlink-root leaf mount resolve.
+        self.resolve_content_index(path)
             .map(|(index, relative_path)| self.mounts[index].filesystem.exists(&relative_path))
             .unwrap_or(false)
     }
@@ -1224,12 +1252,12 @@ impl VirtualFileSystem for MountTable {
     }
 
     fn read_link(&self, path: &str) -> VfsResult<String> {
-        let (index, relative_path) = self.resolve_index(path)?;
+        let (index, relative_path) = self.resolve_link_leaf_index(path)?;
         self.mounts[index].filesystem.read_link(&relative_path)
     }
 
     fn lstat(&self, path: &str) -> VfsResult<VirtualStat> {
-        let (index, relative_path) = self.resolve_index(path)?;
+        let (index, relative_path) = self.resolve_link_leaf_index(path)?;
         self.mounts[index].filesystem.lstat(&relative_path)
     }
 
