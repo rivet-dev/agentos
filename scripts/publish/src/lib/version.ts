@@ -189,6 +189,14 @@ export async function bumpCargoVersions(
 		/((?:agentos|agent-os)-[a-z0-9-]+ = \{ path = "crates\/[^"]+", version = ")[^"]+(" \})/g,
 		`$1${version}$2`,
 	);
+	// Also bump aliased AgentOS-owned crate deps declared as
+	// `<alias> = { package = "agentos-...", path = "crates/...", version = "..." }`
+	// (e.g. `vfs = { package = "agentos-vfs-core", ... }`), which the pattern
+	// above misses because the line starts with the alias key, not `agentos-`.
+	next = next.replace(
+		/(\{ package = "(?:agentos|agent-os)-[a-z0-9-]+", path = "crates\/[^"]+", version = ")[^"]+(" \})/g,
+		`$1${version}$2`,
+	);
 
 	if (next === cargoToml) {
 		log.info(`Cargo.toml Rust versions already set to ${version}`);

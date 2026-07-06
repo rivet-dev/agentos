@@ -437,6 +437,24 @@ jobs:
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
             --version ${{ needs.context.outputs.version }} \
             --version-only
+      - name: Stage vendored V8 bridge bundles and base filesystem
+        run: |
+          set -euo pipefail
+          # crates/{execution,v8-runtime}/assets/generated is gitignored; the
+          # published crates fall back to the vendored bundle (build-support
+          # copy_vendored_bundle) and panic if it is absent. Stage it here.
+          for crate in execution v8-runtime; do
+            out="crates/${crate}/assets/generated"
+            mkdir -p "$out"
+            node packages/build-tools/scripts/build-v8-bridge.mjs --out-dir "$out"
+          done
+          git add -f crates/execution/assets/generated crates/v8-runtime/assets/generated
+          # The single committed base filesystem lives in the vfs crate; the
+          # kernel and native-sidecar crates vendor a copy for isolated publish
+          # builds (their build.rs falls back to assets/base-filesystem.json).
+          mkdir -p crates/kernel/assets crates/native-sidecar/assets
+          cp crates/vfs/assets/base-filesystem.json crates/kernel/assets/base-filesystem.json
+          cp crates/vfs/assets/base-filesystem.json crates/native-sidecar/assets/base-filesystem.json
       - name: Dry-run crate publish
         if: ${{ needs.context.outputs.trigger != 'release' }}
         run: |
