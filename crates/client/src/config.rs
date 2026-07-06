@@ -170,12 +170,14 @@ pub struct SoftwareInput {
     pub kind: SoftwareKind,
 }
 
-/// A reference to a package directory for the `/opt/agentos` projection. The dir
-/// holds an `agentos-package.json` manifest (name + optional agent block) and the
-/// package payload; the sidecar reads commands/version from it at projection time.
+/// A reference to a package tar for the `/opt/agentos` projection. `dir` remains
+/// accepted for local transition fixtures.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageRef {
-    pub dir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tar: Option<String>,
 }
 
 /// A host-side tool execute callback. Receives the validated JSON input, returns a JSON result or an

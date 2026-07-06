@@ -48,10 +48,9 @@ impl<'ctx, 'host> BrowserAcpHost<'ctx, 'host> {
     }
 
     fn execution_id(&self, process_id: &str) -> Result<String, AcpCoreError> {
-        self.executions
-            .get(process_id)
-            .cloned()
-            .ok_or_else(|| AcpCoreError::InvalidState(format!("unknown agent process {process_id}")))
+        self.executions.get(process_id).cloned().ok_or_else(|| {
+            AcpCoreError::InvalidState(format!("unknown agent process {process_id}"))
+        })
     }
 }
 

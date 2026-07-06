@@ -73,15 +73,13 @@ impl BrowserExtension for BrowserAcpExtension {
             })?
             .to_string();
 
-        let mut executions = self
-            .executions
-            .lock()
-            .map_err(|_| BrowserSidecarError::InvalidState(String::from("ACP executions lock poisoned")))?;
+        let mut executions = self.executions.lock().map_err(|_| {
+            BrowserSidecarError::InvalidState(String::from("ACP executions lock poisoned"))
+        })?;
         let mut host = BrowserAcpHost::new(context, vm_id, &mut executions);
-        let mut core = self
-            .core
-            .lock()
-            .map_err(|_| BrowserSidecarError::InvalidState(String::from("ACP core lock poisoned")))?;
+        let mut core = self.core.lock().map_err(|_| {
+            BrowserSidecarError::InvalidState(String::from("ACP core lock poisoned"))
+        })?;
         // Browser uses the RESUMABLE path (AGENTOS-WEB-ASYNC-AGENTS.md §3.2.1):
         // create_session / session/prompt return AcpPending{processId} and the kernel
         // worker drives them via deliver_agent_output, so the worker never blocks

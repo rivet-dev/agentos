@@ -14,9 +14,9 @@ use std::collections::BTreeMap;
 
 use agentos_protocol::generated::v1::{
     AcpCloseSessionRequest, AcpCreateSessionRequest, AcpDeliverAgentOutputRequest,
-    AcpGetSessionStateRequest, AcpPendingResponse, AcpResumeSessionRequest, AcpRequest, AcpResponse,
-    AcpRuntimeKind, AcpSessionClosedResponse, AcpSessionRequest, AcpSessionResumedResponse,
-    AcpSessionRpcResponse,
+    AcpGetSessionStateRequest, AcpPendingResponse, AcpRequest, AcpResponse,
+    AcpResumeSessionRequest, AcpRuntimeKind, AcpSessionClosedResponse, AcpSessionRequest,
+    AcpSessionResumedResponse, AcpSessionRpcResponse,
 };
 use serde_json::{json, Map, Value};
 
@@ -196,7 +196,9 @@ impl AcpCore {
         if session.owner_connection_id != caller_connection_id {
             return Err(unknown());
         }
-        Ok(AcpResponse::AcpSessionStateResponse(session.state_response()))
+        Ok(AcpResponse::AcpSessionStateResponse(
+            session.state_response(),
+        ))
     }
 
     /// `session/close`: owner-only teardown. Removes the record, then SIGTERM →
@@ -255,7 +257,10 @@ impl AcpCore {
         let resolved = resolve_agent(host, &request.agent_type)?;
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
-        env.insert(String::from("SECURE_EXEC_KEEP_STDIN_OPEN"), String::from("1"));
+        env.insert(
+            String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
+            String::from("1"),
+        );
         // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
         for (key, value) in &resolved.env {
             env.entry(key.clone()).or_insert_with(|| value.clone());
@@ -320,7 +325,10 @@ impl AcpCore {
         let resolved = resolve_agent(host, &request.agent_type)?;
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
-        env.insert(String::from("SECURE_EXEC_KEEP_STDIN_OPEN"), String::from("1"));
+        env.insert(
+            String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
+            String::from("1"),
+        );
         // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
         for (key, value) in &resolved.env {
             env.entry(key.clone()).or_insert_with(|| value.clone());
@@ -503,7 +511,10 @@ impl AcpCore {
 
         let unknown =
             || AcpCoreError::InvalidState(format!("unknown ACP session {}", request.session_id));
-        let session = self.sessions.get_mut(&request.session_id).ok_or_else(unknown)?;
+        let session = self
+            .sessions
+            .get_mut(&request.session_id)
+            .ok_or_else(unknown)?;
         if session.owner_connection_id != caller_connection_id {
             return Err(unknown());
         }
@@ -596,7 +607,8 @@ impl AcpCore {
         process_id: &str,
     ) -> Result<SessionBootstrap, AcpCoreError> {
         let mut stdout = String::new();
-        let client_capabilities = parse_json_text(&request.client_capabilities, "clientCapabilities")?;
+        let client_capabilities =
+            parse_json_text(&request.client_capabilities, "clientCapabilities")?;
         let mcp_servers = parse_json_text(&request.mcp_servers, "mcpServers")?;
 
         let initialize = json!({
@@ -608,8 +620,14 @@ impl AcpCore {
                 "clientCapabilities": client_capabilities,
             },
         });
-        let init_response =
-            send_json_rpc(host, process_id, &initialize, 1, INITIALIZE_TIMEOUT_MS, &mut stdout)?;
+        let init_response = send_json_rpc(
+            host,
+            process_id,
+            &initialize,
+            1,
+            INITIALIZE_TIMEOUT_MS,
+            &mut stdout,
+        )?;
         let init_result = response_result(init_response, "ACP initialize")?;
         validate_initialize_result(&init_result, request.protocol_version)?;
 
@@ -619,8 +637,14 @@ impl AcpCore {
             "method": "session/new",
             "params": { "cwd": request.cwd, "mcpServers": mcp_servers },
         });
-        let session_response =
-            send_json_rpc(host, process_id, &session_new, 2, SESSION_NEW_TIMEOUT_MS, &mut stdout)?;
+        let session_response = send_json_rpc(
+            host,
+            process_id,
+            &session_new,
+            2,
+            SESSION_NEW_TIMEOUT_MS,
+            &mut stdout,
+        )?;
         let session_result = response_result(session_response, "ACP session/new")?;
         let session_id = session_id_from_session_result(&session_result, process_id);
 
@@ -666,7 +690,10 @@ impl AcpCore {
         // and no state is mutated on a rejected attempt.
         let unknown =
             || AcpCoreError::InvalidState(format!("unknown ACP session {}", request.session_id));
-        let session = self.sessions.get_mut(&request.session_id).ok_or_else(unknown)?;
+        let session = self
+            .sessions
+            .get_mut(&request.session_id)
+            .ok_or_else(unknown)?;
         if session.owner_connection_id != caller_connection_id {
             return Err(unknown());
         }
@@ -743,7 +770,11 @@ impl AcpCore {
 
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
-        env.insert(String::from("SECURE_EXEC_KEEP_STDIN_OPEN"), String::from("1"));
+        env.remove(RESUME_ADAPTER_ENTRYPOINT_ENV);
+        env.insert(
+            String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
+            String::from("1"),
+        );
         // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
         for (key, value) in &resolved.env {
             env.entry(key.clone()).or_insert_with(|| value.clone());
@@ -812,8 +843,14 @@ impl AcpCore {
                 "clientCapabilities": client_capabilities,
             },
         });
-        let init_response =
-            send_json_rpc(host, process_id, &initialize, 1, INITIALIZE_TIMEOUT_MS, &mut stdout)?;
+        let init_response = send_json_rpc(
+            host,
+            process_id,
+            &initialize,
+            1,
+            INITIALIZE_TIMEOUT_MS,
+            &mut stdout,
+        )?;
         let init_result = response_result(init_response, "ACP initialize")?;
         validate_initialize_result(&init_result, ACP_RESUME_PROTOCOL_VERSION)?;
         let agent_capabilities = init_result.get("agentCapabilities").cloned();
@@ -852,8 +889,10 @@ impl AcpCore {
             // Only the `unknown_session` sentinel falls through; every other error
             // propagates verbatim (the durable store survived; this is a real error).
             if !is_unknown_session_error(&load_response) {
-                return Err(response_result(load_response, &format!("ACP {native_method}"))
-                    .expect_err("native resume error object must map to an AcpCoreError"));
+                return Err(
+                    response_result(load_response, &format!("ACP {native_method}"))
+                        .expect_err("native resume error object must map to an AcpCoreError"),
+                );
             }
             // fall through to Tier 2
         }
@@ -964,8 +1003,7 @@ impl AcpCore {
     ) -> Result<AcpResponse, AcpCoreError> {
         match request {
             AcpRequest::AcpCreateSessionRequest(request) => {
-                let process_id =
-                    self.begin_create_session(host, caller_connection_id, &request)?;
+                let process_id = self.begin_create_session(host, caller_connection_id, &request)?;
                 Ok(AcpResponse::AcpPendingResponse(AcpPendingResponse {
                     process_id,
                 }))
@@ -1045,7 +1083,11 @@ fn prepend_prompt_preamble(params: &mut Map<String, Value>, preamble: &str) {
 /// native `native_resume_method`.
 fn native_resume_method(agent_capabilities: Option<&Value>) -> Option<&'static str> {
     let caps = agent_capabilities.and_then(Value::as_object)?;
-    if caps.get("loadSession").and_then(Value::as_bool).unwrap_or(false) {
+    if caps
+        .get("loadSession")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         return Some("session/load");
     }
     if caps.get("resume").and_then(Value::as_bool).unwrap_or(false) {
@@ -1133,9 +1175,14 @@ fn validate_initialize_result(
     result: &Map<String, Value>,
     requested_protocol_version: i32,
 ) -> Result<(), AcpCoreError> {
-    let reported = result.get("protocolVersion").and_then(Value::as_i64).ok_or_else(|| {
-        AcpCoreError::InvalidState(String::from("ACP initialize response missing protocolVersion"))
-    })?;
+    let reported = result
+        .get("protocolVersion")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| {
+            AcpCoreError::InvalidState(String::from(
+                "ACP initialize response missing protocolVersion",
+            ))
+        })?;
     if reported != i64::from(requested_protocol_version) {
         return Err(AcpCoreError::InvalidState(format!(
             "ACP initialize protocolVersion mismatch: requested {requested_protocol_version}, agent reported {reported}"
@@ -1219,7 +1266,8 @@ mod tests {
             Ok(None)
         }
         fn kill_agent(&mut self, process_id: &str, signal: &str) -> Result<(), AcpCoreError> {
-            self.killed.push((process_id.to_string(), signal.to_string()));
+            self.killed
+                .push((process_id.to_string(), signal.to_string()));
             Ok(())
         }
         fn wait_for_exit(&mut self, _: &str, _: u64) -> Result<Option<i32>, AcpCoreError> {
@@ -1282,7 +1330,9 @@ mod tests {
         assert!(core.close_session(&mut host, "conn-b", &req).is_err());
         assert_eq!(core.session_count(), 1);
         // Owner closes: process is torn down and the record removed.
-        let resp = core.close_session(&mut host, "conn-a", &req).expect("close");
+        let resp = core
+            .close_session(&mut host, "conn-a", &req)
+            .expect("close");
         assert!(matches!(resp, AcpResponse::AcpSessionClosedResponse(_)));
         assert_eq!(core.session_count(), 0);
         assert_eq!(host.closed_stdin, vec!["proc-s1".to_string()]);
@@ -1422,7 +1472,9 @@ mod tests {
                 let reply = match request["method"].as_str().unwrap() {
                     // No agentCapabilities -> native_resume_method returns None.
                     "initialize" => json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":1}}),
-                    "session/new" => json!({"jsonrpc":"2.0","id":id,"result":{"sessionId":"live-1"}}),
+                    "session/new" => {
+                        json!({"jsonrpc":"2.0","id":id,"result":{"sessionId":"live-1"}})
+                    }
                     other => panic!("unexpected method {other}"),
                 };
                 let mut bytes = serde_json::to_vec(&reply).unwrap();
@@ -1509,7 +1561,11 @@ mod tests {
                     pid: Some(7),
                 })
             }
-            fn bind_session(&mut self, session_id: &str, process_id: &str) -> Result<(), AcpCoreError> {
+            fn bind_session(
+                &mut self,
+                session_id: &str,
+                process_id: &str,
+            ) -> Result<(), AcpCoreError> {
                 self.bound.push((session_id.into(), process_id.into()));
                 Ok(())
             }
@@ -1518,8 +1574,12 @@ mod tests {
                     serde_json::from_slice(chunk.strip_suffix(b"\n").unwrap_or(chunk)).unwrap();
                 let id = request["id"].as_i64().unwrap();
                 let reply = match request["method"].as_str().unwrap() {
-                    "initialize" => json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":1,"agentInfo":{"name":"echo"}}}),
-                    "session/new" => json!({"jsonrpc":"2.0","id":id,"result":{"sessionId":"sess-xyz"}}),
+                    "initialize" => {
+                        json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":1,"agentInfo":{"name":"echo"}}})
+                    }
+                    "session/new" => {
+                        json!({"jsonrpc":"2.0","id":id,"result":{"sessionId":"sess-xyz"}})
+                    }
                     other => panic!("unexpected method {other}"),
                 };
                 let mut bytes = serde_json::to_vec(&reply).unwrap();
@@ -1605,7 +1665,10 @@ mod tests {
         bound: Vec<(String, String)>,
     }
     impl AcpHost for ResumableMockHost {
-        fn spawn_agent(&mut self, request: SpawnAgentRequest) -> Result<SpawnedAgent, AcpCoreError> {
+        fn spawn_agent(
+            &mut self,
+            request: SpawnAgentRequest,
+        ) -> Result<SpawnedAgent, AcpCoreError> {
             Ok(SpawnedAgent {
                 process_id: request.process_id,
                 pid: Some(11),
@@ -1729,16 +1792,19 @@ mod tests {
         let (a, rest) = init.split_at(10);
         let (b, c) = rest.split_at(20);
         assert!(matches!(
-            core.feed_agent_output(&mut host, &process_id, a).expect("a"),
+            core.feed_agent_output(&mut host, &process_id, a)
+                .expect("a"),
             ResumeStep::Pending
         ));
         assert_eq!(host.stdin.len(), 1, "no full line yet → no session/new");
         assert!(matches!(
-            core.feed_agent_output(&mut host, &process_id, b).expect("b"),
+            core.feed_agent_output(&mut host, &process_id, b)
+                .expect("b"),
             ResumeStep::Pending
         ));
         assert!(matches!(
-            core.feed_agent_output(&mut host, &process_id, c).expect("c"),
+            core.feed_agent_output(&mut host, &process_id, c)
+                .expect("c"),
             ResumeStep::Pending
         ));
         // Only once the newline arrives is the line parsed and session/new written.

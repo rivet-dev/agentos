@@ -86,7 +86,10 @@ mod tests {
 
     #[test]
     fn error_codes_are_stable() {
-        assert_eq!(AcpCoreError::InvalidState("x".into()).code(), "invalid_state");
+        assert_eq!(
+            AcpCoreError::InvalidState("x".into()).code(),
+            "invalid_state"
+        );
         assert_eq!(AcpCoreError::Unsupported("x".into()).code(), "unsupported");
         assert_eq!(
             error_response(&AcpCoreError::Conflict("dup".into())),

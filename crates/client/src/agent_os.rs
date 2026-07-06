@@ -152,13 +152,18 @@ pub(crate) struct SessionEntry {
 /// A self-contained agentOS package to link into a running VM via
 /// [`AgentOs::link_software`]. The descriptor is forwarded to the sidecar, which
 /// owns the `/opt/agentos` projection (builds the staging tree, derives commands,
-/// reads the version from the package's `package.json`).
+/// reads package metadata from `agentos-package.json`).
 #[derive(Debug, Clone)]
 pub struct PackageDescriptor {
-    pub name: String,
-    pub dir: String,
-    /// `bin/` command that speaks ACP over stdio, if this is an agent package.
-    pub acp_entrypoint: Option<String>,
+    pub dir: Option<String>,
+    pub tar: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectedAgent {
+    pub id: String,
+    pub acp_entrypoint: String,
+    pub adapter_entrypoint: String,
 }
 
 /// The high-level client. Cheaply cloneable via `Arc`.
@@ -176,6 +181,8 @@ pub(crate) struct AgentOsInner {
     pub(crate) request_counter: AtomicI64,
     /// Projected command names and guest entrypoints reported by the sidecar.
     pub(crate) projected_commands: parking_lot::Mutex<BTreeMap<String, String>>,
+    /// Projected agents reported by the sidecar.
+    pub(crate) projected_agents: parking_lot::Mutex<Vec<ProjectedAgent>>,
 
     // Process registries.
     pub(crate) process_registry_lock: parking_lot::Mutex<()>,
@@ -385,16 +392,9 @@ impl AgentOs {
         // 5. Wait for the VM to reach `ready` (bounded by VM_READY_TIMEOUT_MS).
         wait_for_vm_ready(&mut events, &vm_id, crate::VM_READY_TIMEOUT_MS).await?;
 
-        // Resolve software packages to host roots (port of TS `processSoftware` for the
-        // ConfigureVm descriptors). Each `package` is resolved under `module_access_cwd/node_modules`;
-        // an unresolvable package is an explicit error rather than a silent no-op. Wasm command
-        // packages additionally become `/__secure_exec/commands/{index}/` mounts so the sidecar can
-        // discover and resolve guest commands.
-        // Build the package-projection descriptors from the configured package dirs.
-        // Each package's name (and optional ACP entrypoint) is read from its
-        // `agentos-package.json`; the sidecar reads commands/version from the dir and
-        // builds the `/opt/agentos` projection. Runtime `link_software` appends to it.
-        let packages = build_package_descriptors(&config)?;
+        // Forward package dirs to the sidecar. The sidecar owns manifest parsing,
+        // command discovery, and agent enumeration for the `/opt/agentos` projection.
+        let packages = build_package_descriptors(&config);
 
         // Native plugin mounts configured on the client.
         let mounts = serialize_mounts(&config)?;
@@ -402,7 +402,7 @@ impl AgentOs {
         // 6. Configure the VM (vm scope). The sidecar owns the `/opt/agentos` package
         // projection: it builds the staging dir + registers the read-only host_dir
         // mount itself from the forwarded `packages`.
-        let projected_commands = match transport
+        let (projected_commands, projected_agents) = match transport
             .request_wire(
                 wire_vm_ownership(&connection_id, &session_id, &vm_id),
                 wire::RequestPayload::ConfigureVmRequest(wire::ConfigureVmRequest {
@@ -427,11 +427,14 @@ impl AgentOs {
             )
             .await?
         {
-            wire::ResponsePayload::VmConfiguredResponse(configured) => configured
-                .projected_commands
-                .into_iter()
-                .map(|command| (command.name, command.guest_path))
-                .collect(),
+            wire::ResponsePayload::VmConfiguredResponse(configured) => (
+                configured
+                    .projected_commands
+                    .into_iter()
+                    .map(|command| (command.name, command.guest_path))
+                    .collect(),
+                projected_agents_from_wire(configured.agents),
+            ),
             wire::ResponsePayload::RejectedResponse(rejected) => {
                 return Err(rejected_to_error(rejected));
             }
@@ -584,6 +587,7 @@ impl AgentOs {
             vm_id,
             request_counter: AtomicI64::new(1),
             projected_commands: parking_lot::Mutex::new(projected_commands),
+            projected_agents: parking_lot::Mutex::new(projected_agents),
             process_registry_lock: parking_lot::Mutex::new(()),
             processes: SccHashMap::new(),
             process_counter: AtomicU64::new(1),
@@ -652,11 +656,11 @@ impl AgentOs {
             .request_wire(
                 wire_vm_ownership(&inner.connection_id, &inner.session_id, &inner.vm_id),
                 wire::RequestPayload::LinkPackageRequest(wire::LinkPackageRequest {
-                    // The wire `PackageDescriptor` carries only `{ dir }`; the
-                    // sidecar reads `name`/`acpEntrypoint` from the package's
-                    // `agentos-package.json` at `dir`.
+                    // The wire `PackageDescriptor` carries `{ dir, tar }`; the sidecar
+                    // reads metadata from the package payload.
                     package: wire::PackageDescriptor {
                         dir: descriptor.dir,
+                        tar: descriptor.tar,
                     },
                 }),
             )
@@ -667,6 +671,10 @@ impl AgentOs {
                 for command in linked.projected_commands {
                     guard.insert(command.name, command.guest_path);
                 }
+                register_projected_agents(
+                    &inner.projected_agents,
+                    projected_agents_from_wire(linked.agents),
+                );
                 Ok(())
             }
             wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
@@ -858,6 +866,10 @@ impl AgentOs {
     /// `AgentOs.sidecar` (e.g. `describe()` reports `active_vm_count` across VMs sharing a pool).
     pub fn sidecar(&self) -> Arc<AgentOsSidecar> {
         self.inner.sidecar.clone()
+    }
+
+    pub fn projected_agents(&self) -> Vec<ProjectedAgent> {
+        self.inner.projected_agents.lock().clone()
     }
 }
 
@@ -3590,46 +3602,39 @@ fn json_object<const N: usize>(entries: [(&str, Value); N]) -> Value {
     ))
 }
 
-/// The `agentos-package.json` manifest that lives at the root of every projected
-/// package dir. The client validates that the package manifest exists; the
-/// sidecar owns agent resolution and reads commands/version from the dir itself.
-#[derive(serde::Deserialize)]
-struct AgentosPackageManifest {}
-
-/// Read `<dir>/agentos-package.json` (name only). An unreadable or malformed
-/// manifest is an explicit error, not a silent skip.
-fn read_agentos_package_manifest(dir: &str) -> Result<AgentosPackageManifest, ClientError> {
-    let manifest_path = std::path::Path::new(dir).join("agentos-package.json");
-    let text = std::fs::read_to_string(&manifest_path).map_err(|error| {
-        ClientError::Sidecar(format!(
-            "package manifest not found at {}: {error}",
-            manifest_path.display()
-        ))
-    })?;
-    serde_json::from_str(&text).map_err(|error| {
-        ClientError::Sidecar(format!(
-            "invalid agentos-package.json at {}: {error}",
-            manifest_path.display()
-        ))
-    })
+/// Build the wire [`wire::PackageDescriptor`]s for the `/opt/agentos` projection.
+/// The sidecar reads package metadata from the forwarded dir or tar payload.
+fn build_package_descriptors(config: &AgentOsConfig) -> Vec<wire::PackageDescriptor> {
+    config
+        .packages
+        .iter()
+        .map(|package| wire::PackageDescriptor {
+            dir: package.dir.clone(),
+            tar: package.tar.clone(),
+        })
+        .collect()
 }
 
-/// Build the wire [`wire::PackageDescriptor`]s for the `/opt/agentos` projection from
-/// the configured package dirs. `name` (and the optional agent `acpEntrypoint`) come
-/// from each dir's `agentos-package.json`; the sidecar reads the payload from `dir`.
-fn build_package_descriptors(
-    config: &AgentOsConfig,
-) -> Result<Vec<wire::PackageDescriptor>, ClientError> {
-    let mut descriptors = Vec::with_capacity(config.packages.len());
-    for package in &config.packages {
-        // Validate the package dir has a manifest, but the wire descriptor now
-        // carries only `dir`; the sidecar re-reads name/acpEntrypoint from it.
-        let _manifest = read_agentos_package_manifest(&package.dir)?;
-        descriptors.push(wire::PackageDescriptor {
-            dir: package.dir.clone(),
-        });
+fn projected_agents_from_wire(agents: Vec<wire::AgentosProjectedAgent>) -> Vec<ProjectedAgent> {
+    agents
+        .into_iter()
+        .map(|agent| ProjectedAgent {
+            id: agent.id,
+            acp_entrypoint: agent.acp_entrypoint,
+            adapter_entrypoint: agent.adapter_entrypoint,
+        })
+        .collect()
+}
+
+fn register_projected_agents(
+    projected_agents: &parking_lot::Mutex<Vec<ProjectedAgent>>,
+    agents: Vec<ProjectedAgent>,
+) {
+    let mut guard = projected_agents.lock();
+    for agent in agents {
+        guard.retain(|existing| existing.id != agent.id);
+        guard.push(agent);
     }
-    Ok(descriptors)
 }
 
 fn serialize_mounts(config: &AgentOsConfig) -> Result<Vec<wire::MountDescriptor>, ClientError> {

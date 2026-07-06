@@ -24,6 +24,7 @@ export type {
 	RootFilesystemLowerDescriptor,
 	SidecarEventSelector,
 	SidecarFsPermissionRule,
+	SidecarLinkPackageResult,
 	SidecarMountDescriptor,
 	SidecarMountPluginDescriptor,
 	SidecarPatternPermissionRule,
@@ -31,6 +32,7 @@ export type {
 	SidecarPermissionScope,
 	SidecarPermissionsPolicy,
 	SidecarProcessSnapshotEntry,
+	SidecarProjectedAgent,
 	SidecarProjectedModuleDescriptor,
 	SidecarRegisteredHostCallbackDefinition,
 	SidecarRegisteredHostCallbackExample,
@@ -48,4 +50,8 @@ export type {
 	SidecarSpawnOptions,
 	SidecarSpawnOptions as NativeSidecarSpawnOptions,
 	SidecarZombieTimerCount,
+} from "@secure-exec/core/sidecar-client";
+
+export type {
+	SidecarVmConfiguredResponse as SidecarConfigureVmResult,
 } from "@secure-exec/core/sidecar-client";

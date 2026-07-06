@@ -28,7 +28,9 @@ export const OPT_AGENTOS_BIN = "/opt/agentos/bin";
 export type AgentBlock = PackageAgentDescriptor;
 export type PackageRef = ManifestPackageRef;
 export interface SoftwarePackageRef {
-	packageDir: string;
+	packageTar?: string;
+	/** @deprecated Directory refs are accepted only for local transition fixtures. */
+	packageDir?: string;
 }
 /** @deprecated Package software is now represented by its package directory. */
 export type PackageDescriptor = PackageRef;
@@ -80,7 +82,15 @@ function validateAgentosPackageManifest(
 	if (!isPlainObject(value) || typeof value.name !== "string") {
 		throw new Error(`Invalid agentOS package manifest at ${source}: missing name`);
 	}
-	const manifest: AgentosPackageManifest = { name: value.name };
+	if (typeof value.version !== "string" || value.version.length === 0) {
+		throw new Error(
+			`Invalid agentOS package manifest at ${source}: missing version`,
+		);
+	}
+	const manifest: AgentosPackageManifest = {
+		name: value.name,
+		version: value.version,
+	};
 	if (value.agent !== undefined) {
 		if (
 			!isPlainObject(value.agent) ||

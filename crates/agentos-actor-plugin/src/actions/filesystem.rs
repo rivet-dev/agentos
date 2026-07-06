@@ -92,12 +92,10 @@ pub async fn readdir_entries(vm: &AgentOs, path: &str) -> Result<Option<Vec<Read
 /// `kernel_error`), reporting `ENOENT` for a missing path and `ENOTDIR` for a
 /// path that resolves to a file. Any other errno is a real failure.
 fn is_not_a_listable_dir(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| {
-            let msg = cause.to_string();
-            msg.contains("ENOENT") || msg.contains("ENOTDIR")
-        })
+    error.chain().any(|cause| {
+        let msg = cause.to_string();
+        msg.contains("ENOENT") || msg.contains("ENOTDIR")
+    })
 }
 
 /// `exists(path)` — port of [`AgentOs::exists`].

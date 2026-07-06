@@ -6,11 +6,11 @@ use std::time::{Duration, Instant};
 
 use agentos_protocol::generated::v1::{
     AcpAgentEntry, AcpAgentExitedEvent, AcpAgentStderrEvent, AcpCallback, AcpCallbackResponse,
-    AcpCloseSessionRequest,
-    AcpCreateSessionRequest, AcpErrorResponse, AcpEvent, AcpGetSessionStateRequest,
-    AcpHostRequestCallback, AcpListAgentsResponse, AcpPermissionCallback, AcpRequest, AcpResponse,
-    AcpResumeSessionRequest, AcpRuntimeKind, AcpSessionClosedResponse, AcpSessionCreatedResponse,
-    AcpSessionEvent, AcpSessionRequest, AcpSessionResumedResponse, AcpSessionStateResponse,
+    AcpCloseSessionRequest, AcpCreateSessionRequest, AcpErrorResponse, AcpEvent,
+    AcpGetSessionStateRequest, AcpHostRequestCallback, AcpListAgentsResponse,
+    AcpPermissionCallback, AcpRequest, AcpResponse, AcpResumeSessionRequest, AcpRuntimeKind,
+    AcpSessionClosedResponse, AcpSessionCreatedResponse, AcpSessionEvent, AcpSessionRequest,
+    AcpSessionResumedResponse, AcpSessionStateResponse,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
 use secure_exec_sidecar::extension::ExtensionSnapshot;
@@ -169,9 +169,7 @@ enum AdapterRestartError {
 impl AdapterRestartError {
     fn detail(&self) -> String {
         match self {
-            Self::Unsupported => {
-                String::from("adapter does not advertise loadSession/resume")
-            }
+            Self::Unsupported => String::from("adapter does not advertise loadSession/resume"),
             Self::Failed(error) => error.to_string(),
         }
     }
@@ -2637,7 +2635,8 @@ fn adapter_exit_code_from_error(error: &SidecarError) -> Option<i32> {
     let SidecarError::InvalidState(message) = error else {
         return None;
     };
-    let tail = &message[message.find(ADAPTER_EXITED_ERROR_MARKER)? + ADAPTER_EXITED_ERROR_MARKER.len()..];
+    let tail =
+        &message[message.find(ADAPTER_EXITED_ERROR_MARKER)? + ADAPTER_EXITED_ERROR_MARKER.len()..];
     tail.split_whitespace().next()?.parse().ok()
 }
 
@@ -3127,9 +3126,8 @@ mod tests {
         // Lazy observation: a request write to an already-reaped adapter fails
         // with secure-exec's process-table error (the exact production shape:
         // "VM vm-5 has no active process agent-6"). No exit code is observed.
-        let gone = SidecarError::InvalidState(String::from(
-            "VM vm-5 has no active process agent-6",
-        ));
+        let gone =
+            SidecarError::InvalidState(String::from("VM vm-5 has no active process agent-6"));
         assert!(is_adapter_gone_error(&gone));
         assert_eq!(adapter_exit_code_from_error(&gone), None);
 
