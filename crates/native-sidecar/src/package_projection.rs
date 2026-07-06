@@ -20,21 +20,23 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::state::SidecarError;
-use vfs::package_format::{
-    generated::v1, parse_aospkg_header_from_prefix, versioned, AOSPKG_HEADER_LEN,
+use vfs::package_format::pack::{
+    command_targets_from_package_json, is_projectable_command_name, manifest_json_to_v1,
+    SNAPSHOT_BUNDLE_PATH,
 };
+use vfs::package_format::{generated::v1, read_manifest_chunk_from_file};
 use vfs::posix::{normalize_path, TarFileSystem, VirtualFileSystem};
 
 /// Root of the agentOS package tree inside the VM.
 pub const OPT_AGENTOS_ROOT: &str = "/opt/agentos";
 /// The symlink farm on `$PATH`.
 pub const OPT_AGENTOS_BIN: &str = "/opt/agentos/bin";
-pub const DEFAULT_PACKAGE_TAR_NAME: &str = "package.aospkg";
+pub const DEFAULT_PACKAGE_FILE_NAME: &str = "package.aospkg";
+/// Back-compat alias for the packed container file name.
+pub const DEFAULT_PACKAGE_TAR_NAME: &str = DEFAULT_PACKAGE_FILE_NAME;
 pub const MAX_AGENTOS_PACKAGE_MOUNTS: usize = 4096;
 
 /// A package to project, derived from chunk1 of `package.aospkg`.
@@ -194,92 +196,41 @@ pub fn read_package_manifest(dir: &str) -> Result<PackageDescriptor, SidecarErro
     }
 }
 
-const AGENT_SNAPSHOT_BUNDLE: &str = "dist/sdk-snapshot.js";
-
-#[derive(serde::Deserialize)]
-struct DirPackageManifest {
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    version: String,
-    #[serde(default)]
-    agent: Option<DirAgentBlock>,
-    #[serde(default)]
-    provides: Option<DirProvidesBlock>,
-}
-
-#[derive(serde::Deserialize)]
-struct DirAgentBlock {
-    #[serde(rename = "acpEntrypoint")]
-    acp_entrypoint: String,
-    #[serde(default)]
-    snapshot: bool,
-    #[serde(default)]
-    env: HashMap<String, String>,
-    #[serde(default, rename = "launchArgs")]
-    launch_args: Vec<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct DirProvidesBlock {
-    #[serde(default)]
-    env: HashMap<String, String>,
-    #[serde(default)]
-    files: Vec<DirProvidesFile>,
-}
-
-#[derive(serde::Deserialize)]
-struct DirProvidesFile {
-    source: String,
-    target: String,
-}
-
 /// Transition path: project an unpacked package dir (no `.aospkg`) by reading
-/// `agentos-package.json` and scanning `bin/` and `share/man/` on the host.
+/// `agentos-package.json` (toolchain input) and scanning `bin/` and
+/// `share/man/` on the host. The JSON-to-manifest conversion is shared with
+/// the packer (`vfs::package_format::pack`), so packed and dir packages derive
+/// identical manifests for the same source JSON.
 fn read_package_manifest_from_dir(dir: &str) -> Result<PackageDescriptor, SidecarError> {
     let path = Path::new(dir).join("agentos-package.json");
     if !path.exists() {
         return Err(SidecarError::InvalidState(format!(
-            "missing required {DEFAULT_PACKAGE_TAR_NAME} in package dir {dir}"
+            "package dir {dir} has neither {DEFAULT_PACKAGE_FILE_NAME} nor agentos-package.json"
         )));
     }
-    let text = fs::read_to_string(&path).map_err(|e| io_err("read agentos-package.json", e))?;
-    let manifest: DirPackageManifest = serde_json::from_str(&text).map_err(|e| {
-        SidecarError::InvalidState(format!("invalid agentos-package.json in {dir}: {e}"))
-    })?;
-    let snapshot_bundle_path = manifest
-        .agent
-        .as_ref()
-        .filter(|agent| agent.snapshot)
-        .map(|_| format!("/{AGENT_SNAPSHOT_BUNDLE}"));
-    let manifest = v1::PackageManifest {
-        name: manifest.name,
-        version: manifest.version,
-        agent: manifest.agent.map(|agent| v1::AgentBlock {
-            acp_entrypoint: agent.acp_entrypoint,
-            snapshot: agent.snapshot,
-            env: agent.env,
-            launch_args: agent.launch_args,
-        }),
-        provides: manifest.provides.map(|provides| v1::ProvidesBlock {
-            env: provides.env,
-            files: provides
-                .files
-                .into_iter()
-                .map(|file| v1::ProvidesFile {
-                    source: file.source,
-                    target: file.target,
-                })
-                .collect(),
-        }),
-        commands: command_targets_from_dir(dir)?
+    let manifest_json = fs::read(&path).map_err(|e| io_err("read agentos-package.json", e))?;
+    let snapshot_declared = serde_json::from_slice::<serde_json::Value>(&manifest_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("agent")
+                .and_then(|agent| agent.get("snapshot"))
+                .and_then(serde_json::Value::as_bool)
+        })
+        .unwrap_or(false);
+    let snapshot_bundle_path = snapshot_declared.then(|| SNAPSHOT_BUNDLE_PATH.to_owned());
+    let commands = command_targets_from_dir(dir)?;
+    let man_pages = man_pages_from_dir(dir)?;
+    let manifest = manifest_json_to_v1(
+        &manifest_json,
+        commands
             .into_iter()
             .map(|target| v1::CommandTarget {
                 command: target.command,
                 entry: target.entry,
             })
             .collect(),
-        man_pages: man_pages_from_dir(dir)?
+        man_pages
             .into_iter()
             .map(|page| v1::ManPage {
                 section: page.section,
@@ -287,7 +238,10 @@ fn read_package_manifest_from_dir(dir: &str) -> Result<PackageDescriptor, Sideca
             })
             .collect(),
         snapshot_bundle_path,
-    };
+    )
+    .map_err(|error| {
+        SidecarError::InvalidState(format!("invalid agentos-package.json in {dir}: {error}"))
+    })?;
     PackageDescriptor::from_manifest(dir.to_owned(), None, manifest)
 }
 
@@ -297,7 +251,13 @@ fn command_targets_from_dir(dir: &str) -> Result<Vec<PackageCommandTarget>, Side
         if let Ok(text) = fs::read_to_string(&pkg_json) {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
                 if let Some(targets) = command_targets_from_package_json(&value) {
-                    return Ok(targets);
+                    return Ok(targets
+                        .into_iter()
+                        .map(|target| PackageCommandTarget {
+                            command: target.command,
+                            entry: target.entry,
+                        })
+                        .collect());
                 }
             }
         }
@@ -321,52 +281,6 @@ fn command_targets_from_dir(dir: &str) -> Result<Vec<PackageCommandTarget>, Side
     }
     targets.sort_by(|a, b| a.command.cmp(&b.command));
     Ok(targets)
-}
-
-fn command_targets_from_package_json(
-    value: &serde_json::Value,
-) -> Option<Vec<PackageCommandTarget>> {
-    match value.get("bin") {
-        Some(serde_json::Value::String(path)) => {
-            let name = value.get("name").and_then(|v| v.as_str())?;
-            let unscoped = name.rsplit('/').next().unwrap_or(name).to_owned();
-            Some(
-                is_projectable_command_name(&unscoped)
-                    .then(|| PackageCommandTarget {
-                        command: unscoped,
-                        entry: normalize_rel(path),
-                    })
-                    .into_iter()
-                    .collect(),
-            )
-        }
-        Some(serde_json::Value::Object(map)) => {
-            let mut targets: Vec<PackageCommandTarget> = map
-                .iter()
-                .filter_map(|(name, path)| {
-                    is_projectable_command_name(name)
-                        .then(|| path.as_str())
-                        .flatten()
-                        .map(|path| PackageCommandTarget {
-                            command: name.clone(),
-                            entry: normalize_rel(path),
-                        })
-                })
-                .collect();
-            targets.sort_by(|a, b| a.command.cmp(&b.command));
-            Some(targets)
-        }
-        _ => None,
-    }
-}
-
-fn is_projectable_command_name(name: &str) -> bool {
-    !name.starts_with('_') && !name.starts_with('.')
-}
-
-/// Strip a leading `./` so the resulting path is a clean in-package relative path.
-fn normalize_rel(path: &str) -> String {
-    path.strip_prefix("./").unwrap_or(path).to_owned()
 }
 
 fn man_pages_from_dir(dir: &str) -> Result<Vec<PackageManPageTarget>, SidecarError> {
@@ -432,15 +346,6 @@ fn package_tar_for_dir(dir: &str) -> Option<PathBuf> {
     tar.is_file().then_some(tar)
 }
 
-/// Derive command names for the package (sorted).
-pub fn derive_commands(dir: &str) -> Result<Vec<String>, SidecarError> {
-    Ok(read_package_manifest(dir)?
-        .commands
-        .into_iter()
-        .map(|target| target.command)
-        .collect())
-}
-
 /// Read a package manifest from the single wire `path`.
 ///
 /// A file path is a packed `.aospkg` (the normal case). A directory path is a
@@ -480,33 +385,9 @@ fn read_package_manifest_from_tar_with_dir(
 }
 
 fn read_aospkg_manifest_chunk(path: &Path) -> Result<v1::PackageManifest, SidecarError> {
-    let mut file = File::open(path).map_err(|e| io_err("open package.aospkg", e))?;
-    let file_len = file
-        .metadata()
-        .map_err(|e| io_err("stat package.aospkg", e))?
-        .len();
-    let file_len = usize::try_from(file_len).map_err(|_| {
-        SidecarError::InvalidState(format!(
-            "{} is too large to address on this platform",
-            path.display()
-        ))
-    })?;
-    let mut header = [0u8; AOSPKG_HEADER_LEN];
-    file.read_exact(&mut header)
-        .map_err(|e| io_err("read package.aospkg header", e))?;
-    let parsed = parse_aospkg_header_from_prefix(&header, file_len)
-        .map_err(|error| SidecarError::InvalidState(error.to_string()))?;
-    let mut manifest = vec![0u8; parsed.manifest.len()];
-    file.seek(SeekFrom::Start(parsed.manifest.start as u64))
-        .map_err(|e| io_err("seek package.aospkg manifest", e))?;
-    file.read_exact(&mut manifest)
-        .map_err(|e| io_err("read package.aospkg manifest", e))?;
-    versioned::decode_package_manifest(&manifest).map_err(|error| {
-        SidecarError::InvalidState(format!(
-            "decode package manifest in {}: {error}",
-            path.display()
-        ))
-    })
+    // Container framing lives in vfs::package_format; this is the single
+    // startup-critical chunk1 read shared with every host-side consumer.
+    read_manifest_chunk_from_file(path).map_err(|error| SidecarError::InvalidState(error.to_string()))
 }
 
 pub fn build_package_leaf_mounts(

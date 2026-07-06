@@ -111,6 +111,16 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	if (typeof record.packagePath === "string") {
 		return { path: record.packagePath };
 	}
+	// Recognizably-legacy shapes fail loudly instead of silently dropping the
+	// package from the VM.
+	for (const legacy of ["packageTar", "packageDir", "dir"]) {
+		if (typeof record[legacy] === "string") {
+			throw new Error(
+				`agentOS package ref uses removed field "${legacy}"; packages are referenced ` +
+					"by a single `packagePath` — rebuild @agentos-software/* dependencies or pass { packagePath }",
+			);
+		}
+	}
 	return undefined;
 }
 
@@ -137,7 +147,7 @@ export function buildConfigJson<TConnParams>(
 	const packageRefs = normalizedPackageRefs(
 		defaultSoftwareEnabled ? [common, ...softwareInput] : softwareInput,
 	);
-	const packages = packageRefs.map((ref) => ({ path: ref.path }));
+	const packages = packageRefs.map((ref) => ({ packagePath: ref.path }));
 	const mounts = serializeNativeMounts(options.mounts);
 	const sidecar = serializeSidecar(options.sidecar);
 	return JSON.stringify({

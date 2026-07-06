@@ -811,6 +811,17 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	if (typeof record.packagePath === "string") {
 		return { path: record.packagePath };
 	}
+	// Recognizably-legacy shapes fail loudly: silently dropping a software
+	// entry boots a VM with missing packages and no diagnostic.
+	for (const legacy of ["packageTar", "packageDir", "dir"]) {
+		if (typeof record[legacy] === "string") {
+			throw new Error(
+				`agentOS package ref uses removed field "${legacy}" (value: ${JSON.stringify(record[legacy])}); ` +
+					"packages are referenced by a single `packagePath` — update the package " +
+					"(rebuild @agentos-software/* dependencies) or pass { packagePath }",
+			);
+		}
+	}
 	return undefined;
 }
 

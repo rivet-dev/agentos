@@ -79,7 +79,7 @@ struct SidecarJson {
 #[derive(serde::Deserialize, Clone)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct PackageJson {
-    #[serde(alias = "packagePath")]
+    #[serde(rename = "packagePath")]
     path: String,
 }
 
@@ -217,18 +217,19 @@ fn read_package_software_info(path: &str) -> Option<SoftwareInfoDto> {
 }
 
 /// Packed `.aospkg`: decode the chunk1 vbare manifest (the runtime manifest —
-/// packed packages ship no `agentos-package.json`).
+/// packed packages ship no `agentos-package.json`) via the shared container
+/// reader in `vfs::package_format`. A corrupt or truncated package is logged
+/// (host-visible) and skipped rather than silently vanishing from listings.
 fn read_aospkg_software_info(path: &str) -> Option<SoftwareInfoDto> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut file = std::fs::File::open(path).ok()?;
-    let file_len = usize::try_from(file.metadata().ok()?.len()).ok()?;
-    let mut header = [0u8; vfs::package_format::AOSPKG_HEADER_LEN];
-    file.read_exact(&mut header).ok()?;
-    let parsed = vfs::package_format::parse_aospkg_header_from_prefix(&header, file_len).ok()?;
-    let mut manifest = vec![0u8; parsed.manifest.len()];
-    file.seek(SeekFrom::Start(parsed.manifest.start as u64)).ok()?;
-    file.read_exact(&mut manifest).ok()?;
-    let manifest = vfs::package_format::versioned::decode_package_manifest(&manifest).ok()?;
+    let manifest = match vfs::package_format::read_manifest_chunk_from_file(std::path::Path::new(
+        path,
+    )) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            tracing::warn!(%path, %error, "skipping unreadable .aospkg in listSoftware");
+            return None;
+        }
+    };
     Some(SoftwareInfoDto {
         package: manifest.name,
         kind: if manifest.agent.is_some() {

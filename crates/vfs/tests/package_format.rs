@@ -153,7 +153,7 @@ fn pack_strips_agentos_package_json_and_uses_it_as_manifest_input() {
         .unwrap();
     let source_tar = builder.into_inner().unwrap();
 
-    let (aospkg, summary) = pack_aospkg_from_tar_bytes(&source_tar, None).unwrap();
+    let (aospkg, summary) = pack_aospkg_from_tar_bytes(&source_tar).unwrap();
     assert_eq!(summary.name, "demo");
     assert_eq!(summary.version, "2.1.0");
     assert_eq!(summary.commands, vec![String::from("demo")]);

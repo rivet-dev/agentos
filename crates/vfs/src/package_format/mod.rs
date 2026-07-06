@@ -129,6 +129,45 @@ pub fn encode_aospkg_header(manifest_len: usize, index_len: usize) -> VfsResult<
     Ok(header)
 }
 
+/// Read and decode only the chunk1 `PackageManifest` from a `.aospkg` file:
+/// 16-byte header, seek, decode. This is the startup-critical projection read —
+/// it must never parse tar headers, decode chunk2, or touch chunk3. Shared by
+/// every host-side consumer (sidecar projection, actor plugin) so container
+/// framing has exactly one implementation.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_manifest_chunk_from_file(
+    path: &std::path::Path,
+) -> VfsResult<generated::v1::PackageManifest> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| VfsError::new("EIO", format!("open {}: {e}", path.display())))?;
+    let file_len = file
+        .metadata()
+        .map_err(|e| VfsError::new("EIO", format!("stat {}: {e}", path.display())))?
+        .len();
+    let file_len = usize::try_from(file_len).map_err(|_| {
+        VfsError::new(
+            "EOVERFLOW",
+            format!("{} is too large to address on this platform", path.display()),
+        )
+    })?;
+    let mut header = [0u8; AOSPKG_HEADER_LEN];
+    file.read_exact(&mut header)
+        .map_err(|e| VfsError::new("EIO", format!("read {} header: {e}", path.display())))?;
+    let parsed = parse_aospkg_header_from_prefix(&header, file_len)?;
+    let mut manifest = vec![0u8; parsed.manifest.len()];
+    file.seek(SeekFrom::Start(parsed.manifest.start as u64))
+        .map_err(|e| VfsError::new("EIO", format!("seek {} manifest: {e}", path.display())))?;
+    file.read_exact(&mut manifest)
+        .map_err(|e| VfsError::new("EIO", format!("read {} manifest: {e}", path.display())))?;
+    versioned::decode_package_manifest(&manifest).map_err(|error| {
+        VfsError::new(
+            "EINVAL",
+            format!("decode package manifest in {}: {error}", path.display()),
+        )
+    })
+}
+
 pub fn validate_mount_range(
     header: &AospkgHeader,
     offset: u64,

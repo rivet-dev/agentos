@@ -20,8 +20,14 @@ use super::versioned::{encode_mount_index, encode_package_manifest};
 use super::{encode_aospkg_header, AOSPKG_HEADER_LEN};
 use crate::posix::vfs::{VfsError, VfsResult};
 
-const MANIFEST_JSON_NAME: &str = "agentos-package.json";
-const SNAPSHOT_BUNDLE_PATH: &str = "/dist/sdk-snapshot.js";
+/// The toolchain-input manifest name. Pack-time input only; never shipped.
+pub const MANIFEST_JSON_NAME: &str = "agentos-package.json";
+/// Canonical in-package snapshot bundle path for snapshot-enabled agents.
+pub const SNAPSHOT_BUNDLE_PATH: &str = "/dist/sdk-snapshot.js";
+/// Pack-time mirror of the load-side index cap in `posix::tar_fs`
+/// (`MAX_TAR_INDEX_ENTRIES`): fail at pack time, where the limit can be fixed,
+/// instead of at every consumer's VM configure.
+pub const MAX_PACK_INDEX_ENTRIES: usize = 200_000;
 const S_IFDIR: u32 = 0o040000;
 const S_IFREG: u32 = 0o100000;
 const S_IFLNK: u32 = 0o120000;
@@ -72,6 +78,56 @@ struct SourceProvidesFileJson {
     target: String,
 }
 
+/// Parse toolchain-input `agentos-package.json` bytes into a chunk1
+/// `PackageManifest`, with commands/man-pages/snapshot path supplied by the
+/// caller (packed: derived from the mount index; transition dir: from a dir
+/// scan). One JSON schema definition serves both pipelines.
+pub fn manifest_json_to_v1(
+    manifest_json: &[u8],
+    commands: Vec<v1::CommandTarget>,
+    man_pages: Vec<v1::ManPage>,
+    snapshot_bundle_path: Option<String>,
+) -> VfsResult<v1::PackageManifest> {
+    let source: SourceManifestJson = serde_json::from_slice(manifest_json)
+        .map_err(|e| VfsError::new("EINVAL", format!("invalid {MANIFEST_JSON_NAME}: {e}")))?;
+    if source.name.is_empty() {
+        return Err(VfsError::new(
+            "EINVAL",
+            format!("{MANIFEST_JSON_NAME} is missing a valid \"name\""),
+        ));
+    }
+    if source.version.is_empty() {
+        return Err(VfsError::new(
+            "EINVAL",
+            format!("{MANIFEST_JSON_NAME} is missing a valid \"version\""),
+        ));
+    }
+    Ok(v1::PackageManifest {
+        name: source.name,
+        version: source.version,
+        agent: source.agent.map(|agent| v1::AgentBlock {
+            acp_entrypoint: agent.acp_entrypoint,
+            snapshot: agent.snapshot,
+            env: agent.env,
+            launch_args: agent.launch_args,
+        }),
+        provides: source.provides.map(|provides| v1::ProvidesBlock {
+            env: provides.env,
+            files: provides
+                .files
+                .into_iter()
+                .map(|file| v1::ProvidesFile {
+                    source: file.source,
+                    target: file.target,
+                })
+                .collect(),
+        }),
+        commands,
+        man_pages,
+        snapshot_bundle_path,
+    })
+}
+
 #[derive(Clone)]
 struct IndexedEntry {
     kind: v1::TarEntryKind,
@@ -84,33 +140,23 @@ struct IndexedEntry {
     link_target: Option<String>,
 }
 
-/// Pack the source tar at `source_tar` into a `.aospkg` at `dest`.
-///
-/// `fallback_version` is used only when the source `agentos-package.json`
-/// carries no `version` (e.g. staged fixtures whose version lives in a
-/// sibling npm `package.json`).
-pub fn pack_aospkg_from_tar(
-    source_tar: &Path,
-    dest: &Path,
-    fallback_version: Option<&str>,
-) -> VfsResult<PackSummary> {
+/// Pack the source tar at `source_tar` into a `.aospkg` at `dest`. The source
+/// `agentos-package.json` must carry `name` and `version`.
+pub fn pack_aospkg_from_tar(source_tar: &Path, dest: &Path) -> VfsResult<PackSummary> {
     let source_bytes = std::fs::read(source_tar).map_err(|e| {
         VfsError::new(
             "EIO",
             format!("read source tar {}: {e}", source_tar.display()),
         )
     })?;
-    let (aospkg_bytes, summary) = pack_aospkg_from_tar_bytes(&source_bytes, fallback_version)?;
+    let (aospkg_bytes, summary) = pack_aospkg_from_tar_bytes(&source_bytes)?;
     std::fs::write(dest, aospkg_bytes)
         .map_err(|e| VfsError::new("EIO", format!("write {}: {e}", dest.display())))?;
     Ok(summary)
 }
 
 /// In-memory variant of [`pack_aospkg_from_tar`].
-pub fn pack_aospkg_from_tar_bytes(
-    source_tar: &[u8],
-    fallback_version: Option<&str>,
-) -> VfsResult<(Vec<u8>, PackSummary)> {
+pub fn pack_aospkg_from_tar_bytes(source_tar: &[u8]) -> VfsResult<(Vec<u8>, PackSummary)> {
     // Pass 1: read every entry, capture the pack-time JSON inputs, and rebuild
     // the mount tar WITHOUT agentos-package.json. Index offsets must refer to
     // the rebuilt tar, so it is written first and scanned second.
@@ -142,6 +188,10 @@ pub fn pack_aospkg_from_tar_bytes(
             let rel = path.trim_start_matches('/').to_owned();
             if entry_type.is_dir() {
                 let mut out = header.clone();
+                // Some producers record a nonzero size on dir headers; zero it
+                // or the rebuilt tar frames N phantom data blocks and every
+                // subsequent index offset is wrong.
+                out.set_size(0);
                 builder
                     .append_data(&mut out, &rel, std::io::empty())
                     .map_err(|e| VfsError::new("EIO", format!("repack dir {rel}: {e}")))?;
@@ -154,6 +204,7 @@ pub fn pack_aospkg_from_tar_bytes(
                     })?
                     .into_owned();
                 let mut out = header.clone();
+                out.set_size(0);
                 builder
                     .append_link(&mut out, &rel, &target)
                     .map_err(|e| VfsError::new("EIO", format!("repack symlink {rel}: {e}")))?;
@@ -181,6 +232,17 @@ pub fn pack_aospkg_from_tar_bytes(
 
     // Pass 2: index the rebuilt tar.
     let entries = scan_tar_index(&mount_tar)?;
+    if entries.len() > MAX_PACK_INDEX_ENTRIES {
+        return Err(VfsError::new(
+            "EOVERFLOW",
+            format!(
+                "package mount index has {} entries > MAX_PACK_INDEX_ENTRIES ({MAX_PACK_INDEX_ENTRIES}); \
+                 the load-side TarFileSystem cap would reject this package at VM configure — \
+                 split the package or raise both limits together",
+                entries.len()
+            ),
+        ));
+    }
 
     let manifest_json = manifest_json.ok_or_else(|| {
         VfsError::new(
@@ -188,28 +250,10 @@ pub fn pack_aospkg_from_tar_bytes(
             format!("source tar must contain /{MANIFEST_JSON_NAME}"),
         )
     })?;
+    // Peek at the agent block for the snapshot decision; the authoritative
+    // JSON-to-v1 conversion is the shared `manifest_json_to_v1`.
     let source: SourceManifestJson = serde_json::from_slice(&manifest_json)
         .map_err(|e| VfsError::new("EINVAL", format!("invalid {MANIFEST_JSON_NAME}: {e}")))?;
-    if source.name.is_empty() {
-        return Err(VfsError::new(
-            "EINVAL",
-            format!("{MANIFEST_JSON_NAME} is missing a valid \"name\""),
-        ));
-    }
-    let version = if !source.version.is_empty() {
-        source.version.clone()
-    } else {
-        fallback_version
-            .map(str::to_owned)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                VfsError::new(
-                    "EINVAL",
-                    format!("{MANIFEST_JSON_NAME} is missing a valid \"version\""),
-                )
-            })?
-    };
-
     let commands = command_targets(&entries, package_json.as_deref());
     let man_pages = man_pages_from_index(&entries);
     let snapshot_bundle_path = source
@@ -226,30 +270,8 @@ pub fn pack_aospkg_from_tar_bytes(
         .iter()
         .map(|target| target.command.clone())
         .collect::<Vec<_>>();
-    let manifest = v1::PackageManifest {
-        name: source.name.clone(),
-        version: version.clone(),
-        agent: source.agent.map(|agent| v1::AgentBlock {
-            acp_entrypoint: agent.acp_entrypoint,
-            snapshot: agent.snapshot,
-            env: agent.env,
-            launch_args: agent.launch_args,
-        }),
-        provides: source.provides.map(|provides| v1::ProvidesBlock {
-            env: provides.env,
-            files: provides
-                .files
-                .into_iter()
-                .map(|file| v1::ProvidesFile {
-                    source: file.source,
-                    target: file.target,
-                })
-                .collect(),
-        }),
-        commands,
-        man_pages,
-        snapshot_bundle_path,
-    };
+    let manifest = manifest_json_to_v1(&manifest_json, commands, man_pages, snapshot_bundle_path)?;
+    let (name, version) = (manifest.name.clone(), manifest.version.clone());
 
     let tar_entries = entries
         .into_iter()
@@ -281,7 +303,7 @@ pub fn pack_aospkg_from_tar_bytes(
     Ok((
         out,
         PackSummary {
-            name: source.name,
+            name,
             version,
             commands: command_names,
         },
@@ -447,7 +469,12 @@ fn command_targets(
     commands
 }
 
-fn command_targets_from_package_json(value: &serde_json::Value) -> Option<Vec<v1::CommandTarget>> {
+/// Derive command targets from a root npm `package.json` `bin` field. Shared
+/// with the sidecar's transition-dir projection so packed and dir packages
+/// derive identical command sets.
+pub fn command_targets_from_package_json(
+    value: &serde_json::Value,
+) -> Option<Vec<v1::CommandTarget>> {
     match value.get("bin") {
         Some(serde_json::Value::String(path)) => {
             let name = value.get("name").and_then(|v| v.as_str())?;
@@ -498,7 +525,7 @@ fn man_pages_from_index(entries: &BTreeMap<String, IndexedEntry>) -> Vec<v1::Man
     pages
 }
 
-fn is_projectable_command_name(name: &str) -> bool {
+pub fn is_projectable_command_name(name: &str) -> bool {
     !name.starts_with('_') && !name.starts_with('.')
 }
 

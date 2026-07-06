@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use agentos_native_sidecar::package_projection::{
-    build_package_leaf_mounts, derive_commands, package_provides_file_mount, read_package_manifest,
+    build_package_leaf_mounts, package_provides_file_mount, read_package_manifest,
     read_package_manifest_from_path, PackageLeafMount, DEFAULT_PACKAGE_TAR_NAME,
 };
 use tar::Builder;
@@ -68,7 +68,7 @@ fn append_tree(builder: &mut Builder<fs::File>, root: &Path, path: &Path) -> std
 }
 
 fn write_aospkg(root: &Path, source_tar: &Path) {
-    pack_aospkg_from_tar(source_tar, &root.join(DEFAULT_PACKAGE_TAR_NAME), None)
+    pack_aospkg_from_tar(source_tar, &root.join(DEFAULT_PACKAGE_TAR_NAME))
         .unwrap_or_else(|e| panic!("pack {} failed: {e}", source_tar.display()));
 }
 
@@ -124,7 +124,7 @@ fn derives_commands_from_bin_dir() {
     let pkg = unique_dir("cmds");
     write_package(&pkg, "tool", "1.0.0", &["foo", "bar"]);
     finalize_package_tar(&pkg);
-    let mut commands = derive_commands(pkg.to_str().unwrap()).unwrap();
+    let mut commands = read_package_manifest(pkg.to_str().unwrap()).unwrap().commands.into_iter().map(|target| target.command).collect::<Vec<_>>();
     commands.sort();
     assert_eq!(commands, vec!["bar".to_string(), "foo".to_string()]);
 }

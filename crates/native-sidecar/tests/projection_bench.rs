@@ -1,11 +1,8 @@
-//! Reproducible micro-benchmark for the agentOS package **projection** step.
-//!
-//! This is the work the sidecar does, per package, when a VM is configured with
-//! `packages`: locate `<dir>/package.tar`, read the `agentos-package.json`
-//! manifest from *inside* the tar, enumerate the package's commands, and build
-//! the granular leaf mounts (one tar-backed version mount + a `current` symlink
-//! + one symlink per `bin/<cmd>` + man-page aliases). The tar is mounted
-//! directly (lazy, uncompressed) — it is never extracted.
+//! Reproducible micro-benchmark for the agentOS package **load** step: the
+//! work the sidecar does per packed `.aospkg` at VM configure time — decode
+//! the chunk1 vbare manifest, build the granular leaf mounts (tar-backed
+//! version mount + `current`/`bin/*`/man-page symlinks), and open the tar
+//! mount from its precomputed index. The tar is never extracted.
 //!
 //! ## What is timed
 //! The timed span, per sample, is **load time only** — the work the sidecar
@@ -301,24 +298,11 @@ fn create_repacked_real_targets(coreutils_tar: &Path, tar_tar: &Path) -> Repacke
 /// pack duration so callers can print it as an excluded stat.
 fn repack_package_tar_to_aospkg(source_tar: &Path, dest_aospkg: &Path) -> Duration {
     let started = Instant::now();
-    let fallback = package_version_for_tar(source_tar);
-    pack_aospkg_from_tar(source_tar, dest_aospkg, Some(&fallback))
+    pack_aospkg_from_tar(source_tar, dest_aospkg)
         .unwrap_or_else(|e| panic!("pack {} failed: {e}", source_tar.display()));
     started.elapsed()
 }
 
-
-fn package_version_for_tar(source_tar: &Path) -> String {
-    let package_json = source_tar
-        .parent()
-        .and_then(Path::parent)
-        .map(|dir| dir.join("package.json"));
-    package_json
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|value| value.get("version").and_then(|v| v.as_str()).map(str::to_owned))
-        .unwrap_or_else(|| String::from("1.0.0"))
-}
 
 fn project_once(dir: &str) -> (Sample, usize, usize) {
     // Step 1: read the .aospkg header + chunk1 manifest (commands included).
@@ -415,31 +399,23 @@ fn run_target(label: &str, dir: &Path, warmup: usize, samples: usize, pack: Opti
         "  {:<28} {:>9} {:>9} {:>9} {:>9} {:>9}",
         "load span (ms)", "min", "median", "mean", "p95", "max"
     );
-    let print_stat = |name: &str, sorted: &[f64], raw: &[f64]| {
+    // mean() is order-invariant, so the sorted slices serve every stat.
+    let print_stat = |name: &str, sorted: &[f64]| {
         println!(
             "  {:<28} {:>9.3} {:>9.3} {:>9.3} {:>9.3} {:>9.3}",
             name,
             sorted.first().copied().unwrap_or(f64::NAN),
             median(sorted),
-            mean(raw),
+            mean(sorted),
             percentile(sorted, 95.0),
             sorted.last().copied().unwrap_or(f64::NAN),
         );
     };
-    let raw_totals: Vec<f64> = rows.iter().map(|r| r.total).collect();
-    let raw_manifests: Vec<f64> = rows.iter().map(|r| r.manifest).collect();
-    let raw_mounts: Vec<f64> = rows.iter().map(|r| r.mounts).collect();
-    let raw_tar_opens: Vec<f64> = rows.iter().map(|r| r.tar_open).collect();
-    print_stat("FULL load (1+2+3)", &totals, &raw_totals);
-    print_stat("  manifest+cmds (step1)", &manifests, &raw_manifests);
-    print_stat("  leaf mounts   (step2)", &mounts_v, &raw_mounts);
-    print_stat("  tar mount open (step3)", &tar_opens, &raw_tar_opens);
-    if label == "coreutils" && !cfg!(debug_assertions) {
-        assert!(
-            median(&totals) < 20.0,
-            "coreutils FULL-load median (incl. tar index decode + mmap) must be < 20 ms in release"
-        );
-    }
+    print_stat("FULL load (1+2+3)", &totals);
+    print_stat("  manifest+cmds (step1)", &manifests);
+    print_stat("  leaf mounts   (step2)", &mounts_v);
+    print_stat("  tar mount open (step3)", &tar_opens);
+
 }
 
 #[test]
@@ -484,4 +460,34 @@ fn projection_bench() {
     );
     run_target("tar (wasm binary)", &real.tar, warmup, samples, real.tar_pack);
     println!();
+}
+
+/// Default-suite load budget: the coreutils FULL load (manifest + leaf mounts
+/// + tar index open) must stay under 20 ms median even in a debug build (it
+/// measures ~0.15 ms in release, ~1 ms in debug — 20 ms means something is
+/// structurally wrong, e.g. a whole-archive read snuck back in). Not hidden
+/// behind `#[ignore]` so the budget cannot silently regress; skips cleanly
+/// when the registry package is not built.
+#[test]
+fn coreutils_load_budget() {
+    let coreutils_tar = source_tar_path(
+        "PROJ_BENCH_COREUTILS_TAR",
+        "registry/software/coreutils/dist/package.tar",
+    );
+    if !coreutils_tar.is_file() {
+        eprintln!("skipping coreutils_load_budget: {} not built", coreutils_tar.display());
+        return;
+    }
+    let real = create_repacked_real_targets(&coreutils_tar, Path::new("/nonexistent"));
+    let dir = real.coreutils.to_str().expect("utf8 dir");
+    for _ in 0..2 {
+        let _ = project_once(dir);
+    }
+    let mut totals: Vec<f64> = (0..10).map(|_| project_once(dir).0.total).collect();
+    totals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!(
+        median(&totals) < 20.0,
+        "coreutils FULL-load median (incl. tar index decode + mmap) must be < 20 ms, got {:.3} ms",
+        median(&totals)
+    );
 }

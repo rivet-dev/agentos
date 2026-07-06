@@ -175,7 +175,9 @@ pub struct SoftwareInput {
 /// fixtures.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageRef {
-    #[serde(alias = "packagePath")]
+    /// Serialized as `packagePath` — the single package-ref spelling on every
+    /// JSON boundary (registry exports, actor config, client config).
+    #[serde(rename = "packagePath")]
     pub path: String,
 }
 

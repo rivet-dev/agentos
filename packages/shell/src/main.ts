@@ -18,6 +18,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -100,7 +101,12 @@ function isUsablePackageDir(dir: string | undefined): dir is string {
 }
 
 function isUsablePackageFile(file: string | undefined): file is string {
-	return file !== undefined && existsSync(file);
+	if (file === undefined) return false;
+	try {
+		return statSync(file).isFile();
+	} catch {
+		return false;
+	}
 }
 
 // Published packages ship their packed `.aospkg` materialized. Workspace

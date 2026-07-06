@@ -33,6 +33,13 @@ const PACKAGE_MANIFEST_VERSION = 1;
 const MANIFEST_JSON_NAME = "agentos-package.json";
 const SNAPSHOT_BUNDLE_PATH = "/dist/sdk-snapshot.js";
 const BLOCK = 512;
+/** Pack-time mirror of the load-side index cap (`MAX_TAR_INDEX_ENTRIES`). */
+const MAX_PACK_INDEX_ENTRIES = 200_000;
+
+/** Code-unit comparison matching the Rust packer's byte-wise sort. */
+function byteCompare(a: string, b: string): number {
+	return a < b ? -1 : a > b ? 1 : 0;
+}
 const S_IFDIR = 0o040000;
 const S_IFREG = 0o100000;
 const S_IFLNK = 0o120000;
@@ -74,22 +81,19 @@ interface RawTarMember {
 	dataOffsetInRecord: number;
 }
 
-/** Pack `sourceTar` into a `.aospkg` at `dest`. */
-export function packAospkgFromTar(
-	sourceTar: string,
-	dest: string,
-	fallbackVersion?: string,
-): AospkgSummary {
+/** Pack `sourceTar` into a `.aospkg` at `dest`. The source
+ * `agentos-package.json` must carry `name` and `version`. */
+export function packAospkgFromTar(sourceTar: string, dest: string): AospkgSummary {
 	const source = readFileSync(sourceTar);
-	const { bytes, summary } = packAospkgFromTarBytes(source, fallbackVersion);
+	const { bytes, summary } = packAospkgFromTarBytes(source);
 	writeFileSync(dest, bytes);
 	return summary;
 }
 
-export function packAospkgFromTarBytes(
-	source: Buffer,
-	fallbackVersion?: string,
-): { bytes: Buffer; summary: AospkgSummary } {
+export function packAospkgFromTarBytes(source: Buffer): {
+	bytes: Buffer;
+	summary: AospkgSummary;
+} {
 	const members = parseTarMembers(source);
 
 	// Rebuild the mount tar without agentos-package.json, tracking each kept
@@ -153,16 +157,21 @@ export function packAospkgFromTarBytes(
 	if (typeof name !== "string" || name.length === 0) {
 		throw new Error(`${MANIFEST_JSON_NAME} is missing a valid "name"`);
 	}
-	const version =
-		typeof sourceManifest.version === "string" &&
-		sourceManifest.version.length > 0
-			? sourceManifest.version
-			: fallbackVersion;
+	const version = sourceManifest.version;
 	if (typeof version !== "string" || version.length === 0) {
 		throw new Error(`${MANIFEST_JSON_NAME} is missing a valid "version"`);
 	}
 
-	const sortedPaths = [...entries.keys()].sort();
+	if (entries.size > MAX_PACK_INDEX_ENTRIES) {
+		throw new Error(
+			`package mount index has ${entries.size} entries > MAX_PACK_INDEX_ENTRIES (${MAX_PACK_INDEX_ENTRIES}); ` +
+				"the load-side TarFileSystem cap would reject this package at VM configure — " +
+				"split the package or raise both limits together",
+		);
+	}
+	// Byte-wise sort matching the Rust packer (localeCompare varies with the
+	// ICU build and disagrees with Rust's byte order on mixed-case names).
+	const sortedPaths = [...entries.keys()].sort(byteCompare);
 	const tarEntries = sortedPaths.map((path) => entries.get(path) as TarEntry);
 	const commands = commandTargets(sortedPaths, packageJson);
 	const manPages = manPagesFromIndex(sortedPaths);
@@ -339,7 +348,7 @@ function commandTargetsFromPackageJson(value: {
 				command: name,
 				entry: normalizeRel(entry as string),
 			}))
-			.sort((a, b) => a.command.localeCompare(b.command));
+			.sort((a, b) => byteCompare(a.command, b.command));
 	}
 	return undefined;
 }
@@ -355,10 +364,7 @@ function manPagesFromIndex(sortedPaths: string[]): ManPage[] {
 			if (parts.length !== 2) return [];
 			return [{ section: parts[0], page: parts[1] }];
 		})
-		.sort(
-			(a, b) =>
-				a.section.localeCompare(b.section) || a.page.localeCompare(b.page),
-		);
+		.sort((a, b) => byteCompare(a.section, b.section) || byteCompare(a.page, b.page));
 }
 
 function isProjectableCommandName(name: string): boolean {
@@ -380,6 +386,7 @@ function parseTarMembers(source: Buffer): RawTarMember[] {
 	let offset = 0;
 	let pendingName: string | undefined;
 	let pendingLink: string | undefined;
+	let pendingSize: number | undefined;
 	let recordStart = 0;
 	let sawExtension = false;
 	while (offset + BLOCK <= source.length) {
@@ -411,6 +418,7 @@ function parseTarMembers(source: Buffer): RawTarMember[] {
 				);
 				if (records.path !== undefined) pendingName = records.path;
 				if (records.linkpath !== undefined) pendingLink = records.linkpath;
+				if (records.size !== undefined) pendingSize = records.size;
 				sawExtension = true;
 			} else {
 				// global pax header: applies archive-wide; not copied per-member.
@@ -419,6 +427,9 @@ function parseTarMembers(source: Buffer): RawTarMember[] {
 			offset = next;
 			continue;
 		}
+		const memberSize = pendingSize ?? size;
+		const memberDataBlocks = Math.ceil(memberSize / BLOCK);
+		const memberNext = dataStart + memberDataBlocks * BLOCK;
 		const rawName = readCString(block, 0, 100);
 		const prefix = isUstar(block) ? readCString(block, 345, 155) : "";
 		const name =
@@ -433,16 +444,17 @@ function parseTarMembers(source: Buffer): RawTarMember[] {
 			uid: parseOctal(block, 108, 8),
 			gid: parseOctal(block, 116, 8),
 			mtime: parseOctal(block, 136, 12),
-			size,
+			size: memberSize,
 			linkTarget,
 			recordStart,
-			recordEnd: next,
+			recordEnd: memberNext,
 			dataOffsetInRecord: dataStart - recordStart,
 		});
 		pendingName = undefined;
 		pendingLink = undefined;
+		pendingSize = undefined;
 		sawExtension = false;
-		offset = next;
+		offset = memberNext;
 	}
 	return members;
 }
@@ -452,22 +464,36 @@ function memberData(source: Buffer, member: RawTarMember): Buffer {
 	return source.subarray(dataStart, dataStart + member.size);
 }
 
-function parsePaxRecords(data: Buffer): { path?: string; linkpath?: string } {
-	const out: { path?: string; linkpath?: string } = {};
+function parsePaxRecords(data: Buffer): {
+	path?: string;
+	linkpath?: string;
+	size?: number;
+} {
+	// pax record lengths count BYTES ("<len> <key>=<value>\n"), so the walk
+	// must stay on the byte buffer — decoding to a JS string first desyncs on
+	// any multi-byte UTF-8 character in a path.
+	const out: { path?: string; linkpath?: string; size?: number } = {};
 	let offset = 0;
-	const text = data.toString("utf8");
-	while (offset < text.length) {
-		const space = text.indexOf(" ", offset);
+	while (offset < data.length) {
+		const space = data.indexOf(0x20, offset);
 		if (space === -1) break;
-		const length = Number.parseInt(text.slice(offset, space), 10);
+		const length = Number.parseInt(
+			data.subarray(offset, space).toString("latin1"),
+			10,
+		);
 		if (!Number.isFinite(length) || length <= 0) break;
-		const record = text.slice(offset, offset + length);
-		const eq = record.indexOf("=");
+		const record = data.subarray(offset, offset + length);
+		const eq = record.indexOf(0x3d); // '='
 		if (eq !== -1) {
-			const key = record.slice(space - offset + 1, eq);
-			const value = record.slice(eq + 1).replace(/\n$/, "");
+			const key = record.subarray(space - offset + 1, eq).toString("utf8");
+			let value = record.subarray(eq + 1).toString("utf8");
+			value = value.endsWith("\n") ? value.slice(0, -1) : value;
 			if (key === "path") out.path = value;
 			if (key === "linkpath") out.linkpath = value;
+			if (key === "size") {
+				const parsed = Number.parseInt(value, 10);
+				if (Number.isFinite(parsed) && parsed >= 0) out.size = parsed;
+			}
 		}
 		offset += length;
 	}
@@ -502,11 +528,22 @@ function readCString(block: Buffer, start: number, length: number): string {
 
 function parseOctal(block: Buffer, start: number, length: number): number {
 	const slice = block.subarray(start, start + length);
-	// GNU base-256 extension for large numeric fields.
+	// GNU base-256 extension for large numeric fields. Negative values (bit
+	// pattern 0xff..., e.g. pre-epoch mtimes) and values beyond 2^53 cannot be
+	// represented faithfully here; fail loudly instead of packing a corrupt
+	// index.
 	if ((slice[0] & 0x80) !== 0) {
-		let value = slice[0] & 0x7f;
+		if (slice[0] !== 0x80) {
+			throw new Error(
+				"unsupported base-256 tar numeric field (negative or oversized value)",
+			);
+		}
+		let value = 0;
 		for (let i = 1; i < length; i += 1) {
 			value = value * 256 + slice[i];
+			if (!Number.isSafeInteger(value)) {
+				throw new Error("base-256 tar numeric field exceeds 2^53");
+			}
 		}
 		return value;
 	}
