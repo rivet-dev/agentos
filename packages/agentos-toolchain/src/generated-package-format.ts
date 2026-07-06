@@ -7,6 +7,9 @@ export type i64 = bigint
 export type u32 = number
 export type u64 = bigint
 
+/**
+ * File type of a mount tar entry, as served by `TarFileSystem` stat/readdir.
+ */
 export enum TarEntryKind {
     File = "File",
     Directory = "Directory",
@@ -58,15 +61,43 @@ function write0(bc: bare.ByteCursor, x: string | null): void {
     }
 }
 
+/**
+ * One entry of the chunk3 mount tar. The index lets the VFS project the tar
+ * without parsing tar headers at VM startup: file contents are served as
+ * byte ranges directly out of chunk3.
+ */
 export type TarEntry = {
+    /**
+     * Absolute path within the package mount root, e.g. `/bin/jq`.
+     */
     readonly path: string
     readonly kind: TarEntryKind
+    /**
+     * Byte offset of the file's content within chunk3 (the mount tar). 0 for
+     * directories and symlinks, which carry no content.
+     */
     readonly offset: u64
+    /**
+     * Content length in bytes. 0 for directories and symlinks.
+     */
     readonly size: u64
+    /**
+     * POSIX mode bits (file-type bits + permissions) reported by guest stat.
+     */
     readonly mode: u32
+    /**
+     * Ownership reported by guest stat. Deterministic packs emit 0.
+     */
     readonly uid: u32
     readonly gid: u32
+    /**
+     * Modification time (Unix seconds) reported by guest stat. Deterministic
+     * packs emit 0.
+     */
     readonly mtime: i64
+    /**
+     * Symlink target; present only when kind is SYMLINK.
+     */
     readonly linkTarget: string | null
 }
 
@@ -138,10 +169,28 @@ function write2(bc: bare.ByteCursor, x: readonly string[]): void {
     }
 }
 
+/**
+ * Agent metadata for packages that ship an ACP agent adapter. Present only on
+ * agent packages; absence means the package is not launchable as an agent.
+ */
 export type AgentBlock = {
+    /**
+     * Name of a command in `PackageManifest.commands` that speaks ACP on
+     * stdio. The sidecar launches this to run the agent.
+     */
     readonly acpEntrypoint: string
+    /**
+     * True when the package ships a prebuilt SDK snapshot bundle for fast agent
+     * cold starts; see `PackageManifest.snapshotBundlePath`.
+     */
     readonly snapshot: boolean
+    /**
+     * Environment variables applied to the agent process at launch.
+     */
     readonly env: ReadonlyMap<string, string>
+    /**
+     * Extra argv appended when launching the ACP entrypoint.
+     */
     readonly launchArgs: readonly string[]
 }
 
@@ -161,8 +210,23 @@ export function writeAgentBlock(bc: bare.ByteCursor, x: AgentBlock): void {
     write2(bc, x.launchArgs)
 }
 
+/**
+ * One command projected into the shared `$PATH` dir. All packages link their
+ * commands into a single `/opt/agentos/bin`, each as its own virtual symlink
+ * leaf, so the sidecar can enumerate and remap commands from chunk1 alone —
+ * no tar scan or JSON parse at VM startup.
+ */
 export type CommandTarget = {
+    /**
+     * The name the guest types: the link name under `/opt/agentos/bin`.
+     */
     readonly command: string
+    /**
+     * Path of the executable it resolves to, relative to the package mount root
+     * at `/opt/agentos/pkgs/<name>/<version>/`, e.g. `bin/jq` or
+     * `dist/claude-cli.mjs`. Not necessarily under `bin/`: npm-style
+     * `package.json` `bin` maps may point anywhere in the package.
+     */
     readonly entry: string
 }
 
@@ -178,8 +242,19 @@ export function writeCommandTarget(bc: bare.ByteCursor, x: CommandTarget): void 
     bare.writeString(bc, x.entry)
 }
 
+/**
+ * One man page shipped by the package, derived at pack time from mount paths
+ * of the form `/share/man/<section>/<page>`. The projection serves manpage
+ * aliases from this list without scanning the mount index at startup.
+ */
 export type ManPage = {
+    /**
+     * Man section directory name, e.g. `man1`.
+     */
     readonly section: string
+    /**
+     * Page file name within the section, e.g. `jq.1`.
+     */
     readonly page: string
 }
 
@@ -195,8 +270,21 @@ export function writeManPage(bc: bare.ByteCursor, x: ManPage): void {
     bare.writeString(bc, x.page)
 }
 
+/**
+ * One directory the package projects to a fixed location in the guest
+ * filesystem, for software that expects its runtime files at a well-known
+ * absolute path (e.g. vim's `$VIMRUNTIME` tree).
+ */
 export type ProvidesFile = {
+    /**
+     * Source directory relative to the package mount root, e.g. `share/vim/vim92`.
+     * Must be a directory; non-directory sources are skipped with a warning.
+     */
     readonly source: string
+    /**
+     * Absolute guest path where the source is mounted read-only, e.g.
+     * `/usr/local/share/vim/vim92`.
+     */
     readonly target: string
 }
 
@@ -231,8 +319,19 @@ function write3(bc: bare.ByteCursor, x: readonly ProvidesFile[]): void {
     }
 }
 
+/**
+ * Guest environment and filesystem projections the package provides.
+ */
 export type ProvidesBlock = {
+    /**
+     * Guest-wide environment defaults applied at VM creation. First package
+     * wins: a key already set (by the VM config or an earlier package) is not
+     * overridden.
+     */
     readonly env: ReadonlyMap<string, string>
+    /**
+     * Package directories mounted at fixed guest paths; see `ProvidesFile`.
+     */
     readonly files: readonly ProvidesFile[]
 }
 
@@ -308,13 +407,44 @@ function write7(bc: bare.ByteCursor, x: readonly ManPage[]): void {
     }
 }
 
+/**
+ * Chunk1: the runtime package manifest. Read alone (without chunk2/chunk3) on
+ * the VM cold-start path to project `/opt/agentos` — keep it small and free of
+ * anything that would require reading the mount payload.
+ */
 export type PackageManifest = {
+    /**
+     * Runtime package name, e.g. `jq` or `claude-code`. Names the projection dir
+     * `/opt/agentos/pkgs/<name>/` and, for agent packages, the agent id.
+     */
     readonly name: string
+    /**
+     * Package version, e.g. `0.3.0-rc.2`. Names the version dir under the
+     * package projection dir.
+     */
     readonly version: string
+    /**
+     * Agent metadata; present only for packages launchable as ACP agents.
+     */
     readonly agent: AgentBlock | null
+    /**
+     * Env/file projections; present only when the package provides them.
+     */
     readonly provides: ProvidesBlock | null
+    /**
+     * Commands linked under `/opt/agentos/bin`. Derived at pack time from the
+     * `package.json` `bin` map when present, else from `/bin/*` in the mount.
+     */
     readonly commands: readonly CommandTarget[]
+    /**
+     * Man pages shipped under `/share/man/` in the mount.
+     */
     readonly manPages: readonly ManPage[]
+    /**
+     * Mount-root-relative path to the prebuilt SDK snapshot bundle
+     * (`/dist/sdk-snapshot.js`), set iff `agent.snapshot` is true and the file
+     * exists in the mount. Null otherwise.
+     */
     readonly snapshotBundlePath: string | null
 }
 
@@ -378,6 +508,9 @@ function write8(bc: bare.ByteCursor, x: readonly TarEntry[]): void {
     }
 }
 
+/**
+ * Chunk2: index of the chunk3 mount tar, entries sorted by path.
+ */
 export type MountIndex = {
     readonly tarEntries: readonly TarEntry[]
 }
