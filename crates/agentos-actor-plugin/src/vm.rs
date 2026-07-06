@@ -78,9 +78,13 @@ pub(crate) async fn ensure_vm(
     // CBOR array of handler args (`handler(...body)`): the listener takes one
     // object argument, so the body is `[{}]`. JSON bytes / a bare object trip the
     // client's CBOR decoder ("length over 4294967295" / "Spread requires iterable").
-    let mut cbor = Vec::new();
-    if ciborium::into_writer(&serde_json::json!([{}]), &mut cbor).is_ok() {
-        let _ = host.broadcast(b"vmBooted".to_vec(), cbor);
+    match encode_vm_booted_event() {
+        Ok(cbor) => {
+            let _ = host.broadcast(b"vmBooted".to_vec(), cbor);
+        }
+        Err(error) => {
+            tracing::warn!(?error, "failed to encode vmBooted broadcast");
+        }
     }
     Ok(())
 }
@@ -93,10 +97,22 @@ pub(crate) async fn shutdown_vm(host: &HostCtx, vm: &mut Option<AgentOs>, reason
     if let Err(error) = handle.shutdown().await {
         host.log_warn(&format!("agent-os vm shutdown error ({reason}): {error}"));
     }
-    let mut cbor = Vec::new();
-    if ciborium::into_writer(&serde_json::json!([{ "reason": reason }]), &mut cbor).is_ok() {
-        let _ = host.broadcast(b"vmShutdown".to_vec(), cbor);
+    match encode_vm_shutdown_event(reason) {
+        Ok(cbor) => {
+            let _ = host.broadcast(b"vmShutdown".to_vec(), cbor);
+        }
+        Err(error) => {
+            tracing::warn!(?error, "failed to encode vmShutdown broadcast");
+        }
     }
+}
+
+pub(crate) fn encode_vm_booted_event() -> anyhow::Result<Vec<u8>> {
+    crate::actions::encode_event_arg(&json!({}))
+}
+
+pub(crate) fn encode_vm_shutdown_event(reason: &str) -> anyhow::Result<Vec<u8>> {
+    crate::actions::encode_event_arg(&json!({ "reason": reason }))
 }
 
 /// Durable-storage callback: routes a sidecar fs op to actor SQLite via

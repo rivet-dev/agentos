@@ -43,7 +43,7 @@ pub struct OpenShellDto {
 /// (`["$Uint8Array", base64]`), byte-exact with the action-reply encoding, so
 /// `data: ByteBuf` fields arrive client-side as real `Uint8Array`s.
 fn broadcast_event<T: Serialize>(host: &HostCtx, name: &[u8], payload: &T) {
-    match rivet_actor_plugin_abi::codec::encode_json_compat_to_vec(&(payload,)) {
+    match super::encode_event_arg(payload) {
         Ok(bytes) => {
             let _ = host.broadcast(name.to_vec(), bytes);
         }
@@ -66,6 +66,24 @@ struct ShellExitEvent<'a> {
     shell_id: &'a str,
     #[serde(rename = "exitCode")]
     exit_code: i32,
+}
+
+pub(crate) fn encode_shell_data_event(shell_id: &str, data: Vec<u8>) -> Result<Vec<u8>> {
+    super::encode_event_arg(&ShellDataEvent {
+        shell_id,
+        data: serde_bytes::ByteBuf::from(data),
+    })
+}
+
+pub(crate) fn encode_shell_stderr_event(shell_id: &str, data: Vec<u8>) -> Result<Vec<u8>> {
+    encode_shell_data_event(shell_id, data)
+}
+
+pub(crate) fn encode_shell_exit_event(shell_id: &str, exit_code: i32) -> Result<Vec<u8>> {
+    super::encode_event_arg(&ShellExitEvent {
+        shell_id,
+        exit_code,
+    })
 }
 
 /// `openShell(options)` — port of [`AgentOs::open_shell`]. Subscribes the
@@ -152,6 +170,22 @@ struct ProcessExitEvent {
     pid: u32,
     #[serde(rename = "exitCode")]
     exit_code: i32,
+}
+
+pub(crate) fn encode_process_output_event(
+    pid: u32,
+    stream: &str,
+    data: Vec<u8>,
+) -> Result<Vec<u8>> {
+    super::encode_event_arg(&ProcessOutputEvent {
+        pid,
+        stream,
+        data: serde_bytes::ByteBuf::from(data),
+    })
+}
+
+pub(crate) fn encode_process_exit_event(pid: u32, exit_code: i32) -> Result<Vec<u8>> {
+    super::encode_event_arg(&ProcessExitEvent { pid, exit_code })
 }
 
 /// Subscribe a spawned process's stdout/stderr/exit and forward them to

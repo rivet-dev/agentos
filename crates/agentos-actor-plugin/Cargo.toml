@@ -9,7 +9,7 @@ description = "Agent OS actor as a RivetKit native actor plugin (cdylib). Implem
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # RivetKit native-plugin ABI crate, consumed from crates.io like any other
@@ -33,6 +33,7 @@ uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3"
+chrono = "0.4"
 
 [dev-dependencies]
 # Real SQLite backing the mock host in the persistence e2e test (the durable

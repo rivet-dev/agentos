@@ -2,9 +2,13 @@
 //! `CronJobInfo` are not serde types (they carry closures), so we define
 //! serde DTOs here and map to/from the client types.
 
-use agentos_client::{AgentOs, CronAction, CronJobOptions, CronOverlap};
+use crate::host_ctx::HostCtx;
+use agentos_client::{AgentOs, CronAction, CronEvent, CronJobOptions, CronOverlap};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value as JsonValue};
+
+use super::Vars;
 
 /// `{ type: "exec", command, args }` | `{ type: "session", agentType, prompt }`.
 #[derive(Debug, Deserialize)]
@@ -64,7 +68,77 @@ fn to_action(dto: CronActionDto) -> CronAction {
     }
 }
 
-pub fn schedule_cron(vm: &AgentOs, dto: CronJobOptionsDto) -> Result<ScheduledCronDto> {
+pub(crate) fn cron_event_payload(event: &CronEvent) -> JsonValue {
+    match event {
+        CronEvent::Fire { job_id, time } => json!({
+            "event": {
+                "type": "cron:fire",
+                "jobId": job_id,
+                "time": time.timestamp_millis(),
+            },
+        }),
+        CronEvent::Complete {
+            job_id,
+            time,
+            duration_ms,
+        } => json!({
+            "event": {
+                "type": "cron:complete",
+                "jobId": job_id,
+                "time": time.timestamp_millis(),
+                "durationMs": duration_ms,
+            },
+        }),
+        CronEvent::Error {
+            job_id,
+            time,
+            error,
+        } => json!({
+            "event": {
+                "type": "cron:error",
+                "jobId": job_id,
+                "time": time.timestamp_millis(),
+                "error": error,
+            },
+        }),
+    }
+}
+
+pub(crate) fn encode_cron_event(event: &CronEvent) -> Result<Vec<u8>> {
+    super::encode_event_arg(&cron_event_payload(event))
+}
+
+fn ensure_cron_event_pump(host: &HostCtx, vm: &AgentOs, vars: &mut Vars) {
+    if vars.cron_task.is_some() {
+        return;
+    }
+    let host = host.clone();
+    let mut rx = vm.cron_events();
+    vars.cron_task = Some(tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => match encode_cron_event(&event) {
+                    Ok(bytes) => {
+                        let _ = host.broadcast(b"cronEvent".to_vec(), bytes);
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "failed to encode cron event broadcast");
+                    }
+                },
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    }));
+}
+
+pub fn schedule_cron(
+    host: &HostCtx,
+    vm: &AgentOs,
+    vars: &mut Vars,
+    dto: CronJobOptionsDto,
+) -> Result<ScheduledCronDto> {
+    ensure_cron_event_pump(host, vm, vars);
     let options = CronJobOptions {
         id: dto.id,
         schedule: dto.schedule,

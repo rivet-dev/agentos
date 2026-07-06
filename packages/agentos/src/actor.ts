@@ -113,7 +113,7 @@ function normalizePackageRef(value: unknown): NormalizedPackageRef | undefined {
 	}
 	// Recognizably-legacy shapes fail loudly instead of silently dropping the
 	// package from the VM.
-	for (const legacy of ["packageTar", "packageDir", "dir"]) {
+	for (const legacy of ["packageTar", "packageDir", "commandDir", "dir"]) {
 		if (typeof record[legacy] === "string") {
 			throw new Error(
 				`agentOS package ref uses removed field "${legacy}"; packages are referenced ` +

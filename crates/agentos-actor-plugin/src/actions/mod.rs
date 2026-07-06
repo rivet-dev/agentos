@@ -10,13 +10,13 @@
 //! verbatim copies of the rivetkit-agent-os helpers; `session`/`preview` swap
 //! rivetkit's `Ctx` for [`HostCtx`] (durable storage via `db_*`).
 
-pub mod cron;
-pub mod filesystem;
-pub mod network;
-pub mod preview;
-pub mod process;
-pub mod session;
-pub mod shell;
+pub(crate) mod cron;
+pub(crate) mod filesystem;
+pub(crate) mod network;
+pub(crate) mod preview;
+pub(crate) mod process;
+pub(crate) mod session;
+pub(crate) mod shell;
 
 use std::collections::HashMap;
 
@@ -47,6 +47,9 @@ pub struct Vars {
     /// list exists so VM teardown aborts any still-live pumps. Bounded by the
     /// client's shell registries, not here.
     pub shell_tasks: Vec<JoinHandle<()>>,
+    /// One cron event pump per VM lifetime. It fans `AgentOs::cron_events()` to
+    /// actor clients as `cronEvent` broadcasts.
+    pub cron_task: Option<JoinHandle<()>>,
 }
 
 impl Vars {
@@ -71,6 +74,9 @@ impl Vars {
         for task in self.shell_tasks.drain(..) {
             task.abort();
         }
+        if let Some(task) = self.cron_task.take() {
+            task.abort();
+        }
         self.live_sessions.clear();
     }
 }
@@ -93,11 +99,706 @@ fn reply_ok<T: Serialize>(host: &HostCtx, token: u64, value: &T) {
     }
 }
 
+fn reply_ok_encoded(host: &HostCtx, token: u64, encoded: Result<Vec<u8>>) {
+    match encoded {
+        Ok(bytes) => {
+            host.reply_ok(token, bytes);
+        }
+        Err(error) => {
+            host.reply_err(token, &format!("encode action response: {error}"));
+        }
+    }
+}
+
+pub(crate) fn encode_event_arg<T: Serialize>(payload: &T) -> Result<Vec<u8>> {
+    abi::codec::encode_json_compat_to_vec(&(payload,)).map_err(Into::into)
+}
+
 /// Reply failure with the error message (matches `ActionCall::err`).
 fn reply_err(host: &HostCtx, token: u64, error: anyhow::Error) {
     let message = error.to_string();
     host.log_warn(&format!("agent-os action failed: {message}"));
     host.reply_err(token, &message);
+}
+
+pub mod contract {
+    use std::collections::BTreeMap;
+
+    use agentos_client::{
+        AgentExitEvent, CronEvent, CronOverlap, DirEntry, DirEntryType, JsonRpcResponse,
+        ProcessInfo, ProcessStatus, ProcessTreeNode, SpawnHandle, SpawnedProcessInfo, VirtualStat,
+    };
+    use anyhow::{anyhow, Result};
+    use ciborium::Value as CborValue;
+    use rivet_actor_plugin_abi as abi;
+    use serde_json::json;
+
+    use super::{cron, filesystem, network, preview, process, session, shell};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ReplyShape {
+        Unit,
+        String,
+        Bool,
+        Number,
+        Uint8Array,
+        Array,
+        NullableArray,
+        Object(&'static [&'static str]),
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct ActionContract {
+        pub name: &'static str,
+        pub reply_shape: ReplyShape,
+        pub ts_signature: &'static str,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct EventContract {
+        pub name: &'static str,
+        pub payload_shape: ReplyShape,
+        pub ts_signature: &'static str,
+    }
+
+    pub const ACTION_CONTRACTS: &[ActionContract] = &[
+        ActionContract {
+            name: "readFile",
+            reply_shape: ReplyShape::Uint8Array,
+            ts_signature: "readFile: (c: Ctx, path: string) => Promise<Uint8Array>;",
+        },
+        ActionContract {
+            name: "writeFile",
+            reply_shape: ReplyShape::Unit,
+            ts_signature:
+                "writeFile: (c: Ctx, path: string, content: string | Uint8Array) => Promise<void>;",
+        },
+        ActionContract {
+            name: "stat",
+            reply_shape: ReplyShape::Object(&["atimeMs", "birthtimeMs", "blocks", "ctimeMs", "dev", "gid", "ino", "isDirectory", "isSymbolicLink", "mode", "mtimeMs", "nlink", "rdev", "size", "uid"]),
+            ts_signature: "stat: (c: Ctx, path: string) => Promise<VirtualStat>;",
+        },
+        ActionContract {
+            name: "mkdir",
+            reply_shape: ReplyShape::Unit,
+            ts_signature: "mkdir: (c: Ctx, path: string) => Promise<void>;",
+        },
+        ActionContract {
+            name: "readdir",
+            reply_shape: ReplyShape::Array,
+            ts_signature: "readdir: (c: Ctx, path: string) => Promise<string[]>;",
+        },
+        ActionContract {
+            name: "readdirEntries",
+            reply_shape: ReplyShape::NullableArray,
+            ts_signature:
+                "readdirEntries: (c: Ctx, path: string) => Promise<ReaddirEntry[] | null>;",
+        },
+        ActionContract {
+            name: "exists",
+            reply_shape: ReplyShape::Bool,
+            ts_signature: "exists: (c: Ctx, path: string) => Promise<boolean>;",
+        },
+        ActionContract {
+            name: "move",
+            reply_shape: ReplyShape::Unit,
+            ts_signature: "move: (c: Ctx, from: string, to: string) => Promise<void>;",
+        },
+        ActionContract {
+            name: "deleteFile",
+            reply_shape: ReplyShape::Unit,
+            ts_signature:
+                "deleteFile: (c: Ctx, path: string, options?: { recursive?: boolean }) => Promise<void>;",
+        },
+        ActionContract {
+            name: "writeFiles",
+            reply_shape: ReplyShape::Array,
+            ts_signature:
+                "writeFiles: ( c: Ctx, entries: { path: string; content: string | Uint8Array }[], ) => Promise<WriteFileResult[]>;",
+        },
+        ActionContract {
+            name: "readFiles",
+            reply_shape: ReplyShape::Array,
+            ts_signature: "readFiles: (c: Ctx, paths: string[]) => Promise<ReadFileResult[]>;",
+        },
+        ActionContract {
+            name: "readdirRecursive",
+            reply_shape: ReplyShape::Array,
+            ts_signature: "readdirRecursive: (c: Ctx, path: string) => Promise<DirEntry[]>;",
+        },
+        ActionContract {
+            name: "exec",
+            reply_shape: ReplyShape::Object(&["exitCode", "stderr", "stdout"]),
+            ts_signature: "exec: ( c: Ctx, command: string, options?: ExecActionOptions, ) => Promise<ExecResult>;",
+        },
+        ActionContract {
+            name: "spawn",
+            reply_shape: ReplyShape::Object(&["pid"]),
+            ts_signature: "spawn: ( c: Ctx, command: string, args: string[], options?: SpawnActionOptions, ) => Promise<SpawnedProcess>;",
+        },
+        ActionContract {
+            name: "waitProcess",
+            reply_shape: ReplyShape::Number,
+            ts_signature: "waitProcess: (c: Ctx, pid: number) => Promise<number>;",
+        },
+        ActionContract {
+            name: "killProcess",
+            reply_shape: ReplyShape::Unit,
+            ts_signature: "killProcess: (c: Ctx, pid: number) => Promise<void>;",
+        },
+        ActionContract {
+            name: "stopProcess",
+            reply_shape: ReplyShape::Unit,
+            ts_signature: "stopProcess: (c: Ctx, pid: number) => Promise<void>;",
+        },
+        ActionContract {
+            name: "listProcesses",
+            reply_shape: ReplyShape::Array,
+            ts_signature: "listProcesses: (c: Ctx) => Promise<SpawnedProcessInfo[]>;",
+        },
+        ActionContract {
+            name: "allProcesses",
+            reply_shape: ReplyShape::Array,
+            ts_signature: "allProcesses: (c: Ctx) => Promise<ProcessInfo[]>;",
+        },
+        ActionContract {
+            name: "processTree",
+            reply_shape: ReplyShape::Array,
+            ts_signature: "processTree: (c: Ctx) => Promise<ProcessTreeNode[]>;",
+        },
+        ActionContract {
+            name: "getProcess",
+            reply_shape: ReplyShape::Object(&["args", "command", "exitCode", "pid", "running", "startedAt"]),
+            ts_signature: "getProcess: (c: Ctx, pid: number) => Promise<SpawnedProcessInfo>;",
+        },
+        ActionContract {
+            name: "writeProcessStdin",
+            reply_shape: ReplyShape::Unit,
+            ts_signature:
+                "writeProcessStdin: (c: Ctx, pid: number, data: string | Uint8Array) => Promise<void>;",
+        },
+        ActionContract {
+            name: "closeProcessStdin",
+            reply_shape: ReplyShape::Unit,
+            ts_signature: "closeProcessStdin: (c: Ctx, pid: number) => Promise<void>;",
+        },
+        ActionContract {
+            name: "openShell",
+            reply_shape: ReplyShape::Object(&["shellId"]),
+            ts_signature: "openShell: (c: Ctx, options?: OpenShellActionOptions) => Promise<OpenShellResult>;",
+        },
+        ActionContract {
+            name: "writeShell",
+            reply_shape: ReplyShape::Unit,
+            ts_signature: "writeShell: (c: Ctx, shellId: string, data: string | Uint8Array) => Promise<void>;",
+        },
+        ActionContract {
+            name: "resizeShell",
+            reply_shape: ReplyShape::Unit,
+            ts_signature: "resizeShell: (c: Ctx, shellId: string, cols: number, rows: number) => Promise<void>;",
+        },
+        ActionContract {
+            name: "closeShell",
+            reply_shape: ReplyShape::Unit,
+            ts_signature: "closeShell: (c: Ctx, shellId: string) => Promise<void>;",
+        },
+        ActionContract {
+            name: "waitShell",
+            reply_shape: ReplyShape::Number,
+            ts_signature: "waitShell: (c: Ctx, shellId: string) => Promise<number>;",
+        },
+        ActionContract {
+            name: "vmFetch",
+            reply_shape: ReplyShape::Object(&["body", "headers", "status", "statusText"]),
+            ts_signature: "vmFetch: ( c: Ctx, port: number, url: string, options?: VmFetchOptions, ) => Promise<VmFetchResponse>;",
+        },
+        ActionContract {
+            name: "scheduleCron",
+            reply_shape: ReplyShape::Object(&["id"]),
+            ts_signature: "scheduleCron: (c: Ctx, options: SerializableCronJobOptions) => Promise<ScheduledCronJob>;",
+        },
+        ActionContract {
+            name: "listCronJobs",
+            reply_shape: ReplyShape::Array,
+            ts_signature: "listCronJobs: (c: Ctx) => Promise<SerializableCronJobInfo[]>;",
+        },
+        ActionContract {
+            name: "cancelCronJob",
+            reply_shape: ReplyShape::Unit,
+            ts_signature: "cancelCronJob: (c: Ctx, id: string) => Promise<void>;",
+        },
+        ActionContract {
+            name: "createSession",
+            reply_shape: ReplyShape::String,
+            ts_signature:
+                "createSession: (c: Ctx, agentType: string, options?: CreateSessionOptions) => Promise<string>;",
+        },
+        ActionContract {
+            name: "sendPrompt",
+            reply_shape: ReplyShape::Object(&["response", "text"]),
+            ts_signature: "sendPrompt: (c: Ctx, sessionId: string, text: string) => Promise<PromptResult>;",
+        },
+        ActionContract {
+            name: "closeSession",
+            reply_shape: ReplyShape::Unit,
+            ts_signature: "closeSession: (c: Ctx, sessionId: string) => Promise<void>;",
+        },
+        ActionContract {
+            name: "listPersistedSessions",
+            reply_shape: ReplyShape::Array,
+            ts_signature: "listPersistedSessions: (c: Ctx) => Promise<PersistedSessionRecord[]>;",
+        },
+        ActionContract {
+            name: "getSessionEvents",
+            reply_shape: ReplyShape::Array,
+            ts_signature:
+                "getSessionEvents: (c: Ctx, sessionId: string) => Promise<PersistedSessionEvent[]>;",
+        },
+        ActionContract {
+            name: "respondPermission",
+            reply_shape: ReplyShape::Unit,
+            ts_signature:
+                "respondPermission: ( c: Ctx, sessionId: string, permissionId: string, reply: PermissionReply, ) => Promise<void>;",
+        },
+        ActionContract {
+            name: "createSignedPreviewUrl",
+            reply_shape: ReplyShape::Object(&["expiresAt", "path", "port", "token"]),
+            ts_signature:
+                "createSignedPreviewUrl: (c: Ctx, port: number, ttlSeconds: number) => Promise<SignedPreviewUrl>;",
+        },
+        ActionContract {
+            name: "expireSignedPreviewUrl",
+            reply_shape: ReplyShape::Unit,
+            ts_signature: "expireSignedPreviewUrl: (c: Ctx, token: string) => Promise<void>;",
+        },
+        ActionContract {
+            name: "listMounts",
+            reply_shape: ReplyShape::Array,
+            ts_signature: "listMounts: (c: Ctx) => Promise<MountInfo[]>;",
+        },
+        ActionContract {
+            name: "listSoftware",
+            reply_shape: ReplyShape::Array,
+            ts_signature: "listSoftware: (c: Ctx) => Promise<SoftwareInfo[]>;",
+        },
+    ];
+
+    pub const EVENT_CONTRACTS: &[EventContract] = &[
+        EventContract {
+            name: "sessionEvent",
+            payload_shape: ReplyShape::Object(&["event", "sessionId"]),
+            ts_signature: "sessionEvent: SessionEventPayload;",
+        },
+        EventContract {
+            name: "permissionRequest",
+            payload_shape: ReplyShape::Object(&["request", "sessionId"]),
+            ts_signature: "permissionRequest: PermissionRequestPayload;",
+        },
+        EventContract {
+            name: "agentCrashed",
+            payload_shape: ReplyShape::Object(&["event", "sessionId"]),
+            ts_signature: "agentCrashed: AgentCrashedPayload;",
+        },
+        EventContract {
+            name: "vmBooted",
+            payload_shape: ReplyShape::Object(&[]),
+            ts_signature: "vmBooted: VmBootedPayload;",
+        },
+        EventContract {
+            name: "vmShutdown",
+            payload_shape: ReplyShape::Object(&["reason"]),
+            ts_signature: "vmShutdown: VmShutdownPayload;",
+        },
+        EventContract {
+            name: "processOutput",
+            payload_shape: ReplyShape::Object(&["data", "pid", "stream"]),
+            ts_signature: "processOutput: ProcessOutputPayload;",
+        },
+        EventContract {
+            name: "processExit",
+            payload_shape: ReplyShape::Object(&["exitCode", "pid"]),
+            ts_signature: "processExit: ProcessExitPayload;",
+        },
+        EventContract {
+            name: "shellData",
+            payload_shape: ReplyShape::Object(&["data", "shellId"]),
+            ts_signature: "shellData: ShellDataPayload;",
+        },
+        EventContract {
+            name: "shellStderr",
+            payload_shape: ReplyShape::Object(&["data", "shellId"]),
+            ts_signature: "shellStderr: ShellDataPayload;",
+        },
+        EventContract {
+            name: "shellExit",
+            payload_shape: ReplyShape::Object(&["exitCode", "shellId"]),
+            ts_signature: "shellExit: ShellExitPayload;",
+        },
+        EventContract {
+            name: "cronEvent",
+            payload_shape: ReplyShape::Object(&["event"]),
+            ts_signature: "cronEvent: CronEventPayload;",
+        },
+    ];
+
+    pub fn decode_action_args(name: &str, args: &[u8]) -> Result<()> {
+        match name {
+            "readFile" => super::decode_as::<(String,)>(args).map(|_| ()),
+            "writeFile" => {
+                super::decode_as::<(String, filesystem::WriteFileContent)>(args).map(|_| ())
+            }
+            "stat" => super::decode_as::<(String,)>(args).map(|_| ()),
+            "mkdir" => super::decode_as::<(String,)>(args).map(|_| ()),
+            "readdir" => super::decode_as::<(String,)>(args).map(|_| ()),
+            "readdirEntries" => super::decode_as::<(String,)>(args).map(|_| ()),
+            "exists" => super::decode_as::<(String,)>(args).map(|_| ()),
+            "move" => super::decode_as::<(String, String)>(args).map(|_| ()),
+            "deleteFile" => {
+                super::decode_as::<(String, Option<filesystem::DeleteOptionsArg>)>(args)
+                    .map(|_| ())
+                    .or_else(|_| super::decode_as::<(String,)>(args).map(|_| ()))
+            }
+            "writeFiles" => {
+                super::decode_as::<(Vec<filesystem::WriteFilesEntryArg>,)>(args).map(|_| ())
+            }
+            "readFiles" => super::decode_as::<(Vec<String>,)>(args).map(|_| ()),
+            "readdirRecursive" => super::decode_as::<(String,)>(args).map(|_| ()),
+            "exec" => super::decode_as::<(String, Option<process::ExecActionOptions>)>(args)
+                .map(|_| ())
+                .or_else(|_| super::decode_as::<(String,)>(args).map(|_| ())),
+            "spawn" => {
+                super::decode_as::<(String, Vec<String>, Option<process::SpawnActionOptions>)>(args)
+                    .map(|_| ())
+                    .or_else(|_| super::decode_as::<(String, Vec<String>)>(args).map(|_| ()))
+            }
+            "waitProcess" | "killProcess" | "stopProcess" | "getProcess" | "closeProcessStdin" => {
+                super::decode_as::<(u32,)>(args).map(|_| ())
+            }
+            "listProcesses"
+            | "allProcesses"
+            | "processTree"
+            | "listCronJobs"
+            | "listPersistedSessions"
+            | "listMounts"
+            | "listSoftware" => super::decode_as::<()>(args).map(|_| ()),
+            "writeProcessStdin" => {
+                super::decode_as::<(u32, filesystem::WriteFileContent)>(args).map(|_| ())
+            }
+            "openShell" => super::decode_as::<(Option<shell::OpenShellActionOptions>,)>(args)
+                .map(|_| ())
+                .or_else(|_| super::decode_as::<()>(args).map(|_| ())),
+            "writeShell" => {
+                super::decode_as::<(String, filesystem::WriteFileContent)>(args).map(|_| ())
+            }
+            "resizeShell" => super::decode_as::<(String, u16, u16)>(args).map(|_| ()),
+            "closeShell"
+            | "waitShell"
+            | "cancelCronJob"
+            | "closeSession"
+            | "getSessionEvents"
+            | "expireSignedPreviewUrl" => super::decode_as::<(String,)>(args).map(|_| ()),
+            "vmFetch" => super::decode_as::<(u16, String, Option<network::FetchOptions>)>(args)
+                .map(|_| ())
+                .or_else(|_| super::decode_as::<(u16, String)>(args).map(|_| ())),
+            "scheduleCron" => super::decode_as::<(cron::CronJobOptionsDto,)>(args).map(|_| ()),
+            "createSession" => {
+                super::decode_as::<(String, Option<session::CreateSessionOptionsDto>)>(args)
+                    .map(|_| ())
+                    .or_else(|_| super::decode_as::<(String,)>(args).map(|_| ()))
+            }
+            "sendPrompt" => super::decode_as::<(String, String)>(args).map(|_| ()),
+            "respondPermission" => super::decode_as::<(String, String, String)>(args).map(|_| ()),
+            "createSignedPreviewUrl" => super::decode_as::<(u16, u64)>(args).map(|_| ()),
+            other => Err(anyhow!("unknown action {other}")),
+        }
+    }
+
+    pub fn encoded_client_arg_variants(name: &str) -> Result<Vec<Vec<u8>>> {
+        let variants = match name {
+            "readFile"
+            | "stat"
+            | "mkdir"
+            | "readdir"
+            | "readdirEntries"
+            | "exists"
+            | "readdirRecursive"
+            | "closeShell"
+            | "waitShell"
+            | "cancelCronJob"
+            | "closeSession"
+            | "getSessionEvents"
+            | "expireSignedPreviewUrl" => {
+                vec![json!(["/workspace/file.txt"])]
+            }
+            "writeFile" | "writeShell" => vec![
+                json!(["/workspace/file.txt", "hello"]),
+                json!(["/workspace/file.txt", ["$Uint8Array", "aGVsbG8="]]),
+            ],
+            "move" => vec![json!(["/workspace/a.txt", "/workspace/b.txt"])],
+            "deleteFile" => vec![
+                json!(["/workspace/file.txt"]),
+                json!(["/workspace/file.txt", { "recursive": true }]),
+            ],
+            "writeFiles" => vec![json!([[{ "path": "/workspace/a.txt", "content": "a" }]])],
+            "readFiles" => vec![json!([["/workspace/a.txt", "/workspace/b.txt"]])],
+            "exec" => vec![
+                json!(["echo hello"]),
+                json!(["echo hello", { "cwd": "/workspace", "env": { "A": "B" } }]),
+            ],
+            "spawn" => vec![
+                json!(["node", ["server.js"]]),
+                json!(["node", ["server.js"], { "cwd": "/workspace", "streamStdin": true }]),
+            ],
+            "waitProcess" | "killProcess" | "stopProcess" | "getProcess" | "closeProcessStdin" => {
+                vec![json!([42])]
+            }
+            "listProcesses"
+            | "allProcesses"
+            | "processTree"
+            | "listCronJobs"
+            | "listPersistedSessions"
+            | "listMounts"
+            | "listSoftware" => vec![json!([])],
+            "writeProcessStdin" => vec![json!([42, ["$Uint8Array", "aGVsbG8="]])],
+            "openShell" => vec![
+                json!([]),
+                json!([{ "command": "sh", "args": ["-l"], "cols": 80, "rows": 24 }]),
+            ],
+            "resizeShell" => vec![json!(["shell-1", 80, 24])],
+            "vmFetch" => vec![
+                json!([3000, "http://127.0.0.1/"]),
+                json!([3000, "http://127.0.0.1/", { "method": "POST", "headers": { "x-test": "1" } }]),
+            ],
+            "scheduleCron" => vec![
+                json!([{ "id": "job-1", "schedule": "* * * * *", "action": { "type": "exec", "command": "echo", "args": ["hi"] }, "overlap": "skip" }]),
+            ],
+            "createSession" => vec![
+                json!(["default"]),
+                json!(["default", { "cwd": "/workspace", "env": { "A": "B" }, "skipOsInstructions": true, "additionalInstructions": "test" }]),
+            ],
+            "sendPrompt" => vec![json!(["session-1", "hello"])],
+            "respondPermission" => vec![json!(["session-1", "permission-1", "once"])],
+            "createSignedPreviewUrl" => vec![json!([3000, 60])],
+            other => return Err(anyhow!("unknown action {other}")),
+        };
+        variants
+            .into_iter()
+            .map(|value| abi::codec::encode_positional(&value))
+            .collect()
+    }
+
+    pub fn encode_sample_reply(name: &str) -> Result<Vec<u8>> {
+        match name {
+            "readFile" => encode(&serde_bytes::ByteBuf::from(vec![1, 2, 3])),
+            "writeFile"
+            | "mkdir"
+            | "move"
+            | "deleteFile"
+            | "killProcess"
+            | "stopProcess"
+            | "writeProcessStdin"
+            | "closeProcessStdin"
+            | "writeShell"
+            | "resizeShell"
+            | "closeShell"
+            | "cancelCronJob"
+            | "closeSession"
+            | "respondPermission"
+            | "expireSignedPreviewUrl" => encode(&()),
+            "stat" => encode(&VirtualStat {
+                mode: 0o100644,
+                size: 3,
+                blocks: 1,
+                dev: 1,
+                rdev: 0,
+                is_directory: false,
+                is_symbolic_link: false,
+                atime_ms: 1.0,
+                mtime_ms: 2.0,
+                ctime_ms: 3.0,
+                birthtime_ms: 4.0,
+                ino: 5,
+                nlink: 1,
+                uid: 1000,
+                gid: 1000,
+            }),
+            "readdir" => encode(&vec!["a.txt".to_owned()]),
+            "readdirEntries" => encode(&Some(vec![filesystem::ReaddirEntryDto {
+                name: "a.txt".to_owned(),
+                is_directory: false,
+                is_symbolic_link: false,
+            }])),
+            "exists" => encode(&true),
+            "writeFiles" => encode(&vec![filesystem::BatchWriteResultDto {
+                path: "/workspace/a.txt".to_owned(),
+                success: true,
+                error: None,
+            }]),
+            "readFiles" => encode(&vec![filesystem::BatchReadResultDto {
+                path: "/workspace/a.txt".to_owned(),
+                content: Some(serde_bytes::ByteBuf::from(vec![1, 2, 3])),
+                error: None,
+            }]),
+            "readdirRecursive" => encode(&vec![DirEntry {
+                path: "/workspace/a.txt".to_owned(),
+                entry_type: DirEntryType::File,
+                size: 3,
+            }]),
+            "exec" => encode(&process::ExecResultDto {
+                exit_code: 0,
+                stdout: "ok\n".to_owned(),
+                stderr: String::new(),
+            }),
+            "spawn" => encode(&SpawnHandle { pid: 42 }),
+            "waitProcess" | "waitShell" => encode(&0i32),
+            "listProcesses" => encode(&vec![spawned_process_info()]),
+            "allProcesses" => encode(&vec![process_info()]),
+            "processTree" => encode(&vec![ProcessTreeNode {
+                info: process_info(),
+                children: Vec::new(),
+            }]),
+            "getProcess" => encode(&spawned_process_info()),
+            "openShell" => encode(&shell::OpenShellDto {
+                shell_id: "shell-1".to_owned(),
+            }),
+            "vmFetch" => encode(&network::FetchResponseDto {
+                status: 200,
+                status_text: "OK".to_owned(),
+                headers: BTreeMap::from([("content-type".to_owned(), "text/plain".to_owned())]),
+                body: serde_bytes::ByteBuf::from(b"ok".to_vec()),
+            }),
+            "scheduleCron" => encode(&cron::ScheduledCronDto {
+                id: "job-1".to_owned(),
+            }),
+            "listCronJobs" => encode(&vec![cron::CronJobInfoDto {
+                id: "job-1".to_owned(),
+                schedule: "* * * * *".to_owned(),
+                overlap: CronOverlap::Skip,
+                last_run: Some(1.0),
+                next_run: Some(2.0),
+            }]),
+            "createSession" => encode_create_session_reply("session-1"),
+            "sendPrompt" => encode(&session::PromptResultDto {
+                response: JsonRpcResponse {
+                    jsonrpc: "2.0".to_owned(),
+                    id: None,
+                    result: Some(json!({ "ok": true })),
+                    error: None,
+                },
+                text: "hello".to_owned(),
+            }),
+            "listPersistedSessions" => encode(&vec![session::PersistedSessionDto {
+                session_id: "session-1".to_owned(),
+                agent_type: "default".to_owned(),
+                created_at: 1.0,
+                status: "running",
+            }]),
+            "getSessionEvents" => encode(&vec![session::PersistedSessionEventDto {
+                session_id: "session-1".to_owned(),
+                seq: 1,
+                event: json!({ "jsonrpc": "2.0", "method": "session/update", "params": {} }),
+                created_at: 1.0,
+            }]),
+            "createSignedPreviewUrl" => encode(&preview::SignedPreviewUrlDto {
+                path: "/request/preview/token-1".to_owned(),
+                token: "token-1".to_owned(),
+                port: 3000,
+                expires_at: 1.0,
+            }),
+            "listMounts" => encode(&vec![crate::config::MountInfoDto {
+                path: "/data".to_owned(),
+                kind: "host_dir".to_owned(),
+                config: None,
+                read_only: false,
+            }]),
+            "listSoftware" => encode(&vec![crate::config::SoftwareInfoDto {
+                package: "@agentos-software/common".to_owned(),
+                kind: "wasm-commands".to_owned(),
+                version: Some("0.0.1".to_owned()),
+                commands: vec!["ls".to_owned()],
+            }]),
+            other => Err(anyhow!("unknown action {other}")),
+        }
+    }
+
+    pub fn encode_sample_event(name: &str) -> Result<Vec<u8>> {
+        match name {
+            "sessionEvent" => session::encode_session_event(
+                "session-1",
+                &json!({ "jsonrpc": "2.0", "method": "session/update", "params": {} }),
+            ),
+            "permissionRequest" => session::encode_permission_request_event(
+                "session-1",
+                "permission-1",
+                Some("run command"),
+                &json!({ "toolCall": { "title": "Bash" } }),
+            ),
+            "agentCrashed" => session::encode_agent_crashed_event(
+                "session-1",
+                &AgentExitEvent {
+                    session_id: "live-session-1".to_owned(),
+                    agent_type: "pi".to_owned(),
+                    process_id: "proc-1".to_owned(),
+                    exit_code: Some(1),
+                    restart: "restarted".to_owned(),
+                    restart_count: 1,
+                    max_restarts: 3,
+                },
+            ),
+            "vmBooted" => crate::vm::encode_vm_booted_event(),
+            "vmShutdown" => crate::vm::encode_vm_shutdown_event("sleep"),
+            "processOutput" => shell::encode_process_output_event(42, "stdout", b"hello".to_vec()),
+            "processExit" => shell::encode_process_exit_event(42, 0),
+            "shellData" => shell::encode_shell_data_event("shell-1", b"hello".to_vec()),
+            "shellStderr" => shell::encode_shell_stderr_event("shell-1", b"oops".to_vec()),
+            "shellExit" => shell::encode_shell_exit_event("shell-1", 0),
+            "cronEvent" => cron::encode_cron_event(&CronEvent::Fire {
+                job_id: "job-1".to_owned(),
+                time: chrono::Utc::now(),
+            }),
+            other => Err(anyhow!("unknown event {other}")),
+        }
+    }
+
+    pub fn decode_reply_value(bytes: &[u8]) -> Result<CborValue> {
+        ciborium::from_reader(std::io::Cursor::new(bytes)).map_err(Into::into)
+    }
+
+    fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>> {
+        abi::codec::encode_json_compat_to_vec(value)
+    }
+
+    pub fn encode_create_session_reply(session_id: &str) -> Result<Vec<u8>> {
+        encode(&session_id)
+    }
+
+    fn spawned_process_info() -> SpawnedProcessInfo {
+        SpawnedProcessInfo {
+            pid: 42,
+            command: "node".to_owned(),
+            args: vec!["server.js".to_owned()],
+            running: true,
+            exit_code: None,
+            started_at: 1,
+        }
+    }
+
+    fn process_info() -> ProcessInfo {
+        ProcessInfo {
+            pid: 42,
+            ppid: 1,
+            pgid: 42,
+            sid: 42,
+            driver: "native".to_owned(),
+            command: "node".to_owned(),
+            args: vec!["server.js".to_owned()],
+            cwd: "/workspace".to_owned(),
+            status: ProcessStatus::Running,
+            exit_code: None,
+            start_time: 1.0,
+            exit_time: None,
+        }
+    }
 }
 
 /// Dispatch one decoded action against a live VM. `host` provides the actor's
@@ -337,7 +1038,7 @@ pub(crate) async fn dispatch(
             }
         }
         "scheduleCron" => match decode_as::<(cron::CronJobOptionsDto,)>(args) {
-            Ok((options,)) => match cron::schedule_cron(vm, options) {
+            Ok((options,)) => match cron::schedule_cron(host, vm, vars, options) {
                 Ok(handle) => reply_ok(host, token, &handle),
                 Err(error) => reply_err(host, token, error),
             },
@@ -363,7 +1064,11 @@ pub(crate) async fn dispatch(
             match decoded {
                 Ok((agent_type, options)) => {
                     match session::create_session(host, vm, vars, &agent_type, options).await {
-                        Ok(id) => reply_ok(host, token, &id),
+                        Ok(id) => reply_ok_encoded(
+                            host,
+                            token,
+                            contract::encode_create_session_reply(&id),
+                        ),
                         Err(error) => {
                             tracing::error!(?error, agent_type, "create_session failed");
                             reply_err(host, token, error)
@@ -425,15 +1130,19 @@ pub(crate) async fn dispatch(
             },
             Err(error) => reply_err(host, token, error),
         },
-        "openShell" => match decode_as::<(Option<shell::OpenShellActionOptions>,)>(args) {
-            Ok((options,)) => {
-                match shell::open_shell(host, vm, vars, options.unwrap_or_default()) {
-                    Ok(dto) => reply_ok(host, token, &dto),
-                    Err(error) => reply_err(host, token, error),
+        "openShell" => {
+            let decoded = decode_as::<(Option<shell::OpenShellActionOptions>,)>(args)
+                .or_else(|_| decode_as::<()>(args).map(|()| (None,)));
+            match decoded {
+                Ok((options,)) => {
+                    match shell::open_shell(host, vm, vars, options.unwrap_or_default()) {
+                        Ok(dto) => reply_ok(host, token, &dto),
+                        Err(error) => reply_err(host, token, error),
+                    }
                 }
+                Err(error) => reply_err(host, token, error),
             }
-            Err(error) => reply_err(host, token, error),
-        },
+        }
         "writeShell" => match decode_as::<(String, WriteFileContent)>(args) {
             Ok((shell_id, data)) => match shell::write_shell(vm, &shell_id, data).await {
                 Ok(()) => reply_ok(host, token, &()),

@@ -28,6 +28,7 @@ pub struct FetchOptions {
 #[serde(rename_all = "camelCase")]
 pub struct FetchResponseDto {
     pub status: u16,
+    pub status_text: String,
     pub headers: BTreeMap<String, String>,
     pub body: serde_bytes::ByteBuf,
 }
@@ -51,6 +52,11 @@ pub async fn fetch(
 
     let response = vm.fetch(port, request).await?;
     let status = response.status().as_u16();
+    let status_text = response
+        .extensions()
+        .get::<agentos_client::net::FetchStatusText>()
+        .map(|value| value.0.clone())
+        .unwrap_or_default();
     let headers = response
         .headers()
         .iter()
@@ -64,6 +70,7 @@ pub async fn fetch(
     let body = serde_bytes::ByteBuf::from(response.into_body().to_vec());
     Ok(FetchResponseDto {
         status,
+        status_text,
         headers,
         body,
     })

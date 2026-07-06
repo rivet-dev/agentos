@@ -17,7 +17,7 @@ use std::ffi::c_void;
 use rivet_actor_plugin_abi as abi;
 use tokio_util::sync::CancellationToken;
 
-mod actions;
+pub mod actions;
 mod config;
 mod host_ctx;
 mod http;
