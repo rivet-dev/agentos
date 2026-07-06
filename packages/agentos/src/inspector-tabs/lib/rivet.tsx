@@ -8,7 +8,7 @@
 // The client is created once auth is known (it needs the token for the gateway
 // URL segment), so this is a provider gated behind the init handshake.
 import { createClient, createRivetKitWithClient } from "@rivetkit/react";
-import React, { createContext, type ReactNode, useContext, useMemo } from "react";
+import React, { createContext, type ReactNode, useContext, useEffect, useMemo } from "react";
 import { setRivetClient } from "./actor-client";
 import { INSPECTOR_ACTOR_NAME, type InspectorRegistry } from "./registry";
 
@@ -49,12 +49,35 @@ export function RivetProvider({
 	return <RivetContext.Provider value={value}>{children}</RivetContext.Provider>;
 }
 
-/** Typed connection to the agent-os actor, resolved by id. */
+/** Connection to the agent-os actor, resolved by id. The pinned rivetkit
+ * preview's react layer resolves actors by key only, so this builds the
+ * connection from the raw client's `getForId` handle (same transport
+ * `callAction` uses) and exposes the one surface the inspector consumes:
+ * `useEvent(name, handler)`. */
 export function useAgentOsActor() {
 	const ctx = useContext(RivetContext);
 	if (!ctx) throw new Error("useAgentOsActor must be used within <RivetProvider>");
-	return ctx.bundle.useActor({
-		name: INSPECTOR_ACTOR_NAME,
-		id: ctx.actorId,
-	});
+	const connection = useMemo(
+		() => ctx.bundle.client.getForId(INSPECTOR_ACTOR_NAME, ctx.actorId).connect(),
+		[ctx],
+	);
+	useEffect(() => {
+		return () => {
+			void (connection as { dispose?: () => Promise<void> }).dispose?.();
+		};
+	}, [connection]);
+	// Hook-shaped like the react layer's `useEvent`: callers invoke it once per
+	// render, so the inner useEffect call order stays stable.
+	const useEvent = (name: string, handler: (...args: never[]) => void) => {
+		// eslint-disable-next-line react-hooks/rules-of-hooks
+		useEffect(() => {
+			const off = (
+				connection as unknown as {
+					on: (event: string, cb: unknown) => (() => void) | void;
+				}
+			).on(name, handler);
+			return typeof off === "function" ? off : undefined;
+		}, [name, handler]);
+	};
+	return { connection, useEvent };
 }
