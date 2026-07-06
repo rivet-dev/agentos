@@ -22,6 +22,7 @@ jobs:
         with:
           components: rustfmt
       - run: |
+          rm -rf /tmp/docs-theme
           git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
           git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
           rm -rf website/vendor/theme && mkdir -p website/vendor
@@ -87,6 +88,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: |
+          rm -rf /tmp/docs-theme
           git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
           git -C /tmp/docs-theme checkout 450c498555135098c6a927adfdf13458be9be22a
           rm -rf website/vendor/theme && mkdir -p website/vendor

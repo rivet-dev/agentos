@@ -115,8 +115,8 @@ export function checkAgentOsClientProtocolCompat(options = {}) {
 	const sidecarPath = join(root, "crates/client/src/sidecar.rs");
 	if (existsSync(sidecarPath)) {
 		const sidecarSource = readFileSync(sidecarPath, "utf8");
-		if (!sidecarSource.includes("use secure_exec_client::wire;")) {
-			errors.push("crates/client/src/sidecar.rs must import secure_exec_client::wire");
+		if (!sidecarSource.includes("use agentos_sidecar_client::wire;")) {
+			errors.push("crates/client/src/sidecar.rs must import agentos_sidecar_client::wire");
 		}
 		if (!sidecarSource.includes("protocol_version: wire::PROTOCOL_VERSION")) {
 			errors.push(

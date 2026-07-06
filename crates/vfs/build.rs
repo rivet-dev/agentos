@@ -1,4 +1,4 @@
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::{Path, PathBuf}};
 
 // Stage the base filesystem fixture into OUT_DIR. In-tree builds use the
 // canonical AgentOS runtime-core fixture from the current workspace; the
@@ -34,7 +34,7 @@ fn main() {
     });
 }
 
-fn stage_package_format_schema(manifest_dir: &PathBuf, out_dir: &PathBuf) {
+fn stage_package_format_schema(manifest_dir: &Path, out_dir: &Path) {
     let source_schema = manifest_dir.join("package-format").join("v1.bare");
     println!("cargo:rerun-if-changed={}", source_schema.display());
 

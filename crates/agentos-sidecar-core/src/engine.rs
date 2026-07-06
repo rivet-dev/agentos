@@ -84,7 +84,7 @@ fn resolve_agent<H: AcpHost>(
     let path = format!("/opt/agentos/pkgs/{agent_type}/current/agentos-package.json");
     let bytes = host.read_file(&path).map_err(|_| unknown())?;
     let manifest: AgentPackageManifest = serde_json::from_slice(&bytes).map_err(|_| unknown())?;
-    let agent = manifest.agent.ok_or_else(|| unknown())?;
+    let agent = manifest.agent.ok_or_else(&unknown)?;
     if agent.acp_entrypoint.is_empty() {
         return Err(unknown());
     }

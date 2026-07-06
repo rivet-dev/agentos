@@ -29,8 +29,10 @@ pub async fn exec(
     command: &str,
     options: ExecActionOptions,
 ) -> Result<ExecResultDto> {
-    let mut base = ExecOptions::default();
-    base.env = options.env;
+    let mut base = ExecOptions {
+        env: options.env,
+        ..Default::default()
+    };
     if options.cwd.is_some() {
         base.cwd = options.cwd;
     }
@@ -60,8 +62,10 @@ pub fn spawn(
     args: Vec<String>,
     options: SpawnActionOptions,
 ) -> Result<SpawnHandle> {
-    let mut base = ExecOptions::default();
-    base.env = options.env;
+    let mut base = ExecOptions {
+        env: options.env,
+        ..Default::default()
+    };
     if options.cwd.is_some() {
         base.cwd = options.cwd;
     }

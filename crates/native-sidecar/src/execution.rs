@@ -18818,10 +18818,10 @@ fn javascript_crypto_call_ecdh_session(
                 })?,
                 "ECDH private key",
             )?;
-            let ctx = BigNumContext::new().map_err(javascript_crypto_openssl_error)?;
+            let mut ctx = BigNumContext::new().map_err(javascript_crypto_openssl_error)?;
             let mut public_key = EcPoint::new(&group).map_err(javascript_crypto_openssl_error)?;
             public_key
-                .mul_generator(&group, &private_key, &ctx)
+                .mul_generator2(&group, &private_key, &mut ctx)
                 .map_err(javascript_crypto_openssl_error)?;
             session.key_pair = Some(
                 EcKey::from_private_components(&group, &private_key, &public_key)

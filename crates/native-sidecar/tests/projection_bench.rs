@@ -7,18 +7,19 @@
 //! ## What is timed
 //! Per sample, four spans are timed:
 //!   1. `read_package_manifest_from_path(<pkg>.aospkg)`
-//!        → read the 16-byte header, decode the chunk1 `PackageManifest`
-//!          (commands included)
+//!      → read the 16-byte header, decode the chunk1 `PackageManifest`
+//!      (commands included)
 //!   2. `build_package_leaf_mounts(&[descriptor], "/opt/agentos")`
-//!        → cross-package command-collision check + leaf-mount construction
+//!      → cross-package command-collision check + leaf-mount construction
 //!   3. `TarFileSystem::open` on the `.aospkg`
-//!        → decode the precomputed chunk2 mount index + mmap the mount tar
-//!          (cold each sample: the identity-keyed archive cache holds only
-//!          weak refs, so dropping the fs between samples re-loads the index)
+//!      → decode the precomputed chunk2 mount index + mmap the mount tar
+//!      (cold each sample: the identity-keyed archive cache holds only
+//!      weak refs, so dropping the fs between samples re-loads the index)
 //!   4. read every regular file in the mounted tar back out through the VFS
-//!        → recursive `read_dir_with_types` walk + `read_file` on each file,
-//!          summing bytes. This proves the mount serves real content and
-//!          bounds the total cost of "install + read everything".
+//!      → recursive `read_dir_with_types` walk + `read_file` on each file,
+//!      summing bytes. This proves the mount serves real content and
+//!      bounds the total cost of "install + read everything".
+//!
 //! `FULL load` is steps 1–3 (the honest "install" span — content reads happen
 //! later, on demand). `load + read ALL bytes` is steps 1–4 and is the
 //! conservative upper bound to quote against extraction-based installs.
@@ -59,8 +60,9 @@
 //! absent, e.g. in a clean checkout that has not built `dist/`):
 //!   - coreutils: `registry/software/coreutils/dist/package.tar` (large, many commands)
 //!   - tar:       `registry/software/tar/dist/package.tar`       (single wasm binary)
-//!   - git:       `registry/software/git/dist/package.tar`       (the package the
-//!                marketing install comparison talks about)
+//!   - git:       `registry/software/git/dist/package.tar`       (the package
+//!     the marketing install comparison talks about)
+//!
 //! Override the source tars via env:
 //!   PROJ_BENCH_COREUTILS_TAR=/abs/package.tar  PROJ_BENCH_TAR_TAR=/abs/package.tar
 //!   PROJ_BENCH_GIT_TAR=/abs/package.tar
@@ -95,7 +97,7 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
-        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").into())
+        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
 }
 
 fn source_tar_path(env_key: &str, default_rel: &str) -> PathBuf {
@@ -664,10 +666,10 @@ fn projection_bench() {
     println!();
 }
 
-/// Default-suite load budget: the coreutils FULL load (manifest + leaf mounts
-/// + tar index open) must stay under 20 ms median even in a debug build (it
-/// measures ~0.15 ms in release, ~1 ms in debug — 20 ms means something is
-/// structurally wrong, e.g. a whole-archive read snuck back in). Not hidden
+/// Default-suite load budget: the coreutils FULL load (manifest, leaf mounts,
+/// tar index open) must stay under 20 ms median even in a debug build — it
+/// measures ~0.15 ms in release and ~1 ms in debug, so 20 ms means something
+/// structurally wrong (e.g. a whole-archive read snuck back in). Not hidden
 /// behind `#[ignore]` so the budget cannot silently regress; skips cleanly
 /// when the registry package is not built.
 #[test]
