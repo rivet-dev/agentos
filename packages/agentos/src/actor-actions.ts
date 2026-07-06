@@ -121,7 +121,7 @@ export interface OpenShellResult {
 /** Per-entry result of the batch `writeFiles` / `readFiles` actions. */
 export interface WriteFileResult {
 	path: string;
-	ok: boolean;
+	success: boolean;
 	error?: string;
 }
 export interface ReadFileResult {

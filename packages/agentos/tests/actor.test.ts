@@ -1,24 +1,24 @@
-import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import common from "@agentos-software/common";
 import type {
 	ActorFactoryHandle,
 	CoreRuntime,
 	NapiNativePluginOptions,
 } from "rivetkit";
-import { createClient } from "rivetkit/client";
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import type { createClient } from "rivetkit/client";
+import { setupTest } from "rivetkit/test";
+import { describe, expect, type TestContext, test } from "vitest";
 import {
 	agentOS,
 	buildConfigJson,
-	getPluginPath,
 	nodeModulesMount,
+	setup,
 } from "../src/index.js";
+import { INSPECTOR_ACTOR_NAME } from "../src/inspector-tabs/lib/registry.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 function findRepoRoot(start: string): string {
@@ -40,58 +40,12 @@ function findRepoRoot(start: string): string {
 }
 
 const repoRoot = findRepoRoot(testDir);
-const r6Root = join(repoRoot, "..", "r6");
-const r6RivetkitPackageRoot = join(
-	r6Root,
-	"rivetkit-typescript",
-	"packages",
-	"rivetkit",
-);
-const runtimeFixturePath = join(
-	testDir,
-	"fixtures",
-	"agentos-runtime-server.ts",
-);
-const tsxLoaderPath = join(
-	r6RivetkitPackageRoot,
-	"node_modules",
-	"tsx",
-	"dist",
-	"loader.mjs",
-);
-const execFileAsync = promisify(execFile);
-let runtime: ChildProcess | undefined;
-let runtimeLogs = { stdout: "", stderr: "" };
-const pluginFilename =
-	process.platform === "darwin"
-		? "libagentos_actor_plugin.dylib"
-		: process.platform === "win32"
-			? "agentos_actor_plugin.dll"
-			: "libagentos_actor_plugin.so";
 
 function bytesToString(value: unknown): string {
 	if (value instanceof Uint8Array) return Buffer.from(value).toString("utf8");
 	if (Array.isArray(value)) return Buffer.from(value).toString("utf8");
 	if (typeof value === "string") return value;
 	throw new Error(`unexpected readFile result: ${String(value)}`);
-}
-
-function childOutput(): string {
-	return [runtimeLogs.stdout, runtimeLogs.stderr].filter(Boolean).join("\n");
-}
-
-async function stopRuntime(child: ChildProcess): Promise<void> {
-	if (child.exitCode !== null) return;
-	child.kill("SIGINT");
-	await new Promise<void>((resolve) => {
-		const timeout = setTimeout(() => {
-			if (child.exitCode === null) child.kill("SIGKILL");
-		}, 5_000);
-		child.once("exit", () => {
-			clearTimeout(timeout);
-			resolve();
-		});
-	});
 }
 
 async function getFreePort(): Promise<number> {
@@ -110,106 +64,6 @@ async function getFreePort(): Promise<number> {
 			});
 		});
 	});
-}
-
-async function waitForHealth(
-	endpoint: string,
-	timeoutMs: number,
-): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (runtime?.exitCode !== null && runtime !== undefined) {
-			throw new Error(
-				`agentos runtime exited before health check passed:\n${childOutput()}`,
-			);
-		}
-		try {
-			const response = await fetch(`${endpoint}/health`);
-			if (response.ok) return;
-		} catch {}
-		await new Promise((resolve) => setTimeout(resolve, 500));
-	}
-	throw new Error(
-		`timed out waiting for engine health at ${endpoint}\n${childOutput()}`,
-	);
-}
-
-async function upsertNormalRunnerConfig(
-	endpoint: string,
-	namespace: string,
-	token: string | undefined,
-	poolName: string,
-): Promise<void> {
-	const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-	const datacentersResponse = await fetch(
-		`${endpoint}/datacenters?namespace=${encodeURIComponent(namespace)}`,
-		{ headers: authHeaders },
-	);
-	if (!datacentersResponse.ok) {
-		throw new Error(
-			`failed to list datacenters: ${datacentersResponse.status} ${await datacentersResponse.text()}`,
-		);
-	}
-	const datacentersBody = (await datacentersResponse.json()) as {
-		datacenters: Array<{ name: string }>;
-	};
-	const datacenter = datacentersBody.datacenters[0]?.name;
-	if (!datacenter) throw new Error("engine returned no datacenters");
-
-	const response = await fetch(
-		`${endpoint}/runner-configs/${encodeURIComponent(poolName)}?namespace=${encodeURIComponent(namespace)}`,
-		{
-			method: "PUT",
-			headers: {
-				...authHeaders,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({
-				datacenters: {
-					[datacenter]: {
-						normal: {},
-					},
-				},
-			}),
-		},
-	);
-	if (!response.ok) {
-		throw new Error(
-			`failed to upsert runner config ${poolName}: ${response.status} ${await response.text()}`,
-		);
-	}
-}
-
-async function waitForEnvoy(
-	endpoint: string,
-	namespace: string,
-	token: string | undefined,
-	poolName: string,
-	timeoutMs: number,
-): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-	while (Date.now() < deadline) {
-		if (runtime?.exitCode !== null && runtime !== undefined) {
-			throw new Error(
-				`agentos runtime exited before envoy registration:\n${childOutput()}`,
-			);
-		}
-		const response = await fetch(
-			`${endpoint}/envoys?namespace=${encodeURIComponent(namespace)}&name=${encodeURIComponent(poolName)}`,
-			{ headers: authHeaders },
-		);
-		if (response.ok) {
-			const body = (await response.json()) as {
-				envoys: Array<{ envoy_key: string }>;
-			};
-			if (body.envoys.length > 0) return;
-		}
-		await new Promise((resolve) => setTimeout(resolve, 500));
-	}
-	throw new Error(
-		`timed out waiting for envoy registration in ${poolName}\n${childOutput()}`,
-	);
 }
 
 async function waitForActorReady<T>(
@@ -242,11 +96,7 @@ async function waitForActorReady<T>(
 					)
 				)
 			) {
-				throw error instanceof Error
-					? new Error(`${error.message}\n${childOutput()}`, {
-							cause: error,
-						})
-					: error;
+				throw error;
 			}
 		}
 		await new Promise((resolve) => setTimeout(resolve, 500));
@@ -256,60 +106,102 @@ async function waitForActorReady<T>(
 		: new Error("timed out waiting for actor readiness");
 }
 
-describe("@rivet-dev/agentos native plugin package bridge", () => {
-	beforeAll(async () => {
-		await execFileAsync(
-			"cargo",
-			[
-				"build",
-				"--manifest-path",
-				join(repoRoot, "Cargo.toml"),
-				"-p",
-				"agentos-sidecar",
-				"-p",
-				"agentos-actor-plugin",
-			],
-			{
-				cwd: repoRoot,
-				env: process.env,
-				maxBuffer: 1024 * 1024 * 20,
-			},
+async function waitForPromise<T>(
+	promise: Promise<T>,
+	timeoutMs: number,
+	label: string,
+): Promise<T> {
+	let timeout: NodeJS.Timeout | undefined;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<never>((_, reject) => {
+				timeout = setTimeout(
+					() => reject(new Error(`timed out waiting for ${label}`)),
+					timeoutMs,
+				);
+			}),
+		]);
+	} finally {
+		if (timeout) clearTimeout(timeout);
+	}
+}
+
+async function configureLocalRunner(
+	endpoint: string,
+	namespace: string,
+	token: string,
+	poolName: string,
+): Promise<void> {
+	const headers = { Authorization: `Bearer ${token}` };
+	const datacentersResponse = await fetch(
+		`${endpoint}/datacenters?namespace=${encodeURIComponent(namespace)}`,
+		{ headers },
+	);
+	if (!datacentersResponse.ok) {
+		throw new Error(
+			`failed to list datacenters: ${datacentersResponse.status} ${await datacentersResponse.text()}`,
 		);
-		const sidecarPath = join(repoRoot, "target", "debug", "agentos-sidecar");
-		expect(existsSync(sidecarPath)).toBe(true);
-		process.env.AGENTOS_SIDECAR_BIN = sidecarPath;
-		process.env.AGENTOS_PLUGIN_BIN = join(
-			repoRoot,
-			"target",
-			"debug",
-			pluginFilename,
+	}
+	const datacenters = (await datacentersResponse.json()) as {
+		datacenters: Array<{ name: string }>;
+	};
+	const datacenter = datacenters.datacenters[0]?.name;
+	if (!datacenter) throw new Error("engine returned no datacenters");
+
+	const response = await fetch(
+		`${endpoint}/runner-configs/${encodeURIComponent(poolName)}?namespace=${encodeURIComponent(namespace)}`,
+		{
+			method: "PUT",
+			headers: { ...headers, "Content-Type": "application/json" },
+			body: JSON.stringify({
+				datacenters: { [datacenter]: { normal: {} } },
+			}),
+		},
+	);
+	if (!response.ok) {
+		throw new Error(
+			`failed to configure runner ${poolName}: ${response.status} ${await response.text()}`,
 		);
-		expect(existsSync(process.env.AGENTOS_PLUGIN_BIN)).toBe(true);
-		const r6EngineBinary = join(r6Root, "target", "debug", "rivet-engine");
-		if (existsSync(r6EngineBinary)) {
-			process.env.RIVET_ENGINE_BINARY = r6EngineBinary;
+	}
+}
+
+async function waitForLocalEnvoy(
+	endpoint: string,
+	namespace: string,
+	token: string,
+	poolName: string,
+	timeoutMs: number,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	const headers = { Authorization: `Bearer ${token}` };
+	while (Date.now() < deadline) {
+		const response = await fetch(
+			`${endpoint}/envoys?namespace=${encodeURIComponent(namespace)}&name=${encodeURIComponent(poolName)}`,
+			{ headers },
+		).catch(() => undefined);
+		if (response?.ok) {
+			const body = (await response.json()) as {
+				envoys: Array<unknown>;
+			};
+			if (body.envoys.length > 0) return;
 		}
-	}, 120_000);
+		await new Promise((resolve) => setTimeout(resolve, 500));
+	}
+	throw new Error(`timed out waiting for local envoy ${poolName}`);
+}
 
-	afterEach(async () => {
-		if (runtime) {
-			await stopRuntime(runtime);
-			runtime = undefined;
-		}
-	}, 30_000);
-
-	test("resolves the dev-built actor plugin cdylib", () => {
-		const pluginPath = getPluginPath();
-		expect(pluginPath).toBe(join(repoRoot, "target", "debug", pluginFilename));
-		expect(existsSync(pluginPath)).toBe(true);
-	});
-
-	test("serializes config and hands plugin paths to the NAPI runtime", () => {
+describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
+	test("serializes config and hands plugin options to RivetKit", () => {
 		const definition = agentOS({
 			additionalInstructions: "stay deterministic",
 			loopbackExemptPorts: [4020],
 			mounts: [nodeModulesMount("/host/project/node_modules")],
 			sidecar: { kind: "shared", pool: "agentos-smoke" },
+			actorOptions: {
+				sleepTimeout: 500,
+				sleepGracePeriod: 1_000,
+			},
 		});
 		const expectedHandle = Symbol(
 			"native-factory",
@@ -327,8 +219,8 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 
 		expect(handle).toBe(expectedHandle);
 		expect(calls).toHaveLength(1);
-		expect(calls[0].pluginPath).toBe(getPluginPath());
-		expect(calls[0].sidecarPath).toBe(process.env.AGENTOS_SIDECAR_BIN);
+		expect(calls[0].pluginPath).toEqual(expect.any(String));
+		expect(calls[0].sidecarPath).toEqual(expect.any(String));
 		expect(JSON.parse(calls[0].configJson)).toMatchObject({
 			additionalInstructions: "stay deterministic",
 			loopbackExemptPorts: [4020],
@@ -347,6 +239,11 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 				},
 			],
 		});
+		expect((calls[0] as any).actorOptions).toMatchObject({
+			actionTimeout: 3_600_000,
+			sleepTimeout: 500,
+			sleepGracePeriod: 1_000,
+		});
 	});
 
 	test("agentOS flat config keeps callbacks outside native VM options", () => {
@@ -355,7 +252,9 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 			software: [],
 			onSessionEvent: () => {},
 		});
-		const expectedHandle = Symbol("native-factory") as unknown as ActorFactoryHandle;
+		const expectedHandle = Symbol(
+			"native-factory",
+		) as unknown as ActorFactoryHandle;
 		const calls: NapiNativePluginOptions[] = [];
 		const runtime = {
 			kind: "napi",
@@ -376,7 +275,7 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		expect(calls[0].configJson).not.toContain("onSessionEvent");
 	});
 
-	test("rejects native actor options that cannot cross the NAPI config boundary", () => {
+	test("rejects actor options that cannot cross the NAPI config boundary", () => {
 		expect(() =>
 			agentOS({
 				toolKits: [],
@@ -409,7 +308,7 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		).toThrow(/sidecar/);
 	});
 
-	test("serializes native memory mounts across the Rivet native plugin boundary", () => {
+	test("serializes memory mounts across the package boundary", () => {
 		const config = JSON.parse(
 			buildConfigJson({
 				options: {
@@ -443,7 +342,7 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		).toThrow(/notARealOption/);
 	});
 
-	test("agentOS flat config forwards only VM options to native config", () => {
+	test("agentOS flat config forwards only VM options to plugin config", () => {
 		const definition = agentOS({
 			// Disable the default bundle so the software assertion stays deterministic.
 			defaultSoftware: false,
@@ -475,6 +374,22 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		expect(JSON.parse(calls[0].configJson)).not.toHaveProperty("preview");
 	});
 
+	test("agentOS actorOptions override actor sleep defaults", () => {
+		const definition = agentOS({
+			defaultSoftware: false,
+			software: [],
+			actorOptions: {
+				sleepTimeout: 500,
+				sleepGracePeriod: 1_000,
+			},
+		});
+
+		expect((definition as any).config.options).toMatchObject({
+			sleepTimeout: 500,
+			sleepGracePeriod: 1_000,
+		});
+	});
+
 	test("inspector action calls target declared actor actions", () => {
 		const actorActions = readFileSync(
 			join(repoRoot, "packages", "agentos", "src", "actor-actions.ts"),
@@ -498,7 +413,9 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 			),
 		);
 		const calls = [
-			...inspectorSource.matchAll(/callAction(?:<[^>]+>)?\("([^"]+)",\s*\[([^\]]*)\]/g),
+			...inspectorSource.matchAll(
+				/callAction(?:<[^>]+>)?\("([^"]+)",\s*\[([^\]]*)\]/g,
+			),
 		].map((match) => ({
 			name: match[1],
 			args: match[2].trim(),
@@ -560,9 +477,7 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		);
 		expect(pkgs).toContain("/x/wasm.aospkg");
 		// common (sh + coreutils + tools) is injected from the software registry.
-		expect(pkgs.some((p: string) => p.includes("coreutils"))).toBe(
-			true,
-		);
+		expect(pkgs.some((p: string) => p.includes("coreutils"))).toBe(true);
 		expect(withDefault.packages.length).toBeGreaterThan(1);
 
 		const noDefault = JSON.parse(
@@ -618,85 +533,125 @@ describe("@rivet-dev/agentos native plugin package bridge", () => {
 		}
 	});
 
-	// Boots the dylib actor through the rivet engine + r6 rivetkit runtime server,
-	// which is env-fragile in CI (needs the r6 sibling checkout and a resolvable
-	// node binary). Gated behind AGENTOS_E2E_FULL=1; the synchronous bridge tests
-	// above still cover config serialization and plugin-path wiring.
-	const runDylibBoot = process.env.AGENTOS_E2E_FULL === "1";
-	(runDylibBoot ? test : test.skip)("boots a VM through the dylib actor and handles filesystem actions", async () => {
-		const poolName = `agentos-package-${crypto.randomUUID()}`;
+	async function setupActorTest(c: TestContext): Promise<{
+		client: Awaited<ReturnType<typeof createClient<any>>>;
+	}> {
+		const enginePort = await getFreePort();
+		const endpoint = `http://127.0.0.1:${enginePort}`;
 		const namespace = "default";
 		const token = "dev";
-		const enginePort = await getFreePort();
-		let client: Awaited<ReturnType<typeof createClient<any>>> | undefined;
-		try {
-			const endpoint = `http://127.0.0.1:${enginePort}`;
-			runtimeLogs = { stdout: "", stderr: "" };
-			runtime = spawn(
-				process.execPath,
-				["--import", tsxLoaderPath, runtimeFixturePath],
-				{
-					cwd: r6RivetkitPackageRoot,
-					env: {
-						...process.env,
-						RIVET_TOKEN: token,
-						RIVET_NAMESPACE: namespace,
-						RIVETKIT_TEST_ENDPOINT: endpoint,
-						RIVETKIT_TEST_POOL_NAME: poolName,
-						AGENTOS_TEST_SIDECAR_POOL: poolName,
-						RIVET_RUN_ENGINE_HOST: "127.0.0.1",
-						RIVET_RUN_ENGINE_PORT: String(enginePort),
-						ESBK_TSCONFIG_PATH: join(r6RivetkitPackageRoot, "tsconfig.json"),
-						TSX_TSCONFIG_PATH: join(r6RivetkitPackageRoot, "tsconfig.json"),
-						RIVETKIT_STORAGE_PATH: mkdtempSync(
-							join(tmpdir(), "agentos-package-smoke-"),
-						),
+		const poolName = "default";
+		const previousStoragePath = process.env.RIVETKIT_STORAGE_PATH;
+		process.env.RIVETKIT_STORAGE_PATH = mkdtempSync(
+			join(tmpdir(), "agentos-package-smoke-"),
+		);
+		const registry = setup({
+			use: {
+				os: agentOS({
+					defaultSoftware: false,
+					software: [],
+					permissions: {
+						fs: "allow",
+						network: "allow",
+						childProcess: "allow",
+						process: "allow",
+						env: "allow",
 					},
-					stdio: ["ignore", "pipe", "pipe"],
-				},
-			);
-			runtime.stdout?.on("data", (chunk) => {
-				runtimeLogs.stdout += chunk.toString();
-			});
-			runtime.stderr?.on("data", (chunk) => {
-				runtimeLogs.stderr += chunk.toString();
-			});
-
-			await waitForHealth(endpoint, 90_000);
-			await upsertNormalRunnerConfig(endpoint, namespace, token, poolName);
-			await waitForEnvoy(endpoint, namespace, token, poolName, 30_000);
-			client = createClient<any>({
-				endpoint,
-				token,
-				namespace,
-				poolName,
-				disableMetadataLookup: true,
-			});
-			const handle = await waitForActorReady(
-				() =>
-					(client as any).os.create([`agentos-package-${crypto.randomUUID()}`]),
-				30_000,
-			);
-
-			await waitForActorReady(
-				() => handle.writeFile("/tmp/agentos-package-smoke.txt", "hello dylib"),
-				30_000,
-			);
-
-			expect(
-				bytesToString(
-					await waitForActorReady(
-						() => handle.readFile("/tmp/agentos-package-smoke.txt"),
-						30_000,
-					),
-				),
-			).toBe("hello dylib");
-		} finally {
-			await client?.dispose();
-			if (runtime) {
-				await stopRuntime(runtime);
-				runtime = undefined;
+					sidecar: { kind: "shared", pool: poolName },
+					mounts: [{ path: "/scratch", plugin: { id: "memory", config: {} } }],
+				}),
+			},
+			runtime: "native",
+			startEngine: true,
+			engineHost: "127.0.0.1",
+			enginePort,
+			namespace,
+			token,
+			envoy: { poolName },
+			shutdown: { disableSignalHandlers: true },
+		});
+		c.onTestFinished(async () => {
+			try {
+				await registry.shutdown();
+			} finally {
+				if (previousStoragePath === undefined) {
+					delete process.env.RIVETKIT_STORAGE_PATH;
+				} else {
+					process.env.RIVETKIT_STORAGE_PATH = previousStoragePath;
+				}
 			}
+		});
+		const result = await setupTest(c, registry);
+		await configureLocalRunner(endpoint, namespace, token, poolName);
+		await waitForLocalEnvoy(endpoint, namespace, token, poolName, 30_000);
+		return result;
+	}
+
+	test("runs basic actor operations", async (c) => {
+		const { client } = await setupActorTest(c);
+		const handle = await waitForActorReady(
+			() =>
+				(client as any).os.create([`agentos-package-${crypto.randomUUID()}`]),
+			30_000,
+		);
+
+		await waitForActorReady(
+			() => handle.writeFile("/tmp/agentos-package-smoke.txt", "hello actor"),
+			30_000,
+		);
+		const content = await waitForActorReady(
+			() => handle.readFile("/tmp/agentos-package-smoke.txt"),
+			30_000,
+		);
+		expect(bytesToString(content)).toBe("hello actor");
+
+		const gatewayPath = `/tmp/gateway-${crypto.randomUUID()}.txt`;
+		await waitForPromise(
+			handle.action({
+				name: "writeFile",
+				args: [gatewayPath, "hello gateway"],
+			}),
+			30_000,
+			"gateway writeFile",
+		);
+		const gatewayContent = await waitForPromise(
+			handle.action({ name: "readFile", args: [gatewayPath] }),
+			30_000,
+			"gateway readFile",
+		);
+		expect(bytesToString(gatewayContent)).toBe("hello gateway");
+
+		const actorId = await waitForPromise(
+			handle.resolve(),
+			30_000,
+			"resolve actor id",
+		);
+		expect(typeof actorId).toBe("string");
+		expect(actorId.length).toBeGreaterThan(0);
+
+		const conn = handle.connect();
+		try {
+			await waitForPromise(conn.ready, 30_000, "actor connection");
+			expect(conn.actorId).toBe(actorId);
+
+			const directHandle = client.getForId(INSPECTOR_ACTOR_NAME, actorId);
+			const directPath = `/tmp/direct-${crypto.randomUUID()}.txt`;
+			await waitForPromise(
+				directHandle.action({
+					name: "writeFile",
+					args: [directPath, "hello actor id"],
+				}),
+				30_000,
+				"direct actor-id writeFile",
+			);
+			const directContent = await waitForPromise(
+				directHandle.action({ name: "readFile", args: [directPath] }),
+				30_000,
+				"direct actor-id readFile",
+			);
+			expect(bytesToString(directContent)).toBe("hello actor id");
+		} finally {
+			await conn.dispose();
 		}
 	}, 120_000);
 });

@@ -122,8 +122,7 @@ fn decode_args_impl<T: DeserializeOwned>(args: &[u8]) -> Result<T> {
         .context("decode action args from cbor")?;
     let value = revive_undefined_envelopes(value);
     let mut normalized = Vec::new();
-    ciborium::into_writer(&value, &mut normalized)
-        .context("re-encode revived action args")?;
+    ciborium::into_writer(&value, &mut normalized).context("re-encode revived action args")?;
     abi::codec::decode_positional(&normalized)
 }
 
@@ -661,6 +660,93 @@ pub mod contract {
         variants
             .into_iter()
             .map(|value| abi::codec::encode_positional(&value))
+            .collect()
+    }
+
+    pub fn encoded_invalid_client_arg_variants(name: &str) -> Result<Vec<(&'static str, Vec<u8>)>> {
+        let variants = match name {
+            "readFile"
+            | "stat"
+            | "mkdir"
+            | "readdir"
+            | "readdirEntries"
+            | "exists"
+            | "readdirRecursive"
+            | "closeShell"
+            | "waitShell"
+            | "cancelCronJob"
+            | "closeSession"
+            | "getSessionEvents"
+            | "expireSignedPreviewUrl" => {
+                vec![("path/id must be a string", json!([42]))]
+            }
+            "writeFile" | "writeShell" => {
+                vec![(
+                    "content must be string or Uint8Array",
+                    json!(["/workspace/file.txt", { "bad": true }]),
+                )]
+            }
+            "move" => vec![(
+                "destination must be a string",
+                json!(["/workspace/a.txt", 42]),
+            )],
+            "deleteFile" => vec![(
+                "recursive option must be boolean",
+                json!(["/workspace/file.txt", { "recursive": "yes" }]),
+            )],
+            "writeFiles" => vec![(
+                "entry path must be a string",
+                json!([[{ "path": 42, "content": "a" }]]),
+            )],
+            "readFiles" => vec![("paths must be strings", json!([[42]]))],
+            "exec" => vec![(
+                "env option values must be strings",
+                json!(["echo hello", { "env": { "A": 42 } }]),
+            )],
+            "spawn" => vec![("args must be strings", json!(["node", [42]]))],
+            "waitProcess" | "killProcess" | "stopProcess" | "getProcess" | "closeProcessStdin" => {
+                vec![("pid must be a number", json!(["42"]))]
+            }
+            "listProcesses"
+            | "allProcesses"
+            | "processTree"
+            | "listCronJobs"
+            | "listPersistedSessions"
+            | "listMounts"
+            | "listSoftware" => vec![(
+                "zero-arg action must not accept extras",
+                json!(["unexpected"]),
+            )],
+            "writeProcessStdin" => {
+                vec![(
+                    "stdin content must be string or Uint8Array",
+                    json!([42, { "bad": true }]),
+                )]
+            }
+            "openShell" => vec![("cols option must be numeric", json!([{ "cols": "wide" }]))],
+            "resizeShell" => vec![("cols must be numeric", json!(["shell-1", "80", 24]))],
+            "vmFetch" => vec![("port must be numeric", json!(["3000", "http://127.0.0.1/"]))],
+            "scheduleCron" => vec![(
+                "cron job requires a schedule/action shape",
+                json!([{ "id": "job-1" }]),
+            )],
+            "createSession" => vec![("agent type must be a string", json!([42]))],
+            "sendPrompt" => vec![(
+                "prompt must be a string",
+                json!(["session-1", { "text": "hello" }]),
+            )],
+            "respondPermission" => vec![(
+                "permission response must be a string",
+                json!(["session-1", "permission-1", 42]),
+            )],
+            "createSignedPreviewUrl" => vec![("ttl must be numeric", json!([3000, "60"]))],
+            other => return Err(anyhow!("unknown action {other}")),
+        };
+        variants
+            .into_iter()
+            .map(|(case, value)| {
+                abi::codec::encode_positional(&value).map(|encoded| (case, encoded))
+            })
             .collect()
     }
 

@@ -229,6 +229,7 @@ function serializeSidecar(input: unknown): { pool?: string } | undefined {
 
 function buildNativeFactoryBuilder<TConnParams>(
 	parsed: AgentOsActorConfig<TConnParams>,
+	actorOptions: Record<string, unknown>,
 ): (runtime: CoreRuntime) => ActorFactoryHandle {
 	return (runtime) => {
 		if (runtime.kind !== "napi") {
@@ -247,6 +248,9 @@ function buildNativeFactoryBuilder<TConnParams>(
 			pluginPath: getPluginPath(),
 			// Opaque config envelope the plugin parses (config.rs::AgentOsConfigJson).
 			configJson: buildConfigJson(parsed),
+			// RivetKit's native-plugin bridge owns the runtime ActorConfig for
+			// cdylib actors, so forward the merged per-actor lifecycle options too.
+			actorOptions,
 			// Resolve the prebuilt sidecar binary from the npm package so the plugin
 			// spawns the bundled binary rather than relying on `agentos-sidecar`
 			// being on PATH.
@@ -260,6 +264,7 @@ function buildNativeFactoryBuilder<TConnParams>(
 			// native-plugin actors.)
 			inspectorTabs: AGENTOS_INSPECTOR_CONFIG.tabs,
 		} as NapiNativePluginOptions & {
+			actorOptions?: Record<string, unknown>;
 			inspectorTabs: typeof AGENTOS_INSPECTOR_CONFIG.tabs;
 		};
 		return runtime.createNativePluginFactory(options);
@@ -344,14 +349,39 @@ const INSPECTOR_TABS_ASSET_DIR = join(
 // dashboard shows only the agent-os tabs.
 const AGENTOS_INSPECTOR_CONFIG = {
 	tabs: [
-		{ id: "transcript", label: "Transcript", source: INSPECTOR_TABS_ASSET_DIR, icon: "comments" },
-		{ id: "filesystem", label: "Filesystem", source: INSPECTOR_TABS_ASSET_DIR, icon: "folder-tree" },
-		{ id: "processes", label: "Processes", source: INSPECTOR_TABS_ASSET_DIR, icon: "microchip" },
-		{ id: "software", label: "Software", source: INSPECTOR_TABS_ASSET_DIR, icon: "box-archive" },
-		{ id: "mounts", label: "Mounts", source: INSPECTOR_TABS_ASSET_DIR, icon: "hard-drive" },
-		...(["workflow", "database", "state", "queue", "connections", "console"].map(
+		{
+			id: "transcript",
+			label: "Transcript",
+			source: INSPECTOR_TABS_ASSET_DIR,
+			icon: "comments",
+		},
+		{
+			id: "filesystem",
+			label: "Filesystem",
+			source: INSPECTOR_TABS_ASSET_DIR,
+			icon: "folder-tree",
+		},
+		{
+			id: "processes",
+			label: "Processes",
+			source: INSPECTOR_TABS_ASSET_DIR,
+			icon: "microchip",
+		},
+		{
+			id: "software",
+			label: "Software",
+			source: INSPECTOR_TABS_ASSET_DIR,
+			icon: "box-archive",
+		},
+		{
+			id: "mounts",
+			label: "Mounts",
+			source: INSPECTOR_TABS_ASSET_DIR,
+			icon: "hard-drive",
+		},
+		...["workflow", "database", "state", "queue", "connections", "console"].map(
 			(id) => ({ id, hidden: true as const }),
-		)),
+		),
 	],
 };
 
@@ -384,6 +414,9 @@ export function createAgentOS<TConnParams = undefined>(
 	} as Parameters<
 		typeof actor
 	>[0]) as unknown as AgentOsActorDefinition<TConnParams>;
-	definition.nativeFactoryBuilder = buildNativeFactoryBuilder(parsed);
+	definition.nativeFactoryBuilder = buildNativeFactoryBuilder(
+		parsed,
+		actorOptions,
+	);
 	return definition;
 }

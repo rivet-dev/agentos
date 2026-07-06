@@ -221,15 +221,14 @@ fn read_package_software_info(path: &str) -> Option<SoftwareInfoDto> {
 /// reader in `vfs::package_format`. A corrupt or truncated package is logged
 /// (host-visible) and skipped rather than silently vanishing from listings.
 fn read_aospkg_software_info(path: &str) -> Option<SoftwareInfoDto> {
-    let manifest = match vfs::package_format::read_manifest_chunk_from_file(std::path::Path::new(
-        path,
-    )) {
-        Ok(manifest) => manifest,
-        Err(error) => {
-            tracing::warn!(%path, %error, "skipping unreadable .aospkg in listSoftware");
-            return None;
-        }
-    };
+    let manifest =
+        match vfs::package_format::read_manifest_chunk_from_file(std::path::Path::new(path)) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                tracing::warn!(%path, %error, "skipping unreadable .aospkg in listSoftware");
+                return None;
+            }
+        };
     Some(SoftwareInfoDto {
         package: manifest.name,
         kind: if manifest.agent.is_some() {

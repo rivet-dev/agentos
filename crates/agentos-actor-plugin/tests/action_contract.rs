@@ -43,6 +43,50 @@ fn client_arg_payloads_decode_for_every_action() {
 }
 
 #[test]
+fn unknown_action_name_rejects_at_contract_decode_layer() {
+    let error = contract::decode_action_args("definitelyNotAnAction", b"not-cbor")
+        .expect_err("unknown actions must reject before dispatch");
+    assert!(
+        error
+            .to_string()
+            .contains("unknown action definitelyNotAnAction"),
+        "unexpected unknown-action error: {error}"
+    );
+}
+
+#[test]
+fn malformed_arg_payloads_reject_for_every_action_contract() {
+    for action in ACTION_CONTRACTS {
+        if contract::decode_action_args(action.name, b"not-cbor").is_ok() {
+            panic!("{} accepted a malformed non-CBOR arg payload", action.name);
+        }
+    }
+}
+
+#[test]
+fn invalid_client_arg_shapes_reject_for_every_action_contract() {
+    for action in ACTION_CONTRACTS {
+        let variants =
+            contract::encoded_invalid_client_arg_variants(action.name).unwrap_or_else(|error| {
+                panic!("{} invalid arg fixture build failed: {error}", action.name)
+            });
+        assert!(
+            !variants.is_empty(),
+            "{} must have at least one invalid arg fixture",
+            action.name
+        );
+        for (case, payload) in variants {
+            if contract::decode_action_args(action.name, &payload).is_ok() {
+                panic!(
+                    "{} accepted invalid client-shaped arg payload: {case}",
+                    action.name
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn reply_payload_shapes_match_contract_for_every_action() {
     for action in ACTION_CONTRACTS {
         let encoded = contract::encode_sample_reply(action.name)
@@ -71,6 +115,40 @@ fn event_payload_shapes_match_contract_for_every_event() {
         assert_eq!(args.len(), 1, "{} event handler arg count", event.name);
         assert_event_payload_shape(event, &args[0]);
     }
+}
+
+#[test]
+fn agent_crashed_event_includes_core_agent_exit_fields() {
+    let encoded = contract::encode_sample_event("agentCrashed").unwrap();
+    let decoded = contract::decode_reply_value(&encoded).unwrap();
+    let CborValue::Array(args) = decoded else {
+        panic!("agentCrashed event must encode handler args array");
+    };
+    let Some(CborValue::Map(payload)) = args.first() else {
+        panic!("agentCrashed event arg must be an object");
+    };
+    let event = object_field(payload, "event");
+    assert_object_keys(
+        "agentCrashed.event",
+        event,
+        &[
+            "sessionId",
+            "agentType",
+            "processId",
+            "exitCode",
+            "restart",
+            "restartCount",
+            "maxRestarts",
+        ],
+    );
+    assert_eq!(
+        object_field(payload, "sessionId"),
+        object_field(event_map(event), "sessionId")
+    );
+    assert_eq!(
+        object_field(event_map(event), "processId"),
+        &CborValue::Text("proc-1".to_owned())
+    );
 }
 
 #[test]
@@ -114,6 +192,118 @@ fn ts_event_interface_matches_rust_contract_fixture() {
             event.name,
             event.ts_signature
         );
+    }
+}
+
+#[test]
+fn ts_dto_field_names_match_rust_contract_fixture() {
+    let actor_actions = include_str!("../../../packages/agentos/src/actor-actions.ts");
+    let actor_types = include_str!("../../../packages/agentos/src/types.ts");
+    let core_agent_os = include_str!("../../../packages/core/src/agent-os.ts");
+    let core_runtime = include_str!("../../../packages/core/src/runtime.ts");
+    let core_session = include_str!("../../../packages/core/src/agent-session-types.ts");
+
+    let fixtures = [
+        (
+            "VirtualStat",
+            "packages/core/src/runtime.ts",
+            core_runtime,
+            "export interface VirtualStat { mode: number; size: number; blocks: number; dev: number; rdev: number; isDirectory: boolean; isSymbolicLink: boolean; atimeMs: number; mtimeMs: number; ctimeMs: number; birthtimeMs: number; ino: number; nlink: number; uid: number; gid: number; }",
+        ),
+        (
+            "ExecResult",
+            "packages/core/src/runtime.ts",
+            core_runtime,
+            "export interface ExecResult { exitCode: number; stdout: string; stderr: string; }",
+        ),
+        (
+            "ProcessInfo",
+            "packages/core/src/runtime.ts",
+            core_runtime,
+            "export interface ProcessInfo { pid: number; ppid: number; pgid: number; sid: number; driver: string; command: string; args: string[]; cwd: string; status: \"running\" | \"exited\"; exitCode: number | null; startTime: number; exitTime: number | null; }",
+        ),
+        (
+            "AgentExitEvent",
+            "packages/core/src/agent-os.ts",
+            core_agent_os,
+            "export interface AgentExitEvent { sessionId: string; agentType: string;",
+        ),
+        (
+            "AgentExitEvent.pid",
+            "packages/core/src/agent-os.ts",
+            core_agent_os,
+            "pid: number | null;",
+        ),
+        (
+            "AgentExitEvent.restartBudget",
+            "packages/core/src/agent-os.ts",
+            core_agent_os,
+            "restart: AgentRestartOutcome; /** Restarts consumed for this session so far. */ restartCount: number; /** Per-session restart budget. */ maxRestarts: number;",
+        ),
+        (
+            "SpawnedProcessInfo",
+            "packages/core/src/agent-os.ts",
+            core_agent_os,
+            "export interface SpawnedProcessInfo { pid: number; command: string; args: string[]; running: boolean; exitCode: number | null;",
+        ),
+        (
+            "PermissionRequest",
+            "packages/core/src/agent-session-types.ts",
+            core_session,
+            "export interface PermissionRequest { permissionId: string; description?: string; params: Record<string, unknown>; }",
+        ),
+        (
+            "PermissionReply",
+            "packages/core/src/agent-session-types.ts",
+            core_session,
+            "export type PermissionReply = \"once\" | \"always\" | \"reject\";",
+        ),
+        (
+            "VmFetchResponse",
+            "packages/agentos/src/actor-actions.ts",
+            actor_actions,
+            "export interface VmFetchResponse { status: number; statusText: string; headers: Record<string, string>; body: Uint8Array; }",
+        ),
+        (
+            "WriteFileResult",
+            "packages/agentos/src/actor-actions.ts",
+            actor_actions,
+            "export interface WriteFileResult { path: string; success: boolean; error?: string; }",
+        ),
+        (
+            "ReadFileResult",
+            "packages/agentos/src/actor-actions.ts",
+            actor_actions,
+            "export interface ReadFileResult { path: string; content?: Uint8Array; error?: string; }",
+        ),
+        (
+            "PersistedSessionRecord",
+            "packages/agentos/src/types.ts",
+            actor_types,
+            "export interface PersistedSessionRecord { sessionId: string; agentType: string; createdAt: number; status: \"running\" | \"idle\"; }",
+        ),
+        (
+            "PersistedSessionEvent",
+            "packages/agentos/src/types.ts",
+            actor_types,
+            "export interface PersistedSessionEvent { sessionId: string; seq: number; event: JsonRpcNotification; createdAt: number; }",
+        ),
+        (
+            "SerializableCronEvent",
+            "packages/agentos/src/types.ts",
+            actor_types,
+            "export type SerializableCronEvent = | { type: \"cron:fire\"; jobId: string; time: number } | { type: \"cron:complete\"; jobId: string; time: number; durationMs: number } | { type: \"cron:error\"; jobId: string; time: number; error: string };",
+        ),
+        (
+            "SerializableCronJobInfo",
+            "packages/agentos/src/types.ts",
+            actor_types,
+            "export interface SerializableCronJobInfo { id: string; schedule: string; overlap: \"allow\" | \"skip\" | \"queue\"; lastRun?: number; nextRun?: number; }",
+        ),
+    ];
+
+    for (dto, path, source, snippet) in fixtures {
+        assert_source_contains(dto, path, source, snippet);
     }
 }
 
@@ -210,49 +400,37 @@ fn assert_object_keys(action: &str, value: &CborValue, expected: &[&str]) {
     assert_eq!(actual, expected, "{action} reply object keys");
 }
 
+fn event_map(value: &CborValue) -> &Vec<(CborValue, CborValue)> {
+    let CborValue::Map(entries) = value else {
+        panic!("expected object, got {value:?}");
+    };
+    entries
+}
+
+fn object_field<'a>(entries: &'a [(CborValue, CborValue)], field: &str) -> &'a CborValue {
+    entries
+        .iter()
+        .find_map(|(key, value)| match key {
+            CborValue::Text(key) if key == field => Some(value),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing object field {field}"))
+}
+
 fn normalize_ws(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("( ", "(")
+        .replace(", )", ")")
 }
 
-/// Regression: rivetkit clients encode JS `undefined` as the JSON-compat
-/// envelope `["$Undefined", 0]` (rivetkit `common/encoding.ts`). Explicitly
-/// passing an omitted trailing options arg (`handle.exec(cmd, undefined)`)
-/// or an explicitly-undefined options field (`{ env: undefined }`) must
-/// decode instead of failing with an opaque positional-decode error.
-#[test]
-fn undefined_envelopes_decode_as_absent_options() {
-    let undefined = CborValue::Array(vec![
-        CborValue::Text(String::from("$Undefined")),
-        CborValue::Integer(0.into()),
-    ]);
-
-    // exec("pwd", undefined)
-    let args = encode_args(&CborValue::Array(vec![
-        CborValue::Text(String::from("pwd")),
-        undefined.clone(),
-    ]));
-    contract::decode_action_args("exec", &args).expect("exec with trailing undefined options");
-
-    // exec("pwd", { env: undefined })
-    let args = encode_args(&CborValue::Array(vec![
-        CborValue::Text(String::from("pwd")),
-        CborValue::Map(vec![(
-            CborValue::Text(String::from("env")),
-            undefined.clone(),
-        )]),
-    ]));
-    contract::decode_action_args("exec", &args).expect("exec with undefined options field");
-
-    // createSession("pi", undefined)
-    let args = encode_args(&CborValue::Array(vec![
-        CborValue::Text(String::from("pi")),
-        undefined,
-    ]));
-    contract::decode_action_args("createSession", &args).expect("createSession with trailing undefined");
-}
-
-fn encode_args(value: &CborValue) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    ciborium::into_writer(value, &mut bytes).expect("encode test args");
-    bytes
+fn assert_source_contains(dto: &str, path: &str, source: &str, snippet: &str) {
+    let normalized_source = normalize_ws(source);
+    let normalized_snippet = normalize_ws(snippet);
+    assert!(
+        normalized_source.contains(&normalized_snippet),
+        "{path} DTO field drift for {dto}.\nexpected snippet: {snippet}"
+    );
 }

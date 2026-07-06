@@ -8,7 +8,8 @@
 // Resolution priority:
 //   1. `AGENTOS_SIDECAR_BIN` env var (absolute path override).
 //   2. A `agentos-sidecar` binary placed next to this package (dev builds).
-//   3. The platform-specific `@rivet-dev/agentos-sidecar-<platform>` package.
+//   3. A cargo build output under the repo `target/{release,debug}/` (dev).
+//   4. The platform-specific `@rivet-dev/agentos-sidecar-<platform>` package.
 
 const { existsSync } = require("node:fs");
 const { join, dirname } = require("node:path");
@@ -51,6 +52,13 @@ function getSidecarPath() {
 	const localBinary = join(__dirname, BINARY_NAME);
 	if (existsSync(localBinary)) {
 		return localBinary;
+	}
+
+	for (const profile of ["release", "debug"]) {
+		const candidate = join(__dirname, "..", "..", "target", profile, BINARY_NAME);
+		if (existsSync(candidate)) {
+			return candidate;
+		}
 	}
 
 	const platformPkg = getPlatformPackageName();

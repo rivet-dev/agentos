@@ -11,10 +11,7 @@ import type {
 	JsonRpcNotification,
 	PermissionRequest,
 } from "@rivet-dev/agentos-core";
-import {
-	type AgentOsActorDefinition,
-	createAgentOS,
-} from "./actor.js";
+import { type AgentOsActorDefinition, createAgentOS } from "./actor.js";
 import type {
 	AgentOsActorConfigInput,
 	NativeAgentOsOptions,
@@ -98,11 +95,11 @@ export type {
 } from "./actor-actions.js";
 
 export type AgentOSActorConfigInput<TConnParams = undefined> =
-	NativeAgentOsOptions &
-		Omit<AgentOsActorConfigInput<TConnParams>, "options">;
+	NativeAgentOsOptions & Omit<AgentOsActorConfigInput<TConnParams>, "options">;
 
 export type AgentOSConfigInput<TConnParams = undefined> = AgentOsOptions & {
 	preview?: AgentOsActorConfigInput<TConnParams>["preview"];
+	actorOptions?: AgentOsActorConfigInput<TConnParams>["actorOptions"];
 	onBeforeConnect?: AgentOsActorConfigInput<TConnParams>["onBeforeConnect"];
 	onSessionEvent?: (
 		sessionId: string,
@@ -119,6 +116,7 @@ export function agentOS<TConnParams = undefined>(
 ): AgentOsActorDefinition<TConnParams> {
 	const {
 		preview,
+		actorOptions,
 		onBeforeConnect,
 		onSessionEvent,
 		onPermissionRequest,
@@ -127,6 +125,7 @@ export function agentOS<TConnParams = undefined>(
 
 	return createAgentOS({
 		options,
+		actorOptions,
 		preview,
 		onBeforeConnect,
 		onSessionEvent: onSessionEvent
