@@ -15,6 +15,20 @@ registry-native:
 registry-native-cmd name:
 	make -C registry/native cmd/{{ name }}
 
+# Pre-flight for the publish "WASM Commands" job's fragile state: build the C
+# programs against the VANILLA wasi-sdk sysroot exactly like a fresh CI runner
+# (a locally-built patched sysroot is moved aside for the run). Catches
+# socket/netdb programs missing from PATCHED_PROGRAMS before CI does.
+registry-native-preflight:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cd registry/native/c
+	if [ -e sysroot ]; then mv sysroot sysroot.preflight-stash; fi
+	restore() { if [ -e sysroot.preflight-stash ]; then rm -rf sysroot; mv sysroot.preflight-stash sysroot; fi; }
+	trap restore EXIT
+	make wasi-sdk
+	make programs
+
 registry-copy-commands:
 	node packages/runtime-core/scripts/copy-wasm-commands.mjs
 
