@@ -387,7 +387,12 @@ jobs:
             if [ "${NPM_TAG}" = "rc" ]; then PRERELEASE="--prerelease"; fi
             gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes $PRERELEASE
           fi
-          gh release upload "v${VERSION}" release-assets/* release-assets/pyodide/* --clobber
+          # Upload FILES only — a bare `release-assets/*` glob matches the
+          # pyodide directory itself and `gh release upload` cannot upload dirs.
+          find release-assets -maxdepth 1 -type f -print0 | xargs -0 gh release upload "v${VERSION}" --clobber
+          if [ -d release-assets/pyodide ]; then
+            find release-assets/pyodide -maxdepth 1 -type f -print0 | xargs -0 gh release upload "v${VERSION}" --clobber
+          fi
       - name: Upload release assets to R2
         if: ${{ needs.context.outputs.trigger == 'release' }}
         env:

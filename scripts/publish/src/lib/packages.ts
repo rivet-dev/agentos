@@ -183,7 +183,15 @@ export function discoverPackages(
 		) {
 			continue;
 		}
-		if (p.path.includes("/registry/software/")) continue;
+		// registry/software packages version independently and publish from
+		// local via the toolchain — EXCEPT `common`, which core hard-depends on
+		// and therefore ships on the main release track in lockstep.
+		if (
+			p.path.includes("/registry/software/") &&
+			p.name !== "@agentos-software/common"
+		) {
+			continue;
+		}
 		add(p.path);
 	}
 

@@ -1,6 +1,6 @@
 {
 	"name": "@agentos-software/codex-cli",
-	"version": "0.3.0-rc.2",
+	"version": "0.3.3",
 	"type": "module",
 	"license": "Apache-2.0",
 	"description": "OpenAI Codex command package for secure-exec VMs",

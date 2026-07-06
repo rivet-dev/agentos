@@ -103,6 +103,39 @@ export interface BumpOptions {
  *
  * Returns the number of files written.
  */
+/**
+ * Resolve the published `latest` version of an independently-versioned
+ * registry package from npm. Registry software packages (except `common`)
+ * publish from local on their own release track; the main release track pins
+ * `workspace:*` deps on them to whatever was last deliberately released.
+ * Memoized per run. Throws when the package has never been released — a
+ * published manifest carrying `workspace:` protocol is uninstallable by every
+ * consumer, so this must fail the publish, loudly.
+ */
+const npmLatestCache = new Map<string, string>();
+async function npmLatestVersion(dep: string): Promise<string> {
+	const cached = npmLatestCache.get(dep);
+	if (cached) return cached;
+	const { execa } = await import("execa");
+	const { stdout } = await execa("npm", [
+		"view",
+		dep,
+		"dist-tags.latest",
+	]).catch((error: Error & { shortMessage?: string }) => {
+		throw new Error(
+			`cannot resolve npm latest for workspace dep "${dep}": ${error.shortMessage ?? error.message}`,
+		);
+	});
+	const version = stdout.trim();
+	if (!version) {
+		throw new Error(
+			`workspace dep "${dep}" has no published latest on npm; release it from local first (agentos-toolchain publish ... --latest)`,
+		);
+	}
+	npmLatestCache.set(dep, version);
+	return version;
+}
+
 export async function bumpPackageJsons(
 	repoRoot: string,
 	version: string,
@@ -148,8 +181,14 @@ export async function bumpPackageJsons(
 					if (!spec.startsWith("workspace:")) continue;
 					const isOurPkg =
 						packageNames.has(dep) || dep.startsWith("@rivet-dev/agentos-");
-					if (!isOurPkg) continue;
-					deps[dep] = version;
+					if (isOurPkg) {
+						deps[dep] = version;
+						continue;
+					}
+					// Independently-versioned registry software packages: pin to
+					// the npm `latest` the owner last deliberately released from
+					// local. Never leave `workspace:` in a published manifest.
+					deps[dep] = await npmLatestVersion(dep);
 				}
 			}
 		}

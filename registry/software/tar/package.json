@@ -1,6 +1,6 @@
 {
 	"name": "@agentos-software/tar",
-	"version": "0.3.0-rc.2",
+	"version": "0.3.3",
 	"type": "module",
 	"license": "Apache-2.0",
 	"description": "GNU tar archiver for secure-exec VMs",

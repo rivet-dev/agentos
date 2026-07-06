@@ -1,6 +1,6 @@
 {
 	"name": "@agentos-software/browserbase",
-	"version": "0.1.0",
+	"version": "0.3.3",
 	"type": "module",
 	"license": "Apache-2.0",
 	"description": "Browserbase browse CLI for secure-exec VMs (cloud browser automation)",
