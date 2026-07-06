@@ -3523,6 +3523,15 @@ export class AgentOs {
 		// createSession/listAgents from it). Nothing to record client-side.
 	}
 
+	async providedCommands(): Promise<
+		{ packageName: string; commands: string[] }[]
+	> {
+		return this._sidecarClient.providedCommands(
+			this._sidecarSession,
+			this._sidecarVm,
+		);
+	}
+
 	/**
 	 * Returns all registered agents with their installation status. Thin forwarder:
 	 * sends `AcpListAgentsRequest` and maps the response. The sidecar enumerates the

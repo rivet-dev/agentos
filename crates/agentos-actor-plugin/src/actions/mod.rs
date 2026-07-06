@@ -473,7 +473,13 @@ pub(crate) async fn dispatch(
             // wasm-commands package ships come from the live VM (host package
             // dirs), zipped in here by package name.
             let mut list = config.list_software();
-            let commands: HashMap<String, Vec<String>> = vm.provided_commands().into_iter().collect();
+            let commands: HashMap<String, Vec<String>> = match vm.provided_commands().await {
+                Ok(commands) => commands.into_iter().collect(),
+                Err(error) => {
+                    reply_err(host, token, error.into());
+                    return;
+                }
+            };
             for dto in &mut list {
                 if let Some(cmds) = commands.get(&dto.package) {
                     dto.commands = cmds.clone();

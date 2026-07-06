@@ -304,7 +304,8 @@ impl AgentOs {
             | wire::ResponsePayload::ExtEnvelope(_)
             | wire::ResponsePayload::GuestKernelResultResponse(_)
             | wire::ResponsePayload::ResourceSnapshotResponse(_)
-            | wire::ResponsePayload::PackageLinkedResponse(_) => {
+            | wire::ResponsePayload::PackageLinkedResponse(_)
+            | wire::ResponsePayload::ProvidedCommandsResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected open_session response".to_string(),
                 ));
@@ -372,7 +373,8 @@ impl AgentOs {
             | wire::ResponsePayload::ExtEnvelope(_)
             | wire::ResponsePayload::GuestKernelResultResponse(_)
             | wire::ResponsePayload::ResourceSnapshotResponse(_)
-            | wire::ResponsePayload::PackageLinkedResponse(_) => {
+            | wire::ResponsePayload::PackageLinkedResponse(_)
+            | wire::ResponsePayload::ProvidedCommandsResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected create_vm response".to_string(),
                 ));
@@ -464,7 +466,8 @@ impl AgentOs {
             | wire::ResponsePayload::ExtEnvelope(_)
             | wire::ResponsePayload::GuestKernelResultResponse(_)
             | wire::ResponsePayload::ResourceSnapshotResponse(_)
-            | wire::ResponsePayload::PackageLinkedResponse(_) => {
+            | wire::ResponsePayload::PackageLinkedResponse(_)
+            | wire::ResponsePayload::ProvidedCommandsResponse(_) => {
                 return Err(ClientError::Sidecar(
                     "unexpected configure_vm response".to_string(),
                 ));
@@ -543,7 +546,8 @@ impl AgentOs {
                     | wire::ResponsePayload::ExtEnvelope(_)
                     | wire::ResponsePayload::GuestKernelResultResponse(_)
                     | wire::ResponsePayload::ResourceSnapshotResponse(_)
-                    | wire::ResponsePayload::PackageLinkedResponse(_) => {
+                    | wire::ResponsePayload::PackageLinkedResponse(_)
+                    | wire::ResponsePayload::ProvidedCommandsResponse(_) => {
                         return Err(ClientError::Sidecar(
                             "unexpected register_host_callbacks response".to_string(),
                         ));
@@ -668,6 +672,28 @@ impl AgentOs {
             wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
             other => Err(ClientError::Sidecar(format!(
                 "unexpected link_package response: {other:?}"
+            ))),
+        }
+    }
+
+    pub async fn provided_commands(&self) -> Result<BTreeMap<String, Vec<String>>, ClientError> {
+        let inner = self.inner();
+        let response = self
+            .transport()
+            .request_wire(
+                wire_vm_ownership(&inner.connection_id, &inner.session_id, &inner.vm_id),
+                wire::RequestPayload::ProvidedCommandsRequest,
+            )
+            .await?;
+        match response {
+            wire::ResponsePayload::ProvidedCommandsResponse(provided) => Ok(provided
+                .packages
+                .into_iter()
+                .map(|package| (package.package_name, package.commands))
+                .collect()),
+            wire::ResponsePayload::RejectedResponse(rejected) => Err(rejected_to_error(rejected)),
+            other => Err(ClientError::Sidecar(format!(
+                "unexpected provided_commands response: {other:?}"
             ))),
         }
     }
