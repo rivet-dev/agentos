@@ -101,6 +101,12 @@ export interface SessionEventPayload {
 	sessionId?: string;
 	event: JsonRpcNotification;
 }
+/** Live `shellData` / `shellStderr` broadcast payload (the terminal stream).
+ * `data` is a Uint8Array, but the JSON wire form may be `["$Uint8Array", b64]`. */
+export interface ShellDataPayload {
+	shellId: string;
+	data: Uint8Array;
+}
 /** Raw `getSessionEvents` row — the full persisted event, not just the bare
  * notification, so we keep `seq` (ordering/keys) and `createdAt` (timestamps). */
 export interface PersistedSessionEvent {

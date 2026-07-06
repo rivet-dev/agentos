@@ -335,6 +335,7 @@ const INSPECTOR_TABS_ASSET_DIR = join(
 // dashboard shows only the agent-os tabs.
 const AGENTOS_INSPECTOR_CONFIG = {
 	tabs: [
+		{ id: "terminal", label: "Terminal", source: INSPECTOR_TABS_ASSET_DIR, icon: "terminal" },
 		{ id: "transcript", label: "Transcript", source: INSPECTOR_TABS_ASSET_DIR, icon: "comments" },
 		{ id: "filesystem", label: "Filesystem", source: INSPECTOR_TABS_ASSET_DIR, icon: "folder-tree" },
 		{ id: "processes", label: "Processes", source: INSPECTOR_TABS_ASSET_DIR, icon: "microchip" },
