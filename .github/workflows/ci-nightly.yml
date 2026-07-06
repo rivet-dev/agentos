@@ -1,0 +1,48 @@
+name: ci-nightly
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 10 * * *"
+
+jobs:
+  nightly:
+    name: Nightly runtime validation
+    runs-on: [self-hosted, agentos-builder]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-wasip1
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-wasip1
+      - run: pnpm install --frozen-lockfile
+      - run: make -C registry/native commands
+      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
+      - run: cargo check --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: pnpm check-types
+      - run: pnpm test
+        env:
+          AGENTOS_E2E_NETWORK: '1'
+      - run: cargo test --workspace -- --test-threads=1
+      - run: cargo build --release -p agentos-native-sidecar
+      - run: cargo build --release -p agentos-native-baseline
+      - run: cargo build --release --target wasm32-wasip1 -p agentos-native-baseline
+      - run: pnpm --dir packages/runtime-benchmarks bench:matrix
+        env:
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-native-sidecar
+          NATIVE_BASELINE_BIN: ${{ github.workspace }}/target/release/agentos-native-baseline
+          NATIVE_BASELINE_WASM: ${{ github.workspace }}/target/wasm32-wasip1/release/agentos-native-baseline.wasm
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-benchmark-results
+          path: packages/runtime-benchmarks/results
+          if-no-files-found: warn

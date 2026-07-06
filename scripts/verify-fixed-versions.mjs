@@ -2,8 +2,7 @@
 //
 // Release jobs override these versions transiently in CI. The committed state
 // must keep Agent OS-owned package.json files and the Rust workspace package at
-// 0.0.1, while secure-exec dependency versions remain managed by
-// scripts/secure-exec-dep.mjs.
+// 0.0.1.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,6 +73,7 @@ function readPackageVersion(path, relPath, failures) {
 		failures.push(`${relPath} could not be parsed: ${err.message}`);
 		return { hasVersion: false };
 	}
+	if (manifest.private) return { hasVersion: false };
 	if (!Object.hasOwn(manifest, "version")) return { hasVersion: false };
 	return { hasVersion: true, version: manifest.version };
 }
@@ -104,8 +104,7 @@ function readWorkspacePackageVersion(root, failures) {
 // Internal agent-os crate deps in [workspace.dependencies] carry an explicit
 // `version` requirement (path = "crates/..."). It MUST match the workspace
 // package version, or cargo fails to resolve (the crate is 0.0.1 but a sibling
-// requires the old version). secure-exec crate deps (path = "../secure-exec/...")
-// are surface A and intentionally NOT checked here.
+// requires the old version).
 function checkWorkspaceCrateDeps(root, failures) {
 	const cargoPath = join(root, "Cargo.toml");
 	if (!existsSync(cargoPath)) return;

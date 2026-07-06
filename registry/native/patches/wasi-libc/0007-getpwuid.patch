@@ -1,0 +1,107 @@
+Implement getpwuid() via host_user.getpwuid WASM import.
+
+Replaces musl's /etc/passwd-based getpwuid() with an implementation
+that calls our host_user.getpwuid custom WASM import and parses the
+returned serialized passwd string (name:x:uid:gid:gecos:home:shell)
+into a struct passwd.
+
+Un-omits pwd.h from the sysroot headers so C programs can use
+struct passwd and getpwuid().
+
+Import signature matches wasmvm/crates/wasi-ext/src/lib.rs exactly.
+
+diff --git a/libc-bottom-half/sources/host_user_getpwuid.c b/libc-bottom-half/sources/host_user_getpwuid.c
+new file mode 100644
+index 0000000..c80a680
+--- /dev/null
++++ b/libc-bottom-half/sources/host_user_getpwuid.c
+@@ -0,0 +1,57 @@
++// getpwuid() via wasmVM host_user.getpwuid import.
++//
++// Replaces musl's /etc/passwd-based implementation with a call to our
++// custom WASM import. The host returns a serialized passwd string:
++//   name:x:uid:gid:gecos:home:shell
++// which we parse into struct passwd fields.
++//
++// Import signature matches wasmvm/crates/wasi-ext/src/lib.rs exactly.
++
++#include <pwd.h>
++#include <stdint.h>
++#include <string.h>
++#include <stdlib.h>
++
++#define WASM_IMPORT(mod, fn) \
++    __attribute__((__import_module__(mod), __import_name__(fn)))
++
++WASM_IMPORT("host_user", "getpwuid")
++uint32_t __host_getpwuid(uint32_t uid, uint8_t *buf_ptr, uint32_t buf_len, uint32_t *ret_len);
++
++static struct passwd pw_entry;
++static char pw_buf[512];
++
++struct passwd *getpwuid(uid_t uid) {
++    uint32_t ret_len = 0;
++    uint32_t err = __host_getpwuid(
++        (uint32_t)uid,
++        (uint8_t *)pw_buf,
++        (uint32_t)(sizeof(pw_buf) - 1),
++        &ret_len
++    );
++    if (err != 0) return NULL;
++    if (ret_len >= sizeof(pw_buf)) return NULL;
++
++    pw_buf[ret_len] = '\0';
++
++    char *fields[7];
++    int fi = 0;
++    fields[0] = pw_buf;
++    for (uint32_t i = 0; i < ret_len && fi < 6; i++) {
++        if (pw_buf[i] == ':') {
++            pw_buf[i] = '\0';
++            fields[++fi] = &pw_buf[i + 1];
++        }
++    }
++    if (fi != 6) return NULL;
++
++    pw_entry.pw_name   = fields[0];
++    pw_entry.pw_passwd = fields[1];
++    pw_entry.pw_uid    = (uid_t)atoi(fields[2]);
++    pw_entry.pw_gid    = (gid_t)atoi(fields[3]);
++    pw_entry.pw_gecos  = fields[4];
++    pw_entry.pw_dir    = fields[5];
++    pw_entry.pw_shell  = fields[6];
++
++    return &pw_entry;
++}
+diff --git a/libc-top-half/musl/src/passwd/getpwent.c b/libc-top-half/musl/src/passwd/getpwent.c
+index f2bd516..6ca7e67 100644
+--- a/libc-top-half/musl/src/passwd/getpwent.c
++++ b/libc-top-half/musl/src/passwd/getpwent.c
+@@ -22,12 +22,14 @@ struct passwd *getpwent()
+ 	return res;
+ }
+ 
++#ifdef __wasilibc_unmodified_upstream /* getpwuid via /etc/passwd - replaced by host_user import */
+ struct passwd *getpwuid(uid_t uid)
+ {
+ 	struct passwd *res;
+ 	__getpw_a(0, uid, &pw, &line, &size, &res);
+ 	return res;
+ }
++#endif
+ 
+ struct passwd *getpwnam(const char *name)
+ {
+diff --git a/scripts/install-include-headers.sh b/scripts/install-include-headers.sh
+index efa48aa..30b2da5 100755
+--- a/scripts/install-include-headers.sh
++++ b/scripts/install-include-headers.sh
+@@ -62,7 +62,7 @@ MUSL_OMIT_HEADERS+=("sys/procfs.h" "sys/user.h" "sys/kd.h" "sys/vt.h" \
+     "sys/swap.h" "sys/sendfile.h" "sys/inotify.h" "sys/quota.h" "sys/klog.h" \
+     "sys/fsuid.h" "sys/io.h" "sys/prctl.h" "sys/mtio.h" "sys/mount.h" \
+     "sys/fanotify.h" "sys/personality.h" "elf.h" "link.h" "bits/link.h" \
+-    "scsi/scsi.h" "scsi/scsi_ioctl.h" "scsi/sg.h" "sys/auxv.h" "pwd.h" \
++    "scsi/scsi.h" "scsi/scsi_ioctl.h" "scsi/sg.h" "sys/auxv.h" \
+     "shadow.h" "grp.h" "mntent.h" "resolv.h" "pty.h" "ulimit.h" "sys/xattr.h" \
+     "wordexp.h" "spawn.h" "sys/membarrier.h" "sys/signalfd.h" "termios.h" \
+     "sys/termios.h" "bits/termios.h" "net/if.h" "net/if_arp.h" \

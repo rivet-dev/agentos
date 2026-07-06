@@ -1,0 +1,13 @@
+[package]
+name = "cmd-tail"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "tail standalone binary for secure-exec VM"
+
+[[bin]]
+name = "tail"
+path = "src/main.rs"
+
+[dependencies]
+uu_tail = "0.7.0"

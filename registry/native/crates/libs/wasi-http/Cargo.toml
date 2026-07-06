@@ -1,0 +1,9 @@
+[package]
+name = "secureexec-wasi-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal HTTP/1.1 client for WASI using host_net TCP/TLS imports"
+
+[dependencies]
+wasi-ext = { path = "../../wasi-ext" }

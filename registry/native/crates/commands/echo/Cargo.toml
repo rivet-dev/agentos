@@ -1,0 +1,13 @@
+[package]
+name = "cmd-echo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "echo standalone binary for secure-exec VM"
+
+[[bin]]
+name = "echo"
+path = "src/main.rs"
+
+[dependencies]
+uu_echo = "0.7.0"

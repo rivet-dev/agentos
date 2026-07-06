@@ -18,7 +18,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use secure_exec_client::wire::{
+use agentos_sidecar_client::wire::{
     self, GuestFilesystemCallRequest, GuestFilesystemOperation, GuestFilesystemResultResponse,
     GuestFilesystemStat, RootFilesystemEntry, RootFilesystemEntryEncoding, RootFilesystemEntryKind,
 };

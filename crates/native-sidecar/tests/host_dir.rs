@@ -1,0 +1,233 @@
+// `host_dir.rs` is `include!`d below rather than linked from the crate, so its
+// macOS-only `crate::macos_fs::…` references must resolve within this test
+// binary too. Wire the same module in (macOS only; on Linux those references
+// are `#[cfg]`d out and this module is unused).
+#[cfg(target_os = "macos")]
+#[path = "../src/macos_fs.rs"]
+mod macos_fs;
+
+// The source is `include!`d wholesale but this test only exercises the
+// filesystem-plugin subset, so items used elsewhere in the crate (e.g. the
+// session-thread `SessionModuleReader`) are legitimately unused here.
+#[allow(dead_code)]
+mod host_dir {
+    include!("../src/plugins/host_dir.rs");
+
+    mod tests {
+        use super::{HostDirFilesystem, HostDirMountPlugin, MAX_HOST_DIR_READ_BYTES};
+        use agentos_kernel::mount_plugin::{FileSystemPluginFactory, OpenFileSystemPluginRequest};
+        use agentos_kernel::mount_table::MountedFileSystem;
+        use agentos_kernel::vfs::VirtualFileSystem;
+        use serde_json::json;
+        use std::fs;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::path::PathBuf;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        fn temp_dir(prefix: &str) -> PathBuf {
+            let suffix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be monotonic enough for temp paths")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("{prefix}-{suffix}"));
+            fs::create_dir_all(&path).expect("create temp dir");
+            path
+        }
+
+        #[test]
+        fn filesystem_rejects_symlink_escapes_and_round_trips_writes() {
+            let host_dir = temp_dir("secure-exec-host-dir-plugin");
+            let outside_dir = temp_dir("secure-exec-host-dir-plugin-outside");
+            fs::write(host_dir.join("hello.txt"), "hello from host").expect("seed host file");
+            std::os::unix::fs::symlink(&outside_dir, host_dir.join("escape"))
+                .expect("seed escape symlink");
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            assert_eq!(
+                filesystem
+                    .read_text_file("/hello.txt")
+                    .expect("read host file"),
+                "hello from host"
+            );
+
+            filesystem
+                .write_file("/nested/out.txt", b"written from vm".to_vec())
+                .expect("write through host dir fs");
+            assert_eq!(
+                fs::read_to_string(host_dir.join("nested/out.txt"))
+                    .expect("read written host file"),
+                "written from vm"
+            );
+
+            let error = filesystem
+                .read_file("/escape/hostname")
+                .expect_err("escape symlink should fail closed");
+            assert_eq!(error.code(), "EACCES");
+            assert!(
+                !outside_dir.join("hostname").exists(),
+                "read should not materialize files outside the host mount"
+            );
+
+            let error = filesystem
+                .write_file("/escape/owned.txt", b"owned".to_vec())
+                .expect_err("escape symlink write should fail closed");
+            assert_eq!(error.code(), "EACCES");
+            assert!(
+                !outside_dir.join("owned.txt").exists(),
+                "write should not escape the mounted host directory"
+            );
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+            fs::remove_dir_all(outside_dir).expect("remove outside temp dir");
+        }
+
+        #[test]
+        fn filesystem_pwrite_updates_in_place_and_zero_fills_gaps() {
+            let host_dir = temp_dir("secure-exec-host-dir-plugin-pwrite");
+            fs::write(host_dir.join("data.txt"), b"abcdef").expect("seed host file");
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            filesystem
+                .pwrite("/data.txt", b"XYZ".to_vec(), 2)
+                .expect("overwrite bytes in place");
+            filesystem
+                .pwrite("/data.txt", b"!".to_vec(), 8)
+                .expect("extend file with zero-filled hole");
+
+            assert_eq!(
+                fs::read(host_dir.join("data.txt")).expect("read written host file"),
+                b"abXYZf\0\0!".to_vec()
+            );
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+        }
+
+        #[test]
+        fn filesystem_pwrite_rejects_symlink_escape_targets() {
+            let host_dir = temp_dir("secure-exec-host-dir-plugin-pwrite-escape");
+            let outside_dir = temp_dir("secure-exec-host-dir-plugin-pwrite-escape-outside");
+            fs::write(outside_dir.join("outside.txt"), b"outside").expect("seed outside file");
+            std::os::unix::fs::symlink(&outside_dir, host_dir.join("escape"))
+                .expect("seed escape symlink");
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            let error = filesystem
+                .pwrite("/escape/outside.txt", b"owned".to_vec(), 0)
+                .expect_err("pwrite should reject symlink escapes");
+            assert_eq!(error.code(), "EACCES");
+            assert_eq!(
+                fs::read(outside_dir.join("outside.txt")).expect("outside file should stay intact"),
+                b"outside".to_vec()
+            );
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+            fs::remove_dir_all(outside_dir).expect("remove outside temp dir");
+        }
+
+        #[test]
+        fn filesystem_rejects_full_reads_above_host_dir_limit() {
+            let host_dir = temp_dir("secure-exec-host-dir-plugin-full-read-limit");
+            let huge_file = fs::File::create(host_dir.join("huge.bin")).expect("create huge file");
+            huge_file
+                .set_len(MAX_HOST_DIR_READ_BYTES as u64 + 1)
+                .expect("make sparse huge file");
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            let error = filesystem
+                .read_file("/huge.bin")
+                .expect_err("full read should reject oversized host file");
+            assert_eq!(error.code(), "EINVAL");
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+        }
+
+        #[test]
+        fn filesystem_pread_rejects_lengths_above_host_dir_limit() {
+            let host_dir = temp_dir("secure-exec-host-dir-plugin-pread-limit");
+            fs::write(host_dir.join("small.txt"), b"small").expect("seed host file");
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            let error = filesystem
+                .pread("/small.txt", 0, MAX_HOST_DIR_READ_BYTES + 1)
+                .expect_err("pread should reject oversized allocation");
+            assert_eq!(error.code(), "EINVAL");
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+        }
+
+        #[test]
+        fn filesystem_metadata_ops_reject_symlink_targets() {
+            let host_dir = temp_dir("secure-exec-host-dir-plugin-metadata");
+            let outside_dir = temp_dir("secure-exec-host-dir-plugin-metadata-outside");
+            let outside_file = outside_dir.join("outside.txt");
+            fs::write(&outside_file, b"outside").expect("seed outside file");
+            std::os::unix::fs::symlink(&outside_file, host_dir.join("link"))
+                .expect("seed escape symlink");
+
+            let baseline = fs::metadata(&outside_file).expect("outside metadata before ops");
+            let baseline_mode = baseline.permissions().mode() & 0o7777;
+            let baseline_uid = baseline.uid();
+            let baseline_gid = baseline.gid();
+            let baseline_atime_ns = baseline.atime_nsec();
+            let baseline_mtime_ns = baseline.mtime_nsec();
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+
+            let chmod_error = filesystem
+                .chmod("/link", 0o777)
+                .expect_err("chmod should reject symlink targets");
+            assert_eq!(chmod_error.code(), "EPERM");
+
+            let chown_error = filesystem
+                .chown("/link", baseline_uid, baseline_gid)
+                .expect_err("chown should reject symlink targets");
+            assert_eq!(chown_error.code(), "EPERM");
+
+            let utimes_error = filesystem
+                .utimes("/link", 1_000, 2_000)
+                .expect_err("utimes should reject symlink targets");
+            assert_eq!(utimes_error.code(), "EPERM");
+
+            let after = fs::metadata(&outside_file).expect("outside metadata after ops");
+            assert_eq!(after.permissions().mode() & 0o7777, baseline_mode);
+            assert_eq!(after.uid(), baseline_uid);
+            assert_eq!(after.gid(), baseline_gid);
+            assert_eq!(after.atime_nsec(), baseline_atime_ns);
+            assert_eq!(after.mtime_nsec(), baseline_mtime_ns);
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+            fs::remove_dir_all(outside_dir).expect("remove outside temp dir");
+        }
+
+        #[test]
+        fn plugin_config_can_enforce_read_only_mounts() {
+            let host_dir = temp_dir("secure-exec-host-dir-plugin-readonly");
+            fs::write(host_dir.join("hello.txt"), "hello from host").expect("seed host file");
+
+            let plugin = HostDirMountPlugin;
+            let mut mounted = plugin
+                .open(OpenFileSystemPluginRequest {
+                    vm_id: "vm-1",
+                    guest_path: "/workspace",
+                    read_only: false,
+                    config: &json!({
+                        "hostPath": host_dir,
+                        "readOnly": true,
+                    }),
+                    context: &(),
+                })
+                .expect("open host_dir plugin");
+
+            assert_eq!(
+                mounted.read_file("/hello.txt").expect("read host file"),
+                b"hello from host".to_vec()
+            );
+            let error = mounted
+                .write_file("/blocked.txt", b"blocked".to_vec())
+                .expect_err("readonly plugin config should reject writes");
+            assert_eq!(error.code(), "EROFS");
+
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+        }
+    }
+}

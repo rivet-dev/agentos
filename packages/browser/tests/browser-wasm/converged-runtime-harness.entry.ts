@@ -1,6 +1,6 @@
 // Live converged runtime harness for Agent OS (esbuild-bundled).
 //
-// Builds a real BrowserRuntimeDriver from @secure-exec/browser with the Agent OS
+// Builds a real BrowserRuntimeDriver from @rivet-dev/agentos-runtime-browser with the Agent OS
 // converged sidecar (createAgentOsConvergedSidecar), runs a real guest that does
 // filesystem I/O, and reports stdout/exit. Proves a real Agent OS guest runs in
 // Chromium with its fs.* syscalls routed through the converged SharedArrayBuffer
@@ -11,7 +11,7 @@ import {
 	allowAll,
 	createBrowserDriver,
 	createBrowserRuntimeDriverFactory,
-} from "@secure-exec/browser";
+} from "@rivet-dev/agentos-runtime-browser";
 import { createAgentOsConvergedSidecar } from "../../src/converged-sidecar.js";
 
 // Served by serve.mjs at /wasm/ (the agentos wasm-bindgen web output). Passed to

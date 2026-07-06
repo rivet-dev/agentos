@@ -3,7 +3,7 @@ import { createConvergedExecutionHostBridge } from "../../src/converged-executio
 import { createAgentOsConvergedSidecar } from "../../src/converged-sidecar.js";
 
 // Unit coverage for the Agent OS converged-consumption layer (the TS that plugs
-// the ACP wasm sidecar into @secure-exec/browser's converged runtime). The
+// the ACP wasm sidecar into @rivet-dev/agentos-runtime-browser's converged runtime). The
 // end-to-end Chromium proof lives in tests/browser-wasm/converged-runtime.spec.ts;
 // these are the fast headless units that pin the contract.
 

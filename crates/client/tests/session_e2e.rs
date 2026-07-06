@@ -1,8 +1,8 @@
 //! Agent session (ACP) e2e against a real `agentos-sidecar`.
 //!
-//! `create_session` requires agent adapters + a mock LLM + V8 execution. In this environment the
-//! client. This suite fails fast by default when session creation is unavailable; set
-//! `AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1` only for local skip-only runs.
+//! `create_session` requires an agent package projected into `/opt/agentos`. This suite builds a
+//! tiny mock ACP package on the fly so it exercises the real sidecar/session path without depending
+//! on a locally built Pi adapter.
 //!
 //! When a session CAN be created the suite asserts the real TS contract: the session appears in
 //! `list_sessions`, `prompt` returns a `PromptResult` (response + accumulated agent text),
@@ -11,63 +11,102 @@
 
 mod common;
 
-use std::collections::BTreeMap;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 
-use agentos_client::fs::FileContent;
+use agentos_client::config::{AgentOsConfig, PackageRef};
 use agentos_client::{AgentOs, ClientError, CreateSessionOptions};
 use futures::StreamExt;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::task::JoinHandle;
 
-struct MockAnthropic {
-    url: String,
-    port: u16,
-    task: JoinHandle<()>,
+const MOCK_AGENT_TYPE: &str = "mock-agent";
+const MOCK_SESSION_ID: &str = "mock-session-1";
+const MOCK_PROMPT_TEXT: &str = "mock-session-pong";
+const MOCK_ACP_ADAPTER: &str = r#"
+let buffer = "";
+function writeMessage(message) { process.stdout.write(JSON.stringify(message) + "\n"); }
+function writeResponse(id, result) { writeMessage({ jsonrpc: "2.0", id, result }); }
+process.stdin.resume();
+process.stdin.on("data", (chunk) => {
+  buffer += chunk instanceof Uint8Array ? new TextDecoder().decode(chunk) : String(chunk);
+  while (true) {
+    const idx = buffer.indexOf("\n");
+    if (idx === -1) break;
+    const line = buffer.slice(0, idx);
+    buffer = buffer.slice(idx + 1);
+    if (!line.trim()) continue;
+    const msg = JSON.parse(line);
+    if (msg.id === undefined) continue;
+    switch (msg.method) {
+      case "initialize":
+        writeResponse(msg.id, {
+          protocolVersion: 1,
+          agentInfo: { name: "mock-agent", version: "1.0.0" },
+          agentCapabilities: { plan_mode: false, tool_calls: false, promptCapabilities: {} },
+          modes: { currentModeId: "default", availableModes: [{ id: "default", label: "Default" }] },
+          configOptions: [],
+        });
+        break;
+      case "session/new":
+        writeResponse(msg.id, {
+          sessionId: "__MOCK_SESSION_ID__",
+          modes: { currentModeId: "default", availableModes: [{ id: "default", label: "Default" }] },
+          configOptions: [],
+        });
+        break;
+      case "session/prompt":
+        writeMessage({ jsonrpc: "2.0", method: "session/update", params: {
+          sessionId: "__MOCK_SESSION_ID__",
+          update: { sessionUpdate: "agent_message_chunk", content: { text: "__MOCK_PROMPT_TEXT__" } } } });
+        writeMessage({ jsonrpc: "2.0", method: "session/update", params: {
+          sessionId: "__MOCK_SESSION_ID__",
+          update: { sessionUpdate: "completed", stopReason: "end_turn" } } });
+        writeResponse(msg.id, { stopReason: "end_turn" });
+        break;
+      case "session/cancel":
+        writeResponse(msg.id, {});
+        break;
+      default:
+        writeMessage({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "Method not found" } });
+        break;
+    }
+  }
+});
+"#;
+
+fn unique_dir(tag: &str) -> PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("agentos-session-e2e-{tag}-{nonce}"));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    dir
 }
 
-impl MockAnthropic {
-    fn stop(self) {
-        self.task.abort();
-    }
-}
-
-async fn start_mock_anthropic() -> MockAnthropic {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind mock anthropic server");
-    let port = listener.local_addr().expect("mock server address").port();
-    let task = tokio::spawn(async move {
-        loop {
-            let Ok((mut socket, _)) = listener.accept().await else {
-                break;
-            };
-            tokio::spawn(async move {
-                let mut buffer = [0_u8; 8192];
-                let _ = socket.read(&mut buffer).await;
-                let body = r#"{"id":"msg_mock","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[{"type":"text","text":"PONG"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}"#;
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                let _ = socket.write_all(response.as_bytes()).await;
-            });
-        }
-    });
-
-    MockAnthropic {
-        url: format!("http://127.0.0.1:{port}"),
-        port,
-        task,
-    }
+fn write_mock_agent_package(root: &Path) -> PathBuf {
+    let package = root.join("mock-agent-package");
+    std::fs::create_dir_all(package.join("bin")).expect("create package bin");
+    std::fs::write(
+        package.join("agentos-package.json"),
+        r#"{"name":"mock-agent","version":"1.0.0","agent":{"acpEntrypoint":"mock-agent-acp"}}"#,
+    )
+    .expect("write agentos-package.json");
+    let adapter = MOCK_ACP_ADAPTER
+        .replace("__MOCK_SESSION_ID__", MOCK_SESSION_ID)
+        .replace("__MOCK_PROMPT_TEXT__", MOCK_PROMPT_TEXT);
+    let bin = package.join("bin/mock-agent-acp");
+    std::fs::write(&bin, format!("#!/usr/bin/env node\n{adapter}\n")).expect("write adapter");
+    let mut perms = std::fs::metadata(&bin).expect("stat adapter").permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&bin, perms).expect("chmod adapter");
+    package
 }
 
 async fn try_create_session_with_options(
     os: &AgentOs,
     options: CreateSessionOptions,
 ) -> Option<String> {
-    match os.create_session("pi", options).await {
+    match os.create_session(MOCK_AGENT_TYPE, options).await {
         Ok(session) => Some(session.session_id),
         Err(error) => {
             if common::allow_local_e2e_skips() {
@@ -99,21 +138,28 @@ async fn session_surface_create_prompt_events_close() {
     if !common::require_sidecar("session_surface_create_prompt_events_close") {
         return;
     }
-    let mock = start_mock_anthropic().await;
-    let os = common::new_vm_with_loopback_ports(vec![mock.port]).await;
+    let package_root = unique_dir("pkg");
+    let package_dir = write_mock_agent_package(&package_root);
+    common::ensure_sidecar_env();
+    let os = agentos_client::AgentOs::create(AgentOsConfig {
+        packages: vec![PackageRef {
+            dir: Some(package_dir.to_string_lossy().into_owned()),
+            tar: None,
+        }],
+        ..Default::default()
+    })
+    .await
+    .expect("create VM with mock agent package");
 
     // --- Runtime-independent session surface (no agents/V8 needed) --------------------------------
     // Real assertions against the real sidecar: the registry starts empty, agents are resolved
     // dynamically from the configured `/opt/agentos` package manifests (there is NO hardcoded
     // agent registry), and every session operation on an unknown id reports SessionNotFound.
     assert!(os.list_sessions().is_empty(), "a fresh VM has no sessions");
-    // This VM configures no `/opt/agentos` agent packages, so no agents are listed. `list_agents`
-    // is a sidecar ACP RPC that enumerates the projected `/opt/agentos` packages; with none
-    // projected it returns empty.
     let agents = os.list_agents().await.expect("list_agents");
     assert!(
-        agents.is_empty(),
-        "with no agent packages configured, list_agents must be empty (dynamic resolution)"
+        agents.iter().any(|agent| agent.id == MOCK_AGENT_TYPE),
+        "the projected mock package must appear in list_agents: {agents:?}"
     );
     assert!(
         matches!(
@@ -132,42 +178,15 @@ async fn session_surface_create_prompt_events_close() {
         "prompt(unknown) must return SessionNotFound"
     );
 
-    let home_dir = "/home/agentos";
     let workspace_dir = "/home/agentos/workspace";
-    os.mkdir("/home/agentos/.pi/agent", Default::default())
-        .await
-        .expect("create pi config directory");
     os.mkdir(workspace_dir, Default::default())
         .await
         .expect("create workspace");
-    os.write_file(
-        "/home/agentos/.pi/agent/models.json",
-        FileContent::Text(format!(
-            r#"{{
-  "providers": {{
-    "anthropic": {{
-      "baseUrl": "{}",
-      "apiKey": "mock-key"
-    }}
-  }}
-}}"#,
-            mock.url
-        )),
-    )
-    .await
-    .expect("write pi model config");
-
-    let mut env = BTreeMap::new();
-    env.insert("HOME".to_string(), home_dir.to_string());
-    env.insert("ANTHROPIC_API_KEY".to_string(), "mock-key".to_string());
-    env.insert("ANTHROPIC_BASE_URL".to_string(), mock.url.clone());
-    env.insert("PI_SKIP_VERSION_CHECK".to_string(), "1".to_string());
 
     let session_id = match try_create_session_with_options(
         &os,
         CreateSessionOptions {
             cwd: Some(workspace_dir.to_string()),
-            env,
             ..Default::default()
         },
     )
@@ -176,7 +195,7 @@ async fn session_surface_create_prompt_events_close() {
         Some(id) => id,
         None => {
             os.shutdown().await.expect("shutdown");
-            mock.stop();
+            std::fs::remove_dir_all(&package_root).ok();
             return;
         }
     };
@@ -222,13 +241,13 @@ async fn session_surface_create_prompt_events_close() {
     .ok()
     .flatten();
     assert!(
-        !result.text.is_empty(),
+        result.text.contains(MOCK_PROMPT_TEXT),
         "prompt should accumulate agent_message_chunk text from live session events"
     );
     assert!(
         live_chunk_text
             .as_deref()
-            .is_some_and(|text| !text.is_empty()),
+            .is_some_and(|text| text.contains(MOCK_PROMPT_TEXT)),
         "on_session_event should stream a live agent_message_chunk during prompt"
     );
 
@@ -257,5 +276,5 @@ async fn session_surface_create_prompt_events_close() {
     );
 
     os.shutdown().await.expect("shutdown");
-    mock.stop();
+    std::fs::remove_dir_all(&package_root).ok();
 }

@@ -1,0 +1,6 @@
+[package]
+name = "hostname"
+version = "0.4.2"
+edition = "2021"
+license = "Apache-2.0"
+description = "WASM-compatible stub for hostname crate (returns 'wasm-host')"

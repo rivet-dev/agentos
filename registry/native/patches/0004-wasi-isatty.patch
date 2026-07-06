@@ -1,0 +1,34 @@
+--- a/library/std/src/sys/io/mod.rs
++++ b/library/std/src/sys/io/mod.rs
+@@ -25,7 +25,11 @@
+
+ mod is_terminal {
+     cfg_select! {
+-        any(target_family = "unix", target_os = "wasi") => {
++        target_os = "wasi" => {
++            mod wasi;
++            pub use wasi::*;
++        }
++        target_family = "unix" => {
+             mod isatty;
+             pub use isatty::*;
+         }
+
+--- /dev/null
++++ b/library/std/src/sys/io/is_terminal/wasi.rs
+@@ -0,0 +1,14 @@
++// WASI is_terminal implementation using wasmVM host_user.isatty.
++
++use crate::os::fd::AsRawFd;
++
++#[link(wasm_import_module = "host_user")]
++unsafe extern "C" {
++    fn isatty(fd: u32, ret_bool: *mut u32) -> u32;
++}
++
++pub fn is_terminal(fd: &impl AsRawFd) -> bool {
++    let mut result: u32 = 0;
++    let errno = unsafe { isatty(fd.as_raw_fd() as u32, &mut result) };
++    errno == 0 && result != 0
++}
+

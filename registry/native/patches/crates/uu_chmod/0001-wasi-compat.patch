@@ -1,0 +1,140 @@
+--- a/src/chmod.rs
++++ b/src/chmod.rs
+@@ -8,16 +8,87 @@
+ use clap::{Arg, ArgAction, Command};
+ use std::ffi::OsString;
+ use std::fs;
++#[cfg(unix)]
+ use std::os::unix::fs::{MetadataExt, PermissionsExt};
+ use std::path::{Path, PathBuf};
+ use thiserror::Error;
+ use uucore::display::Quotable;
+ use uucore::error::{ExitCode, UError, UResult, USimpleError, UUsageError, set_exit_code};
+ use uucore::fs::display_permissions_unix;
++#[cfg(unix)]
+ use uucore::libc::mode_t;
++#[cfg(target_os = "wasi")]
++use uucore::fs::mode_t;
+ use uucore::mode;
+ use uucore::perms::{TraverseSymlinks, configure_symlink_and_recursion};
+ 
++// wasmVM: WASI compatibility — MetadataExt lacks mode(), Permissions lacks from_mode()
++#[cfg(target_os = "wasi")]
++mod wasi_compat {
++    use std::fs;
++    use std::path::Path;
++
++    mod host_fs {
++        #[link(wasm_import_module = "host_fs")]
++        unsafe extern "C" {
++            pub fn chmod(fd: u32, path_ptr: *const u8, path_len: u32, mode: u32) -> u32;
++            pub fn path_mode(
++                fd: u32,
++                path_ptr: *const u8,
++                path_len: u32,
++                follow_symlinks: u32,
++            ) -> u32;
++        }
++    }
++
++    fn fallback_mode(meta: &fs::Metadata) -> u32 {
++        let ft = meta.file_type();
++        let base = if ft.is_dir() { 0o755 } else { 0o644 };
++        if meta.permissions().readonly() {
++            base & !0o222
++        } else {
++            base
++        }
++    }
++
++    pub fn mode_for_path(path: &Path, meta: &fs::Metadata, follow_symlinks: bool) -> u32 {
++        let Some(path_str) = path.to_str() else {
++            return fallback_mode(meta);
++        };
++        let mode = unsafe {
++            host_fs::path_mode(
++                3,
++                path_str.as_ptr(),
++                path_str.len() as u32,
++                if follow_symlinks { 1 } else { 0 },
++            )
++        };
++        if mode == 0 {
++            fallback_mode(meta)
++        } else {
++            mode & 0o7777
++        }
++    }
++
++    /// Set POSIX-style permissions on a file (best-effort on WASI).
++    pub fn set_permissions_from_mode(path: &Path, mode: u32) -> std::io::Result<()> {
++        use std::io::{Error, ErrorKind};
++
++        let bytes = path
++            .to_str()
++            .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "path is not valid UTF-8"))?
++            .as_bytes();
++        let status = unsafe { host_fs::chmod(3, bytes.as_ptr(), bytes.len() as u32, mode) };
++        if status == 0 {
++            return Ok(());
++        }
++
++        let mut perms = fs::metadata(path)?.permissions();
++        perms.set_readonly(mode & 0o222 == 0);
++        fs::set_permissions(path, perms)
++    }
++}
++
+ #[cfg(all(unix, not(target_os = "redox")))]
+ use uucore::safe_traversal::{DirFd, SymlinkBehavior};
+ use uucore::{format_usage, show, show_error};
+@@ -121,7 +192,16 @@
+     let preserve_root = matches.get_flag(options::PRESERVE_ROOT);
+     let fmode = match matches.get_one::<OsString>(options::REFERENCE) {
+         Some(fref) => match fs::metadata(fref) {
+-            Ok(meta) => Some(meta.mode() & 0o7777),
++            Ok(meta) => {
++                #[cfg(target_os = "wasi")]
++                {
++                    Some(wasi_compat::mode_for_path(Path::new(fref), &meta, true))
++                }
++                #[cfg(not(target_os = "wasi"))]
++                {
++                    Some(meta.mode() & 0o7777)
++                }
++            }
+             Err(_) => {
+                 return Err(ChmodError::CannotStat(fref.into()).into());
+             }
+@@ -623,7 +703,16 @@
+         let metadata = get_metadata(file, dereference);
+ 
+         let fperm = match metadata {
+-            Ok(meta) => meta.mode() & 0o7777,
++            Ok(meta) => {
++                #[cfg(target_os = "wasi")]
++                {
++                    wasi_compat::mode_for_path(file, &meta, dereference)
++                }
++                #[cfg(not(target_os = "wasi"))]
++                {
++                    meta.mode() & 0o7777
++                }
++            }
+             Err(err) => {
+                 // Handle dangling symlinks or other errors
+                 return if file.is_symlink() && !dereference {
+@@ -683,7 +772,12 @@
+             // Use the helper method for consistent reporting
+             self.report_permission_change(file, fperm, mode);
+             Ok(())
+-        } else if let Err(err) = fs::set_permissions(file, fs::Permissions::from_mode(mode)) {
++        } else if let Err(err) = {
++            #[cfg(unix)]
++            { fs::set_permissions(file, fs::Permissions::from_mode(mode)) }
++            #[cfg(target_os = "wasi")]
++            { wasi_compat::set_permissions_from_mode(file, mode) }
++        } {
+             if !self.quiet {
+                 show_error!("{err}");
+             }

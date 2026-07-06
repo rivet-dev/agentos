@@ -1,0 +1,23 @@
+--- a/src/macros/cfg.rs
++++ b/src/macros/cfg.rs
+@@ -385,7 +385,6 @@
+             #[cfg(feature = "process")]
+             #[cfg_attr(docsrs, doc(cfg(feature = "process")))]
+             #[cfg(not(loom))]
+-            #[cfg(not(target_os = "wasi"))]
+             $item
+         )*
+     }
+--- a/src/process/mod.rs
++++ b/src/process/mod.rs
+@@ -239,6 +239,10 @@
+ #[cfg(windows)]
+ mod imp;
+ 
++#[path = "wasi.rs"]
++#[cfg(target_os = "wasi")]
++mod imp;
++
+ mod kill;
+ 
+ use crate::io::{AsyncRead, AsyncWrite, ReadBuf};

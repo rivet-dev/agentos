@@ -1,0 +1,26 @@
+=== Cold Start Benchmark ===
+CPU: 12th Gen Intel(R) Core(TM) i7-12700KF
+Cores: 20 | Max concurrency: 16
+RAM: 62.6 GB | Node: v24.13.0
+Iterations: 5 (+ 1 warmup)
+Batch sizes: 1, 10, 50, 100, 200
+Sidecar: /home/nathan/secure-exec/target/release/secure-exec-sidecar
+
+
+--- batch=1, mode=sequential ---
+  cold: mean=818.55ms p50=801.4ms p95=885.79ms
+  warm: mean=493.46ms p50=455.56ms p95=650.95ms
+
+--- batch=1, mode=concurrent ---
+  cold: mean=786.14ms p50=784.62ms p95=798.17ms
+  warm: mean=461.89ms p50=461.66ms p95=477.25ms
+
+--- batch=10, mode=sequential ---
+  cold: mean=794.92ms p50=792.27ms p95=820.59ms
+  warm: mean=457.83ms p50=455.66ms p95=475.34ms
+
+--- batch=10, mode=concurrent ---
+  cold: mean=1193.37ms p50=1172.91ms p95=1390.81ms
+  warm: mean=477.8ms p50=475.18ms p95=515.5ms
+
+--- batch=50, mode=sequential ---

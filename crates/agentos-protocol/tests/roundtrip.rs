@@ -9,12 +9,9 @@ fn acp_protocol_round_trips_create_session() {
         runtime: AcpRuntimeKind::JavaScript,
         cwd: String::from("/home/agentos"),
         args: vec![String::from("--model"), String::from("gpt-5")],
-        env: [(
-            String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
-            String::from("1"),
-        )]
-        .into_iter()
-        .collect(),
+        env: [(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"))]
+            .into_iter()
+            .collect(),
         protocol_version: 1,
         client_capabilities: String::from("{}"),
         mcp_servers: String::from("{}"),

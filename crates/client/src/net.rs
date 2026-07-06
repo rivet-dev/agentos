@@ -13,7 +13,7 @@ use base64::Engine as _;
 use bytes::Bytes;
 use serde::Deserialize;
 
-use secure_exec_client::wire;
+use agentos_sidecar_client::wire;
 
 use crate::agent_os::AgentOs;
 use crate::error::ClientError;
@@ -21,7 +21,7 @@ use crate::error::ClientError;
 /// Maximum fully buffered fetch component size. `VmFetch` is a single request/response frame, so
 /// keeping this at the default frame size prevents fetch-specific buffers from growing just because
 /// a sidecar was configured with a larger transport frame limit for another API.
-const VM_FETCH_BUFFER_LIMIT_BYTES: usize = secure_exec_client::wire::DEFAULT_MAX_FRAME_BYTES;
+const VM_FETCH_BUFFER_LIMIT_BYTES: usize = agentos_sidecar_client::wire::DEFAULT_MAX_FRAME_BYTES;
 
 /// The shape of the JSON string returned in [`VmFetchResponse::response_json`], mirroring the TS
 /// `{ status, statusText?, headers?: [k,v][], body?: base64 }` payload.
@@ -314,7 +314,7 @@ mod tests {
     fn fetch_buffer_limit_is_fixed_to_default_frame_size() {
         assert_eq!(
             VM_FETCH_BUFFER_LIMIT_BYTES,
-            secure_exec_client::wire::DEFAULT_MAX_FRAME_BYTES
+            agentos_sidecar_client::wire::DEFAULT_MAX_FRAME_BYTES
         );
     }
 

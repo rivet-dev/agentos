@@ -1,0 +1,11394 @@
+use std::collections::BTreeSet;
+use std::env;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
+
+pub(crate) const NODE_IMPORT_CACHE_DEBUG_ENV: &str = "AGENTOS_NODE_IMPORT_CACHE_DEBUG";
+pub(crate) const NODE_IMPORT_CACHE_METRICS_PREFIX: &str = "__AGENTOS_NODE_IMPORT_CACHE_METRICS__:";
+pub(crate) const NODE_IMPORT_CACHE_ASSET_ROOT_ENV: &str = "AGENTOS_NODE_IMPORT_CACHE_ASSET_ROOT";
+
+const NODE_IMPORT_CACHE_PATH_ENV: &str = "AGENTOS_NODE_IMPORT_CACHE_PATH";
+const NODE_IMPORT_CACHE_LOADER_PATH_ENV: &str = "AGENTOS_NODE_IMPORT_CACHE_LOADER_PATH";
+const NODE_IMPORT_CACHE_SCHEMA_VERSION: &str = "1";
+const NODE_IMPORT_CACHE_LOADER_VERSION: &str = "8";
+const NODE_IMPORT_CACHE_ASSET_VERSION: &str = "85";
+const NODE_IMPORT_CACHE_DIR_PREFIX: &str = "agentos-node-import-cache";
+const DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
+const PYODIDE_DIST_DIR: &str = "pyodide-dist";
+const AGENTOS_BUILTIN_SPECIFIER_PREFIX: &str = "secure-exec:builtin/";
+const AGENTOS_POLYFILL_SPECIFIER_PREFIX: &str = "secure-exec:polyfill/";
+const BUNDLED_PYODIDE_MJS: &[u8] = include_bytes!("../assets/pyodide/pyodide.mjs");
+// Large Pyodide assets are excluded from the published crate and staged into
+// OUT_DIR by build.rs (copied from `assets/pyodide/` in-tree, or downloaded
+// from the release CDN when building the published crate).
+const BUNDLED_PYODIDE_ASM_JS: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/pyodide/pyodide.asm.js"));
+const BUNDLED_PYODIDE_ASM_WASM: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/pyodide/pyodide.asm.wasm"));
+const BUNDLED_PYODIDE_LOCK: &[u8] = include_bytes!("../assets/pyodide/pyodide-lock.json");
+const BUNDLED_PYTHON_STDLIB_ZIP: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/pyodide/python_stdlib.zip"));
+const BUNDLED_NUMPY_WHL: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/pyodide/numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl"
+));
+const BUNDLED_PANDAS_WHL: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/pyodide/pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl"
+));
+const BUNDLED_PYTHON_DATEUTIL_WHL: &[u8] =
+    include_bytes!("../assets/pyodide/python_dateutil-2.9.0.post0-py2.py3-none-any.whl");
+const BUNDLED_PYTZ_WHL: &[u8] =
+    include_bytes!("../assets/pyodide/pytz-2025.2-py2.py3-none-any.whl");
+const BUNDLED_SIX_WHL: &[u8] = include_bytes!("../assets/pyodide/six-1.17.0-py2.py3-none-any.whl");
+const BUNDLED_MICROPIP_WHL: &[u8] =
+    include_bytes!("../assets/pyodide/micropip-0.11.0-py3-none-any.whl");
+const BUNDLED_CLICK_WHL: &[u8] = include_bytes!("../assets/pyodide/click-8.3.1-py3-none-any.whl");
+const NODE_PYTHON_RUNNER_SOURCE: &str = include_str!("../assets/runners/python-runner.mjs");
+
+static CLEANED_NODE_IMPORT_CACHE_ROOTS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
+#[cfg(test)]
+static NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy)]
+struct BundledPyodidePackageAsset {
+    file_name: &'static str,
+    bytes: &'static [u8],
+}
+
+const BUNDLED_PYODIDE_PACKAGE_ASSETS: &[BundledPyodidePackageAsset] = &[
+    BundledPyodidePackageAsset {
+        file_name: "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl",
+        bytes: BUNDLED_NUMPY_WHL,
+    },
+    BundledPyodidePackageAsset {
+        file_name: "pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl",
+        bytes: BUNDLED_PANDAS_WHL,
+    },
+    BundledPyodidePackageAsset {
+        file_name: "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+        bytes: BUNDLED_PYTHON_DATEUTIL_WHL,
+    },
+    BundledPyodidePackageAsset {
+        file_name: "pytz-2025.2-py2.py3-none-any.whl",
+        bytes: BUNDLED_PYTZ_WHL,
+    },
+    BundledPyodidePackageAsset {
+        file_name: "six-1.17.0-py2.py3-none-any.whl",
+        bytes: BUNDLED_SIX_WHL,
+    },
+    BundledPyodidePackageAsset {
+        file_name: "micropip-0.11.0-py3-none-any.whl",
+        bytes: BUNDLED_MICROPIP_WHL,
+    },
+    BundledPyodidePackageAsset {
+        file_name: "click-8.3.1-py3-none-any.whl",
+        bytes: BUNDLED_CLICK_WHL,
+    },
+];
+const NODE_IMPORT_CACHE_LOADER_TEMPLATE: &str = r#"
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const GUEST_PATH_MAPPINGS = parseGuestPathMappings(process.env.AGENTOS_GUEST_PATH_MAPPINGS);
+const ALLOWED_BUILTINS = new Set(parseJsonArray(process.env.AGENTOS_ALLOWED_NODE_BUILTINS));
+const CACHE_PATH = process.env.__NODE_IMPORT_CACHE_PATH_ENV__;
+const CACHE_ROOT = CACHE_PATH ? path.dirname(CACHE_PATH) : null;
+const GUEST_INTERNAL_CACHE_ROOT = '/.agentos/node-import-cache';
+const HOST_CWD = process.cwd();
+const DEFAULT_GUEST_CWD =
+  typeof process.env.PWD === 'string' &&
+  process.env.PWD.startsWith('/')
+    ? path.posix.normalize(process.env.PWD)
+    : typeof (globalThis.__agentOSVirtualOs||{}).homedir === 'string' &&
+        (globalThis.__agentOSVirtualOs||{}).homedir.startsWith('/')
+      ? path.posix.normalize((globalThis.__agentOSVirtualOs||{}).homedir)
+    : '/root';
+const UNMAPPED_GUEST_PATH = '/unknown';
+const PROJECTED_SOURCE_CACHE_ROOT = CACHE_PATH
+  ? path.join(path.dirname(CACHE_PATH), 'projected-sources')
+  : null;
+const ASSET_ROOT = process.env.__NODE_IMPORT_CACHE_ASSET_ROOT_ENV__;
+const DEBUG_ENABLED = process.env.__NODE_IMPORT_CACHE_DEBUG_ENV__ === '1';
+const CONTROL_PIPE_FD = parseControlPipeFd(process.env.AGENTOS_CONTROL_PIPE_FD);
+const SCHEMA_VERSION = '__NODE_IMPORT_CACHE_SCHEMA_VERSION__';
+const LOADER_VERSION = '__NODE_IMPORT_CACHE_LOADER_VERSION__';
+const ASSET_VERSION = '__NODE_IMPORT_CACHE_ASSET_VERSION__';
+const MAX_CACHE_RECORD_ENTRIES = 512;
+const MAX_CACHE_KEY_BYTES = 4096;
+const MAX_CACHE_VALUE_BYTES = 16 * 1024;
+const MAX_CACHE_STATE_BYTES = 4 * 1024 * 1024;
+const BUILTIN_PREFIX = '__AGENTOS_BUILTIN_SPECIFIER_PREFIX__';
+const POLYFILL_PREFIX = '__AGENTOS_POLYFILL_SPECIFIER_PREFIX__';
+const FS_ASSET_SPECIFIER = `${BUILTIN_PREFIX}fs`;
+const FS_PROMISES_ASSET_SPECIFIER = `${BUILTIN_PREFIX}fs-promises`;
+const CHILD_PROCESS_ASSET_SPECIFIER = `${BUILTIN_PREFIX}child-process`;
+const NET_ASSET_SPECIFIER = `${BUILTIN_PREFIX}net`;
+const DGRAM_ASSET_SPECIFIER = `${BUILTIN_PREFIX}dgram`;
+const DNS_ASSET_SPECIFIER = `${BUILTIN_PREFIX}dns`;
+const DNS_PROMISES_ASSET_SPECIFIER = `${BUILTIN_PREFIX}dns-promises`;
+const HTTP_ASSET_SPECIFIER = `${BUILTIN_PREFIX}http`;
+const HTTP2_ASSET_SPECIFIER = `${BUILTIN_PREFIX}http2`;
+const HTTPS_ASSET_SPECIFIER = `${BUILTIN_PREFIX}https`;
+const TLS_ASSET_SPECIFIER = `${BUILTIN_PREFIX}tls`;
+const OS_ASSET_SPECIFIER = `${BUILTIN_PREFIX}os`;
+const DENIED_BUILTINS = new Set([
+  'child_process',
+  'cluster',
+  'dgram',
+  'dns',
+  'dns/promises',
+  'http',
+  'http2',
+  'https',
+  'inspector',
+  'module',
+  'net',
+  'tls',
+  'trace_events',
+  'v8',
+  'vm',
+  'worker_threads',
+].filter((name) => !ALLOWED_BUILTINS.has(name)));
+
+let cacheState = loadCacheState();
+let dirty = false;
+let cacheWriteError = null;
+const metrics = {
+  resolveHits: 0,
+  resolveMisses: 0,
+  packageTypeHits: 0,
+  packageTypeMisses: 0,
+  moduleFormatHits: 0,
+  moduleFormatMisses: 0,
+  sourceHits: 0,
+  sourceMisses: 0,
+};
+
+export async function resolve(specifier, context, nextResolve) {
+  const guestResolvedPath = resolveGuestSpecifier(specifier, context);
+  if (guestResolvedPath) {
+    const guestUrl = pathToFileURL(guestResolvedPath).href;
+    const format = lookupModuleFormat(guestUrl);
+    flushCacheState();
+    emitMetrics();
+    return {
+      shortCircuit: true,
+      url: guestUrl,
+      ...(format && format !== 'builtin' ? { format } : {}),
+    };
+  }
+
+  const key = createResolutionKey(specifier, context);
+  const cached = cacheState.resolutions[key];
+
+  if (cached && validateResolutionEntry(cached)) {
+    metrics.resolveHits += 1;
+    const response = {
+      shortCircuit: true,
+      url: cached.resolvedUrl,
+    };
+
+    if (cached.format) {
+      response.format = cached.format;
+    }
+
+    flushCacheState();
+    emitMetrics();
+    return response;
+  }
+
+  metrics.resolveMisses += 1;
+
+  const asset = resolveSecureExecAsset(specifier);
+  if (asset) {
+    cacheState.resolutions[key] = {
+      kind: 'explicit-file',
+      resolvedUrl: asset.url,
+      format: 'module',
+      resolvedFilePath: asset.filePath,
+    };
+    dirty = true;
+    flushCacheState();
+    emitMetrics();
+    return {
+      shortCircuit: true,
+      url: asset.url,
+      format: 'module',
+    };
+  }
+
+  const builtinAsset = resolveBuiltinAsset(specifier, context);
+  if (builtinAsset) {
+    cacheState.resolutions[key] = {
+      kind: 'explicit-file',
+      resolvedUrl: builtinAsset.url,
+      format: 'module',
+      resolvedFilePath: builtinAsset.filePath,
+    };
+    dirty = true;
+    flushCacheState();
+    emitMetrics();
+    return {
+      shortCircuit: true,
+      url: builtinAsset.url,
+      format: 'module',
+    };
+  }
+
+  const deniedBuiltin = resolveDeniedBuiltin(specifier);
+  if (deniedBuiltin) {
+    cacheState.resolutions[key] = {
+      kind: 'explicit-file',
+      resolvedUrl: deniedBuiltin.url,
+      format: 'module',
+      resolvedFilePath: deniedBuiltin.filePath,
+    };
+    dirty = true;
+    flushCacheState();
+    emitMetrics();
+    return {
+      shortCircuit: true,
+      url: deniedBuiltin.url,
+      format: 'module',
+    };
+  }
+
+  const translatedContext = translateContextParentUrl(context);
+  let resolved;
+  try {
+    resolved = await nextResolve(specifier, translatedContext);
+  } catch (error) {
+    flushCacheState();
+    emitMetrics();
+    throw translateErrorToGuest(error);
+  }
+  const translatedUrl = translateResolvedUrlToGuest(resolved.url);
+  const translatedResolved =
+    translatedUrl === resolved.url ? resolved : { ...resolved, url: translatedUrl };
+  const entry = buildResolutionEntry(specifier, context, translatedResolved);
+  if (entry) {
+    cacheState.resolutions[key] = entry;
+    dirty = true;
+  }
+
+  if (entry && entry.format && resolved.format == null) {
+    flushCacheState();
+    emitMetrics();
+    return {
+      ...translatedResolved,
+      format: entry.format,
+    };
+  }
+
+  flushCacheState();
+  emitMetrics();
+  return translatedResolved;
+}
+
+export async function load(url, context, nextLoad) {
+  try {
+    const filePath = filePathFromUrl(url);
+    const format = lookupModuleFormat(url) ?? context.format;
+
+    if (!filePath || !format || format === 'builtin') {
+      return await nextLoad(url, context);
+    }
+
+    const projectedPackageSource = loadProjectedPackageSource(url, filePath, format);
+    if (projectedPackageSource != null) {
+      flushCacheState();
+      emitMetrics();
+      return {
+        shortCircuit: true,
+        format,
+        source: projectedPackageSource,
+      };
+    }
+
+    const source =
+      format === 'wasm'
+        ? fs.readFileSync(filePath)
+        : rewriteBuiltinImports(fs.readFileSync(filePath, 'utf8'), filePath);
+
+    return {
+      shortCircuit: true,
+      format,
+      source,
+    };
+  } catch (error) {
+    flushCacheState();
+    emitMetrics();
+    throw translateErrorToGuest(error);
+  }
+}
+
+function loadCacheState() {
+  if (!CACHE_PATH) {
+    return emptyCacheState();
+  }
+
+  try {
+    const stat = fs.statSync(CACHE_PATH);
+    if (!stat.isFile() || stat.size > MAX_CACHE_STATE_BYTES) {
+      return emptyCacheState();
+    }
+    const parsed = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+    if (!isCompatibleCacheState(parsed)) {
+      return emptyCacheState();
+    }
+
+    return normalizeCacheState(parsed);
+  } catch {
+    return emptyCacheState();
+  }
+}
+
+function flushCacheState() {
+  if (!CACHE_PATH || !dirty) {
+    return;
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(CACHE_PATH), { recursive: true });
+
+    let merged = cacheState;
+    try {
+      const existingStat = fs.statSync(CACHE_PATH);
+      if (existingStat.isFile() && existingStat.size <= MAX_CACHE_STATE_BYTES) {
+        const existing = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
+        if (isCompatibleCacheState(existing)) {
+          merged = mergeCacheStates(normalizeCacheState(existing), cacheState);
+        }
+      }
+    } catch {
+      // Ignore missing or unreadable prior state and replace it with the in-memory view.
+    }
+
+    merged = pruneCacheState(merged);
+    let serialized = JSON.stringify(merged);
+    if (byteLengthUtf8(serialized) > MAX_CACHE_STATE_BYTES) {
+      merged = pruneCacheState(merged, Math.floor(MAX_CACHE_RECORD_ENTRIES / 4));
+      serialized = JSON.stringify(merged);
+    }
+    if (byteLengthUtf8(serialized) > MAX_CACHE_STATE_BYTES) {
+      merged = emptyCacheState();
+      serialized = JSON.stringify(merged);
+    }
+
+    const tempPath = `${CACHE_PATH}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tempPath, serialized);
+    fs.renameSync(tempPath, CACHE_PATH);
+    cacheState = merged;
+    pruneProjectedSourceFiles();
+    dirty = false;
+  } catch (error) {
+    cacheWriteError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+function emitMetrics() {
+  if (!DEBUG_ENABLED) {
+    return;
+  }
+
+  const payload = cacheWriteError
+    ? { ...metrics, cacheWriteError }
+    : metrics;
+
+  emitControlMessage({ type: 'node_import_cache_metrics', metrics: payload });
+}
+
+function parseControlPipeFd(value) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= 3 ? parsed : null;
+}
+
+function emitControlMessage(message) {
+  if (CONTROL_PIPE_FD == null) {
+    if (
+      message?.type === 'signal_state' &&
+      typeof process?.stdout?.write === 'function'
+    ) {
+      try {
+        process.stdout.write(`__AGENTOS_WASM_SIGNAL_STATE__:${JSON.stringify(message)}\n`);
+      } catch {
+        // Ignore control-channel fallback failures during teardown.
+      }
+    }
+    return;
+  }
+
+  try {
+    fs.writeSync(CONTROL_PIPE_FD, `${JSON.stringify(message)}\n`);
+  } catch {
+    if (
+      message?.type === 'signal_state' &&
+      typeof process?.stdout?.write === 'function'
+    ) {
+      try {
+        process.stdout.write(`__AGENTOS_WASM_SIGNAL_STATE__:${JSON.stringify(message)}\n`);
+      } catch {
+        // Ignore control-channel fallback failures during teardown.
+      }
+    }
+  }
+}
+
+function emptyCacheState() {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    loaderVersion: LOADER_VERSION,
+    assetVersion: ASSET_VERSION,
+    nodeVersion: process.version,
+    resolutions: {},
+    packageTypes: {},
+    moduleFormats: {},
+    projectedSources: {},
+  };
+}
+
+function isCompatibleCacheState(value) {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === SCHEMA_VERSION &&
+    value.loaderVersion === LOADER_VERSION &&
+    value.assetVersion === ASSET_VERSION &&
+    value.nodeVersion === process.version
+  );
+}
+
+function normalizeCacheState(value) {
+  return pruneCacheState({
+    ...emptyCacheState(),
+    ...value,
+    resolutions: isRecord(value.resolutions) ? value.resolutions : {},
+    packageTypes: isRecord(value.packageTypes) ? value.packageTypes : {},
+    moduleFormats: isRecord(value.moduleFormats) ? value.moduleFormats : {},
+    projectedSources: isRecord(value.projectedSources) ? value.projectedSources : {},
+  });
+}
+
+function mergeCacheStates(base, current) {
+  return pruneCacheState({
+    ...emptyCacheState(),
+    resolutions: {
+      ...base.resolutions,
+      ...current.resolutions,
+    },
+    packageTypes: {
+      ...base.packageTypes,
+      ...current.packageTypes,
+    },
+    moduleFormats: {
+      ...base.moduleFormats,
+      ...current.moduleFormats,
+    },
+    projectedSources: {
+      ...base.projectedSources,
+      ...current.projectedSources,
+    },
+  });
+}
+
+function pruneCacheState(state, maxEntries = MAX_CACHE_RECORD_ENTRIES) {
+  return {
+    ...emptyCacheState(),
+    ...state,
+    resolutions: pruneCacheRecord(state.resolutions, maxEntries),
+    packageTypes: pruneCacheRecord(state.packageTypes, maxEntries),
+    moduleFormats: pruneCacheRecord(state.moduleFormats, maxEntries),
+    projectedSources: pruneCacheRecord(state.projectedSources, maxEntries),
+  };
+}
+
+function pruneCacheRecord(record, maxEntries) {
+  if (!isRecord(record)) {
+    return {};
+  }
+
+  const entries = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (
+      byteLengthUtf8(key) <= MAX_CACHE_KEY_BYTES &&
+      cacheValueLength(value) <= MAX_CACHE_VALUE_BYTES
+    ) {
+      entries.push([key, value]);
+    }
+  }
+
+  return Object.fromEntries(entries.slice(-maxEntries));
+}
+
+function cacheValueLength(value) {
+  try {
+    return byteLengthUtf8(JSON.stringify(value));
+  } catch {
+    return MAX_CACHE_VALUE_BYTES + 1;
+  }
+}
+
+function byteLengthUtf8(value) {
+  return Buffer.byteLength(String(value), 'utf8');
+}
+
+function pruneProjectedSourceFiles() {
+  if (!PROJECTED_SOURCE_CACHE_ROOT) {
+    return;
+  }
+
+  const retained = new Set();
+  for (const entry of Object.values(cacheState.projectedSources)) {
+    if (
+      isRecord(entry) &&
+      typeof entry.cachedPath === 'string' &&
+      path.dirname(entry.cachedPath) === PROJECTED_SOURCE_CACHE_ROOT
+    ) {
+      retained.add(path.resolve(entry.cachedPath));
+    }
+  }
+
+  let entries;
+  try {
+    entries = fs.readdirSync(PROJECTED_SOURCE_CACHE_ROOT, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const filePath = path.resolve(PROJECTED_SOURCE_CACHE_ROOT, entry.name);
+    if (!retained.has(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch {
+        // Best-effort cleanup. A failed unlink should not break module loading.
+      }
+    }
+  }
+}
+
+function loadProjectedPackageSource(url, filePath, format) {
+  if (
+    format === 'wasm' ||
+    !isProjectedPackageSource(filePath) ||
+    !PROJECTED_SOURCE_CACHE_ROOT
+  ) {
+    return null;
+  }
+
+  const cached = cacheState.projectedSources[url];
+  if (cached && validateProjectedSourceEntry(cached, filePath, format)) {
+    metrics.sourceHits += 1;
+    return fs.readFileSync(cached.cachedPath, 'utf8');
+  }
+
+  metrics.sourceMisses += 1;
+
+  const stat = statForPath(filePath);
+  if (!stat) {
+    return null;
+  }
+
+  const source = rewriteBuiltinImports(fs.readFileSync(filePath, 'utf8'), filePath);
+  const cacheKey = hashString(
+    JSON.stringify({
+      url,
+      format,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+    }),
+  );
+  const extension = path.extname(filePath) || '.js';
+  const cachedPath = path.join(
+    PROJECTED_SOURCE_CACHE_ROOT,
+    `${cacheKey}${extension}.cached`,
+  );
+  fs.mkdirSync(path.dirname(cachedPath), { recursive: true });
+  fs.writeFileSync(cachedPath, source);
+
+  cacheState.projectedSources[url] = {
+    kind: 'text',
+    filePath,
+    format,
+    cachedPath,
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+  };
+  dirty = true;
+  return source;
+}
+
+function resolveSecureExecAsset(specifier) {
+  if (typeof specifier !== 'string' || !ASSET_ROOT) {
+    return null;
+  }
+
+  if (specifier.startsWith(BUILTIN_PREFIX)) {
+    return assetModuleDescriptor(
+      path.join(
+        ASSET_ROOT,
+        'builtins',
+        `${sanitizeAssetName(specifier.slice(BUILTIN_PREFIX.length))}.mjs`,
+      ),
+    );
+  }
+
+  if (specifier.startsWith(POLYFILL_PREFIX)) {
+    return assetModuleDescriptor(
+      path.join(
+        ASSET_ROOT,
+        'polyfills',
+        `${sanitizeAssetName(specifier.slice(POLYFILL_PREFIX.length))}.mjs`,
+      ),
+    );
+  }
+
+  return null;
+}
+
+function rewriteBuiltinImports(source, filePath) {
+  if (typeof source !== 'string' || isAssetPath(filePath)) {
+    return source;
+  }
+
+  let rewritten = source;
+
+  for (const specifier of ['node:fs/promises', 'fs/promises']) {
+    rewritten = replaceBuiltinImportSpecifier(
+      rewritten,
+      specifier,
+      FS_PROMISES_ASSET_SPECIFIER,
+    );
+    rewritten = replaceBuiltinDynamicImportSpecifier(
+      rewritten,
+      specifier,
+      FS_PROMISES_ASSET_SPECIFIER,
+    );
+  }
+
+  for (const specifier of ['node:fs', 'fs']) {
+    rewritten = replaceBuiltinImportSpecifier(
+      rewritten,
+      specifier,
+      FS_ASSET_SPECIFIER,
+    );
+    rewritten = replaceBuiltinDynamicImportSpecifier(
+      rewritten,
+      specifier,
+      FS_ASSET_SPECIFIER,
+    );
+  }
+
+  if (ALLOWED_BUILTINS.has('child_process')) {
+    for (const specifier of ['node:child_process', 'child_process']) {
+      rewritten = replaceBuiltinImportSpecifier(
+        rewritten,
+        specifier,
+        CHILD_PROCESS_ASSET_SPECIFIER,
+      );
+      rewritten = replaceBuiltinDynamicImportSpecifier(
+        rewritten,
+        specifier,
+        CHILD_PROCESS_ASSET_SPECIFIER,
+      );
+    }
+  }
+
+  if (ALLOWED_BUILTINS.has('net')) {
+    for (const specifier of ['node:net', 'net']) {
+      rewritten = replaceBuiltinImportSpecifier(
+        rewritten,
+        specifier,
+        NET_ASSET_SPECIFIER,
+      );
+      rewritten = replaceBuiltinDynamicImportSpecifier(
+        rewritten,
+        specifier,
+        NET_ASSET_SPECIFIER,
+      );
+    }
+  }
+
+  if (ALLOWED_BUILTINS.has('dgram')) {
+    for (const specifier of ['node:dgram', 'dgram']) {
+      rewritten = replaceBuiltinImportSpecifier(
+        rewritten,
+        specifier,
+        DGRAM_ASSET_SPECIFIER,
+      );
+      rewritten = replaceBuiltinDynamicImportSpecifier(
+        rewritten,
+        specifier,
+        DGRAM_ASSET_SPECIFIER,
+      );
+    }
+  }
+
+  if (ALLOWED_BUILTINS.has('dns')) {
+    for (const specifier of ['node:dns/promises', 'dns/promises']) {
+      rewritten = replaceBuiltinImportSpecifier(
+        rewritten,
+        specifier,
+        DNS_PROMISES_ASSET_SPECIFIER,
+      );
+      rewritten = replaceBuiltinDynamicImportSpecifier(
+        rewritten,
+        specifier,
+        DNS_PROMISES_ASSET_SPECIFIER,
+      );
+    }
+    for (const specifier of ['node:dns', 'dns']) {
+      rewritten = replaceBuiltinImportSpecifier(
+        rewritten,
+        specifier,
+        DNS_ASSET_SPECIFIER,
+      );
+      rewritten = replaceBuiltinDynamicImportSpecifier(
+        rewritten,
+        specifier,
+        DNS_ASSET_SPECIFIER,
+      );
+    }
+  }
+
+  if (ALLOWED_BUILTINS.has('http')) {
+    for (const specifier of ['node:http', 'http']) {
+      rewritten = replaceBuiltinImportSpecifier(
+        rewritten,
+        specifier,
+        HTTP_ASSET_SPECIFIER,
+      );
+      rewritten = replaceBuiltinDynamicImportSpecifier(
+        rewritten,
+        specifier,
+        HTTP_ASSET_SPECIFIER,
+      );
+    }
+  }
+
+  if (ALLOWED_BUILTINS.has('http2')) {
+    for (const specifier of ['node:http2', 'http2']) {
+      rewritten = replaceBuiltinImportSpecifier(
+        rewritten,
+        specifier,
+        HTTP2_ASSET_SPECIFIER,
+      );
+      rewritten = replaceBuiltinDynamicImportSpecifier(
+        rewritten,
+        specifier,
+        HTTP2_ASSET_SPECIFIER,
+      );
+    }
+  }
+
+  if (ALLOWED_BUILTINS.has('https')) {
+    for (const specifier of ['node:https', 'https']) {
+      rewritten = replaceBuiltinImportSpecifier(
+        rewritten,
+        specifier,
+        HTTPS_ASSET_SPECIFIER,
+      );
+      rewritten = replaceBuiltinDynamicImportSpecifier(
+        rewritten,
+        specifier,
+        HTTPS_ASSET_SPECIFIER,
+      );
+    }
+  }
+
+  if (ALLOWED_BUILTINS.has('tls')) {
+    for (const specifier of ['node:tls', 'tls']) {
+      rewritten = replaceBuiltinImportSpecifier(
+        rewritten,
+        specifier,
+        TLS_ASSET_SPECIFIER,
+      );
+      rewritten = replaceBuiltinDynamicImportSpecifier(
+        rewritten,
+        specifier,
+        TLS_ASSET_SPECIFIER,
+      );
+    }
+  }
+
+  if (ALLOWED_BUILTINS.has('os')) {
+    for (const specifier of ['node:os', 'os']) {
+      rewritten = replaceBuiltinImportSpecifier(
+        rewritten,
+        specifier,
+        OS_ASSET_SPECIFIER,
+      );
+      rewritten = replaceBuiltinDynamicImportSpecifier(
+        rewritten,
+        specifier,
+        OS_ASSET_SPECIFIER,
+      );
+    }
+  }
+
+  return rewritten;
+}
+
+function replaceBuiltinImportSpecifier(source, specifier, replacement) {
+  const pattern = new RegExp(
+    `(\\bfrom\\s*)(['"])${escapeRegExp(specifier)}\\2`,
+    'g',
+  );
+  return source.replace(pattern, `$1$2${replacement}$2`);
+}
+
+function replaceBuiltinDynamicImportSpecifier(source, specifier, replacement) {
+  const pattern = new RegExp(
+    `(\\bimport\\s*\\(\\s*)(['"])${escapeRegExp(specifier)}\\2(\\s*\\))`,
+    'g',
+  );
+  return source.replace(pattern, `$1$2${replacement}$2$3`);
+}
+
+function isAssetPath(filePath) {
+  return (
+    typeof filePath === 'string' &&
+    typeof ASSET_ROOT === 'string' &&
+    (filePath === ASSET_ROOT || filePath.startsWith(`${ASSET_ROOT}${path.sep}`))
+  );
+}
+
+function resolveDeniedBuiltin(specifier) {
+  if (typeof specifier !== 'string' || !ASSET_ROOT) {
+    return null;
+  }
+
+  const normalized =
+    specifier.startsWith('node:') ? specifier.slice('node:'.length) : specifier;
+  if (!DENIED_BUILTINS.has(normalized)) {
+    return null;
+  }
+
+  return assetModuleDescriptor(
+    path.join(ASSET_ROOT, 'denied', `${sanitizeAssetName(normalized)}.mjs`),
+  );
+}
+
+function resolveBuiltinAsset(specifier, context) {
+  if (
+    typeof specifier !== 'string' ||
+    !ASSET_ROOT ||
+    !specifier.startsWith('node:')
+  ) {
+    return null;
+  }
+
+  if (
+    typeof context?.parentURL === 'string' &&
+    (context.parentURL.startsWith(BUILTIN_PREFIX) ||
+      context.parentURL.startsWith(POLYFILL_PREFIX))
+  ) {
+    return null;
+  }
+
+  const parentPath = filePathFromUrl(context?.parentURL);
+  if (parentPath && isAssetPath(parentPath)) {
+    return null;
+  }
+
+  const normalized = specifier.slice('node:'.length);
+  switch (normalized) {
+    case 'fs':
+      return assetModuleDescriptor(path.join(ASSET_ROOT, 'builtins', 'fs.mjs'));
+    case 'fs/promises':
+      return assetModuleDescriptor(
+        path.join(ASSET_ROOT, 'builtins', 'fs-promises.mjs'),
+      );
+    case 'async_hooks':
+      return assetModuleDescriptor(
+        path.join(ASSET_ROOT, 'builtins', 'async-hooks.mjs'),
+      );
+    case 'child_process':
+      return ALLOWED_BUILTINS.has('child_process')
+        ? assetModuleDescriptor(path.join(ASSET_ROOT, 'builtins', 'child-process.mjs'))
+        : null;
+    case 'diagnostics_channel':
+      return assetModuleDescriptor(
+        path.join(ASSET_ROOT, 'builtins', 'diagnostics-channel.mjs'),
+      );
+    case 'net':
+      return ALLOWED_BUILTINS.has('net')
+        ? assetModuleDescriptor(path.join(ASSET_ROOT, 'builtins', 'net.mjs'))
+        : null;
+    case 'dgram':
+      return ALLOWED_BUILTINS.has('dgram')
+        ? assetModuleDescriptor(path.join(ASSET_ROOT, 'builtins', 'dgram.mjs'))
+        : null;
+    case 'dns':
+      return ALLOWED_BUILTINS.has('dns')
+        ? assetModuleDescriptor(path.join(ASSET_ROOT, 'builtins', 'dns.mjs'))
+        : null;
+    case 'dns/promises':
+      return ALLOWED_BUILTINS.has('dns')
+        ? assetModuleDescriptor(path.join(ASSET_ROOT, 'builtins', 'dns-promises.mjs'))
+        : null;
+    case 'http':
+      return ALLOWED_BUILTINS.has('http')
+        ? assetModuleDescriptor(path.join(ASSET_ROOT, 'builtins', 'http.mjs'))
+        : null;
+    case 'http2':
+      return ALLOWED_BUILTINS.has('http2')
+        ? assetModuleDescriptor(path.join(ASSET_ROOT, 'builtins', 'http2.mjs'))
+        : null;
+    case 'https':
+      return ALLOWED_BUILTINS.has('https')
+        ? assetModuleDescriptor(path.join(ASSET_ROOT, 'builtins', 'https.mjs'))
+        : null;
+    case 'tls':
+      return ALLOWED_BUILTINS.has('tls')
+        ? assetModuleDescriptor(path.join(ASSET_ROOT, 'builtins', 'tls.mjs'))
+        : null;
+    case 'os':
+      return ALLOWED_BUILTINS.has('os')
+        ? assetModuleDescriptor(path.join(ASSET_ROOT, 'builtins', 'os.mjs'))
+        : null;
+    default:
+      return null;
+  }
+}
+
+function assetModuleDescriptor(filePath) {
+  if (!statForPath(filePath)) {
+    return null;
+  }
+
+  return {
+    filePath,
+    url: pathToFileURL(filePath).href,
+  };
+}
+
+function sanitizeAssetName(name) {
+  return String(name).replace(/[^A-Za-z0-9_.-]+/g, '-');
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildResolutionEntry(specifier, context, resolved) {
+  const format = lookupModuleFormat(resolved.url) ?? resolved.format;
+
+  if (resolved.url.startsWith('node:')) {
+    return {
+      kind: 'builtin',
+      resolvedUrl: resolved.url,
+      format,
+    };
+  }
+
+  if (isBareSpecifier(specifier)) {
+    const packageName = barePackageName(specifier);
+    if (!packageName) {
+      return null;
+    }
+
+    const candidatePackageJsonPaths = barePackageJsonCandidates(
+      context.parentURL,
+      packageName,
+    );
+    const selectedPackageJsonPath = firstExistingPath(candidatePackageJsonPaths);
+    return {
+      kind: 'bare',
+      resolvedUrl: resolved.url,
+      format,
+      candidatePackageJsonPaths,
+      selectedPackageJsonPath,
+      selectedPackageJsonFingerprint: selectedPackageJsonPath
+        ? fileFingerprint(selectedPackageJsonPath)
+        : null,
+    };
+  }
+
+  if (isExplicitFileLikeSpecifier(specifier)) {
+    return {
+      kind: 'explicit-file',
+      resolvedUrl: resolved.url,
+      format,
+      resolvedFilePath: filePathFromUrl(resolved.url),
+    };
+  }
+
+  return null;
+}
+
+function isProjectedPackageSource(filePath) {
+  if (typeof filePath !== 'string' || isAssetPath(filePath)) {
+    return false;
+  }
+
+  const guestPath = guestPathFromHostPath(filePath);
+  return typeof guestPath === 'string' && guestPath.includes('/node_modules/');
+}
+
+function validateResolutionEntry(entry) {
+  if (!isRecord(entry) || typeof entry.kind !== 'string') {
+    return false;
+  }
+
+  switch (entry.kind) {
+    case 'builtin':
+      return true;
+    case 'bare': {
+      if (!Array.isArray(entry.candidatePackageJsonPaths)) {
+        return false;
+      }
+
+      const currentPackageJsonPath = firstExistingPath(
+        entry.candidatePackageJsonPaths,
+      );
+      if (currentPackageJsonPath !== entry.selectedPackageJsonPath) {
+        return false;
+      }
+
+      if (
+        currentPackageJsonPath &&
+        !fingerprintMatches(
+          currentPackageJsonPath,
+          entry.selectedPackageJsonFingerprint,
+        )
+      ) {
+        return false;
+      }
+
+      return formatMatches(entry.resolvedUrl, entry.format);
+    }
+    case 'explicit-file':
+      if (
+        typeof entry.resolvedFilePath !== 'string' ||
+        !fs.existsSync(entry.resolvedFilePath)
+      ) {
+        return false;
+      }
+
+      return formatMatches(entry.resolvedUrl, entry.format);
+    default:
+      return false;
+  }
+}
+
+function formatMatches(url, expectedFormat) {
+  if (expectedFormat == null) {
+    return true;
+  }
+
+  return lookupModuleFormat(url) === expectedFormat;
+}
+
+function lookupModuleFormat(url) {
+  const cached = cacheState.moduleFormats[url];
+  if (cached && validateModuleFormatEntry(cached)) {
+    metrics.moduleFormatHits += 1;
+    return cached.format;
+  }
+
+  metrics.moduleFormatMisses += 1;
+  const entry = buildModuleFormatEntry(url);
+  if (!entry) {
+    return null;
+  }
+
+  cacheState.moduleFormats[url] = entry;
+  dirty = true;
+  return entry.format;
+}
+
+function buildModuleFormatEntry(url) {
+  if (url.startsWith('node:')) {
+    return {
+      kind: 'builtin',
+      url,
+      format: 'builtin',
+    };
+  }
+
+  const filePath = filePathFromUrl(url);
+  if (!filePath) {
+    return null;
+  }
+
+  const stat = statForPath(filePath);
+  if (!stat) {
+    return null;
+  }
+
+  const extension = path.extname(filePath);
+  if (extension === '.mjs') {
+    return createFileFormatEntry(url, filePath, stat, 'module', false);
+  }
+  if (extension === '.cjs') {
+    return createFileFormatEntry(url, filePath, stat, 'commonjs', false);
+  }
+  if (extension === '.json') {
+    return createFileFormatEntry(url, filePath, stat, 'json', false);
+  }
+  if (extension === '.wasm') {
+    return createFileFormatEntry(url, filePath, stat, 'wasm', false);
+  }
+  if (extension === '.js' || extension === '') {
+    const packageType = lookupPackageType(filePath);
+    return createFileFormatEntry(
+      url,
+      filePath,
+      stat,
+      packageType === 'module' ? 'module' : 'commonjs',
+      true,
+    );
+  }
+
+  return null;
+}
+
+function createFileFormatEntry(url, filePath, stat, format, usesPackageType) {
+  return {
+    kind: 'file',
+    url,
+    filePath,
+    format,
+    usesPackageType,
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+  };
+}
+
+function validateModuleFormatEntry(entry) {
+  if (!isRecord(entry) || typeof entry.kind !== 'string') {
+    return false;
+  }
+
+  if (entry.kind === 'builtin') {
+    return true;
+  }
+
+  if (entry.kind !== 'file' || typeof entry.filePath !== 'string') {
+    return false;
+  }
+
+  const stat = statForPath(entry.filePath);
+  if (!stat || stat.size !== entry.size || stat.mtimeMs !== entry.mtimeMs) {
+    return false;
+  }
+
+  if (entry.usesPackageType) {
+    const packageType = lookupPackageType(entry.filePath);
+    const expectedFormat = packageType === 'module' ? 'module' : 'commonjs';
+    return entry.format === expectedFormat;
+  }
+
+  return true;
+}
+
+function validateProjectedSourceEntry(entry, filePath, format) {
+  if (
+    !isRecord(entry) ||
+    entry.kind !== 'text' ||
+    typeof entry.filePath !== 'string' ||
+    typeof entry.cachedPath !== 'string' ||
+    typeof entry.format !== 'string'
+  ) {
+    return false;
+  }
+
+  if (entry.filePath !== filePath || entry.format !== format) {
+    return false;
+  }
+
+  const stat = statForPath(filePath);
+  if (!stat || stat.size !== entry.size || stat.mtimeMs !== entry.mtimeMs) {
+    return false;
+  }
+
+  return statForPath(entry.cachedPath)?.isFile() ?? false;
+}
+
+function lookupPackageType(filePath) {
+  let directory = path.dirname(filePath);
+
+  while (true) {
+    const packageJsonPath = path.join(directory, 'package.json');
+    const cached = cacheState.packageTypes[packageJsonPath];
+    if (cached && validatePackageTypeEntry(cached)) {
+      metrics.packageTypeHits += 1;
+      if (cached.kind === 'present') {
+        return cached.packageType;
+      }
+    } else {
+      metrics.packageTypeMisses += 1;
+      const entry = buildPackageTypeEntry(packageJsonPath);
+      cacheState.packageTypes[packageJsonPath] = entry;
+      dirty = true;
+      if (entry.kind === 'present') {
+        return entry.packageType;
+      }
+    }
+
+    const parent = path.dirname(directory);
+    if (parent === directory) {
+      break;
+    }
+    directory = parent;
+  }
+
+  return 'commonjs';
+}
+
+function buildPackageTypeEntry(packageJsonPath) {
+  const stat = statForPath(packageJsonPath);
+  if (!stat) {
+    return {
+      kind: 'missing',
+      packageJsonPath,
+    };
+  }
+
+  const contents = fs.readFileSync(packageJsonPath, 'utf8');
+  let packageType = 'commonjs';
+  try {
+    const parsed = JSON.parse(contents);
+    if (parsed && parsed.type === 'module') {
+      packageType = 'module';
+    }
+  } catch {
+    packageType = 'commonjs';
+  }
+
+  return {
+    kind: 'present',
+    packageJsonPath,
+    packageType,
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    hash: hashString(contents),
+  };
+}
+
+function validatePackageTypeEntry(entry) {
+  if (!isRecord(entry) || typeof entry.kind !== 'string') {
+    return false;
+  }
+
+  if (entry.kind === 'missing') {
+    return statForPath(entry.packageJsonPath) == null;
+  }
+
+  if (entry.kind !== 'present') {
+    return false;
+  }
+
+  const stat = statForPath(entry.packageJsonPath);
+  if (!stat) {
+    return false;
+  }
+
+  if (stat.size !== entry.size || stat.mtimeMs !== entry.mtimeMs) {
+    return false;
+  }
+
+  const contents = fs.readFileSync(entry.packageJsonPath, 'utf8');
+  return hashString(contents) === entry.hash;
+}
+
+function fileFingerprint(filePath) {
+  const stat = statForPath(filePath);
+  if (!stat) {
+    return null;
+  }
+
+  const contents = fs.readFileSync(filePath, 'utf8');
+  return {
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    hash: hashString(contents),
+  };
+}
+
+function fingerprintMatches(filePath, expectedFingerprint) {
+  if (!isRecord(expectedFingerprint)) {
+    return false;
+  }
+
+  const stat = statForPath(filePath);
+  if (!stat) {
+    return false;
+  }
+
+  if (
+    stat.size !== expectedFingerprint.size ||
+    stat.mtimeMs !== expectedFingerprint.mtimeMs
+  ) {
+    return false;
+  }
+
+  const contents = fs.readFileSync(filePath, 'utf8');
+  return hashString(contents) === expectedFingerprint.hash;
+}
+
+function barePackageJsonCandidates(parentURL, packageName) {
+  const parentPath = filePathFromUrl(parentURL);
+  if (!parentPath) {
+    return [];
+  }
+
+  let directory = path.dirname(parentPath);
+  const candidates = [];
+
+  while (true) {
+    candidates.push(path.join(directory, 'node_modules', packageName, 'package.json'));
+    const parent = path.dirname(directory);
+    if (parent === directory) {
+      break;
+    }
+    directory = parent;
+  }
+
+  return candidates;
+}
+
+function firstExistingPath(paths) {
+  for (const candidate of paths) {
+    if (statForPath(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function statForPath(filePath) {
+  try {
+    return fs.statSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function createResolutionKey(specifier, context) {
+  return JSON.stringify({
+    specifier,
+    parentURL: context.parentURL ?? null,
+    conditions: Array.isArray(context.conditions)
+      ? [...context.conditions].sort()
+      : [],
+    importAttributes: sortObject(context.importAttributes ?? {}),
+  });
+}
+
+function sortObject(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => sortObject(item));
+  }
+
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, sortObject(value[key])]),
+    );
+  }
+
+  return value;
+}
+
+function isExplicitFileLikeSpecifier(specifier) {
+  if (typeof specifier !== 'string') {
+    return false;
+  }
+
+  if (specifier.startsWith('file:')) {
+    const filePath = filePathFromUrl(specifier);
+    return Boolean(filePath && path.extname(filePath));
+  }
+
+  if (
+    specifier.startsWith('./') ||
+    specifier.startsWith('../') ||
+    specifier.startsWith('/')
+  ) {
+    return Boolean(path.extname(specifier));
+  }
+
+  return false;
+}
+
+function isBareSpecifier(specifier) {
+  if (typeof specifier !== 'string') {
+    return false;
+  }
+
+  if (
+    specifier.startsWith('./') ||
+    specifier.startsWith('../') ||
+    specifier.startsWith('/') ||
+    specifier.startsWith('file:') ||
+    specifier.startsWith('node:')
+  ) {
+    return false;
+  }
+
+  return !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(specifier);
+}
+
+function barePackageName(specifier) {
+  if (!isBareSpecifier(specifier)) {
+    return null;
+  }
+
+  const parts = specifier.split('/');
+  if (specifier.startsWith('@')) {
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null;
+  }
+
+  return parts[0] ?? null;
+}
+
+function resolveGuestSpecifier(specifier, context) {
+  if (typeof specifier !== 'string') {
+    return null;
+  }
+
+  if (specifier.startsWith('file:')) {
+    const filePath = guestFilePathFromUrl(specifier);
+    if (!filePath) {
+      return null;
+    }
+    if (isInternalImportCachePath(filePath)) {
+      return null;
+    }
+    if (pathExists(filePath) && !guestPathFromHostPath(filePath)) {
+      return null;
+    }
+    return filePath;
+  }
+
+  if (specifier.startsWith('/')) {
+    if (isInternalImportCachePath(specifier)) {
+      return null;
+    }
+    if (pathExists(specifier)) {
+      return null;
+    }
+    return path.posix.normalize(specifier);
+  }
+
+  if (!specifier.startsWith('./') && !specifier.startsWith('../')) {
+    return null;
+  }
+
+  const parentPath = guestFilePathFromUrl(context.parentURL);
+  if (!parentPath) {
+    return null;
+  }
+
+  return path.posix.normalize(
+    path.posix.join(path.posix.dirname(parentPath), specifier),
+  );
+}
+
+function translateContextParentUrl(context) {
+  if (!context || typeof context.parentURL !== 'string') {
+    return context;
+  }
+
+  const hostParentUrl = translateResolvedUrlToHost(context.parentURL);
+  const hostParentPath = guestFilePathFromUrl(hostParentUrl);
+  const realParentPath =
+    hostParentPath && pathExists(hostParentPath) ? safeRealpath(hostParentPath) : null;
+  const normalizedParentUrl = realParentPath
+    ? pathToFileURL(realParentPath).href
+    : hostParentUrl;
+
+  if (normalizedParentUrl === context.parentURL) {
+    return context;
+  }
+
+  return {
+    ...context,
+    parentURL: normalizedParentUrl,
+  };
+}
+
+function translateResolvedUrlToGuest(url) {
+  const hostPath = guestFilePathFromUrl(url);
+  if (!hostPath) {
+    return url;
+  }
+
+  return pathToFileURL(guestVisiblePathFromHostPath(hostPath)).href;
+}
+
+function translateResolvedUrlToHost(url) {
+  const guestPath = guestFilePathFromUrl(url);
+  if (!guestPath) {
+    return url;
+  }
+
+  if (pathExists(guestPath) && !guestPathFromHostPath(guestPath)) {
+    return url;
+  }
+
+  const hostPath = hostPathFromGuestPath(guestPath);
+  return hostPath ? pathToFileURL(hostPath).href : url;
+}
+
+function filePathFromUrl(url) {
+  const guestPath = guestFilePathFromUrl(url);
+  if (!guestPath) {
+    return null;
+  }
+
+  if (pathExists(guestPath)) {
+    return guestPath;
+  }
+
+  return hostPathFromGuestPath(guestPath) ?? guestPath;
+}
+
+function guestFilePathFromUrl(url) {
+  if (typeof url !== 'string' || !url.startsWith('file:')) {
+    return null;
+  }
+
+  try {
+    return fileURLToPath(url);
+  } catch {
+    return null;
+  }
+}
+
+function hostPathFromGuestPath(guestPath) {
+  if (typeof guestPath !== 'string') {
+    return null;
+  }
+
+  const normalized = path.posix.normalize(guestPath);
+  if (
+    CACHE_ROOT &&
+    (normalized === GUEST_INTERNAL_CACHE_ROOT ||
+      normalized.startsWith(`${GUEST_INTERNAL_CACHE_ROOT}/`))
+  ) {
+    const suffix =
+      normalized === GUEST_INTERNAL_CACHE_ROOT
+        ? ''
+        : normalized.slice(GUEST_INTERNAL_CACHE_ROOT.length + 1);
+    return suffix ? path.join(CACHE_ROOT, ...suffix.split('/')) : CACHE_ROOT;
+  }
+
+  for (const mapping of GUEST_PATH_MAPPINGS) {
+    if (mapping.guestPath === '/') {
+      const suffix = normalized.replace(/^\/+/, '');
+      return suffix ? path.join(mapping.hostPath, suffix) : mapping.hostPath;
+    }
+
+    if (
+      normalized !== mapping.guestPath &&
+      !normalized.startsWith(`${mapping.guestPath}/`)
+    ) {
+      continue;
+    }
+
+    const suffix =
+      normalized === mapping.guestPath
+        ? ''
+        : normalized.slice(mapping.guestPath.length + 1);
+    return suffix ? path.join(mapping.hostPath, suffix) : mapping.hostPath;
+  }
+
+  if (
+    normalized === DEFAULT_GUEST_CWD ||
+    normalized.startsWith(`${DEFAULT_GUEST_CWD}/`)
+  ) {
+    const suffix =
+      normalized === DEFAULT_GUEST_CWD
+        ? ''
+        : normalized.slice(DEFAULT_GUEST_CWD.length + 1);
+    return suffix ? path.join(HOST_CWD, ...suffix.split('/')) : HOST_CWD;
+  }
+
+  return null;
+}
+
+function guestPathFromHostPath(hostPath) {
+  if (typeof hostPath !== 'string') {
+    return null;
+  }
+
+  const normalized = path.resolve(hostPath);
+  if (isInternalImportCachePath(normalized)) {
+    return null;
+  }
+  for (const mapping of GUEST_PATH_MAPPINGS) {
+    const hostRoot = path.resolve(mapping.hostPath);
+    if (
+      normalized !== hostRoot &&
+      !normalized.startsWith(`${hostRoot}${path.sep}`)
+    ) {
+      continue;
+    }
+
+    const suffix =
+      normalized === hostRoot
+        ? ''
+        : normalized.slice(hostRoot.length + path.sep.length);
+    return suffix
+      ? path.posix.join(mapping.guestPath, suffix.split(path.sep).join('/'))
+      : mapping.guestPath;
+  }
+
+  return null;
+}
+
+function guestCwdPathFromHostPath(hostPath) {
+  if (typeof hostPath !== 'string') {
+    return null;
+  }
+
+  const normalized = path.resolve(hostPath);
+  const hostRoot = path.resolve(HOST_CWD);
+  if (
+    normalized !== hostRoot &&
+    !normalized.startsWith(`${hostRoot}${path.sep}`)
+  ) {
+    return null;
+  }
+
+  const suffix =
+    normalized === hostRoot
+      ? ''
+      : normalized.slice(hostRoot.length + path.sep.length);
+  return suffix
+    ? path.posix.join(DEFAULT_GUEST_CWD, suffix.split(path.sep).join('/'))
+    : DEFAULT_GUEST_CWD;
+}
+
+function guestInternalPathFromHostPath(hostPath) {
+  if (typeof hostPath !== 'string' || !CACHE_ROOT) {
+    return null;
+  }
+
+  const normalized = path.resolve(hostPath);
+  const hostRoot = path.resolve(CACHE_ROOT);
+  if (
+    normalized !== hostRoot &&
+    !normalized.startsWith(`${hostRoot}${path.sep}`)
+  ) {
+    return null;
+  }
+
+  const suffix =
+    normalized === hostRoot
+      ? ''
+      : normalized.slice(hostRoot.length + path.sep.length);
+  return suffix
+    ? path.posix.join(GUEST_INTERNAL_CACHE_ROOT, suffix.split(path.sep).join('/'))
+    : GUEST_INTERNAL_CACHE_ROOT;
+}
+
+function guestVisiblePathFromHostPath(hostPath) {
+  return (
+    guestPathFromHostPath(hostPath) ??
+    guestInternalPathFromHostPath(hostPath) ??
+    guestCwdPathFromHostPath(hostPath) ??
+    UNMAPPED_GUEST_PATH
+  );
+}
+
+function isGuestVisiblePath(value) {
+  if (typeof value !== 'string' || !path.posix.isAbsolute(value)) {
+    return false;
+  }
+
+  const normalized = path.posix.normalize(value);
+  return (
+    normalized === UNMAPPED_GUEST_PATH ||
+    normalized === GUEST_INTERNAL_CACHE_ROOT ||
+    normalized.startsWith(`${GUEST_INTERNAL_CACHE_ROOT}/`) ||
+    normalized === DEFAULT_GUEST_CWD ||
+    normalized.startsWith(`${DEFAULT_GUEST_CWD}/`) ||
+    hostPathFromGuestPath(normalized) != null
+  );
+}
+
+function translatePathStringToGuest(value) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  if (value.startsWith('file:')) {
+    const hostPath = guestFilePathFromUrl(value);
+    if (!hostPath) {
+      return value;
+    }
+
+    const guestPath = isGuestVisiblePath(hostPath)
+      ? path.posix.normalize(hostPath)
+      : guestVisiblePathFromHostPath(hostPath);
+    return pathToFileURL(guestPath).href;
+  }
+
+  if (!path.isAbsolute(value)) {
+    return value;
+  }
+
+  return isGuestVisiblePath(value)
+    ? path.posix.normalize(value)
+    : guestVisiblePathFromHostPath(value);
+}
+
+function buildHostToGuestTextReplacements() {
+  const replacements = new Map();
+  const addReplacement = (hostValue, guestValue) => {
+    if (
+      typeof hostValue !== 'string' ||
+      hostValue.length === 0 ||
+      typeof guestValue !== 'string' ||
+      guestValue.length === 0
+    ) {
+      return;
+    }
+
+    replacements.set(hostValue, guestValue);
+  };
+
+  for (const mapping of GUEST_PATH_MAPPINGS) {
+    const hostRoot = path.resolve(mapping.hostPath);
+    addReplacement(hostRoot, mapping.guestPath);
+    addReplacement(pathToFileURL(hostRoot).href, pathToFileURL(mapping.guestPath).href);
+    const forwardSlashHostRoot = hostRoot.split(path.sep).join('/');
+    if (forwardSlashHostRoot !== hostRoot) {
+      addReplacement(forwardSlashHostRoot, mapping.guestPath);
+    }
+  }
+
+  if (CACHE_ROOT) {
+    const hostRoot = path.resolve(CACHE_ROOT);
+    addReplacement(hostRoot, GUEST_INTERNAL_CACHE_ROOT);
+    addReplacement(
+      pathToFileURL(hostRoot).href,
+      pathToFileURL(GUEST_INTERNAL_CACHE_ROOT).href,
+    );
+    const forwardSlashHostRoot = hostRoot.split(path.sep).join('/');
+    if (forwardSlashHostRoot !== hostRoot) {
+      addReplacement(forwardSlashHostRoot, GUEST_INTERNAL_CACHE_ROOT);
+    }
+  }
+
+  if (!guestPathFromHostPath(HOST_CWD)) {
+    const hostRoot = path.resolve(HOST_CWD);
+    addReplacement(hostRoot, DEFAULT_GUEST_CWD);
+    addReplacement(pathToFileURL(hostRoot).href, pathToFileURL(DEFAULT_GUEST_CWD).href);
+    const forwardSlashHostRoot = hostRoot.split(path.sep).join('/');
+    if (forwardSlashHostRoot !== hostRoot) {
+      addReplacement(forwardSlashHostRoot, DEFAULT_GUEST_CWD);
+    }
+  }
+
+  return [...replacements.entries()].sort((left, right) => right[0].length - left[0].length);
+}
+
+function splitPathLocationSuffix(value) {
+  if (typeof value !== 'string') {
+    return { pathLike: value, suffix: '' };
+  }
+
+  const match = /^(.*?)(:\d+(?::\d+)?)$/.exec(value);
+  return match
+    ? { pathLike: match[1], suffix: match[2] }
+    : { pathLike: value, suffix: '' };
+}
+
+function translateTextTokenToGuest(token) {
+  if (typeof token !== 'string' || token.length === 0) {
+    return token;
+  }
+
+  const leading = token.match(/^[("'`[{<]+/)?.[0] ?? '';
+  const trailing = token.match(/[)"'`\]}>.,;!?]+$/)?.[0] ?? '';
+  const coreEnd = token.length - trailing.length;
+  const core = token.slice(leading.length, coreEnd);
+  if (core.length === 0) {
+    return token;
+  }
+
+  const { pathLike, suffix } = splitPathLocationSuffix(core);
+  if (
+    typeof pathLike !== 'string' ||
+    (!pathLike.startsWith('file:') && !path.isAbsolute(pathLike))
+  ) {
+    return token;
+  }
+
+  return `${leading}${translatePathStringToGuest(pathLike)}${suffix}${trailing}`;
+}
+
+function translateTextToGuest(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return value;
+  }
+
+  let translated = value;
+  for (const [hostValue, guestValue] of buildHostToGuestTextReplacements()) {
+    translated = translated.split(hostValue).join(guestValue);
+  }
+
+  return translated
+    .split(/(\s+)/)
+    .map((token) => (/^\s+$/.test(token) ? token : translateTextTokenToGuest(token)))
+    .join('');
+}
+
+function translateErrorToGuest(error) {
+  if (error == null || typeof error !== 'object') {
+    return error;
+  }
+
+  if (typeof error.message === 'string') {
+    try {
+      error.message = translateTextToGuest(error.message);
+    } catch {
+      // Ignore readonly message bindings.
+    }
+  }
+
+  if (typeof error.stack === 'string') {
+    try {
+      error.stack = translateTextToGuest(error.stack);
+    } catch {
+      // Ignore readonly stack bindings.
+    }
+  }
+
+  if (typeof error.path === 'string') {
+    try {
+      error.path = translatePathStringToGuest(error.path);
+    } catch {
+      // Ignore readonly path bindings.
+    }
+  }
+
+  if (typeof error.filename === 'string') {
+    try {
+      error.filename = translatePathStringToGuest(error.filename);
+    } catch {
+      // Ignore readonly filename bindings.
+    }
+  }
+
+  if (typeof error.url === 'string') {
+    try {
+      error.url = translatePathStringToGuest(error.url);
+    } catch {
+      // Ignore readonly url bindings.
+    }
+  }
+
+  if (Array.isArray(error.requireStack)) {
+    try {
+      error.requireStack = error.requireStack.map((entry) => translatePathStringToGuest(entry));
+    } catch {
+      // Ignore readonly requireStack bindings.
+    }
+  }
+
+  return error;
+}
+
+function pathExists(targetPath) {
+  try {
+    return fs.existsSync(targetPath);
+  } catch {
+    return false;
+  }
+}
+
+function safeRealpath(targetPath) {
+  try {
+    return fs.realpathSync.native(targetPath);
+  } catch {
+    return null;
+  }
+}
+
+function parseJsonArray(value) {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function isInternalImportCachePath(filePath) {
+  return typeof filePath === 'string' && filePath.includes(`${path.sep}agentos-node-import-cache-`);
+}
+
+function parseGuestPathMappings(value) {
+  const parsed = parseJsonArrayLikeObjects(value);
+  return parsed
+    .map((entry) => {
+      const guestPath =
+        typeof entry.guestPath === 'string'
+          ? path.posix.normalize(entry.guestPath)
+          : null;
+      const hostPath =
+        typeof entry.hostPath === 'string' ? path.resolve(entry.hostPath) : null;
+      return guestPath && hostPath ? { guestPath, hostPath } : null;
+    })
+    .filter(Boolean)
+    .sort((left, right) => {
+      if (right.guestPath.length !== left.guestPath.length) {
+        return right.guestPath.length - left.guestPath.length;
+      }
+      return right.hostPath.length - left.hostPath.length;
+    });
+}
+
+function parseJsonArrayLikeObjects(value) {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter(isRecord) : [];
+  } catch {
+    return [];
+  }
+}
+
+function hashString(contents) {
+  return crypto.createHash('sha256').update(contents).digest('hex');
+}
+
+function isRecord(value) {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+"#;
+
+const NODE_IMPORT_CACHE_REGISTER_SOURCE: &str = r#"
+import { register } from 'node:module';
+
+const loaderPath = process.env.__NODE_IMPORT_CACHE_LOADER_PATH_ENV__;
+
+if (!loaderPath) {
+  throw new Error('__NODE_IMPORT_CACHE_LOADER_PATH_ENV__ is required');
+}
+
+register(loaderPath, import.meta.url);
+"#;
+
+const NODE_EXECUTION_RUNNER_SOURCE: &str = r#"
+const fs = process.getBuiltinModule?.('node:fs');
+const path = process.getBuiltinModule?.('node:path');
+const { pathToFileURL } = process.getBuiltinModule?.('node:url') ?? {};
+
+if (!fs || !path || typeof pathToFileURL !== 'function') {
+  throw new Error('node builtin access is required for the secure-exec guest runtime');
+}
+
+const HOST_PROCESS_ENV = { ...process.env };
+const ALLOW_PROCESS_BINDINGS = HOST_PROCESS_ENV.AGENTOS_ALLOW_PROCESS_BINDINGS === '1';
+const Module =
+  typeof process.getBuiltinModule === 'function'
+    ? process.getBuiltinModule('node:module')
+    : null;
+const syncBuiltinESMExports =
+  typeof Module?.syncBuiltinESMExports === 'function'
+    ? Module.syncBuiltinESMExports.bind(Module)
+    : () => {};
+const GUEST_PATH_MAPPINGS = parseGuestPathMappings(HOST_PROCESS_ENV.AGENTOS_GUEST_PATH_MAPPINGS);
+const ALLOWED_BUILTINS = new Set(parseJsonArray(HOST_PROCESS_ENV.AGENTOS_ALLOWED_NODE_BUILTINS));
+const LOOPBACK_EXEMPT_PORTS = new Set(parseJsonArray(HOST_PROCESS_ENV.AGENTOS_LOOPBACK_EXEMPT_PORTS));
+const DENIED_BUILTINS = new Set([
+  'child_process',
+  'cluster',
+  'dgram',
+  'dns',
+  'http',
+  'http2',
+  'https',
+  'inspector',
+  'module',
+  'net',
+  'tls',
+  'trace_events',
+  'v8',
+  'vm',
+  'worker_threads',
+].filter((name) => !ALLOWED_BUILTINS.has(name)));
+const originalGetBuiltinModule =
+  typeof process.getBuiltinModule === 'function'
+    ? process.getBuiltinModule.bind(process)
+    : null;
+const originalModuleResolveFilename =
+  typeof Module?._resolveFilename === 'function'
+    ? Module._resolveFilename.bind(Module)
+    : null;
+const originalModuleLoad =
+  typeof Module?._load === 'function' ? Module._load.bind(Module) : null;
+const originalModuleCache =
+  Module?._cache && typeof Module._cache === 'object' ? Module._cache : null;
+const originalFetch =
+  typeof globalThis.fetch === 'function'
+    ? globalThis.fetch.bind(globalThis)
+    : null;
+const HOST_CWD = process.cwd();
+const HOST_EXEC_PATH = process.execPath;
+const HOST_EXEC_DIR = path.dirname(HOST_EXEC_PATH);
+if (!Module || typeof Module.createRequire !== 'function') {
+  throw new Error('node:module builtin access is required for the secure-exec guest runtime');
+}
+const hostRequire = Module.createRequire(import.meta.url);
+const hostOs = hostRequire('node:os');
+const hostNet = hostRequire('node:net');
+const hostDgram = hostRequire('node:dgram');
+const hostDns = hostRequire('node:dns');
+const hostDnsPromises = hostRequire('node:dns/promises');
+const hostHttp = hostRequire('node:http');
+const hostHttp2 = hostRequire('node:http2');
+const hostHttps = hostRequire('node:https');
+const hostTls = hostRequire('node:tls');
+const { EventEmitter } = hostRequire('node:events');
+const { Duplex, Readable, Writable } = hostRequire('node:stream');
+const NODE_SYNC_RPC_ENABLE = HOST_PROCESS_ENV.AGENTOS_NODE_SYNC_RPC_ENABLE === '1';
+const hostWorkerThreads = NODE_SYNC_RPC_ENABLE ? hostRequire('node:worker_threads') : null;
+const SIGNAL_EVENTS = new Set(
+  Object.keys(hostOs.constants?.signals ?? {}).filter((name) =>
+    name.startsWith('SIG'),
+  ),
+);
+const TRACKED_PROCESS_SIGNAL_EVENTS = new Set(['SIGCHLD']);
+const guestEntryPoint =
+  HOST_PROCESS_ENV.AGENTOS_GUEST_ENTRYPOINT ?? HOST_PROCESS_ENV.AGENTOS_ENTRYPOINT;
+const DEFAULT_VIRTUAL_EXEC_PATH = '/usr/bin/node';
+const DEFAULT_VIRTUAL_PID = 1;
+const DEFAULT_VIRTUAL_PPID = 0;
+const DEFAULT_VIRTUAL_UID = 0;
+const DEFAULT_VIRTUAL_GID = 0;
+const DEFAULT_VIRTUAL_OS_HOSTNAME = 'secure-exec';
+const DEFAULT_VIRTUAL_OS_TYPE = 'Linux';
+const DEFAULT_VIRTUAL_OS_PLATFORM = 'linux';
+const DEFAULT_VIRTUAL_OS_RELEASE = '6.8.0-secure-exec';
+const DEFAULT_VIRTUAL_OS_VERSION = '#1 SMP PREEMPT_DYNAMIC secure-exec';
+const DEFAULT_VIRTUAL_OS_ARCH = 'x64';
+const DEFAULT_VIRTUAL_OS_MACHINE = 'x86_64';
+const DEFAULT_VIRTUAL_OS_CPU_MODEL = 'secure-exec Virtual CPU';
+const DEFAULT_VIRTUAL_OS_CPU_COUNT = 1;
+const DEFAULT_VIRTUAL_OS_TOTALMEM = 1024 * 1024 * 1024;
+const DEFAULT_VIRTUAL_OS_FREEMEM = 768 * 1024 * 1024;
+const DEFAULT_VIRTUAL_OS_USER = 'root';
+const DEFAULT_VIRTUAL_OS_HOMEDIR = '/root';
+const DEFAULT_VIRTUAL_OS_SHELL = '/bin/sh';
+const DEFAULT_VIRTUAL_OS_TMPDIR = '/tmp';
+const NODE_SYNC_RPC_REQUEST_FD = parseOptionalFd(HOST_PROCESS_ENV.AGENTOS_NODE_SYNC_RPC_REQUEST_FD);
+const NODE_SYNC_RPC_RESPONSE_FD = parseOptionalFd(HOST_PROCESS_ENV.AGENTOS_NODE_SYNC_RPC_RESPONSE_FD);
+const NODE_SYNC_RPC_DATA_BYTES = parsePositiveInt(
+  HOST_PROCESS_ENV.AGENTOS_NODE_SYNC_RPC_DATA_BYTES,
+  4 * 1024 * 1024,
+);
+const NODE_SYNC_RPC_WAIT_TIMEOUT_MS = parsePositiveInt(
+  HOST_PROCESS_ENV.AGENTOS_NODE_SYNC_RPC_WAIT_TIMEOUT_MS,
+  30_000,
+);
+const NODE_IMPORT_CACHE_PATH = HOST_PROCESS_ENV.AGENTOS_NODE_IMPORT_CACHE_PATH ?? null;
+const NODE_IMPORT_CACHE_ROOT =
+  typeof NODE_IMPORT_CACHE_PATH === 'string' && NODE_IMPORT_CACHE_PATH.length > 0
+    ? path.dirname(NODE_IMPORT_CACHE_PATH)
+    : null;
+const CONTROL_PIPE_FD = parseOptionalFd(HOST_PROCESS_ENV.AGENTOS_CONTROL_PIPE_FD);
+const GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT = '/.agentos/node-import-cache';
+const UNMAPPED_GUEST_PATH = '/unknown';
+const VIRTUAL_EXEC_PATH = parseVirtualProcessString(
+  HOST_PROCESS_ENV.AGENTOS_VIRTUAL_PROCESS_EXEC_PATH,
+  DEFAULT_VIRTUAL_EXEC_PATH,
+);
+const VIRTUAL_PID = parseVirtualProcessNumber(
+  HOST_PROCESS_ENV.AGENTOS_VIRTUAL_PROCESS_PID,
+  DEFAULT_VIRTUAL_PID,
+);
+const VIRTUAL_PPID = parseVirtualProcessNumber(
+  HOST_PROCESS_ENV.AGENTOS_VIRTUAL_PROCESS_PPID,
+  DEFAULT_VIRTUAL_PPID,
+);
+const VIRTUAL_UID = parseVirtualProcessNumber(
+  HOST_PROCESS_ENV.AGENTOS_VIRTUAL_PROCESS_UID,
+  DEFAULT_VIRTUAL_UID,
+);
+const VIRTUAL_GID = parseVirtualProcessNumber(
+  HOST_PROCESS_ENV.AGENTOS_VIRTUAL_PROCESS_GID,
+  DEFAULT_VIRTUAL_GID,
+);
+const DEFAULT_GUEST_CWD = resolveVirtualPath(
+  (globalThis.__agentOSVirtualOs||{}).homedir,
+  DEFAULT_VIRTUAL_OS_HOMEDIR,
+);
+const VIRTUAL_OS_USER = parseVirtualProcessString(
+  (globalThis.__agentOSVirtualOs||{}).user,
+  DEFAULT_VIRTUAL_OS_USER,
+);
+const VIRTUAL_OS_HOMEDIR = resolveVirtualPath(
+  (globalThis.__agentOSVirtualOs||{}).homedir,
+  DEFAULT_VIRTUAL_OS_HOMEDIR,
+);
+const VIRTUAL_OS_SHELL = resolveVirtualPath(
+  (globalThis.__agentOSVirtualOs||{}).shell,
+  DEFAULT_VIRTUAL_OS_SHELL,
+);
+
+function isPathLike(specifier) {
+  return specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('file:');
+}
+
+function toImportSpecifier(specifier) {
+  if (specifier.startsWith('file:')) {
+    return translatePathStringToGuest(specifier);
+  }
+  if (isPathLike(specifier)) {
+    if (specifier.startsWith('/')) {
+      return pathToFileURL(
+        translatePathStringToGuest(
+          pathExists(specifier) ? path.resolve(specifier) : path.posix.normalize(specifier),
+        ),
+      ).href;
+    }
+    return pathToFileURL(translatePathStringToGuest(path.resolve(HOST_CWD, specifier))).href;
+  }
+  return specifier;
+}
+
+function accessDenied(subject) {
+  const error = new Error(`${subject} is not available in the secure-exec guest runtime`);
+  error.code = 'ERR_ACCESS_DENIED';
+  return error;
+}
+
+function normalizeBuiltin(specifier) {
+  return specifier.startsWith('node:') ? specifier.slice('node:'.length) : specifier;
+}
+
+function isBareSpecifier(specifier) {
+  if (typeof specifier !== 'string') {
+    return false;
+  }
+
+  if (
+    specifier.startsWith('./') ||
+    specifier.startsWith('../') ||
+    specifier.startsWith('/') ||
+    specifier.startsWith('file:') ||
+    specifier.startsWith('node:')
+  ) {
+    return false;
+  }
+
+  return !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(specifier);
+}
+
+function pathExists(targetPath) {
+  try {
+    return fs.existsSync(targetPath);
+  } catch {
+    return false;
+  }
+}
+
+function parseJsonArray(value) {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseOptionalFd(value) {
+  if (value == null || value === '') {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function parsePositiveInt(value, fallback) {
+  if (value == null || value === '') {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseVirtualProcessNumber(value, fallback) {
+  if (value == null || value === '') {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function parseVirtualProcessString(value, fallback) {
+  return typeof value === 'string' && value.length > 0 ? value : fallback;
+}
+
+function isInternalProcessEnvKey(key) {
+  return typeof key === 'string' && key.startsWith('AGENTOS_');
+}
+
+function createGuestProcessEnv(env) {
+  const guestEnv = {};
+
+  for (const [key, value] of Object.entries(env ?? {})) {
+    if (typeof value !== 'string' || isInternalProcessEnvKey(key)) {
+      continue;
+    }
+    guestEnv[key] = value;
+  }
+
+  return new Proxy(guestEnv, {
+    defineProperty(target, key, descriptor) {
+      if (typeof key === 'string' && isInternalProcessEnvKey(key)) {
+        return true;
+      }
+
+      const normalized = { ...descriptor };
+      if ('value' in normalized) {
+        normalized.value = String(normalized.value);
+      }
+      return Reflect.defineProperty(target, key, normalized);
+    },
+    deleteProperty(target, key) {
+      if (typeof key === 'string' && isInternalProcessEnvKey(key)) {
+        return true;
+      }
+      return Reflect.deleteProperty(target, key);
+    },
+    get(target, key, receiver) {
+      if (typeof key === 'string' && isInternalProcessEnvKey(key)) {
+        return undefined;
+      }
+      return Reflect.get(target, key, receiver);
+    },
+    getOwnPropertyDescriptor(target, key) {
+      if (typeof key === 'string' && isInternalProcessEnvKey(key)) {
+        return undefined;
+      }
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
+    has(target, key) {
+      if (typeof key === 'string' && isInternalProcessEnvKey(key)) {
+        return false;
+      }
+      return Reflect.has(target, key);
+    },
+    ownKeys(target) {
+      return Reflect.ownKeys(target).filter(
+        (key) => typeof key !== 'string' || !isInternalProcessEnvKey(key),
+      );
+    },
+    set(target, key, value, receiver) {
+      if (typeof key === 'string' && isInternalProcessEnvKey(key)) {
+        return true;
+      }
+      return Reflect.set(target, key, String(value), receiver);
+    },
+  });
+}
+
+function parseGuestPathMappings(value) {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((entry) => {
+        const guestPath =
+          entry && typeof entry.guestPath === 'string'
+            ? path.posix.normalize(entry.guestPath)
+            : null;
+        const hostPath =
+          entry && typeof entry.hostPath === 'string'
+            ? path.resolve(entry.hostPath)
+            : null;
+        return guestPath && hostPath
+          ? { guestPath, hostPath, readOnly: entry.readOnly === true }
+          : null;
+      })
+      .filter(Boolean)
+      .sort((left, right) => right.guestPath.length - left.guestPath.length);
+  } catch {
+    return [];
+  }
+}
+
+function hostPathFromGuestPath(guestPath) {
+  if (typeof guestPath !== 'string') {
+    return null;
+  }
+
+  const normalized = path.posix.normalize(guestPath);
+  if (
+    NODE_IMPORT_CACHE_ROOT &&
+    (normalized === GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT ||
+      normalized.startsWith(`${GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT}/`))
+  ) {
+    const suffix =
+      normalized === GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT
+        ? ''
+        : normalized.slice(GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT.length + 1);
+    return suffix
+      ? path.join(NODE_IMPORT_CACHE_ROOT, ...suffix.split('/'))
+      : NODE_IMPORT_CACHE_ROOT;
+  }
+
+  for (const mapping of GUEST_PATH_MAPPINGS) {
+    if (mapping.guestPath === '/') {
+      const suffix = normalized.replace(/^\/+/, '');
+      return suffix ? path.join(mapping.hostPath, suffix) : mapping.hostPath;
+    }
+
+    if (
+      normalized !== mapping.guestPath &&
+      !normalized.startsWith(`${mapping.guestPath}/`)
+    ) {
+      continue;
+    }
+
+    const suffix =
+      normalized === mapping.guestPath
+        ? ''
+        : normalized.slice(mapping.guestPath.length + 1);
+    return suffix ? path.join(mapping.hostPath, suffix) : mapping.hostPath;
+  }
+
+  if (
+    normalized === DEFAULT_GUEST_CWD ||
+    normalized.startsWith(`${DEFAULT_GUEST_CWD}/`)
+  ) {
+    const suffix =
+      normalized === DEFAULT_GUEST_CWD
+        ? ''
+        : normalized.slice(DEFAULT_GUEST_CWD.length + 1);
+    return suffix ? path.join(HOST_CWD, ...suffix.split('/')) : HOST_CWD;
+  }
+
+  return null;
+}
+
+function guestPathFromHostPath(hostPath) {
+  if (typeof hostPath !== 'string') {
+    return null;
+  }
+
+  const normalized = path.resolve(hostPath);
+  for (const mapping of GUEST_PATH_MAPPINGS) {
+    const hostRoot = path.resolve(mapping.hostPath);
+    if (
+      normalized !== hostRoot &&
+      !normalized.startsWith(`${hostRoot}${path.sep}`)
+    ) {
+      continue;
+    }
+
+    const suffix =
+      normalized === hostRoot
+        ? ''
+        : normalized.slice(hostRoot.length + path.sep.length);
+    return suffix
+      ? path.posix.join(mapping.guestPath, suffix.split(path.sep).join('/'))
+      : mapping.guestPath;
+  }
+
+  return null;
+}
+
+function guestCwdPathFromHostPath(hostPath) {
+  if (typeof hostPath !== 'string') {
+    return null;
+  }
+
+  const normalized = path.resolve(hostPath);
+  const hostRoot = path.resolve(HOST_CWD);
+  if (
+    normalized !== hostRoot &&
+    !normalized.startsWith(`${hostRoot}${path.sep}`)
+  ) {
+    return null;
+  }
+
+  const suffix =
+    normalized === hostRoot
+      ? ''
+      : normalized.slice(hostRoot.length + path.sep.length);
+  return suffix
+    ? path.posix.join(INITIAL_GUEST_CWD, suffix.split(path.sep).join('/'))
+    : INITIAL_GUEST_CWD;
+}
+
+function guestInternalPathFromHostPath(hostPath) {
+  if (typeof hostPath !== 'string' || !NODE_IMPORT_CACHE_ROOT) {
+    return null;
+  }
+
+  const normalized = path.resolve(hostPath);
+  const hostRoot = path.resolve(NODE_IMPORT_CACHE_ROOT);
+  if (
+    normalized !== hostRoot &&
+    !normalized.startsWith(`${hostRoot}${path.sep}`)
+  ) {
+    return null;
+  }
+
+  const suffix =
+    normalized === hostRoot
+      ? ''
+      : normalized.slice(hostRoot.length + path.sep.length);
+  return suffix
+    ? path.posix.join(
+        GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT,
+        suffix.split(path.sep).join('/'),
+      )
+    : GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT;
+}
+
+function guestVisiblePathFromHostPath(hostPath) {
+  return (
+    guestPathFromHostPath(hostPath) ??
+    guestInternalPathFromHostPath(hostPath) ??
+    guestCwdPathFromHostPath(hostPath) ??
+    UNMAPPED_GUEST_PATH
+  );
+}
+
+function isGuestVisiblePath(value) {
+  if (typeof value !== 'string' || !path.posix.isAbsolute(value)) {
+    return false;
+  }
+
+  const normalized = path.posix.normalize(value);
+  return (
+    normalized === UNMAPPED_GUEST_PATH ||
+    normalized === GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT ||
+    normalized.startsWith(`${GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT}/`) ||
+    normalized === INITIAL_GUEST_CWD ||
+    normalized.startsWith(`${INITIAL_GUEST_CWD}/`) ||
+    hostPathFromGuestPath(normalized) != null
+  );
+}
+
+function translatePathStringToGuest(value) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  if (value.startsWith('file:')) {
+    try {
+      const hostPath = new URL(value).pathname;
+      const guestPath = isGuestVisiblePath(hostPath)
+        ? path.posix.normalize(hostPath)
+        : guestVisiblePathFromHostPath(hostPath);
+      return pathToFileURL(guestPath).href;
+    } catch {
+      return value;
+    }
+  }
+
+  if (!path.isAbsolute(value)) {
+    return value;
+  }
+
+  return isGuestVisiblePath(value)
+    ? path.posix.normalize(value)
+    : guestVisiblePathFromHostPath(value);
+}
+
+function buildHostToGuestTextReplacements() {
+  const replacements = new Map();
+  const addReplacement = (hostValue, guestValue) => {
+    if (
+      typeof hostValue !== 'string' ||
+      hostValue.length === 0 ||
+      typeof guestValue !== 'string' ||
+      guestValue.length === 0
+    ) {
+      return;
+    }
+
+    replacements.set(hostValue, guestValue);
+  };
+
+  for (const mapping of GUEST_PATH_MAPPINGS) {
+    const hostRoot = path.resolve(mapping.hostPath);
+    addReplacement(hostRoot, mapping.guestPath);
+    addReplacement(pathToFileURL(hostRoot).href, pathToFileURL(mapping.guestPath).href);
+    const forwardSlashHostRoot = hostRoot.split(path.sep).join('/');
+    if (forwardSlashHostRoot !== hostRoot) {
+      addReplacement(forwardSlashHostRoot, mapping.guestPath);
+    }
+  }
+
+  if (NODE_IMPORT_CACHE_ROOT) {
+    const hostRoot = path.resolve(NODE_IMPORT_CACHE_ROOT);
+    addReplacement(hostRoot, GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT);
+    addReplacement(
+      pathToFileURL(hostRoot).href,
+      pathToFileURL(GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT).href,
+    );
+    const forwardSlashHostRoot = hostRoot.split(path.sep).join('/');
+    if (forwardSlashHostRoot !== hostRoot) {
+      addReplacement(forwardSlashHostRoot, GUEST_INTERNAL_NODE_IMPORT_CACHE_ROOT);
+    }
+  }
+
+  if (!guestPathFromHostPath(HOST_CWD)) {
+    const hostRoot = path.resolve(HOST_CWD);
+    addReplacement(hostRoot, INITIAL_GUEST_CWD);
+    addReplacement(pathToFileURL(hostRoot).href, pathToFileURL(INITIAL_GUEST_CWD).href);
+    const forwardSlashHostRoot = hostRoot.split(path.sep).join('/');
+    if (forwardSlashHostRoot !== hostRoot) {
+      addReplacement(forwardSlashHostRoot, INITIAL_GUEST_CWD);
+    }
+  }
+
+  return [...replacements.entries()].sort((left, right) => right[0].length - left[0].length);
+}
+
+function splitPathLocationSuffix(value) {
+  if (typeof value !== 'string') {
+    return { pathLike: value, suffix: '' };
+  }
+
+  const match = /^(.*?)(:\d+(?::\d+)?)$/.exec(value);
+  return match
+    ? { pathLike: match[1], suffix: match[2] }
+    : { pathLike: value, suffix: '' };
+}
+
+function translateTextTokenToGuest(token) {
+  if (typeof token !== 'string' || token.length === 0) {
+    return token;
+  }
+
+  const leading = token.match(/^[("'`[{<]+/)?.[0] ?? '';
+  const trailing = token.match(/[)"'`\]}>.,;!?]+$/)?.[0] ?? '';
+  const coreEnd = token.length - trailing.length;
+  const core = token.slice(leading.length, coreEnd);
+  if (core.length === 0) {
+    return token;
+  }
+
+  const { pathLike, suffix } = splitPathLocationSuffix(core);
+  if (
+    typeof pathLike !== 'string' ||
+    (!pathLike.startsWith('file:') && !path.isAbsolute(pathLike))
+  ) {
+    return token;
+  }
+
+  return `${leading}${translatePathStringToGuest(pathLike)}${suffix}${trailing}`;
+}
+
+function translateTextToGuest(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return value;
+  }
+
+  let translated = value;
+  for (const [hostValue, guestValue] of buildHostToGuestTextReplacements()) {
+    translated = translated.split(hostValue).join(guestValue);
+  }
+
+  return translated
+    .split(/(\s+)/)
+    .map((token) => (/^\s+$/.test(token) ? token : translateTextTokenToGuest(token)))
+    .join('');
+}
+
+function translateErrorToGuest(error) {
+  if (error == null || typeof error !== 'object') {
+    return error;
+  }
+
+  if (typeof error.message === 'string') {
+    try {
+      error.message = translateTextToGuest(error.message);
+    } catch {
+      // Ignore readonly message bindings.
+    }
+  }
+
+  if (typeof error.stack === 'string') {
+    try {
+      error.stack = translateTextToGuest(error.stack);
+    } catch {
+      // Ignore readonly stack bindings.
+    }
+  }
+
+  if (typeof error.path === 'string') {
+    try {
+      error.path = translatePathStringToGuest(error.path);
+    } catch {
+      // Ignore readonly path bindings.
+    }
+  }
+
+  if (typeof error.filename === 'string') {
+    try {
+      error.filename = translatePathStringToGuest(error.filename);
+    } catch {
+      // Ignore readonly filename bindings.
+    }
+  }
+
+  if (typeof error.url === 'string') {
+    try {
+      error.url = translatePathStringToGuest(error.url);
+    } catch {
+      // Ignore readonly url bindings.
+    }
+  }
+
+  if (Array.isArray(error.requireStack)) {
+    try {
+      error.requireStack = error.requireStack.map((entry) => translatePathStringToGuest(entry));
+    } catch {
+      // Ignore readonly requireStack bindings.
+    }
+  }
+
+  return error;
+}
+
+function hostPathForSpecifier(specifier, fromGuestDir) {
+  if (typeof specifier !== 'string') {
+    return null;
+  }
+
+  if (specifier.startsWith('file:')) {
+    try {
+      return hostPathFromGuestPath(new URL(specifier).pathname);
+    } catch {
+      return null;
+    }
+  }
+
+  if (specifier.startsWith('/')) {
+    return hostPathFromGuestPath(specifier);
+  }
+
+  if (specifier.startsWith('./') || specifier.startsWith('../')) {
+    return hostPathFromGuestPath(
+      path.posix.normalize(path.posix.join(fromGuestDir, specifier)),
+    );
+  }
+
+  return null;
+}
+
+function translateGuestPath(value, fromGuestDir = '/') {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const translated = hostPathForSpecifier(value, fromGuestDir);
+  return translated ?? value;
+}
+
+function resolveGuestFsPath(value, fromGuestDir = '/') {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  if (value.startsWith('file:')) {
+    try {
+      return path.posix.normalize(new URL(value).pathname);
+    } catch {
+      return value;
+    }
+  }
+
+  if (value.startsWith('/')) {
+    return path.posix.normalize(value);
+  }
+
+  if (value.startsWith('./') || value.startsWith('../')) {
+    return path.posix.normalize(path.posix.join(fromGuestDir, value));
+  }
+
+  return value;
+}
+
+function normalizeFsReadOptions(options) {
+  return typeof options === 'string' ? { encoding: options } : options;
+}
+
+function normalizeFsWriteContents(contents, options) {
+  if (typeof contents !== 'string') {
+    return contents;
+  }
+
+  const encoding =
+    typeof options === 'string'
+      ? options
+      : options && typeof options === 'object'
+        ? options.encoding
+        : undefined;
+  if (typeof encoding === 'string' && encoding !== 'utf8' && encoding !== 'utf-8') {
+    return Buffer.from(contents, encoding);
+  }
+
+  return contents;
+}
+
+function normalizeFsTimeValue(value) {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  return value;
+}
+
+function createGuestFsStats(stat) {
+  if (stat == null || typeof stat !== 'object') {
+    return stat;
+  }
+
+  const flags = {
+    isDirectory: Boolean(stat.isDirectory),
+    isSymbolicLink: Boolean(stat.isSymbolicLink),
+  };
+  const target = { ...stat };
+
+  return new Proxy(target, {
+    get(source, key, receiver) {
+      switch (key) {
+        case 'isBlockDevice':
+        case 'isCharacterDevice':
+        case 'isFIFO':
+        case 'isSocket':
+          return () => false;
+        case 'isDirectory':
+          return () => flags.isDirectory;
+        case 'isFile':
+          return () => !flags.isDirectory && !flags.isSymbolicLink;
+        case 'isSymbolicLink':
+          return () => flags.isSymbolicLink;
+        case 'toJSON':
+          return () => ({ ...source, ...flags });
+        default:
+          return Reflect.get(source, key, receiver);
+      }
+    },
+  });
+}
+
+function requireSecureExecSyncRpcBridge() {
+  const bridge = globalThis.__agentOSSyncRpc;
+  if (
+    bridge &&
+    typeof bridge.call === 'function' &&
+    typeof bridge.callSync === 'function'
+  ) {
+    return bridge;
+  }
+
+  const error = new Error('secure-exec sync RPC bridge is unavailable');
+  error.code = 'ERR_AGENTOS_NODE_SYNC_RPC_UNAVAILABLE';
+  throw error;
+}
+
+function requireFsSyncRpcBridge() {
+  return requireSecureExecSyncRpcBridge();
+}
+
+function isPythonWarmupDebugEnabled() {
+  return process.env.AGENTOS_PYTHON_WARMUP_DEBUG === '1';
+}
+
+function emitPythonWarmupFsDebug(message) {
+  if (!isPythonWarmupDebugEnabled()) {
+    return;
+  }
+
+  try {
+    process.stderr.write(`__AGENTOS_PYTHON_FS_DEBUG__:${message}\n`);
+  } catch {
+    // Ignore debug logging failures.
+  }
+}
+
+function formatPythonWarmupFsDebugError(error) {
+  if (!error || typeof error !== 'object') {
+    return String(error);
+  }
+
+  if (typeof error.code === 'string' && error.code.length > 0) {
+    return error.code;
+  }
+
+  if (typeof error.message === 'string' && error.message.length > 0) {
+    return error.message;
+  }
+
+  return 'unknown';
+}
+
+function callFsRpc(method, args = []) {
+  emitPythonWarmupFsDebug(`${method}:start`);
+  return requireFsSyncRpcBridge()
+    .call(method, args)
+    .then(
+      (result) => {
+        emitPythonWarmupFsDebug(`${method}:ok`);
+        return result;
+      },
+      (error) => {
+        emitPythonWarmupFsDebug(
+          `${method}:error:${formatPythonWarmupFsDebugError(error)}`,
+        );
+        throw error;
+      },
+    );
+}
+
+function callFsRpcSync(method, args = []) {
+  emitPythonWarmupFsDebug(`${method}:start`);
+  try {
+    const result = requireFsSyncRpcBridge().callSync(method, args);
+    emitPythonWarmupFsDebug(`${method}:ok`);
+    return result;
+  } catch (error) {
+    emitPythonWarmupFsDebug(
+      `${method}:error:${formatPythonWarmupFsDebugError(error)}`,
+    );
+    throw error;
+  }
+}
+
+function guestProcessUmask(mask) {
+  const bridge = requireSecureExecSyncRpcBridge();
+  if (mask == null) {
+    return bridge.callSync('process.umask', []);
+  }
+  return bridge.callSync('process.umask', [normalizeFsMode(mask) ?? 0]);
+}
+
+function createRpcBackedFsPromises(fromGuestDir = '/') {
+  const call = (method, args = []) => callFsRpc(method, args);
+
+  return {
+    access: async (target, mode) => {
+      await call('fs.promises.access', [
+        resolveGuestFsPath(target, fromGuestDir),
+        mode,
+      ]);
+    },
+    chmod: async (target, mode) =>
+      call('fs.promises.chmod', [
+        resolveGuestFsPath(target, fromGuestDir),
+        mode,
+      ]),
+    chown: async (target, uid, gid) =>
+      call('fs.promises.chown', [
+        resolveGuestFsPath(target, fromGuestDir),
+        uid,
+        gid,
+      ]),
+    copyFile: async (source, destination, mode) =>
+      call('fs.promises.copyFile', [
+        resolveGuestFsPath(source, fromGuestDir),
+        resolveGuestFsPath(destination, fromGuestDir),
+        mode,
+      ]),
+    lstat: async (target) =>
+      createGuestFsStats(
+        await call('fs.promises.lstat', [resolveGuestFsPath(target, fromGuestDir)]),
+      ),
+    mkdir: async (target, options) =>
+      call('fs.promises.mkdir', [
+        resolveGuestFsPath(target, fromGuestDir),
+        options,
+      ]),
+    readFile: async (target, options) =>
+      call('fs.promises.readFile', [
+        resolveGuestFsPath(target, fromGuestDir),
+        normalizeFsReadOptions(options),
+      ]),
+    readdir: async (target, options) =>
+      call('fs.promises.readdir', [
+        resolveGuestFsPath(target, fromGuestDir),
+        options,
+      ]),
+    rename: async (source, destination) =>
+      call('fs.promises.rename', [
+        resolveGuestFsPath(source, fromGuestDir),
+        resolveGuestFsPath(destination, fromGuestDir),
+      ]),
+    rmdir: async (target, options) =>
+      call('fs.promises.rmdir', [
+        resolveGuestFsPath(target, fromGuestDir),
+        options,
+      ]),
+    stat: async (target) =>
+      createGuestFsStats(
+        await call('fs.promises.stat', [resolveGuestFsPath(target, fromGuestDir)]),
+      ),
+    unlink: async (target) =>
+      call('fs.promises.unlink', [resolveGuestFsPath(target, fromGuestDir)]),
+    utimes: async (target, atime, mtime) =>
+      call('fs.promises.utimes', [
+        resolveGuestFsPath(target, fromGuestDir),
+        normalizeFsTimeValue(atime),
+        normalizeFsTimeValue(mtime),
+      ]),
+    writeFile: async (target, contents, options) =>
+      call('fs.promises.writeFile', [
+        resolveGuestFsPath(target, fromGuestDir),
+        normalizeFsWriteContents(contents, options),
+        normalizeFsReadOptions(options),
+      ]),
+  };
+}
+
+function resolveGuestSymlinkTarget(value, fromGuestDir = '/') {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  if (value.startsWith('file:') || value.startsWith('/')) {
+    return resolveGuestFsPath(value, fromGuestDir);
+  }
+
+  return value;
+}
+
+const INITIAL_GUEST_CWD = guestPathFromHostPath(HOST_CWD) ?? DEFAULT_GUEST_CWD;
+
+function guestMappedChildNames(guestDir) {
+  if (typeof guestDir !== 'string') {
+    return [];
+  }
+
+  const normalized = path.posix.normalize(guestDir);
+  const prefix = normalized === '/' ? '/' : `${normalized}/`;
+  const children = new Set();
+
+  for (const mapping of GUEST_PATH_MAPPINGS) {
+    if (!mapping.guestPath.startsWith(prefix)) {
+      continue;
+    }
+    const remainder = mapping.guestPath.slice(prefix.length);
+    const childName = remainder.split('/')[0];
+    if (childName) {
+      children.add(childName);
+    }
+  }
+
+  return [...children].sort();
+}
+
+function createSyntheticDirent(name) {
+  return {
+    name,
+    isBlockDevice: () => false,
+    isCharacterDevice: () => false,
+    isDirectory: () => true,
+    isFIFO: () => false,
+    isFile: () => false,
+    isSocket: () => false,
+    isSymbolicLink: () => false,
+  };
+}
+
+function createGuestDirent(name, stat) {
+  return {
+    name,
+    isBlockDevice: stat.isBlockDevice,
+    isCharacterDevice: stat.isCharacterDevice,
+    isDirectory: stat.isDirectory,
+    isFIFO: stat.isFIFO,
+    isFile: stat.isFile,
+    isSocket: stat.isSocket,
+    isSymbolicLink: stat.isSymbolicLink,
+  };
+}
+
+const GUEST_FS_O_RDONLY = 0;
+const GUEST_FS_O_WRONLY = 1;
+const GUEST_FS_O_RDWR = 2;
+const GUEST_FS_O_CREAT = 0o100;
+const GUEST_FS_O_EXCL = 0o200;
+const GUEST_FS_O_TRUNC = 0o1000;
+const GUEST_FS_O_APPEND = 0o2000;
+const GUEST_FS_DEFAULT_STREAM_HWM = 64 * 1024;
+
+function normalizeFsInteger(value, label) {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'bigint'
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || numeric < 0) {
+    throw new TypeError(`secure-exec ${label} must be a non-negative integer`);
+  }
+  return numeric;
+}
+
+function normalizeFsFd(value) {
+  return normalizeFsInteger(value, 'fd');
+}
+
+function isStdioFd(fd) {
+  return fd === 0 || fd === 1 || fd === 2;
+}
+
+function writeToStdioFd(fd, value) {
+  const stream =
+    fd === 1 ? process.stdout : fd === 2 ? process.stderr : null;
+  if (!stream || typeof stream.write !== 'function') {
+    throw new Error(`secure-exec cannot write stdio fd ${fd}`);
+  }
+  stream.write(value);
+  return typeof value === 'string' ? Buffer.byteLength(value) : value.byteLength;
+}
+
+function normalizeFsMode(mode) {
+  if (mode == null) {
+    return null;
+  }
+  if (typeof mode === 'string') {
+    const parsed = Number.parseInt(mode, 8);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return normalizeFsInteger(mode, 'mode');
+}
+
+function normalizeFsPosition(position) {
+  if (position == null) {
+    return null;
+  }
+  return normalizeFsInteger(position, 'position');
+}
+
+function normalizeFsOpenFlags(flags = 'r') {
+  if (typeof flags === 'number') {
+    return flags;
+  }
+
+  switch (flags) {
+    case 'r':
+    case 'rs':
+    case 'sr':
+      return GUEST_FS_O_RDONLY;
+    case 'r+':
+    case 'rs+':
+    case 'sr+':
+      return GUEST_FS_O_RDWR;
+    case 'w':
+      return GUEST_FS_O_WRONLY | GUEST_FS_O_CREAT | GUEST_FS_O_TRUNC;
+    case 'wx':
+    case 'xw':
+      return GUEST_FS_O_WRONLY | GUEST_FS_O_CREAT | GUEST_FS_O_TRUNC | GUEST_FS_O_EXCL;
+    case 'w+':
+      return GUEST_FS_O_RDWR | GUEST_FS_O_CREAT | GUEST_FS_O_TRUNC;
+    case 'wx+':
+    case 'xw+':
+      return GUEST_FS_O_RDWR | GUEST_FS_O_CREAT | GUEST_FS_O_TRUNC | GUEST_FS_O_EXCL;
+    case 'a':
+      return GUEST_FS_O_WRONLY | GUEST_FS_O_CREAT | GUEST_FS_O_APPEND;
+    case 'ax':
+    case 'xa':
+      return GUEST_FS_O_WRONLY | GUEST_FS_O_CREAT | GUEST_FS_O_APPEND | GUEST_FS_O_EXCL;
+    case 'a+':
+      return GUEST_FS_O_RDWR | GUEST_FS_O_CREAT | GUEST_FS_O_APPEND;
+    case 'ax+':
+    case 'xa+':
+      return GUEST_FS_O_RDWR | GUEST_FS_O_CREAT | GUEST_FS_O_APPEND | GUEST_FS_O_EXCL;
+    default:
+      throw new TypeError(`secure-exec does not support fs open flag ${String(flags)}`);
+  }
+}
+
+function toGuestBufferView(value, label) {
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+  if (ArrayBuffer.isView(value)) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  }
+  throw new TypeError(`secure-exec ${label} must be a Buffer, TypedArray, or DataView`);
+}
+
+function decodeFsBytesPayload(value, label) {
+  const decodeByteArray = (bytes) => {
+    const denseBytes = Array.from(bytes);
+    if (denseBytes.length !== bytes.length) {
+      throw new TypeError(`secure-exec ${label} contains sparse byte values`);
+    }
+    if (
+      !denseBytes.every(
+        (byte) => typeof byte === 'number' && Number.isInteger(byte) && byte >= 0 && byte <= 255,
+      )
+    ) {
+      throw new TypeError(`secure-exec ${label} contains an invalid byte value`);
+    }
+    return Buffer.from(denseBytes);
+  };
+
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+  if (ArrayBuffer.isView(value)) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (typeof value === 'string') {
+    return Buffer.from(value);
+  }
+  if (Array.isArray(value)) {
+    return decodeByteArray(value);
+  }
+  if (
+    value &&
+    typeof value === 'object' &&
+    Array.isArray(value.data)
+  ) {
+    return decodeByteArray(value.data);
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value);
+    if (
+      entries.length > 0 &&
+      entries.every(
+        ([key, byte]) =>
+          /^\d+$/.test(key) && typeof byte === 'number' && Number.isInteger(byte),
+      )
+    ) {
+      const bytes = [];
+      for (const [key, byte] of entries) {
+        const index = Number(key);
+        if (index < 0 || index >= entries.length || bytes[index] !== undefined) {
+          throw new TypeError(`secure-exec ${label} contains non-contiguous byte keys`);
+        }
+        bytes[index] = byte;
+      }
+      if (bytes.length !== entries.length || bytes.some((byte) => byte === undefined)) {
+        throw new TypeError(`secure-exec ${label} contains sparse byte keys`);
+      }
+      return decodeByteArray(bytes);
+    }
+  }
+  if (
+    value &&
+    typeof value === 'object' &&
+    typeof value.data === 'string'
+  ) {
+    return Buffer.from(value.data, 'base64');
+  }
+
+  const base64Value =
+    value &&
+    typeof value === 'object' &&
+    typeof (value.base64 ?? value.dataBase64) === 'string'
+      ? (value.base64 ?? value.dataBase64)
+      : null;
+  if (base64Value == null) {
+    throw new TypeError(`secure-exec ${label} must be an encoded bytes payload`);
+  }
+  return Buffer.from(base64Value, 'base64');
+}
+
+function normalizeFsReadTarget(buffer, offset, length) {
+  const target = toGuestBufferView(buffer, 'read buffer');
+  const normalizedOffset = offset == null ? 0 : normalizeFsInteger(offset, 'read offset');
+  const available = target.byteLength - normalizedOffset;
+  if (normalizedOffset > target.byteLength) {
+    throw new RangeError('secure-exec read offset is out of range');
+  }
+  const normalizedLength =
+    length == null ? available : normalizeFsInteger(length, 'read length');
+  if (normalizedLength > available) {
+    throw new RangeError('secure-exec read length is out of range');
+  }
+  return { target, offset: normalizedOffset, length: normalizedLength };
+}
+
+function normalizeFsWriteOperation(value, offsetOrPosition, lengthOrEncoding, position) {
+  if (typeof value === 'string') {
+    const normalizedPosition = normalizeFsPosition(offsetOrPosition);
+    const encoding =
+      typeof lengthOrEncoding === 'string' ? lengthOrEncoding : 'utf8';
+    return {
+      payload: normalizeFsWriteContents(value, { encoding }),
+      position: normalizedPosition,
+      result: value,
+    };
+  }
+
+  const source = toGuestBufferView(value, 'write buffer');
+  const normalizedOffset =
+    offsetOrPosition == null ? 0 : normalizeFsInteger(offsetOrPosition, 'write offset');
+  const available = source.byteLength - normalizedOffset;
+  if (normalizedOffset > source.byteLength) {
+    throw new RangeError('secure-exec write offset is out of range');
+  }
+  const normalizedLength =
+    lengthOrEncoding == null
+      ? available
+      : normalizeFsInteger(lengthOrEncoding, 'write length');
+  if (normalizedLength > available) {
+    throw new RangeError('secure-exec write length is out of range');
+  }
+
+  return {
+    payload: source.subarray(normalizedOffset, normalizedOffset + normalizedLength),
+    position: normalizeFsPosition(position),
+    result: value,
+  };
+}
+
+function normalizeFsBytesResult(value, label) {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'bigint'
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw new TypeError(`secure-exec ${label} must be numeric`);
+  }
+  return Math.trunc(numeric);
+}
+
+function requireFsCallback(callback, methodName) {
+  if (typeof callback !== 'function') {
+    throw new TypeError(`secure-exec ${methodName} requires a callback`);
+  }
+  return callback;
+}
+
+function invokeFsCallback(callback, error, ...results) {
+  queueMicrotask(() => callback(error, ...results));
+}
+
+function readKernelStdinForFs(target, buffer, callback) {
+  if (target.length === 0) {
+    invokeFsCallback(callback, null, 0, buffer);
+    return;
+  }
+
+  let idleDelayMs = 1;
+  const attempt = () => {
+    requireFsSyncRpcBridge()
+      .call('__kernel_stdin_read', [target.length, 5])
+      .then(
+        (payload) => {
+          if (payload == null) {
+            const nextDelayMs = idleDelayMs;
+            idleDelayMs = Math.min(idleDelayMs * 2, 25);
+            setTimeout(attempt, nextDelayMs);
+            return;
+          }
+          if (payload && payload.done === true) {
+            invokeFsCallback(callback, null, 0, buffer);
+            return;
+          }
+          const dataBase64 =
+            payload &&
+            typeof payload === 'object' &&
+            typeof payload.dataBase64 === 'string'
+              ? payload.dataBase64
+              : '';
+          if (!dataBase64) {
+            const nextDelayMs = idleDelayMs;
+            idleDelayMs = Math.min(idleDelayMs * 2, 25);
+            setTimeout(attempt, nextDelayMs);
+            return;
+          }
+          idleDelayMs = 1;
+          const chunk = Buffer.from(dataBase64, 'base64');
+          const bytesRead = Math.min(target.length, chunk.byteLength);
+          chunk.copy(target.target, target.offset, 0, bytesRead);
+          invokeFsCallback(callback, null, bytesRead, buffer);
+        },
+        (error) => invokeFsCallback(callback, error),
+      );
+  };
+  attempt();
+}
+
+function createFsWatchUnavailableError(methodName) {
+  const error = new Error(
+    `secure-exec ${methodName} is unavailable because the kernel has no file-watching API`,
+  );
+  error.code = 'ERR_AGENTOS_FS_WATCH_UNAVAILABLE';
+  return error;
+}
+
+function createRpcBackedFsCallbacks(fromGuestDir = '/') {
+  const call = (method, args = []) => requireFsSyncRpcBridge().call(method, args);
+
+  return {
+    close: (fd, callback) => {
+      const done = requireFsCallback(callback, 'fs.close');
+      call('fs.close', [normalizeFsFd(fd)]).then(
+        () => invokeFsCallback(done, null),
+        (error) => invokeFsCallback(done, error),
+      );
+    },
+    fstat: (fd, options, callback) => {
+      const done = requireFsCallback(
+        typeof options === 'function' ? options : callback,
+        'fs.fstat',
+      );
+      call('fs.fstat', [normalizeFsFd(fd)]).then(
+        (stat) => invokeFsCallback(done, null, createGuestFsStats(stat)),
+        (error) => invokeFsCallback(done, error),
+      );
+    },
+    open: (target, flags, mode, callback) => {
+      if (typeof flags === 'function') {
+        callback = flags;
+        flags = undefined;
+        mode = undefined;
+      } else if (typeof mode === 'function') {
+        callback = mode;
+        mode = undefined;
+      }
+
+      const done = requireFsCallback(callback, 'fs.open');
+      call('fs.open', [
+        resolveGuestFsPath(target, fromGuestDir),
+        normalizeFsOpenFlags(flags ?? 'r'),
+        normalizeFsMode(mode),
+      ]).then(
+        (fd) => invokeFsCallback(done, null, normalizeFsFd(fd)),
+        (error) => invokeFsCallback(done, error),
+      );
+    },
+    read: (fd, buffer, offset, length, position, callback) => {
+      if (typeof offset === 'function') {
+        callback = offset;
+        offset = undefined;
+        length = undefined;
+        position = undefined;
+      } else if (typeof length === 'function') {
+        callback = length;
+        length = undefined;
+        position = undefined;
+      } else if (typeof position === 'function') {
+        callback = position;
+        position = undefined;
+      }
+
+      const done = requireFsCallback(callback, 'fs.read');
+      const target = normalizeFsReadTarget(buffer, offset, length);
+      const normalizedFd = normalizeFsFd(fd);
+      const normalizedPosition = normalizeFsPosition(position);
+      if (normalizedFd === 0 && normalizedPosition == null) {
+        readKernelStdinForFs(target, buffer, done);
+        return;
+      }
+      call('fs.read', [
+        normalizedFd,
+        target.length,
+        normalizedPosition,
+      ]).then(
+        (payload) => {
+          const chunk = decodeFsBytesPayload(payload, 'fs.read result');
+          const bytesRead = Math.min(target.length, chunk.byteLength);
+          chunk.copy(target.target, target.offset, 0, bytesRead);
+          invokeFsCallback(done, null, bytesRead, buffer);
+        },
+        (error) => invokeFsCallback(done, error),
+      );
+    },
+    write: (fd, value, offsetOrPosition, lengthOrEncoding, position, callback) => {
+      if (typeof offsetOrPosition === 'function') {
+        callback = offsetOrPosition;
+        offsetOrPosition = undefined;
+        lengthOrEncoding = undefined;
+        position = undefined;
+      } else if (typeof lengthOrEncoding === 'function') {
+        callback = lengthOrEncoding;
+        lengthOrEncoding = undefined;
+        position = undefined;
+      } else if (typeof position === 'function') {
+        callback = position;
+        position = undefined;
+      }
+
+      const done = requireFsCallback(callback, 'fs.write');
+      const write = normalizeFsWriteOperation(
+        value,
+        offsetOrPosition,
+        lengthOrEncoding,
+        position,
+      );
+      const normalizedFd = normalizeFsFd(fd);
+      if (isStdioFd(normalizedFd)) {
+        try {
+          const bytesWritten = writeToStdioFd(normalizedFd, write.payload);
+          invokeFsCallback(done, null, bytesWritten, write.result);
+        } catch (error) {
+          invokeFsCallback(done, error);
+        }
+        return;
+      }
+      call('fs.write', [normalizedFd, write.payload, write.position]).then(
+        (bytesWritten) =>
+          invokeFsCallback(
+            done,
+            null,
+            normalizeFsBytesResult(bytesWritten, 'fs.write result'),
+            write.result,
+          ),
+        (error) => invokeFsCallback(done, error),
+      );
+    },
+  };
+}
+
+function createRpcBackedFsSync(fromGuestDir = '/') {
+  const callSync = (method, args = []) => callFsRpcSync(method, args);
+
+  return {
+    accessSync: (target, mode) =>
+      callSync('fs.accessSync', [resolveGuestFsPath(target, fromGuestDir), mode]),
+    chmodSync: (target, mode) =>
+      callSync('fs.chmodSync', [resolveGuestFsPath(target, fromGuestDir), mode]),
+    chownSync: (target, uid, gid) =>
+      callSync('fs.chownSync', [resolveGuestFsPath(target, fromGuestDir), uid, gid]),
+    closeSync: (fd) => {
+      const normalizedFd = normalizeFsFd(fd);
+      if (isStdioFd(normalizedFd)) {
+        return undefined;
+      }
+      return callSync('fs.closeSync', [normalizedFd]);
+    },
+    copyFileSync: (source, destination, mode) =>
+      callSync('fs.copyFileSync', [
+        resolveGuestFsPath(source, fromGuestDir),
+        resolveGuestFsPath(destination, fromGuestDir),
+        mode,
+      ]),
+    existsSync: (target) => {
+      try {
+        return Boolean(callSync('fs.existsSync', [resolveGuestFsPath(target, fromGuestDir)]));
+      } catch {
+        return false;
+      }
+    },
+    fstatSync: (fd) => {
+      const normalizedFd = normalizeFsFd(fd);
+      if (isStdioFd(normalizedFd)) {
+        return hostFs.fstatSync(normalizedFd);
+      }
+      return createGuestFsStats(callSync('fs.fstatSync', [normalizedFd]));
+    },
+    ftruncateSync: (fd, len) => {
+      const normalizedFd = normalizeFsFd(fd);
+      if (isStdioFd(normalizedFd)) {
+        return hostFs.ftruncateSync(normalizedFd, len);
+      }
+      return callSync('fs.ftruncateSync', [normalizedFd, normalizeFsInteger(len ?? 0, 'length')]);
+    },
+    linkSync: (existingPath, newPath) =>
+      callSync('fs.linkSync', [
+        resolveGuestFsPath(existingPath, fromGuestDir),
+        resolveGuestFsPath(newPath, fromGuestDir),
+      ]),
+    lstatSync: (target) =>
+      createGuestFsStats(callSync('fs.lstatSync', [resolveGuestFsPath(target, fromGuestDir)])),
+    mkdirSync: (target, options) =>
+      callSync('fs.mkdirSync', [resolveGuestFsPath(target, fromGuestDir), options]),
+    openSync: (target, flags, mode) =>
+      normalizeFsFd(
+        callSync('fs.openSync', [
+          resolveGuestFsPath(target, fromGuestDir),
+          normalizeFsOpenFlags(flags ?? 'r'),
+          normalizeFsMode(mode),
+        ]),
+      ),
+    readFileSync: (target, options) =>
+      callSync('fs.readFileSync', [
+        resolveGuestFsPath(target, fromGuestDir),
+        normalizeFsReadOptions(options),
+      ]),
+    readSync: (fd, buffer, offset, length, position) => {
+      const normalizedFd = normalizeFsFd(fd);
+      const target = normalizeFsReadTarget(buffer, offset, length);
+      if (isStdioFd(normalizedFd)) {
+        return hostFs.readSync(
+          normalizedFd,
+          target.target,
+          target.offset,
+          target.length,
+          position,
+        );
+      }
+      const chunk = decodeFsBytesPayload(
+        callSync('fs.readSync', [
+          normalizedFd,
+          target.length,
+          normalizeFsPosition(position),
+        ]),
+        'fs.readSync result',
+      );
+      const bytesRead = Math.min(target.length, chunk.byteLength);
+      chunk.copy(target.target, target.offset, 0, bytesRead);
+      return bytesRead;
+    },
+    readdirSync: (target, options) => {
+      const guestPath = resolveGuestFsPath(target, fromGuestDir);
+      const entries = callSync('fs.readdirSync', [guestPath, options]);
+      if (!options || typeof options !== 'object' || !options.withFileTypes) {
+        return entries;
+      }
+
+      return entries.map((name) =>
+        createGuestDirent(
+          name,
+          createGuestFsStats(callSync('fs.lstatSync', [path.posix.join(guestPath, name)])),
+        ),
+      );
+    },
+    readlinkSync: (target) =>
+      callSync('fs.readlinkSync', [resolveGuestFsPath(target, fromGuestDir)]),
+    renameSync: (source, destination) =>
+      callSync('fs.renameSync', [
+        resolveGuestFsPath(source, fromGuestDir),
+        resolveGuestFsPath(destination, fromGuestDir),
+      ]),
+    rmdirSync: (target, options) =>
+      callSync('fs.rmdirSync', [resolveGuestFsPath(target, fromGuestDir), options]),
+    statSync: (target) =>
+      createGuestFsStats(callSync('fs.statSync', [resolveGuestFsPath(target, fromGuestDir)])),
+    symlinkSync: (target, linkPath, type) =>
+      callSync('fs.symlinkSync', [
+        resolveGuestSymlinkTarget(target, fromGuestDir),
+        resolveGuestFsPath(linkPath, fromGuestDir),
+        type,
+      ]),
+    truncateSync: (target, len) =>
+      callSync('fs.truncateSync', [
+        resolveGuestFsPath(target, fromGuestDir),
+        normalizeFsInteger(len ?? 0, 'length'),
+      ]),
+    unlinkSync: (target) =>
+      callSync('fs.unlinkSync', [resolveGuestFsPath(target, fromGuestDir)]),
+    utimesSync: (target, atime, mtime) =>
+      callSync('fs.utimesSync', [
+        resolveGuestFsPath(target, fromGuestDir),
+        normalizeFsTimeValue(atime),
+        normalizeFsTimeValue(mtime),
+      ]),
+    writeSync: (fd, value, offsetOrPosition, lengthOrEncoding, position) => {
+      const normalizedFd = normalizeFsFd(fd);
+      const write = normalizeFsWriteOperation(
+        value,
+        offsetOrPosition,
+        lengthOrEncoding,
+        position,
+      );
+      if (isStdioFd(normalizedFd)) {
+        return writeToStdioFd(normalizedFd, write.payload);
+      }
+      return normalizeFsBytesResult(
+        callSync('fs.writeSync', [normalizedFd, write.payload, write.position]),
+        'fs.writeSync result',
+      );
+    },
+    writeFileSync: (target, contents, options) =>
+      callSync('fs.writeFileSync', [
+        resolveGuestFsPath(target, fromGuestDir),
+        normalizeFsWriteContents(contents, options),
+        normalizeFsReadOptions(options),
+      ]),
+  };
+}
+
+function createGuestReadStreamClass(fromGuestDir = '/') {
+  const call = (method, args = []) => requireFsSyncRpcBridge().call(method, args);
+
+  return class SecureExecReadStream extends Readable {
+    constructor(target, options = {}) {
+      super({
+        autoDestroy: options.autoClose !== false,
+        emitClose: options.emitClose !== false,
+        highWaterMark: options.highWaterMark,
+      });
+
+      this.path = target;
+      this.fd = typeof options.fd === 'number' ? options.fd : null;
+      this.flags = options.flags ?? 'r';
+      this.mode = options.mode;
+      this.autoClose = options.autoClose !== false;
+      this.start = options.start;
+      this.end = options.end;
+      this.bytesRead = 0;
+      this.pending = false;
+      this.position =
+        options.start == null ? null : normalizeFsInteger(options.start, 'stream start');
+      this.guestDir = fromGuestDir;
+
+      if (options.end != null) {
+        this.end = normalizeFsInteger(options.end, 'stream end');
+        if (this.position != null && this.end < this.position) {
+          throw new RangeError('secure-exec read stream end must be >= start');
+        }
+      }
+
+      if (options.encoding) {
+        this.setEncoding(options.encoding);
+      }
+    }
+
+    _construct(callback) {
+      if (typeof this.fd === 'number') {
+        this.emit('open', this.fd);
+        this.emit('ready');
+        callback();
+        return;
+      }
+
+      call('fs.open', [
+        resolveGuestFsPath(this.path, this.guestDir),
+        normalizeFsOpenFlags(this.flags),
+        normalizeFsMode(this.mode),
+      ]).then(
+        (fd) => {
+          this.fd = normalizeFsFd(fd);
+          this.emit('open', this.fd);
+          this.emit('ready');
+          callback();
+        },
+        (error) => callback(error),
+      );
+    }
+
+    _read(size) {
+      if (this.pending || typeof this.fd !== 'number') {
+        return;
+      }
+
+      let length = size > 0 ? size : this.readableHighWaterMark ?? GUEST_FS_DEFAULT_STREAM_HWM;
+      if (this.position != null && this.end != null) {
+        const remaining = this.end - this.position + 1;
+        if (remaining <= 0) {
+          this.push(null);
+          return;
+        }
+        length = Math.min(length, remaining);
+      }
+
+      this.pending = true;
+      call('fs.read', [this.fd, length, this.position]).then(
+        (payload) => {
+          this.pending = false;
+          const chunk = decodeFsBytesPayload(payload, 'fs.createReadStream chunk');
+          if (this.position != null) {
+            this.position += chunk.byteLength;
+          }
+          this.bytesRead += chunk.byteLength;
+          if (chunk.byteLength === 0) {
+            this.push(null);
+            return;
+          }
+          this.push(chunk);
+        },
+        (error) => {
+          this.pending = false;
+          this.destroy(error);
+        },
+      );
+    }
+
+    _destroy(error, callback) {
+      if (!this.autoClose || typeof this.fd !== 'number') {
+        callback(error);
+        return;
+      }
+
+      const fd = this.fd;
+      this.fd = null;
+      call('fs.close', [fd]).then(
+        () => callback(error),
+        (closeError) => callback(error ?? closeError),
+      );
+    }
+  };
+}
+
+function createGuestWriteStreamClass(fromGuestDir = '/') {
+  const call = (method, args = []) => requireFsSyncRpcBridge().call(method, args);
+
+  return class SecureExecWriteStream extends Writable {
+    constructor(target, options = {}) {
+      super({
+        autoDestroy: options.autoClose !== false,
+        defaultEncoding: options.defaultEncoding,
+        decodeStrings: options.decodeStrings !== false,
+        emitClose: options.emitClose !== false,
+        highWaterMark: options.highWaterMark,
+      });
+
+      this.path = target;
+      this.fd = typeof options.fd === 'number' ? options.fd : null;
+      this.flags = options.flags ?? 'w';
+      this.mode = options.mode;
+      this.autoClose = options.autoClose !== false;
+      this.bytesWritten = 0;
+      this.position =
+        options.start == null ? null : normalizeFsInteger(options.start, 'stream start');
+      this.guestDir = fromGuestDir;
+    }
+
+    _construct(callback) {
+      if (typeof this.fd === 'number') {
+        this.emit('open', this.fd);
+        this.emit('ready');
+        callback();
+        return;
+      }
+
+      call('fs.open', [
+        resolveGuestFsPath(this.path, this.guestDir),
+        normalizeFsOpenFlags(this.flags),
+        normalizeFsMode(this.mode),
+      ]).then(
+        (fd) => {
+          this.fd = normalizeFsFd(fd);
+          this.emit('open', this.fd);
+          this.emit('ready');
+          callback();
+        },
+        (error) => callback(error),
+      );
+    }
+
+    _write(chunk, encoding, callback) {
+      const write = normalizeFsWriteOperation(chunk, 0, chunk.length, this.position);
+      call('fs.write', [normalizeFsFd(this.fd), write.payload, write.position]).then(
+        (bytesWritten) => {
+          const normalized = normalizeFsBytesResult(
+            bytesWritten,
+            'fs.createWriteStream result',
+          );
+          this.bytesWritten += normalized;
+          if (this.position != null) {
+            this.position += normalized;
+          }
+          callback();
+        },
+        (error) => callback(error),
+      );
+    }
+
+    _destroy(error, callback) {
+      if (!this.autoClose || typeof this.fd !== 'number') {
+        callback(error);
+        return;
+      }
+
+      const fd = this.fd;
+      this.fd = null;
+      call('fs.close', [fd]).then(
+        () => callback(error),
+        (closeError) => callback(error ?? closeError),
+      );
+    }
+  };
+}
+
+function wrapFsModule(fsModule, fromGuestDir = '/') {
+  const wrapPathFirst = (methodName) => {
+    const fn = fsModule[methodName];
+    return (...args) =>
+      fn(translateGuestPath(args[0], fromGuestDir), ...args.slice(1));
+  };
+  const wrapRenameLike = (methodName) => {
+    const fn = fsModule[methodName];
+    return (...args) =>
+      fn(
+        translateGuestPath(args[0], fromGuestDir),
+        translateGuestPath(args[1], fromGuestDir),
+        ...args.slice(2),
+      );
+  };
+  const existsSync = fsModule.existsSync.bind(fsModule);
+  const readdirSync = fsModule.readdirSync.bind(fsModule);
+  const ReadStream = createGuestReadStreamClass(fromGuestDir);
+  const WriteStream = createGuestWriteStreamClass(fromGuestDir);
+
+  const wrapped = {
+    ...fsModule,
+    ReadStream,
+    WriteStream,
+    accessSync: wrapPathFirst('accessSync'),
+    appendFileSync: wrapPathFirst('appendFileSync'),
+    chmodSync: wrapPathFirst('chmodSync'),
+    chownSync: wrapPathFirst('chownSync'),
+    createReadStream: (target, options) => new ReadStream(target, options),
+    createWriteStream: (target, options) => new WriteStream(target, options),
+    existsSync: (target) => {
+      const translated = translateGuestPath(target, fromGuestDir);
+      return existsSync(translated) || guestMappedChildNames(target).length > 0;
+    },
+    lstatSync: wrapPathFirst('lstatSync'),
+    mkdirSync: wrapPathFirst('mkdirSync'),
+    readFileSync: wrapPathFirst('readFileSync'),
+    readdirSync: (target, options) => {
+      const translated = translateGuestPath(target, fromGuestDir);
+      if (existsSync(translated)) {
+        return readdirSync(translated, options);
+      }
+
+      const synthetic = guestMappedChildNames(target);
+      if (synthetic.length > 0) {
+        return options && typeof options === 'object' && options.withFileTypes
+          ? synthetic.map((name) => createSyntheticDirent(name))
+          : synthetic;
+      }
+
+      return readdirSync(translated, options);
+    },
+    readlinkSync: wrapPathFirst('readlinkSync'),
+    realpathSync: wrapPathFirst('realpathSync'),
+    renameSync: wrapRenameLike('renameSync'),
+    rmSync: wrapPathFirst('rmSync'),
+    rmdirSync: wrapPathFirst('rmdirSync'),
+    statSync: wrapPathFirst('statSync'),
+    symlinkSync: wrapRenameLike('symlinkSync'),
+    unlinkSync: wrapPathFirst('unlinkSync'),
+    unwatchFile: () => {},
+    utimesSync: wrapPathFirst('utimesSync'),
+    watch: () => {
+      throw createFsWatchUnavailableError('fs.watch');
+    },
+    watchFile: () => {
+      throw createFsWatchUnavailableError('fs.watchFile');
+    },
+    writeFileSync: wrapPathFirst('writeFileSync'),
+  };
+
+  if (fsModule.promises) {
+    wrapped.promises = {
+      ...fsModule.promises,
+      access: wrapPathFirstAsync(fsModule.promises.access, fromGuestDir),
+      appendFile: wrapPathFirstAsync(fsModule.promises.appendFile, fromGuestDir),
+      chmod: wrapPathFirstAsync(fsModule.promises.chmod, fromGuestDir),
+      chown: wrapPathFirstAsync(fsModule.promises.chown, fromGuestDir),
+      lstat: wrapPathFirstAsync(fsModule.promises.lstat, fromGuestDir),
+      mkdir: wrapPathFirstAsync(fsModule.promises.mkdir, fromGuestDir),
+      open: wrapPathFirstAsync(fsModule.promises.open, fromGuestDir),
+      readFile: wrapPathFirstAsync(fsModule.promises.readFile, fromGuestDir),
+      readdir: wrapPathFirstAsync(fsModule.promises.readdir, fromGuestDir),
+      readlink: wrapPathFirstAsync(fsModule.promises.readlink, fromGuestDir),
+      realpath: wrapPathFirstAsync(fsModule.promises.realpath, fromGuestDir),
+      rename: wrapRenameLikeAsync(fsModule.promises.rename, fromGuestDir),
+      rm: wrapPathFirstAsync(fsModule.promises.rm, fromGuestDir),
+      rmdir: wrapPathFirstAsync(fsModule.promises.rmdir, fromGuestDir),
+      stat: wrapPathFirstAsync(fsModule.promises.stat, fromGuestDir),
+      symlink: wrapRenameLikeAsync(fsModule.promises.symlink, fromGuestDir),
+      unlink: wrapPathFirstAsync(fsModule.promises.unlink, fromGuestDir),
+      utimes: wrapPathFirstAsync(fsModule.promises.utimes, fromGuestDir),
+      writeFile: wrapPathFirstAsync(fsModule.promises.writeFile, fromGuestDir),
+    };
+    Object.assign(wrapped.promises, createRpcBackedFsPromises(fromGuestDir));
+  }
+
+  Object.assign(wrapped, createRpcBackedFsCallbacks(fromGuestDir));
+  Object.assign(wrapped, createRpcBackedFsSync(fromGuestDir));
+
+  return wrapped;
+}
+
+function wrapPathFirstAsync(fn, fromGuestDir) {
+  return (...args) =>
+    fn(translateGuestPath(args[0], fromGuestDir), ...args.slice(1));
+}
+
+function wrapRenameLikeAsync(fn, fromGuestDir) {
+  return (...args) =>
+    fn(
+      translateGuestPath(args[0], fromGuestDir),
+      translateGuestPath(args[1], fromGuestDir),
+      ...args.slice(2),
+    );
+}
+
+function createRpcBackedChildProcessModule(fromGuestDir = '/') {
+  const RPC_POLL_WAIT_MS = 50;
+  const RPC_IDLE_POLL_DELAY_MS = 10;
+  const INTERNAL_BOOTSTRAP_ENV_KEYS = [
+    'AGENTOS_ALLOWED_NODE_BUILTINS',
+    'AGENTOS_GUEST_PATH_MAPPINGS',
+    'AGENTOS_LOOPBACK_EXEMPT_PORTS',
+    'AGENTOS_VIRTUAL_PROCESS_EXEC_PATH',
+    'AGENTOS_VIRTUAL_PROCESS_UID',
+    'AGENTOS_VIRTUAL_PROCESS_GID',
+    'AGENTOS_VIRTUAL_PROCESS_VERSION',
+  ];
+
+  const bridge = () => requireSecureExecSyncRpcBridge();
+  const createUnsupportedChildProcessError = (subject) => {
+    const error = new Error(`${subject} is not supported by the secure-exec child_process polyfill`);
+    error.code = 'ERR_AGENTOS_CHILD_PROCESS_UNSUPPORTED';
+    return error;
+  };
+  const normalizeSpawnInvocation = (args, options) => {
+    if (!Array.isArray(args)) {
+      return {
+        args: [],
+        options: args && typeof args === 'object' ? args : options,
+      };
+    }
+
+    return {
+      args,
+      options,
+    };
+  };
+  const normalizeExecInvocation = (options, callback) =>
+    typeof options === 'function'
+      ? { options: undefined, callback: options }
+      : { options, callback };
+  const normalizeExecFileInvocation = (args, options, callback) => {
+    if (typeof args === 'function') {
+      return { args: [], options: undefined, callback: args };
+    }
+    if (!Array.isArray(args)) {
+      return {
+        args: [],
+        options: args,
+        callback: typeof options === 'function' ? options : callback,
+      };
+    }
+    if (typeof options === 'function') {
+      return { args, options: undefined, callback: options };
+    }
+    return { args, options, callback };
+  };
+  const normalizeChildProcessSignal = (value) =>
+    typeof value === 'string' && value.length > 0 ? value : 'SIGTERM';
+  const normalizeChildProcessEncoding = (options) =>
+    typeof options?.encoding === 'string' ? options.encoding : null;
+  const normalizeChildProcessTimeout = (options) =>
+    Number.isInteger(options?.timeout) && options.timeout > 0 ? options.timeout : null;
+  const normalizeChildProcessEnv = (env) => {
+    const source = env && typeof env === 'object' ? env : {};
+    const merged = {
+      ...Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([key, value]) => typeof value === 'string' && !isInternalProcessEnvKey(key),
+        ),
+      ),
+      ...Object.fromEntries(
+        Object.entries(source).filter(
+          ([key, value]) => value != null && !isInternalProcessEnvKey(key),
+        ),
+      ),
+    };
+    delete merged.NODE_OPTIONS;
+
+    return Object.fromEntries(
+      Object.entries(merged).map(([key, value]) => [key, String(value)]),
+    );
+  };
+  const createChildProcessInternalBootstrapEnv = () => {
+    const bootstrapEnv = {};
+
+    for (const key of INTERNAL_BOOTSTRAP_ENV_KEYS) {
+      if (typeof HOST_PROCESS_ENV[key] === 'string') {
+        bootstrapEnv[key] = HOST_PROCESS_ENV[key];
+      }
+    }
+    // Virtual OS identity is no longer carried as `AGENTOS_VIRTUAL_OS_*` env;
+    // nested child executions receive it via the typed `guest_runtime` →
+    // `__agentOSVirtualOs` global like every other guest execution.
+
+    return bootstrapEnv;
+  };
+  const normalizeChildProcessStdioEntry = (value, index) => {
+    if (value == null) {
+      return 'pipe';
+    }
+    if (value === 'pipe' || value === 'ignore' || value === 'inherit') {
+      return value;
+    }
+    if (value === 'ipc') {
+      throw createUnsupportedChildProcessError('child_process IPC stdio');
+    }
+    if (value === null && index === 0) {
+      return 'pipe';
+    }
+    throw createUnsupportedChildProcessError(`child_process stdio=${String(value)}`);
+  };
+  const normalizeChildProcessStdio = (stdio) => {
+    if (stdio == null) {
+      return ['pipe', 'pipe', 'pipe'];
+    }
+    if (typeof stdio === 'string') {
+      return [
+        normalizeChildProcessStdioEntry(stdio, 0),
+        normalizeChildProcessStdioEntry(stdio, 1),
+        normalizeChildProcessStdioEntry(stdio, 2),
+      ];
+    }
+    if (!Array.isArray(stdio)) {
+      throw createUnsupportedChildProcessError('child_process stdio configuration');
+    }
+    return [0, 1, 2].map((index) =>
+      normalizeChildProcessStdioEntry(stdio[index], index),
+    );
+  };
+  const normalizeChildProcessOptions = (options, shell = false) => {
+    if (options != null && typeof options !== 'object') {
+      throw new TypeError('child_process options must be an object');
+    }
+    if (options?.detached) {
+      throw createUnsupportedChildProcessError('child_process detached');
+    }
+
+    return {
+      cwd:
+        typeof options?.cwd === 'string'
+          ? resolveGuestFsPath(options.cwd, fromGuestDir)
+          : fromGuestDir,
+      env: normalizeChildProcessEnv(options?.env),
+      internalBootstrapEnv: createChildProcessInternalBootstrapEnv(),
+      shell:
+        shell ||
+        options?.shell === true ||
+        typeof options?.shell === 'string',
+      stdio: normalizeChildProcessStdio(options?.stdio),
+      timeout: normalizeChildProcessTimeout(options),
+      killSignal: normalizeChildProcessSignal(options?.killSignal),
+    };
+  };
+  const createRpcSpawnRequest = (command, args, options, shell = false) => ({
+    command: String(command),
+    args: Array.isArray(args) ? args.map((arg) => String(arg)) : [],
+    options: normalizeChildProcessOptions(options, shell),
+  });
+  const callSpawn = (command, args, options, shell = false) =>
+    bridge().callSync('child_process.spawn', [
+      createRpcSpawnRequest(command, args, options, shell),
+    ]);
+  const callPoll = (childId, waitMs = 0) =>
+    bridge().callSync('child_process.poll', [childId, waitMs]);
+  const callKill = (childId, signal) =>
+    bridge().callSync('child_process.kill', [childId, normalizeChildProcessSignal(signal)]);
+  const callWriteStdin = (childId, chunk) =>
+    bridge().callSync('child_process.write_stdin', [childId, toGuestBufferView(chunk, 'stdin chunk')]);
+  const callCloseStdin = (childId) =>
+    bridge().callSync('child_process.close_stdin', [childId]);
+  const encodeChildProcessOutput = (buffer, encoding) =>
+    encoding ? buffer.toString(encoding) : buffer;
+  const createChildProcessExecError = (subject, exitCode, signal, stdout, stderr) => {
+    const error = new Error(
+      signal == null
+        ? `${subject} exited with code ${exitCode ?? 'unknown'}`
+        : `${subject} terminated by signal ${signal}`,
+    );
+    error.code = signal == null ? 'ERR_AGENTOS_CHILD_PROCESS_EXIT' : signal;
+    error.killed = signal != null;
+    error.signal = signal;
+    error.stdout = stdout;
+    error.stderr = stderr;
+    if (typeof exitCode === 'number') {
+      error.status = exitCode;
+    }
+    return error;
+  };
+  const createSpawnSyncTimeoutError = (command) => {
+    const error = new Error(`spawnSync ${command} ETIMEDOUT`);
+    error.code = 'ETIMEDOUT';
+    return error;
+  };
+  const createSpawnSyncResult = (pid, stdout, stderr, exitCode, signal, error, encoding) => {
+    const encodedStdout = encodeChildProcessOutput(stdout, encoding);
+    const encodedStderr = encodeChildProcessOutput(stderr, encoding);
+    return {
+      pid,
+      output: [null, encodedStdout, encodedStderr],
+      stdout: encodedStdout,
+      stderr: encodedStderr,
+      status: typeof exitCode === 'number' ? exitCode : null,
+      signal: signal ?? null,
+      error,
+    };
+  };
+  const runChildProcessSync = (command, args, options, shell = false) => {
+    const normalizedOptions = normalizeChildProcessOptions(options, shell);
+    const encoding = normalizeChildProcessEncoding(options);
+    const stdout = [];
+    const stderr = [];
+    let child;
+    try {
+      child = callSpawn(command, args, options, shell);
+    } catch (error) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        error.code == null &&
+        /ERR_NATIVE_BINARY_NOT_SUPPORTED\b/i.test(String(error.message ?? error))
+      ) {
+        error.code = 'ERR_NATIVE_BINARY_NOT_SUPPORTED';
+      }
+      return createSpawnSyncResult(
+        0,
+        Buffer.alloc(0),
+        Buffer.from(error instanceof Error ? error.message : String(error)),
+        null,
+        null,
+        error,
+        encoding,
+      );
+    }
+
+    const startedAt = Date.now();
+    let exitCode = null;
+    let signal = null;
+    let error = null;
+    while (exitCode == null && signal == null) {
+      if (
+        normalizedOptions.timeout != null &&
+        Date.now() - startedAt > normalizedOptions.timeout
+      ) {
+        callKill(child.childId, normalizedOptions.killSignal);
+        signal = normalizedOptions.killSignal;
+        error = createSpawnSyncTimeoutError(command);
+        break;
+      }
+
+      const event = callPoll(child.childId, RPC_POLL_WAIT_MS);
+      if (!event) {
+        continue;
+      }
+
+      if (event.type === 'stdout') {
+        stdout.push(decodeFsBytesPayload(event.data, 'child_process.spawnSync stdout'));
+      } else if (event.type === 'stderr') {
+        stderr.push(decodeFsBytesPayload(event.data, 'child_process.spawnSync stderr'));
+      } else if (event.type === 'exit') {
+        exitCode =
+          typeof event.exitCode === 'number' ? Math.trunc(event.exitCode) : null;
+        signal = typeof event.signal === 'string' ? event.signal : null;
+      }
+    }
+
+    const stdoutBuffer = Buffer.concat(stdout);
+    const stderrBuffer = Buffer.concat(stderr);
+    return createSpawnSyncResult(
+      Number(child.pid) || 0,
+      stdoutBuffer,
+      stderrBuffer,
+      exitCode,
+      signal,
+      error,
+      encoding,
+    );
+  };
+
+  class SecureExecChildReadable extends Readable {
+    _read() {}
+  }
+
+  class SecureExecChildWritable extends Writable {
+    constructor(childId) {
+      super();
+      this.childId = childId;
+    }
+
+    _write(chunk, encoding, callback) {
+      try {
+        callWriteStdin(this.childId, chunk);
+        callback();
+      } catch (error) {
+        callback(error);
+      }
+    }
+
+    _final(callback) {
+      try {
+        callCloseStdin(this.childId);
+        callback();
+      } catch (error) {
+        callback(error);
+      }
+    }
+  }
+
+  const finalizeChildStream = (stream) => {
+    if (!stream || stream.destroyed) {
+      return;
+    }
+    stream.push(null);
+  };
+  const emitChildLifecycleEvents = (child) => {
+    queueMicrotask(() => {
+      child.emit('exit', child.exitCode, child.signalCode);
+      child.emit('close', child.exitCode, child.signalCode);
+    });
+  };
+  const deliverChildOutput = (child, channel, payload) => {
+    const chunk = decodeFsBytesPayload(payload, `child_process.${channel}`);
+    const mode = channel === 'stdout' ? child._stdio[1] : child._stdio[2];
+    if (mode === 'ignore') {
+      return;
+    }
+    if (mode === 'inherit') {
+      (channel === 'stdout' ? process.stdout : process.stderr).write(chunk);
+      return;
+    }
+
+    const stream = channel === 'stdout' ? child.stdout : child.stderr;
+    stream?.push(chunk);
+  };
+  const closeSyntheticChild = (child, exitCode, signalCode) => {
+    if (child._closed) {
+      return;
+    }
+    child._closed = true;
+    child.exitCode = exitCode;
+    child.signalCode = signalCode;
+    finalizeChildStream(child.stdout);
+    finalizeChildStream(child.stderr);
+    if (child.stdin && !child.stdin.destroyed) {
+      child.stdin.destroy();
+    }
+    emitChildLifecycleEvents(child);
+  };
+  const scheduleSyntheticChildPoll = (child, delayMs) => {
+    if (child._closed || child._pollTimer != null) {
+      return;
+    }
+    child._pollTimer = setTimeout(() => {
+      child._pollTimer = null;
+      if (child._closed) {
+        return;
+      }
+
+      let event;
+      try {
+        event = callPoll(child._childId, RPC_POLL_WAIT_MS);
+      } catch (error) {
+        child._closed = true;
+        finalizeChildStream(child.stdout);
+        finalizeChildStream(child.stderr);
+        queueMicrotask(() => child.emit('error', error));
+        return;
+      }
+
+      if (!event) {
+        scheduleSyntheticChildPoll(child, RPC_IDLE_POLL_DELAY_MS);
+        return;
+      }
+
+      if (event.type === 'stdout' || event.type === 'stderr') {
+        deliverChildOutput(child, event.type, event.data);
+        scheduleSyntheticChildPoll(child, 0);
+        return;
+      }
+
+      if (event.type === 'exit') {
+        closeSyntheticChild(
+          child,
+          typeof event.exitCode === 'number' ? Math.trunc(event.exitCode) : null,
+          typeof event.signal === 'string' ? event.signal : null,
+        );
+        return;
+      }
+
+      scheduleSyntheticChildPoll(child, 0);
+    }, delayMs);
+    if (!child._refed) {
+      child._pollTimer.unref?.();
+    }
+  };
+  const createSyntheticChildProcess = (spawnResult, options) => {
+    const child = Object.create(EventEmitter.prototype);
+    EventEmitter.call(child);
+    child._childId = spawnResult.childId;
+    child._closed = false;
+    child._pollTimer = null;
+    child._refed = true;
+    child._stdio = options.stdio;
+    child.pid = Math.trunc(Number(spawnResult.pid) || 0);
+    child.exitCode = null;
+    child.signalCode = null;
+    child.spawnfile = String(spawnResult.command ?? '');
+    child.spawnargs = [
+      child.spawnfile,
+      ...(Array.isArray(spawnResult.args) ? spawnResult.args.map(String) : []),
+    ];
+    child.stdin = options.stdio[0] === 'pipe' ? new SecureExecChildWritable(child._childId) : null;
+    child.stdout = options.stdio[1] === 'pipe' ? new SecureExecChildReadable() : null;
+    child.stderr = options.stdio[2] === 'pipe' ? new SecureExecChildReadable() : null;
+    child.killed = false;
+    child.connected = false;
+    child.kill = (signal = 'SIGTERM') => {
+      try {
+        callKill(child._childId, signal);
+        child.killed = true;
+        return true;
+      } catch (error) {
+        if (error && typeof error === 'object' && error.code === 'ESRCH') {
+          return false;
+        }
+        throw error;
+      }
+    };
+    child.ref = () => {
+      child._refed = true;
+      child._pollTimer?.ref?.();
+      return child;
+    };
+    child.unref = () => {
+      child._refed = false;
+      child._pollTimer?.unref?.();
+      return child;
+    };
+    child.disconnect = () => {
+      throw createUnsupportedChildProcessError('child_process.disconnect');
+    };
+    child.send = () => {
+      throw createUnsupportedChildProcessError('child_process.send');
+    };
+    queueMicrotask(() => child.emit('spawn'));
+    scheduleSyntheticChildPoll(child, 0);
+    return child;
+  };
+  const collectSyntheticChildOutput = (child, options, callback) => {
+    const encoding = normalizeChildProcessEncoding(options) ?? 'utf8';
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    const timeout = normalizeChildProcessTimeout(options);
+    const killSignal = normalizeChildProcessSignal(options?.killSignal);
+    let timer = null;
+
+    if (child.stdout) {
+      child.stdout.on('data', (chunk) => {
+        stdoutChunks.push(Buffer.from(chunk));
+      });
+    }
+    if (child.stderr) {
+      child.stderr.on('data', (chunk) => {
+        stderrChunks.push(Buffer.from(chunk));
+      });
+    }
+
+    const promise = new Promise((resolve, reject) => {
+      if (timeout != null) {
+        timer = setTimeout(() => {
+          try {
+            child.kill(killSignal);
+          } catch {}
+        }, timeout);
+        timer.unref?.();
+      }
+
+      child.once('error', reject);
+      child.once('close', (exitCode, signalCode) => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+        const stdout = encodeChildProcessOutput(Buffer.concat(stdoutChunks), encoding);
+        const stderr = encodeChildProcessOutput(Buffer.concat(stderrChunks), encoding);
+        if (exitCode === 0 && signalCode == null) {
+          resolve({ stdout, stderr, exitCode, signalCode });
+          return;
+        }
+        reject(createChildProcessExecError('child_process', exitCode, signalCode, stdout, stderr));
+      });
+    });
+
+    if (typeof callback === 'function') {
+      promise.then(
+        ({ stdout, stderr }) => callback(null, stdout, stderr),
+        (error) => callback(error, error.stdout, error.stderr),
+      );
+    }
+
+    return promise;
+  };
+
+  const module = {
+    ChildProcess: EventEmitter,
+    spawn(command, args, options) {
+      const invocation = normalizeSpawnInvocation(args, options);
+      const normalizedOptions = normalizeChildProcessOptions(invocation.options);
+      let spawnResult;
+      try {
+        spawnResult = callSpawn(command, invocation.args, invocation.options);
+      } catch (error) {
+        const spawnError = error instanceof Error ? error : new Error(String(error));
+        if (
+          spawnError.code == null &&
+          /command not found:/i.test(String(spawnError.message ?? ''))
+        ) {
+          spawnError.code = 'ENOENT';
+        } else if (
+          spawnError.code == null &&
+          /ERR_NATIVE_BINARY_NOT_SUPPORTED\b/i.test(String(spawnError.message ?? ''))
+        ) {
+          spawnError.code = 'ERR_NATIVE_BINARY_NOT_SUPPORTED';
+        }
+        const child = Object.create(EventEmitter.prototype);
+        EventEmitter.call(child);
+        child.spawnfile = String(command);
+        child.spawnargs = [String(command), ...invocation.args.map(String)];
+        child.stdin = null;
+        child.stdout = null;
+        child.stderr = null;
+        child.stdio = [null, null, null];
+        child.pid = 0;
+        child.exitCode = null;
+        child.signalCode = null;
+        child.killed = false;
+        child.connected = false;
+        child.kill = () => false;
+        child.ref = () => child;
+        child.unref = () => child;
+        child.disconnect = () => {
+          throw createUnsupportedChildProcessError('child_process.disconnect');
+        };
+        child.send = () => {
+          throw createUnsupportedChildProcessError('child_process.send');
+        };
+        queueMicrotask(() => child.emit('error', spawnError));
+        return child;
+      }
+      const child = createSyntheticChildProcess(spawnResult, normalizedOptions);
+      return child;
+    },
+    spawnSync(command, args, options) {
+      const invocation = normalizeSpawnInvocation(args, options);
+      return runChildProcessSync(command, invocation.args, invocation.options);
+    },
+    exec(command, options, callback) {
+      const invocation = normalizeExecInvocation(options, callback);
+      const child = module.spawn(command, [], {
+        ...invocation.options,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: true,
+      });
+      collectSyntheticChildOutput(child, invocation.options, invocation.callback);
+      return child;
+    },
+    execSync(command, options) {
+      const result = runChildProcessSync(command, [], {
+        ...options,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }, true);
+      if (result.error) {
+        throw result.error;
+      }
+      if (result.status !== 0 || result.signal != null) {
+        throw createChildProcessExecError(
+          'child_process.execSync',
+          result.status,
+          result.signal,
+          result.stdout,
+          result.stderr,
+        );
+      }
+      return result.stdout;
+    },
+    execFile(file, args, options, callback) {
+      const invocation = normalizeExecFileInvocation(args, options, callback);
+      const child = module.spawn(file, invocation.args, {
+        ...invocation.options,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      collectSyntheticChildOutput(child, invocation.options, invocation.callback);
+      return child;
+    },
+    execFileSync(file, args, options) {
+      const invocation = normalizeExecFileInvocation(args, options);
+      const result = runChildProcessSync(file, invocation.args, {
+        ...invocation.options,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      if (result.error) {
+        throw result.error;
+      }
+      if (result.status !== 0 || result.signal != null) {
+        throw createChildProcessExecError(
+          'child_process.execFileSync',
+          result.status,
+          result.signal,
+          result.stdout,
+          result.stderr,
+        );
+      }
+      return result.stdout;
+    },
+    fork(modulePath, args, options) {
+      const invocation = normalizeSpawnInvocation(args, options);
+      return module.spawn('node', [modulePath, ...invocation.args], {
+        ...invocation.options,
+        stdio: invocation.options?.stdio ?? ['pipe', 'pipe', 'pipe'],
+      });
+    },
+  };
+
+  return module;
+}
+
+function createRpcBackedNetModule(netModule, fromGuestDir = '/') {
+  const RPC_POLL_WAIT_MS = 50;
+  const RPC_IDLE_POLL_DELAY_MS = 10;
+  const bridge = () => requireSecureExecSyncRpcBridge();
+  let defaultAutoSelectFamily =
+    typeof netModule?.getDefaultAutoSelectFamily === 'function'
+      ? netModule.getDefaultAutoSelectFamily()
+      : true;
+  let defaultAutoSelectFamilyAttemptTimeout =
+    typeof netModule?.getDefaultAutoSelectFamilyAttemptTimeout === 'function'
+      ? netModule.getDefaultAutoSelectFamilyAttemptTimeout()
+      : 250;
+  const createUnsupportedNetError = (subject) => {
+    const error = new Error(`${subject} is not supported by the secure-exec net polyfill yet`);
+    error.code = 'ERR_AGENTOS_NET_UNSUPPORTED';
+    return error;
+  };
+  const normalizeNetPort = (value) => {
+    const numeric =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string' && value.length > 0
+          ? Number(value)
+          : Number.NaN;
+    if (!Number.isInteger(numeric) || numeric < 0 || numeric > 65535) {
+      throw new RangeError(`secure-exec net port must be an integer between 0 and 65535`);
+    }
+    return numeric;
+  };
+  const normalizeNetBacklog = (value) => {
+    const numeric =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string' && value.length > 0
+          ? Number(value)
+          : Number.NaN;
+    if (!Number.isInteger(numeric) || numeric < 0) {
+      throw new RangeError(`secure-exec net backlog must be a non-negative integer`);
+    }
+    return numeric;
+  };
+  const normalizeNetConnectInvocation = (args) => {
+    const values = [...args];
+    const callback =
+      typeof values[values.length - 1] === 'function' ? values.pop() : undefined;
+
+    let options;
+    if (values[0] != null && typeof values[0] === 'object') {
+      options = { ...values[0] };
+    } else {
+      options = { port: values[0] };
+      if (typeof values[1] === 'string') {
+        options.host = values[1];
+      }
+    }
+
+    if (options?.lookup != null) {
+      throw createUnsupportedNetError('net.connect({ lookup })');
+    }
+
+    if (typeof options?.path === 'string' && options.path.length > 0) {
+      return {
+        callback,
+        options: {
+          allowHalfOpen: options?.allowHalfOpen === true,
+          path: resolveGuestFsPath(options.path, fromGuestDir),
+        },
+      };
+    }
+
+    return {
+      callback,
+      options: {
+        allowHalfOpen: options?.allowHalfOpen === true,
+        host:
+          typeof options?.host === 'string' && options.host.length > 0
+            ? options.host
+            : 'localhost',
+        port: normalizeNetPort(options?.port),
+      },
+    };
+  };
+  const normalizeNetServerCreation = (args) => {
+    let options = {};
+    let connectionListener;
+
+    if (typeof args[0] === 'function') {
+      connectionListener = args[0];
+    } else {
+      if (args[0] != null) {
+        if (typeof args[0] !== 'object') {
+          throw new TypeError('net.createServer options must be an object');
+        }
+        options = { ...args[0] };
+      }
+      if (typeof args[1] === 'function') {
+        connectionListener = args[1];
+      }
+    }
+
+    return {
+      connectionListener,
+      options: {
+        allowHalfOpen: options.allowHalfOpen === true,
+        pauseOnConnect: options.pauseOnConnect === true,
+      },
+    };
+  };
+  const normalizeNetListenInvocation = (args) => {
+    const values = [...args];
+    const callback =
+      typeof values[values.length - 1] === 'function' ? values.pop() : undefined;
+
+    let backlog;
+    if (typeof values[values.length - 1] === 'number') {
+      backlog = normalizeNetBacklog(values.pop());
+    }
+
+    let options;
+    if (values[0] != null && typeof values[0] === 'object') {
+      options = { ...values[0] };
+    } else {
+      options = { port: values[0] };
+      if (typeof values[1] === 'string') {
+        options.host = values[1];
+      }
+    }
+
+    if (options?.signal != null) {
+      throw createUnsupportedNetError('net.Server.listen({ signal })');
+    }
+
+    if (typeof options?.path === 'string' && options.path.length > 0) {
+      return {
+        callback,
+        options: {
+          backlog:
+            options?.backlog != null
+              ? normalizeNetBacklog(options.backlog)
+              : backlog,
+          path: resolveGuestFsPath(options.path, fromGuestDir),
+        },
+      };
+    }
+
+    return {
+      callback,
+      options: {
+        backlog:
+          options?.backlog != null
+            ? normalizeNetBacklog(options.backlog)
+            : backlog,
+        host:
+          typeof options?.host === 'string' && options.host.length > 0
+            ? options.host
+            : '127.0.0.1',
+        port: normalizeNetPort(options?.port ?? 0),
+      },
+    };
+  };
+  const socketFamilyForAddress = (value) => {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    return value.includes(':') ? 'IPv6' : 'IPv4';
+  };
+  const callConnect = (options) => bridge().callSync('net.connect', [options]);
+  const callListen = (options) => bridge().callSync('net.listen', [options]);
+  const callPoll = (socketId, waitMs = 0) => bridge().callSync('net.poll', [socketId, waitMs]);
+  const callServerPoll = (serverId, waitMs = 0) =>
+    bridge().callSync('net.server_poll', [serverId, waitMs]);
+  const callServerConnections = (serverId) =>
+    bridge().callSync('net.server_connections', [serverId]);
+  const callWrite = (socketId, chunk) =>
+    bridge().call('net.write', [socketId, toGuestBufferView(chunk, 'net.write chunk')]);
+  const callShutdown = (socketId) => bridge().call('net.shutdown', [socketId]);
+  const callDestroy = (socketId) => bridge().call('net.destroy', [socketId]);
+  const callServerClose = (serverId) => bridge().call('net.server_close', [serverId]);
+
+  const releaseSocketBridge = (socket) => {
+    if (socket._agentOSBridgeReleased || socket._agentOSSocketId == null) {
+      return Promise.resolve();
+    }
+    const socketId = socket._agentOSSocketId;
+    socket._agentOSBridgeReleased = true;
+    return callDestroy(socketId).catch(() => {});
+  };
+
+  const finalizeSocketClose = (socket, hadError = false) => {
+    if (socket._agentOSClosed) {
+      return;
+    }
+    void releaseSocketBridge(socket);
+    socket._agentOSClosed = true;
+    socket._agentOSCloseHadError = hadError === true;
+    socket._agentOSSocketId = null;
+    socket.connecting = false;
+    socket.pending = false;
+    socket._pollTimer && clearTimeout(socket._pollTimer);
+    socket._pollTimer = null;
+    if (!socket.readableEnded) {
+      socket.push(null);
+    }
+    queueMicrotask(() => socket.emit('close', hadError));
+  };
+  const finalizeSocketCloseAfterReadableEnd = (socket, hadError = false) => {
+    if (socket._agentOSClosed) {
+      return;
+    }
+    if (socket.readableEnded) {
+      finalizeSocketClose(socket, hadError);
+      return;
+    }
+    socket.once('end', () => finalizeSocketClose(socket, hadError));
+  };
+
+  const scheduleSocketPoll = (socket, delayMs) => {
+    if (socket._agentOSClosed || socket._agentOSSocketId == null || socket._pollTimer != null) {
+      return;
+    }
+
+    socket._pollTimer = setTimeout(() => {
+      socket._pollTimer = null;
+      if (socket._agentOSClosed || socket._agentOSSocketId == null) {
+        return;
+      }
+
+      let event;
+      try {
+        event = callPoll(socket._agentOSSocketId, RPC_POLL_WAIT_MS);
+      } catch (error) {
+        socket.destroy(error);
+        return;
+      }
+
+      if (!event) {
+        scheduleSocketPoll(socket, RPC_IDLE_POLL_DELAY_MS);
+        return;
+      }
+
+      if (event.type === 'data') {
+        const chunk = decodeFsBytesPayload(event.data, 'net.data');
+        socket.bytesRead += chunk.length;
+        socket.push(chunk);
+        scheduleSocketPoll(socket, 0);
+        return;
+      }
+
+      if (event.type === 'end') {
+        socket._agentOSRemoteEnded = true;
+        finalizeSocketCloseAfterReadableEnd(socket, false);
+        socket.push(null);
+        if (!socket._agentOSAllowHalfOpen && !socket.writableEnded) {
+          socket.end();
+        }
+        scheduleSocketPoll(socket, 0);
+        return;
+      }
+
+      if (event.type === 'error') {
+        const error = new Error(
+          typeof event.message === 'string' ? event.message : 'secure-exec net socket error',
+        );
+        if (typeof event.code === 'string' && event.code.length > 0) {
+          error.code = event.code;
+        }
+        socket.emit('error', error);
+        scheduleSocketPoll(socket, 0);
+        return;
+      }
+
+      if (event.type === 'close') {
+        finalizeSocketClose(socket, event.hadError === true);
+        return;
+      }
+
+      scheduleSocketPoll(socket, 0);
+    }, delayMs);
+
+    if (!socket._agentOSRefed) {
+      socket._pollTimer.unref?.();
+    }
+  };
+  const attachSocketState = (socket, result, options = {}, emitConnect = false) => {
+    socket._agentOSAllowHalfOpen = options.allowHalfOpen === true;
+    socket._agentOSSocketId = String(result.socketId);
+    socket.localPath =
+      typeof result.localPath === 'string'
+        ? result.localPath
+        : typeof result.path === 'string'
+          ? result.path
+          : undefined;
+    socket.remotePath =
+      typeof result.remotePath === 'string'
+        ? result.remotePath
+        : typeof result.path === 'string'
+          ? result.path
+          : undefined;
+    socket.localAddress =
+      socket.localPath ?? result.localAddress;
+    socket.localPort = result.localPort;
+    socket.remoteAddress =
+      socket.remotePath ?? result.remoteAddress;
+    socket.remotePort = result.remotePort;
+    socket.remoteFamily =
+      socket.remotePath != null
+        ? undefined
+        : result.remoteFamily ?? socketFamilyForAddress(socket.remoteAddress);
+    socket.connecting = false;
+    socket.pending = false;
+    socket._agentOSClosed = false;
+    socket._agentOSRemoteEnded = false;
+    socket._agentOSBridgeReleased = false;
+    if (emitConnect) {
+      queueMicrotask(() => {
+        if (socket._agentOSClosed) {
+          return;
+        }
+        socket.emit('connect');
+        socket.emit('ready');
+      });
+    }
+    scheduleSocketPoll(socket, 0);
+  };
+
+  class SecureExecSocket extends Duplex {
+    constructor(options = undefined) {
+      super(options);
+      this._agentOSAllowHalfOpen = options?.allowHalfOpen === true;
+      this._agentOSClosed = false;
+      this._agentOSCloseHadError = false;
+      this._agentOSExplicitDestroy = false;
+      this._agentOSRemoteEnded = false;
+      this._agentOSBridgeReleased = false;
+      this._agentOSRefed = true;
+      this._agentOSSocketId = null;
+      this._pollTimer = null;
+      this.bytesRead = 0;
+      this.bytesWritten = 0;
+      this.connecting = false;
+      this.pending = false;
+      this.localAddress = undefined;
+      this.localPort = undefined;
+      this.localPath = undefined;
+      this.remoteAddress = undefined;
+      this.remoteFamily = undefined;
+      this.remotePort = undefined;
+      this.remotePath = undefined;
+      this.emit = (eventName, ...eventArgs) => {
+        if (eventName === 'close' && eventArgs.length === 0 && this._agentOSClosed) {
+          eventArgs = [this._agentOSCloseHadError === true];
+        }
+        return Duplex.prototype.emit.call(this, eventName, ...eventArgs);
+      };
+      this.destroy = (error) => {
+        this._agentOSExplicitDestroy = true;
+        return Duplex.prototype.destroy.call(this, error);
+      };
+    }
+
+    _read() {}
+
+    _write(chunk, encoding, callback) {
+      if (this._agentOSSocketId == null) {
+        callback(new Error('secure-exec net socket is not connected'));
+        return;
+      }
+      const payload =
+        typeof chunk === 'string' ? Buffer.from(chunk, encoding) : Buffer.from(chunk);
+      callWrite(this._agentOSSocketId, payload).then(
+        (written) => {
+          if (typeof written === 'number') {
+            this.bytesWritten += written;
+          } else {
+            this.bytesWritten += payload.length;
+          }
+          callback();
+        },
+        (error) => callback(error),
+      );
+    }
+
+    _final(callback) {
+      if (this._agentOSSocketId == null || this._agentOSClosed) {
+        callback();
+        return;
+      }
+      callShutdown(this._agentOSSocketId).then(
+        () => {
+          if (this._agentOSRemoteEnded) {
+            finalizeSocketCloseAfterReadableEnd(this, false);
+          }
+          callback();
+        },
+        (error) => callback(error),
+      );
+    }
+
+    _destroy(error, callback) {
+      const socketId = this._agentOSSocketId;
+      this._agentOSSocketId = null;
+      const finishDestroy = () => {
+        finalizeSocketClose(this, Boolean(error));
+        callback(error);
+      };
+      if (
+        socketId == null ||
+        this._agentOSClosed
+      ) {
+        finishDestroy();
+        return;
+      }
+      this._agentOSSocketId = socketId;
+      releaseSocketBridge(this).then(finishDestroy, () => finishDestroy());
+    }
+
+    address() {
+      if (typeof this.localPath === 'string') {
+        return this.localPath;
+      }
+      if (typeof this.localAddress !== 'string' || typeof this.localPort !== 'number') {
+        return null;
+      }
+      return {
+        address: this.localAddress,
+        family: socketFamilyForAddress(this.localAddress),
+        port: this.localPort,
+      };
+    }
+
+    connect(...args) {
+      const { callback, options } = normalizeNetConnectInvocation(args);
+      if (typeof callback === 'function') {
+        this.once('connect', callback);
+      }
+      if (this._agentOSSocketId != null || this.connecting) {
+        throw new Error('secure-exec net socket is already connected');
+      }
+
+      this._agentOSAllowHalfOpen = options.allowHalfOpen;
+      this.connecting = true;
+      this.pending = true;
+
+      try {
+        const result = callConnect(options);
+        attachSocketState(
+          this,
+          {
+            ...result,
+            remotePath: result.remotePath ?? options.path,
+            remoteAddress: result.remoteAddress ?? options.host,
+            remotePort: result.remotePort ?? options.port,
+          },
+          options,
+          true,
+        );
+      } catch (error) {
+        this.connecting = false;
+        this.pending = false;
+        this.destroy(error);
+      }
+
+      return this;
+    }
+
+    ref() {
+      this._agentOSRefed = true;
+      this._pollTimer?.ref?.();
+      return this;
+    }
+
+    unref() {
+      this._agentOSRefed = false;
+      this._pollTimer?.unref?.();
+      return this;
+    }
+
+    setKeepAlive() {
+      return this;
+    }
+
+    setNoDelay() {
+      return this;
+    }
+
+    setTimeout(timeout, callback) {
+      if (typeof callback === 'function') {
+        if (Number(timeout) > 0) {
+          setTimeout(() => {
+            if (!this._agentOSClosed) {
+              this.emit('timeout');
+              callback();
+            }
+          }, Number(timeout)).unref?.();
+        } else {
+          queueMicrotask(() => callback());
+        }
+      }
+      return this;
+    }
+  }
+
+  const finalizeServerClose = (server) => {
+    if (server._agentOSClosed) {
+      return;
+    }
+    server._agentOSClosed = true;
+    server.listening = false;
+    server._agentOSServerId = null;
+    server._pollTimer && clearTimeout(server._pollTimer);
+    server._pollTimer = null;
+    queueMicrotask(() => server.emit('close'));
+  };
+  const scheduleServerPoll = (server, delayMs) => {
+    if (server._agentOSClosed || server._agentOSServerId == null || server._pollTimer != null) {
+      return;
+    }
+
+    server._pollTimer = setTimeout(() => {
+      server._pollTimer = null;
+      if (server._agentOSClosed || server._agentOSServerId == null) {
+        return;
+      }
+
+      let event;
+      try {
+        event = callServerPoll(server._agentOSServerId, RPC_POLL_WAIT_MS);
+      } catch (error) {
+        server.emit('error', error);
+        finalizeServerClose(server);
+        return;
+      }
+
+      if (!event) {
+        scheduleServerPoll(server, RPC_IDLE_POLL_DELAY_MS);
+        return;
+      }
+
+      if (event.type === 'connection') {
+        const socket = new SecureExecSocket({ allowHalfOpen: server.allowHalfOpen });
+        attachSocketState(socket, event, { allowHalfOpen: server.allowHalfOpen });
+        if (server.pauseOnConnect) {
+          socket.pause();
+        }
+        server.emit('connection', socket);
+        scheduleServerPoll(server, 0);
+        return;
+      }
+
+      if (event.type === 'error') {
+        const error = new Error(
+          typeof event.message === 'string' ? event.message : 'secure-exec net server error',
+        );
+        if (typeof event.code === 'string' && event.code.length > 0) {
+          error.code = event.code;
+        }
+        server.emit('error', error);
+        scheduleServerPoll(server, 0);
+        return;
+      }
+
+      if (event.type === 'close') {
+        finalizeServerClose(server);
+        return;
+      }
+
+      scheduleServerPoll(server, 0);
+    }, delayMs);
+
+    if (!server._agentOSRefed) {
+      server._pollTimer.unref?.();
+    }
+  };
+
+  class SecureExecServer extends EventEmitter {
+    constructor(options = {}, connectionListener = undefined) {
+      super();
+      this.allowHalfOpen = options.allowHalfOpen === true;
+      this.pauseOnConnect = options.pauseOnConnect === true;
+      this.listening = false;
+      this.maxConnections = undefined;
+      this._agentOSClosed = false;
+      this._agentOSRefed = true;
+      this._agentOSServerId = null;
+      this._pollTimer = null;
+      this._address = null;
+      if (typeof connectionListener === 'function') {
+        this.on('connection', connectionListener);
+      }
+    }
+
+    address() {
+      return this._address;
+    }
+
+    close(callback) {
+      if (this._agentOSServerId == null || this._agentOSClosed) {
+        const error = new Error('secure-exec net server is not running');
+        error.code = 'ERR_SERVER_NOT_RUNNING';
+        if (typeof callback === 'function') {
+          queueMicrotask(() => callback(error));
+          return this;
+        }
+        throw error;
+      }
+
+      if (typeof callback === 'function') {
+        this.once('close', callback);
+      }
+      const serverId = this._agentOSServerId;
+      callServerClose(serverId).then(
+        () => finalizeServerClose(this),
+        (error) => this.emit('error', error),
+      );
+      return this;
+    }
+
+    getConnections(callback) {
+      if (this._agentOSServerId == null || this._agentOSClosed) {
+        const error = new Error('secure-exec net server is not running');
+        error.code = 'ERR_SERVER_NOT_RUNNING';
+        if (typeof callback === 'function') {
+          queueMicrotask(() => callback(error));
+          return this;
+        }
+        throw error;
+      }
+
+      try {
+        const count = callServerConnections(this._agentOSServerId);
+        if (typeof callback === 'function') {
+          queueMicrotask(() => callback(null, count));
+        }
+      } catch (error) {
+        if (typeof callback === 'function') {
+          queueMicrotask(() => callback(error));
+          return this;
+        }
+        throw error;
+      }
+
+      return this;
+    }
+
+    listen(...args) {
+      const { callback, options } = normalizeNetListenInvocation(args);
+      if (typeof callback === 'function') {
+        this.once('listening', callback);
+      }
+      if (this._agentOSServerId != null || this.listening) {
+        throw new Error('secure-exec net server is already listening');
+      }
+
+      this._agentOSClosed = false;
+      try {
+        const result = callListen(options);
+        this._agentOSServerId = String(result.serverId);
+        this._address =
+          typeof result.path === 'string'
+            ? result.path
+            : {
+                address: result.localAddress,
+                family: result.family ?? socketFamilyForAddress(result.localAddress),
+                port: result.localPort,
+              };
+        this.listening = true;
+        queueMicrotask(() => {
+          if (this._agentOSClosed) {
+            return;
+          }
+          this.emit('listening');
+        });
+        scheduleServerPoll(this, 0);
+      } catch (error) {
+        this._agentOSServerId = null;
+        this._address = null;
+        this.listening = false;
+        throw error;
+      }
+
+      return this;
+    }
+
+    ref() {
+      this._agentOSRefed = true;
+      this._pollTimer?.ref?.();
+      return this;
+    }
+
+    unref() {
+      this._agentOSRefed = false;
+      this._pollTimer?.unref?.();
+      return this;
+    }
+  }
+
+  const connect = (...args) => new SecureExecSocket().connect(...args);
+  const createServer = (...args) => {
+    const { connectionListener, options } = normalizeNetServerCreation(args);
+    return new SecureExecServer(options, connectionListener);
+  };
+  const module = Object.assign(Object.create(netModule ?? null), {
+    BlockList:
+      typeof netModule?.BlockList === 'function'
+        ? netModule.BlockList
+        : class BlockList {
+            addAddress() {
+              return this;
+            }
+
+            addRange() {
+              return this;
+            }
+
+            addSubnet() {
+              return this;
+            }
+
+            check() {
+              return false;
+            }
+
+            rules() {
+              return [];
+            }
+
+            toJSON() {
+              return [];
+            }
+          },
+    Server: SecureExecServer,
+    Socket: SecureExecSocket,
+    SocketAddress: netModule?.SocketAddress,
+    Stream: SecureExecSocket,
+    connect,
+    createConnection: connect,
+    createServer,
+    getDefaultAutoSelectFamily() {
+      return defaultAutoSelectFamily;
+    },
+    getDefaultAutoSelectFamilyAttemptTimeout() {
+      return defaultAutoSelectFamilyAttemptTimeout;
+    },
+    isIP: netModule?.isIP?.bind(netModule) ?? hostNet.isIP.bind(hostNet),
+    isIPv4: netModule?.isIPv4?.bind(netModule) ?? hostNet.isIPv4.bind(hostNet),
+    isIPv6: netModule?.isIPv6?.bind(netModule) ?? hostNet.isIPv6.bind(hostNet),
+    setDefaultAutoSelectFamily(value) {
+      defaultAutoSelectFamily = value !== false;
+      netModule?.setDefaultAutoSelectFamily?.(defaultAutoSelectFamily);
+    },
+    setDefaultAutoSelectFamilyAttemptTimeout(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric < 0) {
+        throw new RangeError(`Invalid auto-select family attempt timeout: ${value}`);
+      }
+      defaultAutoSelectFamilyAttemptTimeout = Math.trunc(numeric);
+      netModule?.setDefaultAutoSelectFamilyAttemptTimeout?.(
+        defaultAutoSelectFamilyAttemptTimeout,
+      );
+    },
+  });
+
+  return module;
+}
+
+function createRpcBackedTlsModule(tlsModule, netModule) {
+  const createUnsupportedTlsError = (subject) => {
+    const error = new Error(`${subject} is not supported by the secure-exec tls polyfill yet`);
+    error.code = 'ERR_AGENTOS_TLS_UNSUPPORTED';
+    return error;
+  };
+  const defineSocketMetadataPassthrough = (tlsSocket, rawSocket) => {
+    if (tlsSocket === rawSocket) {
+      return;
+    }
+    for (const key of ['localAddress', 'localPort', 'remoteAddress', 'remotePort', 'remoteFamily']) {
+      try {
+        Object.defineProperty(tlsSocket, key, {
+          configurable: true,
+          enumerable: true,
+          get() {
+            return rawSocket[key];
+          },
+          set(value) {
+            rawSocket[key] = value;
+          },
+        });
+      } catch {
+        // Ignore non-configurable host properties.
+      }
+    }
+  };
+  const normalizeTlsPort = (value) => {
+    const numeric =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string' && value.length > 0
+          ? Number(value)
+          : Number.NaN;
+    if (!Number.isInteger(numeric) || numeric < 0 || numeric > 65535) {
+      throw new RangeError('secure-exec tls port must be between 0 and 65535');
+    }
+    return numeric;
+  };
+  const normalizeTlsConnectInvocation = (args) => {
+    const values = [...args];
+    const callback =
+      typeof values[values.length - 1] === 'function' ? values.pop() : undefined;
+
+    let options;
+    if (values[0] != null && typeof values[0] === 'object') {
+      options = { ...values[0] };
+    } else {
+      const positional = {};
+      if (values.length > 0) {
+        positional.port = values.shift();
+      }
+      if (typeof values[0] === 'string') {
+        positional.host = values.shift();
+      }
+      const providedOptions =
+        values[0] != null && typeof values[0] === 'object' ? { ...values[0] } : {};
+      options = { ...providedOptions, ...positional };
+    }
+
+    if (typeof options?.path === 'string') {
+      throw createUnsupportedTlsError('tls.connect({ path })');
+    }
+    if (options?.lookup != null) {
+      throw createUnsupportedTlsError('tls.connect({ lookup })');
+    }
+
+    const transportSocket = options?.socket ?? null;
+    const host =
+      typeof options?.host === 'string' && options.host.length > 0
+        ? options.host
+        : 'localhost';
+    const tlsOptions = { ...options };
+    delete tlsOptions.allowHalfOpen;
+    delete tlsOptions.host;
+    delete tlsOptions.lookup;
+    delete tlsOptions.path;
+    delete tlsOptions.port;
+    delete tlsOptions.socket;
+    if (
+      typeof tlsOptions.servername !== 'string' &&
+      typeof host === 'string' &&
+      host.length > 0 &&
+      hostNet.isIP(host) === 0
+    ) {
+      tlsOptions.servername = host;
+    }
+    if (tlsOptions.ALPNProtocols == null) {
+      tlsOptions.ALPNProtocols = ['http/1.1'];
+    }
+
+    return {
+      callback,
+      transportOptions:
+        transportSocket == null
+          ? {
+              allowHalfOpen: options?.allowHalfOpen === true,
+              host,
+              port: normalizeTlsPort(options?.port),
+            }
+          : null,
+      transportSocket,
+      tlsOptions,
+    };
+  };
+  const normalizeTlsServerCreation = (args) => {
+    let options = {};
+    let secureConnectionListener;
+
+    if (typeof args[0] === 'function') {
+      secureConnectionListener = args[0];
+    } else {
+      if (args[0] != null) {
+        if (typeof args[0] !== 'object') {
+          throw new TypeError('tls.createServer options must be an object');
+        }
+        options = { ...args[0] };
+      }
+      if (typeof args[1] === 'function') {
+        secureConnectionListener = args[1];
+      }
+    }
+
+    return {
+      secureConnectionListener,
+      options,
+    };
+  };
+  const createServerSecureContext = (options) =>
+    options?.secureContext ?? tlsModule.createSecureContext(options ?? {});
+  const createClientTlsSocket = (rawSocket, tlsOptions) => {
+    const tlsSocket = tlsModule.connect({
+      ...tlsOptions,
+      socket: rawSocket,
+    });
+    defineSocketMetadataPassthrough(tlsSocket, rawSocket);
+    return tlsSocket;
+  };
+  const createServerTlsSocket = (rawSocket, options, secureContext) => {
+    const tlsSocket = new tlsModule.TLSSocket(rawSocket, {
+      ...options,
+      isServer: true,
+      secureContext,
+    });
+    defineSocketMetadataPassthrough(tlsSocket, rawSocket);
+    return tlsSocket;
+  };
+
+  class SecureExecTlsServer extends EventEmitter {
+    constructor(options = {}, secureConnectionListener = undefined) {
+      super();
+      this._tlsOptions = { ...options };
+      this._secureContext = createServerSecureContext(this._tlsOptions);
+      this._netServer = netModule.createServer(
+        {
+          allowHalfOpen: options.allowHalfOpen === true,
+          pauseOnConnect: options.pauseOnConnect === true,
+        },
+        (socket) => {
+          const tlsSocket = createServerTlsSocket(socket, this._tlsOptions, this._secureContext);
+          tlsSocket.on('secure', () => {
+            this.emit('secureConnection', tlsSocket);
+          });
+          tlsSocket.on('error', (error) => {
+            this.emit('tlsClientError', error, tlsSocket);
+          });
+        },
+      );
+      if (typeof secureConnectionListener === 'function') {
+        this.on('secureConnection', secureConnectionListener);
+      }
+      this._netServer.on('close', () => this.emit('close'));
+      this._netServer.on('error', (error) => this.emit('error', error));
+      this._netServer.on('listening', () => this.emit('listening'));
+
+      Object.defineProperties(this, {
+        listening: {
+          enumerable: true,
+          get: () => this._netServer.listening,
+        },
+        maxConnections: {
+          enumerable: true,
+          get: () => this._netServer.maxConnections,
+          set: (value) => {
+            this._netServer.maxConnections = value;
+          },
+        },
+      });
+    }
+
+    address() {
+      return this._netServer.address();
+    }
+
+    close(callback) {
+      this._netServer.close(callback);
+      return this;
+    }
+
+    getConnections(callback) {
+      return this._netServer.getConnections(callback);
+    }
+
+    listen(...args) {
+      this._netServer.listen(...args);
+      return this;
+    }
+
+    ref() {
+      this._netServer.ref();
+      return this;
+    }
+
+    setSecureContext(options) {
+      if (options == null || typeof options !== 'object') {
+        throw new TypeError('tls.Server.setSecureContext options must be an object');
+      }
+      this._tlsOptions = { ...options };
+      this._secureContext = createServerSecureContext(this._tlsOptions);
+      return this;
+    }
+
+    unref() {
+      this._netServer.unref();
+      return this;
+    }
+  }
+
+  const connect = (...args) => {
+    const { callback, transportOptions, transportSocket, tlsOptions } =
+      normalizeTlsConnectInvocation(args);
+    const rawSocket =
+      transportSocket ??
+      netModule.connect({
+        allowHalfOpen: transportOptions.allowHalfOpen,
+        host: transportOptions.host,
+        port: transportOptions.port,
+      });
+    const tlsSocket = createClientTlsSocket(rawSocket, tlsOptions);
+    if (typeof callback === 'function') {
+      tlsSocket.once('secureConnect', callback);
+    }
+    return tlsSocket;
+  };
+  const createServer = (...args) => {
+    const { options, secureConnectionListener } = normalizeTlsServerCreation(args);
+    return new SecureExecTlsServer(options, secureConnectionListener);
+  };
+  const module = Object.assign(Object.create(tlsModule ?? null), {
+    Server: SecureExecTlsServer,
+    TLSSocket: tlsModule.TLSSocket,
+    connect,
+    createConnection: connect,
+    createServer,
+  });
+
+  return module;
+}
+
+function createTransportBackedServer(
+  hostServer,
+  transportServer,
+  connectionEventName,
+  forwardedEvents = [],
+) {
+  const forward = (sourceEvent, targetEvent = sourceEvent) => {
+    transportServer.on(sourceEvent, (...args) => {
+      hostServer.emit(targetEvent, ...args);
+    });
+  };
+
+  forward(connectionEventName);
+  forward('close');
+  forward('error');
+  forward('listening');
+  for (const entry of forwardedEvents) {
+    if (Array.isArray(entry)) {
+      forward(entry[0], entry[1] ?? entry[0]);
+    } else {
+      forward(entry);
+    }
+  }
+
+  const definePassthroughProperty = (property, getter, setter = undefined) => {
+    try {
+      Object.defineProperty(hostServer, property, {
+        configurable: true,
+        enumerable: true,
+        get: getter,
+        set: setter,
+      });
+    } catch {
+      // Ignore host properties that reject redefinition.
+    }
+  };
+
+  hostServer.address = () => transportServer.address();
+  hostServer.close = (callback) => {
+    transportServer.close(callback);
+    return hostServer;
+  };
+  hostServer.getConnections = (callback) => transportServer.getConnections(callback);
+  hostServer.listen = (...args) => {
+    transportServer.listen(...args);
+    return hostServer;
+  };
+  hostServer.ref = () => {
+    transportServer.ref();
+    return hostServer;
+  };
+  hostServer.unref = () => {
+    transportServer.unref();
+    return hostServer;
+  };
+
+  definePassthroughProperty('listening', () => transportServer.listening);
+  definePassthroughProperty(
+    'maxConnections',
+    () => transportServer.maxConnections,
+    (value) => {
+      transportServer.maxConnections = value;
+    },
+  );
+
+  return hostServer;
+}
+
+function normalizeHttpPort(value, subject = 'secure-exec http port') {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.length > 0
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isInteger(numeric) || numeric < 0 || numeric > 65535) {
+    throw new RangeError(`${subject} must be an integer between 0 and 65535`);
+  }
+  return numeric;
+}
+
+function defaultPortForProtocol(protocol) {
+  switch (protocol) {
+    case 'https:':
+      return 443;
+    case 'http2:':
+    case 'http:':
+    default:
+      return 80;
+  }
+}
+
+function parseRequestTargetFromHostOption(value, protocol) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return null;
+  }
+  if (hostNet.isIP(value) !== 0) {
+    return {
+      hostname: value,
+      port: null,
+    };
+  }
+
+  const looksLikeHostPort =
+    value.startsWith('[') || /^[^:]+:\d+$/.test(value);
+  if (!looksLikeHostPort) {
+    return {
+      hostname: value,
+      port: null,
+    };
+  }
+
+  try {
+    const parsed = new URL(`${protocol}//${value}`);
+    return {
+      hostname: parsed.hostname || 'localhost',
+      port:
+        parsed.port.length > 0 ? normalizeHttpPort(parsed.port) : null,
+    };
+  } catch {
+    return {
+      hostname: value,
+      port: null,
+    };
+  }
+}
+
+function parseRequestTargetFromUrl(value, defaultProtocol) {
+  if (!(value instanceof URL) && typeof value !== 'string') {
+    return null;
+  }
+
+  const parsed = value instanceof URL ? value : new URL(String(value));
+  const protocol =
+    typeof parsed.protocol === 'string' && parsed.protocol.length > 0
+      ? parsed.protocol
+      : defaultProtocol;
+  const auth =
+    parsed.username.length > 0 || parsed.password.length > 0
+      ? `${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`
+      : undefined;
+  return {
+    protocol,
+    hostname: parsed.hostname || 'localhost',
+    port:
+      parsed.port.length > 0
+        ? normalizeHttpPort(parsed.port)
+        : defaultPortForProtocol(protocol),
+    path: `${parsed.pathname || '/'}${parsed.search || ''}`,
+    auth,
+  };
+}
+
+function createRpcBackedHttpModule(httpModule, transportModule, defaultProtocol = 'http:') {
+  const debugHttpLog = (...args) => {
+    console.error('[agentos http polyfill]', ...args);
+  };
+  const createUnsupportedHttpError = (subject) => {
+    const error = new Error(`${subject} is not supported by the secure-exec http polyfill yet`);
+    error.code = 'ERR_AGENTOS_HTTP_UNSUPPORTED';
+    return error;
+  };
+  const normalizeRequestInvocation = (args) => {
+    const values = [...args];
+    const callback =
+      typeof values[values.length - 1] === 'function' ? values.pop() : undefined;
+
+    let options = {};
+    if (values[0] instanceof URL || typeof values[0] === 'string') {
+      options = {
+        ...options,
+        ...parseRequestTargetFromUrl(values.shift(), defaultProtocol),
+      };
+    }
+    if (values[0] != null) {
+      if (typeof values[0] !== 'object') {
+        throw new TypeError('secure-exec http request options must be an object');
+      }
+      options = {
+        ...options,
+        ...values[0],
+      };
+    }
+
+    if (typeof options.socketPath === 'string') {
+      throw createUnsupportedHttpError('http request socketPath');
+    }
+    if (options.lookup != null) {
+      throw createUnsupportedHttpError('http request lookup');
+    }
+
+    const protocol =
+      typeof options.protocol === 'string' && options.protocol.length > 0
+        ? options.protocol
+        : defaultProtocol;
+    const hostTarget = parseRequestTargetFromHostOption(options.host, protocol);
+    const hostname =
+      typeof options.hostname === 'string' && options.hostname.length > 0
+        ? options.hostname
+        : hostTarget?.hostname ?? 'localhost';
+    const port =
+      options.port != null
+        ? normalizeHttpPort(options.port)
+        : hostTarget?.port ?? defaultPortForProtocol(protocol);
+    const path =
+      typeof options.path === 'string' && options.path.length > 0
+        ? options.path
+        : '/';
+    const requestOptions = {
+      ...options,
+      protocol,
+      hostname,
+      port,
+      path,
+      agent: false,
+    };
+    delete requestOptions.agent;
+    delete requestOptions.createConnection;
+    delete requestOptions.host;
+    delete requestOptions.lookup;
+    delete requestOptions.socketPath;
+
+    return {
+      callback,
+      requestOptions,
+      connectionOptions: {
+        allowHalfOpen: options.allowHalfOpen === true,
+        family: options.family,
+        host: hostname,
+        localAddress: options.localAddress,
+        port,
+      },
+    };
+  };
+  const createRequest = (options, callback) => {
+    class SecureExecHttpAgent extends httpModule.Agent {
+      createConnection() {
+        return transportModule.connect(options.connectionOptions);
+      }
+    }
+
+    const agent = new SecureExecHttpAgent({ keepAlive: false });
+    const request = httpModule.request(
+      {
+        ...options.requestOptions,
+        agent,
+      },
+      callback,
+    );
+    debugHttpLog('http.request', JSON.stringify(options.requestOptions));
+    request.on('socket', (socket) => {
+      debugHttpLog('http.socket');
+      socket?.once?.('connect', () => debugHttpLog('http.socket.connect'));
+      socket?.once?.('secureConnect', () => debugHttpLog('http.socket.secureConnect'));
+      socket?.once?.('error', (error) =>
+        debugHttpLog('http.socket.error', error?.code ?? '', error?.message ?? String(error)),
+      );
+      socket?.once?.('close', () => debugHttpLog('http.socket.close'));
+    });
+    request.once('response', (response) =>
+      debugHttpLog('http.response', response?.statusCode ?? '<none>'),
+    );
+    request.once('error', (error) =>
+      debugHttpLog('http.error', error?.code ?? '', error?.message ?? String(error)),
+    );
+    request.once('close', () => debugHttpLog('http.close'));
+    request.once('close', () => agent.destroy());
+    return request;
+  };
+  const normalizeServerCreation = (args) => {
+    let options = {};
+    let requestListener;
+
+    if (typeof args[0] === 'function') {
+      requestListener = args[0];
+    } else {
+      if (args[0] != null) {
+        if (typeof args[0] !== 'object') {
+          throw new TypeError('http.createServer options must be an object');
+        }
+        options = { ...args[0] };
+      }
+      if (typeof args[1] === 'function') {
+        requestListener = args[1];
+      }
+    }
+
+    return {
+      options,
+      requestListener,
+      transportOptions: {
+        allowHalfOpen: options.allowHalfOpen === true,
+        pauseOnConnect: options.pauseOnConnect === true,
+      },
+    };
+  };
+
+  const request = (...args) => {
+    const normalized = normalizeRequestInvocation(args);
+    return createRequest(normalized, normalized.callback);
+  };
+  const get = (...args) => {
+    const req = request(...args);
+    req.end();
+    return req;
+  };
+  const createServer = (...args) => {
+    const { options, requestListener, transportOptions } =
+      normalizeServerCreation(args);
+    const server = httpModule.createServer(options, requestListener);
+    const transportServer = transportModule.createServer(transportOptions);
+    return createTransportBackedServer(server, transportServer, 'connection');
+  };
+  const module = Object.assign(Object.create(httpModule ?? null), {
+    Agent: httpModule.Agent,
+    globalAgent: httpModule.globalAgent,
+    get,
+    request,
+    createServer,
+  });
+
+  return module;
+}
+
+function createRpcBackedHttpsModule(httpsModule, tlsModule) {
+  const debugHttpLog = (...args) => {
+    console.error('[agentos http polyfill]', ...args);
+  };
+  const createUnsupportedHttpsError = (subject) => {
+    const error = new Error(`${subject} is not supported by the secure-exec https polyfill yet`);
+    error.code = 'ERR_AGENTOS_HTTPS_UNSUPPORTED';
+    return error;
+  };
+  const normalizeRequestInvocation = (args) => {
+    const values = [...args];
+    const callback =
+      typeof values[values.length - 1] === 'function' ? values.pop() : undefined;
+
+    let options = {};
+    if (values[0] instanceof URL || typeof values[0] === 'string') {
+      options = {
+        ...options,
+        ...parseRequestTargetFromUrl(values.shift(), 'https:'),
+      };
+    }
+    if (values[0] != null) {
+      if (typeof values[0] !== 'object') {
+        throw new TypeError('secure-exec https request options must be an object');
+      }
+      options = {
+        ...options,
+        ...values[0],
+      };
+    }
+
+    if (typeof options.socketPath === 'string') {
+      throw createUnsupportedHttpsError('https request socketPath');
+    }
+    if (options.lookup != null) {
+      throw createUnsupportedHttpsError('https request lookup');
+    }
+
+    const hostTarget = parseRequestTargetFromHostOption(options.host, 'https:');
+    const hostname =
+      typeof options.hostname === 'string' && options.hostname.length > 0
+        ? options.hostname
+        : hostTarget?.hostname ?? 'localhost';
+    const port =
+      options.port != null
+        ? normalizeHttpPort(options.port)
+        : hostTarget?.port ?? 443;
+    const path =
+      typeof options.path === 'string' && options.path.length > 0
+        ? options.path
+        : '/';
+    const requestOptions = {
+      ...options,
+      protocol: 'https:',
+      hostname,
+      port,
+      path,
+      agent: false,
+    };
+    delete requestOptions.agent;
+    delete requestOptions.createConnection;
+    delete requestOptions.host;
+    delete requestOptions.lookup;
+    delete requestOptions.socketPath;
+
+    const tlsConnectOptions = {
+      allowHalfOpen: options.allowHalfOpen === true,
+      ALPNProtocols: options.ALPNProtocols,
+      ca: options.ca,
+      cert: options.cert,
+      ciphers: options.ciphers,
+      crl: options.crl,
+      ecdhCurve: options.ecdhCurve,
+      family: options.family,
+      host: hostname,
+      key: options.key,
+      localAddress: options.localAddress,
+      maxVersion: options.maxVersion,
+      minVersion: options.minVersion,
+      passphrase: options.passphrase,
+      pfx: options.pfx,
+      port,
+      rejectUnauthorized: options.rejectUnauthorized,
+      secureContext: options.secureContext,
+      servername: options.servername,
+      session: options.session,
+      sigalgs: options.sigalgs,
+    };
+
+    return {
+      callback,
+      requestOptions,
+      tlsConnectOptions,
+    };
+  };
+  const normalizeServerCreation = (args) => {
+    let options = {};
+    let requestListener;
+
+    if (typeof args[0] === 'function') {
+      requestListener = args[0];
+    } else {
+      if (args[0] != null) {
+        if (typeof args[0] !== 'object') {
+          throw new TypeError('https.createServer options must be an object');
+        }
+        options = { ...args[0] };
+      }
+      if (typeof args[1] === 'function') {
+        requestListener = args[1];
+      }
+    }
+
+    return {
+      options,
+      requestListener,
+    };
+  };
+
+  const request = (...args) => {
+    const normalized = normalizeRequestInvocation(args);
+    class SecureExecHttpsAgent extends httpsModule.Agent {
+      createConnection() {
+        return tlsModule.connect(normalized.tlsConnectOptions);
+      }
+    }
+
+    const agent = new SecureExecHttpsAgent({ keepAlive: false });
+    const request = httpsModule.request(
+      {
+        ...normalized.requestOptions,
+        agent,
+      },
+      normalized.callback,
+    );
+    debugHttpLog('https.request', JSON.stringify(normalized.requestOptions));
+    request.on('socket', (socket) => {
+      debugHttpLog('https.socket');
+      socket?.once?.('connect', () => debugHttpLog('https.socket.connect'));
+      socket?.once?.('secureConnect', () => debugHttpLog('https.socket.secureConnect'));
+      socket?.once?.('error', (error) =>
+        debugHttpLog('https.socket.error', error?.code ?? '', error?.message ?? String(error)),
+      );
+      socket?.once?.('close', () => debugHttpLog('https.socket.close'));
+    });
+    request.once('response', (response) =>
+      debugHttpLog('https.response', response?.statusCode ?? '<none>'),
+    );
+    request.once('error', (error) =>
+      debugHttpLog('https.error', error?.code ?? '', error?.message ?? String(error)),
+    );
+    request.once('close', () => debugHttpLog('https.close'));
+    request.once('close', () => agent.destroy());
+    return request;
+  };
+  const get = (...args) => {
+    const req = request(...args);
+    req.end();
+    return req;
+  };
+  const createServer = (...args) => {
+    const { options, requestListener } = normalizeServerCreation(args);
+    const server = httpsModule.createServer(options, requestListener);
+    const transportServer = tlsModule.createServer(options);
+    return createTransportBackedServer(server, transportServer, 'secureConnection', [
+      'tlsClientError',
+    ]);
+  };
+  const module = Object.assign(Object.create(httpsModule ?? null), {
+    Agent: httpsModule.Agent,
+    globalAgent: httpsModule.globalAgent,
+    get,
+    request,
+    createServer,
+  });
+
+  return module;
+}
+
+function createRpcBackedHttp2Module(http2Module, netModule, tlsModule) {
+  const createUnsupportedHttp2Error = (subject) => {
+    const error = new Error(`${subject} is not supported by the secure-exec http2 polyfill yet`);
+    error.code = 'ERR_AGENTOS_HTTP2_UNSUPPORTED';
+    return error;
+  };
+  const normalizeConnectInvocation = (args) => {
+    const values = [...args];
+    const authority =
+      values[0] instanceof URL || typeof values[0] === 'string'
+        ? values.shift()
+        : 'http://localhost';
+    const authorityTarget = parseRequestTargetFromUrl(authority, 'http:');
+    const callback =
+      typeof values[values.length - 1] === 'function' ? values.pop() : undefined;
+    const options =
+      values[0] != null && typeof values[0] === 'object' ? { ...values[0] } : {};
+
+    if (typeof options.socketPath === 'string') {
+      throw createUnsupportedHttp2Error('http2.connect socketPath');
+    }
+    if (options.lookup != null) {
+      throw createUnsupportedHttp2Error('http2.connect lookup');
+    }
+
+    const connectOptions = { ...options };
+    delete connectOptions.createConnection;
+    delete connectOptions.host;
+    delete connectOptions.hostname;
+    delete connectOptions.lookup;
+    delete connectOptions.port;
+    delete connectOptions.socketPath;
+
+    const isSecure = authorityTarget.protocol === 'https:';
+    return {
+      authority,
+      callback,
+      connectOptions,
+      createConnection: () =>
+        isSecure
+          ? tlsModule.connect({
+              ALPNProtocols: options.ALPNProtocols ?? ['h2'],
+              ca: options.ca,
+              cert: options.cert,
+              ciphers: options.ciphers,
+              family: options.family,
+              host: authorityTarget.hostname,
+              key: options.key,
+              localAddress: options.localAddress,
+              passphrase: options.passphrase,
+              pfx: options.pfx,
+              port: authorityTarget.port,
+              rejectUnauthorized: options.rejectUnauthorized,
+              secureContext: options.secureContext,
+              servername: options.servername,
+              session: options.session,
+            })
+          : netModule.connect({
+              allowHalfOpen: options.allowHalfOpen === true,
+              family: options.family,
+              host: authorityTarget.hostname,
+              localAddress: options.localAddress,
+              port: authorityTarget.port,
+            }),
+    };
+  };
+  const normalizeServerCreation = (args, secure) => {
+    let options = {};
+    let onStream;
+
+    if (typeof args[0] === 'function') {
+      onStream = args[0];
+    } else {
+      if (args[0] != null) {
+        if (typeof args[0] !== 'object') {
+          throw new TypeError(
+            `http2.${secure ? 'createSecureServer' : 'createServer'} options must be an object`,
+          );
+        }
+        options = { ...args[0] };
+      }
+      if (typeof args[1] === 'function') {
+        onStream = args[1];
+      }
+    }
+
+    return {
+      onStream,
+      options,
+    };
+  };
+
+  const connect = (...args) => {
+    const normalized = normalizeConnectInvocation(args);
+    return http2Module.connect(
+      normalized.authority,
+      {
+        ...normalized.connectOptions,
+        createConnection: normalized.createConnection,
+      },
+      normalized.callback,
+    );
+  };
+  const createServer = (...args) => {
+    const { onStream, options } = normalizeServerCreation(args, false);
+    const server = http2Module.createServer(options, onStream);
+    const transportServer = netModule.createServer({
+      allowHalfOpen: options.allowHalfOpen === true,
+      pauseOnConnect: options.pauseOnConnect === true,
+    });
+    return createTransportBackedServer(server, transportServer, 'connection');
+  };
+  const createSecureServer = (...args) => {
+    const { onStream, options } = normalizeServerCreation(args, true);
+    const server = http2Module.createSecureServer(options, onStream);
+    const transportServer = tlsModule.createServer(
+      {
+        ...options,
+        ALPNProtocols: options.ALPNProtocols ?? ['h2'],
+      },
+    );
+    return createTransportBackedServer(server, transportServer, 'secureConnection', [
+      'tlsClientError',
+    ]);
+  };
+  const module = Object.assign(Object.create(http2Module ?? null), {
+    connect,
+    createServer,
+    createSecureServer,
+  });
+
+  return module;
+}
+
+function createRpcBackedDgramModule(dgramModule, fromGuestDir = '/') {
+  const RPC_POLL_WAIT_MS = 50;
+  const RPC_IDLE_POLL_DELAY_MS = 10;
+  const bridge = () => requireSecureExecSyncRpcBridge();
+  const createUnsupportedDgramError = (subject) => {
+    const error = new Error(`${subject} is not supported by the secure-exec dgram polyfill yet`);
+    error.code = 'ERR_AGENTOS_DGRAM_UNSUPPORTED';
+    return error;
+  };
+  const normalizeDgramInteger = (value, label) => {
+    const numeric =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string' && value.length > 0
+          ? Number(value)
+          : Number.NaN;
+    if (!Number.isInteger(numeric) || numeric < 0) {
+      throw new RangeError(`secure-exec ${label} must be a non-negative integer`);
+    }
+    return numeric;
+  };
+  const normalizeDgramPort = (value) => {
+    const numeric = normalizeDgramInteger(value, 'dgram port');
+    if (numeric > 65535) {
+      throw new RangeError(`secure-exec dgram port must be between 0 and 65535`);
+    }
+    return numeric;
+  };
+  const socketFamilyForAddress = (value) => {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    return value.includes(':') ? 'IPv6' : 'IPv4';
+  };
+  const normalizeDgramType = (value) => {
+    if (value === 'udp4' || value === 'udp6') {
+      return value;
+    }
+    throw new TypeError(`secure-exec dgram socket type must be udp4 or udp6`);
+  };
+  const normalizeDgramCreateSocketInvocation = (args) => {
+    const values = [...args];
+    const callback =
+      typeof values[values.length - 1] === 'function' ? values.pop() : undefined;
+
+    let options;
+    if (typeof values[0] === 'string') {
+      options = { type: values[0] };
+    } else if (values[0] != null && typeof values[0] === 'object') {
+      options = { ...values[0] };
+    } else {
+      throw new TypeError('dgram.createSocket requires a socket type or options object');
+    }
+
+    if (options?.recvBufferSize != null || options?.sendBufferSize != null) {
+      throw createUnsupportedDgramError('dgram.createSocket({ recvBufferSize/sendBufferSize })');
+    }
+
+    return {
+      callback,
+      options: {
+        type: normalizeDgramType(options.type),
+      },
+    };
+  };
+  const normalizeDgramBindInvocation = (args, socketType) => {
+    const values = [...args];
+    const callback =
+      typeof values[values.length - 1] === 'function' ? values.pop() : undefined;
+
+    let options;
+    if (values[0] != null && typeof values[0] === 'object') {
+      options = { ...values[0] };
+    } else {
+      options = { port: values[0] };
+      if (typeof values[1] === 'string') {
+        options.address = values[1];
+      }
+    }
+
+    if (options?.exclusive != null || options?.fd != null || options?.signal != null) {
+      throw createUnsupportedDgramError('dgram.Socket.bind advanced options');
+    }
+
+    return {
+      callback,
+      options: {
+        port: normalizeDgramPort(options?.port ?? 0),
+        address:
+          typeof options?.address === 'string' && options.address.length > 0
+            ? options.address
+            : socketType === 'udp6'
+              ? '::1'
+              : '127.0.0.1',
+      },
+    };
+  };
+  const normalizeDgramMessageBuffer = (value) => {
+    if (typeof value === 'string') {
+      return Buffer.from(value);
+    }
+    if (Array.isArray(value)) {
+      return Buffer.concat(value.map((entry) => normalizeDgramMessageBuffer(entry)));
+    }
+    return Buffer.from(toGuestBufferView(value, 'dgram payload'));
+  };
+  const normalizeDgramSendInvocation = (args) => {
+    const values = [...args];
+    const callback =
+      typeof values[values.length - 1] === 'function' ? values.pop() : undefined;
+    if (values.length === 0) {
+      throw new TypeError('dgram.Socket.send requires a payload');
+    }
+
+    let payload = normalizeDgramMessageBuffer(values.shift());
+    let port;
+    let address;
+
+    if (
+      values.length >= 3 &&
+      typeof values[0] === 'number' &&
+      typeof values[1] === 'number'
+    ) {
+      const offset = normalizeDgramInteger(values.shift(), 'dgram send offset');
+      const length = normalizeDgramInteger(values.shift(), 'dgram send length');
+      if (offset > payload.length || offset + length > payload.length) {
+        throw new RangeError('secure-exec dgram send offset/length is out of range');
+      }
+      payload = payload.subarray(offset, offset + length);
+      port = normalizeDgramPort(values.shift());
+      if (typeof values[0] === 'string') {
+        address = values.shift();
+      }
+    } else if (values[0] != null && typeof values[0] === 'object') {
+      const options = { ...values.shift() };
+      port = normalizeDgramPort(options.port);
+      address = options.address;
+    } else {
+      port = normalizeDgramPort(values.shift());
+      if (typeof values[0] === 'string') {
+        address = values.shift();
+      }
+    }
+
+    return {
+      callback,
+      options: {
+        port,
+        address: typeof address === 'string' && address.length > 0 ? address : 'localhost',
+      },
+      payload,
+    };
+  };
+  const callCreateSocket = (options) => bridge().callSync('dgram.createSocket', [options]);
+  const callBind = (socketId, options) => bridge().callSync('dgram.bind', [socketId, options]);
+  const callSend = (socketId, payload, options) =>
+    bridge().call('dgram.send', [socketId, toGuestBufferView(payload, 'dgram.send payload'), options]);
+  const callPoll = (socketId, waitMs = 0) => bridge().callSync('dgram.poll', [socketId, waitMs]);
+  const callClose = (socketId) => bridge().call('dgram.close', [socketId]);
+
+  const finalizeDatagramClose = (socket) => {
+    if (socket._agentOSClosed) {
+      return;
+    }
+    socket._agentOSClosed = true;
+    socket._agentOSBound = false;
+    socket._agentOSPollTimer && clearTimeout(socket._agentOSPollTimer);
+    socket._agentOSPollTimer = null;
+    queueMicrotask(() => socket.emit('close'));
+  };
+  const attachDatagramBindState = (socket, result, emitListening = false) => {
+    const alreadyBound = socket._agentOSBound;
+    socket._agentOSBound = true;
+    socket._address = {
+      address: result.localAddress,
+      family: result.family ?? socketFamilyForAddress(result.localAddress),
+      port: result.localPort,
+    };
+    if (emitListening && !alreadyBound) {
+      queueMicrotask(() => {
+        if (!socket._agentOSClosed) {
+          socket.emit('listening');
+        }
+      });
+    }
+    scheduleDatagramPoll(socket, 0);
+  };
+  const scheduleDatagramPoll = (socket, delayMs) => {
+    if (
+      socket._agentOSClosed ||
+      socket._agentOSSocketId == null ||
+      !socket._agentOSBound ||
+      socket._agentOSPollTimer != null
+    ) {
+      return;
+    }
+
+    socket._agentOSPollTimer = setTimeout(() => {
+      socket._agentOSPollTimer = null;
+      if (
+        socket._agentOSClosed ||
+        socket._agentOSSocketId == null ||
+        !socket._agentOSBound
+      ) {
+        return;
+      }
+
+      let event;
+      try {
+        event = callPoll(socket._agentOSSocketId, RPC_POLL_WAIT_MS);
+      } catch (error) {
+        socket.emit('error', error);
+        scheduleDatagramPoll(socket, 0);
+        return;
+      }
+
+      if (!event) {
+        scheduleDatagramPoll(socket, RPC_IDLE_POLL_DELAY_MS);
+        return;
+      }
+
+      if (event.type === 'message') {
+        socket.emit(
+          'message',
+          decodeFsBytesPayload(event.data, 'dgram.message'),
+          {
+            address: event.remoteAddress,
+            family: event.remoteFamily ?? socketFamilyForAddress(event.remoteAddress),
+            port: event.remotePort,
+            size: decodeFsBytesPayload(event.data, 'dgram.message').length,
+          },
+        );
+        scheduleDatagramPoll(socket, 0);
+        return;
+      }
+
+      if (event.type === 'error') {
+        const error = new Error(
+          typeof event.message === 'string' ? event.message : 'secure-exec dgram socket error',
+        );
+        if (typeof event.code === 'string' && event.code.length > 0) {
+          error.code = event.code;
+        }
+        socket.emit('error', error);
+        scheduleDatagramPoll(socket, 0);
+        return;
+      }
+
+      scheduleDatagramPoll(socket, 0);
+    }, delayMs);
+
+    if (!socket._agentOSRefed) {
+      socket._agentOSPollTimer.unref?.();
+    }
+  };
+
+  class SecureExecDatagramSocket extends EventEmitter {
+    constructor(options = {}, messageListener = undefined) {
+      super();
+      this.type = options.type;
+      this._agentOSClosed = false;
+      this._agentOSRefed = true;
+      this._agentOSBound = false;
+      this._agentOSSocketId = null;
+      this._agentOSPollTimer = null;
+      this._address = null;
+      if (typeof messageListener === 'function') {
+        this.on('message', messageListener);
+      }
+      const result = callCreateSocket(options);
+      this._agentOSSocketId = String(result.socketId);
+    }
+
+    address() {
+      return this._address;
+    }
+
+    bind(...args) {
+      const { callback, options } = normalizeDgramBindInvocation(args, this.type);
+      if (typeof callback === 'function') {
+        this.once('listening', callback);
+      }
+      if (this._agentOSClosed) {
+        throw new Error('secure-exec dgram socket is closed');
+      }
+      attachDatagramBindState(this, callBind(this._agentOSSocketId, options), true);
+      return this;
+    }
+
+    close(callback) {
+      if (typeof callback === 'function') {
+        this.once('close', callback);
+      }
+      if (this._agentOSClosed || this._agentOSSocketId == null) {
+        queueMicrotask(() => finalizeDatagramClose(this));
+        return this;
+      }
+      this._agentOSBound = false;
+      this._agentOSPollTimer && clearTimeout(this._agentOSPollTimer);
+      this._agentOSPollTimer = null;
+      const socketId = this._agentOSSocketId;
+      this._agentOSSocketId = null;
+      callClose(socketId).then(
+        () => finalizeDatagramClose(this),
+        (error) => this.emit('error', error),
+      );
+      return this;
+    }
+
+    send(...args) {
+      if (this._agentOSClosed || this._agentOSSocketId == null) {
+        const error = new Error('secure-exec dgram socket is closed');
+        const callback =
+          typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
+        if (callback) {
+          queueMicrotask(() => callback(error));
+          return;
+        }
+        throw error;
+      }
+
+      const { callback, options, payload } = normalizeDgramSendInvocation(args);
+      callSend(this._agentOSSocketId, payload, options).then(
+        (result) => {
+          attachDatagramBindState(this, result, true);
+          if (typeof callback === 'function') {
+            callback(null, typeof result?.bytes === 'number' ? result.bytes : payload.length);
+          }
+        },
+        (error) => {
+          if (typeof callback === 'function') {
+            callback(error);
+            return;
+          }
+          this.emit('error', error);
+        },
+      );
+    }
+
+    ref() {
+      this._agentOSRefed = true;
+      this._agentOSPollTimer?.ref?.();
+      return this;
+    }
+
+    unref() {
+      this._agentOSRefed = false;
+      this._agentOSPollTimer?.unref?.();
+      return this;
+    }
+
+    setBroadcast() {
+      return this;
+    }
+
+    setMulticastInterface() {
+      return this;
+    }
+
+    setMulticastLoopback() {
+      return this;
+    }
+
+    setMulticastTTL() {
+      return this;
+    }
+
+    setRecvBufferSize() {
+      return this;
+    }
+
+    setSendBufferSize() {
+      return this;
+    }
+
+    setTTL() {
+      return this;
+    }
+
+    addMembership() {
+      throw createUnsupportedDgramError('dgram.Socket.addMembership');
+    }
+
+    connect() {
+      throw createUnsupportedDgramError('dgram.Socket.connect');
+    }
+
+    disconnect() {
+      throw createUnsupportedDgramError('dgram.Socket.disconnect');
+    }
+
+    dropMembership() {
+      throw createUnsupportedDgramError('dgram.Socket.dropMembership');
+    }
+
+    getRecvBufferSize() {
+      return 0;
+    }
+
+    getSendBufferSize() {
+      return 0;
+    }
+
+    remoteAddress() {
+      throw createUnsupportedDgramError('dgram.Socket.remoteAddress');
+    }
+  }
+
+  const createSocket = (...args) => {
+    const { callback, options } = normalizeDgramCreateSocketInvocation(args);
+    return new SecureExecDatagramSocket(options, callback);
+  };
+  const module = Object.assign(Object.create(dgramModule ?? null), {
+    Socket: SecureExecDatagramSocket,
+    createSocket,
+  });
+
+  return module;
+}
+
+function createRpcBackedDnsModule(dnsModule) {
+  const bridge = () => requireSecureExecSyncRpcBridge();
+  const dnsConstants = Object.freeze({ ...(dnsModule?.constants ?? {}) });
+  let defaultResultOrder = 'verbatim';
+
+  const createUnsupportedDnsError = (subject) => {
+    const error = new Error(`${subject} is not supported by the secure-exec dns polyfill yet`);
+    error.code = 'ERR_NOT_IMPLEMENTED';
+    return error;
+  };
+
+  const normalizeDnsHostname = (hostname, methodName) => {
+    if (typeof hostname !== 'string' || hostname.length === 0) {
+      throw new TypeError(`secure-exec ${methodName} hostname must be a non-empty string`);
+    }
+    return hostname;
+  };
+
+  const normalizeDnsFamily = (value, label, allowAny = true) => {
+    if (value == null) {
+      return allowAny ? 0 : 4;
+    }
+    const numeric =
+      typeof value === 'number'
+        ? value
+        : typeof value === 'string' && value.length > 0
+          ? Number(value)
+          : Number.NaN;
+    if (
+      !Number.isInteger(numeric) ||
+      (!allowAny && numeric !== 4 && numeric !== 6) ||
+      (allowAny && numeric !== 0 && numeric !== 4 && numeric !== 6)
+    ) {
+      throw new TypeError(
+        `secure-exec ${label} must be ${allowAny ? '0, 4, or 6' : '4 or 6'}`,
+      );
+    }
+    return numeric;
+  };
+
+  const normalizeDnsResultOrder = (value) => {
+    const normalized = value == null ? defaultResultOrder : String(value);
+    if (
+      normalized !== 'verbatim' &&
+      normalized !== 'ipv4first' &&
+      normalized !== 'ipv6first'
+    ) {
+      throw new TypeError(
+        'secure-exec dns result order must be one of verbatim, ipv4first, or ipv6first',
+      );
+    }
+    return normalized;
+  };
+
+  const sortLookupAddresses = (records, order) => {
+    if (!Array.isArray(records) || order === 'verbatim') {
+      return [...records];
+    }
+    const rankFamily = (family) => {
+      if (order === 'ipv4first') {
+        return family === 4 ? 0 : family === 6 ? 1 : 2;
+      }
+      return family === 6 ? 0 : family === 4 ? 1 : 2;
+    };
+    return [...records].sort((left, right) => rankFamily(left.family) - rankFamily(right.family));
+  };
+
+  const normalizeLookupInvocation = (hostname, options, callback) => {
+    let normalizedOptions = {};
+    let done = callback;
+
+    if (typeof options === 'function') {
+      done = options;
+    } else if (typeof options === 'number') {
+      normalizedOptions = { family: options };
+    } else if (options == null) {
+      normalizedOptions = {};
+    } else if (typeof options === 'object') {
+      normalizedOptions = { ...options };
+    } else {
+      throw new TypeError('secure-exec dns.lookup options must be a number, object, or callback');
+    }
+
+    return {
+      callback: done,
+      options: {
+        hostname: normalizeDnsHostname(hostname, 'dns.lookup'),
+        family: normalizeDnsFamily(normalizedOptions.family, 'dns.lookup family'),
+        all: normalizedOptions.all === true,
+        order: normalizeDnsResultOrder(
+          normalizedOptions.order ??
+            (normalizedOptions.verbatim === false ? 'ipv4first' : undefined),
+        ),
+      },
+    };
+  };
+
+  const normalizeResolveInvocation = (methodName, hostname, rrtype, callback) => {
+    let type = rrtype;
+    let done = callback;
+    if (typeof rrtype === 'function') {
+      done = rrtype;
+      type = undefined;
+    }
+    if (type == null) {
+      type = 'A';
+    }
+    const normalizedType = String(type).toUpperCase();
+    if (
+      normalizedType !== 'A' &&
+      normalizedType !== 'AAAA' &&
+      normalizedType !== 'MX' &&
+      normalizedType !== 'TXT' &&
+      normalizedType !== 'SRV' &&
+      normalizedType !== 'CNAME' &&
+      normalizedType !== 'PTR' &&
+      normalizedType !== 'NS' &&
+      normalizedType !== 'SOA' &&
+      normalizedType !== 'NAPTR' &&
+      normalizedType !== 'CAA' &&
+      normalizedType !== 'ANY'
+    ) {
+      throw createUnsupportedDnsError(`${methodName}(${normalizedType})`);
+    }
+    return {
+      callback: done,
+      options: {
+        hostname: normalizeDnsHostname(hostname, methodName),
+        rrtype: normalizedType,
+      },
+    };
+  };
+
+  const resolveRecords = (method, options) => bridge().callSync(method, [options]);
+  const lookupRecords = (options) => bridge().callSync('dns.lookup', [options]);
+
+  const lookup = (hostname, options, callback) => {
+    const invocation = normalizeLookupInvocation(hostname, options, callback);
+    const records = sortLookupAddresses(lookupRecords(invocation.options), invocation.options.order);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => {
+        if (invocation.options.all) {
+          invocation.callback(null, records);
+        } else {
+          const first = records[0] ?? { address: null, family: invocation.options.family || 0 };
+          invocation.callback(null, first.address, first.family);
+        }
+      });
+    }
+    return invocation.options.all
+      ? records
+      : {
+          address: records[0]?.address ?? null,
+          family: records[0]?.family ?? (invocation.options.family || 0),
+        };
+  };
+
+  const resolve = (hostname, rrtype, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolve', hostname, rrtype, callback);
+    const records = resolveRecords('dns.resolve', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolve4 = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolve4', hostname, 'A', callback);
+    const records = resolveRecords('dns.resolve4', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolve6 = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolve6', hostname, 'AAAA', callback);
+    const records = resolveRecords('dns.resolve6', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolveAny = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolveAny', hostname, 'ANY', callback);
+    const records = resolveRecords('dns.resolve', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolveMx = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolveMx', hostname, 'MX', callback);
+    const records = resolveRecords('dns.resolve', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolveTxt = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolveTxt', hostname, 'TXT', callback);
+    const records = resolveRecords('dns.resolve', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolveSrv = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolveSrv', hostname, 'SRV', callback);
+    const records = resolveRecords('dns.resolve', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolveCname = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolveCname', hostname, 'CNAME', callback);
+    const records = resolveRecords('dns.resolve', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolvePtr = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolvePtr', hostname, 'PTR', callback);
+    const records = resolveRecords('dns.resolve', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolveNs = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolveNs', hostname, 'NS', callback);
+    const records = resolveRecords('dns.resolve', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolveSoa = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolveSoa', hostname, 'SOA', callback);
+    const records = resolveRecords('dns.resolve', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolveNaptr = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolveNaptr', hostname, 'NAPTR', callback);
+    const records = resolveRecords('dns.resolve', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const resolveCaa = (hostname, callback) => {
+    const invocation = normalizeResolveInvocation('dns.resolveCaa', hostname, 'CAA', callback);
+    const records = resolveRecords('dns.resolve', invocation.options);
+    if (typeof invocation.callback === 'function') {
+      queueMicrotask(() => invocation.callback(null, records));
+    }
+    return records;
+  };
+
+  const createInvalidDnsServersError = (subject) => {
+    const error = new TypeError(
+      `${subject} expects an array of non-empty server strings`,
+    );
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    return error;
+  };
+
+  const normalizeDnsServers = (subject, servers) => {
+    if (!Array.isArray(servers)) {
+      throw createInvalidDnsServersError(subject);
+    }
+
+    return servers.map((server) => {
+      if (typeof server !== 'string' || server.length === 0) {
+        throw createInvalidDnsServersError(subject);
+      }
+      return server;
+    });
+  };
+
+  // Resolver instances keep guest-owned server lists for API compatibility.
+  // Queries still use the VM-wide kernel resolver until the sync RPC grows
+  // per-request nameserver overrides.
+  class SecureExecResolver {
+    constructor() {
+      this._servers = [];
+    }
+
+    cancel() {}
+
+    getServers() {
+      return this._servers.slice();
+    }
+
+    lookup(hostname, options, callback) {
+      return lookup(hostname, options, callback);
+    }
+
+    resolve(hostname, rrtype, callback) {
+      return resolve(hostname, rrtype, callback);
+    }
+
+    resolve4(hostname, callback) {
+      return resolve4(hostname, callback);
+    }
+
+    resolve6(hostname, callback) {
+      return resolve6(hostname, callback);
+    }
+
+    resolveAny(hostname, callback) {
+      return resolveAny(hostname, callback);
+    }
+
+    resolveMx(hostname, callback) {
+      return resolveMx(hostname, callback);
+    }
+
+    resolveTxt(hostname, callback) {
+      return resolveTxt(hostname, callback);
+    }
+
+    resolveSrv(hostname, callback) {
+      return resolveSrv(hostname, callback);
+    }
+
+    resolveCname(hostname, callback) {
+      return resolveCname(hostname, callback);
+    }
+
+    resolvePtr(hostname, callback) {
+      return resolvePtr(hostname, callback);
+    }
+
+    resolveNs(hostname, callback) {
+      return resolveNs(hostname, callback);
+    }
+
+    resolveSoa(hostname, callback) {
+      return resolveSoa(hostname, callback);
+    }
+
+    resolveNaptr(hostname, callback) {
+      return resolveNaptr(hostname, callback);
+    }
+
+    resolveCaa(hostname, callback) {
+      return resolveCaa(hostname, callback);
+    }
+
+    setServers(servers) {
+      this._servers = normalizeDnsServers('dns.Resolver.setServers', servers);
+    }
+  }
+
+  class SecureExecPromisesResolver {
+    constructor() {
+      this._servers = [];
+    }
+
+    cancel() {}
+
+    getServers() {
+      return this._servers.slice();
+    }
+
+    lookup(hostname, options) {
+      return Promise.resolve(lookup(hostname, options));
+    }
+
+    resolve(hostname, rrtype) {
+      return Promise.resolve(resolve(hostname, rrtype));
+    }
+
+    resolve4(hostname) {
+      return Promise.resolve(resolve4(hostname));
+    }
+
+    resolve6(hostname) {
+      return Promise.resolve(resolve6(hostname));
+    }
+
+    resolveAny(hostname) {
+      return Promise.resolve(resolveAny(hostname));
+    }
+
+    resolveMx(hostname) {
+      return Promise.resolve(resolveMx(hostname));
+    }
+
+    resolveTxt(hostname) {
+      return Promise.resolve(resolveTxt(hostname));
+    }
+
+    resolveSrv(hostname) {
+      return Promise.resolve(resolveSrv(hostname));
+    }
+
+    resolveCname(hostname) {
+      return Promise.resolve(resolveCname(hostname));
+    }
+
+    resolvePtr(hostname) {
+      return Promise.resolve(resolvePtr(hostname));
+    }
+
+    resolveNs(hostname) {
+      return Promise.resolve(resolveNs(hostname));
+    }
+
+    resolveSoa(hostname) {
+      return Promise.resolve(resolveSoa(hostname));
+    }
+
+    resolveNaptr(hostname) {
+      return Promise.resolve(resolveNaptr(hostname));
+    }
+
+    resolveCaa(hostname) {
+      return Promise.resolve(resolveCaa(hostname));
+    }
+
+    setServers(servers) {
+      this._servers = normalizeDnsServers(
+        'dns.promises.Resolver.setServers',
+        servers,
+      );
+    }
+  }
+
+  const promises = Object.freeze({
+    Resolver: SecureExecPromisesResolver,
+    lookup(hostname, options) {
+      return Promise.resolve(lookup(hostname, options));
+    },
+    resolve(hostname, rrtype) {
+      return Promise.resolve(resolve(hostname, rrtype));
+    },
+    resolve4(hostname) {
+      return Promise.resolve(resolve4(hostname));
+    },
+    resolve6(hostname) {
+      return Promise.resolve(resolve6(hostname));
+    },
+    resolveAny(hostname) {
+      return Promise.resolve(resolveAny(hostname));
+    },
+    resolveMx(hostname) {
+      return Promise.resolve(resolveMx(hostname));
+    },
+    resolveTxt(hostname) {
+      return Promise.resolve(resolveTxt(hostname));
+    },
+    resolveSrv(hostname) {
+      return Promise.resolve(resolveSrv(hostname));
+    },
+    resolveCname(hostname) {
+      return Promise.resolve(resolveCname(hostname));
+    },
+    resolvePtr(hostname) {
+      return Promise.resolve(resolvePtr(hostname));
+    },
+    resolveNs(hostname) {
+      return Promise.resolve(resolveNs(hostname));
+    },
+    resolveSoa(hostname) {
+      return Promise.resolve(resolveSoa(hostname));
+    },
+    resolveNaptr(hostname) {
+      return Promise.resolve(resolveNaptr(hostname));
+    },
+    resolveCaa(hostname) {
+      return Promise.resolve(resolveCaa(hostname));
+    },
+  });
+
+  const module = {
+    ADDRCONFIG: dnsConstants.ADDRCONFIG,
+    ALL: dnsConstants.ALL,
+    V4MAPPED: dnsConstants.V4MAPPED,
+    Resolver: SecureExecResolver,
+    constants: dnsConstants,
+    getDefaultResultOrder() {
+      return defaultResultOrder;
+    },
+    getServers() {
+      return [];
+    },
+    lookup,
+    lookupService() {
+      throw createUnsupportedDnsError('dns.lookupService');
+    },
+    promises,
+    resolve,
+    resolve4,
+    resolve6,
+    resolveAny,
+    resolveMx,
+    resolveTxt,
+    resolveSrv,
+    resolveCname,
+    resolvePtr,
+    resolveNs,
+    resolveSoa,
+    resolveNaptr,
+    resolveCaa,
+    reverse() {
+      throw createUnsupportedDnsError('dns.reverse');
+    },
+    setDefaultResultOrder(order) {
+      defaultResultOrder = normalizeDnsResultOrder(order);
+    },
+    setServers() {
+      throw createUnsupportedDnsError('dns.setServers');
+    },
+  };
+
+  return module;
+}
+
+const guestRequireCache = new Map();
+let rootGuestRequire = null;
+const hostFs = fs;
+const hostFsPromises = fs.promises;
+const hostFsWriteSync = fs.writeSync.bind(fs);
+const hostFsCloseSync = fs.closeSync.bind(fs);
+const guestFs = wrapFsModule(hostFs);
+globalThis.__agentOSGuestFs = guestFs;
+const guestChildProcess = createRpcBackedChildProcessModule(INITIAL_GUEST_CWD);
+const guestNet = createRpcBackedNetModule(hostNet, INITIAL_GUEST_CWD);
+const guestDgram = createRpcBackedDgramModule(hostDgram, INITIAL_GUEST_CWD);
+const guestDns = createRpcBackedDnsModule(hostDns);
+const guestTls = createRpcBackedTlsModule(hostTls, guestNet);
+const guestHttp = createRpcBackedHttpModule(hostHttp, guestNet);
+const guestHttps = createRpcBackedHttpsModule(hostHttps, guestTls);
+const guestHttp2 = createRpcBackedHttp2Module(hostHttp2, guestNet, guestTls);
+const guestGetUid = () => VIRTUAL_UID;
+const guestGetGid = () => VIRTUAL_GID;
+const guestMonotonicNow =
+  globalThis.performance && typeof globalThis.performance.now === 'function'
+    ? globalThis.performance.now.bind(globalThis.performance)
+    : Date.now;
+// Virtual OS identity is carried as the typed `__agentOSVirtualOs` structured
+// global (populated by the runtime shim from `guest_runtime`), not
+// `AGENTOS_VIRTUAL_OS_*` env vars. Absent fields are `undefined` and fall back
+// to the defaults below.
+const VIRTUAL_OS = globalThis.__agentOSVirtualOs || {};
+const VIRTUAL_OS_HOSTNAME = parseVirtualProcessString(
+  VIRTUAL_OS.hostname,
+  DEFAULT_VIRTUAL_OS_HOSTNAME,
+);
+const VIRTUAL_OS_TYPE = parseVirtualProcessString(
+  VIRTUAL_OS.type,
+  DEFAULT_VIRTUAL_OS_TYPE,
+);
+const VIRTUAL_OS_PLATFORM = parseVirtualProcessString(
+  VIRTUAL_OS.platform,
+  DEFAULT_VIRTUAL_OS_PLATFORM,
+);
+const VIRTUAL_OS_RELEASE = parseVirtualProcessString(
+  VIRTUAL_OS.release,
+  DEFAULT_VIRTUAL_OS_RELEASE,
+);
+const VIRTUAL_OS_VERSION = parseVirtualProcessString(
+  VIRTUAL_OS.version,
+  DEFAULT_VIRTUAL_OS_VERSION,
+);
+const VIRTUAL_OS_ARCH = parseVirtualProcessString(
+  VIRTUAL_OS.arch,
+  DEFAULT_VIRTUAL_OS_ARCH,
+);
+const VIRTUAL_OS_MACHINE = parseVirtualProcessString(
+  VIRTUAL_OS.machine,
+  DEFAULT_VIRTUAL_OS_MACHINE,
+);
+const VIRTUAL_OS_CPU_MODEL = parseVirtualProcessString(
+  VIRTUAL_OS.cpuModel,
+  DEFAULT_VIRTUAL_OS_CPU_MODEL,
+);
+const VIRTUAL_OS_CPU_COUNT = parsePositiveInt(
+  VIRTUAL_OS.cpuCount,
+  DEFAULT_VIRTUAL_OS_CPU_COUNT,
+);
+const VIRTUAL_OS_TOTALMEM = parsePositiveInt(
+  VIRTUAL_OS.totalmem,
+  DEFAULT_VIRTUAL_OS_TOTALMEM,
+);
+const VIRTUAL_OS_FREEMEM = Math.min(
+  parsePositiveInt(VIRTUAL_OS.freemem, DEFAULT_VIRTUAL_OS_FREEMEM),
+  VIRTUAL_OS_TOTALMEM,
+);
+const DEFAULT_VIRTUAL_PROCESS_VERSION = 'v24.0.0';
+const VIRTUAL_PROCESS_VERSION = parseVirtualProcessString(
+  HOST_PROCESS_ENV.AGENTOS_VIRTUAL_PROCESS_VERSION,
+  DEFAULT_VIRTUAL_PROCESS_VERSION,
+);
+const VIRTUAL_PROCESS_RELEASE = deepFreezeObject({
+  name: 'node',
+  lts: 'secure-exec',
+});
+const VIRTUAL_PROCESS_CONFIG = deepFreezeObject({
+  target_defaults: {},
+  variables: {
+    host_arch: VIRTUAL_OS_ARCH,
+    node_shared: false,
+    node_use_openssl: false,
+  },
+});
+const VIRTUAL_PROCESS_VERSIONS = deepFreezeObject({
+  node: VIRTUAL_PROCESS_VERSION.replace(/^v/, ''),
+  modules: '0',
+  napi: '0',
+  uv: '0.0.0',
+  zlib: '0.0.0',
+  openssl: '0.0.0',
+  v8: '0.0',
+});
+const VIRTUAL_PROCESS_START_TIME_MS = guestMonotonicNow();
+let guestProcess = process;
+
+function syncBuiltinModuleExports(hostModule, wrappedModule) {
+  if (
+    hostModule == null ||
+    wrappedModule == null ||
+    typeof hostModule !== 'object' ||
+    typeof wrappedModule !== 'object'
+  ) {
+    return;
+  }
+
+  for (const [key, value] of Object.entries(wrappedModule)) {
+    try {
+      hostModule[key] = value;
+    } catch {
+      // Ignore immutable bindings and keep the original builtin export.
+    }
+  }
+}
+
+function cloneFsModule(fsModule) {
+  if (fsModule == null || typeof fsModule !== 'object') {
+    return fsModule;
+  }
+
+  const cloned = { ...fsModule };
+  if (fsModule.promises && typeof fsModule.promises === 'object') {
+    cloned.promises = { ...fsModule.promises };
+  }
+  return cloned;
+}
+
+function resolveVirtualPath(value, fallback) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return fallback;
+  }
+
+  if (path.posix.isAbsolute(value)) {
+    return path.posix.normalize(value);
+  }
+
+  return translatePathStringToGuest(value);
+}
+
+function cloneVirtualCpuInfo(cpu) {
+  return {
+    ...cpu,
+    times: { ...cpu.times },
+  };
+}
+
+function cloneVirtualNetworkInterfaces(networkInterfaces) {
+  return Object.fromEntries(
+    Object.entries(networkInterfaces).map(([name, entries]) => [
+      name,
+      entries.map((entry) => ({ ...entry })),
+    ]),
+  );
+}
+
+function encodeUserInfoValue(value, encoding) {
+  return encoding === 'buffer' ? Buffer.from(String(value)) : String(value);
+}
+
+function deepFreezeObject(value) {
+  if (
+    value == null ||
+    (typeof value !== 'object' && typeof value !== 'function') ||
+    Object.isFrozen(value)
+  ) {
+    return value;
+  }
+
+  for (const nestedValue of Object.values(value)) {
+    deepFreezeObject(nestedValue);
+  }
+
+  return Object.freeze(value);
+}
+
+function createVirtualProcessMemoryUsageSnapshot() {
+  const rss = Math.max(
+    1,
+    Math.min(
+      VIRTUAL_OS_TOTALMEM,
+      Math.max(VIRTUAL_OS_TOTALMEM - VIRTUAL_OS_FREEMEM, Math.floor(VIRTUAL_OS_TOTALMEM / 4)),
+    ),
+  );
+  const heapTotal = Math.max(1, Math.min(rss, Math.floor(rss / 2)));
+  const heapUsed = Math.max(1, Math.min(heapTotal, Math.floor(heapTotal / 2)));
+  const external = Math.max(0, Math.min(rss - heapUsed, Math.floor(rss / 8)));
+  const arrayBuffers = Math.max(0, Math.min(external, Math.floor(external / 2)));
+
+  return {
+    rss,
+    heapTotal,
+    heapUsed,
+    external,
+    arrayBuffers,
+  };
+}
+
+function createGuestMemoryUsage() {
+  const memoryUsage = () => createVirtualProcessMemoryUsageSnapshot();
+  hardenProperty(memoryUsage, 'rss', () => createVirtualProcessMemoryUsageSnapshot().rss);
+  return memoryUsage;
+}
+
+function createGuestProcessUptime() {
+  return () => Math.max(0, (guestMonotonicNow() - VIRTUAL_PROCESS_START_TIME_MS) / 1000);
+}
+
+function createGuestOsModule(osModule) {
+  const virtualHomeDir = resolveVirtualPath(
+    (globalThis.__agentOSVirtualOs||{}).homedir,
+    DEFAULT_VIRTUAL_OS_HOMEDIR,
+  );
+  const virtualTmpDir = resolveVirtualPath(
+    (globalThis.__agentOSVirtualOs||{}).tmpdir,
+    DEFAULT_VIRTUAL_OS_TMPDIR,
+  );
+  const virtualUserName = parseVirtualProcessString(
+    (globalThis.__agentOSVirtualOs||{}).user,
+    DEFAULT_VIRTUAL_OS_USER,
+  );
+  const virtualShell = resolveVirtualPath(
+    (globalThis.__agentOSVirtualOs||{}).shell,
+    DEFAULT_VIRTUAL_OS_SHELL,
+  );
+  const virtualCpuInfo = Object.freeze(
+    Array.from({ length: VIRTUAL_OS_CPU_COUNT }, () =>
+      Object.freeze({
+        model: VIRTUAL_OS_CPU_MODEL,
+        speed: 0,
+        times: Object.freeze({
+          user: 0,
+          nice: 0,
+          sys: 0,
+          idle: 0,
+          irq: 0,
+        }),
+      }),
+    ),
+  );
+  const virtualNetworkInterfaces = Object.freeze({
+    lo: Object.freeze([
+      Object.freeze({
+        address: '127.0.0.1',
+        netmask: '255.0.0.0',
+        family: 'IPv4',
+        mac: '00:00:00:00:00:00',
+        internal: true,
+        cidr: '127.0.0.1/8',
+      }),
+      Object.freeze({
+        address: '::1',
+        netmask: 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+        family: 'IPv6',
+        mac: '00:00:00:00:00:00',
+        internal: true,
+        cidr: '::1/128',
+        scopeid: 0,
+      }),
+    ]),
+  });
+
+  return Object.assign(Object.create(osModule ?? null), {
+    arch: () => VIRTUAL_OS_ARCH,
+    availableParallelism: () => VIRTUAL_OS_CPU_COUNT,
+    cpus: () => virtualCpuInfo.map((cpu) => cloneVirtualCpuInfo(cpu)),
+    freemem: () => VIRTUAL_OS_FREEMEM,
+    getPriority: () => 0,
+    homedir: () => virtualHomeDir,
+    hostname: () => VIRTUAL_OS_HOSTNAME,
+    loadavg: () => [0, 0, 0],
+    machine: () => VIRTUAL_OS_MACHINE,
+    networkInterfaces: () => cloneVirtualNetworkInterfaces(virtualNetworkInterfaces),
+    platform: () => VIRTUAL_OS_PLATFORM,
+    release: () => VIRTUAL_OS_RELEASE,
+    setPriority: () => {
+      throw accessDenied('os.setPriority');
+    },
+    tmpdir: () => virtualTmpDir,
+    totalmem: () => VIRTUAL_OS_TOTALMEM,
+    type: () => VIRTUAL_OS_TYPE,
+    uptime: () => 0,
+    userInfo: (options = undefined) => {
+      const encoding =
+        options && typeof options === 'object' ? options.encoding : undefined;
+      return {
+        username: encodeUserInfoValue(virtualUserName, encoding),
+        uid: VIRTUAL_UID,
+        gid: VIRTUAL_GID,
+        shell: encodeUserInfoValue(virtualShell, encoding),
+        homedir: encodeUserInfoValue(virtualHomeDir, encoding),
+      };
+    },
+    version: () => VIRTUAL_OS_VERSION,
+  });
+}
+
+const guestOs = createGuestOsModule(hostOs);
+const guestMemoryUsage = createGuestMemoryUsage();
+const guestProcessUptime = createGuestProcessUptime();
+
+function isProcessSignalEventName(eventName) {
+  return typeof eventName === 'string' && SIGNAL_EVENTS.has(eventName);
+}
+
+function emitControlMessage(message) {
+  if (CONTROL_PIPE_FD == null) {
+    if (
+      message?.type === 'signal_state' &&
+      typeof process?.stdout?.write === 'function'
+    ) {
+      try {
+        process.stdout.write(`__AGENTOS_WASM_SIGNAL_STATE__:${JSON.stringify(message)}\n`);
+      } catch {
+        // Ignore signal-state bridge failures during teardown.
+      }
+    }
+    return;
+  }
+
+  try {
+    hostFsWriteSync(CONTROL_PIPE_FD, `${JSON.stringify(message)}\n`);
+  } catch {
+    // Ignore control-channel write failures during teardown.
+  }
+}
+
+function isTrackedProcessSignalEventName(eventName) {
+  return typeof eventName === 'string' && TRACKED_PROCESS_SIGNAL_EVENTS.has(eventName);
+}
+
+function signalEventsAffectedByProcessMethod(methodName, eventName) {
+  if (methodName === 'removeAllListeners' && eventName == null) {
+    return [...TRACKED_PROCESS_SIGNAL_EVENTS];
+  }
+
+  return isTrackedProcessSignalEventName(eventName) ? [eventName] : [];
+}
+
+function emitGuestProcessSignalState(eventName) {
+  if (!isTrackedProcessSignalEventName(eventName)) {
+    return;
+  }
+
+  const signal = hostOs.constants?.signals?.[eventName];
+  if (typeof signal !== 'number') {
+    return;
+  }
+
+  const listenerCount =
+    typeof process.listenerCount === 'function' ? process.listenerCount(eventName) : 0;
+  emitControlMessage({
+    type: 'signal_state',
+    signal: Number(signal) >>> 0,
+    registration: {
+      action: listenerCount > 0 ? 'user' : 'default',
+      mask: [],
+      flags: 0,
+    },
+  });
+}
+
+function createBlockedProcessSignalMethod(methodName) {
+  const target = process;
+  const method =
+    typeof target[methodName] === 'function' ? target[methodName].bind(target) : null;
+  if (!method) {
+    return null;
+  }
+
+  return (...args) => {
+    const [eventName] = args;
+    const affectedSignals = signalEventsAffectedByProcessMethod(methodName, eventName);
+    if (isProcessSignalEventName(eventName) && affectedSignals.length === 0) {
+      throw accessDenied(`process.${methodName}(${eventName})`);
+    }
+
+    const result = method(...args);
+    for (const signalName of affectedSignals) {
+      emitGuestProcessSignalState(signalName);
+    }
+    return result === target ? guestProcess : result;
+  };
+}
+
+function createGuestProcessProxy(target) {
+  let proxy = null;
+  proxy = new Proxy(target, {
+    get(source, key) {
+      return Reflect.get(source, key, proxy);
+    },
+  });
+  return proxy;
+}
+
+function normalizeGuestRequireDir(fromGuestDir) {
+  if (typeof fromGuestDir !== 'string' || fromGuestDir.length === 0) {
+    return INITIAL_GUEST_CWD;
+  }
+
+  if (fromGuestDir.startsWith('file:')) {
+    try {
+      return path.posix.normalize(new URL(fromGuestDir).pathname);
+    } catch {
+      return INITIAL_GUEST_CWD;
+    }
+  }
+
+  if (path.posix.isAbsolute(fromGuestDir)) {
+    return path.posix.normalize(fromGuestDir);
+  }
+
+  return path.posix.normalize(path.posix.join(INITIAL_GUEST_CWD, fromGuestDir));
+}
+
+function isPathWithinRoot(candidatePath, rootPath) {
+  if (typeof candidatePath !== 'string' || typeof rootPath !== 'string') {
+    return false;
+  }
+
+  const normalizedCandidate = path.resolve(candidatePath);
+  const normalizedRoot = path.resolve(rootPath);
+  return (
+    normalizedCandidate === normalizedRoot ||
+    normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`)
+  );
+}
+
+function runtimeHostPathFromGuestPath(guestPath) {
+  if (typeof guestPath !== 'string') {
+    return null;
+  }
+
+  const translated = hostPathFromGuestPath(guestPath);
+  if (translated) {
+    return translated;
+  }
+
+  const cwdGuestPath = guestPathFromHostPath(HOST_CWD);
+  if (
+    typeof cwdGuestPath !== 'string' ||
+    !path.posix.isAbsolute(guestPath) ||
+    !path.posix.isAbsolute(cwdGuestPath)
+  ) {
+    return null;
+  }
+
+  const relative = path.posix.relative(cwdGuestPath, path.posix.normalize(guestPath));
+  if (
+    relative.startsWith('..') ||
+    relative === '..' ||
+    path.posix.isAbsolute(relative)
+  ) {
+    return null;
+  }
+
+  return relative ? path.join(HOST_CWD, ...relative.split('/')) : HOST_CWD;
+}
+
+function translateModuleResolutionPath(value) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  if (value.startsWith('file:')) {
+    try {
+      const guestPath = path.posix.normalize(new URL(value).pathname);
+      const hostPath = runtimeHostPathFromGuestPath(guestPath);
+      return hostPath ? pathToFileURL(hostPath).href : value;
+    } catch {
+      return value;
+    }
+  }
+
+  if (path.posix.isAbsolute(value)) {
+    return runtimeHostPathFromGuestPath(value) ?? value;
+  }
+
+  return value;
+}
+
+function translateModuleResolutionParent(parent) {
+  if (!parent || typeof parent !== 'object') {
+    return parent;
+  }
+
+  let nextParent = parent;
+  let changed = false;
+
+  if (typeof parent.filename === 'string') {
+    const translatedFilename = translateModuleResolutionPath(parent.filename);
+    if (translatedFilename !== parent.filename) {
+      nextParent = { ...nextParent, filename: translatedFilename };
+      changed = true;
+    }
+  }
+
+  if (Array.isArray(parent.paths)) {
+    const translatedPaths = parent.paths.map((entry) =>
+      translateModuleResolutionPath(entry),
+    );
+    if (translatedPaths.some((entry, index) => entry !== parent.paths[index])) {
+      nextParent = { ...nextParent, paths: translatedPaths };
+      changed = true;
+    }
+  }
+
+  return changed ? nextParent : parent;
+}
+
+function translateModuleResolutionOptions(options) {
+  if (Array.isArray(options)) {
+    return options.map((entry) => translateModuleResolutionPath(entry));
+  }
+
+  if (!options || typeof options !== 'object' || !Array.isArray(options.paths)) {
+    return options;
+  }
+
+  const translatedPaths = options.paths.map((entry) =>
+    translateModuleResolutionPath(entry),
+  );
+  if (translatedPaths.every((entry, index) => entry === options.paths[index])) {
+    return options;
+  }
+
+  return {
+    ...options,
+    paths: translatedPaths,
+  };
+}
+
+function ensureGuestVisibleModuleResolution(specifier, resolved, parent) {
+  if (typeof resolved !== 'string' || !path.isAbsolute(resolved)) {
+    return resolved;
+  }
+
+  if (
+    guestVisiblePathFromHostPath(resolved) ||
+    isPathWithinRoot(resolved, HOST_CWD)
+  ) {
+    return resolved;
+  }
+
+  const error = new Error(`Cannot find module '${specifier}'`);
+  error.code = 'MODULE_NOT_FOUND';
+  if (typeof parent?.filename === 'string') {
+    error.requireStack = [translatePathStringToGuest(parent.filename)];
+  }
+  throw translateErrorToGuest(error);
+}
+
+function createGuestModuleCacheProxy(moduleCache) {
+  if (!moduleCache || typeof moduleCache !== 'object') {
+    return moduleCache;
+  }
+
+  const toHostKey = (key) =>
+    typeof key === 'string' ? translateModuleResolutionPath(key) : key;
+  const toGuestKey = (key) =>
+    typeof key === 'string' ? translatePathStringToGuest(key) : key;
+
+  return new Proxy(moduleCache, {
+    defineProperty(target, key, descriptor) {
+      return Reflect.defineProperty(target, toHostKey(key), descriptor);
+    },
+    deleteProperty(target, key) {
+      return Reflect.deleteProperty(target, toHostKey(key));
+    },
+    get(target, key, receiver) {
+      return Reflect.get(target, toHostKey(key), receiver);
+    },
+    getOwnPropertyDescriptor(target, key) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(target, toHostKey(key));
+      if (!descriptor) {
+        return descriptor;
+      }
+      return {
+        ...descriptor,
+        configurable: true,
+      };
+    },
+    has(target, key) {
+      return Reflect.has(target, toHostKey(key));
+    },
+    ownKeys(target) {
+      return Reflect.ownKeys(target).map((key) => toGuestKey(key));
+    },
+    set(target, key, value, receiver) {
+      return Reflect.set(target, toHostKey(key), value, receiver);
+    },
+  });
+}
+
+const guestModuleCache = createGuestModuleCacheProxy(originalModuleCache);
+
+function createGuestRequire(fromGuestDir) {
+  const normalizedGuestDir = normalizeGuestRequireDir(fromGuestDir);
+  const cached = guestRequireCache.get(normalizedGuestDir);
+  if (cached) {
+    return cached;
+  }
+
+  const baseRequire = Module.createRequire(
+    pathToFileURL(path.posix.join(normalizedGuestDir, '__agentos_require__.cjs')),
+  );
+
+  const guestRequire = function(specifier) {
+    const translated = hostPathForSpecifier(specifier, normalizedGuestDir);
+    try {
+      if (translated) {
+        return baseRequire(translated);
+      }
+
+      return baseRequire(specifier);
+    } catch (error) {
+      if (rootGuestRequire && rootGuestRequire !== guestRequire && isBareSpecifier(specifier)) {
+        return rootGuestRequire(specifier);
+      }
+      throw translateErrorToGuest(error);
+    }
+  };
+
+  guestRequire.resolve = (specifier, options) => {
+    const translated = hostPathForSpecifier(specifier, normalizedGuestDir);
+    try {
+      if (translated) {
+        return translatePathStringToGuest(baseRequire.resolve(translated, options));
+      }
+
+      return translatePathStringToGuest(baseRequire.resolve(specifier, options));
+    } catch (error) {
+      if (rootGuestRequire && rootGuestRequire !== guestRequire && isBareSpecifier(specifier)) {
+        return rootGuestRequire.resolve(specifier, options);
+      }
+      throw translateErrorToGuest(error);
+    }
+  };
+
+  guestRequire.cache = guestModuleCache;
+
+  guestRequireCache.set(normalizedGuestDir, guestRequire);
+  return guestRequire;
+}
+
+function hardenProperty(target, key, value) {
+  try {
+    Object.defineProperty(target, key, {
+      value,
+      writable: false,
+      configurable: false,
+    });
+  } catch (error) {
+    throw new Error(`Failed to harden property ${String(key)}`, { cause: error });
+  }
+}
+
+function encodeSyncRpcValue(value) {
+  if (value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof Buffer === 'function' && Buffer.isBuffer(value)) {
+    return {
+      __agentOSType: 'bytes',
+      base64: value.toString('base64'),
+    };
+  }
+
+  if (ArrayBuffer.isView(value)) {
+    return {
+      __agentOSType: 'bytes',
+      base64: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('base64'),
+    };
+  }
+
+  if (value instanceof ArrayBuffer) {
+    return {
+      __agentOSType: 'bytes',
+      base64: Buffer.from(value).toString('base64'),
+    };
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => encodeSyncRpcValue(entry));
+  }
+
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, encodeSyncRpcValue(entry)]),
+    );
+  }
+
+  return String(value);
+}
+
+function decodeSyncRpcValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => decodeSyncRpcValue(entry));
+  }
+
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+
+  if (ArrayBuffer.isView(value)) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  }
+
+  if (value && typeof value === 'object') {
+    if (value.__type === 'Buffer' && typeof value.data === 'string') {
+      return Buffer.from(value.data, 'base64');
+    }
+
+    if (value.__agentOSType === 'bytes' && typeof value.base64 === 'string') {
+      return Buffer.from(value.base64, 'base64');
+    }
+
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, decodeSyncRpcValue(entry)]),
+    );
+  }
+
+  return value;
+}
+
+function formatSyncRpcError(error) {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      code: typeof error.code === 'string' ? error.code : undefined,
+    };
+  }
+
+  return {
+    message: String(error),
+  };
+}
+
+function createNodeSyncRpcBridge() {
+  if (!NODE_SYNC_RPC_ENABLE) {
+    return null;
+  }
+
+  if (NODE_SYNC_RPC_REQUEST_FD == null || NODE_SYNC_RPC_RESPONSE_FD == null) {
+    throw new Error('secure-exec Node sync RPC requires request and response file descriptors');
+  }
+
+  const Worker = hostWorkerThreads?.Worker;
+  if (typeof Worker !== 'function') {
+    throw new Error('secure-exec Node sync RPC requires node:worker_threads support');
+  }
+
+  const STATE_INDEX = 0;
+  const STATUS_INDEX = 1;
+  const KIND_INDEX = 2;
+  const REQUEST_LENGTH_INDEX = 3;
+  const RESPONSE_LENGTH_INDEX = 4;
+  const STATE_IDLE = 0;
+  const STATE_REQUEST_READY = 1;
+  const STATE_RESPONSE_READY = 2;
+  const STATE_SHUTDOWN = 3;
+  const STATUS_OK = 0;
+  const STATUS_ERROR = 1;
+  const KIND_JSON = 3;
+  const signalBuffer = new SharedArrayBuffer(5 * Int32Array.BYTES_PER_ELEMENT);
+  const dataBuffer = new SharedArrayBuffer(NODE_SYNC_RPC_DATA_BYTES);
+  const signal = new Int32Array(signalBuffer);
+  const data = new Uint8Array(dataBuffer);
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  let nextRequestId = 1;
+  let disposed = false;
+
+  const workerSource = `
+    const { parentPort, workerData } = require('node:worker_threads');
+    const { readSync, writeSync, closeSync } = require('node:fs');
+    const STATE_INDEX = 0;
+    const STATUS_INDEX = 1;
+    const KIND_INDEX = 2;
+    const REQUEST_LENGTH_INDEX = 3;
+    const RESPONSE_LENGTH_INDEX = 4;
+    const STATE_IDLE = 0;
+    const STATE_REQUEST_READY = 1;
+    const STATE_RESPONSE_READY = 2;
+    const STATE_SHUTDOWN = 3;
+    const STATUS_OK = 0;
+    const STATUS_ERROR = 1;
+    const KIND_JSON = 3;
+    const signal = new Int32Array(workerData.signalBuffer);
+    const data = new Uint8Array(workerData.dataBuffer);
+    const responseFd = workerData.responseFd;
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    let responseBuffer = '';
+
+    function setResponse(status, bytes) {
+      let payload = bytes;
+      let nextStatus = status;
+      if (payload.byteLength > data.byteLength) {
+        payload = encoder.encode(JSON.stringify({
+          message: 'secure-exec Node sync RPC payload exceeded shared buffer capacity',
+          code: 'ERR_AGENTOS_NODE_SYNC_RPC_PAYLOAD_TOO_LARGE',
+        }));
+        nextStatus = STATUS_ERROR;
+      }
+
+      data.fill(0);
+      data.set(payload, 0);
+      Atomics.store(signal, STATUS_INDEX, nextStatus);
+      Atomics.store(signal, KIND_INDEX, KIND_JSON);
+      Atomics.store(signal, RESPONSE_LENGTH_INDEX, payload.byteLength);
+      Atomics.store(signal, STATE_INDEX, STATE_RESPONSE_READY);
+      Atomics.notify(signal, STATE_INDEX, 1);
+    }
+
+    function readResponseLineSync() {
+      while (true) {
+        const newlineIndex = responseBuffer.indexOf('\\n');
+        if (newlineIndex >= 0) {
+          const line = responseBuffer.slice(0, newlineIndex);
+          responseBuffer = responseBuffer.slice(newlineIndex + 1);
+          return line;
+        }
+
+        const chunk = Buffer.alloc(4096);
+        const bytesRead = readSync(responseFd, chunk, 0, chunk.length, null);
+        if (bytesRead === 0) {
+          throw new Error('secure-exec Node sync RPC response channel closed unexpectedly');
+        }
+        responseBuffer += chunk.subarray(0, bytesRead).toString('utf8');
+      }
+    }
+
+    function waitForRequest() {
+      while (true) {
+        const state = Atomics.load(signal, STATE_INDEX);
+        if (state === STATE_REQUEST_READY || state === STATE_SHUTDOWN) {
+          return state;
+        }
+
+        Atomics.wait(signal, STATE_INDEX, state);
+      }
+    }
+
+    try {
+      while (true) {
+        const state = waitForRequest();
+        if (state === STATE_SHUTDOWN) {
+          break;
+        }
+
+        try {
+          const responseLine = readResponseLineSync();
+          setResponse(STATUS_OK, encoder.encode(responseLine));
+        } catch (error) {
+          setResponse(
+            STATUS_ERROR,
+            encoder.encode(JSON.stringify({
+              message: error instanceof Error ? error.message : String(error),
+              code: typeof error?.code === 'string' ? error.code : 'ERR_AGENTOS_NODE_SYNC_RPC',
+            })),
+          );
+        }
+      }
+    } finally {
+      try {
+        closeSync(responseFd);
+      } catch {}
+    }
+  `;
+
+  const worker = new Worker(workerSource, {
+    eval: true,
+    workerData: {
+      signalBuffer,
+      dataBuffer,
+      responseFd: NODE_SYNC_RPC_RESPONSE_FD,
+    },
+  });
+  worker.unref?.();
+
+  const readBytes = (length) => {
+    if (length <= 0) {
+      return new Uint8Array(0);
+    }
+    return data.slice(0, length);
+  };
+
+  const resetSignal = () => {
+    Atomics.store(signal, STATUS_INDEX, STATUS_OK);
+    Atomics.store(signal, KIND_INDEX, KIND_JSON);
+    Atomics.store(signal, REQUEST_LENGTH_INDEX, 0);
+    Atomics.store(signal, RESPONSE_LENGTH_INDEX, 0);
+    Atomics.store(signal, STATE_INDEX, STATE_IDLE);
+    Atomics.notify(signal, STATE_INDEX, 1);
+  };
+
+  const requestRaw = (method, args = []) => {
+    if (disposed) {
+      throw new Error('secure-exec Node sync RPC bridge is already disposed');
+    }
+
+    const payload = encoder.encode(
+      JSON.stringify({
+        id: nextRequestId++,
+        method,
+        args: encodeSyncRpcValue(args),
+      }),
+    );
+    if (payload.byteLength > data.byteLength) {
+      const error = new Error('secure-exec Node sync RPC request exceeded shared buffer capacity');
+      error.code = 'ERR_AGENTOS_NODE_SYNC_RPC_PAYLOAD_TOO_LARGE';
+      throw error;
+    }
+
+    data.fill(0);
+    data.set(payload, 0);
+    hostFsWriteSync(
+      NODE_SYNC_RPC_REQUEST_FD,
+      `${decoder.decode(data.subarray(0, payload.byteLength))}\n`,
+    );
+    Atomics.store(signal, STATUS_INDEX, STATUS_OK);
+    Atomics.store(signal, KIND_INDEX, KIND_JSON);
+    Atomics.store(signal, REQUEST_LENGTH_INDEX, payload.byteLength);
+    Atomics.store(signal, RESPONSE_LENGTH_INDEX, 0);
+    Atomics.store(signal, STATE_INDEX, STATE_REQUEST_READY);
+    Atomics.notify(signal, STATE_INDEX, 1);
+
+    while (true) {
+      const result = Atomics.wait(
+        signal,
+        STATE_INDEX,
+        STATE_REQUEST_READY,
+        NODE_SYNC_RPC_WAIT_TIMEOUT_MS,
+      );
+      if (result !== 'timed-out') {
+        break;
+      }
+      throw new Error(`secure-exec Node sync RPC timed out while handling ${method}`);
+    }
+
+    const status = Atomics.load(signal, STATUS_INDEX);
+    const kind = Atomics.load(signal, KIND_INDEX);
+    const length = Atomics.load(signal, RESPONSE_LENGTH_INDEX);
+    const bytes = readBytes(length);
+    resetSignal();
+
+    if (kind !== KIND_JSON) {
+      throw new Error(`secure-exec Node sync RPC returned unsupported payload kind ${kind}`);
+    }
+
+    if (status === STATUS_ERROR) {
+      const payload = JSON.parse(decoder.decode(bytes));
+      const error = new Error(payload?.message || `secure-exec Node sync RPC ${method} failed`);
+      if (typeof payload?.code === 'string') {
+        error.code = payload.code;
+      }
+      throw error;
+    }
+
+    return JSON.parse(decoder.decode(bytes));
+  };
+
+  return {
+    callSync(method, args = []) {
+      const response = requestRaw(method, args);
+      if (response?.ok) {
+        return decodeSyncRpcValue(response.result);
+      }
+
+      const error = new Error(
+        response?.error?.message || `secure-exec Node sync RPC ${method} failed`,
+      );
+      if (typeof response?.error?.code === 'string') {
+        error.code = response.error.code;
+      }
+      throw error;
+    },
+    async call(method, args = []) {
+      return this.callSync(method, args);
+    },
+    dispose() {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      Atomics.store(signal, STATE_INDEX, STATE_SHUTDOWN);
+      Atomics.notify(signal, STATE_INDEX, 1);
+      try {
+        hostFsCloseSync(NODE_SYNC_RPC_REQUEST_FD);
+      } catch {}
+      worker.terminate().catch(() => {});
+    },
+  };
+}
+
+function installGuestHardening() {
+  hardenProperty(process, 'env', createGuestProcessEnv(HOST_PROCESS_ENV));
+  hardenProperty(process, 'cwd', () => INITIAL_GUEST_CWD);
+  hardenProperty(process, 'chdir', () => {
+    throw accessDenied('process.chdir');
+  });
+  syncBuiltinModuleExports(hostFs, guestFs);
+  syncBuiltinModuleExports(hostFsPromises, guestFs.promises);
+  if (ALLOWED_BUILTINS.has('os')) {
+    syncBuiltinModuleExports(hostOs, guestOs);
+  }
+  if (ALLOWED_BUILTINS.has('net')) {
+    syncBuiltinModuleExports(hostNet, guestNet);
+  }
+  if (ALLOWED_BUILTINS.has('dgram')) {
+    syncBuiltinModuleExports(hostDgram, guestDgram);
+  }
+  if (ALLOWED_BUILTINS.has('dns')) {
+    syncBuiltinModuleExports(hostDns, guestDns);
+    syncBuiltinModuleExports(hostDnsPromises, guestDns.promises);
+  }
+  if (ALLOWED_BUILTINS.has('http')) {
+    syncBuiltinModuleExports(hostHttp, guestHttp);
+  }
+  if (ALLOWED_BUILTINS.has('http2')) {
+    syncBuiltinModuleExports(hostHttp2, guestHttp2);
+  }
+  if (ALLOWED_BUILTINS.has('https')) {
+    syncBuiltinModuleExports(hostHttps, guestHttps);
+  }
+  if (ALLOWED_BUILTINS.has('tls')) {
+    syncBuiltinModuleExports(hostTls, guestTls);
+  }
+  try {
+    syncBuiltinESMExports();
+  } catch {
+    // Ignore runtimes that reject syncing builtin ESM exports.
+  }
+
+  hardenProperty(process, 'execPath', VIRTUAL_EXEC_PATH);
+  hardenProperty(process, 'pid', VIRTUAL_PID);
+  hardenProperty(process, 'ppid', VIRTUAL_PPID);
+  hardenProperty(process, 'version', VIRTUAL_PROCESS_VERSION);
+  hardenProperty(process, 'versions', VIRTUAL_PROCESS_VERSIONS);
+  hardenProperty(process, 'release', VIRTUAL_PROCESS_RELEASE);
+  hardenProperty(process, 'config', VIRTUAL_PROCESS_CONFIG);
+  hardenProperty(process, 'platform', VIRTUAL_OS_PLATFORM);
+  hardenProperty(process, 'arch', VIRTUAL_OS_ARCH);
+  hardenProperty(process, 'memoryUsage', guestMemoryUsage);
+  hardenProperty(process, 'uptime', guestProcessUptime);
+  hardenProperty(process, 'getuid', guestGetUid);
+  hardenProperty(process, 'getgid', guestGetGid);
+  hardenProperty(process, 'umask', guestProcessUmask);
+
+  if (!ALLOW_PROCESS_BINDINGS) {
+    hardenProperty(process, 'binding', () => {
+      throw accessDenied('process.binding');
+    });
+    hardenProperty(process, '_linkedBinding', () => {
+      throw accessDenied('process._linkedBinding');
+    });
+    hardenProperty(process, 'dlopen', () => {
+      throw accessDenied('process.dlopen');
+    });
+  }
+  for (const methodName of [
+    'addListener',
+    'on',
+    'once',
+    'removeAllListeners',
+    'removeListener',
+    'off',
+    'prependListener',
+    'prependOnceListener',
+  ]) {
+    const blockedMethod = createBlockedProcessSignalMethod(methodName);
+    if (blockedMethod) {
+      hardenProperty(process, methodName, blockedMethod);
+    }
+  }
+  if (Module?._extensions && typeof Module._extensions === 'object') {
+    hardenProperty(Module._extensions, '.node', () => {
+      throw accessDenied('native addon loading');
+    });
+  }
+  if (originalGetBuiltinModule) {
+    hardenProperty(process, 'getBuiltinModule', (specifier) => {
+      const normalized =
+        typeof specifier === 'string' ? normalizeBuiltin(specifier) : null;
+      if (normalized === 'process') {
+        return guestProcess;
+      }
+      if (normalized === 'fs') {
+        return cloneFsModule(guestFs);
+      }
+      if (normalized === 'os' && ALLOWED_BUILTINS.has('os')) {
+        return guestOs;
+      }
+      if (normalized === 'net' && ALLOWED_BUILTINS.has('net')) {
+        return guestNet;
+      }
+      if (normalized === 'dgram' && ALLOWED_BUILTINS.has('dgram')) {
+        return guestDgram;
+      }
+      if (normalized === 'dns' && ALLOWED_BUILTINS.has('dns')) {
+        return guestDns;
+      }
+      if (normalized === 'dns/promises' && ALLOWED_BUILTINS.has('dns')) {
+        return guestDns.promises;
+      }
+      if (normalized === 'http' && ALLOWED_BUILTINS.has('http')) {
+        return guestHttp;
+      }
+      if (normalized === 'http2' && ALLOWED_BUILTINS.has('http2')) {
+        return guestHttp2;
+      }
+      if (normalized === 'https' && ALLOWED_BUILTINS.has('https')) {
+        return guestHttps;
+      }
+      if (normalized === 'tls' && ALLOWED_BUILTINS.has('tls')) {
+        return guestTls;
+      }
+      if (normalized === 'child_process' && ALLOWED_BUILTINS.has('child_process')) {
+        return guestChildProcess;
+      }
+      if (normalized && DENIED_BUILTINS.has(normalized)) {
+        throw accessDenied(`node:${normalized}`);
+      }
+      return originalGetBuiltinModule(specifier);
+    });
+  }
+
+  if (originalModuleLoad) {
+    Module._load = function(request, parent, isMain) {
+      const normalized =
+        typeof request === 'string' ? normalizeBuiltin(request) : null;
+      if (normalized === 'process') {
+        return guestProcess;
+      }
+      if (normalized === 'fs') {
+        return cloneFsModule(guestFs);
+      }
+      if (normalized === 'os' && ALLOWED_BUILTINS.has('os')) {
+        return guestOs;
+      }
+      if (normalized === 'net' && ALLOWED_BUILTINS.has('net')) {
+        return guestNet;
+      }
+      if (normalized === 'dgram' && ALLOWED_BUILTINS.has('dgram')) {
+        return guestDgram;
+      }
+      if (normalized === 'dns' && ALLOWED_BUILTINS.has('dns')) {
+        return guestDns;
+      }
+      if (normalized === 'dns/promises' && ALLOWED_BUILTINS.has('dns')) {
+        return guestDns.promises;
+      }
+      if (normalized === 'http' && ALLOWED_BUILTINS.has('http')) {
+        return guestHttp;
+      }
+      if (normalized === 'http2' && ALLOWED_BUILTINS.has('http2')) {
+        return guestHttp2;
+      }
+      if (normalized === 'https' && ALLOWED_BUILTINS.has('https')) {
+        return guestHttps;
+      }
+      if (normalized === 'tls' && ALLOWED_BUILTINS.has('tls')) {
+        return guestTls;
+      }
+      if (normalized === 'child_process' && ALLOWED_BUILTINS.has('child_process')) {
+        return guestChildProcess;
+      }
+      if (normalized && DENIED_BUILTINS.has(normalized)) {
+        throw accessDenied(`node:${normalized}`);
+      }
+
+      return originalModuleLoad(request, parent, isMain);
+    };
+  }
+
+  if (originalModuleResolveFilename) {
+    Module._resolveFilename = function(request, parent, isMain, options) {
+      const translatedRequest = translateModuleResolutionPath(request);
+      const translatedParent = translateModuleResolutionParent(parent);
+      const translatedOptions = translateModuleResolutionOptions(options);
+      const resolved = originalModuleResolveFilename(
+        translatedRequest,
+        translatedParent,
+        isMain,
+        translatedOptions,
+      );
+      return ensureGuestVisibleModuleResolution(
+        request,
+        resolved,
+        translatedParent,
+      );
+    };
+  }
+
+  if (guestModuleCache) {
+    hardenProperty(Module, '_cache', guestModuleCache);
+  }
+
+  if (originalFetch) {
+    const restrictedFetch = async (resource, init) => {
+      const candidate =
+        typeof resource === 'string'
+          ? resource
+          : resource instanceof URL
+            ? resource.href
+            : resource?.url;
+
+      let url;
+      try {
+        url = new URL(String(candidate ?? ''));
+      } catch {
+        throw accessDenied('network access');
+      }
+
+      if (url.protocol !== 'data:') {
+        const normalizedPort =
+          url.port || (url.protocol === 'https:' ? '443' : url.protocol === 'http:' ? '80' : '');
+        const loopbackHost =
+          url.hostname === '127.0.0.1' ||
+          url.hostname === 'localhost' ||
+          url.hostname === '::1' ||
+          url.hostname === '[::1]';
+        const loopbackAllowed =
+          loopbackHost &&
+          (url.protocol === 'http:' || url.protocol === 'https:') &&
+          LOOPBACK_EXEMPT_PORTS.has(normalizedPort);
+
+        if (!loopbackAllowed) {
+          throw accessDenied(`network access to ${url.protocol}`);
+        }
+      }
+
+      return originalFetch(resource, init);
+    };
+
+    hardenProperty(globalThis, 'fetch', restrictedFetch);
+  }
+}
+
+const entrypoint = HOST_PROCESS_ENV.AGENTOS_ENTRYPOINT;
+if (!entrypoint) {
+  throw new Error('AGENTOS_ENTRYPOINT is required');
+}
+
+const guestSyncRpc = createNodeSyncRpcBridge();
+installGuestHardening();
+rootGuestRequire = createGuestRequire('/root/node_modules');
+if (ALLOWED_BUILTINS.has('child_process')) {
+  hardenProperty(globalThis, '__agentOSBuiltinChildProcess', guestChildProcess);
+}
+hardenProperty(globalThis, '__agentOSBuiltinFs', guestFs);
+if (ALLOWED_BUILTINS.has('net')) {
+  hardenProperty(globalThis, '__agentOSBuiltinNet', guestNet);
+}
+if (ALLOWED_BUILTINS.has('dgram')) {
+  hardenProperty(globalThis, '__agentOSBuiltinDgram', guestDgram);
+}
+if (ALLOWED_BUILTINS.has('dns')) {
+  hardenProperty(globalThis, '__agentOSBuiltinDns', guestDns);
+}
+if (ALLOWED_BUILTINS.has('http')) {
+  hardenProperty(globalThis, '__agentOSBuiltinHttp', guestHttp);
+}
+if (ALLOWED_BUILTINS.has('http2')) {
+  hardenProperty(globalThis, '__agentOSBuiltinHttp2', guestHttp2);
+}
+if (ALLOWED_BUILTINS.has('https')) {
+  hardenProperty(globalThis, '__agentOSBuiltinHttps', guestHttps);
+}
+if (ALLOWED_BUILTINS.has('tls')) {
+  hardenProperty(globalThis, '__agentOSBuiltinTls', guestTls);
+}
+if (ALLOWED_BUILTINS.has('os')) {
+  hardenProperty(globalThis, '__agentOSBuiltinOs', guestOs);
+}
+if (guestSyncRpc) {
+  hardenProperty(globalThis, '__agentOSSyncRpc', guestSyncRpc);
+}
+hardenProperty(globalThis, '_requireFrom', (specifier, fromDir = '/') =>
+  createGuestRequire(fromDir)(specifier),
+);
+hardenProperty(
+  globalThis,
+  'require',
+  createGuestRequire(path.posix.dirname(guestEntryPoint ?? entrypoint)),
+);
+
+if (HOST_PROCESS_ENV.AGENTOS_KEEP_STDIN_OPEN === '1') {
+  let stdinKeepalive = setInterval(() => {}, 1_000_000);
+  const releaseStdinKeepalive = () => {
+    if (stdinKeepalive !== null) {
+      clearInterval(stdinKeepalive);
+      stdinKeepalive = null;
+    }
+  };
+
+  process.stdin.resume();
+  process.stdin.once('end', releaseStdinKeepalive);
+  process.stdin.once('close', releaseStdinKeepalive);
+  process.stdin.once('error', releaseStdinKeepalive);
+}
+
+const guestArgv = JSON.parse(HOST_PROCESS_ENV.AGENTOS_GUEST_ARGV ?? '[]');
+const bootstrapModule = HOST_PROCESS_ENV.AGENTOS_BOOTSTRAP_MODULE;
+const entrypointPath = isPathLike(entrypoint)
+  ? path.resolve(process.cwd(), entrypoint)
+  : entrypoint;
+
+process.argv = [VIRTUAL_EXEC_PATH, guestEntryPoint ?? entrypointPath, ...guestArgv];
+guestProcess = createGuestProcessProxy(process);
+hardenProperty(globalThis, 'process', guestProcess);
+
+try {
+  if (bootstrapModule) {
+    await import(toImportSpecifier(bootstrapModule));
+  }
+
+  await import(toImportSpecifier(entrypoint));
+} catch (error) {
+  throw translateErrorToGuest(error);
+} finally {
+  guestSyncRpc?.dispose?.();
+}
+"#;
+
+const NODE_TIMING_BOOTSTRAP_SOURCE: &str = r#"
+const frozenTimeValue = Number(process.env.AGENTOS_FROZEN_TIME_MS);
+const frozenTimeMs = Number.isFinite(frozenTimeValue) ? Math.trunc(frozenTimeValue) : Date.now();
+const frozenDateNow = () => frozenTimeMs;
+const OriginalDate = Date;
+
+function FrozenDate(...args) {
+  if (new.target) {
+    if (args.length === 0) {
+      return new OriginalDate(frozenTimeMs);
+    }
+    return new OriginalDate(...args);
+  }
+  return new OriginalDate(frozenTimeMs).toString();
+}
+
+Object.setPrototypeOf(FrozenDate, OriginalDate);
+Object.defineProperty(FrozenDate, 'prototype', {
+  value: OriginalDate.prototype,
+  writable: false,
+  configurable: false,
+});
+FrozenDate.parse = OriginalDate.parse;
+FrozenDate.UTC = OriginalDate.UTC;
+Object.defineProperty(FrozenDate, 'now', {
+  value: frozenDateNow,
+  writable: false,
+  configurable: false,
+});
+
+try {
+  Object.defineProperty(globalThis, 'Date', {
+    value: FrozenDate,
+    writable: false,
+    configurable: false,
+  });
+} catch {
+  globalThis.Date = FrozenDate;
+}
+
+const originalPerformance = globalThis.performance;
+const frozenPerformance = Object.create(null);
+if (typeof originalPerformance !== 'undefined' && originalPerformance !== null) {
+  const performanceSource =
+    Object.getPrototypeOf(originalPerformance) ?? originalPerformance;
+  for (const key of Object.getOwnPropertyNames(performanceSource)) {
+    if (key === 'now') {
+      continue;
+    }
+    try {
+      const value = originalPerformance[key];
+      frozenPerformance[key] =
+        typeof value === 'function' ? value.bind(originalPerformance) : value;
+    } catch {
+      // Ignore properties that throw during access.
+    }
+  }
+}
+Object.defineProperty(frozenPerformance, 'now', {
+  value: () => 0,
+  writable: false,
+  configurable: false,
+});
+Object.freeze(frozenPerformance);
+
+try {
+  Object.defineProperty(globalThis, 'performance', {
+    value: frozenPerformance,
+    writable: false,
+    configurable: false,
+  });
+} catch {
+  globalThis.performance = frozenPerformance;
+}
+
+const frozenHrtimeBigint = BigInt(frozenTimeMs) * 1000000n;
+const frozenHrtime = (previous) => {
+  const seconds = Math.trunc(frozenTimeMs / 1000);
+  const nanoseconds = Math.trunc((frozenTimeMs % 1000) * 1000000);
+
+  if (!Array.isArray(previous) || previous.length < 2) {
+    return [seconds, nanoseconds];
+  }
+
+  let deltaSeconds = seconds - Number(previous[0]);
+  let deltaNanoseconds = nanoseconds - Number(previous[1]);
+  if (deltaNanoseconds < 0) {
+    deltaSeconds -= 1;
+    deltaNanoseconds += 1000000000;
+  }
+  return [deltaSeconds, deltaNanoseconds];
+};
+frozenHrtime.bigint = () => frozenHrtimeBigint;
+
+try {
+  process.hrtime = frozenHrtime;
+} catch {
+  // Ignore runtimes that expose a non-writable process.hrtime binding.
+}
+"#;
+
+const NODE_PREWARM_SOURCE: &str = r#"
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+function isPathLike(specifier) {
+  return specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('file:');
+}
+
+function toImportSpecifier(specifier) {
+  if (specifier.startsWith('file:')) {
+    return specifier;
+  }
+  if (isPathLike(specifier)) {
+    return pathToFileURL(path.resolve(process.cwd(), specifier)).href;
+  }
+  return specifier;
+}
+
+const imports = JSON.parse(process.env.AGENTOS_NODE_PREWARM_IMPORTS ?? '[]');
+for (const specifier of imports) {
+  await import(toImportSpecifier(specifier));
+}
+"#;
+
+const NODE_WASM_RUNNER_SOURCE: &str = include_str!("../assets/runners/wasm-runner.mjs");
+
+static NEXT_NODE_IMPORT_CACHE_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Copy)]
+struct BuiltinAsset {
+    name: &'static str,
+    module_specifier: &'static str,
+    init_counter_key: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct DeniedBuiltinAsset {
+    name: &'static str,
+    module_specifier: &'static str,
+}
+
+const BUILTIN_ASSETS: &[BuiltinAsset] = &[
+    BuiltinAsset {
+        name: "async-hooks",
+        module_specifier: "node:async_hooks",
+        init_counter_key: "__agentOSBuiltinAsyncHooksInitCount",
+    },
+    BuiltinAsset {
+        name: "assert",
+        module_specifier: "node:assert",
+        init_counter_key: "__agentOSBuiltinAssertInitCount",
+    },
+    BuiltinAsset {
+        name: "buffer",
+        module_specifier: "node:buffer",
+        init_counter_key: "__agentOSBuiltinBufferInitCount",
+    },
+    BuiltinAsset {
+        name: "constants",
+        module_specifier: "node:constants",
+        init_counter_key: "__agentOSBuiltinConstantsInitCount",
+    },
+    BuiltinAsset {
+        name: "events",
+        module_specifier: "node:events",
+        init_counter_key: "__agentOSBuiltinEventsInitCount",
+    },
+    BuiltinAsset {
+        name: "fs",
+        module_specifier: "node:fs",
+        init_counter_key: "__agentOSBuiltinFsInitCount",
+    },
+    BuiltinAsset {
+        name: "path",
+        module_specifier: "node:path",
+        init_counter_key: "__agentOSBuiltinPathInitCount",
+    },
+    BuiltinAsset {
+        name: "url",
+        module_specifier: "node:url",
+        init_counter_key: "__agentOSBuiltinUrlInitCount",
+    },
+    BuiltinAsset {
+        name: "fs-promises",
+        module_specifier: "node:fs/promises",
+        init_counter_key: "__agentOSBuiltinFsPromisesInitCount",
+    },
+    BuiltinAsset {
+        name: "child-process",
+        module_specifier: "node:child_process",
+        init_counter_key: "__agentOSBuiltinChildProcessInitCount",
+    },
+    BuiltinAsset {
+        name: "net",
+        module_specifier: "node:net",
+        init_counter_key: "__agentOSBuiltinNetInitCount",
+    },
+    BuiltinAsset {
+        name: "dgram",
+        module_specifier: "node:dgram",
+        init_counter_key: "__agentOSBuiltinDgramInitCount",
+    },
+    BuiltinAsset {
+        name: "diagnostics-channel",
+        module_specifier: "node:diagnostics_channel",
+        init_counter_key: "__agentOSBuiltinDiagnosticsChannelInitCount",
+    },
+    BuiltinAsset {
+        name: "dns",
+        module_specifier: "node:dns",
+        init_counter_key: "__agentOSBuiltinDnsInitCount",
+    },
+    BuiltinAsset {
+        name: "dns-promises",
+        module_specifier: "node:dns/promises",
+        init_counter_key: "__agentOSBuiltinDnsPromisesInitCount",
+    },
+    BuiltinAsset {
+        name: "http",
+        module_specifier: "node:http",
+        init_counter_key: "__agentOSBuiltinHttpInitCount",
+    },
+    BuiltinAsset {
+        name: "http2",
+        module_specifier: "node:http2",
+        init_counter_key: "__agentOSBuiltinHttp2InitCount",
+    },
+    BuiltinAsset {
+        name: "https",
+        module_specifier: "node:https",
+        init_counter_key: "__agentOSBuiltinHttpsInitCount",
+    },
+    BuiltinAsset {
+        name: "tls",
+        module_specifier: "node:tls",
+        init_counter_key: "__agentOSBuiltinTlsInitCount",
+    },
+    BuiltinAsset {
+        name: "os",
+        module_specifier: "node:os",
+        init_counter_key: "__agentOSBuiltinOsInitCount",
+    },
+    BuiltinAsset {
+        name: "punycode",
+        module_specifier: "node:punycode",
+        init_counter_key: "__agentOSBuiltinPunycodeInitCount",
+    },
+    BuiltinAsset {
+        name: "querystring",
+        module_specifier: "node:querystring",
+        init_counter_key: "__agentOSBuiltinQuerystringInitCount",
+    },
+    BuiltinAsset {
+        name: "stream",
+        module_specifier: "node:stream",
+        init_counter_key: "__agentOSBuiltinStreamInitCount",
+    },
+    BuiltinAsset {
+        name: "string-decoder",
+        module_specifier: "node:string_decoder",
+        init_counter_key: "__agentOSBuiltinStringDecoderInitCount",
+    },
+    BuiltinAsset {
+        name: "util",
+        module_specifier: "node:util",
+        init_counter_key: "__agentOSBuiltinUtilInitCount",
+    },
+    BuiltinAsset {
+        name: "v8",
+        module_specifier: "node:v8",
+        init_counter_key: "__agentOSBuiltinV8InitCount",
+    },
+    BuiltinAsset {
+        name: "vm",
+        module_specifier: "node:vm",
+        init_counter_key: "__agentOSBuiltinVmInitCount",
+    },
+    BuiltinAsset {
+        name: "worker-threads",
+        module_specifier: "node:worker_threads",
+        init_counter_key: "__agentOSBuiltinWorkerThreadsInitCount",
+    },
+    BuiltinAsset {
+        name: "zlib",
+        module_specifier: "node:zlib",
+        init_counter_key: "__agentOSBuiltinZlibInitCount",
+    },
+];
+
+const DENIED_BUILTIN_ASSETS: &[DeniedBuiltinAsset] = &[
+    DeniedBuiltinAsset {
+        name: "child_process",
+        module_specifier: "node:child_process",
+    },
+    DeniedBuiltinAsset {
+        name: "cluster",
+        module_specifier: "node:cluster",
+    },
+    DeniedBuiltinAsset {
+        name: "dgram",
+        module_specifier: "node:dgram",
+    },
+    DeniedBuiltinAsset {
+        name: "http",
+        module_specifier: "node:http",
+    },
+    DeniedBuiltinAsset {
+        name: "http2",
+        module_specifier: "node:http2",
+    },
+    DeniedBuiltinAsset {
+        name: "https",
+        module_specifier: "node:https",
+    },
+    DeniedBuiltinAsset {
+        name: "inspector",
+        module_specifier: "node:inspector",
+    },
+    DeniedBuiltinAsset {
+        name: "module",
+        module_specifier: "node:module",
+    },
+    DeniedBuiltinAsset {
+        name: "net",
+        module_specifier: "node:net",
+    },
+    DeniedBuiltinAsset {
+        name: "trace_events",
+        module_specifier: "node:trace_events",
+    },
+];
+
+const PATH_POLYFILL_ASSET_NAME: &str = "path";
+const PATH_POLYFILL_INIT_COUNTER_KEY: &str = "__agentOSPolyfillPathInitCount";
+
+#[derive(Debug)]
+pub(crate) struct NodeImportCache {
+    root_dir: PathBuf,
+    cleanup: Arc<NodeImportCacheCleanup>,
+    materialized: AtomicBool,
+    cache_path: PathBuf,
+    loader_path: PathBuf,
+    register_path: PathBuf,
+    runner_path: PathBuf,
+    python_runner_path: PathBuf,
+    timing_bootstrap_path: PathBuf,
+    prewarm_path: PathBuf,
+    wasm_runner_path: PathBuf,
+    asset_root: PathBuf,
+    pyodide_dist_path: PathBuf,
+    prewarm_marker_dir: PathBuf,
+}
+
+#[derive(Debug)]
+pub(crate) struct NodeImportCacheCleanup {
+    root_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct NodeImportCacheMaterialization {
+    root_dir: PathBuf,
+    loader_path: PathBuf,
+    register_path: PathBuf,
+    runner_path: PathBuf,
+    python_runner_path: PathBuf,
+    timing_bootstrap_path: PathBuf,
+    prewarm_path: PathBuf,
+    wasm_runner_path: PathBuf,
+    asset_root: PathBuf,
+    pyodide_dist_path: PathBuf,
+    prewarm_marker_dir: PathBuf,
+}
+
+impl Default for NodeImportCache {
+    fn default() -> Self {
+        Self::new_in(default_node_import_cache_base_dir())
+    }
+}
+
+fn default_node_import_cache_base_dir() -> PathBuf {
+    env::temp_dir().join(format!(
+        "{NODE_IMPORT_CACHE_DIR_PREFIX}-roots-{}",
+        std::process::id()
+    ))
+}
+
+fn cleanup_stale_node_import_caches_once(base_dir: &Path) {
+    let cleaned_roots = CLEANED_NODE_IMPORT_CACHE_ROOTS.get_or_init(|| Mutex::new(BTreeSet::new()));
+    let should_cleanup = cleaned_roots
+        .lock()
+        .map(|mut roots| roots.insert(base_dir.to_path_buf()))
+        .unwrap_or(true);
+
+    if should_cleanup {
+        cleanup_stale_node_import_caches(base_dir);
+    }
+}
+
+fn cleanup_stale_node_import_caches(base_dir: &Path) {
+    let entries = match fs::read_dir(base_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+        Err(error) => {
+            eprintln!(
+                "agentos: failed to scan node import cache root {}: {error}",
+                base_dir.display()
+            );
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => continue,
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let name = entry.file_name();
+        if !name
+            .to_str()
+            .is_some_and(|name| name.starts_with(NODE_IMPORT_CACHE_DIR_PREFIX))
+        {
+            continue;
+        }
+
+        let path = entry.path();
+        if let Err(error) = fs::remove_dir_all(&path) {
+            if error.kind() != io::ErrorKind::NotFound {
+                eprintln!(
+                    "agentos: failed to clean up stale node import cache {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+impl NodeImportCache {
+    pub(crate) fn new_in(base_dir: PathBuf) -> Self {
+        cleanup_stale_node_import_caches_once(&base_dir);
+        let cache_id = NEXT_NODE_IMPORT_CACHE_ID.fetch_add(1, Ordering::Relaxed);
+        let root_dir = base_dir.join(format!(
+            "{NODE_IMPORT_CACHE_DIR_PREFIX}-{}-{cache_id}",
+            std::process::id()
+        ));
+
+        Self {
+            root_dir: root_dir.clone(),
+            cleanup: Arc::new(NodeImportCacheCleanup {
+                root_dir: root_dir.clone(),
+            }),
+            materialized: AtomicBool::new(false),
+            cache_path: root_dir.join("state.json"),
+            loader_path: root_dir.join("loader.mjs"),
+            register_path: root_dir.join("register.mjs"),
+            runner_path: root_dir.join("runner.mjs"),
+            python_runner_path: root_dir.join("python-runner.mjs"),
+            timing_bootstrap_path: root_dir.join("timing-bootstrap.mjs"),
+            prewarm_path: root_dir.join("prewarm.mjs"),
+            wasm_runner_path: root_dir.join("wasm-runner.mjs"),
+            asset_root: root_dir.join("assets"),
+            pyodide_dist_path: root_dir.join("assets").join(PYODIDE_DIST_DIR),
+            prewarm_marker_dir: root_dir.join("warmup"),
+        }
+    }
+}
+
+impl Drop for NodeImportCacheCleanup {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.root_dir) {
+            if error.kind() != io::ErrorKind::NotFound {
+                eprintln!(
+                    "agentos: failed to clean up node import cache {}: {error}",
+                    self.root_dir.display()
+                );
+            }
+        }
+    }
+}
+
+impl NodeImportCache {
+    pub(crate) fn cache_path(&self) -> &Path {
+        &self.cache_path
+    }
+
+    pub(crate) fn cleanup_guard(&self) -> Arc<NodeImportCacheCleanup> {
+        Arc::clone(&self.cleanup)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn python_runner_path(&self) -> &Path {
+        &self.python_runner_path
+    }
+
+    #[cfg(test)]
+    pub(crate) fn timing_bootstrap_path(&self) -> &Path {
+        &self.timing_bootstrap_path
+    }
+
+    pub(crate) fn wasm_runner_path(&self) -> &Path {
+        &self.wasm_runner_path
+    }
+
+    pub(crate) fn asset_root(&self) -> &Path {
+        &self.asset_root
+    }
+
+    pub(crate) fn pyodide_dist_path(&self) -> &Path {
+        &self.pyodide_dist_path
+    }
+
+    pub(crate) fn prewarm_marker_dir(&self) -> &Path {
+        &self.prewarm_marker_dir
+    }
+
+    pub(crate) fn shared_compile_cache_dir(&self) -> PathBuf {
+        self.root_dir.join("compile-cache")
+    }
+
+    pub(crate) fn ensure_materialized(&self) -> Result<(), io::Error> {
+        self.ensure_materialized_with_timeout(DEFAULT_NODE_IMPORT_CACHE_MATERIALIZE_TIMEOUT)
+    }
+
+    pub(crate) fn ensure_materialized_with_timeout(
+        &self,
+        timeout: Duration,
+    ) -> Result<(), io::Error> {
+        if self.materialized.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
+        let materialization = NodeImportCacheMaterialization::from(self);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(materialization.materialize());
+        });
+
+        match receiver.recv_timeout(timeout) {
+            Ok(result) => {
+                result?;
+                self.materialized.store(true, Ordering::Release);
+                Ok(())
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "timed out materializing node import cache after {} ms",
+                    timeout.as_millis()
+                ),
+            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::other(
+                "node import cache materialization thread exited unexpectedly",
+            )),
+        }
+    }
+}
+
+impl From<&NodeImportCache> for NodeImportCacheMaterialization {
+    fn from(cache: &NodeImportCache) -> Self {
+        Self {
+            root_dir: cache.root_dir.clone(),
+            loader_path: cache.loader_path.clone(),
+            register_path: cache.register_path.clone(),
+            runner_path: cache.runner_path.clone(),
+            python_runner_path: cache.python_runner_path.clone(),
+            timing_bootstrap_path: cache.timing_bootstrap_path.clone(),
+            prewarm_path: cache.prewarm_path.clone(),
+            wasm_runner_path: cache.wasm_runner_path.clone(),
+            asset_root: cache.asset_root.clone(),
+            pyodide_dist_path: cache.pyodide_dist_path.clone(),
+            prewarm_marker_dir: cache.prewarm_marker_dir.clone(),
+        }
+    }
+}
+
+impl NodeImportCacheMaterialization {
+    fn materialize(self) -> Result<(), io::Error> {
+        #[cfg(test)]
+        {
+            let delay_ms = NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS.load(Ordering::Relaxed);
+            if delay_ms > 0 {
+                std::thread::sleep(Duration::from_millis(delay_ms));
+            }
+        }
+
+        fs::create_dir_all(&self.root_dir)?;
+        fs::create_dir_all(self.asset_root.join("builtins"))?;
+        fs::create_dir_all(self.asset_root.join("denied"))?;
+        fs::create_dir_all(self.asset_root.join("polyfills"))?;
+        fs::create_dir_all(&self.pyodide_dist_path)?;
+        fs::create_dir_all(&self.prewarm_marker_dir)?;
+
+        write_file_if_changed(&self.loader_path, &render_loader_source())?;
+        write_file_if_changed(&self.register_path, &render_register_source())?;
+        write_file_if_changed(&self.runner_path, NODE_EXECUTION_RUNNER_SOURCE)?;
+        write_file_if_changed(&self.python_runner_path, NODE_PYTHON_RUNNER_SOURCE)?;
+        write_file_if_changed(&self.timing_bootstrap_path, NODE_TIMING_BOOTSTRAP_SOURCE)?;
+        write_file_if_changed(&self.prewarm_path, NODE_PREWARM_SOURCE)?;
+        write_file_if_changed(&self.wasm_runner_path, NODE_WASM_RUNNER_SOURCE)?;
+
+        for asset in BUILTIN_ASSETS {
+            write_file_if_changed(
+                &self
+                    .asset_root
+                    .join("builtins")
+                    .join(format!("{}.mjs", asset.name)),
+                &render_builtin_asset_source(asset),
+            )?;
+        }
+
+        for asset in DENIED_BUILTIN_ASSETS {
+            write_file_if_changed(
+                &self
+                    .asset_root
+                    .join("denied")
+                    .join(format!("{}.mjs", asset.name)),
+                &render_denied_asset_source(asset.module_specifier),
+            )?;
+        }
+
+        write_file_if_changed(
+            &self
+                .asset_root
+                .join("polyfills")
+                .join(format!("{PATH_POLYFILL_ASSET_NAME}.mjs")),
+            &render_path_polyfill_source(),
+        )?;
+        write_file_if_changed(
+            &self.pyodide_dist_path.join("pyodide.mjs"),
+            &render_patched_pyodide_mjs(),
+        )?;
+        write_bytes_if_changed(
+            &self.pyodide_dist_path.join("pyodide.asm.js"),
+            BUNDLED_PYODIDE_ASM_JS,
+        )?;
+        write_bytes_if_changed(
+            &self.pyodide_dist_path.join("pyodide.asm.wasm"),
+            BUNDLED_PYODIDE_ASM_WASM,
+        )?;
+        write_bytes_if_changed(
+            &self.pyodide_dist_path.join("pyodide-lock.json"),
+            BUNDLED_PYODIDE_LOCK,
+        )?;
+        write_bytes_if_changed(
+            &self.pyodide_dist_path.join("python_stdlib.zip"),
+            BUNDLED_PYTHON_STDLIB_ZIP,
+        )?;
+        for asset in BUNDLED_PYODIDE_PACKAGE_ASSETS {
+            write_bytes_if_changed(&self.pyodide_dist_path.join(asset.file_name), asset.bytes)?;
+        }
+        Ok(())
+    }
+}
+
+fn render_loader_source() -> String {
+    NODE_IMPORT_CACHE_LOADER_TEMPLATE
+        .replace("__NODE_IMPORT_CACHE_PATH_ENV__", NODE_IMPORT_CACHE_PATH_ENV)
+        .replace(
+            "__NODE_IMPORT_CACHE_ASSET_ROOT_ENV__",
+            NODE_IMPORT_CACHE_ASSET_ROOT_ENV,
+        )
+        .replace(
+            "__NODE_IMPORT_CACHE_DEBUG_ENV__",
+            NODE_IMPORT_CACHE_DEBUG_ENV,
+        )
+        .replace(
+            "__NODE_IMPORT_CACHE_METRICS_PREFIX__",
+            NODE_IMPORT_CACHE_METRICS_PREFIX,
+        )
+        .replace(
+            "__NODE_IMPORT_CACHE_SCHEMA_VERSION__",
+            NODE_IMPORT_CACHE_SCHEMA_VERSION,
+        )
+        .replace(
+            "__NODE_IMPORT_CACHE_LOADER_VERSION__",
+            NODE_IMPORT_CACHE_LOADER_VERSION,
+        )
+        .replace(
+            "__NODE_IMPORT_CACHE_ASSET_VERSION__",
+            NODE_IMPORT_CACHE_ASSET_VERSION,
+        )
+        .replace(
+            "__AGENTOS_BUILTIN_SPECIFIER_PREFIX__",
+            AGENTOS_BUILTIN_SPECIFIER_PREFIX,
+        )
+        .replace(
+            "__AGENTOS_POLYFILL_SPECIFIER_PREFIX__",
+            AGENTOS_POLYFILL_SPECIFIER_PREFIX,
+        )
+}
+
+fn render_patched_pyodide_mjs() -> String {
+    let source = String::from_utf8_lossy(BUNDLED_PYODIDE_MJS);
+    source
+        .replace(
+            r#"H=(await import("node:vm")).default,"#,
+            "",
+        )
+        .replace(
+            r#"async function fe(e){e.startsWith("file://")&&(e=e.slice(7)),e.includes("://")?H.runInThisContext(await(await fetch(e)).text()):await import(e.startsWith("/" )?e:$.pathToFileURL(e).href)}o(fe,"nodeLoadScript");"#,
+            r#"async function fe(e){if(e.startsWith("file://")&&(e=e.slice(7)),e.includes("://")){let t=await(await fetch(e)).text();await import(`data:text/javascript;base64,${$e(t)}`);return}await import(e.startsWith("/")?e:$.pathToFileURL(e).href)}o(fe,"nodeLoadScript");"#,
+        )
+        .replace(
+            r#"function Ne(e){if(typeof WasmOffsetConverter<"u")return;let{binary:t,response:n}=R(e+"pyodide.asm.wasm"),i=K();return function(s,r){return async function(){s.sentinel=await i;try{let a;if(n){a=await WebAssembly.instantiateStreaming(n,s);}else{let l=await t;a=await WebAssembly.instantiate(l,s);}let{instance:l,module:c}=a;r(l,c);}catch(a){console.warn("wasm instantiation failed!"),console.warn(a)}}(),{}}}o(Ne,"getInstantiateWasmFunc");"#,
+            r#"function Ne(e){if(typeof WasmOffsetConverter<"u")return;let{binary:t,response:n}=R(e+"pyodide.asm.wasm"),i=K();return function(s,r){return async function(){s.sentinel=await i;try{let a;if(n){a=await WebAssembly.instantiateStreaming(n,s);}else{let l=await t;a=await WebAssembly.instantiate(l,s);}let{instance:l,module:c}=a;r(l,c);}catch(a){console.warn("wasm instantiation failed!"),console.warn(a);throw a}}(),{}}}o(Ne,"getInstantiateWasmFunc");"#,
+        )
+}
+
+fn render_register_source() -> String {
+    NODE_IMPORT_CACHE_REGISTER_SOURCE.replace(
+        "__NODE_IMPORT_CACHE_LOADER_PATH_ENV__",
+        NODE_IMPORT_CACHE_LOADER_PATH_ENV,
+    )
+}
+
+fn render_builtin_asset_source(asset: &BuiltinAsset) -> String {
+    match asset.name {
+        "async-hooks" => render_async_hooks_builtin_asset_source(asset.init_counter_key),
+        "fs" => render_fs_builtin_asset_source(asset.init_counter_key),
+        "fs-promises" => render_fs_promises_builtin_asset_source(asset.init_counter_key),
+        "child-process" => render_child_process_builtin_asset_source(asset.init_counter_key),
+        "net" => render_net_builtin_asset_source(asset.init_counter_key),
+        "dgram" => render_dgram_builtin_asset_source(asset.init_counter_key),
+        "diagnostics-channel" => {
+            render_diagnostics_channel_builtin_asset_source(asset.init_counter_key)
+        }
+        "dns" => render_dns_builtin_asset_source(asset.init_counter_key),
+        "dns-promises" => render_dns_promises_builtin_asset_source(asset.init_counter_key),
+        "http" => render_http_builtin_asset_source(asset.init_counter_key),
+        "http2" => render_http2_builtin_asset_source(asset.init_counter_key),
+        "https" => render_https_builtin_asset_source(asset.init_counter_key),
+        "tls" => render_tls_builtin_asset_source(asset.init_counter_key),
+        "os" => render_os_builtin_asset_source(asset.init_counter_key),
+        "util" => render_util_builtin_asset_source(asset.init_counter_key),
+        "v8" => render_v8_builtin_asset_source(asset.init_counter_key),
+        "vm" => render_vm_builtin_asset_source(asset.init_counter_key),
+        "worker-threads" => render_worker_threads_builtin_asset_source(asset.init_counter_key),
+        _ => {
+            render_passthrough_builtin_asset_source(asset.module_specifier, asset.init_counter_key)
+        }
+    }
+}
+
+fn render_passthrough_builtin_asset_source(
+    module_specifier: &str,
+    init_counter_key: &str,
+) -> String {
+    let module_specifier = format!("{module_specifier:?}");
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "import * as namespace from {module_specifier};\n\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+const builtin = namespace.default ?? namespace;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default builtin;\n\
+export * from {module_specifier};\n"
+    )
+}
+
+fn render_util_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "import * as namespace from \"node:util\";\n\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+const builtin = namespace.default ?? namespace;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default builtin;\n\
+export const formatWithOptions = builtin.formatWithOptions;\n\
+export * from \"node:util\";\n"
+    )
+}
+
+fn render_fs_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+const mod = globalThis.__agentOSBuiltinFs ?? globalThis.__agentOSGuestFs ?? process.getBuiltinModule?.(\"node:fs\");\n\
+if (!mod) {{\n\
+  throw new Error('secure-exec guest fs polyfill was not initialized');\n\
+}}\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const Dir = mod.Dir;\n\
+export const Dirent = mod.Dirent;\n\
+export const ReadStream = mod.ReadStream;\n\
+export const Stats = mod.Stats;\n\
+export const WriteStream = mod.WriteStream;\n\
+export const constants = mod.constants;\n\
+export const promises = mod.promises;\n\
+export const access = mod.access;\n\
+export const accessSync = mod.accessSync;\n\
+export const appendFile = mod.appendFile;\n\
+export const appendFileSync = mod.appendFileSync;\n\
+export const chmod = mod.chmod;\n\
+export const chmodSync = mod.chmodSync;\n\
+export const chown = mod.chown;\n\
+export const chownSync = mod.chownSync;\n\
+export const close = mod.close;\n\
+export const closeSync = mod.closeSync;\n\
+export const copyFile = mod.copyFile;\n\
+export const copyFileSync = mod.copyFileSync;\n\
+export const cp = mod.cp;\n\
+export const cpSync = mod.cpSync;\n\
+export const createReadStream = mod.createReadStream;\n\
+export const createWriteStream = mod.createWriteStream;\n\
+export const exists = mod.exists;\n\
+export const existsSync = mod.existsSync;\n\
+export const lchmod = mod.lchmod;\n\
+export const lchmodSync = mod.lchmodSync;\n\
+export const lchown = mod.lchown;\n\
+export const lchownSync = mod.lchownSync;\n\
+export const link = mod.link;\n\
+export const linkSync = mod.linkSync;\n\
+export const lstat = mod.lstat;\n\
+export const lstatSync = mod.lstatSync;\n\
+export const lutimes = mod.lutimes;\n\
+export const lutimesSync = mod.lutimesSync;\n\
+export const mkdir = mod.mkdir;\n\
+export const mkdirSync = mod.mkdirSync;\n\
+export const mkdtemp = mod.mkdtemp;\n\
+export const mkdtempSync = mod.mkdtempSync;\n\
+export const open = mod.open;\n\
+export const openSync = mod.openSync;\n\
+export const opendir = mod.opendir;\n\
+export const opendirSync = mod.opendirSync;\n\
+export const read = mod.read;\n\
+export const readFile = mod.readFile;\n\
+export const readFileSync = mod.readFileSync;\n\
+export const readSync = mod.readSync;\n\
+export const readdir = mod.readdir;\n\
+export const readdirSync = mod.readdirSync;\n\
+export const readlink = mod.readlink;\n\
+export const readlinkSync = mod.readlinkSync;\n\
+export const realpath = mod.realpath;\n\
+export const realpathSync = mod.realpathSync;\n\
+export const rename = mod.rename;\n\
+export const renameSync = mod.renameSync;\n\
+export const rm = mod.rm;\n\
+export const rmSync = mod.rmSync;\n\
+export const rmdir = mod.rmdir;\n\
+export const rmdirSync = mod.rmdirSync;\n\
+export const stat = mod.stat;\n\
+export const statSync = mod.statSync;\n\
+export const statfs = mod.statfs;\n\
+export const statfsSync = mod.statfsSync;\n\
+export const symlink = mod.symlink;\n\
+export const symlinkSync = mod.symlinkSync;\n\
+export const truncate = mod.truncate;\n\
+export const truncateSync = mod.truncateSync;\n\
+export const unlink = mod.unlink;\n\
+export const unlinkSync = mod.unlinkSync;\n\
+export const unwatchFile = mod.unwatchFile;\n\
+export const utimes = mod.utimes;\n\
+export const utimesSync = mod.utimesSync;\n\
+export const watch = mod.watch;\n\
+export const watchFile = mod.watchFile;\n\
+export const write = mod.write;\n\
+export const writeFile = mod.writeFile;\n\
+export const writeFileSync = mod.writeFileSync;\n\
+export const writeSync = mod.writeSync;\n"
+    )
+}
+
+fn render_fs_promises_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "import fsModule from \"secure-exec:builtin/fs\";\n\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+const mod = fsModule.promises;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const constants = fsModule.constants;\n\
+export const FileHandle = mod.FileHandle;\n\
+export const access = mod.access;\n\
+export const appendFile = mod.appendFile;\n\
+export const chmod = mod.chmod;\n\
+export const chown = mod.chown;\n\
+export const copyFile = mod.copyFile;\n\
+export const cp = mod.cp;\n\
+export const lchmod = mod.lchmod;\n\
+export const lchown = mod.lchown;\n\
+export const link = mod.link;\n\
+export const lstat = mod.lstat;\n\
+export const lutimes = mod.lutimes;\n\
+export const mkdir = mod.mkdir;\n\
+export const mkdtemp = mod.mkdtemp;\n\
+export const open = mod.open;\n\
+export const opendir = mod.opendir;\n\
+export const readFile = mod.readFile;\n\
+export const readdir = mod.readdir;\n\
+export const readlink = mod.readlink;\n\
+export const realpath = mod.realpath;\n\
+export const rename = mod.rename;\n\
+export const rm = mod.rm;\n\
+export const rmdir = mod.rmdir;\n\
+export const stat = mod.stat;\n\
+export const statfs = mod.statfs;\n\
+export const symlink = mod.symlink;\n\
+export const truncate = mod.truncate;\n\
+export const unlink = mod.unlink;\n\
+export const utimes = mod.utimes;\n\
+export const watch = mod.watch;\n\
+export const writeFile = mod.writeFile;\n"
+    )
+}
+
+fn render_async_hooks_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+\n\
+class AsyncLocalStorage {{\n\
+  constructor() {{\n\
+    this._store = undefined;\n\
+  }}\n\
+  disable() {{\n\
+    this._store = undefined;\n\
+  }}\n\
+  enterWith(store) {{\n\
+    this._store = store;\n\
+  }}\n\
+  exit(callback, ...args) {{\n\
+    return callback(...args);\n\
+  }}\n\
+  getStore() {{\n\
+    return this._store;\n\
+  }}\n\
+  run(store, callback, ...args) {{\n\
+    const previous = this._store;\n\
+    this._store = store;\n\
+    try {{\n\
+      return callback(...args);\n\
+    }} finally {{\n\
+      this._store = previous;\n\
+    }}\n\
+  }}\n\
+}}\n\
+\n\
+class AsyncResource {{\n\
+  constructor(type = 'SecureExecAsyncResource') {{\n\
+    this.type = type;\n\
+  }}\n\
+  emitBefore() {{}}\n\
+  emitAfter() {{}}\n\
+  emitDestroy() {{}}\n\
+  asyncId() {{\n\
+    return 0;\n\
+  }}\n\
+  triggerAsyncId() {{\n\
+    return 0;\n\
+  }}\n\
+  runInAsyncScope(callback, thisArg, ...args) {{\n\
+    return callback.apply(thisArg, args);\n\
+  }}\n\
+}}\n\
+\n\
+function createHook() {{\n\
+  return {{\n\
+    enable() {{\n\
+      return this;\n\
+    }},\n\
+    disable() {{\n\
+      return this;\n\
+    }},\n\
+  }};\n\
+}}\n\
+\n\
+function executionAsyncId() {{\n\
+  return 0;\n\
+}}\n\
+\n\
+function triggerAsyncId() {{\n\
+  return 0;\n\
+}}\n\
+\n\
+const mod = {{\n\
+  AsyncLocalStorage,\n\
+  AsyncResource,\n\
+  createHook,\n\
+  executionAsyncId,\n\
+  triggerAsyncId,\n\
+}};\n\
+\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export {{ AsyncLocalStorage, AsyncResource, createHook, executionAsyncId, triggerAsyncId }};\n"
+    )
+}
+
+fn render_child_process_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const ACCESS_DENIED_CODE = \"ERR_ACCESS_DENIED\";\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+if (!globalThis.__agentOSBuiltinChildProcess) {{\n\
+  const error = new Error(\"node:child_process is not available in the secure-exec guest runtime\");\n\
+  error.code = ACCESS_DENIED_CODE;\n\
+  throw error;\n\
+}}\n\n\
+const mod = globalThis.__agentOSBuiltinChildProcess;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const ChildProcess = mod.ChildProcess;\n\
+export const _forkChild = mod._forkChild;\n\
+export const exec = mod.exec;\n\
+export const execFile = mod.execFile;\n\
+export const execFileSync = mod.execFileSync;\n\
+export const execSync = mod.execSync;\n\
+export const fork = mod.fork;\n\
+export const spawn = mod.spawn;\n\
+export const spawnSync = mod.spawnSync;\n"
+    )
+}
+
+fn render_net_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const ACCESS_DENIED_CODE = \"ERR_ACCESS_DENIED\";\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+if (!globalThis.__agentOSBuiltinNet) {{\n\
+  const error = new Error(\"node:net is not available in the secure-exec guest runtime\");\n\
+  error.code = ACCESS_DENIED_CODE;\n\
+  throw error;\n\
+}}\n\n\
+const mod = globalThis.__agentOSBuiltinNet;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const BlockList = mod.BlockList;\n\
+export const Server = mod.Server;\n\
+export const Socket = mod.Socket;\n\
+export const SocketAddress = mod.SocketAddress;\n\
+export const Stream = mod.Stream;\n\
+export const connect = mod.connect;\n\
+export const createConnection = mod.createConnection;\n\
+export const createServer = mod.createServer;\n\
+export const getDefaultAutoSelectFamily = mod.getDefaultAutoSelectFamily;\n\
+export const getDefaultAutoSelectFamilyAttemptTimeout = mod.getDefaultAutoSelectFamilyAttemptTimeout;\n\
+export const isIP = mod.isIP;\n\
+export const isIPv4 = mod.isIPv4;\n\
+export const isIPv6 = mod.isIPv6;\n\
+export const setDefaultAutoSelectFamily = mod.setDefaultAutoSelectFamily;\n\
+export const setDefaultAutoSelectFamilyAttemptTimeout = mod.setDefaultAutoSelectFamilyAttemptTimeout;\n"
+    )
+}
+
+fn render_dgram_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const ACCESS_DENIED_CODE = \"ERR_ACCESS_DENIED\";\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+if (!globalThis.__agentOSBuiltinDgram) {{\n\
+  const error = new Error(\"node:dgram is not available in the secure-exec guest runtime\");\n\
+  error.code = ACCESS_DENIED_CODE;\n\
+  throw error;\n\
+}}\n\n\
+const mod = globalThis.__agentOSBuiltinDgram;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const Socket = mod.Socket;\n\
+export const createSocket = mod.createSocket;\n"
+    )
+}
+
+fn render_diagnostics_channel_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        r#"const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;
+globalThis[{init_counter_key}] = initCount;
+
+class Channel {{
+  constructor(name = '') {{
+    this.name = String(name);
+    this._subscribers = new Set();
+  }}
+
+  get hasSubscribers() {{
+    return this._subscribers.size > 0;
+  }}
+
+  publish(message) {{
+    for (const subscriber of Array.from(this._subscribers)) {{
+      subscriber(message, this.name);
+    }}
+  }}
+
+  subscribe(subscriber) {{
+    if (typeof subscriber === 'function') {{
+      this._subscribers.add(subscriber);
+    }}
+  }}
+
+  unsubscribe(subscriber) {{
+    return this._subscribers.delete(subscriber);
+  }}
+
+  runStores(context, callback, thisArg, ...args) {{
+    if (typeof callback !== 'function') {{
+      return callback;
+    }}
+    return callback.apply(thisArg, args);
+  }}
+}}
+
+const channelCache = new Map();
+
+function channel(name = '') {{
+  const channelName = String(name);
+  let existing = channelCache.get(channelName);
+  if (!existing) {{
+    existing = new Channel(channelName);
+    channelCache.set(channelName, existing);
+  }}
+  return existing;
+}}
+
+function hasSubscribers(name = '') {{
+  return channel(name).hasSubscribers;
+}}
+
+function subscribe(name = '', subscriber) {{
+  return channel(name).subscribe(subscriber);
+}}
+
+function unsubscribe(name = '', subscriber) {{
+  return channel(name).unsubscribe(subscriber);
+}}
+
+function tracingChannel(name = '') {{
+  const channelName = String(name);
+  const tracing = {{
+    start: channel(`tracing:${{channelName}}:start`),
+    end: channel(`tracing:${{channelName}}:end`),
+    asyncStart: channel(`tracing:${{channelName}}:asyncStart`),
+    asyncEnd: channel(`tracing:${{channelName}}:asyncEnd`),
+    error: channel(`tracing:${{channelName}}:error`),
+    subscribe() {{}},
+    unsubscribe() {{
+      return true;
+    }},
+    traceSync(fn, context, thisArg, ...args) {{
+      if (typeof fn !== 'function') {{
+        return fn;
+      }}
+      return fn.apply(thisArg, args);
+    }},
+    tracePromise(fn, context, thisArg, ...args) {{
+      if (typeof fn !== 'function') {{
+        return Promise.resolve(fn);
+      }}
+      return Promise.resolve(fn.apply(thisArg, args));
+    }},
+    traceCallback(fn, position, context, thisArg, ...args) {{
+      if (typeof fn !== 'function') {{
+        return fn;
+      }}
+      return fn.apply(thisArg, args);
+    }},
+  }};
+  Object.defineProperty(tracing, 'hasSubscribers', {{
+    get() {{
+      return (
+        tracing.start.hasSubscribers ||
+        tracing.end.hasSubscribers ||
+        tracing.asyncStart.hasSubscribers ||
+        tracing.asyncEnd.hasSubscribers ||
+        tracing.error.hasSubscribers
+      );
+    }},
+    enumerable: false,
+    configurable: true,
+  }});
+  return tracing;
+}}
+
+const mod = {{ Channel, channel, hasSubscribers, subscribe, tracingChannel, unsubscribe }};
+
+export const __agentOSInitCount = initCount;
+export default mod;
+export {{ Channel, channel, hasSubscribers, subscribe, tracingChannel, unsubscribe }};
+"#
+    )
+}
+
+fn render_dns_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const ACCESS_DENIED_CODE = \"ERR_ACCESS_DENIED\";\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+if (!globalThis.__agentOSBuiltinDns) {{\n\
+  const error = new Error(\"node:dns is not available in the secure-exec guest runtime\");\n\
+  error.code = ACCESS_DENIED_CODE;\n\
+  throw error;\n\
+}}\n\n\
+const mod = globalThis.__agentOSBuiltinDns;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const ADDRCONFIG = mod.ADDRCONFIG;\n\
+export const ALL = mod.ALL;\n\
+export const Resolver = mod.Resolver;\n\
+export const V4MAPPED = mod.V4MAPPED;\n\
+export const constants = mod.constants;\n\
+export const getDefaultResultOrder = mod.getDefaultResultOrder;\n\
+export const getServers = mod.getServers;\n\
+export const lookup = mod.lookup;\n\
+export const lookupService = mod.lookupService;\n\
+export const promises = mod.promises;\n\
+export const resolve = mod.resolve;\n\
+export const resolve4 = mod.resolve4;\n\
+export const resolve6 = mod.resolve6;\n\
+export const reverse = mod.reverse;\n\
+export const setDefaultResultOrder = mod.setDefaultResultOrder;\n\
+export const setServers = mod.setServers;\n"
+    )
+}
+
+fn render_dns_promises_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const ACCESS_DENIED_CODE = \"ERR_ACCESS_DENIED\";\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+if (!globalThis.__agentOSBuiltinDns) {{\n\
+  const error = new Error(\"node:dns/promises is not available in the secure-exec guest runtime\");\n\
+  error.code = ACCESS_DENIED_CODE;\n\
+  throw error;\n\
+}}\n\n\
+const mod = globalThis.__agentOSBuiltinDns.promises;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const Resolver = mod.Resolver;\n\
+export const lookup = mod.lookup;\n\
+export const resolve = mod.resolve;\n\
+export const resolve4 = mod.resolve4;\n\
+export const resolve6 = mod.resolve6;\n\
+export const resolveAny = mod.resolveAny;\n\
+export const resolveMx = mod.resolveMx;\n\
+export const resolveTxt = mod.resolveTxt;\n\
+export const resolveSrv = mod.resolveSrv;\n\
+export const resolveCname = mod.resolveCname;\n\
+export const resolvePtr = mod.resolvePtr;\n\
+export const resolveNs = mod.resolveNs;\n\
+export const resolveSoa = mod.resolveSoa;\n\
+export const resolveNaptr = mod.resolveNaptr;\n\
+export const resolveCaa = mod.resolveCaa;\n"
+    )
+}
+
+fn render_http_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const ACCESS_DENIED_CODE = \"ERR_ACCESS_DENIED\";\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+if (!globalThis.__agentOSBuiltinHttp) {{\n\
+  const error = new Error(\"node:http is not available in the secure-exec guest runtime\");\n\
+  error.code = ACCESS_DENIED_CODE;\n\
+  throw error;\n\
+}}\n\n\
+const mod = globalThis.__agentOSBuiltinHttp;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const Agent = mod.Agent;\n\
+export const ClientRequest = mod.ClientRequest;\n\
+export const IncomingMessage = mod.IncomingMessage;\n\
+export const METHODS = mod.METHODS;\n\
+export const OutgoingMessage = mod.OutgoingMessage;\n\
+export const STATUS_CODES = mod.STATUS_CODES;\n\
+export const Server = mod.Server;\n\
+export const ServerResponse = mod.ServerResponse;\n\
+export const createServer = mod.createServer;\n\
+export const get = mod.get;\n\
+export const globalAgent = mod.globalAgent;\n\
+export const maxHeaderSize = mod.maxHeaderSize;\n\
+export const request = mod.request;\n\
+export const setMaxIdleHTTPParsers = mod.setMaxIdleHTTPParsers;\n\
+export const validateHeaderName = mod.validateHeaderName;\n\
+export const validateHeaderValue = mod.validateHeaderValue;\n"
+    )
+}
+
+fn render_http2_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const ACCESS_DENIED_CODE = \"ERR_ACCESS_DENIED\";\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+if (!globalThis.__agentOSBuiltinHttp2) {{\n\
+  const error = new Error(\"node:http2 is not available in the secure-exec guest runtime\");\n\
+  error.code = ACCESS_DENIED_CODE;\n\
+  throw error;\n\
+}}\n\n\
+const mod = globalThis.__agentOSBuiltinHttp2;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const Http2ServerRequest = mod.Http2ServerRequest;\n\
+export const Http2ServerResponse = mod.Http2ServerResponse;\n\
+export const Http2Session = mod.Http2Session;\n\
+export const Http2Stream = mod.Http2Stream;\n\
+export const constants = mod.constants;\n\
+export const connect = mod.connect;\n\
+export const createServer = mod.createServer;\n\
+export const createSecureServer = mod.createSecureServer;\n\
+export const getDefaultSettings = mod.getDefaultSettings;\n\
+export const getPackedSettings = mod.getPackedSettings;\n\
+export const getUnpackedSettings = mod.getUnpackedSettings;\n\
+export const sensitiveHeaders = mod.sensitiveHeaders;\n"
+    )
+}
+
+fn render_https_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const ACCESS_DENIED_CODE = \"ERR_ACCESS_DENIED\";\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+if (!globalThis.__agentOSBuiltinHttps) {{\n\
+  const error = new Error(\"node:https is not available in the secure-exec guest runtime\");\n\
+  error.code = ACCESS_DENIED_CODE;\n\
+  throw error;\n\
+}}\n\n\
+const mod = globalThis.__agentOSBuiltinHttps;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const Agent = mod.Agent;\n\
+export const Server = mod.Server;\n\
+export const createServer = mod.createServer;\n\
+export const get = mod.get;\n\
+export const globalAgent = mod.globalAgent;\n\
+export const request = mod.request;\n"
+    )
+}
+
+fn render_tls_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const ACCESS_DENIED_CODE = \"ERR_ACCESS_DENIED\";\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+if (!globalThis.__agentOSBuiltinTls) {{\n\
+  const error = new Error(\"node:tls is not available in the secure-exec guest runtime\");\n\
+  error.code = ACCESS_DENIED_CODE;\n\
+  throw error;\n\
+}}\n\n\
+const mod = globalThis.__agentOSBuiltinTls;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const CLIENT_RENEG_LIMIT = mod.CLIENT_RENEG_LIMIT;\n\
+export const CLIENT_RENEG_WINDOW = mod.CLIENT_RENEG_WINDOW;\n\
+export const DEFAULT_CIPHERS = mod.DEFAULT_CIPHERS;\n\
+export const DEFAULT_ECDH_CURVE = mod.DEFAULT_ECDH_CURVE;\n\
+export const DEFAULT_MAX_VERSION = mod.DEFAULT_MAX_VERSION;\n\
+export const DEFAULT_MIN_VERSION = mod.DEFAULT_MIN_VERSION;\n\
+export const SecureContext = mod.SecureContext;\n\
+export const Server = mod.Server;\n\
+export const TLSSocket = mod.TLSSocket;\n\
+export const checkServerIdentity = mod.checkServerIdentity;\n\
+export const connect = mod.connect;\n\
+export const createConnection = mod.createConnection;\n\
+export const createSecureContext = mod.createSecureContext;\n\
+export const createSecurePair = mod.createSecurePair;\n\
+export const createServer = mod.createServer;\n\
+export const getCiphers = mod.getCiphers;\n\
+export const rootCertificates = mod.rootCertificates;\n"
+    )
+}
+
+fn render_os_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const ACCESS_DENIED_CODE = \"ERR_ACCESS_DENIED\";\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+if (!globalThis.__agentOSBuiltinOs) {{\n\
+  const error = new Error(\"node:os is not available in the secure-exec guest runtime\");\n\
+  error.code = ACCESS_DENIED_CODE;\n\
+  throw error;\n\
+}}\n\n\
+const mod = globalThis.__agentOSBuiltinOs;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const EOL = mod.EOL;\n\
+export const arch = mod.arch;\n\
+export const availableParallelism = mod.availableParallelism;\n\
+export const constants = mod.constants;\n\
+export const cpus = mod.cpus;\n\
+export const devNull = mod.devNull;\n\
+export const endianness = mod.endianness;\n\
+export const freemem = mod.freemem;\n\
+export const getPriority = mod.getPriority;\n\
+export const homedir = mod.homedir;\n\
+export const hostname = mod.hostname;\n\
+export const loadavg = mod.loadavg;\n\
+export const machine = mod.machine;\n\
+export const networkInterfaces = mod.networkInterfaces;\n\
+export const platform = mod.platform;\n\
+export const release = mod.release;\n\
+export const setPriority = mod.setPriority;\n\
+export const tmpdir = mod.tmpdir;\n\
+export const totalmem = mod.totalmem;\n\
+export const type = mod.type;\n\
+export const uptime = mod.uptime;\n\
+export const userInfo = mod.userInfo;\n\
+export const version = mod.version;\n"
+    )
+}
+
+fn render_v8_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+const mod = process.getBuiltinModule?.(\"node:v8\");\n\
+if (!mod) {{\n\
+  throw new Error(\"secure-exec guest v8 compatibility module was not initialized\");\n\
+}}\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const GCProfiler = mod.GCProfiler;\n\
+export const Deserializer = mod.Deserializer;\n\
+export const Serializer = mod.Serializer;\n\
+export const cachedDataVersionTag = mod.cachedDataVersionTag;\n\
+export const deserialize = mod.deserialize;\n\
+export const getCppHeapStatistics = mod.getCppHeapStatistics;\n\
+export const getHeapCodeStatistics = mod.getHeapCodeStatistics;\n\
+export const getHeapSnapshot = mod.getHeapSnapshot;\n\
+export const getHeapSpaceStatistics = mod.getHeapSpaceStatistics;\n\
+export const getHeapStatistics = mod.getHeapStatistics;\n\
+export const isStringOneByteRepresentation = mod.isStringOneByteRepresentation;\n\
+export const promiseHooks = mod.promiseHooks;\n\
+export const queryObjects = mod.queryObjects;\n\
+export const serialize = mod.serialize;\n\
+export const setFlagsFromString = mod.setFlagsFromString;\n\
+export const setHeapSnapshotNearHeapLimit = mod.setHeapSnapshotNearHeapLimit;\n\
+export const startCpuProfile = mod.startCpuProfile;\n\
+export const startupSnapshot = mod.startupSnapshot;\n\
+export const stopCoverage = mod.stopCoverage;\n\
+export const takeCoverage = mod.takeCoverage;\n\
+export const writeHeapSnapshot = mod.writeHeapSnapshot;\n"
+    )
+}
+
+fn render_vm_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+const mod = process.getBuiltinModule?.(\"node:vm\");\n\
+if (!mod) {{\n\
+  throw new Error(\"secure-exec guest vm compatibility module was not initialized\");\n\
+}}\n\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const Script = mod.Script;\n\
+export const createContext = mod.createContext;\n\
+export const isContext = mod.isContext;\n\
+export const runInNewContext = mod.runInNewContext;\n\
+export const runInThisContext = mod.runInThisContext;\n"
+    )
+}
+
+fn render_worker_threads_builtin_asset_source(init_counter_key: &str) -> String {
+    let init_counter_key = format!("{init_counter_key:?}");
+
+    format!(
+        "const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\
+\n\
+function createNotImplementedError(feature) {{\n\
+  const error = new Error(`node:worker_threads ${{feature}} is not available in the secure-exec guest runtime`);\n\
+  error.code = \"ERR_NOT_IMPLEMENTED\";\n\
+  return error;\n\
+}}\n\
+\n\
+class MessagePort {{\n\
+  postMessage() {{}}\n\
+  start() {{}}\n\
+  close() {{}}\n\
+  unref() {{\n\
+    return this;\n\
+  }}\n\
+  ref() {{\n\
+    return this;\n\
+  }}\n\
+}}\n\
+\n\
+class MessageChannel {{\n\
+  constructor() {{\n\
+    this.port1 = new MessagePort();\n\
+    this.port2 = new MessagePort();\n\
+  }}\n\
+}}\n\
+\n\
+class Worker {{\n\
+  constructor() {{\n\
+    throw createNotImplementedError(\"Worker\");\n\
+  }}\n\
+}}\n\
+\n\
+function getEnvironmentData() {{\n\
+  return undefined;\n\
+}}\n\
+\n\
+function markAsUncloneable() {{}}\n\
+\n\
+function markAsUntransferable() {{}}\n\
+\n\
+function moveMessagePortToContext() {{\n\
+  throw createNotImplementedError(\"moveMessagePortToContext\");\n\
+}}\n\
+\n\
+function postMessageToThread() {{\n\
+  throw createNotImplementedError(\"postMessageToThread\");\n\
+}}\n\
+\n\
+function receiveMessageOnPort() {{\n\
+  return undefined;\n\
+}}\n\
+\n\
+function setEnvironmentData() {{}}\n\
+\n\
+const mod = {{\n\
+  BroadcastChannel: globalThis.BroadcastChannel,\n\
+  MessageChannel,\n\
+  MessagePort,\n\
+  SHARE_ENV: Symbol.for(\"secure-exec.worker_threads.SHARE_ENV\"),\n\
+  Worker,\n\
+  getEnvironmentData,\n\
+  isMainThread: true,\n\
+  markAsUncloneable,\n\
+  markAsUntransferable,\n\
+  moveMessagePortToContext,\n\
+  parentPort: null,\n\
+  postMessageToThread,\n\
+  receiveMessageOnPort,\n\
+  resourceLimits: {{}},\n\
+  setEnvironmentData,\n\
+  threadId: 0,\n\
+  workerData: null,\n\
+}};\n\
+\n\
+export const __agentOSInitCount = initCount;\n\
+export default mod;\n\
+export const BroadcastChannel = mod.BroadcastChannel;\n\
+export const MessageChannel = mod.MessageChannel;\n\
+export const MessagePort = mod.MessagePort;\n\
+export const SHARE_ENV = mod.SHARE_ENV;\n\
+export const Worker = mod.Worker;\n\
+export const getEnvironmentData = mod.getEnvironmentData;\n\
+export const isMainThread = mod.isMainThread;\n\
+export const markAsUncloneable = mod.markAsUncloneable;\n\
+export const markAsUntransferable = mod.markAsUntransferable;\n\
+export const moveMessagePortToContext = mod.moveMessagePortToContext;\n\
+export const parentPort = mod.parentPort;\n\
+export const postMessageToThread = mod.postMessageToThread;\n\
+export const receiveMessageOnPort = mod.receiveMessageOnPort;\n\
+export const resourceLimits = mod.resourceLimits;\n\
+export const setEnvironmentData = mod.setEnvironmentData;\n\
+export const threadId = mod.threadId;\n\
+export const workerData = mod.workerData;\n"
+    )
+}
+
+fn render_denied_asset_source(module_specifier: &str) -> String {
+    let message = format!("{module_specifier} is not available in the secure-exec guest runtime");
+    format!(
+        "const error = new Error({message:?});\nerror.code = \"ERR_ACCESS_DENIED\";\nthrow error;\n"
+    )
+}
+
+fn render_path_polyfill_source() -> String {
+    let init_counter_key = format!("{PATH_POLYFILL_INIT_COUNTER_KEY:?}");
+
+    format!(
+        "import path from \"node:path\";\n\n\
+const initCount = (globalThis[{init_counter_key}] ?? 0) + 1;\n\
+globalThis[{init_counter_key}] = initCount;\n\n\
+export const __agentOSInitCount = initCount;\n\
+export const basename = (...args) => path.basename(...args);\n\
+export const dirname = (...args) => path.dirname(...args);\n\
+export const join = (...args) => path.join(...args);\n\
+export const resolve = (...args) => path.resolve(...args);\n\
+export const sep = path.sep;\n\
+export default path;\n"
+    )
+}
+
+fn write_bytes_if_changed(path: &Path, contents: &[u8]) -> Result<(), io::Error> {
+    match fs::read(path) {
+        Ok(existing) if existing == contents => return Ok(()),
+        Ok(_) | Err(_) => {}
+    }
+
+    fs::write(path, contents)
+}
+
+fn write_file_if_changed(path: &Path, contents: &str) -> Result<(), io::Error> {
+    write_bytes_if_changed(path, contents.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        NodeImportCache, NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS, NODE_WASM_RUNNER_SOURCE,
+    };
+    use crate::host_node::node_binary;
+    use serde_json::Value;
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::io::Write;
+    use std::path::Path;
+    use std::process::{Command, Output, Stdio};
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+    use tempfile::tempdir;
+
+    fn assert_node_available() {
+        let output = Command::new(node_binary())
+            .arg("--version")
+            .output()
+            .expect("spawn node --version");
+        assert!(output.status.success(), "node --version failed");
+    }
+
+    fn write_fixture(path: &Path, contents: &str) {
+        fs::write(path, contents).expect("write fixture");
+    }
+
+    fn run_python_runner(
+        import_cache: &NodeImportCache,
+        pyodide_index_url: &Path,
+        code: &str,
+    ) -> Output {
+        run_python_runner_with_env(import_cache, pyodide_index_url, code, &[])
+    }
+
+    fn run_python_runner_with_env(
+        import_cache: &NodeImportCache,
+        pyodide_index_url: &Path,
+        code: &str,
+        env: &[(&str, &str)],
+    ) -> Output {
+        let mut command = Command::new(node_binary());
+        command
+            .arg("--import")
+            .arg(import_cache.timing_bootstrap_path())
+            .arg(import_cache.python_runner_path())
+            .env("AGENTOS_PYODIDE_INDEX_URL", pyodide_index_url)
+            .env(
+                "AGENTOS_PYODIDE_PACKAGE_CACHE_DIR",
+                pyodide_index_url.join("pyodide-package-cache"),
+            )
+            .env("AGENTOS_PYTHON_CODE", code);
+
+        for (key, value) in env {
+            command.env(key, value);
+        }
+
+        command.output().expect("run python runner")
+    }
+
+    fn run_python_runner_prewarm(
+        import_cache: &NodeImportCache,
+        pyodide_index_url: &Path,
+        env: &[(&str, &str)],
+    ) -> Output {
+        let mut command = Command::new(node_binary());
+        command
+            .arg("--import")
+            .arg(import_cache.timing_bootstrap_path())
+            .arg(import_cache.python_runner_path())
+            .env("AGENTOS_PYODIDE_INDEX_URL", pyodide_index_url)
+            .env(
+                "AGENTOS_PYODIDE_PACKAGE_CACHE_DIR",
+                pyodide_index_url.join("pyodide-package-cache"),
+            )
+            .env("AGENTOS_PYTHON_PREWARM_ONLY", "1");
+
+        for (key, value) in env {
+            command.env(key, value);
+        }
+
+        command.output().expect("run python runner prewarm")
+    }
+
+    fn run_python_runner_with_env_and_stdin(
+        import_cache: &NodeImportCache,
+        pyodide_index_url: &Path,
+        code: &str,
+        env: &[(&str, &str)],
+        stdin_chunks: &[&[u8]],
+    ) -> Output {
+        let mut command = Command::new(node_binary());
+        command
+            .arg("--import")
+            .arg(import_cache.timing_bootstrap_path())
+            .arg(import_cache.python_runner_path())
+            .env("AGENTOS_PYODIDE_INDEX_URL", pyodide_index_url)
+            .env(
+                "AGENTOS_PYODIDE_PACKAGE_CACHE_DIR",
+                pyodide_index_url.join("pyodide-package-cache"),
+            )
+            .env("AGENTOS_PYTHON_CODE", code)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        for (key, value) in env {
+            command.env(key, value);
+        }
+
+        let mut child = command.spawn().expect("spawn python runner");
+        {
+            let mut stdin = child.stdin.take().expect("python runner stdin");
+            for chunk in stdin_chunks {
+                stdin
+                    .write_all(chunk)
+                    .expect("write python runner stdin chunk");
+            }
+        }
+
+        child.wait_with_output().expect("wait for python runner")
+    }
+
+    #[test]
+    fn materialized_python_runner_hardens_builtin_access_before_load_pyodide() {
+        assert_node_available();
+
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let pyodide_dir = tempdir().expect("create pyodide fixture dir");
+        write_fixture(
+            &pyodide_dir.path().join("pyodide.mjs"),
+            r#"
+export async function loadPyodide(options) {
+  const capturedFetch = globalThis.fetch;
+  return {
+    setStdin(_stdin) {},
+    async runPythonAsync() {
+      try {
+        await capturedFetch('http://127.0.0.1:1/');
+        options.stdout('unexpected');
+      } catch (error) {
+        options.stdout(JSON.stringify({
+          code: error.code ?? null,
+          message: error.message,
+        }));
+      }
+    },
+  };
+}
+"#,
+        );
+        write_fixture(
+            &pyodide_dir.path().join("pyodide-lock.json"),
+            "{\"packages\":[]}\n",
+        );
+
+        let output = run_python_runner(&import_cache, pyodide_dir.path(), "print('hello')");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse hardening JSON");
+
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+        assert_eq!(
+            parsed["code"],
+            Value::String(String::from("ERR_ACCESS_DENIED"))
+        );
+        assert!(
+            parsed["message"]
+                .as_str()
+                .expect("fetch denial message")
+                .contains("network access"),
+            "unexpected stdout: {stdout}"
+        );
+    }
+
+    #[test]
+    fn materialized_python_runner_executes_python_code_via_pyodide_callbacks() {
+        assert_node_available();
+
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let pyodide_dir = tempdir().expect("create pyodide fixture dir");
+        write_fixture(
+            &pyodide_dir.path().join("pyodide.mjs"),
+            r#"
+export async function loadPyodide(options) {
+  return {
+    setStdin(_stdin) {},
+    async runPythonAsync(code) {
+      options.stdout(`stdout:${code}`);
+      options.stderr(`stderr:${options.indexURL}:${options.lockFileContents}`);
+    },
+  };
+}
+"#,
+        );
+        write_fixture(
+            &pyodide_dir.path().join("pyodide-lock.json"),
+            "{\"packages\":[]}\n",
+        );
+
+        let output = run_python_runner(&import_cache, pyodide_dir.path(), "print('hello')");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let expected_index_path = format!(
+            "stderr:{}{}",
+            pyodide_dir.path().display(),
+            std::path::MAIN_SEPARATOR
+        );
+
+        assert_eq!(output.status.code(), Some(0));
+        assert_eq!(stdout, "stdout:print('hello')\n");
+        assert!(
+            stderr.starts_with(&expected_index_path),
+            "unexpected stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("{\"packages\":[]}"),
+            "lock file contents should be passed to loadPyodide: {stderr}"
+        );
+    }
+
+    #[test]
+    fn materialized_python_runner_prefers_python_file_over_inline_code() {
+        assert_node_available();
+
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let pyodide_dir = tempdir().expect("create pyodide fixture dir");
+        write_fixture(
+            &pyodide_dir.path().join("pyodide.mjs"),
+            r#"
+export async function loadPyodide(options) {
+  return {
+    FS: {
+      readFile(path, config = {}) {
+        options.stderr(`file:${path}:${config.encoding ?? 'binary'}`);
+        return "print('from file')";
+      },
+    },
+    setStdin(_stdin) {},
+    async runPythonAsync(code) {
+      options.stdout(`stdout:${code}`);
+    },
+  };
+}
+"#,
+        );
+        write_fixture(
+            &pyodide_dir.path().join("pyodide-lock.json"),
+            "{\"packages\":[]}\n",
+        );
+
+        let output = run_python_runner_with_env(
+            &import_cache,
+            pyodide_dir.path(),
+            "print('ignored')",
+            &[("AGENTOS_PYTHON_FILE", "/workspace/script.py")],
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+        assert_eq!(stdout, "stdout:print('from file')\n");
+        assert!(
+            stderr.contains("file:/workspace/script.py:utf8"),
+            "unexpected stderr: {stderr}"
+        );
+    }
+
+    #[test]
+    fn materialized_python_runner_prewarm_validates_assets_without_running_guest_code() {
+        assert_node_available();
+
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let pyodide_dir = tempdir().expect("create pyodide fixture dir");
+        write_fixture(
+            &pyodide_dir.path().join("pyodide.mjs"),
+            r#"
+export async function loadPyodide(options) {
+  options.stderr(`prewarm:${options.indexURL}`);
+  return {
+    setStdin() {
+      throw new Error('setStdin should not run during prewarm');
+    },
+    async runPythonAsync() {
+      throw new Error('runPythonAsync should not run during prewarm');
+    },
+  };
+}
+"#,
+        );
+        write_fixture(
+            &pyodide_dir.path().join("pyodide-lock.json"),
+            "{\"packages\":[]}\n",
+        );
+        fs::write(pyodide_dir.path().join("python_stdlib.zip"), b"stub-stdlib")
+            .expect("write stdlib fixture");
+        fs::write(pyodide_dir.path().join("pyodide.asm.wasm"), b"stub-wasm")
+            .expect("write wasm fixture");
+
+        let output = run_python_runner_prewarm(
+            &import_cache,
+            pyodide_dir.path(),
+            &[("AGENTOS_PYTHON_CODE", "print('ignored')")],
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+        assert!(stdout.is_empty(), "unexpected stdout: {stdout}");
+        assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+        assert!(
+            !stderr.contains("setStdin should not run during prewarm"),
+            "unexpected stderr: {stderr}"
+        );
+        assert!(
+            !stderr.contains("runPythonAsync should not run during prewarm"),
+            "unexpected stderr: {stderr}"
+        );
+    }
+
+    #[test]
+    fn materialized_python_runner_reports_syntax_errors_to_stderr_and_exits_nonzero() {
+        assert_node_available();
+
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let pyodide_dir = tempdir().expect("create pyodide fixture dir");
+        write_fixture(
+            &pyodide_dir.path().join("pyodide.mjs"),
+            r#"
+export async function loadPyodide() {
+  return {
+    setStdin(_stdin) {},
+    async runPythonAsync(code) {
+      throw new Error(`SyntaxError: invalid syntax near ${code}`);
+    },
+  };
+}
+"#,
+        );
+        write_fixture(
+            &pyodide_dir.path().join("pyodide-lock.json"),
+            "{\"packages\":[]}\n",
+        );
+
+        let output = run_python_runner(&import_cache, pyodide_dir.path(), "print(");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            stderr.contains("SyntaxError: invalid syntax near print("),
+            "unexpected stderr: {stderr}"
+        );
+    }
+
+    #[test]
+    fn materialized_python_runner_blocks_pyodide_js_escape_modules() {
+        assert_node_available();
+
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let output = run_python_runner(
+            &import_cache,
+            import_cache.pyodide_dist_path(),
+            r#"
+import json
+import js
+import pyodide_js
+
+def capture(action):
+    try:
+        action()
+        return {"ok": True}
+    except Exception as error:
+        return {
+            "ok": False,
+            "type": type(error).__name__,
+            "message": str(error),
+        }
+
+print(json.dumps({
+    "js_process_env": capture(lambda: js.process.env),
+    "js_require": capture(lambda: js.require),
+    "js_process_exit": capture(lambda: js.process.exit),
+    "js_process_kill": capture(lambda: js.process.kill),
+    "js_child_process_builtin": capture(
+        lambda: js.process.getBuiltinModule("node:child_process")
+    ),
+    "js_vm_builtin": capture(
+        lambda: js.process.getBuiltinModule("node:vm")
+    ),
+    "pyodide_js_eval_code": capture(lambda: pyodide_js.eval_code),
+}))
+"#,
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let parsed: Value =
+            serde_json::from_str(stdout.trim()).expect("parse Python hardening JSON");
+
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+
+        for key in [
+            "js_process_env",
+            "js_require",
+            "js_process_exit",
+            "js_process_kill",
+            "js_child_process_builtin",
+            "js_vm_builtin",
+        ] {
+            assert_eq!(parsed[key]["ok"], Value::Bool(false), "stdout: {stdout}");
+            assert_eq!(
+                parsed[key]["type"],
+                Value::String(String::from("RuntimeError"))
+            );
+            assert!(
+                parsed[key]["message"]
+                    .as_str()
+                    .expect("js hardening message")
+                    .contains("js is not available"),
+                "stdout: {stdout}"
+            );
+        }
+
+        assert_eq!(
+            parsed["pyodide_js_eval_code"]["ok"],
+            Value::Bool(false),
+            "stdout: {stdout}"
+        );
+        assert_eq!(
+            parsed["pyodide_js_eval_code"]["type"],
+            Value::String(String::from("RuntimeError"))
+        );
+        assert!(
+            parsed["pyodide_js_eval_code"]["message"]
+                .as_str()
+                .expect("pyodide_js hardening message")
+                .contains("pyodide_js is not available"),
+            "stdout: {stdout}"
+        );
+    }
+
+    #[test]
+    fn materialized_python_runner_exposes_frozen_time_to_python() {
+        assert_node_available();
+
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let frozen_time_ms = 1_704_067_200_123_u64;
+        let output = run_python_runner_with_env(
+            &import_cache,
+            import_cache.pyodide_dist_path(),
+            r#"
+import datetime
+import json
+import time
+
+first_ns = time.time_ns()
+second_ns = time.time_ns()
+utc_now = datetime.datetime.now(datetime.timezone.utc)
+
+print(json.dumps({
+    "first_ns": first_ns,
+    "second_ns": second_ns,
+    "iso": utc_now.isoformat(timespec="milliseconds"),
+}))
+"#,
+            &[("AGENTOS_FROZEN_TIME_MS", "1704067200123")],
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let parsed: Value = serde_json::from_str(stdout.trim()).expect("parse frozen-time JSON");
+
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+        assert_eq!(parsed["first_ns"], parsed["second_ns"], "stdout: {stdout}");
+        let first_ns = parsed["first_ns"]
+            .as_u64()
+            .expect("frozen time.time_ns() value");
+        assert_eq!(first_ns / 1_000_000, frozen_time_ms, "stdout: {stdout}");
+        assert_eq!(
+            parsed["iso"],
+            Value::String(String::from("2024-01-01T00:00:00.123+00:00")),
+            "stdout: {stdout}"
+        );
+    }
+
+    #[test]
+    fn materialized_python_runner_preloads_bundled_packages_from_local_disk() {
+        assert_node_available();
+
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let pyodide_dir = tempdir().expect("create pyodide fixture dir");
+        write_fixture(
+            &pyodide_dir.path().join("pyodide.mjs"),
+            r#"
+export async function loadPyodide(options) {
+  return {
+    setStdin(_stdin) {},
+    async loadPackage(packages) {
+      options.stdout(`packages:${packages.join(',')}`);
+      options.stderr(`base:${options.packageBaseUrl}`);
+    },
+    async runPythonAsync(code) {
+      options.stdout(`code:${code}`);
+    },
+  };
+}
+"#,
+        );
+        write_fixture(
+            &pyodide_dir.path().join("pyodide-lock.json"),
+            "{\"packages\":[]}\n",
+        );
+
+        let output = run_python_runner_with_env(
+            &import_cache,
+            pyodide_dir.path(),
+            "print('hello')",
+            &[("AGENTOS_PYTHON_PRELOAD_PACKAGES", "[\"numpy\",\"pandas\"]")],
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let expected_package_base = format!(
+            "base:{}{}",
+            pyodide_dir.path().display(),
+            std::path::MAIN_SEPARATOR
+        );
+
+        assert_eq!(output.status.code(), Some(0));
+        assert_eq!(
+            stdout,
+            "packages:micropip\npackages:numpy,pandas\ncode:print('hello')\n"
+        );
+        assert!(
+            stderr.contains(&expected_package_base),
+            "expected local package base path in stderr, got: {stderr}"
+        );
+    }
+
+    #[test]
+    fn materialized_python_runner_rejects_unknown_preload_packages() {
+        assert_node_available();
+
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let pyodide_dir = tempdir().expect("create pyodide fixture dir");
+        write_fixture(
+            &pyodide_dir.path().join("pyodide.mjs"),
+            r#"
+export async function loadPyodide() {
+  return {
+    setStdin(_stdin) {},
+    async loadPackage() {
+      throw new Error('loadPackage should not be called');
+    },
+    async runPythonAsync(_code) {},
+  };
+}
+"#,
+        );
+        write_fixture(
+            &pyodide_dir.path().join("pyodide-lock.json"),
+            "{\"packages\":[]}\n",
+        );
+
+        let output = run_python_runner_with_env(
+            &import_cache,
+            pyodide_dir.path(),
+            "print('hello')",
+            &[("AGENTOS_PYTHON_PRELOAD_PACKAGES", "[\"requests\"]")],
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            stderr.contains("Unsupported bundled Python package \"requests\""),
+            "unexpected stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("Available packages: numpy, pandas"),
+            "unexpected stderr: {stderr}"
+        );
+        assert!(
+            !stderr.contains("loadPackage should not be called"),
+            "runner should validate packages before calling loadPackage: {stderr}"
+        );
+    }
+
+    #[test]
+    fn materialized_python_runner_streams_multiple_stdin_reads_through_pyodide() {
+        assert_node_available();
+
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let pyodide_dir = tempdir().expect("create pyodide fixture dir");
+        write_fixture(
+            &pyodide_dir.path().join("pyodide.mjs"),
+            r#"
+const decoder = new TextDecoder();
+
+export async function loadPyodide(options) {
+  let stdin = null;
+
+  function createInputReader() {
+    let buffered = '';
+
+    return () => {
+      while (true) {
+        const newlineIndex = buffered.indexOf('\n');
+        if (newlineIndex >= 0) {
+          const line = buffered.slice(0, newlineIndex);
+          buffered = buffered.slice(newlineIndex + 1);
+          return line;
+        }
+
+        const chunk = new Uint8Array(64);
+        const bytesRead = stdin.read(chunk);
+        if (bytesRead === 0) {
+          const tail = buffered;
+          buffered = '';
+          return tail;
+        }
+
+        buffered += decoder.decode(chunk.subarray(0, bytesRead));
+      }
+    };
+  }
+
+  return {
+    setStdin(config) {
+      stdin = config;
+    },
+    async runPythonAsync(code) {
+      const input = createInputReader();
+      options.stdout(`first:${input()}`);
+      options.stdout(`second:${input()}`);
+      options.stdout(`tail:${JSON.stringify(input())}`);
+      options.stdout(`code:${code}`);
+    },
+  };
+}
+"#,
+        );
+        write_fixture(
+            &pyodide_dir.path().join("pyodide-lock.json"),
+            "{\"packages\":[]}\n",
+        );
+
+        let output = run_python_runner_with_env_and_stdin(
+            &import_cache,
+            pyodide_dir.path(),
+            "print('interactive')",
+            &[],
+            &[b"first line\n", b"second line\n"],
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+        assert!(
+            stdout.contains("first:first line\n"),
+            "unexpected stdout: {stdout}"
+        );
+        assert!(
+            stdout.contains("second:second line\n"),
+            "unexpected stdout: {stdout}"
+        );
+        assert!(stdout.contains("tail:\"\""), "unexpected stdout: {stdout}");
+        assert!(
+            stdout.contains("code:print('interactive')"),
+            "unexpected stdout: {stdout}"
+        );
+    }
+
+    #[test]
+    fn ensure_materialized_writes_bundled_pyodide_distribution_assets() {
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        for file_name in [
+            "pyodide.mjs",
+            "pyodide.asm.js",
+            "pyodide.asm.wasm",
+            "pyodide-lock.json",
+            "python_stdlib.zip",
+            "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl",
+            "pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl",
+            "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+            "pytz-2025.2-py2.py3-none-any.whl",
+            "six-1.17.0-py2.py3-none-any.whl",
+        ] {
+            assert!(
+                import_cache.pyodide_dist_path().join(file_name).is_file(),
+                "expected bundled Pyodide asset {file_name} to be materialized"
+            );
+        }
+    }
+
+    #[test]
+    fn ensure_materialized_honors_configured_timeout() {
+        let temp_root = tempdir().expect("create node import cache temp root");
+        let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
+
+        NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS.store(50, Ordering::Relaxed);
+        let error = import_cache
+            .ensure_materialized_with_timeout(Duration::from_millis(5))
+            .expect_err("materialization should time out");
+        NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS.store(0, Ordering::Relaxed);
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            error
+                .to_string()
+                .contains("timed out materializing node import cache"),
+            "unexpected error: {error}"
+        );
+
+        std::thread::sleep(Duration::from_millis(75));
+    }
+
+    #[test]
+    fn ensure_materialized_skips_repeated_materialization_after_success() {
+        let temp_root = tempdir().expect("create node import cache temp root");
+        let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
+
+        import_cache
+            .ensure_materialized()
+            .expect("initial materialization should succeed");
+
+        NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS.store(50, Ordering::Relaxed);
+        let result = import_cache.ensure_materialized_with_timeout(Duration::from_millis(5));
+        NODE_IMPORT_CACHE_TEST_MATERIALIZE_DELAY_MS.store(0, Ordering::Relaxed);
+        result.expect("second materialization should use memoized success");
+    }
+
+    #[test]
+    fn new_in_cleans_stale_temp_roots_without_touching_unrelated_entries() {
+        let temp_root = tempdir().expect("create node import cache temp root");
+        let stale_cache_dir = temp_root
+            .path()
+            .join("agentos-node-import-cache-stale-test");
+        let unrelated_dir = temp_root.path().join("keep-me");
+        fs::create_dir_all(&stale_cache_dir).expect("create stale cache dir");
+        fs::create_dir_all(&unrelated_dir).expect("create unrelated dir");
+        fs::write(stale_cache_dir.join("state.json"), b"stale").expect("seed stale cache");
+
+        let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
+
+        assert!(
+            !stale_cache_dir.exists(),
+            "expected stale cache dir to be removed"
+        );
+        assert!(unrelated_dir.exists(), "expected unrelated dir to remain");
+        assert!(
+            import_cache.root_dir.starts_with(temp_root.path()),
+            "expected import cache root to stay inside the configured temp root"
+        );
+    }
+
+    #[test]
+    fn materialized_loader_prunes_persisted_resolution_cache_state() {
+        assert_node_available();
+
+        let temp_root = tempdir().expect("create node import cache temp root");
+        let workspace = tempdir().expect("create loader test workspace");
+        let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let driver_path = workspace.path().join("drive-loader-cache.mjs");
+        write_fixture(
+            &driver_path,
+            r#"
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const [loaderPath, workspaceRoot] = process.argv.slice(2);
+const loader = await import(`${pathToFileURL(loaderPath).href}?case=${process.pid}-${Date.now()}`);
+const parentURL = pathToFileURL(path.join(workspaceRoot, 'entry.mjs')).href;
+
+for (let index = 0; index < 600; index += 1) {
+  const specifier = `pkg-${index}`;
+  const resolvedPath = path.join(workspaceRoot, 'node_modules', specifier, 'index.mjs');
+  await loader.resolve(specifier, { parentURL }, async () => ({
+    url: pathToFileURL(resolvedPath).href,
+    format: 'module',
+  }));
+}
+"#,
+        );
+
+        let output = Command::new(node_binary())
+            .arg(&driver_path)
+            .arg(&import_cache.loader_path)
+            .arg(workspace.path())
+            .env("AGENTOS_NODE_IMPORT_CACHE_PATH", import_cache.cache_path())
+            .env(
+                "AGENTOS_NODE_IMPORT_CACHE_ASSET_ROOT",
+                import_cache.asset_root(),
+            )
+            .output()
+            .expect("run loader cache driver");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+
+        let state: Value = serde_json::from_str(
+            &fs::read_to_string(import_cache.cache_path()).expect("read cache state"),
+        )
+        .expect("parse cache state");
+        let resolutions = state["resolutions"]
+            .as_object()
+            .expect("resolution cache object");
+
+        assert_eq!(resolutions.len(), 512);
+        assert!(
+            resolutions.keys().any(|key| key.contains("pkg-599")),
+            "newest resolution should be retained"
+        );
+        assert!(
+            !resolutions.keys().any(|key| key.contains("pkg-0\"")),
+            "oldest resolution should be pruned"
+        );
+    }
+
+    #[test]
+    fn materialized_loader_ignores_oversized_state_during_flush_merge() {
+        assert_node_available();
+
+        let temp_root = tempdir().expect("create node import cache temp root");
+        let workspace = tempdir().expect("create loader test workspace");
+        let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+        fs::create_dir_all(import_cache.cache_path().parent().expect("cache parent"))
+            .expect("create cache parent");
+        fs::write(import_cache.cache_path(), vec![b' '; 5 * 1024 * 1024])
+            .expect("seed oversized cache state");
+
+        let driver_path = workspace.path().join("drive-oversized-state.mjs");
+        write_fixture(
+            &driver_path,
+            r#"
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const [loaderPath, workspaceRoot] = process.argv.slice(2);
+const loader = await import(`${pathToFileURL(loaderPath).href}?case=oversized-${process.pid}-${Date.now()}`);
+const parentURL = pathToFileURL(path.join(workspaceRoot, 'entry.mjs')).href;
+await loader.resolve('pkg-fresh', { parentURL }, async () => ({
+  url: pathToFileURL(path.join(workspaceRoot, 'node_modules/pkg-fresh/index.mjs')).href,
+  format: 'module',
+}));
+"#,
+        );
+
+        let output = Command::new(node_binary())
+            .arg(&driver_path)
+            .arg(&import_cache.loader_path)
+            .arg(workspace.path())
+            .env("AGENTOS_NODE_IMPORT_CACHE_PATH", import_cache.cache_path())
+            .env(
+                "AGENTOS_NODE_IMPORT_CACHE_ASSET_ROOT",
+                import_cache.asset_root(),
+            )
+            .output()
+            .expect("run oversized state driver");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+
+        let state_contents =
+            fs::read_to_string(import_cache.cache_path()).expect("read rewritten cache state");
+        assert!(
+            state_contents.len() < 4 * 1024 * 1024,
+            "cache state should be rewritten below the hard limit"
+        );
+        let state: Value = serde_json::from_str(&state_contents).expect("parse cache state");
+        assert_eq!(
+            state["resolutions"]
+                .as_object()
+                .expect("resolution cache object")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn materialized_loader_prunes_unreferenced_projected_source_files() {
+        assert_node_available();
+
+        let temp_root = tempdir().expect("create node import cache temp root");
+        let workspace = tempdir().expect("create loader test workspace");
+        let import_cache = NodeImportCache::new_in(temp_root.path().to_path_buf());
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+        let node_modules = workspace.path().join("node_modules");
+        fs::create_dir_all(&node_modules).expect("create node_modules");
+        for index in 0..520 {
+            let package_dir = node_modules.join(format!("pkg-{index}"));
+            fs::create_dir_all(&package_dir).expect("create package dir");
+            fs::write(
+                package_dir.join("index.mjs"),
+                format!("import fs from 'node:fs';\nexport const value = {index};\n"),
+            )
+            .expect("write package source");
+        }
+
+        let driver_path = workspace.path().join("drive-projected-source-cache.mjs");
+        write_fixture(
+            &driver_path,
+            r#"
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const [loaderPath, workspaceRoot] = process.argv.slice(2);
+const loader = await import(`${pathToFileURL(loaderPath).href}?case=projected-${process.pid}-${Date.now()}`);
+
+for (let index = 0; index < 520; index += 1) {
+  const filePath = path.join(workspaceRoot, 'node_modules', `pkg-${index}`, 'index.mjs');
+  await loader.load(pathToFileURL(filePath).href, { format: 'module' }, async () => {
+    throw new Error('nextLoad should not run for projected package sources');
+  });
+}
+"#,
+        );
+
+        let guest_path_mappings = format!(
+            r#"[{{"guestPath":"/root/node_modules","hostPath":"{}"}}]"#,
+            node_modules.display()
+        );
+        let output = Command::new(node_binary())
+            .arg(&driver_path)
+            .arg(&import_cache.loader_path)
+            .arg(workspace.path())
+            .env("AGENTOS_NODE_IMPORT_CACHE_PATH", import_cache.cache_path())
+            .env(
+                "AGENTOS_NODE_IMPORT_CACHE_ASSET_ROOT",
+                import_cache.asset_root(),
+            )
+            .env("AGENTOS_GUEST_PATH_MAPPINGS", guest_path_mappings)
+            .output()
+            .expect("run projected source cache driver");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+
+        let projected_source_root = import_cache
+            .cache_path()
+            .parent()
+            .expect("cache parent")
+            .join("projected-sources");
+        let cached_file_count = fs::read_dir(&projected_source_root)
+            .expect("read projected source cache")
+            .count();
+        assert_eq!(cached_file_count, 512);
+    }
+
+    #[test]
+    fn ensure_materialized_writes_denied_builtin_assets_for_hardened_modules() {
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let denied_root = import_cache.asset_root().join("denied");
+        let actual = fs::read_dir(&denied_root)
+            .expect("read denied builtin assets")
+            .map(|entry| {
+                entry
+                    .expect("denied builtin asset entry")
+                    .path()
+                    .file_stem()
+                    .expect("denied builtin asset file stem")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<BTreeSet<_>>();
+        let expected = BTreeSet::from([
+            String::from("child_process"),
+            String::from("cluster"),
+            String::from("dgram"),
+            String::from("http"),
+            String::from("http2"),
+            String::from("https"),
+            String::from("inspector"),
+            String::from("module"),
+            String::from("net"),
+            String::from("trace_events"),
+        ]);
+
+        assert_eq!(actual, expected);
+
+        let module_asset =
+            fs::read_to_string(denied_root.join("module.mjs")).expect("read module denied asset");
+        let trace_events_asset = fs::read_to_string(denied_root.join("trace_events.mjs"))
+            .expect("read trace_events denied asset");
+
+        assert!(module_asset.contains("node:module is not available"));
+        assert!(trace_events_asset.contains("ERR_ACCESS_DENIED"));
+    }
+
+    #[test]
+    fn ensure_materialized_writes_v8_vm_and_worker_threads_builtin_assets() {
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let builtins_root = import_cache.asset_root().join("builtins");
+        let v8_asset =
+            fs::read_to_string(builtins_root.join("v8.mjs")).expect("read v8 builtin asset");
+        let vm_asset =
+            fs::read_to_string(builtins_root.join("vm.mjs")).expect("read vm builtin asset");
+        let worker_threads_asset = fs::read_to_string(builtins_root.join("worker-threads.mjs"))
+            .expect("read worker_threads builtin asset");
+
+        assert!(v8_asset.contains("process.getBuiltinModule?.(\"node:v8\")"));
+        assert!(v8_asset.contains("export const cachedDataVersionTag = mod.cachedDataVersionTag;"));
+        assert!(vm_asset.contains("process.getBuiltinModule?.(\"node:vm\")"));
+        assert!(vm_asset.contains("export const runInThisContext = mod.runInThisContext;"));
+        assert!(worker_threads_asset.contains("class Worker"));
+        assert!(worker_threads_asset.contains("export const isMainThread = mod.isMainThread;"));
+    }
+
+    #[test]
+    fn ensure_materialized_writes_async_and_diagnostics_builtin_assets() {
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let builtins_root = import_cache.asset_root().join("builtins");
+        let async_hooks_asset = fs::read_to_string(builtins_root.join("async-hooks.mjs"))
+            .expect("read async_hooks builtin asset");
+        let diagnostics_asset = fs::read_to_string(builtins_root.join("diagnostics-channel.mjs"))
+            .expect("read diagnostics_channel builtin asset");
+
+        assert!(async_hooks_asset.contains("class AsyncLocalStorage"));
+        assert!(async_hooks_asset.contains("function createHook()"));
+        assert!(diagnostics_asset.contains("function channel(name = '')"));
+        assert!(diagnostics_asset.contains("class Channel"));
+        assert!(diagnostics_asset.contains("function tracingChannel(name = '')"));
+    }
+
+    #[test]
+    fn ensure_materialized_writes_os_builtin_asset() {
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let os_asset =
+            fs::read_to_string(import_cache.asset_root().join("builtins").join("os.mjs"))
+                .expect("read os builtin asset");
+
+        assert!(os_asset.contains("__agentOSBuiltinOs"));
+        assert!(os_asset.contains("export const hostname = mod.hostname"));
+        assert!(os_asset.contains("export const userInfo = mod.userInfo"));
+    }
+
+    #[test]
+    fn ensure_materialized_writes_http_builtin_assets() {
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let builtins_root = import_cache.asset_root().join("builtins");
+        let http_asset =
+            fs::read_to_string(builtins_root.join("http.mjs")).expect("read http builtin asset");
+        let http2_asset =
+            fs::read_to_string(builtins_root.join("http2.mjs")).expect("read http2 builtin asset");
+        let https_asset =
+            fs::read_to_string(builtins_root.join("https.mjs")).expect("read https builtin asset");
+
+        assert!(http_asset.contains("__agentOSBuiltinHttp"));
+        assert!(http_asset.contains("export const request = mod.request"));
+        assert!(http2_asset.contains("__agentOSBuiltinHttp2"));
+        assert!(http2_asset.contains("export const connect = mod.connect"));
+        assert!(https_asset.contains("__agentOSBuiltinHttps"));
+        assert!(https_asset.contains("export const createServer = mod.createServer"));
+    }
+
+    #[test]
+    fn ensure_materialized_writes_net_builtin_asset() {
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let net_asset =
+            fs::read_to_string(import_cache.asset_root().join("builtins").join("net.mjs"))
+                .expect("read net builtin asset");
+
+        assert!(net_asset.contains("__agentOSBuiltinNet"));
+        assert!(net_asset.contains("export const connect = mod.connect"));
+        assert!(net_asset.contains("export const createServer = mod.createServer"));
+    }
+
+    #[test]
+    fn ensure_materialized_writes_dgram_builtin_asset() {
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let dgram_asset =
+            fs::read_to_string(import_cache.asset_root().join("builtins").join("dgram.mjs"))
+                .expect("read dgram builtin asset");
+
+        assert!(dgram_asset.contains("__agentOSBuiltinDgram"));
+        assert!(dgram_asset.contains("export const Socket = mod.Socket"));
+        assert!(dgram_asset.contains("export const createSocket = mod.createSocket"));
+    }
+
+    #[test]
+    fn ensure_materialized_writes_dns_builtin_asset() {
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let dns_asset =
+            fs::read_to_string(import_cache.asset_root().join("builtins").join("dns.mjs"))
+                .expect("read dns builtin asset");
+
+        assert!(dns_asset.contains("__agentOSBuiltinDns"));
+        assert!(dns_asset.contains("export const Resolver = mod.Resolver"));
+        assert!(dns_asset.contains("export const lookup = mod.lookup"));
+        assert!(dns_asset.contains("export const resolve4 = mod.resolve4"));
+    }
+
+    #[test]
+    fn ensure_materialized_writes_dns_promises_builtin_asset() {
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let dns_promises_asset = fs::read_to_string(
+            import_cache
+                .asset_root()
+                .join("builtins")
+                .join("dns-promises.mjs"),
+        )
+        .expect("read dns promises builtin asset");
+
+        assert!(dns_promises_asset.contains("__agentOSBuiltinDns.promises"));
+        assert!(dns_promises_asset.contains("export const Resolver = mod.Resolver"));
+        assert!(dns_promises_asset.contains("export const resolve4 = mod.resolve4"));
+    }
+
+    #[test]
+    fn wasm_runner_preopens_guest_cwd_before_root() {
+        let cwd_index = NODE_WASM_RUNNER_SOURCE
+            .find("preopens[cwdMount] = createPreopen(HOST_CWD, cwdReadOnly);")
+            .expect("runner should preopen the guest cwd");
+        let root_index = NODE_WASM_RUNNER_SOURCE
+            .find("preopens['/'] = createPreopen(rootMapping.hostPath, rootMapping.readOnly);")
+            .expect("runner should preopen the guest root");
+
+        assert!(cwd_index < root_index);
+    }
+
+    #[test]
+    fn wasm_runner_preserves_read_only_mappings_in_preopens() {
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("? { guestPath, hostPath, readOnly: entry.readOnly === true }"));
+        assert!(NODE_WASM_RUNNER_SOURCE.contains("readOnly: readOnly === true,"));
+        assert!(NODE_WASM_RUNNER_SOURCE.contains("resolveModuleGuestPathToHostMapping"));
+        assert!(NODE_WASM_RUNNER_SOURCE.contains("rightsBase: READ_ONLY_PREOPEN_RIGHTS_BASE,"));
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("preopens[guestPath] = createPreopen(mapping.hostPath, mapping.readOnly);"));
+        assert!(NODE_WASM_RUNNER_SOURCE.contains("const cwdReadOnly = readOnlyForCwd(guestCwd);"));
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("preopens[cwdMount] = createPreopen(HOST_CWD, cwdReadOnly);"));
+        assert!(
+            NODE_WASM_RUNNER_SOURCE.contains("if (mapping.readOnly) {\n        return 1;\n      }")
+        );
+        assert!(NODE_WASM_RUNNER_SOURCE.contains("readOnly: preopenSpec?.readOnly === true,"));
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("resolveModuleGuestPathToHostMapping(guestPath)?.readOnly === true"));
+        assert!(NODE_WASM_RUNNER_SOURCE
+            .contains("if (handle.readOnly === true) {\n      return WASI_ERRNO_ROFS;\n    }"));
+    }
+
+    #[test]
+    fn ensure_materialized_writes_tls_builtin_asset() {
+        let import_cache = NodeImportCache::default();
+        import_cache
+            .ensure_materialized()
+            .expect("materialize node import cache");
+
+        let tls_asset =
+            fs::read_to_string(import_cache.asset_root().join("builtins").join("tls.mjs"))
+                .expect("read tls builtin asset");
+
+        assert!(tls_asset.contains("__agentOSBuiltinTls"));
+        assert!(tls_asset.contains("export const connect = mod.connect"));
+        assert!(tls_asset.contains("export const createServer = mod.createServer"));
+    }
+}

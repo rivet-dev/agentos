@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { anthropic } from "@ai-sdk/anthropic";
-import { createTypeScriptTools } from "@secure-exec/typescript";
+import { createTypeScriptTools } from "@rivet-dev/agentos-typescript";
+import { nodeModulesMount } from "@rivet-dev/agentos-core";
 import { generateText, stepCountIs, tool } from "ai";
 import {
 	allowAll,
@@ -9,8 +10,7 @@ import {
 	createNodeDriver,
 	createNodeRuntime,
 	createNodeRuntimeDriverFactory,
-	nodeModulesMount,
-} from "secure-exec";
+} from "@rivet-dev/agentos-core/internal/runtime-compat";
 import { z } from "zod";
 
 const filesystem = createInMemoryFileSystem();

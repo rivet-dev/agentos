@@ -1,0 +1,57 @@
+--- a/libc-bottom-half/sources/host_spawn_wait.c
++++ b/libc-bottom-half/sources/host_spawn_wait.c
+@@ -108,6 +108,17 @@
+     return 0;
+ }
+
++static const char *find_pwd_in_env(char *const envp[]) {
++    if (!envp) return NULL;
++    for (int i = 0; envp[i]; i++) {
++        const char *entry = envp[i];
++        if (strncmp(entry, "PWD=", 4) == 0 && entry[4] == '/') {
++            return entry + 4;
++        }
++    }
++    return NULL;
++}
++
+ int posix_spawn_file_actions_adddup2(posix_spawn_file_actions_t *fa, int srcfd, int fd) {
+     if (srcfd < 0 || fd < 0) return EBADF;
+     struct __fdop *op = malloc(sizeof(*op));
+@@ -232,6 +243,7 @@
+     }
+
+     // Process file_actions in order: extract stdio overrides and handle close/open
++    const char *spawn_cwd = NULL;
+     uint32_t stdin_fd = 0, stdout_fd = 1, stderr_fd = 2;
+     if (fa && fa->__actions) {
+         for (struct __fdop *op = fa->__actions; op; op = op->next) {
+@@ -259,16 +271,27 @@
+                 else close(opened);
+                 break;
+             }
++            case FDOP_CHDIR:
++                if (op->path[0] == '/') spawn_cwd = op->path;
++                break;
+             }
+         }
+     }
+
++    // Resolve cwd: explicit chdir action > inherited PWD > getcwd() > empty
++    char cwd_buf[1024];
++    const char *cwd_str = spawn_cwd;
++    if (!cwd_str) cwd_str = find_pwd_in_env(env);
++    if (!cwd_str && getcwd(cwd_buf, sizeof(cwd_buf))) {
++        cwd_str = cwd_buf;
++    }
++
+     uint32_t child_pid;
+     uint32_t err = __host_proc_spawn(
+         argv_buf, (uint32_t)argv_buf_len,
+         envp_buf ? envp_buf : (const uint8_t *)"", (uint32_t)envp_buf_len,
+         stdin_fd, stdout_fd, stderr_fd,
+-        (const uint8_t *)"", 0,
++        cwd_str ? (const uint8_t *)cwd_str : (const uint8_t *)"", cwd_str ? (uint32_t)strlen(cwd_str) : 0,
+         &child_pid);
+
+     free(argv_buf);

@@ -4,7 +4,7 @@
 //
 // 1. DRIVER mode (default, no `agentExecutor`): mirrors secure-exec's no-op
 //    execution host bridge. In the converged browser runtime the guest runs in the
-//    browser worker (driven by @secure-exec/browser's runtime driver), not in the
+//    browser worker (driven by @rivet-dev/agentos-runtime-browser's runtime driver), not in the
 //    wasm sidecar; the sidecar only needs a kernel process (pid) for socket
 //    ownership, created by an `execute` wire request. `startExecution` echoes the
 //    driver-provided execution id (set via `setNextExecutionId`); the stdio

@@ -1,77 +1,42 @@
 ---
 name: release
-description: Cut a release or a release-preview via the scripts/publish flow. Use when the user asks to release, publish, cut a release, bump the version, or preview a branch.
+description: Cut an AgentOS release via the scripts/publish flow. Use when the user asks to release, publish, cut a release, or bump the AgentOS version.
 ---
 
-# Release
+# AgentOS Release
 
-The publish flow lives in `scripts/publish` and is driven by the unified
-`.github/workflows/publish.yaml` workflow. There are two modes:
+The publish flow lives in `scripts/publish` and is driven by
+`.github/workflows/publish.yaml`.
 
-- **Release** — a versioned cut that publishes to npm + crates.io, creates a
-  GitHub release with binaries, and tags `v<version>`.
-- **Release-preview** — a branch snapshot published to npm only, under a
-  branch-named dist-tag, using fast debug builds. No git tag, no crates.io
-  release, no GitHub release.
+AgentOS is the source of truth. It publishes npm packages, crates, runtime
+sidecars, Pyodide/R2 assets, and `@agentos-software/*` registry packages from
+this repository. secure-exec releases are generated compatibility shims that
+follow the AgentOS version; never release secure-exec first.
 
-## Release
+## Procedure
 
-A release REQUIRES a real secure-exec release version (the committed deps are
-file-based; the workflow verifies `<v>` on npm AND crates.io and release-swaps
-to it transiently — cut one first with secure-exec's `release-secure-exec`
-skill if needed):
+1. Start from a clean, pushed `merge-aos` or `main` bookmark.
+2. Run the local trigger:
 
 ```bash
-just release --secure-exec-version <v> --version 0.2.0       # exact version
-just release --secure-exec-version <v> --version 0.2.0-rc.1  # rc (npm tag `rc`)
-just release --secure-exec-version <v> --patch               # semver bump from latest git tag
+just release --version 0.2.0       # exact version
+just release --version 0.2.0-rc.1  # rc (npm tag `rc`)
+just release --patch               # semver bump from latest git tag
 ```
 
-`just release` runs `scripts/publish/src/local/cut-release.ts`, which is a
-**pure trigger** — it never mutates or commits version files:
-1. Resolves the version and the `latest` flag (auto-detected from git tags).
-2. Validates the working tree is clean and prints a plan to confirm.
-3. Runs a local core build + type-check fail-fast (`--skip-checks` to skip).
-4. Triggers `publish.yaml` with the version + `secure_exec_version`, which
-   verifies the secure-exec release, release-swaps the file deps to it AND
-   bumps the committed `0.0.1` product versions to `<version>` — all in the
-   ephemeral CI checkout, never committed — then builds release binaries,
-   publishes npm + crates.io, uploads release assets, and tags `v<version>`.
-
-The committed tree always stays at product version `0.0.1` (enforced by
-`scripts/verify-fixed-versions.mjs`); the real version lives only in the
-workflow input and the resulting `v<version>` git tag. `resolveVersion` reads
-those git tags — not any committed `package.json` — so pinning at `0.0.1` never
-affects version resolution.
-
-Flags: `--latest` / `--no-latest`, `--dry-run` (print the resolved plan only —
-no file changes, no workflow trigger), `-y`.
-
-## Release-preview
+3. Watch the workflow:
 
 ```bash
-just release-preview <branch>
-```
-
-Dispatches `publish.yaml` on the branch with no version. The context resolver
-computes `version = 0.0.0-<sanitized-branch>.<sha>` and `npm_tag = <sanitized-branch>`,
-builds a debug sidecar, and publishes every package to npm under that tag.
-The `secure-exec-version` job auto-cuts (or reuses) a secure-exec preview at
-the committed `.github/refs/secure-exec` sha and release-swaps to it — see the
-`release-preview` skill for the end-to-end cross-repo loop (needs the
-`SECURE_EXEC_DISPATCH_TOKEN` secret).
-Install a preview with:
-
-```bash
-npm install @rivet-dev/agentos-core@<sanitized-branch>
+run=$(gh run list -R rivet-dev/agentos --workflow=publish.yaml -L1 --json databaseId --jq '.[0].databaseId')
+gh run watch -R rivet-dev/agentos "$run" --exit-status
 ```
 
 ## Notes
 
 - Never publish to npm or crates.io locally; always go through `publish.yaml`.
-- Platform binary packages publish with `npm publish` (preserves the `0755`
-  executable bit). `workspace:*` deps are rewritten to literal versions by the
-  full `bump-versions` pass before publish, so `npm publish` resolves them.
-- `SIDECAR_PLATFORMS` (workflow env + `scripts/publish` discovery) is the single
-  source of truth for which platform binary packages are built and published.
+- `scripts/publish/src/local/cut-release.ts` is a pure trigger; version changes
+  happen in the ephemeral CI checkout.
+- `workspace:*` deps are rewritten to literal versions by the publish bump pass.
+- Generated secure-exec shims are dispatched after AgentOS publishes and must
+  use the same version.
 - If anything fails, stop and report — do not retry automatically.

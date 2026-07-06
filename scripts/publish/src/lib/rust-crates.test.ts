@@ -41,9 +41,18 @@ function assertBefore(crate: string, dependent: string) {
 test("Rust crate publish order satisfies internal dependencies", () => {
 	assert.equal(new Set(RUST_CRATES).size, RUST_CRATES.length);
 
-	// Only agentOS-owned crates; secure-exec runtime crates are published by secure-exec.
-	assertBefore("agentos-protocol", "agentos-sidecar");
+	assertBefore("agentos-build-support", "agentos-v8-runtime");
+	assertBefore("agentos-bridge", "agentos-execution");
+	assertBefore("agentos-vfs-core", "agentos-vfs");
+	assertBefore("agentos-kernel", "agentos-execution");
+	assertBefore("agentos-sidecar-protocol", "agentos-sidecar-client");
+	assertBefore("agentos-execution", "agentos-native-sidecar");
+	assertBefore("agentos-native-sidecar-core", "agentos-native-sidecar");
+	assertBefore("agentos-sidecar-client", "agentos-native-sidecar");
+	assertBefore("agentos-native-sidecar", "agentos-native-sidecar-browser");
+	assertBefore("agentos-sidecar-core", "agentos-sidecar");
 	assertBefore("agentos-protocol", "agentos-client");
+	assertBefore("agentos-client", "agentos-sidecar");
 });
 
 test("discovers the publishable Rust crate subset from a workspace", () => {
@@ -56,6 +65,7 @@ test("discovers the publishable Rust crate subset from a workspace", () => {
 				"members = [",
 				'  "crates/agentos-protocol",',
 				'  "crates/agentos-sidecar",',
+				'  "crates/native-sidecar",',
 				'  "crates/client",',
 				"]",
 				"",
@@ -64,15 +74,17 @@ test("discovers the publishable Rust crate subset from a workspace", () => {
 		for (const [member, name] of [
 			["crates/agentos-protocol", "agentos-protocol"],
 			["crates/agentos-sidecar", "agentos-sidecar"],
+			["crates/native-sidecar", "agentos-native-sidecar"],
 			["crates/client", "agentos-client"],
 		]) {
 			write(root, join(member, "Cargo.toml"), `[package]\nname = "${name}"\n`);
 		}
 
 		assert.deepEqual(discoverRustCrates(root), [
+			"agentos-native-sidecar",
 			"agentos-protocol",
-			"agentos-sidecar",
 			"agentos-client",
+			"agentos-sidecar",
 		]);
 	});
 });

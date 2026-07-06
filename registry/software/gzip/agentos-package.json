@@ -1,0 +1,9 @@
+{
+	"commands": [
+		"gzip"
+	],
+	"aliases": {
+		"gunzip": "gzip",
+		"zcat": "gzip"
+	}
+}

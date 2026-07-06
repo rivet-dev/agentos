@@ -73,10 +73,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentos-bridge"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "agentos-build-support"
+version = "0.0.1"
+
+[[package]]
 name = "agentos-client"
 version = "0.0.1"
 dependencies = [
+ "agentos-bridge",
  "agentos-protocol",
+ "agentos-sidecar-client",
+ "agentos-vm-config",
  "anyhow",
  "async-trait",
  "base64 0.22.1",
@@ -87,9 +103,6 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "scc",
- "secure-exec-bridge",
- "secure-exec-client",
- "secure-exec-vm-config",
  "serde",
  "serde_bare",
  "serde_json",
@@ -98,6 +111,130 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "agentos-execution"
+version = "0.0.1"
+dependencies = [
+ "agentos-bridge",
+ "agentos-build-support",
+ "agentos-v8-runtime",
+ "base64 0.22.1",
+ "ciborium",
+ "getrandom 0.2.17",
+ "nix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "wat",
+]
+
+[[package]]
+name = "agentos-kernel"
+version = "0.0.1"
+dependencies = [
+ "agentos-bridge",
+ "agentos-vfs-core",
+ "base64 0.22.1",
+ "getrandom 0.2.17",
+ "hickory-proto",
+ "hickory-resolver",
+ "serde",
+ "serde_json",
+ "tokio",
+ "web-time",
+]
+
+[[package]]
+name = "agentos-native-baseline"
+version = "0.0.1"
+
+[[package]]
+name = "agentos-native-sidecar"
+version = "0.0.1"
+dependencies = [
+ "aes",
+ "aes-gcm",
+ "agentos-bridge",
+ "agentos-execution",
+ "agentos-kernel",
+ "agentos-native-sidecar-core",
+ "agentos-sidecar-protocol",
+ "agentos-vfs",
+ "agentos-vfs-core",
+ "agentos-vm-config",
+ "async-trait",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "base64 0.22.1",
+ "blake3",
+ "bytes",
+ "cap-std",
+ "ctr",
+ "filetime",
+ "h2 0.4.15",
+ "hickory-resolver",
+ "hmac 0.12.1",
+ "http 1.4.2",
+ "jsonwebtoken",
+ "log",
+ "md-5 0.10.6",
+ "nix",
+ "openssl",
+ "pbkdf2",
+ "rusqlite",
+ "rustls 0.23.41",
+ "rustls-native-certs",
+ "rustls-pemfile",
+ "scrypt",
+ "serde",
+ "serde_bare",
+ "serde_json",
+ "sha1 0.10.6",
+ "sha2 0.10.9",
+ "socket2 0.6.4",
+ "tar",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tracing",
+ "tracing-subscriber",
+ "ureq",
+ "url",
+ "v8",
+ "wat",
+]
+
+[[package]]
+name = "agentos-native-sidecar-browser"
+version = "0.0.1"
+dependencies = [
+ "agentos-bridge",
+ "agentos-kernel",
+ "agentos-native-sidecar-core",
+ "agentos-sidecar-protocol",
+ "agentos-vm-config",
+ "base64 0.22.1",
+ "getrandom 0.2.17",
+ "js-sys",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "agentos-native-sidecar-core"
+version = "0.0.1"
+dependencies = [
+ "agentos-bridge",
+ "agentos-kernel",
+ "agentos-sidecar-protocol",
+ "agentos-vfs-core",
+ "agentos-vm-config",
+ "base64 0.22.1",
+ "serde_json",
 ]
 
 [[package]]
@@ -113,10 +250,10 @@ dependencies = [
 name = "agentos-sidecar"
 version = "0.0.1"
 dependencies = [
+ "agentos-bridge",
+ "agentos-native-sidecar",
  "agentos-protocol",
- "secure-exec-bridge",
- "secure-exec-sidecar",
- "secure-exec-vm-config",
+ "agentos-vm-config",
  "serde_bare",
  "serde_json",
  "tokio",
@@ -130,14 +267,27 @@ dependencies = [
 name = "agentos-sidecar-browser"
 version = "0.0.1"
 dependencies = [
+ "agentos-bridge",
+ "agentos-native-sidecar-browser",
  "agentos-protocol",
  "agentos-sidecar-core",
  "getrandom 0.2.17",
  "js-sys",
- "secure-exec-bridge",
- "secure-exec-sidecar-browser",
  "serde_bare",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "agentos-sidecar-client"
+version = "0.0.1"
+dependencies = [
+ "agentos-sidecar-protocol",
+ "futures",
+ "parking_lot",
+ "scc",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -148,6 +298,74 @@ dependencies = [
  "serde",
  "serde_bare",
  "serde_json",
+]
+
+[[package]]
+name = "agentos-sidecar-protocol"
+version = "0.0.1"
+dependencies = [
+ "agentos-vm-config",
+ "rivet-vbare-compiler",
+ "serde",
+ "serde_bare",
+ "serde_json",
+ "vbare",
+]
+
+[[package]]
+name = "agentos-v8-runtime"
+version = "0.0.1"
+dependencies = [
+ "agentos-bridge",
+ "agentos-build-support",
+ "ciborium",
+ "crossbeam-channel",
+ "libc",
+ "serde",
+ "sha2 0.10.9",
+ "signal-hook",
+ "v8",
+]
+
+[[package]]
+name = "agentos-vfs"
+version = "0.0.1"
+dependencies = [
+ "agentos-vfs-core",
+ "async-trait",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "agentos-vfs-core"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "blake3",
+ "memmap2",
+ "serde",
+ "serde_json",
+ "tar",
+ "tokio",
+ "tracing",
+ "web-time",
+]
+
+[[package]]
+name = "agentos-vm-config"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ts-rs",
 ]
 
 [[package]]
@@ -1281,7 +1499,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1923,7 +2141,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tokio",
  "tower-service",
  "tracing",
@@ -2228,6 +2446,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
+name = "leb128fmt"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2433,7 +2657,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2994,7 +3218,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3181,210 +3405,6 @@ dependencies = [
  "pkcs8",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "secure-exec-bridge"
-version = "0.0.1"
-dependencies = [
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "secure-exec-build-support"
-version = "0.0.1"
-
-[[package]]
-name = "secure-exec-client"
-version = "0.0.1"
-dependencies = [
- "futures",
- "parking_lot",
- "scc",
- "secure-exec-sidecar-protocol",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "secure-exec-execution"
-version = "0.0.1"
-dependencies = [
- "base64 0.22.1",
- "ciborium",
- "getrandom 0.2.17",
- "nix",
- "secure-exec-bridge",
- "secure-exec-build-support",
- "secure-exec-v8-runtime",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "secure-exec-kernel"
-version = "0.0.1"
-dependencies = [
- "base64 0.22.1",
- "getrandom 0.2.17",
- "hickory-proto",
- "hickory-resolver",
- "secure-exec-bridge",
- "secure-exec-vfs-core",
- "serde",
- "serde_json",
- "tokio",
- "web-time",
-]
-
-[[package]]
-name = "secure-exec-sidecar"
-version = "0.0.1"
-dependencies = [
- "aes",
- "aes-gcm",
- "async-trait",
- "aws-config",
- "aws-credential-types",
- "aws-sdk-s3",
- "base64 0.22.1",
- "blake3",
- "bytes",
- "cap-std",
- "ctr",
- "filetime",
- "h2 0.4.15",
- "hickory-resolver",
- "hmac 0.12.1",
- "http 1.4.2",
- "jsonwebtoken",
- "log",
- "md-5 0.10.6",
- "nix",
- "openssl",
- "pbkdf2",
- "rusqlite",
- "rustls 0.23.41",
- "rustls-native-certs",
- "rustls-pemfile",
- "scrypt",
- "secure-exec-bridge",
- "secure-exec-execution",
- "secure-exec-kernel",
- "secure-exec-sidecar-core",
- "secure-exec-sidecar-protocol",
- "secure-exec-vfs",
- "secure-exec-vfs-core",
- "secure-exec-vm-config",
- "serde",
- "serde_json",
- "sha1 0.10.6",
- "sha2 0.10.9",
- "socket2 0.6.4",
- "tokio",
- "tokio-rustls 0.26.4",
- "tracing",
- "tracing-subscriber",
- "ureq",
- "url",
-]
-
-[[package]]
-name = "secure-exec-sidecar-browser"
-version = "0.0.1"
-dependencies = [
- "base64 0.22.1",
- "getrandom 0.2.17",
- "js-sys",
- "secure-exec-bridge",
- "secure-exec-kernel",
- "secure-exec-sidecar-core",
- "secure-exec-sidecar-protocol",
- "secure-exec-vm-config",
- "serde_json",
- "wasm-bindgen",
-]
-
-[[package]]
-name = "secure-exec-sidecar-core"
-version = "0.0.1"
-dependencies = [
- "base64 0.22.1",
- "secure-exec-bridge",
- "secure-exec-kernel",
- "secure-exec-sidecar-protocol",
- "secure-exec-vfs-core",
- "secure-exec-vm-config",
- "serde_json",
-]
-
-[[package]]
-name = "secure-exec-sidecar-protocol"
-version = "0.0.1"
-dependencies = [
- "rivet-vbare-compiler",
- "secure-exec-vm-config",
- "serde",
- "serde_bare",
- "serde_json",
- "vbare",
-]
-
-[[package]]
-name = "secure-exec-v8-runtime"
-version = "0.0.1"
-dependencies = [
- "ciborium",
- "crossbeam-channel",
- "libc",
- "secure-exec-bridge",
- "secure-exec-build-support",
- "serde",
- "sha2 0.10.9",
- "signal-hook",
- "v8",
-]
-
-[[package]]
-name = "secure-exec-vfs"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "aws-sdk-s3",
- "rusqlite",
- "secure-exec-vfs-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "secure-exec-vfs-core"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "blake3",
- "memmap2",
- "serde",
- "serde_json",
- "tar",
- "tokio",
- "tracing",
- "web-time",
-]
-
-[[package]]
-name = "secure-exec-vm-config"
-version = "0.0.1"
-dependencies = [
- "serde",
- "serde_json",
- "ts-rs",
 ]
 
 [[package]]
@@ -3740,6 +3760,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.3",
+ "once_cell",
+ "rustix 1.1.4",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "termcolor"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4050,6 +4083,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
+name = "unicode-width"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+
+[[package]]
 name = "universal-hash"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4245,6 +4284,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-encoder"
+version = "0.252.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8185ae345fa5687c054626ff9a50e7089797a343d9904d1dc9820eb4c4d3196f"
+dependencies = [
+ "leb128fmt",
+ "wasmparser",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.252.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3eb099dcadcde5be9eef55e3a337128efd4e44b4c93122487e4d2e4e1c6627c"
+dependencies = [
+ "bitflags",
+ "indexmap",
+ "semver",
+]
+
+[[package]]
+name = "wast"
+version = "252.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "942a3449d6a593fccc111a6241c8df52bda168af30e40bf9580d4394d7374c65"
+dependencies = [
+ "bumpalo",
+ "leb128fmt",
+ "memchr",
+ "unicode-width",
+ "wasm-encoder",
+]
+
+[[package]]
+name = "wat"
+version = "1.252.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c72a4ba7088f7bac94cf516e49882bdf97068904a563768cf249efc839ec42cb"
+dependencies = [
+ "wast",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4322,7 +4404,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

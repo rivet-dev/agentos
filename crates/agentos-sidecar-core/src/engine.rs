@@ -257,10 +257,7 @@ impl AcpCore {
         let resolved = resolve_agent(host, &request.agent_type)?;
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
-        env.insert(
-            String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
-            String::from("1"),
-        );
+        env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
         // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
         for (key, value) in &resolved.env {
             env.entry(key.clone()).or_insert_with(|| value.clone());
@@ -325,10 +322,7 @@ impl AcpCore {
         let resolved = resolve_agent(host, &request.agent_type)?;
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
-        env.insert(
-            String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
-            String::from("1"),
-        );
+        env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
         // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
         for (key, value) in &resolved.env {
             env.entry(key.clone()).or_insert_with(|| value.clone());
@@ -770,10 +764,7 @@ impl AcpCore {
 
         let process_id = self.allocate_process_id("acp-agent");
         let mut env: BTreeMap<String, String> = request.env.clone().into_iter().collect();
-        env.insert(
-            String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
-            String::from("1"),
-        );
+        env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
         // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
         for (key, value) in &resolved.env {
             env.entry(key.clone()).or_insert_with(|| value.clone());

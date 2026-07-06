@@ -10,7 +10,7 @@ import {
 	type NetworkAdapter,
 	type NodeRuntimeDriver,
 	type PtyOpenResult,
-} from "@secure-exec/browser";
+} from "@rivet-dev/agentos-runtime-browser";
 import {
 	chatRequestToPrompt,
 	createChromeLanguageModelSession,

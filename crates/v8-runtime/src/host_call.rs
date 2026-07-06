@@ -1,0 +1,967 @@
+// Sync-blocking bridge call: serialize, write to socket, block on read, deserialize
+
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use crate::ipc_binary::{self, BinaryFrame};
+use crate::runtime_protocol::{BridgeResponse, RuntimeEvent};
+use crate::session::RuntimeEventEnvelope;
+
+// ── Sync bridge-call round-trip latency (opt-in via AGENTOS_SYNCRPC_LAT=1) ──
+// Measures the guest-observed cost of one host_call round trip (send + block on
+// response). If this is ~ms per call, the embedded-V8 IPC floor is a big part of
+// the evaluate-phase VM tax (~50 fs sync RPCs during SDK init). Writes running
+// (count, total_us, max_us) to AGENTOS_SYNCRPC_LAT_FILE.
+static SYNCRPC_LAT: std::sync::OnceLock<std::sync::Mutex<(u64, u64, u64)>> =
+    std::sync::OnceLock::new();
+
+fn syncrpc_lat_enabled() -> bool {
+    std::env::var("AGENTOS_SYNCRPC_LAT").as_deref() == Ok("1")
+}
+
+fn record_syncrpc_lat(ns: u64) {
+    let m = SYNCRPC_LAT.get_or_init(|| std::sync::Mutex::new((0, 0, 0)));
+    let Ok(mut a) = m.lock() else {
+        return;
+    };
+    a.0 += 1;
+    a.1 = a.1.wrapping_add(ns / 1000);
+    a.2 = a.2.max(ns / 1000);
+    if a.0 % 25 == 0 {
+        if let Ok(path) = std::env::var("AGENTOS_SYNCRPC_LAT_FILE") {
+            let _ = std::fs::write(
+                &path,
+                format!(
+                    "calls={} total_us={} avg_us={} max_us={}\n",
+                    a.0,
+                    a.1,
+                    a.1 / a.0,
+                    a.2
+                ),
+            );
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+struct SyncBridgeHostPhaseStats {
+    calls: u64,
+    total_us: u64,
+    max_us: u64,
+}
+
+static SYNC_BRIDGE_HOST_PHASES: std::sync::OnceLock<
+    std::sync::Mutex<BTreeMap<String, SyncBridgeHostPhaseStats>>,
+> = std::sync::OnceLock::new();
+static SYNC_BRIDGE_CALL_METHODS: std::sync::OnceLock<std::sync::Mutex<HashMap<u64, String>>> =
+    std::sync::OnceLock::new();
+static SYNC_BRIDGE_RESPONSE_CHANNEL_SENDS: std::sync::OnceLock<
+    std::sync::Mutex<HashMap<u64, (String, Instant)>>,
+> = std::sync::OnceLock::new();
+
+fn sync_bridge_host_phases_enabled() -> bool {
+    std::env::var("AGENTOS_SYNC_BRIDGE_HOST_PHASES").as_deref() == Ok("1")
+}
+
+pub(crate) fn record_sync_bridge_host_phase(method: &str, stage: &str, elapsed: Duration) {
+    if !sync_bridge_host_phases_enabled() {
+        return;
+    }
+    let stats = SYNC_BRIDGE_HOST_PHASES.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()));
+    let Ok(mut stats) = stats.lock() else {
+        return;
+    };
+    let elapsed_us = elapsed.as_micros() as u64;
+    let key = format!("{method}:{stage}");
+    let entry = stats.entry(key).or_default();
+    entry.calls += 1;
+    entry.total_us = entry.total_us.wrapping_add(elapsed_us);
+    entry.max_us = entry.max_us.max(elapsed_us);
+
+    if let Ok(path) = std::env::var("AGENTOS_SYNC_BRIDGE_HOST_PHASES_FILE") {
+        let mut lines = String::new();
+        for (key, value) in stats.iter() {
+            let Some((method, stage)) = key.split_once(':') else {
+                continue;
+            };
+            let avg_us = value.total_us.checked_div(value.calls).unwrap_or(0);
+            lines.push_str(&format!(
+                "method={method} stage={stage} calls={} total_us={} avg_us={} max_us={}\n",
+                value.calls, value.total_us, avg_us, value.max_us
+            ));
+        }
+        let _ = std::fs::write(path, lines);
+    }
+}
+
+fn track_sync_bridge_call_method(call_id: u64, method: &str) {
+    if !sync_bridge_host_phases_enabled() {
+        return;
+    }
+    let methods = SYNC_BRIDGE_CALL_METHODS.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let Ok(mut methods) = methods.lock() else {
+        return;
+    };
+    if methods.len() > 4096 {
+        methods.clear();
+    }
+    methods.insert(call_id, method.to_owned());
+}
+
+fn cleanup_sync_bridge_call_tracking(call_id: u64) {
+    if let Some(methods) = SYNC_BRIDGE_CALL_METHODS.get() {
+        if let Ok(mut methods) = methods.lock() {
+            methods.remove(&call_id);
+        }
+    }
+    if let Some(starts) = SYNC_BRIDGE_RESPONSE_CHANNEL_SENDS.get() {
+        if let Ok(mut starts) = starts.lock() {
+            starts.remove(&call_id);
+        }
+    }
+}
+
+pub(crate) fn record_sync_bridge_response_channel_send_start(call_id: u64) {
+    if !sync_bridge_host_phases_enabled() {
+        return;
+    }
+    let method = SYNC_BRIDGE_CALL_METHODS
+        .get()
+        .and_then(|methods| methods.lock().ok()?.get(&call_id).cloned())
+        .unwrap_or_else(|| String::from("sync_rpc_response"));
+    let starts =
+        SYNC_BRIDGE_RESPONSE_CHANNEL_SENDS.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let Ok(mut starts) = starts.lock() else {
+        return;
+    };
+    if starts.len() > 4096 {
+        starts.clear();
+    }
+    starts.insert(call_id, (method, Instant::now()));
+}
+
+pub(crate) fn record_sync_bridge_response_channel_received(call_id: u64) {
+    if !sync_bridge_host_phases_enabled() {
+        return;
+    }
+    let Some(starts) = SYNC_BRIDGE_RESPONSE_CHANNEL_SENDS.get() else {
+        return;
+    };
+    let Ok(mut starts) = starts.lock() else {
+        return;
+    };
+    let Some((method, started)) = starts.remove(&call_id) else {
+        return;
+    };
+    record_sync_bridge_host_phase(&method, "host_response_channel_recv", started.elapsed());
+}
+
+/// Trait for sending serialized frames to the host without holding a shared mutex.
+/// Production code uses ChannelRuntimeEventSender (lock-free MPSC); tests use WriterRuntimeEventSender.
+pub trait RuntimeEventSender: Send {
+    fn send_event(&self, event: RuntimeEvent) -> Result<(), String>;
+}
+
+/// Sends frames via a crossbeam channel to a dedicated writer thread.
+/// Maintains a reusable frame buffer that grows to high-water mark,
+/// avoiding per-call allocation for frame construction.
+pub struct ChannelRuntimeEventSender {
+    pub tx: crossbeam_channel::Sender<RuntimeEventEnvelope>,
+    output_generation: Option<u64>,
+    /// Pre-allocated frame buffer reused across send_frame calls.
+    /// Grows to high-water mark; cleared (not deallocated) between calls.
+    #[allow(dead_code)]
+    frame_buf: RefCell<Vec<u8>>,
+}
+
+impl ChannelRuntimeEventSender {
+    pub fn new(
+        tx: crossbeam_channel::Sender<RuntimeEventEnvelope>,
+        output_generation: Option<u64>,
+    ) -> Self {
+        ChannelRuntimeEventSender {
+            tx,
+            output_generation,
+            frame_buf: RefCell::new(Vec::with_capacity(256)),
+        }
+    }
+}
+
+impl RuntimeEventSender for ChannelRuntimeEventSender {
+    fn send_event(&self, event: RuntimeEvent) -> Result<(), String> {
+        self.tx
+            .send(RuntimeEventEnvelope {
+                output_generation: self.output_generation,
+                event,
+            })
+            .map_err(|e| format!("channel send failed: {}", e))
+    }
+}
+
+/// Sends frames directly to a Write impl (used by tests).
+#[allow(dead_code)]
+pub struct WriterRuntimeEventSender {
+    writer: Mutex<Box<dyn Write + Send>>,
+}
+
+impl RuntimeEventSender for WriterRuntimeEventSender {
+    fn send_event(&self, event: RuntimeEvent) -> Result<(), String> {
+        let mut w = self.writer.lock().unwrap();
+        let frame: BinaryFrame = event.into();
+        ipc_binary::write_frame(&mut *w, &frame).map_err(|e| format!("write error: {}", e))
+    }
+}
+
+/// Trait for receiving a BridgeResponse directly without re-serialization.
+/// Production code uses a channel-based implementation; tests use a buffer-based one.
+pub trait BridgeResponseReceiver: Send {
+    fn recv_response(&self, expected_call_id: u64) -> Result<BridgeResponse, String>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncBridgeCallResponse {
+    pub status: u8,
+    pub payload: Vec<u8>,
+}
+
+/// ResponseReceiver that reads frames from a byte buffer via ipc_binary::read_frame.
+/// Used by tests and any code that has a pre-serialized byte stream.
+#[allow(dead_code)]
+pub struct ReaderBridgeResponseReceiver {
+    reader: Mutex<Box<dyn Read + Send>>,
+}
+
+impl ReaderBridgeResponseReceiver {
+    #[allow(dead_code)]
+    pub fn new(reader: Box<dyn Read + Send>) -> Self {
+        ReaderBridgeResponseReceiver {
+            reader: Mutex::new(reader),
+        }
+    }
+}
+
+impl BridgeResponseReceiver for ReaderBridgeResponseReceiver {
+    fn recv_response(&self, expected_call_id: u64) -> Result<BridgeResponse, String> {
+        let mut reader = self.reader.lock().unwrap();
+        let frame = ipc_binary::read_frame(&mut *reader)
+            .map_err(|e| format!("failed to read BridgeResponse: {}", e))?;
+        match frame {
+            BinaryFrame::BridgeResponse {
+                call_id,
+                status,
+                payload,
+                ..
+            } => {
+                if call_id != expected_call_id {
+                    return Err(format!(
+                        "call_id mismatch: expected {}, got {}",
+                        expected_call_id, call_id
+                    ));
+                }
+                Ok(BridgeResponse {
+                    call_id,
+                    status,
+                    payload,
+                })
+            }
+            _ => Err("expected BridgeResponse, got different message type".into()),
+        }
+    }
+}
+
+/// Shared routing table: maps call_id → session_id for BridgeResponse routing.
+/// The connection handler uses this to determine which session a BridgeResponse
+/// belongs to (since BridgeResponse has call_id but no session_id).
+pub type CallIdRouter = Arc<Mutex<HashMap<u64, String>>>;
+
+/// Shared call_id counter type. Sessions sharing a CallIdRouter must use the same
+/// counter to prevent call_id collisions that cause BridgeResponses to be delivered
+/// to the wrong session.
+pub type SharedCallIdCounter = Arc<AtomicU64>;
+
+/// Context for sync-blocking bridge calls from a V8 session.
+///
+/// Holds the frame sender and response receiver, session ID, call_id counter,
+/// and pending-call tracking. Used by V8 FunctionTemplate callbacks to
+/// implement the sync-blocking bridge pattern.
+pub struct BridgeCallContext {
+    /// Sender for serialized frames to the host (channel-based in production)
+    sender: Box<dyn RuntimeEventSender>,
+    /// Receiver for BridgeResponse frames (no re-serialization needed)
+    response_rx: Mutex<Box<dyn BridgeResponseReceiver>>,
+    /// Session ID included in every BridgeCall
+    pub session_id: String,
+    /// Monotonically increasing call_id counter. Sessions sharing a CallIdRouter
+    /// must share the same counter (via Arc) to prevent call_id collisions.
+    next_call_id: Arc<AtomicU64>,
+    /// Set of in-flight call_ids (for duplicate rejection)
+    pending_calls: Mutex<HashSet<u64>>,
+    /// Opt-in diagnostic tracking for sync call_ids. The atomic call_id counter
+    /// plus recv_response(call_id) validation are the correctness path; this set
+    /// is only needed when inspecting in-flight calls.
+    track_pending_calls: bool,
+    /// Optional routing table for call_id → session_id mapping.
+    /// When set, call_ids are registered here so the connection handler
+    /// can route BridgeResponse messages to the correct session.
+    call_id_router: Option<CallIdRouter>,
+}
+
+/// No-op FrameSender for snapshot stub functions.
+/// Panics if called — stubs must never be invoked during snapshot creation.
+#[allow(dead_code)]
+struct StubRuntimeEventSender;
+
+impl RuntimeEventSender for StubRuntimeEventSender {
+    fn send_event(&self, _event: RuntimeEvent) -> Result<(), String> {
+        panic!(
+            "stub bridge function called during snapshot creation — bridge IIFE must not call bridge functions at setup time"
+        )
+    }
+}
+
+/// No-op ResponseReceiver for snapshot stub functions.
+/// Panics if called — stubs must never be invoked during snapshot creation.
+#[allow(dead_code)]
+struct StubBridgeResponseReceiver;
+
+impl BridgeResponseReceiver for StubBridgeResponseReceiver {
+    fn recv_response(&self, _expected_call_id: u64) -> Result<BridgeResponse, String> {
+        panic!(
+            "stub bridge function called during snapshot creation — bridge IIFE must not call bridge functions at setup time"
+        )
+    }
+}
+
+#[allow(dead_code)]
+impl BridgeCallContext {
+    /// Create a no-op BridgeCallContext for snapshot stub functions.
+    /// Panics if sync_call or async_send is called — stubs exist only for
+    /// the bridge IIFE to reference (not call) during snapshot creation.
+    pub fn stub() -> Self {
+        BridgeCallContext {
+            sender: Box::new(StubRuntimeEventSender),
+            response_rx: Mutex::new(Box::new(StubBridgeResponseReceiver)),
+            session_id: "stub".into(),
+            next_call_id: Arc::new(AtomicU64::new(1)),
+            pending_calls: Mutex::new(HashSet::new()),
+            track_pending_calls: should_track_pending_sync_calls(),
+            call_id_router: None,
+        }
+    }
+
+    /// Create a BridgeCallContext with a byte writer and reader (wraps in WriterFrameSender
+    /// and ReaderResponseReceiver). Convenient for tests that pre-serialize BridgeResponse bytes.
+    pub fn new(
+        writer: Box<dyn Write + Send>,
+        reader: Box<dyn Read + Send>,
+        session_id: String,
+    ) -> Self {
+        BridgeCallContext {
+            sender: Box::new(WriterRuntimeEventSender {
+                writer: Mutex::new(writer),
+            }),
+            response_rx: Mutex::new(Box::new(ReaderBridgeResponseReceiver::new(reader))),
+            session_id,
+            next_call_id: Arc::new(AtomicU64::new(1)),
+            pending_calls: Mutex::new(HashSet::new()),
+            track_pending_calls: should_track_pending_sync_calls(),
+            call_id_router: None,
+        }
+    }
+
+    /// Create a BridgeCallContext with a FrameSender, ResponseReceiver, call_id routing table,
+    /// and shared call_id counter. All sessions sharing the same CallIdRouter must share
+    /// the same counter to prevent call_id collisions in the routing table.
+    pub fn with_receiver(
+        sender: Box<dyn RuntimeEventSender>,
+        response_rx: Box<dyn BridgeResponseReceiver>,
+        session_id: String,
+        router: CallIdRouter,
+        shared_call_id: SharedCallIdCounter,
+    ) -> Self {
+        BridgeCallContext {
+            sender,
+            response_rx: Mutex::new(response_rx),
+            session_id,
+            next_call_id: shared_call_id,
+            pending_calls: Mutex::new(HashSet::new()),
+            track_pending_calls: should_track_pending_sync_calls(),
+            call_id_router: Some(router),
+        }
+    }
+
+    /// Perform a sync-blocking bridge call.
+    ///
+    /// Generates a unique call_id, sends a BridgeCall message over IPC,
+    /// blocks on read() for the BridgeResponse, and returns the result.
+    /// Error responses from the host are returned as Err.
+    pub fn sync_call_response(
+        &self,
+        method: &str,
+        args: Vec<u8>,
+    ) -> Result<Option<SyncBridgeCallResponse>, String> {
+        let call_id = self.next_call_id.fetch_add(1, Ordering::Relaxed);
+        track_sync_bridge_call_method(call_id, method);
+
+        // Optional diagnostic tracking. Correctness comes from the atomic
+        // counter and recv_response(call_id) identity validation.
+        if self.track_pending_calls {
+            let mut pending = self.pending_calls.lock().unwrap();
+            if !pending.insert(call_id) {
+                return Err(format!("duplicate call_id: {}", call_id));
+            }
+        }
+
+        // Register call_id → session_id for BridgeResponse routing
+        if let Some(ref router) = self.call_id_router {
+            let phase_start = Instant::now();
+            router
+                .lock()
+                .unwrap()
+                .insert(call_id, self.session_id.clone());
+            record_sync_bridge_host_phase(method, "host_register_route", phase_start.elapsed());
+        }
+
+        // Send BridgeCall to host
+        let bridge_call = RuntimeEvent::BridgeCall {
+            session_id: self.session_id.clone(),
+            call_id,
+            method: method.to_string(),
+            payload: args,
+        };
+
+        let __lat = syncrpc_lat_enabled().then(Instant::now);
+        let phase_start = Instant::now();
+        if let Err(e) = self.sender.send_event(bridge_call) {
+            self.remove_pending_call(call_id);
+            self.remove_call_route(call_id);
+            return Err(format!("failed to write BridgeCall: {}", e));
+        }
+        record_sync_bridge_host_phase(method, "host_send_event", phase_start.elapsed());
+
+        // Receive BridgeResponse directly (no re-serialization)
+        let response = {
+            let rx = self.response_rx.lock().unwrap();
+            let phase_start = Instant::now();
+            match rx.recv_response(call_id) {
+                Ok(frame) => {
+                    record_sync_bridge_host_phase(
+                        method,
+                        "host_recv_response",
+                        phase_start.elapsed(),
+                    );
+                    frame
+                }
+                Err(e) => {
+                    self.remove_pending_call(call_id);
+                    self.remove_call_route(call_id);
+                    return Err(e);
+                }
+            }
+        };
+        if let Some(t) = __lat {
+            record_syncrpc_lat(t.elapsed().as_nanos() as u64);
+        }
+
+        let phase_start = Instant::now();
+        self.remove_pending_call(call_id);
+        self.remove_call_route(call_id);
+        record_sync_bridge_host_phase(method, "host_cleanup", phase_start.elapsed());
+
+        // Validate and extract BridgeResponse
+        let phase_start = Instant::now();
+        if response.status == 1 {
+            let result = Err(String::from_utf8_lossy(&response.payload).to_string());
+            record_sync_bridge_host_phase(method, "host_extract_response", phase_start.elapsed());
+            result
+        } else if response.payload.is_empty() && response.status != 2 {
+            record_sync_bridge_host_phase(method, "host_extract_response", phase_start.elapsed());
+            Ok(None)
+        } else {
+            let result = Ok(Some(SyncBridgeCallResponse {
+                status: response.status,
+                payload: response.payload,
+            }));
+            record_sync_bridge_host_phase(method, "host_extract_response", phase_start.elapsed());
+            result
+        }
+    }
+
+    pub fn sync_call(&self, method: &str, args: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+        self.sync_call_response(method, args)
+            .map(|response| response.map(|response| response.payload))
+    }
+
+    /// Send a BridgeCall without blocking for a response.
+    /// Returns the call_id for later matching with BridgeResponse.
+    /// Used by async promise-returning bridge functions.
+    pub fn async_send(&self, method: &str, args: Vec<u8>) -> Result<u64, String> {
+        let call_id = self.next_call_id.fetch_add(1, Ordering::Relaxed);
+
+        // Register call_id → session_id for BridgeResponse routing
+        if let Some(ref router) = self.call_id_router {
+            router
+                .lock()
+                .unwrap()
+                .insert(call_id, self.session_id.clone());
+        }
+
+        let bridge_call = RuntimeEvent::BridgeCall {
+            session_id: self.session_id.clone(),
+            call_id,
+            method: method.to_string(),
+            payload: args,
+        };
+
+        if let Err(e) = self.sender.send_event(bridge_call) {
+            self.remove_call_route(call_id);
+            return Err(format!("failed to write BridgeCall: {}", e));
+        }
+
+        Ok(call_id)
+    }
+
+    fn remove_call_route(&self, call_id: u64) {
+        if let Some(ref router) = self.call_id_router {
+            router.lock().unwrap().remove(&call_id);
+        }
+    }
+
+    fn remove_pending_call(&self, call_id: u64) {
+        cleanup_sync_bridge_call_tracking(call_id);
+        if self.track_pending_calls {
+            self.pending_calls.lock().unwrap().remove(&call_id);
+        }
+    }
+
+    /// Check if a call_id is currently pending.
+    pub fn is_call_pending(&self, call_id: u64) -> bool {
+        if !self.track_pending_calls {
+            return false;
+        }
+        self.pending_calls.lock().unwrap().contains(&call_id)
+    }
+
+    /// Number of pending calls.
+    pub fn pending_count(&self) -> usize {
+        if !self.track_pending_calls {
+            return 0;
+        }
+        self.pending_calls.lock().unwrap().len()
+    }
+}
+
+fn should_track_pending_sync_calls() -> bool {
+    std::env::var("AGENTOS_TRACK_PENDING_SYNC_CALLS").as_deref() == Ok("1")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+    use std::sync::Arc;
+
+    /// Shared writer that captures output for test inspection
+    struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().write(buf)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.0.lock().unwrap().flush()
+        }
+    }
+
+    /// Serialize a BridgeResponse into length-prefixed binary frame bytes
+    fn make_response_bytes(
+        call_id: u64,
+        result: Option<Vec<u8>>,
+        error: Option<String>,
+    ) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let (status, payload) = if let Some(err) = error {
+            (1u8, err.into_bytes())
+        } else if let Some(res) = result {
+            (0u8, res)
+        } else {
+            (0u8, vec![])
+        };
+        ipc_binary::write_frame(
+            &mut buf,
+            &BinaryFrame::BridgeResponse {
+                session_id: String::new(),
+                call_id,
+                status,
+                payload,
+            },
+        )
+        .unwrap();
+        buf
+    }
+
+    #[test]
+    fn sync_call_success_with_result() {
+        let response_bytes = make_response_bytes(1, Some(vec![0x93, 0x01, 0x02, 0x03]), None);
+        let writer_buf = Arc::new(Mutex::new(Vec::new()));
+
+        let ctx = BridgeCallContext::new(
+            Box::new(SharedWriter(Arc::clone(&writer_buf))),
+            Box::new(Cursor::new(response_bytes)),
+            "test-session-abc".into(),
+        );
+
+        let result = ctx.sync_call("_fsReadFile", vec![0x91, 0xa3, 0x66, 0x6f, 0x6f]);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(vec![0x93, 0x01, 0x02, 0x03]));
+
+        // Verify the BridgeCall was written correctly
+        let written = writer_buf.lock().unwrap();
+        let call = ipc_binary::read_frame(&mut Cursor::new(&*written)).unwrap();
+        match call {
+            BinaryFrame::BridgeCall {
+                call_id,
+                session_id,
+                method,
+                payload,
+                ..
+            } => {
+                assert_eq!(call_id, 1);
+                assert_eq!(session_id, "test-session-abc");
+                assert_eq!(method, "_fsReadFile");
+                assert_eq!(payload, vec![0x91, 0xa3, 0x66, 0x6f, 0x6f]);
+            }
+            _ => panic!("expected BridgeCall"),
+        }
+    }
+
+    #[test]
+    fn sync_call_success_null_result() {
+        let response_bytes = make_response_bytes(1, None, None);
+        let ctx = BridgeCallContext::new(
+            Box::new(Vec::new()),
+            Box::new(Cursor::new(response_bytes)),
+            "session-1".into(),
+        );
+
+        let result = ctx.sync_call("_log", vec![0xc0]).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn sync_call_error_response() {
+        let response_bytes = make_response_bytes(1, None, Some("ENOENT: no such file".into()));
+        let ctx = BridgeCallContext::new(
+            Box::new(Vec::new()),
+            Box::new(Cursor::new(response_bytes)),
+            "session-1".into(),
+        );
+
+        let result = ctx.sync_call("_fsReadFile", vec![0xc0]);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "ENOENT: no such file");
+    }
+
+    #[test]
+    fn sync_call_call_id_increments() {
+        // Prepare two sequential responses
+        let mut response_bytes = make_response_bytes(1, Some(vec![0xa1, 0x61]), None);
+        response_bytes.extend_from_slice(&make_response_bytes(2, Some(vec![0xa1, 0x62]), None));
+
+        let ctx = BridgeCallContext::new(
+            Box::new(Vec::new()),
+            Box::new(Cursor::new(response_bytes)),
+            "session-1".into(),
+        );
+
+        let r1 = ctx.sync_call("_fn1", vec![]).unwrap();
+        let r2 = ctx.sync_call("_fn2", vec![]).unwrap();
+        assert_eq!(r1, Some(vec![0xa1, 0x61]));
+        assert_eq!(r2, Some(vec![0xa1, 0x62]));
+    }
+
+    #[test]
+    fn sync_call_pending_cleanup_on_read_error() {
+        // Empty reader = EOF error; call_id should be cleaned up
+        let ctx = BridgeCallContext::new(
+            Box::new(Vec::new()),
+            Box::new(Cursor::new(Vec::new())),
+            "session-1".into(),
+        );
+
+        assert_eq!(ctx.pending_count(), 0);
+        let _ = ctx.sync_call("_fn", vec![]);
+        assert_eq!(ctx.pending_count(), 0);
+    }
+
+    #[test]
+    fn sync_call_id_mismatch_rejected() {
+        // Response has call_id=99 but expected call_id=1
+        let response_bytes = make_response_bytes(99, Some(vec![0xc0]), None);
+        let ctx = BridgeCallContext::new(
+            Box::new(Vec::new()),
+            Box::new(Cursor::new(response_bytes)),
+            "session-1".into(),
+        );
+
+        let result = ctx.sync_call("_fn", vec![]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("call_id mismatch"));
+    }
+
+    #[test]
+    fn sync_call_unexpected_message_type_rejected() {
+        // Response is not a BridgeResponse
+        let mut response_bytes = Vec::new();
+        ipc_binary::write_frame(
+            &mut response_bytes,
+            &BinaryFrame::TerminateExecution {
+                session_id: "session-1".into(),
+            },
+        )
+        .unwrap();
+
+        let ctx = BridgeCallContext::new(
+            Box::new(Vec::new()),
+            Box::new(Cursor::new(response_bytes)),
+            "session-1".into(),
+        );
+
+        let result = ctx.sync_call("_fn", vec![]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("expected BridgeResponse"));
+    }
+
+    #[test]
+    fn async_send_writes_bridge_call() {
+        let writer_buf = Arc::new(Mutex::new(Vec::new()));
+        let ctx = BridgeCallContext::new(
+            Box::new(SharedWriter(Arc::clone(&writer_buf))),
+            Box::new(Cursor::new(Vec::new())),
+            "test-session-abc".into(),
+        );
+
+        let call_id = ctx
+            .async_send("_asyncFn", vec![0x91, 0xa3, 0x66, 0x6f, 0x6f])
+            .unwrap();
+        assert_eq!(call_id, 1);
+
+        // Verify the BridgeCall was written correctly
+        let written = writer_buf.lock().unwrap();
+        let call = ipc_binary::read_frame(&mut Cursor::new(&*written)).unwrap();
+        match call {
+            BinaryFrame::BridgeCall {
+                call_id,
+                session_id,
+                method,
+                payload,
+                ..
+            } => {
+                assert_eq!(call_id, 1);
+                assert_eq!(session_id, "test-session-abc");
+                assert_eq!(method, "_asyncFn");
+                assert_eq!(payload, vec![0x91, 0xa3, 0x66, 0x6f, 0x6f]);
+            }
+            _ => panic!("expected BridgeCall"),
+        }
+    }
+
+    #[test]
+    fn async_send_increments_call_id() {
+        let ctx = BridgeCallContext::new(
+            Box::new(Vec::new()),
+            Box::new(Cursor::new(Vec::new())),
+            "session-1".into(),
+        );
+
+        let id1 = ctx.async_send("_fn1", vec![]).unwrap();
+        let id2 = ctx.async_send("_fn2", vec![]).unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+    }
+
+    #[test]
+    fn async_send_shares_counter_with_sync() {
+        // Sync call uses call_id=1, async_send should get call_id=2
+        let response_bytes = make_response_bytes(1, Some(vec![0xc0]), None);
+        let ctx = BridgeCallContext::new(
+            Box::new(Vec::new()),
+            Box::new(Cursor::new(response_bytes)),
+            "session-1".into(),
+        );
+
+        let _ = ctx.sync_call("_sync", vec![]);
+        let id = ctx.async_send("_async", vec![]).unwrap();
+        assert_eq!(id, 2);
+    }
+
+    #[test]
+    fn channel_runtime_event_sender_delivers_frames() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let sender = super::ChannelRuntimeEventSender::new(tx, None);
+
+        let event = RuntimeEvent::BridgeCall {
+            session_id: "sess-1".into(),
+            call_id: 42,
+            method: "_fsReadFile".into(),
+            payload: vec![0x01, 0x02],
+        };
+        sender.send_event(event.clone()).expect("send_event");
+
+        // Verify the received event matches without any BinaryFrame hop.
+        let received = rx.recv().expect("recv");
+        assert_eq!(received.output_generation, None);
+        assert_eq!(received.event, event);
+    }
+
+    #[test]
+    fn channel_runtime_event_sender_no_mutex_contention() {
+        // Multiple senders can send concurrently without blocking each other
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                let sender = super::ChannelRuntimeEventSender::new(tx.clone(), None);
+                std::thread::spawn(move || {
+                    for j in 0..10 {
+                        let event = RuntimeEvent::BridgeCall {
+                            session_id: format!("sess-{}", i),
+                            call_id: (i * 100 + j) as u64,
+                            method: "_fn".into(),
+                            payload: vec![],
+                        };
+                        sender.send_event(event).expect("send_event");
+                    }
+                })
+            })
+            .collect();
+        drop(tx); // Drop original sender so rx closes when threads finish
+
+        for h in handles {
+            h.join().expect("thread join");
+        }
+
+        // All 40 frames should arrive and be decodable
+        let mut count = 0;
+        while rx.try_recv().is_ok() {
+            count += 1;
+        }
+        assert_eq!(count, 40);
+    }
+
+    #[test]
+    fn channel_runtime_event_sender_with_bridge_context() {
+        // Verify BridgeCallContext works with ChannelRuntimeEventSender end-to-end
+        let (tx, rx) = crossbeam_channel::unbounded();
+
+        // Pre-serialize a BridgeResponse for the reader
+        let response_bytes = make_response_bytes(1, Some(vec![0xAB, 0xCD]), None);
+        let router: super::CallIdRouter = Arc::new(Mutex::new(HashMap::new()));
+
+        let ctx = BridgeCallContext::with_receiver(
+            Box::new(super::ChannelRuntimeEventSender::new(tx, None)),
+            Box::new(super::ReaderBridgeResponseReceiver::new(Box::new(
+                Cursor::new(response_bytes),
+            ))),
+            "test-session".into(),
+            router,
+            Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        );
+
+        let result = ctx.sync_call("_fsReadFile", vec![0x01]).unwrap();
+        assert_eq!(result, Some(vec![0xAB, 0xCD]));
+
+        // Verify the BridgeCall went through the channel
+        let event = rx.recv().expect("recv bridge call");
+        match event.event {
+            RuntimeEvent::BridgeCall { method, .. } => assert_eq!(method, "_fsReadFile"),
+            _ => panic!("expected BridgeCall"),
+        }
+    }
+
+    #[test]
+    fn sync_call_success_clears_call_id_route() {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let response_bytes = make_response_bytes(1, Some(vec![0xAB, 0xCD]), None);
+        let router: super::CallIdRouter = Arc::new(Mutex::new(HashMap::new()));
+
+        let ctx = BridgeCallContext::with_receiver(
+            Box::new(super::ChannelRuntimeEventSender::new(tx, None)),
+            Box::new(super::ReaderBridgeResponseReceiver::new(Box::new(
+                Cursor::new(response_bytes),
+            ))),
+            "test-session".into(),
+            Arc::clone(&router),
+            Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        );
+
+        let result = ctx.sync_call("_fsReadFile", vec![0x01]).unwrap();
+        assert_eq!(result, Some(vec![0xAB, 0xCD]));
+        assert!(
+            router.lock().unwrap().is_empty(),
+            "sync bridge response completion should clear the call_id route"
+        );
+    }
+
+    #[test]
+    fn writer_runtime_event_sender_serializes_events() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let sender = super::ChannelRuntimeEventSender::new(tx, None);
+
+        // Send multiple frames — buffer grows to high-water mark
+        for i in 0..5 {
+            let event = RuntimeEvent::BridgeCall {
+                session_id: "sess-1".into(),
+                call_id: i,
+                method: "_fn".into(),
+                payload: vec![0xAA; 100 * (i as usize + 1)],
+            };
+            sender.send_event(event).expect("send_event");
+        }
+
+        // Verify all events arrive with their payload intact.
+        for i in 0..5u64 {
+            let decoded = rx.recv().expect("recv");
+            match decoded.event {
+                RuntimeEvent::BridgeCall {
+                    call_id, payload, ..
+                } => {
+                    assert_eq!(call_id, i);
+                    assert_eq!(payload.len(), 100 * (i as usize + 1));
+                }
+                _ => panic!("expected BridgeCall"),
+            }
+        }
+
+        // Small follow-up events still go through the same sender.
+        let small = RuntimeEvent::Log {
+            session_id: "s".into(),
+            channel: 0,
+            message: "x".into(),
+        };
+        sender.send_event(small.clone()).expect("send_event");
+        let decoded = rx.recv().expect("recv");
+        assert_eq!(decoded.event, small);
+    }
+
+    #[test]
+    fn stub_context_panics_on_sync_call() {
+        let ctx = BridgeCallContext::stub();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = ctx.sync_call("_fsReadFile", vec![]);
+        }));
+        assert!(result.is_err(), "stub sync_call should panic");
+    }
+
+    #[test]
+    fn stub_context_panics_on_async_send() {
+        let ctx = BridgeCallContext::stub();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = ctx.async_send("_asyncFn", vec![]);
+        }));
+        assert!(result.is_err(), "stub async_send should panic");
+    }
+}

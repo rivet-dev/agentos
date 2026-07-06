@@ -1,0 +1,28 @@
+{
+	"name": "@agentos-software/codex-cli",
+	"version": "0.3.0-rc.2",
+	"type": "module",
+	"license": "Apache-2.0",
+	"description": "OpenAI Codex command package for secure-exec VMs",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "agentos-toolchain stage --commands-dir ../codex/wasm --if-missing skip && tsc && agentos-toolchain build",
+		"check-types": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@agentos-software/manifest": "workspace:*",
+		"@rivet-dev/agentos-toolchain": "workspace:*",
+		"@types/node": "^22.10.2",
+		"typescript": "^5.9.2"
+	}
+}

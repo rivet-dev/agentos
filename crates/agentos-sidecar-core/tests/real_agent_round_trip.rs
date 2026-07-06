@@ -146,7 +146,14 @@ impl AcpHost for NodeChildAcpHost {
     }
 
     fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
-        Ok(Vec::new())
+        let manifest = serde_json::json!({
+            "name": "echo",
+            "agent": {
+                "acpEntrypoint": echo_agent_path().to_string_lossy(),
+            },
+        });
+        serde_json::to_vec(&manifest)
+            .map_err(|error| AcpCoreError::Execution(format!("encode echo manifest: {error}")))
     }
 
     fn now_ms(&self) -> u64 {
@@ -182,7 +189,6 @@ fn acp_core_runs_a_real_session_round_trip_against_the_echo_agent() {
     let mut host = NodeChildAcpHost::default();
     let request = AcpCreateSessionRequest {
         agent_type: "echo".into(),
-        adapter_entrypoint: agent.to_string_lossy().into_owned(),
         runtime: AcpRuntimeKind::JavaScript,
         protocol_version: 1,
         cwd: ".".into(),

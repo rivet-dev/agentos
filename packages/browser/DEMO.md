@@ -25,7 +25,7 @@ pnpm --filter @rivet-dev/agentos-browser test:browser-wasm
 
 1. **Boots** the `agentos-sidecar-browser` wasm module in the page and reports its
    `sidecarId`.
-2. **Authenticates** over the BARE wire protocol (`@secure-exec/core` codec).
+2. **Authenticates** over the BARE wire protocol (`@rivet-dev/agentos-runtime-core` codec).
 3. Sends an ACP **`get_session_state`** request as a wire `ExtEnvelope`.
 4. The frame is routed `BrowserAcpExtension → AcpCore` (the host-free engine
    shared verbatim with the native sidecar), which returns a real ACP response.

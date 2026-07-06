@@ -9,8 +9,8 @@ import { Buffer as BufferPolyfill } from "buffer";
 import {
 	decodeBareProtocolFrame,
 	encodeBareProtocolFrame,
-} from "@secure-exec/core/protocol-frames";
-import { SIDECAR_PROTOCOL_SCHEMA } from "@secure-exec/core/protocol-schema";
+} from "@rivet-dev/agentos-runtime-core/protocol-frames";
+import { SIDECAR_PROTOCOL_SCHEMA } from "@rivet-dev/agentos-runtime-core/protocol-schema";
 import {
 	decodeAcpResponse,
 	encodeAcpRequest,

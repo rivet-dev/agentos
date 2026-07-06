@@ -1,0 +1,13 @@
+[package]
+name = "cmd-test"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "test/[ standalone binary for secure-exec VM"
+
+[[bin]]
+name = "test"
+path = "src/main.rs"
+
+[dependencies]
+secureexec-builtins = { path = "../../libs/builtins" }

@@ -1,0 +1,13 @@
+[package]
+name = "cmd-b2sum"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "b2sum standalone binary for secure-exec VM"
+
+[[bin]]
+name = "b2sum"
+path = "src/main.rs"
+
+[dependencies]
+uu_b2sum = "0.7.0"

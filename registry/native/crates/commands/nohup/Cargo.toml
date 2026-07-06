@@ -1,0 +1,13 @@
+[package]
+name = "cmd-nohup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "nohup standalone binary for secure-exec VM"
+
+[[bin]]
+name = "nohup"
+path = "src/main.rs"
+
+[dependencies]
+shims = { package = "secureexec-shims", path = "../../libs/shims" }

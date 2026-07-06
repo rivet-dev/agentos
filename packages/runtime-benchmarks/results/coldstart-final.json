@@ -1,0 +1,3907 @@
+{
+  "hardware": {
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700KF",
+    "cores": 20,
+    "ram": "62.6 GB",
+    "memAvailable": "26424332 kB",
+    "swapTotal": "1000444 kB",
+    "swapFree": "0 kB",
+    "swapCached": "114032 kB",
+    "node": "v24.13.0",
+    "os": "Linux 6.1.0-41-amd64",
+    "arch": "x64",
+    "loadAverage": [
+      4.8,
+      3.73,
+      3.23
+    ]
+  },
+  "scenarioSetup": {
+    "owned-sidecar": {},
+    "shared-sidecar": {},
+    "resident-runner": {},
+    "isolate-only": {
+      "snapshotCreateMs": 123.904,
+      "snapshotBytes": 3902240,
+      "bridge": "generated-v8-bridge",
+      "isolateWarmup": 5
+    }
+  },
+  "results": [
+    {
+      "scenario": "owned-sidecar",
+      "batchSize": 1,
+      "mode": "sequential",
+      "iterations": 5,
+      "coldStart": {
+        "samples": 5,
+        "mean": 772.88,
+        "p50": 771.96,
+        "p95": 779.42,
+        "p99": 779.42,
+        "min": 765.8,
+        "max": 779.42
+      },
+      "warmStart": {
+        "samples": 5,
+        "mean": 452.68,
+        "p50": 452.37,
+        "p95": 457.13,
+        "p99": 457.13,
+        "min": 449.32,
+        "max": 457.13
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 5,
+          "mean": 0.16,
+          "p50": 0.1,
+          "p95": 0.29,
+          "p99": 0.29,
+          "min": 0.07,
+          "max": 0.29
+        },
+        "sidecar_spawn": {
+          "samples": 5,
+          "mean": 2.97,
+          "p50": 2.78,
+          "p95": 3.76,
+          "p99": 3.76,
+          "min": 2.71,
+          "max": 3.76
+        },
+        "session_open": {
+          "samples": 5,
+          "mean": 2.54,
+          "p50": 2.34,
+          "p95": 3.61,
+          "p99": 3.61,
+          "min": 2.04,
+          "max": 3.61
+        },
+        "vm_create": {
+          "samples": 5,
+          "mean": 1.27,
+          "p50": 1.36,
+          "p95": 1.38,
+          "p99": 1.38,
+          "min": 1.09,
+          "max": 1.38
+        },
+        "vm_ready": {
+          "samples": 5,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.02,
+          "p99": 0.02,
+          "min": 0.01,
+          "max": 0.02
+        },
+        "vm_configure": {
+          "samples": 5,
+          "mean": 0.17,
+          "p50": 0.17,
+          "p95": 0.26,
+          "p99": 0.26,
+          "min": 0.11,
+          "max": 0.26
+        },
+        "runtime_mount_wasm": {
+          "samples": 5,
+          "mean": 172.92,
+          "p50": 172.95,
+          "p95": 177.04,
+          "p99": 177.04,
+          "min": 169.07,
+          "max": 177.04
+        },
+        "runtime_mount_node": {
+          "samples": 5,
+          "mean": 2.83,
+          "p50": 2.71,
+          "p95": 3.23,
+          "p99": 3.23,
+          "min": 2.61,
+          "max": 3.23
+        },
+        "runtime_create_total": {
+          "samples": 5,
+          "mean": 175.85,
+          "p50": 176.3,
+          "p95": 179.8,
+          "p99": 179.8,
+          "min": 171.8,
+          "max": 179.8
+        },
+        "first_exec": {
+          "samples": 5,
+          "mean": 597.03,
+          "p50": 596.26,
+          "p95": 601.45,
+          "p99": 601.45,
+          "min": 593.79,
+          "max": 601.45
+        },
+        "warm_exec": {
+          "samples": 5,
+          "mean": 452.68,
+          "p50": 452.37,
+          "p95": 457.13,
+          "p99": 457.13,
+          "min": 449.32,
+          "max": 457.13
+        }
+      }
+    },
+    {
+      "scenario": "owned-sidecar",
+      "batchSize": 1,
+      "mode": "concurrent",
+      "iterations": 5,
+      "coldStart": {
+        "samples": 5,
+        "mean": 776.22,
+        "p50": 775.63,
+        "p95": 782.37,
+        "p99": 782.37,
+        "min": 773.07,
+        "max": 782.37
+      },
+      "warmStart": {
+        "samples": 5,
+        "mean": 449.86,
+        "p50": 449.59,
+        "p95": 452.53,
+        "p99": 452.53,
+        "min": 447.58,
+        "max": 452.53
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 5,
+          "mean": 0.19,
+          "p50": 0.26,
+          "p95": 0.28,
+          "p99": 0.28,
+          "min": 0.05,
+          "max": 0.28
+        },
+        "sidecar_spawn": {
+          "samples": 5,
+          "mean": 2.84,
+          "p50": 2.79,
+          "p95": 3.08,
+          "p99": 3.08,
+          "min": 2.65,
+          "max": 3.08
+        },
+        "session_open": {
+          "samples": 5,
+          "mean": 2.85,
+          "p50": 2.99,
+          "p95": 3.63,
+          "p99": 3.63,
+          "min": 2.13,
+          "max": 3.63
+        },
+        "vm_create": {
+          "samples": 5,
+          "mean": 1.2,
+          "p50": 1.11,
+          "p95": 1.46,
+          "p99": 1.46,
+          "min": 1.05,
+          "max": 1.46
+        },
+        "vm_ready": {
+          "samples": 5,
+          "mean": 0.02,
+          "p50": 0.01,
+          "p95": 0.04,
+          "p99": 0.04,
+          "min": 0.01,
+          "max": 0.04
+        },
+        "vm_configure": {
+          "samples": 5,
+          "mean": 0.11,
+          "p50": 0.12,
+          "p95": 0.13,
+          "p99": 0.13,
+          "min": 0.08,
+          "max": 0.13
+        },
+        "runtime_mount_wasm": {
+          "samples": 5,
+          "mean": 175.25,
+          "p50": 174.2,
+          "p95": 178.88,
+          "p99": 178.88,
+          "min": 173.44,
+          "max": 178.88
+        },
+        "runtime_mount_node": {
+          "samples": 5,
+          "mean": 2.71,
+          "p50": 2.67,
+          "p95": 2.79,
+          "p99": 2.79,
+          "min": 2.64,
+          "max": 2.79
+        },
+        "runtime_create_total": {
+          "samples": 5,
+          "mean": 178.06,
+          "p50": 176.95,
+          "p95": 181.63,
+          "p99": 181.63,
+          "min": 176.32,
+          "max": 181.63
+        },
+        "first_exec": {
+          "samples": 5,
+          "mean": 598.17,
+          "p50": 599.03,
+          "p95": 600.75,
+          "p99": 600.75,
+          "min": 595.48,
+          "max": 600.75
+        },
+        "warm_exec": {
+          "samples": 5,
+          "mean": 449.86,
+          "p50": 449.59,
+          "p95": 452.53,
+          "p99": 452.53,
+          "min": 447.58,
+          "max": 452.53
+        }
+      }
+    },
+    {
+      "scenario": "owned-sidecar",
+      "batchSize": 10,
+      "mode": "sequential",
+      "iterations": 5,
+      "coldStart": {
+        "samples": 50,
+        "mean": 780.07,
+        "p50": 778.64,
+        "p95": 802.66,
+        "p99": 817.39,
+        "min": 760.69,
+        "max": 817.39
+      },
+      "warmStart": {
+        "samples": 50,
+        "mean": 453.92,
+        "p50": 452.69,
+        "p95": 463.47,
+        "p99": 472.79,
+        "min": 448.9,
+        "max": 472.79
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 50,
+          "mean": 0.18,
+          "p50": 0.24,
+          "p95": 0.29,
+          "p99": 0.76,
+          "min": 0.05,
+          "max": 0.76
+        },
+        "sidecar_spawn": {
+          "samples": 50,
+          "mean": 3.07,
+          "p50": 2.74,
+          "p95": 5.08,
+          "p99": 5.57,
+          "min": 2.36,
+          "max": 5.57
+        },
+        "session_open": {
+          "samples": 50,
+          "mean": 2.69,
+          "p50": 2.44,
+          "p95": 4.12,
+          "p99": 5.86,
+          "min": 1.06,
+          "max": 5.86
+        },
+        "vm_create": {
+          "samples": 50,
+          "mean": 1.31,
+          "p50": 1.21,
+          "p95": 1.93,
+          "p99": 2.37,
+          "min": 1.05,
+          "max": 2.37
+        },
+        "vm_ready": {
+          "samples": 50,
+          "mean": 0.02,
+          "p50": 0.01,
+          "p95": 0.08,
+          "p99": 0.37,
+          "min": 0.01,
+          "max": 0.37
+        },
+        "vm_configure": {
+          "samples": 50,
+          "mean": 0.12,
+          "p50": 0.11,
+          "p95": 0.21,
+          "p99": 0.35,
+          "min": 0.08,
+          "max": 0.35
+        },
+        "runtime_mount_wasm": {
+          "samples": 50,
+          "mean": 174.85,
+          "p50": 173.25,
+          "p95": 187.89,
+          "p99": 211.45,
+          "min": 163.97,
+          "max": 211.45
+        },
+        "runtime_mount_node": {
+          "samples": 50,
+          "mean": 3.07,
+          "p50": 2.74,
+          "p95": 3.71,
+          "p99": 14.98,
+          "min": 2.53,
+          "max": 14.98
+        },
+        "runtime_create_total": {
+          "samples": 50,
+          "mean": 178,
+          "p50": 176.21,
+          "p95": 190.61,
+          "p99": 215.85,
+          "min": 166.69,
+          "max": 215.85
+        },
+        "first_exec": {
+          "samples": 50,
+          "mean": 602.07,
+          "p50": 601.18,
+          "p95": 614.83,
+          "p99": 618.39,
+          "min": 593.97,
+          "max": 618.39
+        },
+        "warm_exec": {
+          "samples": 50,
+          "mean": 453.92,
+          "p50": 452.69,
+          "p95": 463.47,
+          "p99": 472.79,
+          "min": 448.9,
+          "max": 472.79
+        }
+      }
+    },
+    {
+      "scenario": "owned-sidecar",
+      "batchSize": 10,
+      "mode": "concurrent",
+      "iterations": 5,
+      "coldStart": {
+        "samples": 50,
+        "mean": 1000.39,
+        "p50": 1028.29,
+        "p95": 1119.05,
+        "p99": 1137.11,
+        "min": 798.29,
+        "max": 1137.11
+      },
+      "warmStart": {
+        "samples": 50,
+        "mean": 477.27,
+        "p50": 469.19,
+        "p95": 532.17,
+        "p99": 550.94,
+        "min": 451.03,
+        "max": 550.94
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 50,
+          "mean": 46.54,
+          "p50": 31.48,
+          "p95": 120.71,
+          "p99": 142.03,
+          "min": 0.03,
+          "max": 142.03
+        },
+        "sidecar_spawn": {
+          "samples": 50,
+          "mean": 2.64,
+          "p50": 2.08,
+          "p95": 4.88,
+          "p99": 8.98,
+          "min": 1.62,
+          "max": 8.98
+        },
+        "session_open": {
+          "samples": 50,
+          "mean": 10.03,
+          "p50": 7.93,
+          "p95": 22.99,
+          "p99": 51.88,
+          "min": 1.85,
+          "max": 51.88
+        },
+        "vm_create": {
+          "samples": 50,
+          "mean": 22.65,
+          "p50": 2.54,
+          "p95": 91.3,
+          "p99": 112.29,
+          "min": 1.06,
+          "max": 112.29
+        },
+        "vm_ready": {
+          "samples": 50,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.01,
+          "p99": 0.02,
+          "min": 0,
+          "max": 0.02
+        },
+        "vm_configure": {
+          "samples": 50,
+          "mean": 32.8,
+          "p50": 22.13,
+          "p95": 96.03,
+          "p99": 112.46,
+          "min": 0.07,
+          "max": 112.46
+        },
+        "runtime_mount_wasm": {
+          "samples": 50,
+          "mean": 357.03,
+          "p50": 369.84,
+          "p95": 470.12,
+          "p99": 479.73,
+          "min": 188.48,
+          "max": 479.73
+        },
+        "runtime_mount_node": {
+          "samples": 50,
+          "mean": 3.5,
+          "p50": 3.08,
+          "p95": 5.13,
+          "p99": 8.36,
+          "min": 2.54,
+          "max": 8.36
+        },
+        "runtime_create_total": {
+          "samples": 50,
+          "mean": 360.62,
+          "p50": 373.11,
+          "p95": 473.4,
+          "p99": 482.44,
+          "min": 191.55,
+          "max": 482.44
+        },
+        "first_exec": {
+          "samples": 50,
+          "mean": 639.78,
+          "p50": 642.15,
+          "p95": 670.64,
+          "p99": 711.39,
+          "min": 601.8,
+          "max": 711.39
+        },
+        "warm_exec": {
+          "samples": 50,
+          "mean": 477.27,
+          "p50": 469.19,
+          "p95": 532.17,
+          "p99": 550.94,
+          "min": 451.03,
+          "max": 550.94
+        }
+      }
+    },
+    {
+      "scenario": "owned-sidecar",
+      "batchSize": 50,
+      "mode": "sequential",
+      "iterations": 5,
+      "coldStart": {
+        "samples": 250,
+        "mean": 777.49,
+        "p50": 775.3,
+        "p95": 797.46,
+        "p99": 810.01,
+        "min": 758.17,
+        "max": 842.78
+      },
+      "warmStart": {
+        "samples": 250,
+        "mean": 453.43,
+        "p50": 452.59,
+        "p95": 461.71,
+        "p99": 468.33,
+        "min": 446.49,
+        "max": 473.73
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 250,
+          "mean": 0.03,
+          "p50": 0.03,
+          "p95": 0.04,
+          "p99": 0.06,
+          "min": 0.02,
+          "max": 0.09
+        },
+        "sidecar_spawn": {
+          "samples": 250,
+          "mean": 3.66,
+          "p50": 3.13,
+          "p95": 5.57,
+          "p99": 7.97,
+          "min": 2.39,
+          "max": 11.09
+        },
+        "session_open": {
+          "samples": 250,
+          "mean": 2.63,
+          "p50": 2.36,
+          "p95": 3.93,
+          "p99": 5.17,
+          "min": 1.78,
+          "max": 7.13
+        },
+        "vm_create": {
+          "samples": 250,
+          "mean": 1.34,
+          "p50": 1.22,
+          "p95": 2.04,
+          "p99": 2.9,
+          "min": 1.01,
+          "max": 4.06
+        },
+        "vm_ready": {
+          "samples": 250,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.04,
+          "p99": 0.06,
+          "min": 0,
+          "max": 0.07
+        },
+        "vm_configure": {
+          "samples": 250,
+          "mean": 0.12,
+          "p50": 0.11,
+          "p95": 0.21,
+          "p99": 0.27,
+          "min": 0.07,
+          "max": 0.72
+        },
+        "runtime_mount_wasm": {
+          "samples": 250,
+          "mean": 173.44,
+          "p50": 171.68,
+          "p95": 186.85,
+          "p99": 202.94,
+          "min": 159.51,
+          "max": 214.03
+        },
+        "runtime_mount_node": {
+          "samples": 250,
+          "mean": 2.85,
+          "p50": 2.72,
+          "p95": 3.95,
+          "p99": 4.48,
+          "min": 2.5,
+          "max": 5.41
+        },
+        "runtime_create_total": {
+          "samples": 250,
+          "mean": 176.37,
+          "p50": 174.76,
+          "p95": 189.74,
+          "p99": 206.04,
+          "min": 162.34,
+          "max": 217.76
+        },
+        "first_exec": {
+          "samples": 250,
+          "mean": 601.12,
+          "p50": 599.8,
+          "p95": 612.78,
+          "p99": 625.02,
+          "min": 590.75,
+          "max": 629.36
+        },
+        "warm_exec": {
+          "samples": 250,
+          "mean": 453.43,
+          "p50": 452.59,
+          "p95": 461.71,
+          "p99": 468.33,
+          "min": 446.49,
+          "max": 473.73
+        }
+      }
+    },
+    {
+      "scenario": "owned-sidecar",
+      "batchSize": 50,
+      "mode": "concurrent",
+      "iterations": 5,
+      "coldStart": {
+        "samples": 250,
+        "mean": 1041.81,
+        "p50": 1044.33,
+        "p95": 1133.77,
+        "p99": 1160.99,
+        "min": 803.82,
+        "max": 1173.16
+      },
+      "warmStart": {
+        "samples": 250,
+        "mean": 468.05,
+        "p50": 465.77,
+        "p95": 491.47,
+        "p99": 500.52,
+        "min": 448.81,
+        "max": 504.51
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 250,
+          "mean": 51.91,
+          "p50": 45.06,
+          "p95": 120.47,
+          "p99": 125.55,
+          "min": 0.03,
+          "max": 127.77
+        },
+        "sidecar_spawn": {
+          "samples": 250,
+          "mean": 2.58,
+          "p50": 2.11,
+          "p95": 4.93,
+          "p99": 7.04,
+          "min": 1.48,
+          "max": 11.03
+        },
+        "session_open": {
+          "samples": 250,
+          "mean": 13.62,
+          "p50": 9.75,
+          "p95": 45.62,
+          "p99": 98.82,
+          "min": 2.04,
+          "max": 105.13
+        },
+        "vm_create": {
+          "samples": 250,
+          "mean": 23.51,
+          "p50": 21.44,
+          "p95": 74.05,
+          "p99": 117.57,
+          "min": 1.16,
+          "max": 132.92
+        },
+        "vm_ready": {
+          "samples": 250,
+          "mean": 0.01,
+          "p50": 0,
+          "p95": 0.01,
+          "p99": 0.05,
+          "min": 0,
+          "max": 0.24
+        },
+        "vm_configure": {
+          "samples": 250,
+          "mean": 40.77,
+          "p50": 34.25,
+          "p95": 109.91,
+          "p99": 127.38,
+          "min": 0.07,
+          "max": 140.87
+        },
+        "runtime_mount_wasm": {
+          "samples": 250,
+          "mean": 390.18,
+          "p50": 393.55,
+          "p95": 469.13,
+          "p99": 489.67,
+          "min": 195.44,
+          "max": 494.31
+        },
+        "runtime_mount_node": {
+          "samples": 250,
+          "mean": 3.56,
+          "p50": 3.23,
+          "p95": 4.85,
+          "p99": 5.94,
+          "min": 2.44,
+          "max": 14.6
+        },
+        "runtime_create_total": {
+          "samples": 250,
+          "mean": 393.82,
+          "p50": 396.28,
+          "p95": 471.79,
+          "p99": 492.32,
+          "min": 198.12,
+          "max": 497.15
+        },
+        "first_exec": {
+          "samples": 250,
+          "mean": 647.99,
+          "p50": 643.04,
+          "p95": 687.33,
+          "p99": 708.65,
+          "min": 601.99,
+          "max": 742.52
+        },
+        "warm_exec": {
+          "samples": 250,
+          "mean": 468.05,
+          "p50": 465.77,
+          "p95": 491.47,
+          "p99": 500.52,
+          "min": 448.81,
+          "max": 504.51
+        }
+      }
+    },
+    {
+      "scenario": "owned-sidecar",
+      "batchSize": 100,
+      "mode": "sequential",
+      "iterations": 5,
+      "coldStart": {
+        "samples": 500,
+        "mean": 777.89,
+        "p50": 776.54,
+        "p95": 793.79,
+        "p99": 802.12,
+        "min": 757.86,
+        "max": 877.76
+      },
+      "warmStart": {
+        "samples": 500,
+        "mean": 453.66,
+        "p50": 452.93,
+        "p95": 460.66,
+        "p99": 464,
+        "min": 446.28,
+        "max": 472.32
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 500,
+          "mean": 0.03,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.21,
+          "min": 0.02,
+          "max": 0.49
+        },
+        "sidecar_spawn": {
+          "samples": 500,
+          "mean": 4.62,
+          "p50": 4.22,
+          "p95": 6.59,
+          "p99": 7.61,
+          "min": 3.42,
+          "max": 14.42
+        },
+        "session_open": {
+          "samples": 500,
+          "mean": 2.51,
+          "p50": 2.33,
+          "p95": 3.7,
+          "p99": 4.36,
+          "min": 1.9,
+          "max": 5.92
+        },
+        "vm_create": {
+          "samples": 500,
+          "mean": 1.3,
+          "p50": 1.2,
+          "p95": 1.99,
+          "p99": 2.5,
+          "min": 1.01,
+          "max": 5.75
+        },
+        "vm_ready": {
+          "samples": 500,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.04,
+          "p99": 0.07,
+          "min": 0,
+          "max": 0.09
+        },
+        "vm_configure": {
+          "samples": 500,
+          "mean": 0.13,
+          "p50": 0.1,
+          "p95": 0.25,
+          "p99": 0.73,
+          "min": 0.07,
+          "max": 0.95
+        },
+        "runtime_mount_wasm": {
+          "samples": 500,
+          "mean": 174.6,
+          "p50": 173.29,
+          "p95": 187.32,
+          "p99": 194.52,
+          "min": 161.57,
+          "max": 247.12
+        },
+        "runtime_mount_node": {
+          "samples": 500,
+          "mean": 2.85,
+          "p50": 2.73,
+          "p95": 3.57,
+          "p99": 4.3,
+          "min": 2.49,
+          "max": 10.8
+        },
+        "runtime_create_total": {
+          "samples": 500,
+          "mean": 177.53,
+          "p50": 176.16,
+          "p95": 190.06,
+          "p99": 198.61,
+          "min": 164.25,
+          "max": 252.3
+        },
+        "first_exec": {
+          "samples": 500,
+          "mean": 600.36,
+          "p50": 599.6,
+          "p95": 608.94,
+          "p99": 614.21,
+          "min": 592.06,
+          "max": 625.46
+        },
+        "warm_exec": {
+          "samples": 500,
+          "mean": 453.66,
+          "p50": 452.93,
+          "p95": 460.66,
+          "p99": 464,
+          "min": 446.28,
+          "max": 472.32
+        }
+      }
+    },
+    {
+      "scenario": "owned-sidecar",
+      "batchSize": 100,
+      "mode": "concurrent",
+      "iterations": 5,
+      "coldStart": {
+        "samples": 500,
+        "mean": 1041.19,
+        "p50": 1043.72,
+        "p95": 1120.25,
+        "p99": 1136.03,
+        "min": 874.13,
+        "max": 1163.67
+      },
+      "warmStart": {
+        "samples": 500,
+        "mean": 468.6,
+        "p50": 466.36,
+        "p95": 492.1,
+        "p99": 508.12,
+        "min": 451,
+        "max": 523.72
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 500,
+          "mean": 51.71,
+          "p50": 45.26,
+          "p95": 115.99,
+          "p99": 121.44,
+          "min": 0.03,
+          "max": 127.91
+        },
+        "sidecar_spawn": {
+          "samples": 500,
+          "mean": 2.85,
+          "p50": 2.37,
+          "p95": 5.17,
+          "p99": 6.76,
+          "min": 1.86,
+          "max": 11.4
+        },
+        "session_open": {
+          "samples": 500,
+          "mean": 12.93,
+          "p50": 10.31,
+          "p95": 29.16,
+          "p99": 79.09,
+          "min": 2.12,
+          "max": 132.03
+        },
+        "vm_create": {
+          "samples": 500,
+          "mean": 27.26,
+          "p50": 23.2,
+          "p95": 69.69,
+          "p99": 112.08,
+          "min": 1.2,
+          "max": 140.51
+        },
+        "vm_ready": {
+          "samples": 500,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0.01,
+          "p99": 0.01,
+          "min": 0,
+          "max": 0.02
+        },
+        "vm_configure": {
+          "samples": 500,
+          "mean": 38.93,
+          "p50": 30.68,
+          "p95": 104.19,
+          "p99": 125.52,
+          "min": 0.09,
+          "max": 147.19
+        },
+        "runtime_mount_wasm": {
+          "samples": 500,
+          "mean": 391.69,
+          "p50": 391.04,
+          "p95": 462.01,
+          "p99": 478.64,
+          "min": 249.44,
+          "max": 494.42
+        },
+        "runtime_mount_node": {
+          "samples": 500,
+          "mean": 3.44,
+          "p50": 3.18,
+          "p95": 4.66,
+          "p99": 5.08,
+          "min": 2.41,
+          "max": 15.95
+        },
+        "runtime_create_total": {
+          "samples": 500,
+          "mean": 395.19,
+          "p50": 394.78,
+          "p95": 465.21,
+          "p99": 482.88,
+          "min": 252.48,
+          "max": 499.13
+        },
+        "first_exec": {
+          "samples": 500,
+          "mean": 646,
+          "p50": 641.96,
+          "p95": 684.23,
+          "p99": 700.88,
+          "min": 607.26,
+          "max": 719.01
+        },
+        "warm_exec": {
+          "samples": 500,
+          "mean": 468.6,
+          "p50": 466.36,
+          "p95": 492.1,
+          "p99": 508.12,
+          "min": 451,
+          "max": 523.72
+        }
+      }
+    },
+    {
+      "scenario": "owned-sidecar",
+      "batchSize": 200,
+      "mode": "sequential",
+      "iterations": 5,
+      "coldStart": {
+        "samples": 1000,
+        "mean": 778.28,
+        "p50": 776.94,
+        "p95": 793.79,
+        "p99": 810.69,
+        "min": 759.62,
+        "max": 841.83
+      },
+      "warmStart": {
+        "samples": 1000,
+        "mean": 454.03,
+        "p50": 453.13,
+        "p95": 462.01,
+        "p99": 468.77,
+        "min": 446.24,
+        "max": 501.19
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 1000,
+          "mean": 0.03,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.24,
+          "min": 0.02,
+          "max": 0.7
+        },
+        "sidecar_spawn": {
+          "samples": 1000,
+          "mean": 4.64,
+          "p50": 4.3,
+          "p95": 6.58,
+          "p99": 8.15,
+          "min": 3.37,
+          "max": 14.31
+        },
+        "session_open": {
+          "samples": 1000,
+          "mean": 2.49,
+          "p50": 2.32,
+          "p95": 3.77,
+          "p99": 4.84,
+          "min": 0.86,
+          "max": 7.37
+        },
+        "vm_create": {
+          "samples": 1000,
+          "mean": 1.29,
+          "p50": 1.2,
+          "p95": 1.96,
+          "p99": 2.63,
+          "min": 1,
+          "max": 4.02
+        },
+        "vm_ready": {
+          "samples": 1000,
+          "mean": 0.01,
+          "p50": 0,
+          "p95": 0.04,
+          "p99": 0.06,
+          "min": 0,
+          "max": 0.13
+        },
+        "vm_configure": {
+          "samples": 1000,
+          "mean": 0.14,
+          "p50": 0.1,
+          "p95": 0.25,
+          "p99": 0.96,
+          "min": 0.06,
+          "max": 1.74
+        },
+        "runtime_mount_wasm": {
+          "samples": 1000,
+          "mean": 174.63,
+          "p50": 173.7,
+          "p95": 187.98,
+          "p99": 196.17,
+          "min": 159.88,
+          "max": 235.94
+        },
+        "runtime_mount_node": {
+          "samples": 1000,
+          "mean": 2.84,
+          "p50": 2.72,
+          "p95": 3.68,
+          "p99": 4.29,
+          "min": 2.5,
+          "max": 7.88
+        },
+        "runtime_create_total": {
+          "samples": 1000,
+          "mean": 177.55,
+          "p50": 176.64,
+          "p95": 190.7,
+          "p99": 199.01,
+          "min": 162.73,
+          "max": 238.71
+        },
+        "first_exec": {
+          "samples": 1000,
+          "mean": 600.73,
+          "p50": 599.84,
+          "p95": 609.8,
+          "p99": 618.15,
+          "min": 589.53,
+          "max": 637.83
+        },
+        "warm_exec": {
+          "samples": 1000,
+          "mean": 454.03,
+          "p50": 453.13,
+          "p95": 462.01,
+          "p99": 468.77,
+          "min": 446.24,
+          "max": 501.19
+        }
+      }
+    },
+    {
+      "scenario": "owned-sidecar",
+      "batchSize": 200,
+      "mode": "concurrent",
+      "iterations": 5,
+      "coldStart": {
+        "samples": 1000,
+        "mean": 1044.03,
+        "p50": 1042.73,
+        "p95": 1124.88,
+        "p99": 1162.92,
+        "min": 925.95,
+        "max": 1198.97
+      },
+      "warmStart": {
+        "samples": 1000,
+        "mean": 468.68,
+        "p50": 466.89,
+        "p95": 488.09,
+        "p99": 513.54,
+        "min": 449.6,
+        "max": 520.28
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 1000,
+          "mean": 51.87,
+          "p50": 47.8,
+          "p95": 114.52,
+          "p99": 120.39,
+          "min": 0.03,
+          "max": 137.72
+        },
+        "sidecar_spawn": {
+          "samples": 1000,
+          "mean": 2.93,
+          "p50": 2.39,
+          "p95": 5.36,
+          "p99": 7.61,
+          "min": 1.86,
+          "max": 10.09
+        },
+        "session_open": {
+          "samples": 1000,
+          "mean": 13.82,
+          "p50": 10.58,
+          "p95": 37.18,
+          "p99": 76.75,
+          "min": 2,
+          "max": 112.27
+        },
+        "vm_create": {
+          "samples": 1000,
+          "mean": 26.98,
+          "p50": 22.78,
+          "p95": 77.31,
+          "p99": 108.9,
+          "min": 1.17,
+          "max": 231.51
+        },
+        "vm_ready": {
+          "samples": 1000,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0.01,
+          "p99": 0.01,
+          "min": 0,
+          "max": 0.05
+        },
+        "vm_configure": {
+          "samples": 1000,
+          "mean": 39.14,
+          "p50": 33.55,
+          "p95": 104.19,
+          "p99": 128.42,
+          "min": 0.08,
+          "max": 146.77
+        },
+        "runtime_mount_wasm": {
+          "samples": 1000,
+          "mean": 394.48,
+          "p50": 391.19,
+          "p95": 470.52,
+          "p99": 493.46,
+          "min": 288.96,
+          "max": 547.77
+        },
+        "runtime_mount_node": {
+          "samples": 1000,
+          "mean": 3.45,
+          "p50": 3.26,
+          "p95": 4.63,
+          "p99": 5.02,
+          "min": 2.46,
+          "max": 6.2
+        },
+        "runtime_create_total": {
+          "samples": 1000,
+          "mean": 397.99,
+          "p50": 394.96,
+          "p95": 473.6,
+          "p99": 497.73,
+          "min": 291.81,
+          "max": 551.16
+        },
+        "first_exec": {
+          "samples": 1000,
+          "mean": 646.03,
+          "p50": 640.8,
+          "p95": 684,
+          "p99": 698.73,
+          "min": 613.51,
+          "max": 743.44
+        },
+        "warm_exec": {
+          "samples": 1000,
+          "mean": 468.68,
+          "p50": 466.89,
+          "p95": 488.09,
+          "p99": 513.54,
+          "min": 449.6,
+          "max": 520.28
+        }
+      }
+    },
+    {
+      "scenario": "shared-sidecar",
+      "batchSize": 1,
+      "mode": "sequential",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 4.09,
+        "p50": 3.94,
+        "p95": 5.26,
+        "p99": 5.26,
+        "min": 3.47,
+        "max": 5.26
+      },
+      "coldStart": {
+        "samples": 5,
+        "mean": 774.17,
+        "p50": 774.5,
+        "p95": 778.62,
+        "p99": 778.62,
+        "min": 767.75,
+        "max": 778.62
+      },
+      "warmStart": {
+        "samples": 5,
+        "mean": 457.19,
+        "p50": 452.75,
+        "p95": 466.31,
+        "p99": 466.31,
+        "min": 450.8,
+        "max": 466.31
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 5,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.03,
+          "min": 0.02,
+          "max": 0.03
+        },
+        "session_open": {
+          "samples": 5,
+          "mean": 0.37,
+          "p50": 0.3,
+          "p95": 0.71,
+          "p99": 0.71,
+          "min": 0.21,
+          "max": 0.71
+        },
+        "vm_create": {
+          "samples": 5,
+          "mean": 1.48,
+          "p50": 1.22,
+          "p95": 2.63,
+          "p99": 2.63,
+          "min": 1.08,
+          "max": 2.63
+        },
+        "vm_ready": {
+          "samples": 5,
+          "mean": 0,
+          "p50": 0,
+          "p95": 0.01,
+          "p99": 0.01,
+          "min": 0,
+          "max": 0.01
+        },
+        "vm_configure": {
+          "samples": 5,
+          "mean": 0.12,
+          "p50": 0.11,
+          "p95": 0.23,
+          "p99": 0.23,
+          "min": 0.09,
+          "max": 0.23
+        },
+        "runtime_mount_wasm": {
+          "samples": 5,
+          "mean": 169.17,
+          "p50": 170.47,
+          "p95": 175.92,
+          "p99": 175.92,
+          "min": 161.9,
+          "max": 175.92
+        },
+        "runtime_mount_node": {
+          "samples": 5,
+          "mean": 2.63,
+          "p50": 2.61,
+          "p95": 2.77,
+          "p99": 2.77,
+          "min": 2.53,
+          "max": 2.77
+        },
+        "runtime_create_total": {
+          "samples": 5,
+          "mean": 171.89,
+          "p50": 173.09,
+          "p95": 178.62,
+          "p99": 178.62,
+          "min": 164.59,
+          "max": 178.62
+        },
+        "first_exec": {
+          "samples": 5,
+          "mean": 602.27,
+          "p50": 604.54,
+          "p95": 609.91,
+          "p99": 609.91,
+          "min": 594.65,
+          "max": 609.91
+        },
+        "warm_exec": {
+          "samples": 5,
+          "mean": 457.19,
+          "p50": 452.75,
+          "p95": 466.31,
+          "p99": 466.31,
+          "min": 450.8,
+          "max": 466.31
+        }
+      }
+    },
+    {
+      "scenario": "shared-sidecar",
+      "batchSize": 1,
+      "mode": "concurrent",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 6.12,
+        "p50": 5.21,
+        "p95": 9.57,
+        "p99": 9.57,
+        "min": 5.06,
+        "max": 9.57
+      },
+      "coldStart": {
+        "samples": 5,
+        "mean": 775.66,
+        "p50": 776.97,
+        "p95": 780.66,
+        "p99": 780.66,
+        "min": 766.27,
+        "max": 780.66
+      },
+      "warmStart": {
+        "samples": 5,
+        "mean": 452.79,
+        "p50": 453.29,
+        "p95": 453.98,
+        "p99": 453.98,
+        "min": 451.29,
+        "max": 453.98
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 5,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.02,
+          "p99": 0.02,
+          "min": 0.02,
+          "max": 0.02
+        },
+        "session_open": {
+          "samples": 5,
+          "mean": 0.38,
+          "p50": 0.4,
+          "p95": 0.49,
+          "p99": 0.49,
+          "min": 0.24,
+          "max": 0.49
+        },
+        "vm_create": {
+          "samples": 5,
+          "mean": 1.28,
+          "p50": 1.14,
+          "p95": 1.87,
+          "p99": 1.87,
+          "min": 1.1,
+          "max": 1.87
+        },
+        "vm_ready": {
+          "samples": 5,
+          "mean": 0.01,
+          "p50": 0,
+          "p95": 0.02,
+          "p99": 0.02,
+          "min": 0,
+          "max": 0.02
+        },
+        "vm_configure": {
+          "samples": 5,
+          "mean": 0.09,
+          "p50": 0.09,
+          "p95": 0.12,
+          "p99": 0.12,
+          "min": 0.07,
+          "max": 0.12
+        },
+        "runtime_mount_wasm": {
+          "samples": 5,
+          "mean": 169.66,
+          "p50": 169.79,
+          "p95": 171.77,
+          "p99": 171.77,
+          "min": 166.04,
+          "max": 171.77
+        },
+        "runtime_mount_node": {
+          "samples": 5,
+          "mean": 3.18,
+          "p50": 2.71,
+          "p95": 4.19,
+          "p99": 4.19,
+          "min": 2.59,
+          "max": 4.19
+        },
+        "runtime_create_total": {
+          "samples": 5,
+          "mean": 172.93,
+          "p50": 173.44,
+          "p95": 176.06,
+          "p99": 176.06,
+          "min": 168.76,
+          "max": 176.06
+        },
+        "first_exec": {
+          "samples": 5,
+          "mean": 602.73,
+          "p50": 603.17,
+          "p95": 605.43,
+          "p99": 605.43,
+          "min": 597.5,
+          "max": 605.43
+        },
+        "warm_exec": {
+          "samples": 5,
+          "mean": 452.79,
+          "p50": 453.29,
+          "p95": 453.98,
+          "p99": 453.98,
+          "min": 451.29,
+          "max": 453.98
+        }
+      }
+    },
+    {
+      "scenario": "shared-sidecar",
+      "batchSize": 10,
+      "mode": "sequential",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.51,
+        "p50": 5.49,
+        "p95": 5.73,
+        "p99": 5.73,
+        "min": 5.37,
+        "max": 5.73
+      },
+      "coldStart": {
+        "samples": 50,
+        "mean": 627.58,
+        "p50": 613.98,
+        "p95": 773.01,
+        "p99": 783.61,
+        "min": 592.18,
+        "max": 783.61
+      },
+      "warmStart": {
+        "samples": 50,
+        "mean": 450.97,
+        "p50": 450.94,
+        "p95": 459.89,
+        "p99": 466.32,
+        "min": 443.57,
+        "max": 466.32
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 50,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.04,
+          "min": 0.02,
+          "max": 0.04
+        },
+        "session_open": {
+          "samples": 50,
+          "mean": 0.21,
+          "p50": 0.19,
+          "p95": 0.35,
+          "p99": 0.38,
+          "min": 0.14,
+          "max": 0.38
+        },
+        "vm_create": {
+          "samples": 50,
+          "mean": 1.3,
+          "p50": 1.17,
+          "p95": 1.96,
+          "p99": 2.3,
+          "min": 0.96,
+          "max": 2.3
+        },
+        "vm_ready": {
+          "samples": 50,
+          "mean": 0.01,
+          "p50": 0,
+          "p95": 0.03,
+          "p99": 0.03,
+          "min": 0,
+          "max": 0.03
+        },
+        "vm_configure": {
+          "samples": 50,
+          "mean": 0.1,
+          "p50": 0.09,
+          "p95": 0.19,
+          "p99": 0.21,
+          "min": 0.06,
+          "max": 0.21
+        },
+        "runtime_mount_wasm": {
+          "samples": 50,
+          "mean": 159.99,
+          "p50": 158.99,
+          "p95": 173.9,
+          "p99": 176.82,
+          "min": 143.47,
+          "max": 176.82
+        },
+        "runtime_mount_node": {
+          "samples": 50,
+          "mean": 2.84,
+          "p50": 2.68,
+          "p95": 3.92,
+          "p99": 4.16,
+          "min": 2.52,
+          "max": 4.16
+        },
+        "runtime_create_total": {
+          "samples": 50,
+          "mean": 162.9,
+          "p50": 161.69,
+          "p95": 177.85,
+          "p99": 179.59,
+          "min": 146.04,
+          "max": 179.59
+        },
+        "first_exec": {
+          "samples": 50,
+          "mean": 464.68,
+          "p50": 449.24,
+          "p95": 601.5,
+          "p99": 605.66,
+          "min": 444.51,
+          "max": 605.66
+        },
+        "warm_exec": {
+          "samples": 50,
+          "mean": 450.97,
+          "p50": 450.94,
+          "p95": 459.89,
+          "p99": 466.32,
+          "min": 443.57,
+          "max": 466.32
+        }
+      }
+    },
+    {
+      "scenario": "shared-sidecar",
+      "batchSize": 10,
+      "mode": "concurrent",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 4.94,
+        "p50": 5.23,
+        "p95": 5.88,
+        "p99": 5.88,
+        "min": 3.84,
+        "max": 5.88
+      },
+      "coldStart": {
+        "samples": 50,
+        "mean": 3493.51,
+        "p50": 4558.22,
+        "p95": 4676.49,
+        "p99": 6652.52,
+        "min": 725.69,
+        "max": 6652.52
+      },
+      "warmStart": {
+        "samples": 50,
+        "mean": 2174.08,
+        "p50": 2086.34,
+        "p95": 4965.71,
+        "p99": 5377.91,
+        "min": 438.99,
+        "max": 5377.91
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 50,
+          "mean": 43.92,
+          "p50": 25.47,
+          "p95": 118.61,
+          "p99": 126.64,
+          "min": 0.03,
+          "max": 126.64
+        },
+        "session_open": {
+          "samples": 50,
+          "mean": 0.61,
+          "p50": 0.57,
+          "p95": 1.17,
+          "p99": 1.26,
+          "min": 0.2,
+          "max": 1.26
+        },
+        "vm_create": {
+          "samples": 50,
+          "mean": 3.79,
+          "p50": 3.39,
+          "p95": 7.51,
+          "p99": 8.95,
+          "min": 1.13,
+          "max": 8.95
+        },
+        "vm_ready": {
+          "samples": 50,
+          "mean": 0.23,
+          "p50": 0,
+          "p95": 0.04,
+          "p99": 11.07,
+          "min": 0,
+          "max": 11.07
+        },
+        "vm_configure": {
+          "samples": 50,
+          "mean": 19.29,
+          "p50": 11.57,
+          "p95": 72.25,
+          "p99": 103.13,
+          "min": 0.18,
+          "max": 103.13
+        },
+        "runtime_mount_wasm": {
+          "samples": 50,
+          "mean": 920.58,
+          "p50": 1051.38,
+          "p95": 1149.41,
+          "p99": 1158.81,
+          "min": 270.43,
+          "max": 1158.81
+        },
+        "runtime_mount_node": {
+          "samples": 50,
+          "mean": 16.09,
+          "p50": 18.54,
+          "p95": 19.55,
+          "p99": 19.6,
+          "min": 4.69,
+          "max": 19.6
+        },
+        "runtime_create_total": {
+          "samples": 50,
+          "mean": 936.73,
+          "p50": 1070.66,
+          "p95": 1168.91,
+          "p99": 1178.48,
+          "min": 275.42,
+          "max": 1178.48
+        },
+        "first_exec": {
+          "samples": 50,
+          "mean": 2556.78,
+          "p50": 3507.02,
+          "p95": 3519.16,
+          "p99": 5581.86,
+          "min": 448.08,
+          "max": 5581.86
+        },
+        "warm_exec": {
+          "samples": 50,
+          "mean": 2174.08,
+          "p50": 2086.34,
+          "p95": 4965.71,
+          "p99": 5377.91,
+          "min": 438.99,
+          "max": 5377.91
+        }
+      }
+    },
+    {
+      "scenario": "shared-sidecar",
+      "batchSize": 50,
+      "mode": "sequential",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.12,
+        "p50": 5.09,
+        "p95": 5.39,
+        "p99": 5.39,
+        "min": 4.93,
+        "max": 5.39
+      },
+      "coldStart": {
+        "samples": 250,
+        "mean": 610.76,
+        "p50": 605.65,
+        "p95": 627.44,
+        "p99": 775.68,
+        "min": 591.17,
+        "max": 788.91
+      },
+      "warmStart": {
+        "samples": 250,
+        "mean": 449.02,
+        "p50": 448.23,
+        "p95": 456.81,
+        "p99": 464.36,
+        "min": 442.29,
+        "max": 469.3
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 250,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.05,
+          "min": 0.02,
+          "max": 0.07
+        },
+        "session_open": {
+          "samples": 250,
+          "mean": 0.26,
+          "p50": 0.21,
+          "p95": 0.41,
+          "p99": 1.18,
+          "min": 0.12,
+          "max": 3.85
+        },
+        "vm_create": {
+          "samples": 250,
+          "mean": 1.28,
+          "p50": 1.14,
+          "p95": 1.94,
+          "p99": 2.34,
+          "min": 0.93,
+          "max": 3.14
+        },
+        "vm_ready": {
+          "samples": 250,
+          "mean": 0.01,
+          "p50": 0,
+          "p95": 0.03,
+          "p99": 0.04,
+          "min": 0,
+          "max": 0.23
+        },
+        "vm_configure": {
+          "samples": 250,
+          "mean": 0.12,
+          "p50": 0.09,
+          "p95": 0.19,
+          "p99": 0.34,
+          "min": 0.06,
+          "max": 2.44
+        },
+        "runtime_mount_wasm": {
+          "samples": 250,
+          "mean": 155.28,
+          "p50": 153.45,
+          "p95": 169.89,
+          "p99": 187.15,
+          "min": 142.75,
+          "max": 203.16
+        },
+        "runtime_mount_node": {
+          "samples": 250,
+          "mean": 2.8,
+          "p50": 2.67,
+          "p95": 3.69,
+          "p99": 4.13,
+          "min": 2.48,
+          "max": 8.15
+        },
+        "runtime_create_total": {
+          "samples": 250,
+          "mean": 158.16,
+          "p50": 156.3,
+          "p95": 172.65,
+          "p99": 189.87,
+          "min": 145.32,
+          "max": 206.18
+        },
+        "first_exec": {
+          "samples": 250,
+          "mean": 452.6,
+          "p50": 448.83,
+          "p95": 459,
+          "p99": 599.03,
+          "min": 442.61,
+          "max": 603.9
+        },
+        "warm_exec": {
+          "samples": 250,
+          "mean": 449.02,
+          "p50": 448.23,
+          "p95": 456.81,
+          "p99": 464.36,
+          "min": 442.29,
+          "max": 469.3
+        }
+      }
+    },
+    {
+      "scenario": "shared-sidecar",
+      "batchSize": 50,
+      "mode": "concurrent",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 7.15,
+        "p50": 5.56,
+        "p95": 14.37,
+        "p99": 14.37,
+        "min": 3.96,
+        "max": 14.37
+      },
+      "coldStart": {
+        "samples": 250,
+        "mean": 3197.96,
+        "p50": 3299.89,
+        "p95": 4602.98,
+        "p99": 4657.39,
+        "min": 742.4,
+        "max": 6126.19
+      },
+      "warmStart": {
+        "samples": 250,
+        "mean": 2162.03,
+        "p50": 2212.06,
+        "p95": 3395.52,
+        "p99": 5415.61,
+        "min": 345.69,
+        "max": 5535.61
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 250,
+          "mean": 48.75,
+          "p50": 43.21,
+          "p95": 113.11,
+          "p99": 124.69,
+          "min": 0.03,
+          "max": 128.47
+        },
+        "session_open": {
+          "samples": 250,
+          "mean": 0.52,
+          "p50": 0.48,
+          "p95": 1.34,
+          "p99": 1.7,
+          "min": 0.15,
+          "max": 1.77
+        },
+        "vm_create": {
+          "samples": 250,
+          "mean": 4.33,
+          "p50": 4.2,
+          "p95": 8.07,
+          "p99": 9.82,
+          "min": 0.95,
+          "max": 10.89
+        },
+        "vm_ready": {
+          "samples": 250,
+          "mean": 0.4,
+          "p50": 0,
+          "p95": 0.04,
+          "p99": 10.69,
+          "min": 0,
+          "max": 48.48
+        },
+        "vm_configure": {
+          "samples": 250,
+          "mean": 21.82,
+          "p50": 16.13,
+          "p95": 55.91,
+          "p99": 90.5,
+          "min": 0.77,
+          "max": 92.12
+        },
+        "runtime_mount_wasm": {
+          "samples": 250,
+          "mean": 1061.42,
+          "p50": 1088.07,
+          "p95": 1166.25,
+          "p99": 1193.51,
+          "min": 288.93,
+          "max": 1210.24
+        },
+        "runtime_mount_node": {
+          "samples": 250,
+          "mean": 18.88,
+          "p50": 19.28,
+          "p95": 21.01,
+          "p99": 21.38,
+          "min": 4.8,
+          "max": 21.38
+        },
+        "runtime_create_total": {
+          "samples": 250,
+          "mean": 1080.36,
+          "p50": 1107.01,
+          "p95": 1184.53,
+          "p99": 1212.99,
+          "min": 294.01,
+          "max": 1230.75
+        },
+        "first_exec": {
+          "samples": 250,
+          "mean": 2117.6,
+          "p50": 2211.64,
+          "p95": 3514.23,
+          "p99": 3520.26,
+          "min": 373.91,
+          "max": 5044.43
+        },
+        "warm_exec": {
+          "samples": 250,
+          "mean": 2162.03,
+          "p50": 2212.06,
+          "p95": 3395.52,
+          "p99": 5415.61,
+          "min": 345.69,
+          "max": 5535.61
+        }
+      }
+    },
+    {
+      "scenario": "shared-sidecar",
+      "batchSize": 100,
+      "mode": "sequential",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.22,
+        "p50": 5.43,
+        "p95": 5.74,
+        "p99": 5.74,
+        "min": 4.48,
+        "max": 5.74
+      },
+      "coldStart": {
+        "samples": 500,
+        "mean": 619.24,
+        "p50": 610.78,
+        "p95": 656.44,
+        "p99": 774.55,
+        "min": 590.27,
+        "max": 970.58
+      },
+      "warmStart": {
+        "samples": 500,
+        "mean": 453.68,
+        "p50": 449.44,
+        "p95": 472.09,
+        "p99": 482.32,
+        "min": 442.18,
+        "max": 588.18
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 500,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.06,
+          "min": 0.02,
+          "max": 0.25
+        },
+        "session_open": {
+          "samples": 500,
+          "mean": 0.25,
+          "p50": 0.21,
+          "p95": 0.45,
+          "p99": 0.69,
+          "min": 0.14,
+          "max": 3.12
+        },
+        "vm_create": {
+          "samples": 500,
+          "mean": 1.27,
+          "p50": 1.12,
+          "p95": 1.98,
+          "p99": 2.41,
+          "min": 0.95,
+          "max": 4.51
+        },
+        "vm_ready": {
+          "samples": 500,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.04,
+          "p99": 0.23,
+          "min": 0,
+          "max": 0.26
+        },
+        "vm_configure": {
+          "samples": 500,
+          "mean": 0.17,
+          "p50": 0.1,
+          "p95": 0.29,
+          "p99": 2.49,
+          "min": 0.06,
+          "max": 3.32
+        },
+        "runtime_mount_wasm": {
+          "samples": 500,
+          "mean": 160.04,
+          "p50": 157.04,
+          "p95": 180.19,
+          "p99": 187.13,
+          "min": 143.95,
+          "max": 215.2
+        },
+        "runtime_mount_node": {
+          "samples": 500,
+          "mean": 3.63,
+          "p50": 2.84,
+          "p95": 3.52,
+          "p99": 4.54,
+          "min": 2.5,
+          "max": 348
+        },
+        "runtime_create_total": {
+          "samples": 500,
+          "mean": 163.74,
+          "p50": 159.9,
+          "p95": 183.45,
+          "p99": 190.57,
+          "min": 146.67,
+          "max": 511.74
+        },
+        "first_exec": {
+          "samples": 500,
+          "mean": 455.5,
+          "p50": 449.94,
+          "p95": 471.76,
+          "p99": 582.17,
+          "min": 442.77,
+          "max": 622.04
+        },
+        "warm_exec": {
+          "samples": 500,
+          "mean": 453.68,
+          "p50": 449.44,
+          "p95": 472.09,
+          "p99": 482.32,
+          "min": 442.18,
+          "max": 588.18
+        }
+      }
+    },
+    {
+      "scenario": "shared-sidecar",
+      "batchSize": 100,
+      "mode": "concurrent",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.09,
+        "p50": 5.49,
+        "p95": 6.49,
+        "p99": 6.49,
+        "min": 3.71,
+        "max": 6.49
+      },
+      "coldStart": {
+        "samples": 500,
+        "mean": 3187.99,
+        "p50": 3317.35,
+        "p95": 4591.89,
+        "p99": 4694.52,
+        "min": 1111.29,
+        "max": 6710.25
+      },
+      "warmStart": {
+        "samples": 500,
+        "mean": 2134.07,
+        "p50": 2207.08,
+        "p95": 2716.34,
+        "p99": 3940.45,
+        "min": 438.63,
+        "max": 4994.58
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 500,
+          "mean": 49.97,
+          "p50": 44.7,
+          "p95": 111.92,
+          "p99": 119.87,
+          "min": 0.03,
+          "max": 131.84
+        },
+        "session_open": {
+          "samples": 500,
+          "mean": 0.59,
+          "p50": 0.54,
+          "p95": 1.32,
+          "p99": 1.59,
+          "min": 0.13,
+          "max": 1.66
+        },
+        "vm_create": {
+          "samples": 500,
+          "mean": 4.3,
+          "p50": 4.24,
+          "p95": 7.73,
+          "p99": 9.48,
+          "min": 0.98,
+          "max": 10.6
+        },
+        "vm_ready": {
+          "samples": 500,
+          "mean": 0.55,
+          "p50": 0,
+          "p95": 0.05,
+          "p99": 25.38,
+          "min": 0,
+          "max": 34.38
+        },
+        "vm_configure": {
+          "samples": 500,
+          "mean": 19.08,
+          "p50": 14.62,
+          "p95": 50.06,
+          "p99": 72.85,
+          "min": 2.37,
+          "max": 81.81
+        },
+        "runtime_mount_wasm": {
+          "samples": 500,
+          "mean": 1092.42,
+          "p50": 1110.41,
+          "p95": 1185.79,
+          "p99": 1210.14,
+          "min": 565.86,
+          "max": 1221.78
+        },
+        "runtime_mount_node": {
+          "samples": 500,
+          "mean": 19.53,
+          "p50": 19.5,
+          "p95": 21.82,
+          "p99": 30.38,
+          "min": 9.73,
+          "max": 30.52
+        },
+        "runtime_create_total": {
+          "samples": 500,
+          "mean": 1112,
+          "p50": 1130.31,
+          "p95": 1205.87,
+          "p99": 1230.32,
+          "min": 585.93,
+          "max": 1242
+        },
+        "first_exec": {
+          "samples": 500,
+          "mean": 2075.99,
+          "p50": 2212.38,
+          "p95": 3512.6,
+          "p99": 3535.78,
+          "min": 365.84,
+          "max": 5608.44
+        },
+        "warm_exec": {
+          "samples": 500,
+          "mean": 2134.07,
+          "p50": 2207.08,
+          "p95": 2716.34,
+          "p99": 3940.45,
+          "min": 438.63,
+          "max": 4994.58
+        }
+      }
+    },
+    {
+      "scenario": "shared-sidecar",
+      "batchSize": 200,
+      "mode": "sequential",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.17,
+        "p50": 5.26,
+        "p95": 6.09,
+        "p99": 6.09,
+        "min": 4.06,
+        "max": 6.09
+      },
+      "coldStart": {
+        "samples": 1000,
+        "mean": 616.2,
+        "p50": 614.43,
+        "p95": 633.42,
+        "p99": 644.44,
+        "min": 592.87,
+        "max": 945.4
+      },
+      "warmStart": {
+        "samples": 1000,
+        "mean": 449.22,
+        "p50": 448.24,
+        "p95": 456.27,
+        "p99": 463.62,
+        "min": 441.39,
+        "max": 631.44
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 1000,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.05,
+          "min": 0.02,
+          "max": 0.27
+        },
+        "session_open": {
+          "samples": 1000,
+          "mean": 0.28,
+          "p50": 0.25,
+          "p95": 0.49,
+          "p99": 0.74,
+          "min": 0.12,
+          "max": 1.43
+        },
+        "vm_create": {
+          "samples": 1000,
+          "mean": 1.19,
+          "p50": 1.11,
+          "p95": 1.77,
+          "p99": 2.23,
+          "min": 0.95,
+          "max": 2.81
+        },
+        "vm_ready": {
+          "samples": 1000,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.03,
+          "p99": 0.22,
+          "min": 0,
+          "max": 0.28
+        },
+        "vm_configure": {
+          "samples": 1000,
+          "mean": 0.17,
+          "p50": 0.12,
+          "p95": 0.31,
+          "p99": 1.94,
+          "min": 0.07,
+          "max": 3.43
+        },
+        "runtime_mount_wasm": {
+          "samples": 1000,
+          "mean": 162.26,
+          "p50": 161.85,
+          "p95": 177.54,
+          "p99": 184.97,
+          "min": 143.69,
+          "max": 214.76
+        },
+        "runtime_mount_node": {
+          "samples": 1000,
+          "mean": 3.33,
+          "p50": 2.92,
+          "p95": 3.6,
+          "p99": 4.52,
+          "min": 2.49,
+          "max": 329.2
+        },
+        "runtime_create_total": {
+          "samples": 1000,
+          "mean": 165.66,
+          "p50": 164.85,
+          "p95": 181,
+          "p99": 188.95,
+          "min": 146.4,
+          "max": 489.96
+        },
+        "first_exec": {
+          "samples": 1000,
+          "mean": 450.54,
+          "p50": 448.77,
+          "p95": 457.83,
+          "p99": 473.65,
+          "min": 441.44,
+          "max": 613.1
+        },
+        "warm_exec": {
+          "samples": 1000,
+          "mean": 449.22,
+          "p50": 448.24,
+          "p95": 456.27,
+          "p99": 463.62,
+          "min": 441.39,
+          "max": 631.44
+        }
+      }
+    },
+    {
+      "scenario": "shared-sidecar",
+      "batchSize": 200,
+      "mode": "concurrent",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 3.81,
+        "p50": 3.79,
+        "p95": 3.92,
+        "p99": 3.92,
+        "min": 3.73,
+        "max": 3.92
+      },
+      "coldStart": {
+        "samples": 1000,
+        "mean": 3235.65,
+        "p50": 3340.36,
+        "p95": 3501.49,
+        "p99": 4639.9,
+        "min": 1603.72,
+        "max": 6731.02
+      },
+      "warmStart": {
+        "samples": 1000,
+        "mean": 2102.22,
+        "p50": 2200.24,
+        "p95": 2732.96,
+        "p99": 3665.63,
+        "min": 299.53,
+        "max": 5422.94
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 1000,
+          "mean": 49.92,
+          "p50": 47.71,
+          "p95": 111.37,
+          "p99": 116.24,
+          "min": 0.03,
+          "max": 123.67
+        },
+        "session_open": {
+          "samples": 1000,
+          "mean": 0.73,
+          "p50": 0.61,
+          "p95": 1.79,
+          "p99": 2.3,
+          "min": 0.13,
+          "max": 2.61
+        },
+        "vm_create": {
+          "samples": 1000,
+          "mean": 4.15,
+          "p50": 4.14,
+          "p95": 7.02,
+          "p99": 8.07,
+          "min": 0.96,
+          "max": 9.81
+        },
+        "vm_ready": {
+          "samples": 1000,
+          "mean": 0.12,
+          "p50": 0,
+          "p95": 0.03,
+          "p99": 0.05,
+          "min": 0,
+          "max": 54.89
+        },
+        "vm_configure": {
+          "samples": 1000,
+          "mean": 17.93,
+          "p50": 14.71,
+          "p95": 40.65,
+          "p99": 57.22,
+          "min": 1.6,
+          "max": 102.1
+        },
+        "runtime_mount_wasm": {
+          "samples": 1000,
+          "mean": 1145.4,
+          "p50": 1147.31,
+          "p95": 1239.47,
+          "p99": 1262.54,
+          "min": 996.9,
+          "max": 1290.99
+        },
+        "runtime_mount_node": {
+          "samples": 1000,
+          "mean": 20.78,
+          "p50": 20.37,
+          "p95": 22.55,
+          "p99": 23.87,
+          "min": 18.46,
+          "max": 61.17
+        },
+        "runtime_create_total": {
+          "samples": 1000,
+          "mean": 1166.23,
+          "p50": 1168.28,
+          "p95": 1260.91,
+          "p99": 1284.1,
+          "min": 1016.18,
+          "max": 1311.64
+        },
+        "first_exec": {
+          "samples": 1000,
+          "mean": 2069.42,
+          "p50": 2210.55,
+          "p95": 2262.54,
+          "p99": 3529.65,
+          "min": 369.41,
+          "max": 5578.1
+        },
+        "warm_exec": {
+          "samples": 1000,
+          "mean": 2102.22,
+          "p50": 2200.24,
+          "p95": 2732.96,
+          "p99": 3665.63,
+          "min": 299.53,
+          "max": 5422.94
+        }
+      }
+    },
+    {
+      "scenario": "resident-runner",
+      "batchSize": 1,
+      "mode": "sequential",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 4.81,
+        "p50": 4.19,
+        "p95": 6.14,
+        "p99": 6.14,
+        "min": 3.83,
+        "max": 6.14
+      },
+      "coldStart": {
+        "samples": 5,
+        "mean": 351,
+        "p50": 349.56,
+        "p95": 358.02,
+        "p99": 358.02,
+        "min": 347.63,
+        "max": 358.02
+      },
+      "warmStart": {
+        "samples": 5,
+        "mean": 1.27,
+        "p50": 1.27,
+        "p95": 1.32,
+        "p99": 1.32,
+        "min": 1.24,
+        "max": 1.32
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 5,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.02,
+          "p99": 0.02,
+          "min": 0.02,
+          "max": 0.02
+        },
+        "session_open": {
+          "samples": 5,
+          "mean": 0.33,
+          "p50": 0.29,
+          "p95": 0.43,
+          "p99": 0.43,
+          "min": 0.27,
+          "max": 0.43
+        },
+        "vm_create": {
+          "samples": 5,
+          "mean": 1.22,
+          "p50": 1.26,
+          "p95": 1.34,
+          "p99": 1.34,
+          "min": 1.12,
+          "max": 1.34
+        },
+        "vm_ready": {
+          "samples": 5,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.01,
+          "p99": 0.01,
+          "min": 0.01,
+          "max": 0.01
+        },
+        "vm_configure": {
+          "samples": 5,
+          "mean": 0.11,
+          "p50": 0.09,
+          "p95": 0.19,
+          "p99": 0.19,
+          "min": 0.09,
+          "max": 0.19
+        },
+        "runtime_mount_wasm": {
+          "samples": 5,
+          "mean": 171.79,
+          "p50": 170.03,
+          "p95": 179.45,
+          "p99": 179.45,
+          "min": 165.9,
+          "max": 179.45
+        },
+        "runtime_mount_node": {
+          "samples": 5,
+          "mean": 2.85,
+          "p50": 2.77,
+          "p95": 3.22,
+          "p99": 3.22,
+          "min": 2.58,
+          "max": 3.22
+        },
+        "runtime_create_total": {
+          "samples": 5,
+          "mean": 174.73,
+          "p50": 173.03,
+          "p95": 182.28,
+          "p99": 182.28,
+          "min": 168.77,
+          "max": 182.28
+        },
+        "resident_runner_create": {
+          "samples": 5,
+          "mean": 174.73,
+          "p50": 174.4,
+          "p95": 178.32,
+          "p99": 178.32,
+          "min": 173.04,
+          "max": 178.32
+        },
+        "resident_first_exec": {
+          "samples": 5,
+          "mean": 1.54,
+          "p50": 1.31,
+          "p95": 2.47,
+          "p99": 2.47,
+          "min": 1.25,
+          "max": 2.47
+        },
+        "resident_warm_exec": {
+          "samples": 5,
+          "mean": 1.27,
+          "p50": 1.27,
+          "p95": 1.32,
+          "p99": 1.32,
+          "min": 1.24,
+          "max": 1.32
+        }
+      }
+    },
+    {
+      "scenario": "resident-runner",
+      "batchSize": 1,
+      "mode": "concurrent",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 4.6,
+        "p50": 4.08,
+        "p95": 6.27,
+        "p99": 6.27,
+        "min": 3.54,
+        "max": 6.27
+      },
+      "coldStart": {
+        "samples": 5,
+        "mean": 347.91,
+        "p50": 346.99,
+        "p95": 358.2,
+        "p99": 358.2,
+        "min": 340.22,
+        "max": 358.2
+      },
+      "warmStart": {
+        "samples": 5,
+        "mean": 1.25,
+        "p50": 1.26,
+        "p95": 1.29,
+        "p99": 1.29,
+        "min": 1.19,
+        "max": 1.29
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 5,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.02,
+          "p99": 0.02,
+          "min": 0.02,
+          "max": 0.02
+        },
+        "session_open": {
+          "samples": 5,
+          "mean": 0.37,
+          "p50": 0.3,
+          "p95": 0.71,
+          "p99": 0.71,
+          "min": 0.22,
+          "max": 0.71
+        },
+        "vm_create": {
+          "samples": 5,
+          "mean": 1.75,
+          "p50": 1.21,
+          "p95": 3.24,
+          "p99": 3.24,
+          "min": 1.06,
+          "max": 3.24
+        },
+        "vm_ready": {
+          "samples": 5,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.01,
+          "p99": 0.01,
+          "min": 0.01,
+          "max": 0.01
+        },
+        "vm_configure": {
+          "samples": 5,
+          "mean": 0.71,
+          "p50": 0.1,
+          "p95": 3.14,
+          "p99": 3.14,
+          "min": 0.08,
+          "max": 3.14
+        },
+        "runtime_mount_wasm": {
+          "samples": 5,
+          "mean": 169.97,
+          "p50": 171.18,
+          "p95": 176.64,
+          "p99": 176.64,
+          "min": 160.07,
+          "max": 176.64
+        },
+        "runtime_mount_node": {
+          "samples": 5,
+          "mean": 2.77,
+          "p50": 2.67,
+          "p95": 3.13,
+          "p99": 3.13,
+          "min": 2.61,
+          "max": 3.13
+        },
+        "runtime_create_total": {
+          "samples": 5,
+          "mean": 172.82,
+          "p50": 174.09,
+          "p95": 179.34,
+          "p99": 179.34,
+          "min": 162.77,
+          "max": 179.34
+        },
+        "resident_runner_create": {
+          "samples": 5,
+          "mean": 173.75,
+          "p50": 172.53,
+          "p95": 177.55,
+          "p99": 177.55,
+          "min": 170.41,
+          "max": 177.55
+        },
+        "resident_first_exec": {
+          "samples": 5,
+          "mean": 1.34,
+          "p50": 1.32,
+          "p95": 1.49,
+          "p99": 1.49,
+          "min": 1.23,
+          "max": 1.49
+        },
+        "resident_warm_exec": {
+          "samples": 5,
+          "mean": 1.25,
+          "p50": 1.26,
+          "p95": 1.29,
+          "p99": 1.29,
+          "min": 1.19,
+          "max": 1.29
+        }
+      }
+    },
+    {
+      "scenario": "resident-runner",
+      "batchSize": 10,
+      "mode": "sequential",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.17,
+        "p50": 5.36,
+        "p95": 5.73,
+        "p99": 5.73,
+        "min": 4.08,
+        "max": 5.73
+      },
+      "coldStart": {
+        "samples": 50,
+        "mean": 202.61,
+        "p50": 186.16,
+        "p95": 350.97,
+        "p99": 353.52,
+        "min": 176.1,
+        "max": 353.52
+      },
+      "warmStart": {
+        "samples": 50,
+        "mean": 1.26,
+        "p50": 1.24,
+        "p95": 1.37,
+        "p99": 1.57,
+        "min": 1.17,
+        "max": 1.57
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 50,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.05,
+          "min": 0.02,
+          "max": 0.05
+        },
+        "session_open": {
+          "samples": 50,
+          "mean": 0.28,
+          "p50": 0.2,
+          "p95": 0.44,
+          "p99": 1.94,
+          "min": 0.13,
+          "max": 1.94
+        },
+        "vm_create": {
+          "samples": 50,
+          "mean": 1.4,
+          "p50": 1.2,
+          "p95": 2.49,
+          "p99": 2.69,
+          "min": 0.98,
+          "max": 2.69
+        },
+        "vm_ready": {
+          "samples": 50,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.04,
+          "p99": 0.05,
+          "min": 0,
+          "max": 0.05
+        },
+        "vm_configure": {
+          "samples": 50,
+          "mean": 0.16,
+          "p50": 0.09,
+          "p95": 0.21,
+          "p99": 2.67,
+          "min": 0.07,
+          "max": 2.67
+        },
+        "runtime_mount_wasm": {
+          "samples": 50,
+          "mean": 157.05,
+          "p50": 154.63,
+          "p95": 171.86,
+          "p99": 174.71,
+          "min": 146.87,
+          "max": 174.71
+        },
+        "runtime_mount_node": {
+          "samples": 50,
+          "mean": 2.82,
+          "p50": 2.7,
+          "p95": 3.57,
+          "p99": 3.8,
+          "min": 2.57,
+          "max": 3.8
+        },
+        "runtime_create_total": {
+          "samples": 50,
+          "mean": 159.95,
+          "p50": 157.63,
+          "p95": 175.41,
+          "p99": 178.08,
+          "min": 150.41,
+          "max": 178.08
+        },
+        "resident_runner_create": {
+          "samples": 50,
+          "mean": 41.28,
+          "p50": 26.24,
+          "p95": 174.16,
+          "p99": 175.12,
+          "min": 24.46,
+          "max": 175.12
+        },
+        "resident_first_exec": {
+          "samples": 50,
+          "mean": 1.37,
+          "p50": 1.3,
+          "p95": 2.45,
+          "p99": 2.5,
+          "min": 1.21,
+          "max": 2.5
+        },
+        "resident_warm_exec": {
+          "samples": 50,
+          "mean": 1.26,
+          "p50": 1.24,
+          "p95": 1.37,
+          "p99": 1.57,
+          "min": 1.17,
+          "max": 1.57
+        }
+      }
+    },
+    {
+      "scenario": "resident-runner",
+      "batchSize": 10,
+      "mode": "concurrent",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.49,
+        "p50": 5.51,
+        "p95": 5.79,
+        "p99": 5.79,
+        "min": 5.22,
+        "max": 5.79
+      },
+      "coldStart": {
+        "samples": 50,
+        "mean": 205,
+        "p50": 186.33,
+        "p95": 351.88,
+        "p99": 359.75,
+        "min": 176.52,
+        "max": 359.75
+      },
+      "warmStart": {
+        "samples": 50,
+        "mean": 1.26,
+        "p50": 1.25,
+        "p95": 1.39,
+        "p99": 1.42,
+        "min": 1.17,
+        "max": 1.42
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 50,
+          "mean": 0.03,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.23,
+          "min": 0.02,
+          "max": 0.23
+        },
+        "session_open": {
+          "samples": 50,
+          "mean": 0.23,
+          "p50": 0.2,
+          "p95": 0.37,
+          "p99": 0.41,
+          "min": 0.14,
+          "max": 0.41
+        },
+        "vm_create": {
+          "samples": 50,
+          "mean": 1.41,
+          "p50": 1.24,
+          "p95": 2.39,
+          "p99": 2.7,
+          "min": 1.01,
+          "max": 2.7
+        },
+        "vm_ready": {
+          "samples": 50,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.04,
+          "p99": 0.26,
+          "min": 0.01,
+          "max": 0.26
+        },
+        "vm_configure": {
+          "samples": 50,
+          "mean": 0.11,
+          "p50": 0.09,
+          "p95": 0.18,
+          "p99": 0.46,
+          "min": 0.06,
+          "max": 0.46
+        },
+        "runtime_mount_wasm": {
+          "samples": 50,
+          "mean": 158.46,
+          "p50": 156.45,
+          "p95": 179.94,
+          "p99": 193.32,
+          "min": 145.55,
+          "max": 193.32
+        },
+        "runtime_mount_node": {
+          "samples": 50,
+          "mean": 2.79,
+          "p50": 2.68,
+          "p95": 3.76,
+          "p99": 4.18,
+          "min": 2.54,
+          "max": 4.18
+        },
+        "runtime_create_total": {
+          "samples": 50,
+          "mean": 161.32,
+          "p50": 159.21,
+          "p95": 182.72,
+          "p99": 196.25,
+          "min": 148.22,
+          "max": 196.25
+        },
+        "resident_runner_create": {
+          "samples": 50,
+          "mean": 42.23,
+          "p50": 26.15,
+          "p95": 177.45,
+          "p99": 180.24,
+          "min": 24.94,
+          "max": 180.24
+        },
+        "resident_first_exec": {
+          "samples": 50,
+          "mean": 1.44,
+          "p50": 1.28,
+          "p95": 2.41,
+          "p99": 2.49,
+          "min": 1.21,
+          "max": 2.49
+        },
+        "resident_warm_exec": {
+          "samples": 50,
+          "mean": 1.26,
+          "p50": 1.25,
+          "p95": 1.39,
+          "p99": 1.42,
+          "min": 1.17,
+          "max": 1.42
+        }
+      }
+    },
+    {
+      "scenario": "resident-runner",
+      "batchSize": 50,
+      "mode": "sequential",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.83,
+        "p50": 5.55,
+        "p95": 6.93,
+        "p99": 6.93,
+        "min": 5.47,
+        "max": 6.93
+      },
+      "coldStart": {
+        "samples": 250,
+        "mean": 187.92,
+        "p50": 182.66,
+        "p95": 197.69,
+        "p99": 350.51,
+        "min": 172.07,
+        "max": 362.01
+      },
+      "warmStart": {
+        "samples": 250,
+        "mean": 1.26,
+        "p50": 1.25,
+        "p95": 1.37,
+        "p99": 1.48,
+        "min": 1.15,
+        "max": 1.67
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 250,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.04,
+          "min": 0.02,
+          "max": 0.23
+        },
+        "session_open": {
+          "samples": 250,
+          "mean": 0.23,
+          "p50": 0.2,
+          "p95": 0.44,
+          "p99": 0.59,
+          "min": 0.13,
+          "max": 0.68
+        },
+        "vm_create": {
+          "samples": 250,
+          "mean": 1.26,
+          "p50": 1.15,
+          "p95": 1.78,
+          "p99": 2.96,
+          "min": 0.95,
+          "max": 4.04
+        },
+        "vm_ready": {
+          "samples": 250,
+          "mean": 0.01,
+          "p50": 0.01,
+          "p95": 0.04,
+          "p99": 0.05,
+          "min": 0,
+          "max": 0.26
+        },
+        "vm_configure": {
+          "samples": 250,
+          "mean": 0.13,
+          "p50": 0.1,
+          "p95": 0.33,
+          "p99": 0.51,
+          "min": 0.06,
+          "max": 1.94
+        },
+        "runtime_mount_wasm": {
+          "samples": 250,
+          "mean": 153.86,
+          "p50": 152.45,
+          "p95": 165.32,
+          "p99": 176.7,
+          "min": 143.77,
+          "max": 182.19
+        },
+        "runtime_mount_node": {
+          "samples": 250,
+          "mean": 3.45,
+          "p50": 2.68,
+          "p95": 3.87,
+          "p99": 6.54,
+          "min": 2.47,
+          "max": 155.7
+        },
+        "runtime_create_total": {
+          "samples": 250,
+          "mean": 157.38,
+          "p50": 155.29,
+          "p95": 168.61,
+          "p99": 184.5,
+          "min": 146.42,
+          "max": 318.86
+        },
+        "resident_runner_create": {
+          "samples": 250,
+          "mean": 29.13,
+          "p50": 25.8,
+          "p95": 31.18,
+          "p99": 171.67,
+          "min": 24.21,
+          "max": 176.25
+        },
+        "resident_first_exec": {
+          "samples": 250,
+          "mean": 1.4,
+          "p50": 1.3,
+          "p95": 2.41,
+          "p99": 2.8,
+          "min": 1.18,
+          "max": 5.27
+        },
+        "resident_warm_exec": {
+          "samples": 250,
+          "mean": 1.26,
+          "p50": 1.25,
+          "p95": 1.37,
+          "p99": 1.48,
+          "min": 1.15,
+          "max": 1.67
+        }
+      }
+    },
+    {
+      "scenario": "resident-runner",
+      "batchSize": 50,
+      "mode": "concurrent",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.58,
+        "p50": 5.48,
+        "p95": 5.91,
+        "p99": 5.91,
+        "min": 5.23,
+        "max": 5.91
+      },
+      "coldStart": {
+        "samples": 250,
+        "mean": 187.45,
+        "p50": 183.14,
+        "p95": 194.96,
+        "p99": 346.89,
+        "min": 174.71,
+        "max": 354.51
+      },
+      "warmStart": {
+        "samples": 250,
+        "mean": 1.26,
+        "p50": 1.26,
+        "p95": 1.36,
+        "p99": 1.47,
+        "min": 1.14,
+        "max": 1.63
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 250,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.04,
+          "min": 0.02,
+          "max": 0.04
+        },
+        "session_open": {
+          "samples": 250,
+          "mean": 0.24,
+          "p50": 0.2,
+          "p95": 0.44,
+          "p99": 0.59,
+          "min": 0.14,
+          "max": 1.23
+        },
+        "vm_create": {
+          "samples": 250,
+          "mean": 1.29,
+          "p50": 1.16,
+          "p95": 1.99,
+          "p99": 3.13,
+          "min": 0.94,
+          "max": 3.38
+        },
+        "vm_ready": {
+          "samples": 250,
+          "mean": 0.01,
+          "p50": 0,
+          "p95": 0.03,
+          "p99": 0.04,
+          "min": 0,
+          "max": 0.04
+        },
+        "vm_configure": {
+          "samples": 250,
+          "mean": 0.12,
+          "p50": 0.09,
+          "p95": 0.33,
+          "p99": 0.5,
+          "min": 0.06,
+          "max": 0.7
+        },
+        "runtime_mount_wasm": {
+          "samples": 250,
+          "mean": 154.15,
+          "p50": 153.06,
+          "p95": 164.59,
+          "p99": 174.07,
+          "min": 145.22,
+          "max": 175.96
+        },
+        "runtime_mount_node": {
+          "samples": 250,
+          "mean": 2.76,
+          "p50": 2.67,
+          "p95": 3.32,
+          "p99": 4.14,
+          "min": 2.5,
+          "max": 4.68
+        },
+        "runtime_create_total": {
+          "samples": 250,
+          "mean": 156.98,
+          "p50": 155.91,
+          "p95": 167.28,
+          "p99": 176.83,
+          "min": 147.95,
+          "max": 178.81
+        },
+        "resident_runner_create": {
+          "samples": 250,
+          "mean": 29.04,
+          "p50": 25.71,
+          "p95": 29.33,
+          "p99": 174.02,
+          "min": 24.35,
+          "max": 176.34
+        },
+        "resident_first_exec": {
+          "samples": 250,
+          "mean": 1.43,
+          "p50": 1.3,
+          "p95": 2.42,
+          "p99": 2.68,
+          "min": 1.19,
+          "max": 4.01
+        },
+        "resident_warm_exec": {
+          "samples": 250,
+          "mean": 1.26,
+          "p50": 1.26,
+          "p95": 1.36,
+          "p99": 1.47,
+          "min": 1.14,
+          "max": 1.63
+        }
+      }
+    },
+    {
+      "scenario": "resident-runner",
+      "batchSize": 100,
+      "mode": "sequential",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.65,
+        "p50": 5.39,
+        "p95": 6.61,
+        "p99": 6.61,
+        "min": 5.27,
+        "max": 6.61
+      },
+      "coldStart": {
+        "samples": 500,
+        "mean": 186.1,
+        "p50": 183.49,
+        "p95": 196.74,
+        "p99": 241.08,
+        "min": 174.21,
+        "max": 356.11
+      },
+      "warmStart": {
+        "samples": 500,
+        "mean": 1.29,
+        "p50": 1.27,
+        "p95": 1.44,
+        "p99": 1.56,
+        "min": 1.13,
+        "max": 1.85
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 500,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.03,
+          "min": 0.02,
+          "max": 0.07
+        },
+        "session_open": {
+          "samples": 500,
+          "mean": 0.24,
+          "p50": 0.21,
+          "p95": 0.37,
+          "p99": 0.56,
+          "min": 0.13,
+          "max": 1.35
+        },
+        "vm_create": {
+          "samples": 500,
+          "mean": 1.22,
+          "p50": 1.08,
+          "p95": 1.89,
+          "p99": 2.4,
+          "min": 0.95,
+          "max": 3.1
+        },
+        "vm_ready": {
+          "samples": 500,
+          "mean": 0.01,
+          "p50": 0,
+          "p95": 0.03,
+          "p99": 0.04,
+          "min": 0,
+          "max": 0.1
+        },
+        "vm_configure": {
+          "samples": 500,
+          "mean": 0.12,
+          "p50": 0.09,
+          "p95": 0.31,
+          "p99": 0.45,
+          "min": 0.06,
+          "max": 0.83
+        },
+        "runtime_mount_wasm": {
+          "samples": 500,
+          "mean": 154.32,
+          "p50": 153.09,
+          "p95": 164.25,
+          "p99": 173.43,
+          "min": 144.5,
+          "max": 209.43
+        },
+        "runtime_mount_node": {
+          "samples": 500,
+          "mean": 2.79,
+          "p50": 2.71,
+          "p95": 3.29,
+          "p99": 4.16,
+          "min": 2.5,
+          "max": 5.19
+        },
+        "runtime_create_total": {
+          "samples": 500,
+          "mean": 157.18,
+          "p50": 155.96,
+          "p95": 168.01,
+          "p99": 177.22,
+          "min": 147.33,
+          "max": 213.6
+        },
+        "resident_runner_create": {
+          "samples": 500,
+          "mean": 27.46,
+          "p50": 25.58,
+          "p95": 29.87,
+          "p99": 34.55,
+          "min": 22.81,
+          "max": 180.7
+        },
+        "resident_first_exec": {
+          "samples": 500,
+          "mean": 1.45,
+          "p50": 1.32,
+          "p95": 2.53,
+          "p99": 2.83,
+          "min": 1.17,
+          "max": 4.15
+        },
+        "resident_warm_exec": {
+          "samples": 500,
+          "mean": 1.29,
+          "p50": 1.27,
+          "p95": 1.44,
+          "p99": 1.56,
+          "min": 1.13,
+          "max": 1.85
+        }
+      }
+    },
+    {
+      "scenario": "resident-runner",
+      "batchSize": 100,
+      "mode": "concurrent",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.63,
+        "p50": 5.54,
+        "p95": 6.12,
+        "p99": 6.12,
+        "min": 5.4,
+        "max": 6.12
+      },
+      "coldStart": {
+        "samples": 500,
+        "mean": 187.07,
+        "p50": 184.3,
+        "p95": 197.65,
+        "p99": 247.58,
+        "min": 173.96,
+        "max": 357.61
+      },
+      "warmStart": {
+        "samples": 500,
+        "mean": 1.29,
+        "p50": 1.28,
+        "p95": 1.42,
+        "p99": 1.53,
+        "min": 1.14,
+        "max": 1.65
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 500,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.03,
+          "min": 0.02,
+          "max": 0.07
+        },
+        "session_open": {
+          "samples": 500,
+          "mean": 0.24,
+          "p50": 0.21,
+          "p95": 0.41,
+          "p99": 0.59,
+          "min": 0.13,
+          "max": 1.14
+        },
+        "vm_create": {
+          "samples": 500,
+          "mean": 1.22,
+          "p50": 1.1,
+          "p95": 1.86,
+          "p99": 2.05,
+          "min": 0.95,
+          "max": 3.41
+        },
+        "vm_ready": {
+          "samples": 500,
+          "mean": 0.01,
+          "p50": 0,
+          "p95": 0.03,
+          "p99": 0.04,
+          "min": 0,
+          "max": 0.06
+        },
+        "vm_configure": {
+          "samples": 500,
+          "mean": 0.12,
+          "p50": 0.09,
+          "p95": 0.32,
+          "p99": 0.51,
+          "min": 0.06,
+          "max": 1.35
+        },
+        "runtime_mount_wasm": {
+          "samples": 500,
+          "mean": 155.41,
+          "p50": 154.31,
+          "p95": 166.61,
+          "p99": 173.9,
+          "min": 144.64,
+          "max": 217.62
+        },
+        "runtime_mount_node": {
+          "samples": 500,
+          "mean": 2.8,
+          "p50": 2.73,
+          "p95": 3.37,
+          "p99": 4.14,
+          "min": 2.49,
+          "max": 6.63
+        },
+        "runtime_create_total": {
+          "samples": 500,
+          "mean": 158.28,
+          "p50": 157.16,
+          "p95": 169.46,
+          "p99": 176.71,
+          "min": 147.26,
+          "max": 221
+        },
+        "resident_runner_create": {
+          "samples": 500,
+          "mean": 27.37,
+          "p50": 25.57,
+          "p95": 28.95,
+          "p99": 44,
+          "min": 22.79,
+          "max": 179.67
+        },
+        "resident_first_exec": {
+          "samples": 500,
+          "mean": 1.42,
+          "p50": 1.31,
+          "p95": 2.47,
+          "p99": 2.66,
+          "min": 1.19,
+          "max": 6.73
+        },
+        "resident_warm_exec": {
+          "samples": 500,
+          "mean": 1.29,
+          "p50": 1.28,
+          "p95": 1.42,
+          "p99": 1.53,
+          "min": 1.14,
+          "max": 1.65
+        }
+      }
+    },
+    {
+      "scenario": "resident-runner",
+      "batchSize": 200,
+      "mode": "sequential",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.58,
+        "p50": 5.51,
+        "p95": 5.79,
+        "p99": 5.79,
+        "min": 5.42,
+        "max": 5.79
+      },
+      "coldStart": {
+        "samples": 1000,
+        "mean": 189.76,
+        "p50": 187.37,
+        "p95": 204.16,
+        "p99": 215.02,
+        "min": 172.9,
+        "max": 361.82
+      },
+      "warmStart": {
+        "samples": 1000,
+        "mean": 1.23,
+        "p50": 1.29,
+        "p95": 1.52,
+        "p99": 1.66,
+        "min": 0.3,
+        "max": 3.77
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 1000,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.04,
+          "min": 0.02,
+          "max": 0.06
+        },
+        "session_open": {
+          "samples": 1000,
+          "mean": 0.27,
+          "p50": 0.24,
+          "p95": 0.52,
+          "p99": 0.65,
+          "min": 0.13,
+          "max": 1.31
+        },
+        "vm_create": {
+          "samples": 1000,
+          "mean": 1.18,
+          "p50": 1.1,
+          "p95": 1.77,
+          "p99": 2.29,
+          "min": 0.93,
+          "max": 3.2
+        },
+        "vm_ready": {
+          "samples": 1000,
+          "mean": 0.01,
+          "p50": 0,
+          "p95": 0.03,
+          "p99": 0.05,
+          "min": 0,
+          "max": 0.06
+        },
+        "vm_configure": {
+          "samples": 1000,
+          "mean": 0.15,
+          "p50": 0.12,
+          "p95": 0.33,
+          "p99": 0.47,
+          "min": 0.06,
+          "max": 1.02
+        },
+        "runtime_mount_wasm": {
+          "samples": 1000,
+          "mean": 159.24,
+          "p50": 157.28,
+          "p95": 174.65,
+          "p99": 178.82,
+          "min": 143.28,
+          "max": 195.21
+        },
+        "runtime_mount_node": {
+          "samples": 1000,
+          "mean": 2.9,
+          "p50": 2.79,
+          "p95": 3.59,
+          "p99": 4.24,
+          "min": 2.44,
+          "max": 7.61
+        },
+        "runtime_create_total": {
+          "samples": 1000,
+          "mean": 162.21,
+          "p50": 160.18,
+          "p95": 177.95,
+          "p99": 182.11,
+          "min": 145.86,
+          "max": 198.19
+        },
+        "resident_runner_create": {
+          "samples": 1000,
+          "mean": 26.07,
+          "p50": 25.2,
+          "p95": 28.4,
+          "p99": 33.17,
+          "min": 22.19,
+          "max": 179.58
+        },
+        "resident_first_exec": {
+          "samples": 1000,
+          "mean": 1.47,
+          "p50": 1.36,
+          "p95": 2.5,
+          "p99": 2.82,
+          "min": 1.07,
+          "max": 6.92
+        },
+        "resident_warm_exec": {
+          "samples": 1000,
+          "mean": 1.23,
+          "p50": 1.29,
+          "p95": 1.52,
+          "p99": 1.66,
+          "min": 0.3,
+          "max": 3.77
+        }
+      }
+    },
+    {
+      "scenario": "resident-runner",
+      "batchSize": 200,
+      "mode": "concurrent",
+      "iterations": 5,
+      "sidecarSetupMs": {
+        "samples": 5,
+        "mean": 5.77,
+        "p50": 5.61,
+        "p95": 6.18,
+        "p99": 6.18,
+        "min": 5.46,
+        "max": 6.18
+      },
+      "coldStart": {
+        "samples": 1000,
+        "mean": 191.33,
+        "p50": 189.09,
+        "p95": 205.41,
+        "p99": 218.43,
+        "min": 173.66,
+        "max": 358.92
+      },
+      "warmStart": {
+        "samples": 1000,
+        "mean": 1.22,
+        "p50": 1.29,
+        "p95": 1.51,
+        "p99": 1.64,
+        "min": 0.32,
+        "max": 2.31
+      },
+      "phases": {
+        "filesystem_snapshot": {
+          "samples": 1000,
+          "mean": 0.02,
+          "p50": 0.02,
+          "p95": 0.03,
+          "p99": 0.05,
+          "min": 0.02,
+          "max": 0.1
+        },
+        "session_open": {
+          "samples": 1000,
+          "mean": 0.27,
+          "p50": 0.24,
+          "p95": 0.52,
+          "p99": 0.65,
+          "min": 0.13,
+          "max": 1.4
+        },
+        "vm_create": {
+          "samples": 1000,
+          "mean": 1.19,
+          "p50": 1.1,
+          "p95": 1.75,
+          "p99": 2.45,
+          "min": 0.93,
+          "max": 7.19
+        },
+        "vm_ready": {
+          "samples": 1000,
+          "mean": 0.01,
+          "p50": 0,
+          "p95": 0.03,
+          "p99": 0.04,
+          "min": 0,
+          "max": 0.06
+        },
+        "vm_configure": {
+          "samples": 1000,
+          "mean": 0.14,
+          "p50": 0.11,
+          "p95": 0.32,
+          "p99": 0.41,
+          "min": 0.06,
+          "max": 5.13
+        },
+        "runtime_mount_wasm": {
+          "samples": 1000,
+          "mean": 160.77,
+          "p50": 158.75,
+          "p95": 176.08,
+          "p99": 181.88,
+          "min": 144.33,
+          "max": 212.94
+        },
+        "runtime_mount_node": {
+          "samples": 1000,
+          "mean": 2.94,
+          "p50": 2.85,
+          "p95": 3.61,
+          "p99": 4.18,
+          "min": 2.47,
+          "max": 5.46
+        },
+        "runtime_create_total": {
+          "samples": 1000,
+          "mean": 163.78,
+          "p50": 161.8,
+          "p95": 179.33,
+          "p99": 185.67,
+          "min": 146.9,
+          "max": 216.13
+        },
+        "resident_runner_create": {
+          "samples": 1000,
+          "mean": 26.08,
+          "p50": 25.21,
+          "p95": 28.18,
+          "p99": 34.27,
+          "min": 22.33,
+          "max": 180.21
+        },
+        "resident_first_exec": {
+          "samples": 1000,
+          "mean": 1.46,
+          "p50": 1.35,
+          "p95": 2.46,
+          "p99": 2.89,
+          "min": 1.08,
+          "max": 13.88
+        },
+        "resident_warm_exec": {
+          "samples": 1000,
+          "mean": 1.22,
+          "p50": 1.29,
+          "p95": 1.51,
+          "p99": 1.64,
+          "min": 0.32,
+          "max": 2.31
+        }
+      }
+    },
+    {
+      "scenario": "isolate-only",
+      "batchSize": 1,
+      "mode": "snapshot-restore",
+      "iterations": 50,
+      "coldStart": {
+        "samples": 1,
+        "mean": 4.5749,
+        "p50": 4.5749,
+        "p95": 4.5749,
+        "p99": 4.5749,
+        "min": 4.5749,
+        "max": 4.5749
+      },
+      "warmStart": {
+        "samples": 50,
+        "mean": 3.1503,
+        "p50": 3.1059,
+        "p95": 3.5326,
+        "p99": 3.8155,
+        "min": 2.8691,
+        "max": 3.8155
+      },
+      "phases": {
+        "snapshot_create": {
+          "samples": 1,
+          "mean": 123.904,
+          "p50": 123.904,
+          "p95": 123.904,
+          "p99": 123.904,
+          "min": 123.904,
+          "max": 123.904
+        }
+      }
+    }
+  ]
+}

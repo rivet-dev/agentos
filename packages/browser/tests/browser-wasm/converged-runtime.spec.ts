@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 // End-to-end converged runtime proof in real Chromium: a real Agent OS guest runs
-// in the @secure-exec/browser worker, and its fs.* syscalls are serviced over the
+// in the @rivet-dev/agentos-runtime-browser worker, and its fs.* syscalls are serviced over the
 // converged SharedArrayBuffer sync-bridge by the Agent OS wasm kernel (plugged in
 // via createAgentOsConvergedSidecar). This exercises the full converged path the
 // DoD requires — guest syscalls routed to the wasm kernel, kernel as sole

@@ -6,7 +6,7 @@
 // same path the echo agent proved for fs.*), which the in-sandbox HTTP proxy guest is
 // then built on. Binary `data` args ride the syscall channel via the $u8 tag.
 
-import { SabExecutionEndpoint, type SabRingLayout } from "@secure-exec/browser";
+import { SabExecutionEndpoint, type SabRingLayout } from "@rivet-dev/agentos-runtime-browser";
 import { encodeSyscall } from "./syscall-codec.js";
 
 interface InitMessage {

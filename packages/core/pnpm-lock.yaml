@@ -63,7 +63,7 @@ importers:
       '@agentos-software/codex':
         specifier: link:../../../secure-exec/registry/agent/codex
         version: link:../../../secure-exec/registry/agent/codex
-      '@secure-exec/coreutils':
+      '@rivet-dev/agentos-runtime-coreutils':
         specifier: link:../../registry/software/coreutils
         version: link:../../registry/software/coreutils
       '@secure-exec/curl':

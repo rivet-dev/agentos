@@ -1,0 +1,9 @@
+[package]
+name = "secureexec-expr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "expr implementation for secure-exec standalone binaries"
+
+[dependencies]
+regex = "1"

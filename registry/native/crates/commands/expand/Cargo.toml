@@ -1,0 +1,13 @@
+[package]
+name = "cmd-expand"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "expand standalone binary for secure-exec VM"
+
+[[bin]]
+name = "expand"
+path = "src/main.rs"
+
+[dependencies]
+uu_expand = "0.7.0"

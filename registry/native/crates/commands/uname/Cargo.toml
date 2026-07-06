@@ -1,0 +1,13 @@
+[package]
+name = "cmd-uname"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "uname standalone binary for secure-exec VM"
+
+[[bin]]
+name = "uname"
+path = "src/main.rs"
+
+[dependencies]
+uu_uname = "0.7.0"

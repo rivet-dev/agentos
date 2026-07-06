@@ -1,0 +1,20 @@
+[package]
+name = "agentos-v8-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "V8 isolate runtime for secure-exec guest JavaScript execution"
+
+[dependencies]
+agentos-bridge = { workspace = true }
+v8 = "130"
+crossbeam-channel = "0.5"
+signal-hook = "0.3"
+libc = "0.2"
+ciborium = "0.2"
+serde = "1.0"
+sha2 = "0.10"
+
+[build-dependencies]
+agentos-build-support = { workspace = true }

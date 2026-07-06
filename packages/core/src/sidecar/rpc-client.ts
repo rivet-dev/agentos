@@ -6,7 +6,7 @@ import type {
 	RootFilesystemConfig as VmConfigRootFilesystemConfig,
 	RootFilesystemEntry as VmConfigRootFilesystemEntry,
 	RootFilesystemLowerDescriptor as VmConfigRootFilesystemLowerDescriptor,
-} from "@secure-exec/core/vm-config";
+} from "@rivet-dev/agentos-runtime-core/vm-config";
 import type {
 	NativeMountConfig,
 	PlainMountConfig,
@@ -739,7 +739,7 @@ export class NativeSidecarKernelProxy {
 			cwd: options?.cwd ?? this.cwd,
 			env: {
 				...(options?.env ?? {}),
-				...(options?.streamStdin ? { SECURE_EXEC_KEEP_STDIN_OPEN: "1" } : {}),
+				...(options?.streamStdin ? { AGENTOS_KEEP_STDIN_OPEN: "1" } : {}),
 			},
 			startTime: Date.now(),
 			exitTime: null,

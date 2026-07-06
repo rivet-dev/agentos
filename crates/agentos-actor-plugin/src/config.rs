@@ -152,7 +152,8 @@ impl AgentOsConfigJson {
                 .packages
                 .iter()
                 .map(|package| PackageRef {
-                    dir: package.dir.clone(),
+                    dir: Some(package.dir.clone()),
+                    tar: None,
                 })
                 .collect(),
             packages_mount_at: self.packages_mount_at.clone(),

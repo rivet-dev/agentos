@@ -1,0 +1,18 @@
+[package]
+name = "cmd-sh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "sh standalone binary for secure-exec VM"
+
+[[bin]]
+name = "sh"
+path = "src/main.rs"
+
+# `reedline` is enabled on ALL targets, including wasm: the vendored wasi
+# patches supply what it needs (crossterm wasi backend, fd-lock, and
+# brush-interactive's cfg(target_os = "wasi") alternatives to the
+# tokio block_in_place paths), per the "behave like native Linux" rule.
+# `minimal` stays available as an explicit opt-out backend.
+[dependencies]
+brush-shell = { version = "0.3.0", default-features = false, features = ["reedline", "minimal"] }

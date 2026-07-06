@@ -1,2 +1,2 @@
-pub use secure_exec_client::SidecarTransport as SidecarProcess;
-pub use secure_exec_client::WireSidecarCallback;
+pub use agentos_sidecar_client::SidecarTransport as SidecarProcess;
+pub use agentos_sidecar_client::WireSidecarCallback;

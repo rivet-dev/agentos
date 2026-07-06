@@ -1,0 +1,13 @@
+[package]
+name = "cmd-tsort"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "tsort standalone binary for secure-exec VM"
+
+[[bin]]
+name = "tsort"
+path = "src/main.rs"
+
+[dependencies]
+uu_tsort = "0.7.0"

@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use anyhow::Result;
 use uuid::Uuid;
 
-use secure_exec_client::wire::{self, EventPayload, StreamChannel};
+use agentos_sidecar_client::wire::{self, EventPayload, StreamChannel};
 
 use crate::agent_os::{AcpTerminalEntry, AgentOs, ShellEntry};
 use crate::error::ClientError;

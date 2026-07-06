@@ -11,8 +11,8 @@ import type {
 	MountConfigJsonObject,
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
-} from "@secure-exec/core/descriptors";
-import type { CreateVmConfig } from "@secure-exec/core/vm-config";
+} from "@rivet-dev/agentos-runtime-core/descriptors";
+import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import type {
 	AgentCapabilities,
 	AgentInfo,
@@ -54,7 +54,7 @@ export type {
 	MountConfigJsonPrimitive,
 	MountConfigJsonValue,
 	NativeMountPluginDescriptor,
-} from "@secure-exec/core/descriptors";
+} from "@rivet-dev/agentos-runtime-core/descriptors";
 export type {
 	AgentCapabilities,
 	AgentInfo,
@@ -5522,14 +5522,14 @@ function ensureSharedSidecarNativeProcess(
 			// the spawned child is untracked, unreapable, and pins the loop).
 			state.sharedChild = sidecarChildHandle(client);
 			if (!state.sharedChild) {
-				// We reached into @secure-exec/core internals to get the child for
+				// We reached into @rivet-dev/agentos-runtime-core internals to get the child for
 				// idle-unref. If that shape ever changes this returns undefined and
 				// the optimization silently stops working (one-shot scripts would
 				// hang again). Make it loud rather than a silent regression.
 				console.warn(
 					"[agentos] could not resolve the shared sidecar child handle; " +
 						"standalone scripts may not exit cleanly after dispose(). " +
-						"This usually means @secure-exec/core internals changed.",
+						"This usually means @rivet-dev/agentos-runtime-core internals changed.",
 				);
 			}
 			// Apply the current hold state to the just-spawned child.

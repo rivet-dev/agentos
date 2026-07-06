@@ -1,4 +1,4 @@
-import type { NativeMountPluginDescriptor } from "@secure-exec/core/descriptors";
+import type { NativeMountPluginDescriptor } from "@rivet-dev/agentos-runtime-core/descriptors";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentOs } from "../src/index.js";
 

@@ -1,0 +1,20 @@
+--- a/Cargo.toml	2026-07-01 21:43:37.964197973 -0700
++++ b/Cargo.toml	2026-07-01 21:43:37.964197973 -0700
+@@ -91,6 +91,17 @@
+     "signal",
+ ]
+ 
++# wasi: the reedline/completion modules use tokio's runtime-agnostic pieces
++# (sync::Mutex, pin!) unconditionally; upstream only declares tokio for
++# unix/windows because it never compiled reedline for wasi. `signal` is
++# excluded (not available on wasi); `sync` + `macros` are all that's used.
++[target."cfg(target_os = \"wasi\")".dependencies.tokio]
++version = "1.48.0"
++features = [
++    "macros",
++    "sync",
++]
++
+ [target."cfg(unix)".dependencies.nix]
+ version = "0.30.1"
+ features = ["term"]

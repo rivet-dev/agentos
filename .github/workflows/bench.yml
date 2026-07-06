@@ -1,0 +1,39 @@
+name: bench
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 * * *"
+
+jobs:
+  bench-gate:
+    name: Runtime benchmark gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-wasip1
+      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-benchmarks...'
+      - run: cargo build --release -p agentos-native-sidecar
+      - run: cargo build --release -p agentos-native-baseline
+      - run: cargo build --release --target wasm32-wasip1 -p agentos-native-baseline
+      - run: make -C registry/native commands
+      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
+      - run: pnpm --dir packages/runtime-benchmarks bench:check
+      - run: pnpm --dir packages/runtime-benchmarks bench:gate
+        env:
+          AGENTOS_SIDECAR_BIN: ${{ github.workspace }}/target/release/agentos-native-sidecar
+          NATIVE_BASELINE_BIN: ${{ github.workspace }}/target/release/agentos-native-baseline
+          NATIVE_BASELINE_WASM: ${{ github.workspace }}/target/wasm32-wasip1/release/agentos-native-baseline.wasm

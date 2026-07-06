@@ -1,0 +1,61 @@
+--- a/src/platform/mod.rs
++++ b/src/platform/mod.rs
+@@ -19,3 +19,25 @@
+
+ #[cfg(windows)]
+ mod windows;
++
++// wasmVM: WASI stubs — no process signals or PID checks available
++#[cfg(target_os = "wasi")]
++pub type Pid = i32;
++
++#[cfg(target_os = "wasi")]
++pub struct ProcessChecker {
++    _pid: Pid,
++}
++
++#[cfg(target_os = "wasi")]
++impl ProcessChecker {
++    pub fn new(pid: Pid) -> Self {
++        Self { _pid: pid }
++    }
++    pub fn is_dead(&self) -> bool {
++        false
++    }
++}
++
++#[cfg(target_os = "wasi")]
++pub fn supports_pid_checks(_pid: Pid) -> bool { false }
+--- a/src/text.rs
++++ b/src/text.rs
+@@ -18,3 +18,5 @@
+ pub const BACKEND: &str = "kqueue";
+ #[cfg(target_os = "windows")]
+ pub const BACKEND: &str = "ReadDirectoryChanges";
++#[cfg(target_os = "wasi")]
++pub const BACKEND: &str = "polling";
+--- a/src/args.rs
++++ b/src/args.rs
+@@ -447,6 +447,8 @@
+     let polling_help = translate!("tail-help-polling-unix");
+     #[cfg(target_os = "windows")]
+     let polling_help = translate!("tail-help-polling-windows");
++    #[cfg(target_os = "wasi")]
++    let polling_help = translate!("tail-help-polling-unix");
+
+     Command::new(uucore::util_name())
+         .version(uucore::crate_version!())
+--- a/src/paths.rs
++++ b/src/paths.rs
+@@ -195,6 +195,11 @@
+             //     }
+             // }
+             false
++        }
++        #[cfg(not(any(unix, windows)))]
++        {
++            // wasmVM: WASI fallback — no file identity comparison
++            false
+         }
+     }
+ }

@@ -1,15 +1,28 @@
 packages:
   - packages/agentos-sandbox
   - packages/agentos
+  - packages/agentos-plugin
+  - packages/agentos-toolchain
   - packages/browser
+  - packages/build-tools
   - packages/core
-  - packages/dev-shell
+  - packages/manifest
   - packages/playground
+  - packages/posix
+  - packages/python
+  - packages/runtime-benchmarks
+  - packages/runtime-browser
+  - packages/runtime-core
+  - packages/runtime-sidecar
+  - packages/runtime-sidecar/npm/*
   - packages/secure-exec
   - packages/secure-exec-example-ai-agent-type-check
-  - packages/secure-exec-typescript
+  - packages/typescript
   - packages/shell
   - packages/sidecar-binary
+  - registry/agent/*
+  - registry/software/*
+  - registry/tool/*
   - examples/*
   # Nested example packages (e.g. examples/quickstart/hello-world) so every
   # embeddable example is a workspace member that `turbo check-types` covers.
@@ -37,46 +50,6 @@ onlyBuiltDependencies:
   - esbuild
   - lefthook
   - sharp
-
-# >>> secure-exec catalog (managed by scripts/secure-exec-dep.mjs) >>>
-catalog:
-  '@agentos-software/claude-code': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/codex': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/codex-cli': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/common': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/coreutils': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/curl': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/diffutils': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/duckdb': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/fd': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/file': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/findutils': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/gawk': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/git': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/grep': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/gzip': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/http-get': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/jq': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/manifest': 0.0.260331072558
-  '@agentos-software/opencode': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/pi': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/pi-cli': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/ripgrep': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/sed': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/sqlite3': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/tar': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/tree': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/unzip': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/vim': 0.0.260331072558
-  '@agentos-software/vix': 0.0.260331072558
-  '@agentos-software/wget': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@agentos-software/yq': 0.0.0-nathan-agentos-package-resolution.42d8146
-  '@agentos-software/zip': 0.0.0-nathan-agentos-package-resolution.efc374f
-  '@secure-exec/browser': 0.0.0-nathan-agentos-package-resolution.0bf7dcb
-  '@secure-exec/core': 0.0.0-nathan-agentos-package-resolution.0bf7dcb
-  '@secure-exec/nodejs': 0.2.1
-  '@secure-exec/sandbox': 0.0.0-nathan-agentos-package-resolution.0bf7dcb
-# <<< secure-exec catalog <<<
 
 # rivetkit runtime + react bindings. Same-version lockstep with the sidecar;
 # pinned once here and referenced everywhere via `catalog:rivetkit`.

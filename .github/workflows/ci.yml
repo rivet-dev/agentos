@@ -1,4 +1,5 @@
 name: CI
+
 on:
   push:
     branches: [main]
@@ -6,10 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  # Cheap job — TypeScript/boundary/metadata checks + rustfmt. No heavy cargo
-  # compile, so it runs on GitHub-hosted runners (small, dynamic), NOT the
-  # self-hosted pool (which is reserved for the cache-heavy rust build below).
   checks:
+    name: Checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,10 +27,6 @@ jobs:
           rm -rf website/vendor/theme && mkdir -p website/vendor
           cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
-      # website deploys via its own Dockerfile and is NOT built in CI. It is a
-      # workspace member only in local dev (commented out of pnpm-workspace.yaml
-      # when committed), so `--filter='!@agentos/website'` errors with "No package
-      # found in workspace" in CI. Apply the exclusion only when website is a member.
       - run: |
           if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
             npx turbo build --filter='!@agentos/website'
@@ -40,19 +35,10 @@ jobs:
           fi
       - run: pnpm --dir scripts/publish run check-types
       - run: pnpm --dir scripts/publish test
-      - run: bash scripts/check-secure-exec-rust-boundary.test.sh
-      - run: bash scripts/check-secure-exec-rust-boundary.sh
       - run: node --test scripts/check-rust-package-metadata.test.mjs
       - run: node scripts/check-rust-package-metadata.mjs
-      - run: node --test scripts/check-stale-split-names.test.mjs
-      - run: node scripts/check-stale-split-names.mjs
       - run: node --test scripts/check-agentos-client-protocol-compat.test.mjs
       - run: node scripts/check-agentos-client-protocol-compat.mjs
-      - run: node --test scripts/check-secure-exec-package-boundary.test.mjs
-      - run: node scripts/check-secure-exec-package-boundary.mjs
-      - run: node --test scripts/check-no-escaping-local-deps.test.mjs
-      - run: node scripts/check-no-escaping-local-deps.mjs
-      - run: node scripts/verify-file-deps.mjs
       - run: node --test scripts/verify-fixed-versions.test.mjs
       - run: node scripts/verify-fixed-versions.mjs
       - run: cargo fmt --check
@@ -60,12 +46,36 @@ jobs:
       - run: pnpm lint
         continue-on-error: true
 
-  # Heavy job — compiles the secure-exec crates (via prepare-build), runs clippy,
-  # the Rust test suites, and the sidecar-heavy e2e tests. CPU/mem intensive and
-  # relies on the warm cargo/sccache cache, so it runs on the self-hosted
-  # agentos-builder pool. On self-hosted the persistent on-disk target/ +
-  # CARGO_HOME + sccache replace the GHA cache steps (absent here).
+  wasm-commands:
+    name: WASM Commands
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: registry/native -> registry/native/target
+          key: wasm-commands-${{ hashFiles('registry/native/Cargo.lock') }}
+      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
+      - run: make -C registry/native commands
+      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-commands
+          path: packages/runtime-core/commands
+          if-no-files-found: error
+
   rust:
+    name: Rust
+    needs: [wasm-commands]
     runs-on: [self-hosted, agentos-builder]
     steps:
       - uses: actions/checkout@v4
@@ -82,29 +92,20 @@ jobs:
           rm -rf website/vendor/theme && mkdir -p website/vendor
           cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
-      # website deploys via its own Dockerfile and is NOT built in CI. It is a
-      # workspace member only in local dev (commented out of pnpm-workspace.yaml
-      # when committed), so `--filter='!@agentos/website'` errors with "No package
-      # found in workspace" in CI. Apply the exclusion only when website is a member.
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-commands
+          path: packages/runtime-core/commands
+      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - run: |
           if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
             npx turbo build --filter='!@agentos/website'
           else
             npx turbo build
           fi
-      # Build the Rust crates against the pinned secure-exec. For a preview pin this
-      # clones secure-exec at the pinned <sha> and switches cargo to local path deps
-      # (crates.io has no preview track, so an unreleased crate API — e.g. a new
-      # Extension hook — is only reachable via the clone); no-op for release pins.
-      # Mirrors the same step in publish.yaml so PR CI matches the build.
-      - name: Prepare secure-exec crates
-        run: node scripts/secure-exec-dep.mjs prepare-build
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test -p agentos-protocol -- --test-threads=1
       - run: cargo test -p agentos-sidecar -- --test-threads=1
-      # NOTE: agentos-sidecar-browser is intentionally excluded from the
-      # workspace (it depends on secure-exec-sidecar-browser, unpublished on
-      # crates.io), so it is not tested here. Re-add once that crate publishes.
       - run: cargo test -p agentos-client -- --test-threads=1
         env:
           AGENT_OS_CLIENT_ALLOW_E2E_SKIPS: '1'
@@ -112,6 +113,5 @@ jobs:
         run: pnpm test
         env:
           AGENTOS_E2E_NETWORK: '1'
-          SECURE_EXEC_E2E_NETWORK: '1'
       - if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: pnpm test

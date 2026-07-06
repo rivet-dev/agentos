@@ -1,0 +1,9 @@
+[package]
+name = "secureexec-diff"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "diff implementation for secure-exec standalone binaries"
+
+[dependencies]
+similar = "2"

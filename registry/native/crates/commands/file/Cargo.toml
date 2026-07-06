@@ -1,0 +1,13 @@
+[package]
+name = "cmd-file"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "file standalone binary for secure-exec VM"
+
+[[bin]]
+name = "file"
+path = "src/main.rs"
+
+[dependencies]
+secureexec-file-cmd = { path = "../../libs/file-cmd" }

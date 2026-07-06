@@ -1,0 +1,1 @@
+//! Metric tag constants (stub).

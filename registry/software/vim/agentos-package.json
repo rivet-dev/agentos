@@ -1,0 +1,18 @@
+{
+	"name": "vim",
+	"commands": [
+		"vim"
+	],
+	"provides": {
+		"env": {
+			"VIM": "/usr/local/share/vim",
+			"VIMRUNTIME": "/usr/local/share/vim/vim92"
+		},
+		"files": [
+			{
+				"source": "share/vim/vim92",
+				"target": "/usr/local/share/vim/vim92"
+			}
+		]
+	}
+}

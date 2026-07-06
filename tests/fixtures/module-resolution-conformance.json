@@ -1,0 +1,214 @@
+{
+  "cases": [
+    {
+      "name": "file URL specifiers resolve to guest files",
+      "files": {
+        "project/space name.js": "module.exports = 1;",
+        "project/plus+name.js": "module.exports = 2;"
+      },
+      "resolves": [
+        {
+          "specifier": "file:///root/project/space%20name.js?cache=1",
+          "from": "/root/project/app.js",
+          "mode": "require",
+          "expected": "/root/project/space name.js"
+        },
+        {
+          "specifier": "file:///root/project/plus+name.js",
+          "from": "/root/project/app.js",
+          "mode": "require",
+          "expected": "/root/project/plus+name.js"
+        },
+        {
+          "specifier": "file://remote/root/project/app.js",
+          "from": "/root/project/app.js",
+          "mode": "require",
+          "expected": null
+        }
+      ]
+    },
+    {
+      "name": "package imports resolve from nearest package json",
+      "files": {
+        "project/package.json": "{ \"imports\": { \"#config\": \"./src/config.js\", \"#utils/*\": \"./src/utils/*.js\" } }",
+        "project/src/config.js": "export const value = 1;",
+        "project/src/utils/math.js": "export const value = 2;"
+      },
+      "resolves": [
+        {
+          "specifier": "#config",
+          "from": "/root/project/src/app.js",
+          "mode": "import",
+          "expected": "/root/project/src/config.js"
+        },
+        {
+          "specifier": "#utils/math",
+          "from": "/root/project/src/app.js",
+          "mode": "import",
+          "expected": "/root/project/src/utils/math.js"
+        },
+        {
+          "specifier": "#missing",
+          "from": "/root/project/src/app.js",
+          "mode": "import",
+          "expected": null
+        }
+      ]
+    },
+    {
+      "name": "conditional exports prefer native node order",
+      "files": {
+        "node_modules/pkg/package.json": "{ \"exports\": { \".\": { \"browser\": \"./browser.js\", \"node\": \"./node.js\", \"default\": \"./default.js\" } } }",
+        "node_modules/pkg/browser.js": "module.exports = 'browser';",
+        "node_modules/pkg/node.js": "module.exports = 'node';",
+        "node_modules/pkg/default.js": "module.exports = 'default';"
+      },
+      "resolves": [
+        {
+          "specifier": "pkg",
+          "from": "/root/project/app.js",
+          "mode": "import",
+          "expected": "/root/node_modules/pkg/node.js"
+        },
+        {
+          "specifier": "pkg",
+          "from": "/root/project/app.js",
+          "mode": "require",
+          "expected": "/root/node_modules/pkg/node.js"
+        }
+      ]
+    },
+    {
+      "name": "package exports resolve before load existence checks",
+      "files": {
+        "node_modules/missing-export/package.json": "{ \"exports\": \"./dist/missing.js\" }"
+      },
+      "resolves": [
+        {
+          "specifier": "missing-export",
+          "from": "/root/project/app.js",
+          "mode": "import",
+          "expected": "/root/node_modules/missing-export/dist/missing.js"
+        }
+      ]
+    },
+    {
+      "name": "package self references resolve through exports",
+      "files": {
+        "project/package.json": "{ \"name\": \"self-pkg\", \"exports\": { \".\": \"./src/index.js\", \"./feature\": { \"import\": \"./src/feature.mjs\", \"require\": \"./src/feature.cjs\" } } }",
+        "project/src/index.js": "module.exports = 1;",
+        "project/src/feature.mjs": "export default 2;",
+        "project/src/feature.cjs": "module.exports = 3;"
+      },
+      "resolves": [
+        {
+          "specifier": "self-pkg",
+          "from": "/root/project/src/app.js",
+          "mode": "require",
+          "expected": "/root/project/src/index.js"
+        },
+        {
+          "specifier": "self-pkg/feature",
+          "from": "/root/project/src/app.js",
+          "mode": "import",
+          "expected": "/root/project/src/feature.mjs"
+        },
+        {
+          "specifier": "self-pkg/feature",
+          "from": "/root/project/src/app.js",
+          "mode": "require",
+          "expected": "/root/project/src/feature.cjs"
+        }
+      ]
+    },
+    {
+      "name": "import extension probing matches native order",
+      "files": {
+        "project/src/dual.js": "export default 'js';",
+        "project/src/dual.mjs": "export default 'mjs';"
+      },
+      "resolves": [
+        {
+          "specifier": "./dual",
+          "from": "/root/project/src/app.js",
+          "mode": "import",
+          "expected": "/root/project/src/dual.js"
+        }
+      ]
+    },
+    {
+      "name": "root node_modules fallback is available outside root",
+      "files": {
+        "node_modules/root-fallback/index.js": "module.exports = 1;",
+        "node_modules/other/index.js": "module.exports = 2;"
+      },
+      "resolves": [
+        {
+          "specifier": "root-fallback",
+          "from": "/workspace/app.js",
+          "mode": "require",
+          "expected": "/root/node_modules/root-fallback/index.js"
+        },
+        {
+          "specifier": "other",
+          "from": "/workspace/app.js",
+          "mode": "require",
+          "expected": "/root/node_modules/other/index.js"
+        }
+      ]
+    }
+  ],
+  "formats": [
+    {
+      "name": "explicit ESM extensions are modules",
+      "files": {
+        "project/src/module.mjs": "export default 1;"
+      },
+      "path": "/root/project/src/module.mjs",
+      "expected": "module"
+    },
+    {
+      "name": "explicit CJS extensions are commonjs",
+      "files": {
+        "project/src/module.cjs": "module.exports = 1;"
+      },
+      "path": "/root/project/src/module.cjs",
+      "expected": "commonjs"
+    },
+    {
+      "name": "json files are json modules",
+      "files": {
+        "project/src/config.json": "{ \"ok\": true }"
+      },
+      "path": "/root/project/src/config.json",
+      "expected": "json"
+    },
+    {
+      "name": "js files inherit nearest module package type",
+      "files": {
+        "project/package.json": "{ \"type\": \"module\" }",
+        "project/src/app.js": "export default 1;"
+      },
+      "path": "/root/project/src/app.js",
+      "expected": "module"
+    },
+    {
+      "name": "js files inherit nearest commonjs package type",
+      "files": {
+        "project/package.json": "{ \"type\": \"module\" }",
+        "project/src/cjs/package.json": "{ \"type\": \"commonjs\" }",
+        "project/src/cjs/app.js": "module.exports = 1;"
+      },
+      "path": "/root/project/src/cjs/app.js",
+      "expected": "commonjs"
+    },
+    {
+      "name": "unknown extensions have no module format",
+      "files": {
+        "project/src/readme.txt": "not JavaScript"
+      },
+      "path": "/root/project/src/readme.txt",
+      "expected": null
+    }
+  ]
+}

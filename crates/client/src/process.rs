@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
-use secure_exec_client::wire::{self, EventPayload, ProcessSnapshotStatus, StreamChannel};
+use agentos_sidecar_client::wire::{self, EventPayload, ProcessSnapshotStatus, StreamChannel};
 
 use crate::agent_os::{AgentOs, ProcessEntry};
 use crate::command_line::resolve_exec_command;

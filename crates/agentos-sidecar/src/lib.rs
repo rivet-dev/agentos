@@ -6,7 +6,7 @@ mod acp_extension;
 
 pub use acp_extension::AcpExtension;
 
-pub fn extensions() -> Vec<Box<dyn secure_exec_sidecar::Extension>> {
+pub fn extensions() -> Vec<Box<dyn agentos_native_sidecar::Extension>> {
     vec![Box::new(AcpExtension::new())]
 }
 

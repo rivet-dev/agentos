@@ -1,0 +1,168 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wasi-ext",
+    "crates/libs/shims",
+    "crates/libs/builtins",
+    "crates/libs/stubs",
+    "crates/libs/grep",
+    "crates/libs/awk",
+    "crates/libs/jq",
+    "crates/libs/yq",
+    "crates/commands/grep",
+    "crates/commands/sh",
+    "crates/commands/sed",
+    "crates/commands/awk",
+    "crates/commands/jq",
+    "crates/commands/yq",
+    "crates/commands/rg",
+    "crates/libs/find",
+    "crates/libs/file-cmd",
+    "crates/libs/tree",
+    "crates/libs/du",
+    "crates/libs/column",
+    "crates/libs/rev",
+    "crates/libs/strings-cmd",
+    "crates/libs/expr",
+    "crates/libs/diff",
+    "crates/commands/find",
+    "crates/commands/file",
+    "crates/commands/tree",
+    "crates/commands/du",
+    "crates/commands/column",
+    "crates/commands/rev",
+    "crates/commands/strings",
+    "crates/commands/expr",
+    "crates/commands/diff",
+    "crates/libs/gzip",
+    "crates/libs/tar",
+    "crates/commands/gzip",
+    "crates/commands/tar",
+    "crates/commands/ls",
+    "crates/commands/cat",
+    "crates/commands/cp",
+    "crates/commands/mv",
+    "crates/commands/rm",
+    "crates/commands/mkdir",
+    "crates/commands/chmod",
+    "crates/commands/sort",
+    "crates/commands/head",
+    "crates/commands/tail",
+    "crates/commands/wc",
+    "crates/commands/cut",
+    "crates/commands/tr",
+    "crates/commands/echo",
+    "crates/commands/printf",
+    # US-009: remaining uutils coreutils
+    "crates/commands/dd",
+    "crates/commands/ln",
+    "crates/commands/logname",
+    "crates/commands/mktemp",
+    "crates/commands/pathchk",
+    "crates/commands/split",
+    "crates/commands/stat",
+    "crates/commands/tac",
+    "crates/commands/touch",
+    "crates/commands/tsort",
+    "crates/commands/base32",
+    "crates/commands/base64",
+    "crates/commands/basenc",
+    "crates/commands/basename",
+    "crates/commands/comm",
+    "crates/commands/dircolors",
+    "crates/commands/dirname",
+    "crates/commands/expand",
+    "crates/commands/factor",
+    "crates/commands/false",
+    "crates/commands/fmt",
+    "crates/commands/fold",
+    "crates/commands/join",
+    "crates/commands/nl",
+    "crates/commands/numfmt",
+    "crates/commands/od",
+    "crates/commands/paste",
+    "crates/commands/printenv",
+    "crates/commands/ptx",
+    "crates/commands/seq",
+    "crates/commands/shuf",
+    "crates/commands/true",
+    "crates/commands/unexpand",
+    "crates/commands/uniq",
+    "crates/commands/yes",
+    "crates/commands/b2sum",
+    "crates/commands/cksum",
+    "crates/commands/md5sum",
+    "crates/commands/sha1sum",
+    "crates/commands/sha224sum",
+    "crates/commands/sha256sum",
+    "crates/commands/sha384sum",
+    "crates/commands/sha512sum",
+    "crates/commands/sum",
+    "crates/commands/link",
+    "crates/commands/pwd",
+    "crates/commands/readlink",
+    "crates/commands/realpath",
+    "crates/commands/rmdir",
+    "crates/commands/shred",
+    "crates/commands/tee",
+    "crates/commands/truncate",
+    "crates/commands/unlink",
+    "crates/commands/arch",
+    "crates/commands/date",
+    "crates/commands/nproc",
+    "crates/commands/uname",
+    # US-010: builtins, shims, and stubs
+    "crates/commands/sleep",
+    "crates/commands/test",
+    "crates/commands/whoami",
+    "crates/commands/env",
+    "crates/commands/timeout",
+    "crates/commands/which",
+    "crates/commands/xu",
+    "crates/commands/xargs",
+    "crates/commands/nice",
+    "crates/commands/nohup",
+    "crates/commands/stdbuf",
+    "crates/commands/_stubs",
+    # US-079: fd-find compatible file finder
+    "crates/libs/fd",
+    "crates/commands/fd",
+    # US-099: codex (OpenAI Codex CLI) WASI build skeleton
+    "crates/commands/codex",
+    # US-100: WASI process spawning via host_process FFI
+    "crates/libs/wasi-spawn",
+    "crates/commands/spawn-test-host",
+    # US-101: WASI PTY-based process management via host_process FFI
+    "crates/libs/wasi-pty",
+    # US-102: WASI HTTP client via host_net TCP/TLS
+    "crates/libs/wasi-http",
+    "crates/commands/curl",
+    "crates/commands/http-test",
+    # US-104: codex-exec headless agent binary
+    "crates/commands/codex-exec",
+    # git: minimal git implementation
+    "crates/libs/git",
+    "crates/commands/git",
+    "stubs/codex-otel",
+    "stubs/ctrlc",
+    "stubs/hostname",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+# WASM-compatible stubs for crates that don't support wasm32-wasip1
+[patch.crates-io]
+ctrlc = { path = "stubs/ctrlc" }
+hostname = { path = "stubs/hostname" }
+uucore = { path = "stubs/uucore" }
+codex-network-proxy = { path = "stubs/codex-network-proxy" }
+codex-otel = { path = "stubs/codex-otel" }

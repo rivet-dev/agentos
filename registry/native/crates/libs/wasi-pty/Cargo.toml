@@ -1,0 +1,10 @@
+[package]
+name = "secureexec-wasi-pty"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WASI PTY-based process management via host_process FFI for interactive sessions"
+
+[dependencies]
+wasi-ext = { path = "../../wasi-ext" }
+wasi-spawn = { package = "secureexec-wasi-spawn", path = "../wasi-spawn" }

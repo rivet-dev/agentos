@@ -1,0 +1,13 @@
+[package]
+name = "cmd-uniq"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "uniq standalone binary for secure-exec VM"
+
+[[bin]]
+name = "uniq"
+path = "src/main.rs"
+
+[dependencies]
+uu_uniq = "0.7.0"
