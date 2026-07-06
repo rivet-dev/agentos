@@ -53,7 +53,12 @@ fn pi_module_cwd() -> Option<String> {
         .then(|| root.to_string_lossy().into_owned())
 }
 
-fn pi_package_dir() -> Option<PathBuf> {
+fn pi_package_path() -> Option<PathBuf> {
+    // Prefer the packed .aospkg — the artifact the registry actually ships.
+    let aospkg = repo_root().join("registry/agent/pi/dist/package.aospkg");
+    if aospkg.is_file() {
+        return std::fs::canonicalize(aospkg).ok();
+    }
     let dir = repo_root().join("registry/agent/pi/dist/package");
     if dir.join("agentos-package.json").is_file() {
         std::fs::canonicalize(dir).ok()
@@ -131,8 +136,8 @@ async fn pi_session_create_prompt_close() {
         );
         return;
     };
-    let Some(package_dir) = pi_package_dir() else {
-        eprintln!("skipping pi_session_create_prompt_close: Pi package dir not materialized");
+    let Some(package_path) = pi_package_path() else {
+        eprintln!("skipping pi_session_create_prompt_close: Pi package is not built");
         return;
     };
 
@@ -141,16 +146,24 @@ async fn pi_session_create_prompt_close() {
     let port = llmock.port();
 
     common::ensure_sidecar_env();
-    let os = AgentOs::create(AgentOsConfig {
-        mounts: vec![node_modules_mount(
-            package_dir
+    // Packed .aospkg packages carry node_modules inside the mount tar and the
+    // runtime resolves them through the kernel VFS — no host mount needed. The
+    // transition-dir fallback still exercises the host node_modules mount.
+    let mounts = if package_path.is_file() {
+        Vec::new()
+    } else {
+        vec![node_modules_mount(
+            package_path
                 .join("node_modules")
                 .to_string_lossy()
                 .into_owned(),
-        )],
+        )]
+    };
+    let os = AgentOs::create(AgentOsConfig {
+        mounts,
         loopback_exempt_ports: vec![port],
         packages: vec![PackageRef {
-            path: package_dir.to_string_lossy().into_owned(),
+            path: package_path.to_string_lossy().into_owned(),
         }],
         permissions: Some(Permissions {
             network: Some(PatternPermissions::Mode(PermissionMode::Allow)),

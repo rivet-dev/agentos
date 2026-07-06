@@ -42,6 +42,7 @@ const MAX_TAR_SYMLINKS: usize = 40;
 /// `/opt/agentos/pkgs/<pkg>/<version>`. Managed commands and `current` aliases
 /// are separate symlink leaf mounts, while parent directories stay writable
 /// overlay directories so user-installed files can coexist with managed ones.
+#[derive(Clone)]
 pub struct TarFileSystem {
     archive: Arc<CachedTarArchive>,
     root: String,

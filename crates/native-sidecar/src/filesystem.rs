@@ -974,11 +974,41 @@ impl ModuleFsReader for ProcessModuleFsReader<'_> {
 /// `__resolve_module` / `__load_file` / `__module_format` /
 /// `__batch_resolve_modules` methods (mapped from the guest bridge's
 /// `_resolveModule` / `_loadFile` / `_moduleFormat` / `_batchResolveModules`).
+/// The `/opt/agentos/pkgs/<name>/<version>` root containing `guest_entrypoint`,
+/// when the entrypoint lives inside a projected package. `current` is a valid
+/// version segment here — the resolver canonicalizes it through the kernel.
+fn agentos_package_version_root(guest_entrypoint: &str) -> Option<String> {
+    let rest = guest_entrypoint.strip_prefix("/opt/agentos/pkgs/")?;
+    let mut parts = rest.split('/');
+    let name = parts.next().filter(|part| !part.is_empty())?;
+    let version = parts.next().filter(|part| !part.is_empty())?;
+    Some(format!("/opt/agentos/pkgs/{name}/{version}"))
+}
+
+fn is_bare_module_specifier(specifier: &str) -> bool {
+    !(specifier.starts_with('/')
+        || specifier.starts_with("./")
+        || specifier.starts_with("../")
+        || specifier == "."
+        || specifier == ".."
+        || specifier.starts_with('#')
+        || specifier.starts_with("file:"))
+}
+
 pub(crate) fn service_javascript_module_sync_rpc(
     kernel: &mut SidecarKernel,
     process: &mut ActiveProcess,
     request: &JavascriptSyncRpcRequest,
 ) -> Result<Value, SidecarError> {
+    // Self-contained package processes (agent adapters, packed JS commands)
+    // carry their whole dependency closure inside the package mount. A bare
+    // specifier that misses from an unpackaged context (a parent module path
+    // like `/root` from cwd-based requires) retries from the package's own
+    // version root, so packed packages resolve exactly what they shipped.
+    let package_fallback_from = process
+        .env
+        .get("AGENTOS_GUEST_ENTRYPOINT")
+        .and_then(|entrypoint| agentos_package_version_root(entrypoint));
     let mut cache = std::mem::take(&mut process.module_resolution_cache);
     let value = {
         let reader = ProcessModuleFsReader {
@@ -999,10 +1029,19 @@ pub(crate) fn service_javascript_module_sync_rpc(
                     _ if request.method == "_resolveModuleSync" => ModuleResolveMode::Require,
                     _ => ModuleResolveMode::Import,
                 };
-                resolver
-                    .resolve_module(specifier, parent, mode)
-                    .map(Value::String)
-                    .unwrap_or(Value::Null)
+                let mut resolved = resolver.resolve_module(specifier, parent, mode);
+                if resolved.is_none() && is_bare_module_specifier(specifier) {
+                    if let Some(fallback_from) = package_fallback_from
+                        .as_deref()
+                        .filter(|fallback| *fallback != parent)
+                    {
+                        resolved = resolver.resolve_module(specifier, fallback_from, mode);
+                    }
+                }
+                if resolved.is_none() && std::env::var("AGENTOS_MODULE_READER_TRACE").is_ok() {
+                    eprintln!("kernel-resolve MISS: {specifier} from {parent} mode={mode:?}");
+                }
+                resolved.map(Value::String).unwrap_or(Value::Null)
             }
             "__load_file" | "_loadFile" | "_loadFileSync" => {
                 let path = javascript_sync_rpc_arg_str(&request.args, 0, "module load path")?;

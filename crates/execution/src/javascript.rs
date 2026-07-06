@@ -3887,9 +3887,17 @@ impl LocalBridgeState {
         mode: ModuleResolveMode,
     ) -> Option<String> {
         if self.js_runtime_denies_specifier(specifier) {
+            if std::env::var("AGENTOS_MODULE_READER_TRACE").is_ok() {
+                eprintln!("resolve DENIED: {specifier} from {from_dir}");
+            }
             return None;
         }
-        self.with_module_resolver(|resolver| resolver.resolve_module(specifier, from_dir, mode))
+        let resolved =
+            self.with_module_resolver(|resolver| resolver.resolve_module(specifier, from_dir, mode));
+        if resolved.is_none() && std::env::var("AGENTOS_MODULE_READER_TRACE").is_ok() {
+            eprintln!("resolve MISS: {specifier} from {from_dir} mode={mode:?}");
+        }
+        resolved
     }
 
     /// jsRuntime resolution gate. Denies builtin and bare/relative imports per the

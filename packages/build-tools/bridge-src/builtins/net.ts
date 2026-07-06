@@ -1066,7 +1066,11 @@ function createAcceptedClientHandle(socketId, info) {
   };
 }
 
-var NET_BRIDGE_TIMEOUT_SENTINEL = "__secure_exec_net_timeout__";
+// Must match JAVASCRIPT_NET_TIMEOUT_SENTINEL in crates/native-sidecar/src/execution.rs.
+// A mismatched sentinel is NOT a soft failure: every no-data poll response then
+// falls through to base64 decoding and injects the decoded sentinel bytes into
+// the socket stream as phantom data.
+var NET_BRIDGE_TIMEOUT_SENTINEL = "__agentos_net_timeout__";
 
 var NET_BRIDGE_POLL_DELAY_MS = 10;
 

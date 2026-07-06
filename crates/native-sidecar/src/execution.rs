@@ -11119,15 +11119,81 @@ fn build_module_reader(
         })
         .collect();
 
+    // Packed package-version leaves: module resolution reads packed
+    // `node_modules` content straight from the `.aospkg` mount index (shared
+    // mmap cache; no kernel access), mirroring what the guest sees through the
+    // kernel tar mount. `(guest_path, aospkg_path, tar_root)` triples.
+    let mut package_tars: Vec<(String, String, String)> = vm
+        .configuration
+        .mounts
+        .iter()
+        .filter(|mount| mount.plugin.id == "agentos_packages")
+        .filter_map(|mount| {
+            let config = serde_json::from_str::<Value>(&mount.plugin.config).ok()?;
+            if config.get("kind").and_then(Value::as_str) != Some("tar") {
+                return None;
+            }
+            let tar_path = config.get("tarPath").and_then(Value::as_str)?.to_owned();
+            let root = config
+                .get("root")
+                .and_then(Value::as_str)
+                .unwrap_or("/")
+                .to_owned();
+            Some((normalize_path(&mount.guest_path), tar_path, root))
+        })
+        .collect();
+    // `<pkg>/current -> <version>` symlink leaves: alias the current prefix to
+    // the same tar so modules that self-locate through `current` (rather than
+    // the realpathed version dir) still resolve.
+    let current_aliases: Vec<(String, String, String)> = vm
+        .configuration
+        .mounts
+        .iter()
+        .filter(|mount| mount.plugin.id == "agentos_packages")
+        .filter_map(|mount| {
+            let config = serde_json::from_str::<Value>(&mount.plugin.config).ok()?;
+            if config.get("kind").and_then(Value::as_str) != Some("singleSymlink") {
+                return None;
+            }
+            let link_path = normalize_path(&mount.guest_path);
+            let target = config.get("target").and_then(Value::as_str)?;
+            let resolved_target = if target.starts_with('/') {
+                normalize_path(target)
+            } else {
+                let parent = Path::new(&link_path).parent()?.to_str()?;
+                normalize_path(&format!("{parent}/{target}"))
+            };
+            package_tars
+                .iter()
+                .find(|(guest, _, _)| *guest == resolved_target)
+                .map(|(_, tar_path, root)| (link_path, tar_path.clone(), root.clone()))
+        })
+        .collect();
+    package_tars.extend(current_aliases);
+
     let guest_entrypoint = resolved
         .env
         .get("AGENTOS_GUEST_ENTRYPOINT")
         .map(|path| normalize_path(path));
     if let Some(guest_entrypoint) = guest_entrypoint.as_deref() {
-        let entrypoint_in_read_only_mount = pairs.iter().any(|(guest_path, _)| {
-            guest_entrypoint == guest_path
-                || guest_entrypoint.starts_with(&format!("{guest_path}/"))
-        });
+        // Package entrypoints may still carry their pre-realpath launch path
+        // (`/opt/agentos/bin/<cmd>` or `<pkg>/current/...` symlink leaves), so
+        // gate on EVERY agentos_packages mount prefix, not just the tar leaves.
+        let package_mount_prefixes: Vec<String> = vm
+            .configuration
+            .mounts
+            .iter()
+            .filter(|mount| mount.plugin.id == "agentos_packages")
+            .map(|mount| normalize_path(&mount.guest_path))
+            .collect();
+        let entrypoint_in_read_only_mount = pairs
+            .iter()
+            .map(|(guest_path, _)| guest_path)
+            .chain(package_mount_prefixes.iter())
+            .any(|guest_path| {
+                guest_entrypoint == guest_path
+                    || guest_entrypoint.starts_with(&format!("{guest_path}/"))
+            });
         if !entrypoint_in_read_only_mount {
             return None;
         }
@@ -11145,7 +11211,21 @@ fn build_module_reader(
         .collect();
     pairs.extend(extra_roots);
 
-    crate::plugins::host_dir::HostDirModuleReader::from_mounts(pairs)
+    if std::env::var("AGENTOS_MODULE_READER_TRACE").is_ok() {
+        eprintln!(
+            "module-reader: entrypoint={:?} host_pairs={} package_tars={:?}",
+            resolved.env.get("AGENTOS_GUEST_ENTRYPOINT"),
+            pairs.len(),
+            package_tars
+                .iter()
+                .map(|(guest, _, _)| guest.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+    crate::plugins::host_dir::HostDirModuleReader::from_mounts_and_package_tars(
+        pairs,
+        package_tars,
+    )
 }
 
 fn host_node_modules_root(path: &Path) -> Option<PathBuf> {
