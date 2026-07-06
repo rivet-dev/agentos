@@ -69,7 +69,7 @@ and config-wired?" is verified mechanically rather than by review.
 ## Logging & host visibility
 
 secure-exec logs to **stderr** (never stdout — stdout is the framed wire
-protocol). The default level is `WARN`, tunable with the `SECURE_EXEC_LOG`
+protocol). The default level is `WARN`, tunable with the `AGENTOS_LOG`
 environment variable (`error` to quiet, `debug` for per-limit usage snapshots).
 Near-limit warnings and backpressure events therefore show up in the sidecar's
 stderr stream, which agentOS forwards to the host.

@@ -2,7 +2,7 @@
 // Builds the assets the Chromium wasm tests (tests/browser-wasm/) need:
 //   1. the agentos-sidecar-browser wasm for the web target (.cache/agentos-sidecar-wasm-web)
 //   2. the ACP wire-codec bundle (tests/browser-wasm/acp-codec.bundle.js) via esbuild,
-//      resolving @secure-exec/core + agent-os's generated ACP encoders + a Buffer polyfill.
+//      resolving @rivet-dev/agentos-runtime-core + agent-os's generated ACP encoders + a Buffer polyfill.
 //
 // Run before `playwright test --config=playwright.wasm.config.ts` (the config's
 // webServer invokes this).
@@ -55,12 +55,12 @@ run(esbuildBin, [
 	`--outfile=${outfile}`,
 ]);
 
-// 3. Converged runtime harness assets: bundle @secure-exec/browser's worker and
+// 3. Converged runtime harness assets: bundle @rivet-dev/agentos-runtime-browser's worker and
 // the converged-runtime harness so a real guest can run in Chromium with its
 // fs.* syscalls routed through the converged sync-bridge to the agentos wasm
 // kernel (createAgentOsConvergedSidecar).
 const browserTestsDir = path.join(packageRoot, "tests", "browser-wasm");
-const workerEntry = require.resolve("@secure-exec/browser/internal/worker");
+const workerEntry = require.resolve("@rivet-dev/agentos-runtime-browser/internal/worker");
 const secureExecBrowserRoot = path.resolve(path.dirname(workerEntry), "..");
 const secureExecRepoRoot = path.resolve(secureExecBrowserRoot, "..", "..");
 const secureExecCommandsDir = path.join(

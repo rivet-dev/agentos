@@ -10,11 +10,11 @@ import {
 	StreamChannel,
 	WasmPermissionTier,
 	writeGuestFilesystemCallRequest,
-} from "@secure-exec/core/protocol";
+} from "@rivet-dev/agentos-runtime-core/protocol";
 import {
 	decodeBareProtocolFrame,
 	encodeBareProtocolFrame,
-} from "@secure-exec/core/protocol-frames";
+} from "@rivet-dev/agentos-runtime-core/protocol-frames";
 
 const GENERATED_AUTH_FRAME_HEX =
 	"00137365637572652d657865632d73696465636172070007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e070001000000";
@@ -25,7 +25,7 @@ describe("generated sidecar protocol", () => {
 		const frame: ProtocolFrame = {
 			tag: "RequestFrame",
 			val: {
-				schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 				requestId: 7n,
 				ownership: {
 					tag: "ConnectionOwnership",
@@ -63,7 +63,7 @@ describe("generated sidecar protocol", () => {
 		const generatedConfigureFrame: ProtocolFrame = {
 			tag: "RequestFrame",
 			val: {
-				schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 				requestId: 9n,
 				ownership: {
 					tag: "VmOwnership",
@@ -113,7 +113,7 @@ describe("generated sidecar protocol", () => {
 		};
 		const nativeConfigureFrame = {
 			frame_type: "request",
-			schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+			schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 			request_id: 9,
 			ownership: {
 				scope: "vm",
@@ -158,7 +158,7 @@ describe("generated sidecar protocol", () => {
 		const generatedExtFrame: ProtocolFrame = {
 			tag: "RequestFrame",
 			val: {
-				schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 				requestId: 11n,
 				ownership: {
 					tag: "ConnectionOwnership",
@@ -175,7 +175,7 @@ describe("generated sidecar protocol", () => {
 		};
 		const nativeExtFrame = {
 			frame_type: "request",
-			schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+			schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 			request_id: 11,
 			ownership: { scope: "connection", connection_id: "conn-1" },
 			payload: {
@@ -196,7 +196,7 @@ describe("generated sidecar protocol", () => {
 		const generatedFrame: ProtocolFrame = {
 			tag: "ResponseFrame",
 			val: {
-				schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 				requestId: 9n,
 				ownership: {
 					tag: "VmOwnership",
@@ -215,7 +215,7 @@ describe("generated sidecar protocol", () => {
 
 		expect(decodeBareProtocolFrame(encodeProtocolFrame(generatedFrame))).toEqual({
 			frame_type: "response",
-			schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+			schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 			request_id: 9,
 			ownership: {
 				scope: "vm",
@@ -235,7 +235,7 @@ describe("generated sidecar protocol", () => {
 		const generatedFrame: ProtocolFrame = {
 			tag: "EventFrame",
 			val: {
-				schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 				ownership: {
 					tag: "VmOwnership",
 					val: {
@@ -261,7 +261,7 @@ describe("generated sidecar protocol", () => {
 
 		expect(decodeBareProtocolFrame(framed.subarray(4))).toEqual({
 			frame_type: "event",
-			schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+			schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 			ownership: {
 				scope: "vm",
 				connection_id: "conn-1",
@@ -282,7 +282,7 @@ describe("generated sidecar protocol", () => {
 		const frame: ProtocolFrame = {
 			tag: "RequestFrame",
 			val: {
-				schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+				schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 				requestId: 8n,
 				ownership: {
 					tag: "ConnectionOwnership",
@@ -358,7 +358,7 @@ function authFrame(): ProtocolFrame {
 	return {
 		tag: "RequestFrame",
 		val: {
-			schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+			schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 			requestId: 7n,
 			ownership: {
 				tag: "ConnectionOwnership",
@@ -380,7 +380,7 @@ function authFrame(): ProtocolFrame {
 function authFrameForNative(): unknown {
 	return {
 		frame_type: "request",
-		schema: { name: "secure-exec-sidecar", version: PROTOCOL_VERSION },
+		schema: { name: "agentos-native-sidecar", version: PROTOCOL_VERSION },
 		request_id: 7,
 		ownership: { scope: "connection", connection_id: "conn-1" },
 		payload: {

@@ -5979,7 +5979,7 @@ var init_protocol_schema = __esm({
   "../../../secure-exec-convwasi/packages/core/dist/protocol-schema.js"() {
     "use strict";
     SIDECAR_PROTOCOL_SCHEMA = {
-      name: "secure-exec-sidecar",
+      name: "agentos-native-sidecar",
       version: 7
     };
   }
@@ -16049,8 +16049,8 @@ init_signals();
 init_sync_bridge();
 
 // ../../../secure-exec-convwasi/packages/browser/dist/default-sidecar.js
-var WASM_MODULE_URL = new URL("./sidecar-wasm-web/secure_exec_sidecar_browser.js", import.meta.url);
-var WASM_BINARY_URL = new URL("./sidecar-wasm-web/secure_exec_sidecar_browser_bg.wasm", import.meta.url);
+var WASM_MODULE_URL = new URL("./sidecar-wasm-web/agentos_native_sidecar_browser.js", import.meta.url);
+var WASM_BINARY_URL = new URL("./sidecar-wasm-web/agentos_native_sidecar_browser_bg.wasm", import.meta.url);
 
 // ../../../secure-exec-convwasi/packages/browser/dist/sab-ring.js
 var HEAD_INDEX = 0;

@@ -1,0 +1,37 @@
+{
+	"name": "@agentos-software/pi-cli",
+	"version": "0.2.1",
+	"type": "module",
+	"license": "Apache-2.0",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"pi-acp": "./node_modules/pi-acp/dist/index.js",
+		"pi": "./node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"agentos-package.json"
+	],
+	"scripts": {
+		"build": "tsc && rm -rf dist/package dist/package.tar && agentos-toolchain pack . --out dist/package --agent pi-acp --prune-native",
+		"check-types": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@mariozechner/pi-coding-agent": "^0.60.0",
+		"pi-acp": "^0.0.23"
+	},
+	"devDependencies": {
+		"@agentos-software/manifest": "workspace:*",
+		"@rivet-dev/agentos-toolchain": "workspace:*",
+		"@types/node": "^22.10.2",
+		"typescript": "^5.7.2"
+	}
+}

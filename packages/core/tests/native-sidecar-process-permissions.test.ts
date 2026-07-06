@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CreateVmConfig } from "@secure-exec/core/vm-config";
+import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import { afterEach, describe, expect, test } from "vitest";
 import {
 	NativeSidecarProcessClient,
@@ -118,7 +118,7 @@ describe("native sidecar process client permissions", () => {
 			[
 				"import { writeFileSync } from 'node:fs';",
 				"const capturePath = process.argv[2];",
-				"const schema = { name: 'secure-exec-sidecar', version: 7 };",
+				"const schema = { name: 'agentos-native-sidecar', version: 7 };",
 				"let stdinBuffer = Buffer.alloc(0);",
 				"const captures = [];",
 				"const writeFrame = (frame) => {",

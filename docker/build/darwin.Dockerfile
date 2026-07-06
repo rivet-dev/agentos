@@ -9,7 +9,7 @@ FROM ghcr.io/rivet-dev/rivet/builder-base-osxcross:0e33ceb98
 
 ARG TARGET=aarch64-apple-darwin
 ARG CLANG=aarch64-apple-darwin20.4
-ARG TRIGGER=branch
+ARG BUILD_PROFILE=debug
 
 ENV SDK=/root/osxcross/target/SDK/MacOSX11.3.sdk \
     RUSTC_WRAPPER=
@@ -22,12 +22,7 @@ RUN rustup toolchain install stable --profile minimal && \
     rustup target add "$TARGET"
 
 RUN corepack enable && \
-    pnpm install --no-frozen-lockfile --filter='!@agentos/website'
-
-# crates.io has no preview track: a secure-exec preview pin builds the crates
-# from a clone at the pinned commit (../secure-exec == /secure-exec here);
-# a release pin is a no-op and resolves crates from crates.io.
-RUN node scripts/secure-exec-dep.mjs prepare-build
+	pnpm install --no-frozen-lockfile --filter='!@agentos/website'
 
 RUN tu=$(echo "$TARGET" | tr 'a-z-' 'A-Z_') && \
     tl=$(echo "$TARGET" | tr - _) && \
@@ -39,10 +34,11 @@ RUN tu=$(echo "$TARGET" | tr 'a-z-' 'A-Z_') && \
     export AR_${tl}=${CLANG}-ar && \
     export RANLIB_${tl}=${CLANG}-ranlib && \
     export CARGO_TARGET_${tu}_LINKER=${CLANG}-clang && \
-    if [ "$TRIGGER" = "release" ]; then FLAG="--release"; PROF=release; else FLAG=""; PROF=debug; fi && \
-    cargo build $FLAG -p agentos-sidecar -p agentos-actor-plugin --target "$TARGET" && \
+    if [ "$BUILD_PROFILE" = "release" ]; then FLAG="--release"; PROF=release; else FLAG=""; PROF=debug; fi && \
+    cargo build $FLAG -p agentos-sidecar -p agentos-native-sidecar -p agentos-actor-plugin --target "$TARGET" && \
     mkdir -p /artifacts && \
     cp "target/$TARGET/$PROF/agentos-sidecar" /artifacts/agentos-sidecar && \
+    cp "target/$TARGET/$PROF/agentos-native-sidecar" /artifacts/agentos-native-sidecar && \
     cp "target/$TARGET/$PROF/libagentos_actor_plugin.dylib" /artifacts/libagentos_actor_plugin.dylib
 
 CMD ["ls", "-la", "/artifacts"]

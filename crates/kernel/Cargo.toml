@@ -1,0 +1,26 @@
+[package]
+name = "agentos-kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared kernel plane for secure-exec native and browser sidecars"
+
+[dependencies]
+agentos-bridge = { workspace = true }
+vfs = { workspace = true }
+base64 = "0.22"
+hickory-proto = { version = "0.26.0-beta.3", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Drop-in std::time replacement that works on wasm32 (std SystemTime/Instant
+# abort there); re-exports std on native.
+web-time = "1.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+getrandom = "0.2"
+hickory-resolver = "0.26.0-beta.3"
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }

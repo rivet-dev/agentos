@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use std::sync::Once;
 
 use agentos_client::config::{
-    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, MountConfig, MountPlugin, Permissions,
+    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, MountConfig, MountPlugin, PackageRef,
+    Permissions,
 };
 use agentos_client::AgentOs;
 
@@ -125,11 +126,6 @@ async fn new_vm_with_config(
 }
 
 fn wasm_commands_dir() -> Option<PathBuf> {
-    let registry_dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../registry/software/coreutils/wasm");
-    if registry_dir.is_dir() {
-        return Some(registry_dir);
-    }
     coreutils_wasm_dir()
 }
 
@@ -151,9 +147,39 @@ fn wasm_command_mounts() -> Vec<MountConfig> {
     }]
 }
 
-/// Locate the coreutils wasm command directory under the workspace `node_modules`. Returns its
-/// canonical absolute path, or `None` when the artifacts have not been installed/built.
+/// Locate the materialized coreutils package under the in-repo registry build.
+pub fn coreutils_package_dir() -> Option<PathBuf> {
+    let registry_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../registry/software/coreutils/dist/package");
+    if registry_dir.join("agentos-package.json").is_file() {
+        return std::fs::canonicalize(registry_dir).ok();
+    }
+
+    let node_modules_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../node_modules/@agentos-software/coreutils/dist/package");
+    if node_modules_dir.join("agentos-package.json").is_file() {
+        return std::fs::canonicalize(node_modules_dir).ok();
+    }
+
+    None
+}
+
+/// Locate the coreutils wasm command directory. Returns its canonical absolute path, or `None` when
+/// the artifacts have not been installed/built.
 pub fn coreutils_wasm_dir() -> Option<PathBuf> {
+    if let Some(package_dir) = coreutils_package_dir() {
+        let registry_bin = package_dir.join("bin");
+        if registry_bin.is_dir() {
+            return std::fs::canonicalize(registry_bin).ok();
+        }
+    }
+
+    let legacy_registry_dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../registry/software/coreutils/wasm");
+    if legacy_registry_dir.is_dir() {
+        return std::fs::canonicalize(legacy_registry_dir).ok();
+    }
+
     let pnpm = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../node_modules/.pnpm");
     for entry in std::fs::read_dir(&pnpm).ok()?.flatten() {
         let file_name = entry.file_name();
@@ -171,7 +197,7 @@ pub fn coreutils_wasm_dir() -> Option<PathBuf> {
         if file_name.starts_with("@rivet-dev+agentos-coreutils@") {
             let wasm = entry
                 .path()
-                .join("node_modules/@secure-exec/coreutils/wasm");
+                .join("node_modules/@agentos-software/coreutils/wasm");
             if wasm.is_dir() {
                 return std::fs::canonicalize(&wasm).ok();
             }
@@ -180,24 +206,23 @@ pub fn coreutils_wasm_dir() -> Option<PathBuf> {
     None
 }
 
-/// Create a VM with the coreutils wasm command package mounted, so `exec`/`spawn` can resolve real
-/// commands (`echo`, `cat`, `sh`, ...). Returns `None` when the wasm artifacts are absent, so suites
-/// can skip cleanly in unbuilt trees.
+/// Create a VM with the coreutils command package projected, so `exec`/`spawn` can resolve real
+/// commands (`echo`, `cat`, `sh`, ...). Returns `None` when the package artifacts are absent, so
+/// suites can skip cleanly in unbuilt trees.
 pub async fn new_vm_with_commands() -> Option<AgentOs> {
     ensure_sidecar_env();
-    let wasm_dir = coreutils_wasm_dir()?;
+    let package_dir = coreutils_package_dir()?;
     let config = AgentOsConfig {
-        software: vec![agentos_client::SoftwareInput {
-            package: wasm_dir.to_string_lossy().into_owned(),
-            version: None,
-            kind: agentos_client::SoftwareKind::WasmCommands,
+        packages: vec![PackageRef {
+            dir: Some(package_dir.to_string_lossy().into_owned()),
+            tar: None,
         }],
         ..Default::default()
     };
     Some(
         AgentOs::create(config)
             .await
-            .expect("create VM with coreutils command software"),
+            .expect("create VM with coreutils command package"),
     )
 }
 

@@ -37,7 +37,6 @@ export const EXCLUDED = new Set<string>([
 	"@rivet-dev/agentos-playground",
 	"@rivet-dev/agentos-shell",
 	"secure-exec",
-	"@secure-exec/typescript",
 	"publish",
 ]);
 
@@ -62,6 +61,10 @@ export const META_PACKAGES: readonly MetaPackageSpec[] = [
 		platformPrefix: "@rivet-dev/agentos-sidecar-",
 	},
 	{
+		meta: "@rivet-dev/agentos-runtime-sidecar",
+		platformPrefix: "@rivet-dev/agentos-runtime-sidecar-",
+	},
+	{
 		meta: "@rivet-dev/agentos",
 		platformPrefix: "@rivet-dev/agentos-plugin-",
 	},
@@ -69,6 +72,7 @@ export const META_PACKAGES: readonly MetaPackageSpec[] = [
 
 const SIDECAR_BINARY_PACKAGE_DIRS = [
 	"packages/sidecar-binary/npm",
+	"packages/runtime-sidecar/npm",
 	"packages/sidecar/npm",
 ] as const;
 
@@ -77,11 +81,6 @@ const SIDECAR_BINARY_PACKAGE_DIRS = [
 // the `@rivet-dev/agentos` meta package. Same discovery shape as the sidecar
 // binary packages: one dir per platform, allowlisted via sidecarPlatforms().
 const PLUGIN_BINARY_PACKAGE_DIRS = ["packages/agentos-plugin/npm"] as const;
-
-export const SECURE_EXEC_WORKSPACE_PACKAGES = new Set([
-	"@secure-exec/browser",
-	"@secure-exec/sandbox",
-]);
 
 /**
  * Platforms whose sidecar binary package is built and published. Kept in sync
@@ -180,8 +179,7 @@ export function discoverPackages(
 		if (
 			!p.name.startsWith("@rivet-dev/agentos-") &&
 			p.name !== "@rivet-dev/agentos" &&
-			!p.name.startsWith("@agentos-software/") &&
-			!SECURE_EXEC_WORKSPACE_PACKAGES.has(p.name)
+			!p.name.startsWith("@agentos-software/")
 		) {
 			continue;
 		}
@@ -220,21 +218,13 @@ export function assertDiscoverySanity(packages: Package[]): void {
 	const hasAgentOsPackages = packages.some((p) =>
 		p.name.startsWith("@rivet-dev/agentos-"),
 	);
-	const hasSecureExecPackages = packages.some((p) =>
-		p.name.startsWith("@secure-exec/"),
-	);
 	const required: string[] = [];
 	if (hasAgentOsPackages) {
 		required.push(
 			"@rivet-dev/agentos-core",
 			"@rivet-dev/agentos-sidecar",
+			"@rivet-dev/agentos-runtime-sidecar",
 		);
-	}
-	if (hasSecureExecPackages) {
-		required.push("@secure-exec/sandbox");
-	}
-	if (hasSecureExecPackages && !hasAgentOsPackages) {
-		required.push("@secure-exec/browser");
 	}
 	const missing = required.filter((r) => !byName.has(r));
 	if (missing.length > 0) {

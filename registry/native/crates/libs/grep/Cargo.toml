@@ -1,0 +1,9 @@
+[package]
+name = "secureexec-grep"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "grep/egrep/fgrep/rg implementations for secure-exec standalone binaries"
+
+[dependencies]
+regex = "1"

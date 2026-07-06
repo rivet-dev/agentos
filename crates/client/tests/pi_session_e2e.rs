@@ -24,7 +24,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use agentos_client::config::{
-    node_modules_mount, AgentOsConfig, PatternPermissions, PermissionMode, Permissions,
+    node_modules_mount, AgentOsConfig, PackageRef, PatternPermissions, PermissionMode, Permissions,
 };
 use agentos_client::fs::MkdirOptions;
 use agentos_client::{AgentOs, CreateSessionOptions};
@@ -51,6 +51,15 @@ fn pi_module_cwd() -> Option<String> {
     in_repo_adapter
         .is_file()
         .then(|| root.to_string_lossy().into_owned())
+}
+
+fn pi_package_dir() -> Option<PathBuf> {
+    let dir = repo_root().join("registry/agent/pi/dist/package");
+    if dir.join("agentos-package.json").is_file() {
+        std::fs::canonicalize(dir).ok()
+    } else {
+        None
+    }
 }
 
 /// A host-side llmock LLM server, killed on drop.
@@ -115,11 +124,15 @@ async fn pi_session_create_prompt_close() {
         eprintln!("skipping pi_session_create_prompt_close: sidecar binary not built");
         return;
     }
-    let Some(module_cwd) = pi_module_cwd() else {
+    let Some(_module_cwd) = pi_module_cwd() else {
         eprintln!(
             "skipping pi_session_create_prompt_close: no built Pi adapter \
              (build it, or set AGENT_OS_PI_MODULE_CWD)"
         );
+        return;
+    };
+    let Some(package_dir) = pi_package_dir() else {
+        eprintln!("skipping pi_session_create_prompt_close: Pi package dir not materialized");
         return;
     };
 
@@ -130,12 +143,16 @@ async fn pi_session_create_prompt_close() {
     common::ensure_sidecar_env();
     let os = AgentOs::create(AgentOsConfig {
         mounts: vec![node_modules_mount(
-            Path::new(&module_cwd)
+            package_dir
                 .join("node_modules")
                 .to_string_lossy()
                 .into_owned(),
         )],
         loopback_exempt_ports: vec![port],
+        packages: vec![PackageRef {
+            dir: Some(package_dir.to_string_lossy().into_owned()),
+            tar: None,
+        }],
         permissions: Some(Permissions {
             network: Some(PatternPermissions::Mode(PermissionMode::Allow)),
             ..Default::default()

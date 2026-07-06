@@ -1,0 +1,9 @@
+[package]
+name = "ctrlc"
+version = "3.5.2"
+edition = "2021"
+license = "Apache-2.0"
+description = "WASM-compatible stub for ctrlc crate (no-op signal handling)"
+
+[features]
+termination = []

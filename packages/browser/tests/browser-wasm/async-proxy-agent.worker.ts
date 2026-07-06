@@ -12,7 +12,7 @@
 // exact path pi will drive, minus pi itself running as a separate guest (the next
 // layer). The proxy framing logic is the shared, unit-tested openai-proxy module.
 
-import { SabExecutionEndpoint, type SabRingLayout } from "@secure-exec/browser";
+import { SabExecutionEndpoint, type SabRingLayout } from "@rivet-dev/agentos-runtime-browser";
 import {
 	buildHttpRequest,
 	handleProxyRequest,

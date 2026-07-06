@@ -1,0 +1,114 @@
+--- a/src/sort.rs
++++ b/src/sort.rs
+@@ -2112,10 +2112,13 @@
+             .get_one::<String>(options::PARALLEL)
+             .map_or_else(|| "0".to_string(), String::from);
+-        let num_threads = match settings.threads.parse::<usize>() {
+-            Ok(0) | Err(_) => std::thread::available_parallelism().map_or(1, NonZero::get),
+-            Ok(n) => n,
+-        };
+-        let _ = rayon::ThreadPoolBuilder::new()
+-            .num_threads(num_threads)
+-            .build_global();
++        #[cfg(not(target_os = "wasi"))]
++        {
++            let num_threads = match settings.threads.parse::<usize>() {
++                Ok(0) | Err(_) => std::thread::available_parallelism().map_or(1, NonZero::get),
++                Ok(n) => n,
++            };
++            let _ = rayon::ThreadPoolBuilder::new()
++                .num_threads(num_threads)
++                .build_global();
++        }
+     }
+@@ -2591,10 +2591,22 @@
+ }
+ 
+ fn sort_by<'a>(unsorted: &mut Vec<Line<'a>>, settings: &GlobalSettings, line_data: &LineData<'a>) {
+-    if settings.stable || settings.unique {
+-        unsorted.par_sort_by(|a, b| compare_by(a, b, settings, line_data, line_data));
+-    } else {
+-        unsorted.par_sort_unstable_by(|a, b| compare_by(a, b, settings, line_data, line_data));
++    #[cfg(target_os = "wasi")]
++    {
++        if settings.stable || settings.unique {
++            unsorted.sort_by(|a, b| compare_by(a, b, settings, line_data, line_data));
++        } else {
++            unsorted.sort_unstable_by(|a, b| compare_by(a, b, settings, line_data, line_data));
++        }
++    }
++
++    #[cfg(not(target_os = "wasi"))]
++    {
++        if settings.stable || settings.unique {
++            unsorted.par_sort_by(|a, b| compare_by(a, b, settings, line_data, line_data));
++        } else {
++            unsorted.par_sort_unstable_by(|a, b| compare_by(a, b, settings, line_data, line_data));
++        }
+     }
+ }
+ 
+--- a/src/ext_sort.rs
++++ b/src/ext_sort.rs
+@@ -50,9 +50,17 @@ pub fn ext_sort(
++    #[cfg(target_os = "wasi")]
++    let (sorted_sender, sorted_receiver) = std::sync::mpsc::sync_channel(2);
++
++    #[cfg(not(target_os = "wasi"))]
+     let (sorted_sender, sorted_receiver) = std::sync::mpsc::sync_channel(1);
++    #[cfg(not(target_os = "wasi"))]
+     let (recycled_sender, recycled_receiver) = std::sync::mpsc::sync_channel(1);
++    #[cfg(not(target_os = "wasi"))]
+     thread::spawn({
+         let settings = settings.clone();
+         move || sorter(&recycled_receiver, &sorted_sender, &settings)
+     });
++    #[cfg(target_os = "wasi")]
++    let recycled_sender = sorted_sender;
+ 
+     // Test if compression program exists and works, disable if not
+     let mut effective_settings = settings.clone();
+@@ -213,9 +222,9 @@ fn read_write_loop<I: WriteableTmpFile>(
+             drop(sender);
+             // We have already read the whole input. Since we are in our first two reads,
+             // this means that we can fit the whole input into memory. Bypass writing below and
+             // handle this case in a more straightforward way.
+-            return Ok(if let Ok(first_chunk) = receiver.recv() {
+-                if let Ok(second_chunk) = receiver.recv() {
++            return Ok(if let Some(first_chunk) = receive_sorted_chunk(receiver, settings) {
++                if let Some(second_chunk) = receive_sorted_chunk(receiver, settings) {
+                     ReadResult::SortedTwoChunks([first_chunk, second_chunk])
+                 } else {
+                     ReadResult::SortedSingleChunk(first_chunk)
+@@ -232,7 +241,7 @@ fn read_write_loop<I: WriteableTmpFile>(
+ 
+     let mut tmp_files = vec![];
+     loop {
+-        let Ok(chunk) = receiver.recv() else {
++        let Some(chunk) = receive_sorted_chunk(receiver, settings) else {
+             return Ok(ReadResult::WroteChunksToFile { tmp_files });
+         };
+ 
+@@ -262,6 +271,22 @@ fn read_write_loop<I: WriteableTmpFile>(
+     }
+ }
+ 
++#[cfg(target_os = "wasi")]
++fn receive_sorted_chunk(receiver: &Receiver<Chunk>, settings: &GlobalSettings) -> Option<Chunk> {
++    let Ok(mut chunk) = receiver.recv() else {
++        return None;
++    };
++    chunk.with_dependent_mut(|_, contents| {
++        sort_by(&mut contents.lines, settings, &contents.line_data);
++    });
++    Some(chunk)
++}
++
++#[cfg(not(target_os = "wasi"))]
++fn receive_sorted_chunk(receiver: &Receiver<Chunk>, _settings: &GlobalSettings) -> Option<Chunk> {
++    receiver.recv().ok()
++}
++
+ /// Write the lines in `chunk` to `file`, separated by `separator`.
+ /// `compress_prog` is used to optionally compress file contents.
+ fn write<I: WriteableTmpFile>(

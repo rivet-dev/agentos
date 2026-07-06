@@ -1,0 +1,13 @@
+[package]
+name = "cmd-rm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rm standalone binary for secure-exec VM"
+
+[[bin]]
+name = "rm"
+path = "src/main.rs"
+
+[dependencies]
+uu_rm = "0.7.0"

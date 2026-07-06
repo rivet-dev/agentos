@@ -1,0 +1,21 @@
+Fix realloc(ptr, 0) to match glibc/POSIX semantics.
+
+WASI's dlmalloc returns a minimum-size allocation for realloc(ptr, 0).
+glibc/POSIX treats realloc(non-NULL, 0) as free(ptr) and returns NULL.
+glibc treats realloc(NULL, 0) as malloc(0) and returns non-NULL.
+
+dlmalloc already has REALLOC_ZERO_BYTES_FREES support — just enable it.
+
+--- a/dlmalloc/src/dlmalloc.c
++++ b/dlmalloc/src/dlmalloc.c
+@@ -30,6 +30,10 @@
+ // Align malloc regions to 16, to avoid unaligned SIMD accesses.
+ #define MALLOC_ALIGNMENT 16
+
++// Match glibc/POSIX semantics: realloc(non-NULL, 0) frees and returns NULL.
++// dlmalloc already has this behavior behind a flag — enable it.
++#define REALLOC_ZERO_BYTES_FREES 1
++
+ // Declare errno values used by dlmalloc. We define them like this to avoid
+ // putting specific errno values in the ABI.
+ extern const int __ENOMEM;

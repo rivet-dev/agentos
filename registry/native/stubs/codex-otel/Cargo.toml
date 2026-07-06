@@ -1,0 +1,13 @@
+[package]
+name = "codex-otel"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "WASM-compatible stub for codex-otel (no-op telemetry/metrics)"
+
+[lib]
+name = "codex_otel"
+path = "src/lib.rs"
+
+[features]
+disable-default-metrics-exporter = []

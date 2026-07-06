@@ -10,7 +10,7 @@
 // the loopback-HTTP proxy + pi are layered on top. The model itself is reached ONLY
 // through this kernel-brokered syscall — never as an ambient capability.
 
-import { SabExecutionEndpoint, type SabRingLayout } from "@secure-exec/browser";
+import { SabExecutionEndpoint, type SabRingLayout } from "@rivet-dev/agentos-runtime-browser";
 
 interface InitMessage {
 	type: "init";

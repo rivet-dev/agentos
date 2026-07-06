@@ -1,0 +1,62 @@
+--- a/library/std/src/sys/fs/unix.rs
++++ b/library/std/src/sys/fs/unix.rs
+@@ -85,6 +85,21 @@
+ use crate::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd};
+ #[cfg(target_family = "unix")]
+ use crate::os::unix::prelude::*;
++
++// host_fs FFI — provides real POSIX mode from the wasmVM host runtime.
++// WASI filestat does not include permission bits, so Rust std's stat()
++// returns a synthesized default (0555). These imports let us fetch the
++// actual mode stored in the virtual filesystem.
++#[cfg(target_os = "wasi")]
++mod host_fs {
++    #[link(wasm_import_module = "host_fs")]
++    unsafe extern "C" {
++        pub fn path_mode(dir_fd: u32, path_ptr: *const u8, path_len: u32, follow_symlinks: u32) -> u32;
++        pub fn fd_mode(fd: i32) -> u32;
++        pub fn chmod(dir_fd: u32, path_ptr: *const u8, path_len: u32, mode: u32) -> u32;
++    }
++}
++
+ #[cfg(target_os = "wasi")]
+ use crate::os::wasi::prelude::*;
+ use crate::path::{Path, PathBuf};
+@@ -1375,6 +1390,11 @@
+ 
+         let mut stat: stat64 = unsafe { mem::zeroed() };
+         cvt(unsafe { fstat64(fd, &mut stat) })?;
++        #[cfg(target_os = "wasi")]
++        {
++            let mode = unsafe { host_fs::fd_mode(fd as i32) };
++            if mode != 0 { stat.st_mode = mode as libc::mode_t; }
++        }
+         Ok(FileAttr::from_stat64(stat))
+     }
+ 
+@@ -2162,6 +2182,12 @@
+ 
+     let mut stat: stat64 = unsafe { mem::zeroed() };
+     cvt(unsafe { stat64(p.as_ptr(), &mut stat) })?;
++    #[cfg(target_os = "wasi")]
++    {
++        let bytes = p.to_bytes();
++        let mode = unsafe { host_fs::path_mode(3, bytes.as_ptr(), bytes.len() as u32, 1) };
++        if mode != 0 { stat.st_mode = mode as libc::mode_t; }
++    }
+     Ok(FileAttr::from_stat64(stat))
+ }
+ 
+@@ -2179,6 +2205,12 @@
+ 
+     let mut stat: stat64 = unsafe { mem::zeroed() };
+     cvt(unsafe { lstat64(p.as_ptr(), &mut stat) })?;
++    #[cfg(target_os = "wasi")]
++    {
++        let bytes = p.to_bytes();
++        let mode = unsafe { host_fs::path_mode(3, bytes.as_ptr(), bytes.len() as u32, 0) };
++        if mode != 0 { stat.st_mode = mode as libc::mode_t; }
++    }
+     Ok(FileAttr::from_stat64(stat))
+ }
+ 

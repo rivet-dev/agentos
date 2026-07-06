@@ -54,7 +54,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@agentos-software/common": "link:../../../secure-exec/registry/software/common",
+		"@agentos-software/common": "workspace:*",
 		"@rivet-dev/agentos-core": "workspace:*",
 		"@rivet-dev/agentos-sidecar": "workspace:*",
 		"@rivetkit/react": "catalog:rivetkit",

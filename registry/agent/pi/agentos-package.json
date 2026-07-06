@@ -1,0 +1,7 @@
+{
+  "name": "pi",
+  "agent": {
+    "acpEntrypoint": "pi-sdk-acp",
+    "snapshot": true
+  }
+}

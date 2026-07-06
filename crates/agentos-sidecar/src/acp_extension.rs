@@ -4,6 +4,17 @@ use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use agentos_native_sidecar::extension::ExtensionSnapshot;
+use agentos_native_sidecar::limits::DEFAULT_ACP_MAX_READ_LINE_BYTES;
+use agentos_native_sidecar::wire::{
+    CloseStdinRequest, EventPayload, ExecuteRequest, GuestFilesystemCallRequest,
+    GuestFilesystemOperation, GuestRuntimeKind, KillProcessRequest, OwnershipScope, StreamChannel,
+    WriteStdinRequest,
+};
+use agentos_native_sidecar::{
+    Extension, ExtensionContext, ExtensionFuture, ExtensionInterruptRequest,
+    ExtensionInterruptResponse, ExtensionResponse, SidecarError,
+};
 use agentos_protocol::generated::v1::{
     AcpAgentEntry, AcpAgentExitedEvent, AcpAgentStderrEvent, AcpCallback, AcpCallbackResponse,
     AcpCloseSessionRequest, AcpCreateSessionRequest, AcpErrorResponse, AcpEvent,
@@ -13,17 +24,6 @@ use agentos_protocol::generated::v1::{
     AcpSessionResumedResponse, AcpSessionStateResponse,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
-use secure_exec_sidecar::extension::ExtensionSnapshot;
-use secure_exec_sidecar::limits::DEFAULT_ACP_MAX_READ_LINE_BYTES;
-use secure_exec_sidecar::wire::{
-    CloseStdinRequest, EventPayload, ExecuteRequest, GuestFilesystemCallRequest,
-    GuestFilesystemOperation, GuestRuntimeKind, KillProcessRequest, OwnershipScope, StreamChannel,
-    WriteStdinRequest,
-};
-use secure_exec_sidecar::{
-    Extension, ExtensionContext, ExtensionFuture, ExtensionInterruptRequest,
-    ExtensionInterruptResponse, ExtensionResponse, SidecarError,
-};
 use serde_json::{json, Map, Value};
 use tokio::sync::Mutex;
 
@@ -139,7 +139,7 @@ struct AcpSessionRecord {
 /// sidecar can auto-restart a crashed adapter (see
 /// `AcpExtension::handle_adapter_exit`). `args`/`env` are the FINAL values that
 /// went into the original `ExecuteRequest` — post prompt-injection, including
-/// `SECURE_EXEC_KEEP_STDIN_OPEN` — so a restart relaunches exactly what
+/// `AGENTOS_KEEP_STDIN_OPEN` — so a restart relaunches exactly what
 /// create/resume launched. `count` is the restarts already consumed for this
 /// session, bounded by `MAX_ADAPTER_RESTARTS`.
 #[derive(Debug, Clone)]
@@ -279,10 +279,7 @@ impl AcpExtension {
         let mut args = resolved.launch_args.clone();
         args.extend(request.args.iter().cloned());
         let mut env = hash_to_btree(request.env.clone());
-        env.insert(
-            String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
-            String::from("1"),
-        );
+        env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
         // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
         for (key, value) in &resolved.env {
             env.entry(key.clone()).or_insert_with(|| value.clone());
@@ -968,10 +965,7 @@ impl AcpExtension {
         let mut args = resolved.launch_args.clone();
         args.extend(create_like.args.iter().cloned());
         let mut env = hash_to_btree(create_like.env.clone());
-        env.insert(
-            String::from("SECURE_EXEC_KEEP_STDIN_OPEN"),
-            String::from("1"),
-        );
+        env.insert(String::from("AGENTOS_KEEP_STDIN_OPEN"), String::from("1"));
         // Manifest env applies as DEFAULTS; caller/base env wins on conflicts.
         for (key, value) in &resolved.env {
             env.entry(key.clone()).or_insert_with(|| value.clone());
@@ -1261,7 +1255,7 @@ impl AcpExtension {
         exit_code: Option<i32>,
         error: SidecarError,
     ) -> (
-        Option<secure_exec_sidecar::wire::EventFrame>,
+        Option<agentos_native_sidecar::wire::EventFrame>,
         &'static str,
         SidecarError,
     ) {
@@ -1568,7 +1562,7 @@ impl Extension for AcpExtension {
 
 struct AcpHandlerOutput {
     response: Result<AcpResponse, SidecarError>,
-    events: Vec<secure_exec_sidecar::wire::EventFrame>,
+    events: Vec<agentos_native_sidecar::wire::EventFrame>,
 }
 
 impl AcpHandlerOutput {
@@ -1634,7 +1628,7 @@ impl AcpSessionRecord {
         &mut self,
         method: &str,
         params: &Map<String, Value>,
-        events: &[secure_exec_sidecar::wire::EventFrame],
+        events: &[agentos_native_sidecar::wire::EventFrame],
     ) -> Result<Option<String>, SidecarError> {
         if method == "session/set_mode" {
             let Some(mode_id) = params.get("modeId").and_then(Value::as_str) else {
@@ -1755,8 +1749,8 @@ impl AcpSessionRecord {
 /// once when the `session/prompt` dispatch finally resolves.
 fn deliver_event(
     ctx: &ExtensionContext<'_>,
-    events: &mut Vec<secure_exec_sidecar::wire::EventFrame>,
-    frame: secure_exec_sidecar::wire::EventFrame,
+    events: &mut Vec<agentos_native_sidecar::wire::EventFrame>,
+    frame: agentos_native_sidecar::wire::EventFrame,
 ) -> Result<(), SidecarError> {
     if let Some(frame) = ctx.emit_event_wire(frame)? {
         events.push(frame);
@@ -2081,7 +2075,7 @@ fn synthetic_config_update(config_options: &[String]) -> Value {
 }
 
 fn has_matching_session_update(
-    events: &[secure_exec_sidecar::wire::EventFrame],
+    events: &[agentos_native_sidecar::wire::EventFrame],
     session_id: &str,
     predicate: impl Fn(&Map<String, Value>) -> bool,
 ) -> bool {
@@ -2388,7 +2382,7 @@ fn resolve_permission_option_id(params: &Value, reply: &str) -> Option<String> {
 
 struct JsonRpcExchange {
     response: Value,
-    events: Vec<secure_exec_sidecar::wire::EventFrame>,
+    events: Vec<agentos_native_sidecar::wire::EventFrame>,
     notifications: Vec<String>,
 }
 

@@ -6,9 +6,9 @@
 //! is handled by the Agent OS wrapper while every kernel syscall still routes
 //! through the converged secure-exec wasm kernel (the sole enforcement point).
 
+use agentos_native_sidecar_browser::wire_dispatch::{BrowserWireDispatcher, BROWSER_SIDECAR_ID};
+use agentos_native_sidecar_browser::BrowserJsBridge;
 use js_sys::{Error as JsError, Uint8Array};
-use secure_exec_sidecar_browser::wire_dispatch::{BrowserWireDispatcher, BROWSER_SIDECAR_ID};
-use secure_exec_sidecar_browser::BrowserJsBridge;
 use wasm_bindgen::prelude::*;
 
 use crate::BrowserAcpExtension;

@@ -10,7 +10,7 @@
 //! field may be populated (including `acp_timeout` and codex `-32601` fallbacks). Do not convert
 //! those into `Err`.
 
-use secure_exec_client::{ProtocolCodecError, TransportError};
+use agentos_sidecar_client::{ProtocolCodecError, TransportError};
 
 /// Typed error taxonomy for the client SDK.
 #[derive(thiserror::Error, Debug)]

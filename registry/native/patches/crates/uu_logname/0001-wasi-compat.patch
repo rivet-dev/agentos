@@ -1,0 +1,33 @@
+--- a/src/logname.rs
++++ b/src/logname.rs
+@@ -6,11 +6,14 @@
+ // spell-checker:ignore (ToDO) getlogin userlogin
+
+ use clap::Command;
+-use std::ffi::CStr;
+ use std::io::{Write, stdout};
+ use uucore::translate;
+ use uucore::{error::UResult, show_error};
+
++#[cfg(not(target_os = "wasi"))]
++use std::ffi::CStr;
++
++#[cfg(not(target_os = "wasi"))]
+ fn get_userlogin() -> Option<String> {
+     unsafe {
+         let login: *const libc::c_char = libc::getlogin();
+@@ -22,6 +25,14 @@
+     }
+ }
+
++#[cfg(target_os = "wasi")]
++fn get_userlogin() -> Option<String> {
++    std::env::var("LOGNAME")
++        .or_else(|_| std::env::var("USER"))
++        .ok()
++        .filter(|s| !s.is_empty())
++}
++
+ #[uucore::main(no_signals)]
+ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
+     let _ = uucore::clap_localization::handle_clap_result(uu_app(), args)?;

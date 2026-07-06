@@ -24,8 +24,11 @@ const found = execSync(
 		'-not -path "*/node_modules/*"',
 		'-not -path "*/dist/*"',
 		'-not -path "*/.astro/*"',
+		'-not -path "*/.cache/*"',
 		'-not -path "*/.turbo/*"',
 		'-not -path "*/vendor/*"',
+		'-not -path "./registry/tests/projects/*"',
+		'-not -path "./crates/execution/assets/undici-shims/*"',
 	].join(" "),
 	{ encoding: "utf8", cwd: root },
 )

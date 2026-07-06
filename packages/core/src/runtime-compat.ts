@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
 	type CreateVmConfig,
 	type RootFilesystemEntry as VmConfigRootFilesystemEntry,
-} from "@secure-exec/core/vm-config";
+} from "@rivet-dev/agentos-runtime-core/vm-config";
 import { resolvePublishedSidecarBinary } from "./sidecar/binary.js";
 import { findCargoBinary, resolveCargoBinary } from "./sidecar/cargo.js";
 import { serializePermissionsForSidecar } from "./sidecar/permissions.js";

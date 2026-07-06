@@ -170,13 +170,8 @@ export async function bumpPackageJsons(
 }
 
 /**
- * Rewrite the a6 Rust workspace version (`[workspace.package]`). a6's own crates
+ * Rewrite the AgentOS Rust workspace version (`[workspace.package]`). AgentOS crates
  * inherit it via `version.workspace = true`.
- *
- * NOTE: the secure-exec crate dependencies in `[workspace.dependencies]` are
- * deliberately NOT rewritten. They are crates.io deps managed separately by
- * `scripts/secure-exec-dep.mjs`; AgentOS preview/release versions must not
- * overwrite those registry requirements.
  */
 export async function bumpCargoVersions(
 	repoRoot: string,
@@ -189,11 +184,9 @@ export async function bumpCargoVersions(
 		/(\[workspace\.package\]\n(?:[^\n]*\n)*?[ \t]*version = )"[^"]+"/,
 		`$1"${version}"`,
 	);
-	// Bump a6-OWNED crate dep requirements (path = "crates/..."). The secure-exec
-	// crate deps are intentionally NOT bumped because they are registry-pinned by
-	// the secure-exec dependency manager.
+	// Bump AgentOS-owned crate dep requirements (path = "crates/...").
 	next = next.replace(
-		/((?:agentos|agent-os|secure-exec)-[a-z0-9-]+ = \{ path = "crates\/[^"]+", version = ")[^"]+(" \})/g,
+		/((?:agentos|agent-os)-[a-z0-9-]+ = \{ path = "crates\/[^"]+", version = ")[^"]+(" \})/g,
 		`$1${version}$2`,
 	);
 

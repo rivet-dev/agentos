@@ -14,7 +14,7 @@ import {
 import { constants as osConstants, tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CreateVmConfig } from "@secure-exec/core/vm-config";
+import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createHostDirBackend } from "../src/host-dir-mount.js";
 import {
@@ -414,7 +414,7 @@ describe("native sidecar process client", () => {
 			[
 				"import { writeFileSync } from 'node:fs';",
 				"const capturePath = process.argv[2];",
-				"const schema = { name: 'secure-exec-sidecar', version: 7 };",
+				"const schema = { name: 'agentos-native-sidecar', version: 7 };",
 				"let stdinBuffer = Buffer.alloc(0);",
 				BARE_FIXTURE_PROTOCOL_HELPERS,
 				"const drain = () => {",
@@ -580,7 +580,7 @@ describe("native sidecar process client", () => {
 		writeFileSync(
 			driverPath,
 			[
-				"const schema = { name: 'secure-exec-sidecar', version: 7 };",
+				"const schema = { name: 'agentos-native-sidecar', version: 7 };",
 				"const writeFrame = (frame) => {",
 				"  const payload = Buffer.from(JSON.stringify(frame), 'utf8');",
 				"  const prefix = Buffer.allocUnsafe(4);",
@@ -669,7 +669,7 @@ describe("native sidecar process client", () => {
 		writeFileSync(
 			driverPath,
 			[
-				"const schema = { name: 'secure-exec-sidecar', version: 7 };",
+				"const schema = { name: 'agentos-native-sidecar', version: 7 };",
 				"let stdinBuffer = Buffer.alloc(0);",
 				"const writeFrame = (frame) => {",
 				"  const payload = Buffer.from(JSON.stringify(frame), 'utf8');",

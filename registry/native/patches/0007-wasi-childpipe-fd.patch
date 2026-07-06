@@ -1,0 +1,46 @@
+--- a/library/std/src/os/wasi/mod.rs
++++ b/library/std/src/os/wasi/mod.rs
+@@ -39,6 +39,7 @@
+ 
+ #[cfg(all(target_os = "wasi", target_env = "p1"))]
+ pub mod net;
++pub mod process;
+ 
+ /// A prelude for conveniently writing platform-specific code.
+ ///
+--- a/library/std/src/sys/process/wasi.rs
++++ b/library/std/src/sys/process/wasi.rs
+@@ -125,6 +125,22 @@
+     }
+ }
+ 
++// Inner-fd plumbing so the public `os/wasi/process.rs` can expose the
++// ChildStdin/out/err fd traits (mirrors the unix anonymous-pipe path).
++impl crate::os::fd::AsFd for ChildPipe {
++    #[inline]
++    fn as_fd(&self) -> crate::os::fd::BorrowedFd<'_> {
++        self.0.as_fd()
++    }
++}
++
++impl crate::sys::IntoInner<crate::os::fd::OwnedFd> for ChildPipe {
++    #[inline]
++    fn into_inner(self) -> crate::os::fd::OwnedFd {
++        self.0.into_inner()
++    }
++}
++
+ // ============================================================
+ // Stdio
+ // ============================================================
+@@ -439,6 +455,10 @@
+ #[derive(PartialEq, Eq, Clone, Copy, Debug)]
+ pub struct ExitStatus(i32);
+ 
++impl From<i32> for ExitStatus {
++    fn from(c: i32) -> ExitStatus { ExitStatus(c) }
++}
++
+ impl ExitStatus {
+     pub fn exit_ok(&self) -> Result<(), ExitStatusError> {
+         if self.0 == 0 {

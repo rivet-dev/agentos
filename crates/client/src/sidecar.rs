@@ -12,7 +12,7 @@ use scc::HashMap as SccHashMap;
 use serde::Serialize;
 use uuid::Uuid;
 
-use secure_exec_client::wire;
+use agentos_sidecar_client::wire;
 
 use crate::agent_os::AgentOs;
 use crate::error::ClientError;

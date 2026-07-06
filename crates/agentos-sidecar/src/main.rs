@@ -3,9 +3,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 fn main() {
     init_tracing();
-    tracing::info!(target: "secure_exec_sidecar::perf", "sidecar process started");
+    tracing::info!(target: "agentos_native_sidecar::perf", "sidecar process started");
     if let Err(error) =
-        secure_exec_sidecar::stdio::run_with_extensions(agentos_sidecar_wrapper::extensions())
+        agentos_native_sidecar::stdio::run_with_extensions(agentos_sidecar_wrapper::extensions())
     {
         tracing::error!(?error, "agentos-sidecar startup failed");
         std::process::exit(1);

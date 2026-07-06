@@ -7,7 +7,7 @@
 // converged `pty.*` sync-bridge ops route through the wasm sidecar's guest_pty
 // dispatcher into the kernel's real PTY (the same pushFrame path net.*/fs.* use).
 
-import { SabExecutionEndpoint, type SabRingLayout } from "@secure-exec/browser";
+import { SabExecutionEndpoint, type SabRingLayout } from "@rivet-dev/agentos-runtime-browser";
 import { encodeSyscall } from "./syscall-codec.js";
 
 interface InitMessage {

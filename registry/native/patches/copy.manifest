@@ -1,0 +1,11 @@
+# Companion source files for std patches (installed by scripts/patch-std.sh).
+# Format: <src-relative-to-this-patches-dir> <dest-relative-to-std-src-root>
+#
+# A `patch`/`diff` cannot reliably create a brand-new std source file from a
+# `/dev/null` hunk (it is silently skipped across patch versions), so the actual
+# module body for any `pub mod <name>;` a patch declares is installed here.
+#
+# os/wasi/process.rs — public wasi child-pipe fd traits (AsRawFd/IntoRawFd/AsFd/
+# From<_> for OwnedFd on ChildStdin/out/err) + ExitStatusExt::from_raw, wired via
+# `pub mod process;` from 0007-wasi-childpipe-fd.patch. Mirrors os/unix/process.rs.
+std/os/wasi/process.rs library/std/src/os/wasi/process.rs

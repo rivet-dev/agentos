@@ -1,4 +1,4 @@
-import type { PermissionsPolicy } from "@secure-exec/core/vm-config";
+import type { PermissionsPolicy } from "@rivet-dev/agentos-runtime-core/vm-config";
 import type { Permissions } from "../runtime-compat.js";
 
 const ALL_OPERATIONS = ["*"];

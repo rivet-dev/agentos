@@ -1,0 +1,30 @@
+--- a/src/cp.rs
++++ b/src/cp.rs
+@@ -1898,7 +1898,7 @@
+     dest: &Path,
+     symlinked_files: &mut HashSet<FileInformation>,
+ ) -> CopyResult<()> {
+-    #[cfg(not(windows))]
++    #[cfg(unix)]
+     {
+         std::os::unix::fs::symlink(source, dest).map_err(|e| {
+             CpError::IoErrContext(
+@@ -1915,6 +1915,18 @@
+             CpError::IoErrContext(
+                 e,
+                 translate!("cp-error-cannot-create-symlink",
++                           "dest" => get_filename(dest).unwrap_or("?").quote(),
++                           "source" => get_filename(source).unwrap_or("?").quote()),
++            )
++        })?;
++    }
++    // wasmVM: WASI symlink support via std::fs::soft_link (WASI API)
++    #[cfg(target_os = "wasi")]
++    {
++        std::fs::soft_link(source, dest).map_err(|e| {
++            CpError::IoErrContext(
++                e,
++                translate!("cp-error-cannot-create-symlink",
+                            "dest" => get_filename(dest).unwrap_or("?").quote(),
+                            "source" => get_filename(source).unwrap_or("?").quote()),
+             )

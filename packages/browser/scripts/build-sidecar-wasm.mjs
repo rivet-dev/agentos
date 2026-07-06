@@ -8,7 +8,7 @@
 // directly in vitest/Node; pass `--target web` for the browser harness build.
 //
 // The agentos-sidecar-browser crate is host-free on purpose (no tokio/mio/native
-// secure-exec-sidecar) so it compiles to wasm32; see the crate's Cargo.toml.
+// agentos-native-sidecar) so it compiles to wasm32; see the crate's Cargo.toml.
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";

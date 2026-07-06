@@ -1,0 +1,17 @@
+[package]
+name = "agentos-sidecar-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Rust client transport for the Secure Exec native sidecar"
+
+[dependencies]
+agentos-sidecar-protocol = { workspace = true }
+
+futures = "0.3"
+parking_lot = "0.12"
+scc = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync"] }
+tracing = "0.1"

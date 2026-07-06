@@ -12,7 +12,7 @@ async function writeJson(root: string, rel: string, value: unknown) {
 	await writeFile(path, `${JSON.stringify(value, null, "\t")}\n`);
 }
 
-test("bumpCargoVersions bumps [workspace.package] but NOT secure-exec dep requirements", async () => {
+test("bumpCargoVersions bumps [workspace.package] and AgentOS path deps", async () => {
 	const repoRoot = await mkdtemp(join(tmpdir(), "agentos-version-test-"));
 	try {
 		await writeFile(
@@ -22,8 +22,7 @@ version = "0.2.0"
 
 [workspace.dependencies]
 agentos-protocol = { path = "crates/agentos-protocol", version = "0.2.0-rc.3" }
-secure-exec-sidecar = { version = "0.3.1-rc.2" }
-secure-exec-client = { version = "0.3.1-rc.2" }
+agentos-kernel = { path = "crates/kernel", version = "0.2.0-rc.3" }
 serde = "1"
 `,
 		);
@@ -33,19 +32,14 @@ serde = "1"
 		const cargoToml = await readFile(join(repoRoot, "Cargo.toml"), "utf8");
 		// a6 workspace version bumped...
 		assert.match(cargoToml, /\[workspace\.package\]\nversion = "0\.3\.0"/);
-		// ...a6-owned crate dep (path = "crates/...") bumped...
+		// ...AgentOS-owned crate deps (path = "crates/...") bumped...
 		assert.match(
 			cargoToml,
 			/agentos-protocol = \{ path = "crates\/agentos-protocol", version = "0\.3\.0" \}/,
 		);
-		// ...but secure-exec crate dep requirements stay at their registry version.
 		assert.match(
 			cargoToml,
-			/secure-exec-sidecar = \{ version = "0\.3\.1-rc\.2" \}/,
-		);
-		assert.match(
-			cargoToml,
-			/secure-exec-client = \{ version = "0\.3\.1-rc\.2" \}/,
+			/agentos-kernel = \{ path = "crates\/kernel", version = "0\.3\.0" \}/,
 		);
 		assert.match(cargoToml, /serde = "1"/);
 	} finally {
@@ -53,7 +47,7 @@ serde = "1"
 	}
 });
 
-test("bumpPackageJsons injects agent-os sidecar and plugin platform optional dependencies", async () => {
+test("bumpPackageJsons injects agent-os sidecar, runtime sidecar, and plugin platform optional dependencies", async () => {
 	const repoRoot = await mkdtemp(join(tmpdir(), "agentos-version-test-"));
 	try {
 		await writeJson(repoRoot, "package.json", {
@@ -67,6 +61,7 @@ test("bumpPackageJsons injects agent-os sidecar and plugin platform optional dep
 				"packages:",
 				"  - packages/*",
 				"  - packages/sidecar-binary/npm/*",
+				"  - packages/runtime-sidecar/npm/*",
 				"  - packages/agentos-plugin/npm/*",
 				"",
 			].join("\n"),
@@ -75,9 +70,14 @@ test("bumpPackageJsons injects agent-os sidecar and plugin platform optional dep
 			["packages/agentos", "@rivet-dev/agentos"],
 			["packages/core", "@rivet-dev/agentos-core"],
 			["packages/sidecar-binary", "@rivet-dev/agentos-sidecar"],
+			["packages/runtime-sidecar", "@rivet-dev/agentos-runtime-sidecar"],
 			...DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
 				`packages/sidecar-binary/npm/${platform}`,
 				`@rivet-dev/agentos-sidecar-${platform}`,
+			]),
+			...DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
+				`packages/runtime-sidecar/npm/${platform}`,
+				`@rivet-dev/agentos-runtime-sidecar-${platform}`,
 			]),
 			...DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
 				`packages/agentos-plugin/npm/${platform}`,
@@ -103,6 +103,22 @@ test("bumpPackageJsons injects agent-os sidecar and plugin platform optional dep
 			Object.fromEntries(
 				DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
 					`@rivet-dev/agentos-sidecar-${platform}`,
+					"0.3.0",
+				]).sort(),
+			),
+		);
+
+		const runtimeSidecarManifest = JSON.parse(
+			await readFile(
+				join(repoRoot, "packages/runtime-sidecar/package.json"),
+				"utf8",
+			),
+		);
+		assert.deepEqual(
+			runtimeSidecarManifest.optionalDependencies,
+			Object.fromEntries(
+				DEFAULT_SIDECAR_PLATFORMS.map((platform) => [
+					`@rivet-dev/agentos-runtime-sidecar-${platform}`,
 					"0.3.0",
 				]).sort(),
 			),

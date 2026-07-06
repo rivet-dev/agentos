@@ -12,13 +12,17 @@ use agentos_client::{AgentOs, AgentOsConfig, OpenShellOptions, PackageRef, Stdin
 use futures::StreamExt;
 
 fn coreutils_package_dir() -> Option<PathBuf> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../node_modules/@agentos-software/coreutils/dist/package");
-    if dir.join("agentos-package.json").is_file() {
-        std::fs::canonicalize(dir).ok()
-    } else {
-        None
+    for dir in [
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../registry/software/coreutils/dist/package"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../node_modules/@agentos-software/coreutils/dist/package"),
+    ] {
+        if dir.join("agentos-package.json").is_file() {
+            return std::fs::canonicalize(dir).ok();
+        }
     }
+    None
 }
 
 #[tokio::test(flavor = "multi_thread")]

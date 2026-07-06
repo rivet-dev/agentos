@@ -1,0 +1,75 @@
+[package]
+name = "agentos-native-sidecar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native Secure Exec sidecar runtime"
+
+[lib]
+name = "agentos_native_sidecar"
+
+[[bin]]
+name = "agentos-native-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+agentos-bridge = { workspace = true }
+agentos-kernel = { workspace = true }
+agentos-sidecar-protocol = { workspace = true }
+agentos-native-sidecar-core = { workspace = true }
+agentos-execution = { workspace = true }
+agentos-vm-config = { workspace = true }
+agentos-vfs = { workspace = true }
+async-trait = "0.1"
+aes = "0.8"
+aes-gcm = "0.10"
+aws-config = "1"
+aws-credential-types = "1"
+aws-sdk-s3 = "1"
+base64 = "0.22"
+blake3 = "1"
+bytes = "1"
+ctr = "0.9"
+filetime = "0.2"
+h2 = "0.4"
+http = "1"
+hmac = "0.12"
+hickory-resolver = "0.26.0-beta.3"
+jsonwebtoken = "8.3.0"
+log = "0.4"
+md-5 = "0.10"
+nix = { version = "0.29", features = ["fs", "poll", "process", "signal", "user"] }
+# `vendored` builds OpenSSL from source → self-contained binary with no
+# system-openssl discovery on any runner (ubuntu/macOS). openssl backs the
+# guest crypto runtime (RSA/EC/DH/AES), so it cannot be a TLS-only stack.
+openssl = { version = "0.10", features = ["vendored"] }
+pbkdf2 = "0.12"
+rustls = { version = "0.23.37", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-native-certs = "0.8"
+rustls-pemfile = "2.2"
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+scrypt = "0.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha1 = "0.10"
+sha2 = "0.10"
+socket2 = "0.6"
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+ureq = { version = "2.10", features = ["json"] }
+url = "2"
+vfs = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS has no openat2/RESOLVE_BENEATH; cap-std provides the audited
+# resolve-beneath path resolution used in place of openat2 on this platform.
+cap-std = "3"
+
+[dev-dependencies]
+serde_bare = "0.5"
+tar = "0.4"
+wat = "1.0"
+v8 = "130"

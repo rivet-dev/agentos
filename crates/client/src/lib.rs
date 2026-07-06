@@ -9,7 +9,7 @@
 //! The client spawns the native `agentos-sidecar` binary and speaks the existing framed BARE
 //! protocol over its stdio (see [`transport`]). It does NOT embed the kernel in-process and does NOT
 //! define a new sidecar wire protocol. The generated Secure Exec schema surface comes from
-//! `secure_exec_client::wire`; Agent OS layers ACP/session semantics on top of those generated wire
+//! `agentos_sidecar_client::wire`; Agent OS layers ACP/session semantics on top of those generated wire
 //! frames through the wrapper client.
 //!
 //! See the companion design docs in `~/.agents/specs/rust-client-sdk/` (ADR-001, spec, reference,
@@ -66,14 +66,14 @@ pub use sidecar::{
 pub use stream::{ByteStream, Subscription};
 
 pub use config::{
-    AcpLimits, AgentOsConfig, AgentOsConfigBuilder, AgentOsLimits, AgentOsSidecarConfig,
-    FsPermissionRule, FsPermissions, HostTool, HttpLimits, JsRuntimeLimits, MountConfig,
-    MountPlugin, OverlayMountConfig, PatternPermissionRule, PatternPermissions, PermissionMode,
-    PackageRef, Permissions, PluginLimits, PythonLimits, ResourceLimits, RootFilesystemConfig,
-    RootFilesystemKind, RootFilesystemMode, RootLowerInput, RulePermissions, ScheduleCallback,
-    ScheduleDriver, ScheduleEntry, ScheduleHandle, SidecarJsBridgeCall, SidecarJsBridgeCallback,
-    SoftwareInput, SoftwareKind, TimerScheduleDriver, ToolCallback, ToolKit, ToolLimits,
-    WasmLimits, node_modules_mount,
+    node_modules_mount, AcpLimits, AgentOsConfig, AgentOsConfigBuilder, AgentOsLimits,
+    AgentOsSidecarConfig, FsPermissionRule, FsPermissions, HostTool, HttpLimits, JsRuntimeLimits,
+    MountConfig, MountPlugin, OverlayMountConfig, PackageRef, PatternPermissionRule,
+    PatternPermissions, PermissionMode, Permissions, PluginLimits, PythonLimits, ResourceLimits,
+    RootFilesystemConfig, RootFilesystemKind, RootFilesystemMode, RootLowerInput, RulePermissions,
+    ScheduleCallback, ScheduleDriver, ScheduleEntry, ScheduleHandle, SidecarJsBridgeCall,
+    SidecarJsBridgeCallback, SoftwareInput, SoftwareKind, TimerScheduleDriver, ToolCallback,
+    ToolKit, ToolLimits, WasmLimits,
 };
 
 pub use process::{

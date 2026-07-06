@@ -1,0 +1,13 @@
+[package]
+name = "cmd-column"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "column standalone binary for secure-exec VM"
+
+[[bin]]
+name = "column"
+path = "src/main.rs"
+
+[dependencies]
+secureexec-column = { path = "../../libs/column" }

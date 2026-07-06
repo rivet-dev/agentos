@@ -15,14 +15,14 @@
 
 use std::collections::BTreeMap;
 
-use agentos_sidecar_core::host::{AcpHost, AgentOutput, SpawnAgentRequest, SpawnedAgent};
-use agentos_sidecar_core::AcpCoreError;
-use secure_exec_bridge::{
+use agentos_bridge::{
     CreateJavascriptContextRequest, ExecutionEvent, ExecutionHandleRequest, ExecutionSignal,
     KillExecutionRequest, PollExecutionEventRequest, StartExecutionRequest,
     WriteExecutionStdinRequest,
 };
-use secure_exec_sidecar_browser::{BrowserExtensionContext, BrowserSidecarError};
+use agentos_native_sidecar_browser::{BrowserExtensionContext, BrowserSidecarError};
+use agentos_sidecar_core::host::{AcpHost, AgentOutput, SpawnAgentRequest, SpawnedAgent};
+use agentos_sidecar_core::AcpCoreError;
 
 /// Per-request adapter: borrows the extension context + the session→execution map.
 pub struct BrowserAcpHost<'ctx, 'host> {

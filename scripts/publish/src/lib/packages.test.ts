@@ -7,7 +7,6 @@ import {
 	assertDiscoverySanity,
 	buildMetaPlatformMap,
 	discoverPackages,
-	SECURE_EXEC_WORKSPACE_PACKAGES,
 } from "./packages.js";
 
 const repoRoot = resolve(import.meta.dirname, "../../../..");
@@ -43,57 +42,12 @@ test("discovers Agent OS sidecar resolver packages", () => {
 		);
 	}
 
-	// a6 no longer publishes the secure-exec runtime packages; they are
-	// consumed from npm via the catalog instead.
-	assert(!names.includes("@secure-exec/core"));
-	assert(!names.includes("@secure-exec/sidecar"));
-});
-
-test("discovers secure-exec-only staged packages", () => {
-	withFixture((root) => {
-		writeJson(root, "package.json", {
-			name: "secure-exec-workspace",
-			private: true,
-			packageManager: "pnpm@10.13.1",
-		});
-		writeFileSync(
-			join(root, "pnpm-workspace.yaml"),
-			[
-				"packages:",
-				"  - packages/*",
-				"  - registry/file-system/*",
-				"  - registry/tool/*",
-				"",
-			].join("\n"),
-		);
-		for (const [rel, name] of [
-			["packages/browser", "@secure-exec/browser"],
-			["registry/tool/sandbox", "@secure-exec/sandbox"],
-		]) {
-			writeJson(root, join(rel, "package.json"), {
-				name,
-				version: "0.0.0",
-			});
-		}
-
-		const packages = discoverPackages(root);
-		const names = packages.map((pkg) => pkg.name);
-
-		assert.deepEqual(
-			names.filter((name) => name.startsWith("@rivet-dev/agentos-")),
-			[],
-		);
-		assert(names.includes("@secure-exec/browser"));
-		assert(names.includes("@secure-exec/sandbox"));
-		// a6 no longer discovers the secure-exec runtime packages for publish.
-		assert(!names.includes("@secure-exec/core"));
-		assert(!names.includes("@secure-exec/sidecar"));
-		assert.doesNotThrow(() => assertDiscoverySanity(packages));
-	});
-});
-
-test("allowlists secure-exec browser package for post-split discovery", () => {
-	assert(SECURE_EXEC_WORKSPACE_PACKAGES.has("@secure-exec/browser"));
+	assert(names.includes("@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu"));
+	assert(names.includes("@rivet-dev/agentos-runtime-sidecar"));
+	assert(
+		names.indexOf("@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu") <
+			names.indexOf("@rivet-dev/agentos-runtime-sidecar"),
+	);
 });
 
 test("builds platform map for the agent-os sidecar meta package", () => {
@@ -114,9 +68,13 @@ test("builds platform map for the agent-os sidecar meta package", () => {
 			"@rivet-dev/agentos-plugin-linux-arm64-gnu",
 			"@rivet-dev/agentos-plugin-linux-x64-gnu",
 		]);
+		assert.deepEqual(metaMap.get("@rivet-dev/agentos-runtime-sidecar"), [
+			"@rivet-dev/agentos-runtime-sidecar-darwin-arm64",
+			"@rivet-dev/agentos-runtime-sidecar-darwin-x64",
+			"@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu",
+			"@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu",
+		]);
 	}
-	// a6 no longer publishes the secure-exec sidecar meta package.
-	assert.equal(metaMap.has("@secure-exec/sidecar"), false);
 });
 
 test("sanity check passes for the agent-os workspace", () => {

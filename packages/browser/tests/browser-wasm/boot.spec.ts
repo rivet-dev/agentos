@@ -10,7 +10,7 @@ test("agentos wasm sidecar boots in Chromium and reports its identity", async ({
 	await page.goto("/");
 	await expect(page.locator("#status")).toHaveText("ready");
 	const sidecarId = await page.evaluate(() => window.__agentosWasm.bootId());
-	expect(sidecarId).toBe("secure-exec-sidecar-browser");
+	expect(sidecarId).toBe("agentos-native-sidecar-browser");
 });
 
 test("agentos wasm sidecar processes wire frames in Chromium", async ({

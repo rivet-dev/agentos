@@ -1,14 +1,18 @@
 ---
 name: sanity-check
-description: Run an E2E smoke test that installs agent-os packages from npm in an isolated temp project, spawns a Pi agent session, has it write a file and read it back with cat, then verifies the result. Use when the user asks to sanity check, smoke test, or verify the release works.
+description: Run the deferred AgentOS E2E smoke test from public npm packages. Use when the user asks to sanity check, smoke test, or verify a release works.
 ---
 
 # Sanity Check
 
+This is a P6/full-validation check. It installs from npm in a fresh project,
+boots an AgentOS VM, spawns a Pi agent session, writes a file, reads it back,
+and verifies the contents.
+
 ## Usage
 - `/sanity-check` — run in a temp directory on the host
 - `/sanity-check docker` — run inside a `node:22` Docker container
-- `/sanity-check <custom instructions>` — any extra instructions (e.g. "use rc.3", "use pnpm", "test on node 20")
+- `/sanity-check <custom instructions>` — extra instructions, such as "use rc.3", "use pnpm", or "test on node 20"
 
 ## What it tests
 

@@ -8,8 +8,8 @@ description = "High-level Rust client SDK for the Agent OS native sidecar (1:1 p
 
 [dependencies]
 # Reuse the secure-exec BARE wire schema + IPC transport. No new wire types are defined here.
-secure-exec-client = { workspace = true }
-secure-exec-vm-config = { workspace = true }
+agentos-sidecar-client = { workspace = true }
+agentos-vm-config = { workspace = true }
 agentos-protocol = { workspace = true }
 agentos-bridge = { workspace = true }
 

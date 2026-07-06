@@ -1,0 +1,13 @@
+[package]
+name = "cmd-timeout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "timeout standalone binary for secure-exec VM"
+
+[[bin]]
+name = "timeout"
+path = "src/main.rs"
+
+[dependencies]
+shims = { package = "secureexec-shims", path = "../../libs/shims" }

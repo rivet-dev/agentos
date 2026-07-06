@@ -1,0 +1,224 @@
+=== Cold Start Benchmark ===
+CPU: 12th Gen Intel(R) Core(TM) i7-12700KF
+Cores: 20 | Max concurrency: 16 | Max live runtimes: 8
+Resident runner live cap: 1
+RAM: 62.6 GB | Node: v24.13.0
+Loadavg: 4.8, 3.73, 3.23
+MemAvailable: 26424332 kB | SwapFree: 0 kB | SwapCached: 114032 kB
+Iterations: 5 (+ 1 warmup)
+Batch sizes: 1, 10, 50, 100, 200
+Scenarios: owned-sidecar, shared-sidecar, resident-runner, isolate-only
+Sidecar: /home/nathan/secure-exec-perf-restore/target/release/secure-exec-sidecar
+
+WASM commands: /home/nathan/secure-exec/packages/core/commands
+
+
+--- scenario=owned-sidecar, batch=1, mode=sequential ---
+  cold: mean=772.88ms p50=771.96ms p95=779.42ms
+  warm: mean=452.68ms p50=452.37ms p95=457.13ms
+  phases: filesystem_snapshot.p50=0.1ms | first_exec.p50=596.26ms | runtime_create_total.p50=176.3ms | runtime_mount_node.p50=2.71ms | runtime_mount_wasm.p50=172.95ms | session_open.p50=2.34ms | sidecar_spawn.p50=2.78ms | vm_configure.p50=0.17ms | vm_create.p50=1.36ms | vm_ready.p50=0.01ms | warm_exec.p50=452.37ms
+
+--- scenario=owned-sidecar, batch=1, mode=concurrent ---
+  cold: mean=776.22ms p50=775.63ms p95=782.37ms
+  warm: mean=449.86ms p50=449.59ms p95=452.53ms
+  phases: filesystem_snapshot.p50=0.26ms | first_exec.p50=599.03ms | runtime_create_total.p50=176.95ms | runtime_mount_node.p50=2.67ms | runtime_mount_wasm.p50=174.2ms | session_open.p50=2.99ms | sidecar_spawn.p50=2.79ms | vm_configure.p50=0.12ms | vm_create.p50=1.11ms | vm_ready.p50=0.01ms | warm_exec.p50=449.59ms
+
+--- scenario=owned-sidecar, batch=10, mode=sequential ---
+  cold: mean=780.07ms p50=778.64ms p95=802.66ms
+  warm: mean=453.92ms p50=452.69ms p95=463.47ms
+  phases: filesystem_snapshot.p50=0.24ms | first_exec.p50=601.18ms | runtime_create_total.p50=176.21ms | runtime_mount_node.p50=2.74ms | runtime_mount_wasm.p50=173.25ms | session_open.p50=2.44ms | sidecar_spawn.p50=2.74ms | vm_configure.p50=0.11ms | vm_create.p50=1.21ms | vm_ready.p50=0.01ms | warm_exec.p50=452.69ms
+
+--- scenario=owned-sidecar, batch=10, mode=concurrent ---
+  cold: mean=1000.39ms p50=1028.29ms p95=1119.05ms
+  warm: mean=477.27ms p50=469.19ms p95=532.17ms
+  phases: filesystem_snapshot.p50=31.48ms | first_exec.p50=642.15ms | runtime_create_total.p50=373.11ms | runtime_mount_node.p50=3.08ms | runtime_mount_wasm.p50=369.84ms | session_open.p50=7.93ms | sidecar_spawn.p50=2.08ms | vm_configure.p50=22.13ms | vm_create.p50=2.54ms | vm_ready.p50=0.01ms | warm_exec.p50=469.19ms
+
+--- scenario=owned-sidecar, batch=50, mode=sequential ---
+  cold: mean=777.49ms p50=775.3ms p95=797.46ms
+  warm: mean=453.43ms p50=452.59ms p95=461.71ms
+  phases: filesystem_snapshot.p50=0.03ms | first_exec.p50=599.8ms | runtime_create_total.p50=174.76ms | runtime_mount_node.p50=2.72ms | runtime_mount_wasm.p50=171.68ms | session_open.p50=2.36ms | sidecar_spawn.p50=3.13ms | vm_configure.p50=0.11ms | vm_create.p50=1.22ms | vm_ready.p50=0.01ms | warm_exec.p50=452.59ms
+
+--- scenario=owned-sidecar, batch=50, mode=concurrent ---
+  cold: mean=1041.81ms p50=1044.33ms p95=1133.77ms
+  warm: mean=468.05ms p50=465.77ms p95=491.47ms
+  phases: filesystem_snapshot.p50=45.06ms | first_exec.p50=643.04ms | runtime_create_total.p50=396.28ms | runtime_mount_node.p50=3.23ms | runtime_mount_wasm.p50=393.55ms | session_open.p50=9.75ms | sidecar_spawn.p50=2.11ms | vm_configure.p50=34.25ms | vm_create.p50=21.44ms | vm_ready.p50=0ms | warm_exec.p50=465.77ms
+
+--- scenario=owned-sidecar, batch=100, mode=sequential ---
+  cold: mean=777.89ms p50=776.54ms p95=793.79ms
+  warm: mean=453.66ms p50=452.93ms p95=460.66ms
+  phases: filesystem_snapshot.p50=0.02ms | first_exec.p50=599.6ms | runtime_create_total.p50=176.16ms | runtime_mount_node.p50=2.73ms | runtime_mount_wasm.p50=173.29ms | session_open.p50=2.33ms | sidecar_spawn.p50=4.22ms | vm_configure.p50=0.1ms | vm_create.p50=1.2ms | vm_ready.p50=0.01ms | warm_exec.p50=452.93ms
+
+--- scenario=owned-sidecar, batch=100, mode=concurrent ---
+  cold: mean=1041.19ms p50=1043.72ms p95=1120.25ms
+  warm: mean=468.6ms p50=466.36ms p95=492.1ms
+  phases: filesystem_snapshot.p50=45.26ms | first_exec.p50=641.96ms | runtime_create_total.p50=394.78ms | runtime_mount_node.p50=3.18ms | runtime_mount_wasm.p50=391.04ms | session_open.p50=10.31ms | sidecar_spawn.p50=2.37ms | vm_configure.p50=30.68ms | vm_create.p50=23.2ms | vm_ready.p50=0ms | warm_exec.p50=466.36ms
+
+--- scenario=owned-sidecar, batch=200, mode=sequential ---
+  cold: mean=778.28ms p50=776.94ms p95=793.79ms
+  warm: mean=454.03ms p50=453.13ms p95=462.01ms
+  phases: filesystem_snapshot.p50=0.02ms | first_exec.p50=599.84ms | runtime_create_total.p50=176.64ms | runtime_mount_node.p50=2.72ms | runtime_mount_wasm.p50=173.7ms | session_open.p50=2.32ms | sidecar_spawn.p50=4.3ms | vm_configure.p50=0.1ms | vm_create.p50=1.2ms | vm_ready.p50=0ms | warm_exec.p50=453.13ms
+
+--- scenario=owned-sidecar, batch=200, mode=concurrent ---
+  cold: mean=1044.03ms p50=1042.73ms p95=1124.88ms
+  warm: mean=468.68ms p50=466.89ms p95=488.09ms
+  phases: filesystem_snapshot.p50=47.8ms | first_exec.p50=640.8ms | runtime_create_total.p50=394.96ms | runtime_mount_node.p50=3.26ms | runtime_mount_wasm.p50=391.19ms | session_open.p50=10.58ms | sidecar_spawn.p50=2.39ms | vm_configure.p50=33.55ms | vm_create.p50=22.78ms | vm_ready.p50=0ms | warm_exec.p50=466.89ms
+
+--- scenario=shared-sidecar, batch=1, mode=sequential ---
+  cold: mean=774.17ms p50=774.5ms p95=778.62ms
+  warm: mean=457.19ms p50=452.75ms p95=466.31ms
+  phases: filesystem_snapshot.p50=0.02ms | first_exec.p50=604.54ms | runtime_create_total.p50=173.09ms | runtime_mount_node.p50=2.61ms | runtime_mount_wasm.p50=170.47ms | session_open.p50=0.3ms | vm_configure.p50=0.11ms | vm_create.p50=1.22ms | vm_ready.p50=0ms | warm_exec.p50=452.75ms
+  sidecar setup excluded: p50=3.94ms p95=5.26ms
+
+--- scenario=shared-sidecar, batch=1, mode=concurrent ---
+  cold: mean=775.66ms p50=776.97ms p95=780.66ms
+  warm: mean=452.79ms p50=453.29ms p95=453.98ms
+  phases: filesystem_snapshot.p50=0.02ms | first_exec.p50=603.17ms | runtime_create_total.p50=173.44ms | runtime_mount_node.p50=2.71ms | runtime_mount_wasm.p50=169.79ms | session_open.p50=0.4ms | vm_configure.p50=0.09ms | vm_create.p50=1.14ms | vm_ready.p50=0ms | warm_exec.p50=453.29ms
+  sidecar setup excluded: p50=5.21ms p95=9.57ms
+
+--- scenario=shared-sidecar, batch=10, mode=sequential ---
+  cold: mean=627.58ms p50=613.98ms p95=773.01ms
+  warm: mean=450.97ms p50=450.94ms p95=459.89ms
+  phases: filesystem_snapshot.p50=0.02ms | first_exec.p50=449.24ms | runtime_create_total.p50=161.69ms | runtime_mount_node.p50=2.68ms | runtime_mount_wasm.p50=158.99ms | session_open.p50=0.19ms | vm_configure.p50=0.09ms | vm_create.p50=1.17ms | vm_ready.p50=0ms | warm_exec.p50=450.94ms
+  sidecar setup excluded: p50=5.49ms p95=5.73ms
+
+--- scenario=shared-sidecar, batch=10, mode=concurrent ---
+  cold: mean=3493.51ms p50=4558.22ms p95=4676.49ms
+  warm: mean=2174.08ms p50=2086.34ms p95=4965.71ms
+  phases: filesystem_snapshot.p50=25.47ms | first_exec.p50=3507.02ms | runtime_create_total.p50=1070.66ms | runtime_mount_node.p50=18.54ms | runtime_mount_wasm.p50=1051.38ms | session_open.p50=0.57ms | vm_configure.p50=11.57ms | vm_create.p50=3.39ms | vm_ready.p50=0ms | warm_exec.p50=2086.34ms
+  sidecar setup excluded: p50=5.23ms p95=5.88ms
+
+--- scenario=shared-sidecar, batch=50, mode=sequential ---
+  cold: mean=610.76ms p50=605.65ms p95=627.44ms
+  warm: mean=449.02ms p50=448.23ms p95=456.81ms
+  phases: filesystem_snapshot.p50=0.02ms | first_exec.p50=448.83ms | runtime_create_total.p50=156.3ms | runtime_mount_node.p50=2.67ms | runtime_mount_wasm.p50=153.45ms | session_open.p50=0.21ms | vm_configure.p50=0.09ms | vm_create.p50=1.14ms | vm_ready.p50=0ms | warm_exec.p50=448.23ms
+  sidecar setup excluded: p50=5.09ms p95=5.39ms
+
+--- scenario=shared-sidecar, batch=50, mode=concurrent ---
+  cold: mean=3197.96ms p50=3299.89ms p95=4602.98ms
+  warm: mean=2162.03ms p50=2212.06ms p95=3395.52ms
+  phases: filesystem_snapshot.p50=43.21ms | first_exec.p50=2211.64ms | runtime_create_total.p50=1107.01ms | runtime_mount_node.p50=19.28ms | runtime_mount_wasm.p50=1088.07ms | session_open.p50=0.48ms | vm_configure.p50=16.13ms | vm_create.p50=4.2ms | vm_ready.p50=0ms | warm_exec.p50=2212.06ms
+  sidecar setup excluded: p50=5.56ms p95=14.37ms
+
+--- scenario=shared-sidecar, batch=100, mode=sequential ---
+  cold: mean=619.24ms p50=610.78ms p95=656.44ms
+  warm: mean=453.68ms p50=449.44ms p95=472.09ms
+  phases: filesystem_snapshot.p50=0.02ms | first_exec.p50=449.94ms | runtime_create_total.p50=159.9ms | runtime_mount_node.p50=2.84ms | runtime_mount_wasm.p50=157.04ms | session_open.p50=0.21ms | vm_configure.p50=0.1ms | vm_create.p50=1.12ms | vm_ready.p50=0.01ms | warm_exec.p50=449.44ms
+  sidecar setup excluded: p50=5.43ms p95=5.74ms
+
+--- scenario=shared-sidecar, batch=100, mode=concurrent ---
+  cold: mean=3187.99ms p50=3317.35ms p95=4591.89ms
+  warm: mean=2134.07ms p50=2207.08ms p95=2716.34ms
+  phases: filesystem_snapshot.p50=44.7ms | first_exec.p50=2212.38ms | runtime_create_total.p50=1130.31ms | runtime_mount_node.p50=19.5ms | runtime_mount_wasm.p50=1110.41ms | session_open.p50=0.54ms | vm_configure.p50=14.62ms | vm_create.p50=4.24ms | vm_ready.p50=0ms | warm_exec.p50=2207.08ms
+  sidecar setup excluded: p50=5.49ms p95=6.49ms
+
+--- scenario=shared-sidecar, batch=200, mode=sequential ---
+  cold: mean=616.2ms p50=614.43ms p95=633.42ms
+  warm: mean=449.22ms p50=448.24ms p95=456.27ms
+  phases: filesystem_snapshot.p50=0.02ms | first_exec.p50=448.77ms | runtime_create_total.p50=164.85ms | runtime_mount_node.p50=2.92ms | runtime_mount_wasm.p50=161.85ms | session_open.p50=0.25ms | vm_configure.p50=0.12ms | vm_create.p50=1.11ms | vm_ready.p50=0.01ms | warm_exec.p50=448.24ms
+  sidecar setup excluded: p50=5.26ms p95=6.09ms
+
+--- scenario=shared-sidecar, batch=200, mode=concurrent ---
+  cold: mean=3235.65ms p50=3340.36ms p95=3501.49ms
+  warm: mean=2102.22ms p50=2200.24ms p95=2732.96ms
+  phases: filesystem_snapshot.p50=47.71ms | first_exec.p50=2210.55ms | runtime_create_total.p50=1168.28ms | runtime_mount_node.p50=20.37ms | runtime_mount_wasm.p50=1147.31ms | session_open.p50=0.61ms | vm_configure.p50=14.71ms | vm_create.p50=4.14ms | vm_ready.p50=0ms | warm_exec.p50=2200.24ms
+  sidecar setup excluded: p50=3.79ms p95=3.92ms
+
+--- scenario=resident-runner, batch=1, mode=sequential ---
+  cold: mean=351ms p50=349.56ms p95=358.02ms
+  warm: mean=1.27ms p50=1.27ms p95=1.32ms
+  phases: filesystem_snapshot.p50=0.02ms | resident_first_exec.p50=1.31ms | resident_runner_create.p50=174.4ms | resident_warm_exec.p50=1.27ms | runtime_create_total.p50=173.03ms | runtime_mount_node.p50=2.77ms | runtime_mount_wasm.p50=170.03ms | session_open.p50=0.29ms | vm_configure.p50=0.09ms | vm_create.p50=1.26ms | vm_ready.p50=0.01ms
+  sidecar setup excluded: p50=4.19ms p95=6.14ms
+
+--- scenario=resident-runner, batch=1, mode=concurrent ---
+  cold: mean=347.91ms p50=346.99ms p95=358.2ms
+  warm: mean=1.25ms p50=1.26ms p95=1.29ms
+  phases: filesystem_snapshot.p50=0.02ms | resident_first_exec.p50=1.32ms | resident_runner_create.p50=172.53ms | resident_warm_exec.p50=1.26ms | runtime_create_total.p50=174.09ms | runtime_mount_node.p50=2.67ms | runtime_mount_wasm.p50=171.18ms | session_open.p50=0.3ms | vm_configure.p50=0.1ms | vm_create.p50=1.21ms | vm_ready.p50=0.01ms
+  sidecar setup excluded: p50=4.08ms p95=6.27ms
+
+--- scenario=resident-runner, batch=10, mode=sequential ---
+  cold: mean=202.61ms p50=186.16ms p95=350.97ms
+  warm: mean=1.26ms p50=1.24ms p95=1.37ms
+  phases: filesystem_snapshot.p50=0.02ms | resident_first_exec.p50=1.3ms | resident_runner_create.p50=26.24ms | resident_warm_exec.p50=1.24ms | runtime_create_total.p50=157.63ms | runtime_mount_node.p50=2.7ms | runtime_mount_wasm.p50=154.63ms | session_open.p50=0.2ms | vm_configure.p50=0.09ms | vm_create.p50=1.2ms | vm_ready.p50=0.01ms
+  sidecar setup excluded: p50=5.36ms p95=5.73ms
+
+--- scenario=resident-runner, batch=10, mode=concurrent ---
+  cold: mean=205ms p50=186.33ms p95=351.88ms
+  warm: mean=1.26ms p50=1.25ms p95=1.39ms
+  phases: filesystem_snapshot.p50=0.02ms | resident_first_exec.p50=1.28ms | resident_runner_create.p50=26.15ms | resident_warm_exec.p50=1.25ms | runtime_create_total.p50=159.21ms | runtime_mount_node.p50=2.68ms | runtime_mount_wasm.p50=156.45ms | session_open.p50=0.2ms | vm_configure.p50=0.09ms | vm_create.p50=1.24ms | vm_ready.p50=0.01ms
+  sidecar setup excluded: p50=5.51ms p95=5.79ms
+
+--- scenario=resident-runner, batch=50, mode=sequential ---
+  cold: mean=187.92ms p50=182.66ms p95=197.69ms
+  warm: mean=1.26ms p50=1.25ms p95=1.37ms
+  phases: filesystem_snapshot.p50=0.02ms | resident_first_exec.p50=1.3ms | resident_runner_create.p50=25.8ms | resident_warm_exec.p50=1.25ms | runtime_create_total.p50=155.29ms | runtime_mount_node.p50=2.68ms | runtime_mount_wasm.p50=152.45ms | session_open.p50=0.2ms | vm_configure.p50=0.1ms | vm_create.p50=1.15ms | vm_ready.p50=0.01ms
+  sidecar setup excluded: p50=5.55ms p95=6.93ms
+
+--- scenario=resident-runner, batch=50, mode=concurrent ---
+  cold: mean=187.45ms p50=183.14ms p95=194.96ms
+  warm: mean=1.26ms p50=1.26ms p95=1.36ms
+  phases: filesystem_snapshot.p50=0.02ms | resident_first_exec.p50=1.3ms | resident_runner_create.p50=25.71ms | resident_warm_exec.p50=1.26ms | runtime_create_total.p50=155.91ms | runtime_mount_node.p50=2.67ms | runtime_mount_wasm.p50=153.06ms | session_open.p50=0.2ms | vm_configure.p50=0.09ms | vm_create.p50=1.16ms | vm_ready.p50=0ms
+  sidecar setup excluded: p50=5.48ms p95=5.91ms
+
+--- scenario=resident-runner, batch=100, mode=sequential ---
+  cold: mean=186.1ms p50=183.49ms p95=196.74ms
+  warm: mean=1.29ms p50=1.27ms p95=1.44ms
+  phases: filesystem_snapshot.p50=0.02ms | resident_first_exec.p50=1.32ms | resident_runner_create.p50=25.58ms | resident_warm_exec.p50=1.27ms | runtime_create_total.p50=155.96ms | runtime_mount_node.p50=2.71ms | runtime_mount_wasm.p50=153.09ms | session_open.p50=0.21ms | vm_configure.p50=0.09ms | vm_create.p50=1.08ms | vm_ready.p50=0ms
+  sidecar setup excluded: p50=5.39ms p95=6.61ms
+
+--- scenario=resident-runner, batch=100, mode=concurrent ---
+  cold: mean=187.07ms p50=184.3ms p95=197.65ms
+  warm: mean=1.29ms p50=1.28ms p95=1.42ms
+  phases: filesystem_snapshot.p50=0.02ms | resident_first_exec.p50=1.31ms | resident_runner_create.p50=25.57ms | resident_warm_exec.p50=1.28ms | runtime_create_total.p50=157.16ms | runtime_mount_node.p50=2.73ms | runtime_mount_wasm.p50=154.31ms | session_open.p50=0.21ms | vm_configure.p50=0.09ms | vm_create.p50=1.1ms | vm_ready.p50=0ms
+  sidecar setup excluded: p50=5.54ms p95=6.12ms
+
+--- scenario=resident-runner, batch=200, mode=sequential ---
+  cold: mean=189.76ms p50=187.37ms p95=204.16ms
+  warm: mean=1.23ms p50=1.29ms p95=1.52ms
+  phases: filesystem_snapshot.p50=0.02ms | resident_first_exec.p50=1.36ms | resident_runner_create.p50=25.2ms | resident_warm_exec.p50=1.29ms | runtime_create_total.p50=160.18ms | runtime_mount_node.p50=2.79ms | runtime_mount_wasm.p50=157.28ms | session_open.p50=0.24ms | vm_configure.p50=0.12ms | vm_create.p50=1.1ms | vm_ready.p50=0ms
+  sidecar setup excluded: p50=5.51ms p95=5.79ms
+
+--- scenario=resident-runner, batch=200, mode=concurrent ---
+  cold: mean=191.33ms p50=189.09ms p95=205.41ms
+  warm: mean=1.22ms p50=1.29ms p95=1.51ms
+  phases: filesystem_snapshot.p50=0.02ms | resident_first_exec.p50=1.35ms | resident_runner_create.p50=25.21ms | resident_warm_exec.p50=1.29ms | runtime_create_total.p50=161.8ms | runtime_mount_node.p50=2.85ms | runtime_mount_wasm.p50=158.75ms | session_open.p50=0.24ms | vm_configure.p50=0.11ms | vm_create.p50=1.1ms | vm_ready.p50=0ms
+  sidecar setup excluded: p50=5.61ms p95=6.18ms
+
+--- scenario=isolate-only, mode=snapshot-restore ---
+  cold: mean=4.5749ms p50=4.5749ms p95=4.5749ms
+  warm: mean=3.1503ms p50=3.1059ms p95=3.5326ms
+  phases: snapshot_create.p50=123.904ms
+
+       scenario | batch |             mode | cold mean |  cold p50 |  cold p95 | warm mean |  warm p50 |  warm p95
+--------------- | ----- | ---------------- | --------- | --------- | --------- | --------- | --------- | ---------
+  owned-sidecar |     1 |       sequential |  772.88ms |  771.96ms |  779.42ms |  452.68ms |  452.37ms |  457.13ms
+  owned-sidecar |     1 |       concurrent |  776.22ms |  775.63ms |  782.37ms |  449.86ms |  449.59ms |  452.53ms
+  owned-sidecar |    10 |       sequential |  780.07ms |  778.64ms |  802.66ms |  453.92ms |  452.69ms |  463.47ms
+  owned-sidecar |    10 |       concurrent | 1000.39ms | 1028.29ms | 1119.05ms |  477.27ms |  469.19ms |  532.17ms
+  owned-sidecar |    50 |       sequential |  777.49ms |   775.3ms |  797.46ms |  453.43ms |  452.59ms |  461.71ms
+  owned-sidecar |    50 |       concurrent | 1041.81ms | 1044.33ms | 1133.77ms |  468.05ms |  465.77ms |  491.47ms
+  owned-sidecar |   100 |       sequential |  777.89ms |  776.54ms |  793.79ms |  453.66ms |  452.93ms |  460.66ms
+  owned-sidecar |   100 |       concurrent | 1041.19ms | 1043.72ms | 1120.25ms |   468.6ms |  466.36ms |   492.1ms
+  owned-sidecar |   200 |       sequential |  778.28ms |  776.94ms |  793.79ms |  454.03ms |  453.13ms |  462.01ms
+  owned-sidecar |   200 |       concurrent | 1044.03ms | 1042.73ms | 1124.88ms |  468.68ms |  466.89ms |  488.09ms
+ shared-sidecar |     1 |       sequential |  774.17ms |   774.5ms |  778.62ms |  457.19ms |  452.75ms |  466.31ms
+ shared-sidecar |     1 |       concurrent |  775.66ms |  776.97ms |  780.66ms |  452.79ms |  453.29ms |  453.98ms
+ shared-sidecar |    10 |       sequential |  627.58ms |  613.98ms |  773.01ms |  450.97ms |  450.94ms |  459.89ms
+ shared-sidecar |    10 |       concurrent | 3493.51ms | 4558.22ms | 4676.49ms | 2174.08ms | 2086.34ms | 4965.71ms
+ shared-sidecar |    50 |       sequential |  610.76ms |  605.65ms |  627.44ms |  449.02ms |  448.23ms |  456.81ms
+ shared-sidecar |    50 |       concurrent | 3197.96ms | 3299.89ms | 4602.98ms | 2162.03ms | 2212.06ms | 3395.52ms
+ shared-sidecar |   100 |       sequential |  619.24ms |  610.78ms |  656.44ms |  453.68ms |  449.44ms |  472.09ms
+ shared-sidecar |   100 |       concurrent | 3187.99ms | 3317.35ms | 4591.89ms | 2134.07ms | 2207.08ms | 2716.34ms
+ shared-sidecar |   200 |       sequential |   616.2ms |  614.43ms |  633.42ms |  449.22ms |  448.24ms |  456.27ms
+ shared-sidecar |   200 |       concurrent | 3235.65ms | 3340.36ms | 3501.49ms | 2102.22ms | 2200.24ms | 2732.96ms
+resident-runner |     1 |       sequential |     351ms |  349.56ms |  358.02ms |    1.27ms |    1.27ms |    1.32ms
+resident-runner |     1 |       concurrent |  347.91ms |  346.99ms |   358.2ms |    1.25ms |    1.26ms |    1.29ms
+resident-runner |    10 |       sequential |  202.61ms |  186.16ms |  350.97ms |    1.26ms |    1.24ms |    1.37ms
+resident-runner |    10 |       concurrent |     205ms |  186.33ms |  351.88ms |    1.26ms |    1.25ms |    1.39ms
+resident-runner |    50 |       sequential |  187.92ms |  182.66ms |  197.69ms |    1.26ms |    1.25ms |    1.37ms
+resident-runner |    50 |       concurrent |  187.45ms |  183.14ms |  194.96ms |    1.26ms |    1.26ms |    1.36ms
+resident-runner |   100 |       sequential |   186.1ms |  183.49ms |  196.74ms |    1.29ms |    1.27ms |    1.44ms
+resident-runner |   100 |       concurrent |  187.07ms |   184.3ms |  197.65ms |    1.29ms |    1.28ms |    1.42ms
+resident-runner |   200 |       sequential |  189.76ms |  187.37ms |  204.16ms |    1.23ms |    1.29ms |    1.52ms
+resident-runner |   200 |       concurrent |  191.33ms |  189.09ms |  205.41ms |    1.22ms |    1.29ms |    1.51ms
+   isolate-only |     1 | snapshot-restore |  4.5749ms |  4.5749ms |  4.5749ms |  3.1503ms |  3.1059ms |  3.5326ms
+

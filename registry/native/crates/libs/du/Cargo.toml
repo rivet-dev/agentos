@@ -1,0 +1,8 @@
+[package]
+name = "secureexec-du"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "du implementation for secure-exec standalone binaries"
+
+[dependencies]

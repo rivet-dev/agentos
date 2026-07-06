@@ -1,0 +1,13 @@
+[package]
+name = "cmd-tar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "tar standalone binary for secure-exec VM"
+
+[[bin]]
+name = "tar"
+path = "src/main.rs"
+
+[dependencies]
+secureexec-tar = { path = "../../libs/tar" }

@@ -59,8 +59,8 @@ internal bounded queues alike — is tracked in a central limit registry that:
   full rather than dropping data or tearing down the session — so a transient
   burst degrades to "slower", not "broken".
 - **Surfaces through logs.** secure-exec logs to stderr (stdout is the wire
-  protocol); set `SECURE_EXEC_LOG=warn` (the default) to see near-limit warnings
-  or `SECURE_EXEC_LOG=debug` for live per-limit usage snapshots.
+  protocol); set `AGENTOS_LOG=warn` (the default) to see near-limit warnings
+  or `AGENTOS_LOG=debug` for live per-limit usage snapshots.
 
 See [Limits & Observability](/docs/architecture/limits-and-observability) for the
 full architecture.

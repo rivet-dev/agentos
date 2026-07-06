@@ -24,7 +24,7 @@ use agentos_protocol::generated::v1::{
     AcpSessionCreatedResponse, AcpSessionRequest, AcpSessionStateResponse,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
-use secure_exec_client::wire;
+use agentos_sidecar_client::wire;
 
 use crate::agent_os::{AgentOs, SessionEntry};
 use crate::config::ToolKit;

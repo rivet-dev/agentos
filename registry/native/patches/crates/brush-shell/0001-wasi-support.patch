@@ -1,0 +1,48 @@
+diff -ruN '--exclude=*.orig' a/src/entry.rs b/src/entry.rs
+--- a/src/entry.rs	2026-06-27 14:11:52.543433624 -0700
++++ b/src/entry.rs	2026-06-27 14:11:52.551433620 -0700
+@@ -354,7 +354,15 @@
+             InputBackend::Minimal
+         }
+     }
+-    #[cfg(not(any(unix, windows)))]
++    #[cfg(all(not(any(unix, windows)), target_os = "wasi"))]
++    {
++        if std::io::stdin().is_terminal() {
++            InputBackend::Reedline
++        } else {
++            InputBackend::Minimal
++        }
++    }
++    #[cfg(all(not(any(unix, windows)), not(target_os = "wasi")))]
+     {
+         InputBackend::Minimal
+     }
+diff -ruN '--exclude=*.orig' a/src/shell_factory.rs b/src/shell_factory.rs
+--- a/src/shell_factory.rs	2026-06-27 14:11:52.543433624 -0700
++++ b/src/shell_factory.rs	2026-06-27 14:11:52.551433620 -0700
+@@ -50,20 +50,20 @@
+ 
+ #[allow(unused_variables, reason = "options are not used on all platforms")]
+ impl ShellFactory for ReedlineShellFactory {
+-    #[cfg(all(feature = "reedline", any(unix, windows)))]
++    #[cfg(all(feature = "reedline", any(unix, windows, target_os = "wasi")))]
+     type ShellType = brush_interactive::ReedlineShell;
+-    #[cfg(any(not(feature = "reedline"), not(any(unix, windows))))]
++    #[cfg(any(not(feature = "reedline"), not(any(unix, windows, target_os = "wasi"))))]
+     type ShellType = StubShell;
+ 
+     async fn create(
+         &self,
+         options: brush_interactive::Options,
+     ) -> Result<Self::ShellType, brush_interactive::ShellError> {
+-        #[cfg(all(feature = "reedline", any(unix, windows)))]
++        #[cfg(all(feature = "reedline", any(unix, windows, target_os = "wasi")))]
+         {
+             brush_interactive::ReedlineShell::new(options).await
+         }
+-        #[cfg(any(not(feature = "reedline"), not(any(unix, windows))))]
++        #[cfg(any(not(feature = "reedline"), not(any(unix, windows, target_os = "wasi"))))]
+         {
+             Err(brush_interactive::ShellError::InputBackendNotSupported)
+         }

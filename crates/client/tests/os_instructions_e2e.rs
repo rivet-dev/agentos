@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use agentos_client::config::{
-    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, FsPermissions, HostTool,
+    node_modules_mount, AgentOsConfig, AgentOsSidecarConfig, FsPermissions, HostTool, PackageRef,
     PatternPermissions, PermissionMode, Permissions, ToolKit,
 };
 use agentos_client::{AgentOs, CreateSessionOptions};
@@ -72,14 +72,13 @@ fn allow_all_permissions() -> Permissions {
         child_process: Some(PatternPermissions::Mode(PermissionMode::Allow)),
         process: Some(PatternPermissions::Mode(PermissionMode::Allow)),
         env: Some(PatternPermissions::Mode(PermissionMode::Allow)),
-        tool: Some(PatternPermissions::Mode(PermissionMode::Allow)),
+        binding: Some(PatternPermissions::Mode(PermissionMode::Allow)),
     }
 }
 
-/// Lay out a fake `node_modules/@agentos-software/pi` whose `bin` resolves to the mock adapter,
-/// so the client's `resolve_package_bin("pi")` path projects it into the guest at
-/// `/root/node_modules/@agentos-software/pi/adapter.mjs` and the sidecar launches it.
-fn write_mock_pi_adapter(module_root: &std::path::Path) {
+/// Lay out a fake `node_modules/@agentos-software/pi` that is also a projectable
+/// agentOS package, so the sidecar resolves `pi` from `/opt/agentos`.
+fn write_mock_pi_adapter(module_root: &std::path::Path) -> std::path::PathBuf {
     let package_dir = module_root
         .join("node_modules")
         .join("@agentos-software")
@@ -90,12 +89,18 @@ fn write_mock_pi_adapter(module_root: &std::path::Path) {
         r#"{ "name": "@agentos-software/pi", "version": "0.0.0", "bin": "./adapter.mjs" }"#,
     )
     .expect("write mock adapter package.json");
+    std::fs::write(
+        package_dir.join("agentos-package.json"),
+        r#"{"name":"pi","version":"0.0.0","agent":{"acpEntrypoint":"pi"}}"#,
+    )
+    .expect("write mock agentos-package.json");
     let adapter = MOCK_ACP_ADAPTER.replace(
         "__MOCK_SESSION_ID__",
         &format!("mock-session-{}", Uuid::new_v4()),
     );
     std::fs::write(package_dir.join("adapter.mjs"), adapter)
         .expect("write mock adapter entrypoint");
+    package_dir
 }
 
 async fn launch_pi_session_and_read_argv(options: CreateSessionOptions) -> Vec<String> {
@@ -108,9 +113,9 @@ async fn launch_pi_session_with_tools_and_read_argv(
 ) -> Vec<String> {
     let module_access_dir =
         std::env::temp_dir().join(format!("agentos-client-os-instructions-{}", Uuid::new_v4()));
-    write_mock_pi_adapter(&module_access_dir);
+    let package_dir = write_mock_pi_adapter(&module_access_dir);
 
-    let argv = run_session(&module_access_dir, options, tool_kits).await;
+    let argv = run_session(&module_access_dir, &package_dir, options, tool_kits).await;
 
     std::fs::remove_dir_all(&module_access_dir).ok();
     argv
@@ -118,6 +123,7 @@ async fn launch_pi_session_with_tools_and_read_argv(
 
 async fn run_session(
     module_access_dir: &Path,
+    package_dir: &Path,
     options: CreateSessionOptions,
     tool_kits: Vec<ToolKit>,
 ) -> Vec<String> {
@@ -128,6 +134,10 @@ async fn run_session(
                 .to_string_lossy()
                 .into_owned(),
         )],
+        packages: vec![PackageRef {
+            dir: Some(package_dir.to_string_lossy().into_owned()),
+            tar: None,
+        }],
         sidecar: Some(AgentOsSidecarConfig::Shared {
             pool: Some(format!("os-instructions-{}", Uuid::new_v4())),
         }),

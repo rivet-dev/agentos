@@ -157,7 +157,7 @@ await vm.dispose();
 - `MountConfigCustom` — Caller-provided VirtualFileSystem
 - `NativeMountConfig` — Declarative sidecar mount plugin configuration
 - `MountConfigOverlay` — Copy-on-write overlay (lower + upper layers)
-- `chunkedS3MountPlugin()` — Declarative S3-compatible native mount plugin descriptor (from `@secure-exec/core/descriptors`)
+- `chunkedS3MountPlugin()` — Declarative S3-compatible native mount plugin descriptor (from `@rivet-dev/agentos-runtime-core/descriptors`)
 
 **MCP Servers**
 - `McpServerConfig` — Union of local and remote MCP configs

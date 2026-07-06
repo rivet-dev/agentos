@@ -59,10 +59,6 @@ const fallbackCommandDirs = [
 		workspaceRoot,
 		"registry/native/target/wasm32-wasip1/release/commands",
 	),
-	resolve(
-		workspaceRoot,
-		"../secure-exec/registry/native/target/wasm32-wasip1/release/commands",
-	),
 ];
 const BRUSH_SHELL_COMMANDS = new Set(["bash", "sh"]);
 const SHELL_OPTIONS_WITH_VALUES = new Set([
@@ -91,18 +87,22 @@ interface CliOptions {
 }
 
 // The `@agentos-software/*` packages default-export a package descriptor
-// pointing at their self-contained package directory (a `bin/` of wasm files +
-// an `agentos-package.json`). Current packages export `{ packageDir }`; older
-// builds exported `{ name, dir }` — accept both.
+// pointing at their self-contained package tar. Local transition builds may
+// still export a package directory, and older builds exported `{ name, dir }`.
 interface RegistryPackage {
 	name?: string;
 	dir?: string;
 	packageDir?: string;
+	packageTar?: string;
 }
 
 // The sidecar requires an agentos-package.json manifest in every package dir.
 function isUsablePackageDir(dir: string | undefined): dir is string {
 	return dir !== undefined && existsSync(resolve(dir, "agentos-package.json"));
+}
+
+function isUsablePackageTar(file: string | undefined): file is string {
+	return file !== undefined && existsSync(file);
 }
 
 // Published packages ship their package dir materialized. Workspace packages
@@ -111,6 +111,9 @@ function isUsablePackageDir(dir: string | undefined): dir is string {
 // exists but predates the agentos-package.json manifest requirement is skipped
 // (with a warning) rather than aborting VM creation for the whole shell.
 function withLocalCommandFallback(pkg: RegistryPackage): SoftwareInput | null {
+	if (isUsablePackageTar(pkg.packageTar)) {
+		return { packageTar: pkg.packageTar };
+	}
 	const packageDir = pkg.packageDir ?? pkg.dir;
 	if (isUsablePackageDir(packageDir)) {
 		return { packageDir };
@@ -156,10 +159,15 @@ const software: SoftwareInput[] = [
 // The vi-like editors ship as registry packages: vix, and vim (which carries
 // its runtime tree + VIMRUNTIME via the manifest `provides`). An unbuilt
 // package is a valid empty placeholder — skip it rather than projecting a
-// command-less package (build them in ../secure-exec: drop the wasm binaries
-// into registry/native/target/.../commands and run `just registry-build`).
-for (const editor of [vix, vim]) {
+// command-less package (build them locally: drop the wasm binaries into
+// registry/native/target/.../commands and run `just registry-build`).
+for (const editor of [vix, vim] as RegistryPackage[]) {
+	if (isUsablePackageTar(editor.packageTar)) {
+		software.push({ packageTar: editor.packageTar });
+		continue;
+	}
 	const packageDir = editor.packageDir;
+	if (packageDir === undefined) continue;
 	try {
 		const bin = JSON.parse(
 			readFileSync(join(packageDir, "package.json"), "utf8"),

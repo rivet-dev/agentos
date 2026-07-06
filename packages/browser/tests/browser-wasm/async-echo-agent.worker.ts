@@ -6,7 +6,7 @@
 // so the agent could await the model), and stdout is written to the SAB
 // up-channel via SabExecutionEndpoint (so the blocked kernel reactor is woken).
 
-import { SabExecutionEndpoint, type SabRingLayout } from "@secure-exec/browser";
+import { SabExecutionEndpoint, type SabRingLayout } from "@rivet-dev/agentos-runtime-browser";
 
 interface InitMessage {
 	type: "init";

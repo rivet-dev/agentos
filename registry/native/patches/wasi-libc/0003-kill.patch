@@ -1,0 +1,74 @@
+Implement kill() via host_process WASM import.
+
+Un-ifdefs kill() declaration from signal.h (was hidden behind
+__wasilibc_unmodified_upstream) and provides an implementation
+that calls host_process.proc_kill. Other signal functions
+(sigemptyset, sigaction, etc.) remain hidden.
+
+Also ensures pid_t is defined before the kill() declaration by
+adding __NEED_pid_t + bits/alltypes.h outside the upstream-only block.
+
+Import signature matches wasmvm/crates/wasi-ext/src/lib.rs exactly.
+
+diff --git a/libc-bottom-half/sources/host_kill.c b/libc-bottom-half/sources/host_kill.c
+new file mode 100644
+index 0000000..cbf9211
+--- /dev/null
++++ b/libc-bottom-half/sources/host_kill.c
+@@ -0,0 +1,25 @@
++// kill() via wasmVM host_process import.
++//
++// Replaces wasi-libc's hidden kill() declaration with an implementation
++// that calls our custom host_process.proc_kill WASM import.
++//
++// Import signature matches wasmvm/crates/wasi-ext/src/lib.rs exactly.
++
++#include <__errno.h>
++#include <stdint.h>
++#include <sys/types.h>
++
++#define WASM_IMPORT(mod, fn) \
++    __attribute__((__import_module__(mod), __import_name__(fn)))
++
++WASM_IMPORT("host_process", "proc_kill")
++uint32_t __host_proc_kill(uint32_t pid, uint32_t signal);
++
++int kill(pid_t pid, int sig) {
++    uint32_t err = __host_proc_kill((uint32_t)pid, (uint32_t)sig);
++    if (err != 0) {
++        errno = (int)err;
++        return -1;
++    }
++    return 0;
++}
+diff --git a/libc-top-half/musl/include/signal.h b/libc-top-half/musl/include/signal.h
+index 75b5e55..9bf8833 100644
+--- a/libc-top-half/musl/include/signal.h
++++ b/libc-top-half/musl/include/signal.h
+@@ -15,7 +15,14 @@ extern "C" {
+  || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+  || defined(_BSD_SOURCE)
+ 
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no ucontext support */
++#ifndef __wasilibc_unmodified_upstream
++// Ensure pid_t is available for kill() declaration below.
++// The upstream __NEED_pid_t is inside the ifdef'd-out block.
++#define __NEED_pid_t
++#include <bits/alltypes.h>
++#endif
++
++#ifdef __wasilibc_unmodified_upstream /* WASI has no ucontext/sigaction */
+ #ifdef _GNU_SOURCE
+ #define __ucontext ucontext
+ #endif
+@@ -220,9 +227,9 @@ int __libc_current_sigrtmax(void);
+ #define SIGRTMAX  (__libc_current_sigrtmax())
+ #endif
+ 
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no signals */
+ int kill(pid_t, int);
+ 
++#ifdef __wasilibc_unmodified_upstream /* WASI has no signal sets */
+ int sigemptyset(sigset_t *);
+ int sigfillset(sigset_t *);
+ int sigaddset(sigset_t *, int);

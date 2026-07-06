@@ -1,0 +1,13 @@
+[package]
+name = "cmd-gzip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "gzip standalone binary for secure-exec VM"
+
+[[bin]]
+name = "gzip"
+path = "src/main.rs"
+
+[dependencies]
+secureexec-gzip = { path = "../../libs/gzip" }

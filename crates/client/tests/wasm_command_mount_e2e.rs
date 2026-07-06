@@ -1,13 +1,12 @@
-//! Regression repro for "software descriptors don't actually mount commands into the VM".
+//! Regression repro for "projected command packages resolve commands in the VM".
 //!
-//! A wasm-command software package (e.g. `@secure-exec/coreutils/wasm`) must be mounted at
-//! `/__secure_exec/commands/{index}/` so the sidecar's `discover_command_guest_paths` can resolve guest
-//! commands. Before the fix, `AgentOs::create` sent `ConfigureVm { mounts: Vec::new() }`, so the
-//! command directory was never mounted and `exec("echo hello")` failed with
-//! `command not found on native sidecar path: echo hello`.
+//! A command package (e.g. `@agentos-software/coreutils`) must be projected into `/opt/agentos`
+//! so the sidecar's command discovery can resolve guest commands. Before package projection was the
+//! sole boot path, stale helpers could create a VM with no usable command package and
+//! `exec("echo hello")` failed with `command not found on native sidecar path: echo hello`.
 //!
 //! This suite self-gates: it skips (returns early) when the sidecar binary is not built or when the
-//! coreutils wasm artifacts are absent, so it stays honest in unbuilt trees. When both prerequisites
+//! coreutils package artifacts are absent, so it stays honest in unbuilt trees. When both prerequisites
 //! are present it asserts the real contract: `echo hello` exits 0 with stdout `hello`.
 
 mod common;
@@ -21,7 +20,9 @@ async fn wasm_command_software_mounts_into_vm() {
         return;
     }
     let Some(os) = common::new_vm_with_commands().await else {
-        eprintln!("skipping wasm_command_software_mounts_into_vm: coreutils wasm artifacts absent");
+        eprintln!(
+            "skipping wasm_command_software_mounts_into_vm: coreutils package artifacts absent"
+        );
         return;
     };
 

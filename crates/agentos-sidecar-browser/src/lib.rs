@@ -12,18 +12,18 @@ mod acp_host;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use agentos_sidecar_core::{codec, error_response, AcpCore, AcpCoreError};
-use secure_exec_sidecar_browser::{
+use agentos_native_sidecar_browser::{
     BrowserExtension, BrowserExtensionContext, BrowserSidecar, BrowserSidecarBridge,
     BrowserSidecarConfig, BrowserSidecarError,
 };
+use agentos_sidecar_core::{codec, error_response, AcpCore, AcpCoreError};
 
 use crate::acp_host::BrowserAcpHost;
 
 /// The browser ACP extension: decodes ACP wire requests, dispatches them through
 /// the host-free `agentos-sidecar-core` engine, and drives the agent process via a
 /// `BrowserAcpHost` over the converged executor. This crate stays host-free (no
-/// tokio / native secure-exec-sidecar) so it compiles to wasm32; the kernel remains
+/// tokio / native agentos-native-sidecar) so it compiles to wasm32; the kernel remains
 /// the sole enforcement point and all guest syscalls route through the converged
 /// sync bridge. `Mutex` (not `RefCell`) satisfies the `Send + Sync` trait bound; the
 /// browser runs single-threaded so there is no real contention.
@@ -103,7 +103,7 @@ pub fn browser_sidecar<B>(
 ) -> Result<BrowserSidecar<B>, BrowserSidecarError>
 where
     B: BrowserSidecarBridge,
-    <B as secure_exec_bridge::BridgeTypes>::Error: std::fmt::Debug,
+    <B as agentos_bridge::BridgeTypes>::Error: std::fmt::Debug,
 {
     BrowserSidecar::with_extensions(bridge, config, extensions())
 }
@@ -158,7 +158,7 @@ mod tests {
 
     struct NullBrowserExtensionHost;
 
-    impl secure_exec_sidecar_browser::BrowserExtensionHost for NullBrowserExtensionHost {
+    impl agentos_native_sidecar_browser::BrowserExtensionHost for NullBrowserExtensionHost {
         fn write_file(
             &mut self,
             _vm_id: &str,
@@ -191,50 +191,50 @@ mod tests {
 
         fn create_javascript_context(
             &mut self,
-            _request: secure_exec_bridge::CreateJavascriptContextRequest,
-        ) -> Result<secure_exec_bridge::GuestContextHandle, BrowserSidecarError> {
+            _request: agentos_bridge::CreateJavascriptContextRequest,
+        ) -> Result<agentos_bridge::GuestContextHandle, BrowserSidecarError> {
             unreachable!("test ACP extension does not call browser context")
         }
 
         fn create_wasm_context(
             &mut self,
-            _request: secure_exec_bridge::CreateWasmContextRequest,
-        ) -> Result<secure_exec_bridge::GuestContextHandle, BrowserSidecarError> {
+            _request: agentos_bridge::CreateWasmContextRequest,
+        ) -> Result<agentos_bridge::GuestContextHandle, BrowserSidecarError> {
             unreachable!("test ACP extension does not call browser context")
         }
 
         fn start_execution(
             &mut self,
-            _request: secure_exec_bridge::StartExecutionRequest,
-        ) -> Result<secure_exec_bridge::StartedExecution, BrowserSidecarError> {
+            _request: agentos_bridge::StartExecutionRequest,
+        ) -> Result<agentos_bridge::StartedExecution, BrowserSidecarError> {
             unreachable!("test ACP extension does not call browser context")
         }
 
         fn write_stdin(
             &mut self,
-            _request: secure_exec_bridge::WriteExecutionStdinRequest,
+            _request: agentos_bridge::WriteExecutionStdinRequest,
         ) -> Result<(), BrowserSidecarError> {
             unreachable!("test ACP extension does not call browser context")
         }
 
         fn close_stdin(
             &mut self,
-            _request: secure_exec_bridge::ExecutionHandleRequest,
+            _request: agentos_bridge::ExecutionHandleRequest,
         ) -> Result<(), BrowserSidecarError> {
             unreachable!("test ACP extension does not call browser context")
         }
 
         fn kill_execution(
             &mut self,
-            _request: secure_exec_bridge::KillExecutionRequest,
+            _request: agentos_bridge::KillExecutionRequest,
         ) -> Result<(), BrowserSidecarError> {
             unreachable!("test ACP extension does not call browser context")
         }
 
         fn poll_execution_event(
             &mut self,
-            _request: secure_exec_bridge::PollExecutionEventRequest,
-        ) -> Result<Option<secure_exec_bridge::ExecutionEvent>, BrowserSidecarError> {
+            _request: agentos_bridge::PollExecutionEventRequest,
+        ) -> Result<Option<agentos_bridge::ExecutionEvent>, BrowserSidecarError> {
             unreachable!("test ACP extension does not call browser context")
         }
     }

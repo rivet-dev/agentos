@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 
-// The symlinked @secure-exec/browser + /core dist files (served via /@fs from a
+// The symlinked @rivet-dev/agentos-runtime-browser + /core dist files (served via /@fs from a
 // sibling checkout) import bare deps that live in THIS package's store, not the
 // sibling's. Vite resolves bare imports relative to the importing file, so those
 // fail. Alias each to its agent-os-web-resolved location (resolved at config time
@@ -38,7 +38,7 @@ const browserWasmDir = path.join(here, "tests", "browser-wasm");
 const wasmDir = path.join(here, ".cache", "agentos-sidecar-wasm-web");
 const commandsDir = path.join(browserWasmDir, "commands");
 const repoRoot = path.resolve(here, "..", "..");
-// @secure-exec/browser is symlinked to a sibling checkout; allow Vite to read it.
+// @rivet-dev/agentos-runtime-browser is symlinked to a sibling checkout; allow Vite to read it.
 const secureExecCheckout = path.resolve(repoRoot, "..", "secure-exec-convwasi");
 // The entry imports `buffer` for the Buffer polyfill; Vite would otherwise
 // externalize the Node builtin. Point it at the npm `buffer` package (same as the
@@ -202,7 +202,7 @@ export default defineConfig({
 	optimizeDeps: {
 		// The symlinked dist dep + the runtime-fetched .cjs bundles should not be
 		// pre-bundled; the entry imports them lazily / at runtime.
-		exclude: ["@secure-exec/browser"],
+		exclude: ["@rivet-dev/agentos-runtime-browser"],
 		include: ["buffer"],
 	},
 	plugins: [agentosDevServer()],

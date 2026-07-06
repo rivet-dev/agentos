@@ -1,0 +1,29 @@
+Fix pthread_condattr_getclock operator precedence bug.
+
+The WASI-specific path in pthread_condattr_getclock uses:
+  if (a->__attr & 0x7fffffff == __WASI_CLOCKID_REALTIME)
+But == has higher precedence than &, so this evaluates as:
+  if (a->__attr & (0x7fffffff == 0))  =>  if (a->__attr & 0)  =>  always false
+The *clk output is never set, causing getclock to return uninitialized data.
+
+Fix by extracting the masked value first, then comparing.
+
+--- a/libc-top-half/musl/src/thread/pthread_attr_get.c
++++ b/libc-top-half/musl/src/thread/pthread_attr_get.c
+@@ -77,9 +77,12 @@
+ #else
+ int pthread_condattr_getclock(const pthread_condattr_t *restrict a, clockid_t *restrict clk)
+ {
+-	if (a->__attr & 0x7fffffff == __WASI_CLOCKID_REALTIME)
+-		*clk = CLOCK_REALTIME;
+-	if (a->__attr & 0x7fffffff == __WASI_CLOCKID_MONOTONIC)
+-		*clk = CLOCK_MONOTONIC;
++	unsigned id = a->__attr & 0x7fffffff;
++	if (id == __WASI_CLOCKID_REALTIME)
++		*clk = CLOCK_REALTIME;
++	else if (id == __WASI_CLOCKID_MONOTONIC)
++		*clk = CLOCK_MONOTONIC;
++	else
++		*clk = CLOCK_REALTIME;
+ 	return 0;
+ }

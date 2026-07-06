@@ -1,6 +1,6 @@
 // Agent OS converged sidecar loader.
 //
-// The converged browser runtime lives in `@secure-exec/browser`: the worker, the
+// The converged browser runtime lives in `@rivet-dev/agentos-runtime-browser`: the worker, the
 // SharedArrayBuffer sync-bridge, and the fs/net/dns/module servicers are all
 // reused verbatim. Agent OS plugs in its OWN wasm sidecar — the one that registers
 // `BrowserAcpExtension` — via `createBrowserRuntimeDriverFactory({ convergedSidecar })`.
@@ -12,12 +12,12 @@
 // `_bg.wasm`; both URLs resolve relative to this module so a consumer's bundler
 // (or native ESM loader) emits/serves them.
 
-import type { CreateVmConfig } from "@secure-exec/core/vm-config";
-import type { ProtocolFramePayloadCodec } from "@secure-exec/core/protocol-frames";
+import type { CreateVmConfig } from "@rivet-dev/agentos-runtime-core/vm-config";
+import type { ProtocolFramePayloadCodec } from "@rivet-dev/agentos-runtime-core/protocol-frames";
 import type {
 	ConvergedSidecarFactoryOptions,
 	ConvergedSidecarHandle,
-} from "@secure-exec/browser";
+} from "@rivet-dev/agentos-runtime-browser";
 import {
 	createConvergedExecutionHostBridge,
 	type SyncAgentExecutor,
@@ -66,7 +66,7 @@ export interface AgentOsConvergedSidecarOptions {
  * `createBrowserRuntimeDriverFactory`'s `convergedSidecar` option:
  *
  * ```ts
- * import { createBrowserRuntimeDriverFactory } from "@secure-exec/browser";
+ * import { createBrowserRuntimeDriverFactory } from "@rivet-dev/agentos-runtime-browser";
  * import { createAgentOsConvergedSidecar } from "@rivet-dev/agentos-browser";
  *
  * const factory = createBrowserRuntimeDriverFactory({

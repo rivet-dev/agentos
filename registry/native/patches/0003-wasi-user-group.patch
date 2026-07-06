@@ -1,0 +1,67 @@
+--- a/library/std/src/sys/pal/wasi/os.rs	2026-03-15 17:39:48.943743477 -0700
++++ b/library/std/src/sys/pal/wasi/os.rs	2026-03-15 17:40:04.603751504 -0700
+@@ -8,6 +8,23 @@
+ use crate::sys::unsupported;
+ use crate::{fmt, io};
+ 
++// wasmVM host FFI bindings for process and user identity syscalls.
++mod host_ffi {
++    #[link(wasm_import_module = "host_process")]
++    unsafe extern "C" {
++        pub fn proc_getpid(ret_pid: *mut u32) -> u32;
++        pub fn proc_getppid(ret_pid: *mut u32) -> u32;
++    }
++
++    #[link(wasm_import_module = "host_user")]
++    unsafe extern "C" {
++        pub fn getuid(ret_uid: *mut u32) -> u32;
++        pub fn getgid(ret_gid: *mut u32) -> u32;
++        pub fn geteuid(ret_uid: *mut u32) -> u32;
++        pub fn getegid(ret_gid: *mut u32) -> u32;
++    }
++}
++
+ // Add a few symbols not in upstream `libc` just yet.
+ pub mod libc {
+     pub use libc::*;
+@@ -103,7 +120,39 @@
+ }
+ 
+ pub fn getpid() -> u32 {
+-    panic!("unsupported");
++    let mut pid: u32 = 0;
++    let errno = unsafe { host_ffi::proc_getpid(&mut pid) };
++    if errno != 0 { 1 } else { pid }
++}
++
++pub fn getppid() -> u32 {
++    let mut pid: u32 = 0;
++    let errno = unsafe { host_ffi::proc_getppid(&mut pid) };
++    if errno != 0 { 0 } else { pid }
++}
++
++pub fn getuid() -> u32 {
++    let mut uid: u32 = 0;
++    let errno = unsafe { host_ffi::getuid(&mut uid) };
++    if errno != 0 { 1000 } else { uid }
++}
++
++pub fn getgid() -> u32 {
++    let mut gid: u32 = 0;
++    let errno = unsafe { host_ffi::getgid(&mut gid) };
++    if errno != 0 { 1000 } else { gid }
++}
++
++pub fn geteuid() -> u32 {
++    let mut uid: u32 = 0;
++    let errno = unsafe { host_ffi::geteuid(&mut uid) };
++    if errno != 0 { 1000 } else { uid }
++}
++
++pub fn getegid() -> u32 {
++    let mut gid: u32 = 0;
++    let errno = unsafe { host_ffi::getegid(&mut gid) };
++    if errno != 0 { 1000 } else { gid }
+ }
+ 
+ #[doc(hidden)]

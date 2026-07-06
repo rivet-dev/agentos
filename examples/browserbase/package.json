@@ -11,8 +11,8 @@
   "dependencies": {
     "@rivet-dev/agentos": "workspace:*",
     "rivetkit": "catalog:rivetkit",
-    "@agentos-software/claude-code": "link:../../../secure-exec/registry/agent/claude",
-    "@agentos-software/browserbase": "link:../../../secure-exec/registry/software/browserbase"
+    "@agentos-software/claude-code": "workspace:*",
+    "@agentos-software/browserbase": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

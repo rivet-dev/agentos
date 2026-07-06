@@ -1,0 +1,13 @@
+[package]
+name = "cmd-whoami"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "whoami standalone binary for secure-exec VM"
+
+[[bin]]
+name = "whoami"
+path = "src/main.rs"
+
+[dependencies]
+secureexec-builtins = { path = "../../libs/builtins" }

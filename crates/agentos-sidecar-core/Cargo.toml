@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 description = "Host-free Agent OS sidecar core (ACP state machine), shared by the native and wasm/browser sidecars"
 
-# Host-free ONLY: no tokio, no std::fs/host IO, no native secure-exec-sidecar.
+# Host-free ONLY: no tokio, no std::fs/host IO, no native agentos-native-sidecar.
 # This crate must compile to wasm32 so the browser sidecar can run the ACP logic.
 [dependencies]
 agentos-protocol = { workspace = true }

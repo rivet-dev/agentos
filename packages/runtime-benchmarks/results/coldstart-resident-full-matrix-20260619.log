@@ -1,0 +1,75 @@
+=== Cold Start Benchmark ===
+CPU: 12th Gen Intel(R) Core(TM) i7-12700KF
+Cores: 20 | Max concurrency: 16 | Max live runtimes: 8
+Resident runner live cap: 1
+RAM: 62.6 GB | Node: v24.13.0
+Loadavg: 2.3, 2.56, 4.03
+Iterations: 1 (+ 0 warmup)
+Batch sizes: 1, 10, 50, 100, 200
+Scenarios: resident-runner
+Sidecar: /home/nathan/secure-exec/target/release/secure-exec-sidecar
+
+
+--- scenario=resident-runner, batch=1, mode=sequential ---
+  cold: mean=396.38ms p50=396.38ms p95=396.38ms
+  warm: mean=1.36ms p50=1.36ms p95=1.36ms
+  phases: filesystem_snapshot.p50=0.32ms | resident_first_exec.p50=1.59ms | resident_runner_create.p50=171.41ms | resident_warm_exec.p50=1.36ms | runtime_create_total.p50=223.38ms | runtime_mount_node.p50=2.95ms | runtime_mount_wasm.p50=220.02ms | session_open.p50=6.35ms | vm_configure.p50=0.73ms | vm_create.p50=2.75ms | vm_ready.p50=0.25ms
+
+--- scenario=resident-runner, batch=1, mode=concurrent ---
+  cold: mean=204.7ms p50=204.7ms p95=204.7ms
+  warm: mean=1.41ms p50=1.41ms p95=1.41ms
+  phases: filesystem_snapshot.p50=0.1ms | resident_first_exec.p50=1.54ms | resident_runner_create.p50=27.31ms | resident_warm_exec.p50=1.41ms | runtime_create_total.p50=175.85ms | runtime_mount_node.p50=2.82ms | runtime_mount_wasm.p50=172.92ms | session_open.p50=1.11ms | vm_configure.p50=0.14ms | vm_create.p50=1.26ms | vm_ready.p50=0.01ms
+
+--- scenario=resident-runner, batch=10, mode=sequential ---
+  cold: mean=197.95ms p50=197.93ms p95=211.43ms
+  warm: mean=1.3ms p50=1.29ms p95=1.38ms
+  phases: filesystem_snapshot.p50=0.08ms | resident_first_exec.p50=1.32ms | resident_runner_create.p50=25.27ms | resident_warm_exec.p50=1.29ms | runtime_create_total.p50=171.63ms | runtime_mount_node.p50=2.76ms | runtime_mount_wasm.p50=168.87ms | session_open.p50=0.38ms | vm_configure.p50=0.14ms | vm_create.p50=1.34ms | vm_ready.p50=0.01ms
+
+--- scenario=resident-runner, batch=10, mode=concurrent ---
+  cold: mean=192.94ms p50=190.69ms p95=203.83ms
+  warm: mean=1.29ms p50=1.28ms p95=1.36ms
+  phases: filesystem_snapshot.p50=0.03ms | resident_first_exec.p50=1.36ms | resident_runner_create.p50=25.53ms | resident_warm_exec.p50=1.28ms | runtime_create_total.p50=164.37ms | runtime_mount_node.p50=2.72ms | runtime_mount_wasm.p50=161.48ms | session_open.p50=0.33ms | vm_configure.p50=0.16ms | vm_create.p50=1.28ms | vm_ready.p50=0.01ms
+
+--- scenario=resident-runner, batch=50, mode=sequential ---
+  cold: mean=187.5ms p50=186.28ms p95=202.34ms
+  warm: mean=1.31ms p50=1.3ms p95=1.4ms
+  phases: filesystem_snapshot.p50=0.03ms | resident_first_exec.p50=1.34ms | resident_runner_create.p50=25.41ms | resident_warm_exec.p50=1.3ms | runtime_create_total.p50=159.5ms | runtime_mount_node.p50=2.7ms | runtime_mount_wasm.p50=156.58ms | session_open.p50=0.2ms | vm_configure.p50=0.11ms | vm_create.p50=1.1ms | vm_ready.p50=0.01ms
+
+--- scenario=resident-runner, batch=50, mode=concurrent ---
+  cold: mean=189.8ms p50=188.72ms p95=201.12ms
+  warm: mean=1.34ms p50=1.35ms p95=1.54ms
+  phases: filesystem_snapshot.p50=0.03ms | resident_first_exec.p50=1.41ms | resident_runner_create.p50=25.36ms | resident_warm_exec.p50=1.35ms | runtime_create_total.p50=162.01ms | runtime_mount_node.p50=2.76ms | runtime_mount_wasm.p50=158.55ms | session_open.p50=0.21ms | vm_configure.p50=0.12ms | vm_create.p50=1.13ms | vm_ready.p50=0.01ms
+
+--- scenario=resident-runner, batch=100, mode=sequential ---
+  cold: mean=202.61ms p50=200.75ms p95=212.41ms
+  warm: mean=1.05ms p50=1.3ms p95=1.59ms
+  phases: filesystem_snapshot.p50=0.03ms | resident_first_exec.p50=1.41ms | resident_runner_create.p50=24.23ms | resident_warm_exec.p50=1.3ms | runtime_create_total.p50=175.13ms | runtime_mount_node.p50=3.16ms | runtime_mount_wasm.p50=171.64ms | session_open.p50=0.3ms | vm_configure.p50=0.16ms | vm_create.p50=1.15ms | vm_ready.p50=0.01ms
+
+--- scenario=resident-runner, batch=100, mode=concurrent ---
+  cold: mean=217.31ms p50=217.14ms p95=229.38ms
+  warm: mean=0.78ms p50=0.73ms p95=1.22ms
+  phases: filesystem_snapshot.p50=0.03ms | resident_first_exec.p50=1.6ms | resident_runner_create.p50=23.9ms | resident_warm_exec.p50=0.73ms | runtime_create_total.p50=190.92ms | runtime_mount_node.p50=3.42ms | runtime_mount_wasm.p50=187.62ms | session_open.p50=0.35ms | vm_configure.p50=0.22ms | vm_create.p50=1.15ms | vm_ready.p50=0.01ms
+
+--- scenario=resident-runner, batch=200, mode=sequential ---
+  cold: mean=243.3ms p50=243.92ms p95=262.6ms
+  warm: mean=0.99ms p50=0.92ms p95=1.68ms
+  phases: filesystem_snapshot.p50=0.03ms | resident_first_exec.p50=1.76ms | resident_runner_create.p50=24.04ms | resident_warm_exec.p50=0.92ms | runtime_create_total.p50=216.65ms | runtime_mount_node.p50=3.9ms | runtime_mount_wasm.p50=211.89ms | session_open.p50=0.51ms | vm_configure.p50=0.24ms | vm_create.p50=1.22ms | vm_ready.p50=0.01ms
+
+--- scenario=resident-runner, batch=200, mode=concurrent ---
+  cold: mean=283.56ms p50=284.31ms p95=302.18ms
+  warm: mean=1.38ms p50=1.28ms p95=2.29ms
+  phases: filesystem_snapshot.p50=0.02ms | resident_first_exec.p50=2.16ms | resident_runner_create.p50=24.63ms | resident_warm_exec.p50=1.28ms | runtime_create_total.p50=257.46ms | runtime_mount_node.p50=4.67ms | runtime_mount_wasm.p50=252.57ms | session_open.p50=0.81ms | vm_configure.p50=0.3ms | vm_create.p50=1.33ms | vm_ready.p50=0.01ms
+
+       scenario | batch |       mode | cold mean | cold p50 | cold p95 | warm mean | warm p50 | warm p95
+--------------- | ----- | ---------- | --------- | -------- | -------- | --------- | -------- | --------
+resident-runner |     1 | sequential |  396.38ms | 396.38ms | 396.38ms |    1.36ms |   1.36ms |   1.36ms
+resident-runner |     1 | concurrent |   204.7ms |  204.7ms |  204.7ms |    1.41ms |   1.41ms |   1.41ms
+resident-runner |    10 | sequential |  197.95ms | 197.93ms | 211.43ms |     1.3ms |   1.29ms |   1.38ms
+resident-runner |    10 | concurrent |  192.94ms | 190.69ms | 203.83ms |    1.29ms |   1.28ms |   1.36ms
+resident-runner |    50 | sequential |   187.5ms | 186.28ms | 202.34ms |    1.31ms |    1.3ms |    1.4ms
+resident-runner |    50 | concurrent |   189.8ms | 188.72ms | 201.12ms |    1.34ms |   1.35ms |   1.54ms
+resident-runner |   100 | sequential |  202.61ms | 200.75ms | 212.41ms |    1.05ms |    1.3ms |   1.59ms
+resident-runner |   100 | concurrent |  217.31ms | 217.14ms | 229.38ms |    0.78ms |   0.73ms |   1.22ms
+resident-runner |   200 | sequential |   243.3ms | 243.92ms |  262.6ms |    0.99ms |   0.92ms |   1.68ms
+resident-runner |   200 | concurrent |  283.56ms | 284.31ms | 302.18ms |    1.38ms |   1.28ms |   2.29ms
+

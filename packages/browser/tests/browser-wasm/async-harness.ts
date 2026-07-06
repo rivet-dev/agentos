@@ -14,13 +14,13 @@
 import {
 	decodeBareProtocolFrame,
 	encodeBareProtocolFrame,
-} from "@secure-exec/core/protocol-frames";
-import { SIDECAR_PROTOCOL_SCHEMA } from "@secure-exec/core/protocol-schema";
+} from "@rivet-dev/agentos-runtime-core/protocol-frames";
+import { SIDECAR_PROTOCOL_SCHEMA } from "@rivet-dev/agentos-runtime-core/protocol-schema";
 import {
 	SabRing,
 	type SabRingLayout,
 	encodeSyscallCompletion,
-} from "@secure-exec/browser";
+} from "@rivet-dev/agentos-runtime-browser";
 import {
 	handleChatCompletion,
 	type LanguageModelSession,

@@ -10,7 +10,7 @@ import {
 	allowAll,
 	createBrowserDriver,
 	createBrowserRuntimeDriverFactory,
-} from "@secure-exec/browser";
+} from "@rivet-dev/agentos-runtime-browser";
 import { createAgentOsConvergedSidecar } from "../../src/converged-sidecar.js";
 
 const WASM_MODULE_URL = "/wasm/agentos_sidecar_browser.js";

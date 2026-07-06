@@ -1,0 +1,13 @@
+--- a/src/touch.rs
++++ b/src/touch.rs
+@@ -826,6 +826,10 @@
+     #[cfg(target_os = "android")]
+     {
+         Ok(PathBuf::from("/proc/self/fd/1"))
++    }
++    #[cfg(target_os = "wasi")]
++    {
++        Ok(PathBuf::from("/dev/stdout"))
+     }
+     #[cfg(windows)]
+     {

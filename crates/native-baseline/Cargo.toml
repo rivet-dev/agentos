@@ -1,0 +1,16 @@
+[package]
+name = "agentos-native-baseline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Native floor for the differential perf harness. std-only on purpose: this is the
+# glibc fork/posix_spawn + execve baseline that the agent-os "emulation tax" divides
+# against. No secure-exec deps — it must measure the host, not the emulator.
+
+[[bin]]
+name = "agentos-native-baseline"
+path = "src/main.rs"
+
+[dependencies]

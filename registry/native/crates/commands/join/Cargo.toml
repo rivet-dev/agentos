@@ -1,0 +1,13 @@
+[package]
+name = "cmd-join"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "join standalone binary for secure-exec VM"
+
+[[bin]]
+name = "join"
+path = "src/main.rs"
+
+[dependencies]
+uu_join = "0.7.0"

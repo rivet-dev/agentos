@@ -1,0 +1,13 @@
+[package]
+name = "cmd-mkdir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "mkdir standalone binary for secure-exec VM"
+
+[[bin]]
+name = "mkdir"
+path = "src/main.rs"
+
+[dependencies]
+uu_mkdir = "0.7.0"

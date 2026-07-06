@@ -1,0 +1,57 @@
+Implement isatty() via host_user WASM import.
+
+Replaces wasi-libc's basic filetype heuristic (fd_fdstat_get check
+for CHARACTER_DEVICE without SEEK/TELL rights) with a call to our
+host_user.isatty import, which checks actual PTY state on the host.
+
+Preserves the __isatty / isatty weak alias pattern used by musl's
+__stdout_write.c and __fdopen.c.
+
+Import signature matches wasmvm/crates/wasi-ext/src/lib.rs exactly.
+
+--- a/libc-bottom-half/sources/isatty.c
++++ b/libc-bottom-half/sources/isatty.c
+@@ -1,22 +1,28 @@
+-#include <wasi/api.h>
+-#include <__errno.h>
++// isatty() via wasmVM host_user import.
++//
++// Replaces wasi-libc's fdstat-based heuristic with a call to our
++// host_user.isatty import which checks actual PTY state on the host.
++//
++// Import signature matches wasmvm/crates/wasi-ext/src/lib.rs exactly.
++
++#include <__errno.h>
++#include <stdint.h>
+ #include <__function___isatty.h>
+
++#define WASM_IMPORT(mod, fn) \
++    __attribute__((__import_module__(mod), __import_name__(fn)))
++
++// host_user.isatty(fd: u32, ret_bool: *mut u32) -> errno
++WASM_IMPORT("host_user", "isatty")
++uint32_t __host_isatty(uint32_t fd, uint32_t *ret_bool);
++
+ int __isatty(int fd) {
+-    __wasi_fdstat_t statbuf;
+-    int r = __wasi_fd_fdstat_get(fd, &statbuf);
+-    if (r != 0) {
+-        errno = r;
++    uint32_t result;
++    uint32_t err = __host_isatty((uint32_t)fd, &result);
++    if (err != 0) {
++        errno = (int)err;
+         return 0;
+     }
+-
+-    // A tty is a character device that we can't seek or tell on.
+-    if (statbuf.fs_filetype != __WASI_FILETYPE_CHARACTER_DEVICE ||
+-        (statbuf.fs_rights_base & (__WASI_RIGHTS_FD_SEEK | __WASI_RIGHTS_FD_TELL)) != 0) {
+-        errno = __WASI_ERRNO_NOTTY;
+-        return 0;
+-    }
+-
+-    return 1;
++    return result != 0 ? 1 : 0;
+ }
+ extern __typeof(__isatty) isatty __attribute__((weak, alias("__isatty")));

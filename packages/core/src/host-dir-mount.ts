@@ -1,7 +1,7 @@
 import type {
 	MountConfigJsonObject,
 	NativeMountPluginDescriptor,
-} from "@secure-exec/core/descriptors";
+} from "@rivet-dev/agentos-runtime-core/descriptors";
 
 export interface HostDirBackendOptions {
 	/** Absolute path to the host directory to project into the VM. */

@@ -7,21 +7,23 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use agentos_native_sidecar::wire::{
+    AuthenticateRequest, BootstrapRootFilesystemRequest, ConnectionOwnership, CreateVmRequest,
+    EventFrame, EventPayload, ExtEnvelope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope,
+    RequestFrame, RequestPayload, ResponsePayload, RootFilesystemEntry,
+    RootFilesystemEntryEncoding, RootFilesystemEntryKind, SessionOwnership, SidecarPlacement,
+    SidecarPlacementShared, SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload,
+    VmOwnership,
+};
+use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig};
 use agentos_protocol::generated::v1::{
     AcpCallback, AcpCallbackResponse, AcpCloseSessionRequest, AcpCreateSessionRequest, AcpEvent,
     AcpGetSessionStateRequest, AcpHostRequestCallbackResponse, AcpPermissionCallbackResponse,
     AcpRequest, AcpResponse, AcpRuntimeKind, AcpSessionRequest,
 };
 use agentos_protocol::{ACP_EXTENSION_NAMESPACE, PROTOCOL_VERSION as ACP_PROTOCOL_VERSION};
+use agentos_vm_config as vm_config;
 use bridge_support::RecordingBridge;
-use secure_exec_sidecar::wire::{
-    AuthenticateRequest, ConnectionOwnership, CreateVmRequest, EventFrame, EventPayload,
-    ExtEnvelope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope, RequestFrame,
-    RequestPayload, ResponsePayload, SessionOwnership, SidecarPlacement, SidecarPlacementShared,
-    SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload, VmOwnership,
-};
-use secure_exec_sidecar::{NativeSidecar, NativeSidecarConfig};
-use secure_exec_vm_config as vm_config;
 use serde_json::Value;
 
 #[test]
@@ -87,7 +89,6 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
             runtime: AcpRuntimeKind::JavaScript,
-            adapter_entrypoint: adapter.to_string_lossy().into_owned(),
             cwd: cwd.to_string_lossy().into_owned(),
             args: Vec::new(),
             env: HashMap::new(),
@@ -333,7 +334,6 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
             runtime: AcpRuntimeKind::JavaScript,
-            adapter_entrypoint: adapter.to_string_lossy().into_owned(),
             cwd: cwd.to_string_lossy().into_owned(),
             args: Vec::new(),
             env: HashMap::new(),
@@ -438,7 +438,6 @@ fn acp_close_session_denies_cross_connection_session_id() {
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
             runtime: AcpRuntimeKind::JavaScript,
-            adapter_entrypoint: adapter.to_string_lossy().into_owned(),
             cwd: cwd.to_string_lossy().into_owned(),
             args: Vec::new(),
             env: HashMap::new(),
@@ -553,7 +552,6 @@ fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
         AcpRequest::AcpCreateSessionRequest(AcpCreateSessionRequest {
             agent_type: String::from("pi"),
             runtime: AcpRuntimeKind::JavaScript,
-            adapter_entrypoint: adapter.to_string_lossy().into_owned(),
             cwd: cwd.to_string_lossy().into_owned(),
             args: Vec::new(),
             env: HashMap::new(),
@@ -807,7 +805,7 @@ fn dispatch_acp_with_events(
     let payload = serde_bare::to_vec(&request).expect("encode ACP request");
     let result = sidecar
         .dispatch_wire_blocking(RequestFrame {
-            schema: secure_exec_sidecar::wire::protocol_schema(),
+            schema: agentos_native_sidecar::wire::protocol_schema(),
             request_id,
             ownership: OwnershipScope::VmOwnership(VmOwnership {
                 connection_id: connection_id.to_owned(),
@@ -1009,7 +1007,7 @@ fn new_sidecar(name: &str) -> NativeSidecar<RecordingBridge> {
 fn authenticate(sidecar: &mut NativeSidecar<RecordingBridge>) -> String {
     let result = sidecar
         .dispatch_wire_blocking(RequestFrame {
-            schema: secure_exec_sidecar::wire::protocol_schema(),
+            schema: agentos_native_sidecar::wire::protocol_schema(),
             request_id: 1,
             ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
                 connection_id: String::from("client"),
@@ -1017,7 +1015,7 @@ fn authenticate(sidecar: &mut NativeSidecar<RecordingBridge>) -> String {
             payload: RequestPayload::AuthenticateRequest(AuthenticateRequest {
                 client_name: String::from("acp-extension-test"),
                 auth_token: String::new(),
-                protocol_version: secure_exec_sidecar::wire::PROTOCOL_VERSION,
+                protocol_version: agentos_native_sidecar::wire::PROTOCOL_VERSION,
                 bridge_version: agentos_bridge::bridge_contract().version,
             }),
         })
@@ -1031,7 +1029,7 @@ fn authenticate(sidecar: &mut NativeSidecar<RecordingBridge>) -> String {
 fn open_session(sidecar: &mut NativeSidecar<RecordingBridge>, connection_id: &str) -> String {
     let result = sidecar
         .dispatch_wire_blocking(RequestFrame {
-            schema: secure_exec_sidecar::wire::protocol_schema(),
+            schema: agentos_native_sidecar::wire::protocol_schema(),
             request_id: 2,
             ownership: OwnershipScope::ConnectionOwnership(ConnectionOwnership {
                 connection_id: connection_id.to_owned(),
@@ -1058,7 +1056,7 @@ fn create_vm(
 ) -> String {
     let result = sidecar
         .dispatch_wire_blocking(RequestFrame {
-            schema: secure_exec_sidecar::wire::protocol_schema(),
+            schema: agentos_native_sidecar::wire::protocol_schema(),
             request_id: 3,
             ownership: OwnershipScope::SessionOwnership(SessionOwnership {
                 connection_id: connection_id.to_owned(),
@@ -1075,9 +1073,91 @@ fn create_vm(
             }),
         })
         .expect("create VM");
-    match result.response.payload {
+    let vm_id = match result.response.payload {
         ResponsePayload::VmCreatedResponse(response) => response.vm_id,
         other => panic!("unexpected create VM response: {other:?}"),
+    };
+    bootstrap_mock_agents(sidecar, connection_id, session_id, &vm_id, cwd);
+    vm_id
+}
+
+fn bootstrap_mock_agents(
+    sidecar: &mut NativeSidecar<RecordingBridge>,
+    connection_id: &str,
+    session_id: &str,
+    vm_id: &str,
+    cwd: &Path,
+) {
+    let adapter = cwd.join("adapter.mjs");
+    if !adapter.exists() {
+        return;
+    }
+    let script = fs::read_to_string(&adapter).expect("read mock adapter");
+    let manifest = serde_json::json!({
+        "name": "pi",
+        "agent": { "acpEntrypoint": "pi" },
+    })
+    .to_string();
+    let result = sidecar
+        .dispatch_wire_blocking(RequestFrame {
+            schema: agentos_native_sidecar::wire::protocol_schema(),
+            request_id: 30,
+            ownership: OwnershipScope::VmOwnership(VmOwnership {
+                connection_id: connection_id.to_owned(),
+                session_id: session_id.to_owned(),
+                vm_id: vm_id.to_owned(),
+            }),
+            payload: RequestPayload::BootstrapRootFilesystemRequest(
+                BootstrapRootFilesystemRequest {
+                    entries: vec![
+                        root_dir("/opt"),
+                        root_dir("/opt/agentos"),
+                        root_dir("/opt/agentos/bin"),
+                        root_dir("/opt/agentos/pkgs"),
+                        root_dir("/opt/agentos/pkgs/pi"),
+                        root_dir("/opt/agentos/pkgs/pi/current"),
+                        root_file("/opt/agentos/bin/pi", script, true),
+                        root_file(
+                            "/opt/agentos/pkgs/pi/current/agentos-package.json",
+                            manifest,
+                            false,
+                        ),
+                    ],
+                },
+            ),
+        })
+        .expect("bootstrap mock ACP package");
+    assert!(matches!(
+        result.response.payload,
+        ResponsePayload::RootFilesystemBootstrappedResponse(_)
+    ));
+}
+
+fn root_dir(path: &str) -> RootFilesystemEntry {
+    RootFilesystemEntry {
+        path: path.to_owned(),
+        kind: RootFilesystemEntryKind::Directory,
+        mode: Some(0o755),
+        uid: None,
+        gid: None,
+        content: None,
+        encoding: None,
+        target: None,
+        executable: false,
+    }
+}
+
+fn root_file(path: &str, content: String, executable: bool) -> RootFilesystemEntry {
+    RootFilesystemEntry {
+        path: path.to_owned(),
+        kind: RootFilesystemEntryKind::File,
+        mode: Some(if executable { 0o755 } else { 0o644 }),
+        uid: None,
+        gid: None,
+        content: Some(content),
+        encoding: Some(RootFilesystemEntryEncoding::Utf8),
+        target: None,
+        executable,
     }
 }
 

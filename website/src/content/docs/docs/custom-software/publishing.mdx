@@ -18,7 +18,7 @@ Every package is an npm package whose default export points at a self-contained 
 
 ## Building
 
-In the secure-exec registry, the `just` recipes drive the toolchain (see [Building Binaries](/docs/custom-software/building-wasm)):
+In the AgentOS registry, the `just` recipes drive the toolchain (see [Building Binaries](/docs/custom-software/building-wasm)):
 
 ```bash
 just registry-native            # compile the native wasm binaries (once per checkout)
@@ -53,12 +53,13 @@ just agentos-pkgs-update dev                # ... or from another tag
 
 ## Local development
 
-Both sides consume local builds by default:
+AgentOS consumes local registry builds by default because the registry packages
+are pnpm workspace members. Build the native commands with `just registry-native`
+and assemble packages with `just registry-build`; no sibling checkout or
+published package is required while iterating.
 
-- **secure-exec**: the registry packages are pnpm workspace members, so its tests and examples always resolve the in-repo builds — publish nothing while iterating.
-- **agent-os**: the **committed** dependency state is file-based — `link:`/`path` deps into the sibling `../secure-exec` checkout, with a committed `.github/refs/secure-exec` sha that CI materializes the sibling at. Keep a sibling checkout, build its registry packages (`just registry-native` + `just registry-build` there), and everything resolves locally with no mode flipping. Advance the dependency with `just secure-exec-bump [sha]`.
-
-Published-version pins exist only transiently inside agent-os publish workflows (`release-swap`): previews auto-cut a secure-exec preview at the committed ref, releases pin a real secure-exec release — and the swap is never committed.
+Published-version pins exist only in release validation and downstream
+consumers. The AgentOS workspace itself stays self-contained.
 
 ## Publishing from your own repo
 

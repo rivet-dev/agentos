@@ -1,19 +1,20 @@
 ---
 title: TypeScript
-description: Sandboxed type checking and compilation via @secure-exec/typescript.
+description: Sandboxed type checking and compilation via @rivet-dev/agentos-typescript.
 icon: "code"
 ---
 
-The maintained Secure-Exec compatibility surface includes a companion package
-for sandboxed TypeScript tooling. `@secure-exec/typescript` runs the TypeScript
+The AgentOS runtime includes a companion package
+for sandboxed TypeScript tooling. `@rivet-dev/agentos-typescript` runs the TypeScript
 compiler inside the sandbox runtime instead of the host process, so untrusted
 compile and typecheck work stays inside the same execution boundary.
 
 ## Runnable example
 
 ```ts Type-Checked Execution
+import { join } from "node:path";
 import { anthropic } from "@ai-sdk/anthropic";
-import { createTypeScriptTools } from "@secure-exec/typescript";
+import { createTypeScriptTools } from "@rivet-dev/agentos-typescript";
 import { generateText, stepCountIs, tool } from "ai";
 import {
 	allowAll,
@@ -22,15 +23,14 @@ import {
 	createNodeDriver,
 	createNodeRuntime,
 	createNodeRuntimeDriverFactory,
-} from "secure-exec";
+	nodeModulesMount,
+} from "@rivet-dev/agentos-core";
 import { z } from "zod";
 
 const filesystem = createInMemoryFileSystem();
 const systemDriver = createNodeDriver({
 	filesystem,
-	moduleAccess: {
-		cwd: process.cwd(),
-	},
+	mounts: [nodeModulesMount(join(process.cwd(), "node_modules"))],
 	permissions: allowAll,
 });
 const runtimeDriverFactory = createNodeRuntimeDriverFactory();
@@ -149,26 +149,25 @@ Source: [`packages/secure-exec-example-ai-agent-type-check/src/index.ts`](../../
 ## Install
 
 ```bash
-pnpm add secure-exec @secure-exec/typescript typescript
+pnpm add @rivet-dev/agentos-core @rivet-dev/agentos-typescript typescript
 ```
 
 ## Setup
 
 ```ts
-import { createNodeDriver, createNodeRuntimeDriverFactory } from "secure-exec";
-import { createTypeScriptTools } from "@secure-exec/typescript";
+import { join } from "node:path";
+import { createNodeDriver, createNodeRuntimeDriverFactory, nodeModulesMount } from "@rivet-dev/agentos-core";
+import { createTypeScriptTools } from "@rivet-dev/agentos-typescript";
 
 const ts = createTypeScriptTools({
   systemDriver: createNodeDriver({
-    moduleAccess: {
-      cwd: process.cwd(),
-    },
+    mounts: [nodeModulesMount(join(process.cwd(), "node_modules"))],
   }),
   runtimeDriverFactory: createNodeRuntimeDriverFactory(),
 });
 ```
 
-`moduleAccess.cwd` exposes the host package's `node_modules/` to the sandbox as
+`nodeModulesMount` exposes the host package's `node_modules/` to the sandbox as
 a read-only module tree, which lets the compiler runtime import packages like
 `typescript` without copying them into the sandbox filesystem first.
 

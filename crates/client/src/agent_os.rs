@@ -22,8 +22,8 @@ use agentos_protocol::generated::v1::{
     AcpPermissionCallbackResponse,
 };
 use agentos_protocol::ACP_EXTENSION_NAMESPACE;
-use secure_exec_client::wire;
-use secure_exec_vm_config as vm_config;
+use agentos_sidecar_client::wire;
+use agentos_vm_config as vm_config;
 
 use crate::config::{
     AgentOsConfig, AgentOsLimits, HostTool, MountConfig, PermissionMode, Permissions,
@@ -41,7 +41,7 @@ use crate::session::{
 };
 use crate::sidecar::{AgentOsSidecar, AgentOsSidecarPlacement, AgentOsSidecarVmLease};
 use crate::transport::{SidecarProcess, WireSidecarCallback};
-use secure_exec_client::TransportError;
+use agentos_sidecar_client::TransportError;
 
 use once_cell::sync::OnceCell;
 
@@ -3856,10 +3856,10 @@ mod tests {
         DirEntryType, FilesystemEntry, FilesystemEntryEncoding, FilesystemSnapshotEntries,
         FilesystemSnapshotExport, RootSnapshotExport, SnapshotExportKind,
     };
-    use secure_exec_client::wire::{
+    use agentos_sidecar_client::wire::{
         FsPermissionScope, PatternPermissionScope, PermissionMode as WirePermissionMode,
     };
-    use secure_exec_vm_config::{
+    use agentos_vm_config::{
         RootFilesystemEntryKind, RootFilesystemLowerDescriptor,
         RootFilesystemMode as ConfigRootFilesystemMode,
     };

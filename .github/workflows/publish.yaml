@@ -1,23 +1,3 @@
-# =============================================================================
-# Publish
-# =============================================================================
-#
-# Single workflow for preview publish AND release cuts. Both triggers are
-# manual (workflow_dispatch). The build + npm publish steps run identically for
-# both modes. Only the build profile (debug vs release), npm dist-tag, and the
-# release-only tail (crates.io, GitHub release assets, R2, git tag) differ.
-#
-# Triggers and mapping:
-#   workflow_dispatch (no version)   → trigger=branch  npm_tag=<sanitized branch>  build=debug
-#   workflow_dispatch (with version) → trigger=release npm_tag=latest              build=release
-#                                       (npm_tag becomes `rc` if version contains `-rc.`, or
-#                                        `next` if `latest=false`)
-#
-# Preview publishes are fast: debug sidecar build, npm only (the binary ships
-# inside the npm platform package), crates dry-run. Releases add the crates.io
-# publish, GitHub release assets, R2 mirror, and git tag.
-# =============================================================================
-
 name: publish
 
 on:
@@ -32,10 +12,6 @@ on:
         required: true
         type: boolean
         default: true
-      secure_exec_version:
-        description: "secure-exec RELEASE version to publish against (REQUIRED when version is set; must exist on npm AND crates.io). Ignored for previews — they auto-cut a secure-exec preview at the committed .github/refs/secure-exec."
-        required: false
-        type: string
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -44,16 +20,12 @@ concurrency:
 env:
   R2_BUCKET: rivet-releases
   R2_ENDPOINT: https://2a94c6a0ced8d35ea63cddc86c2681e7.r2.cloudflarestorage.com
-  # Platform list kept in sync with packages/*sidecar*/npm/* and the build
-  # matrix below. Also consumed by scripts/publish discovery via SIDECAR_PLATFORMS.
   SIDECAR_PLATFORMS: "linux-x64-gnu linux-arm64-gnu darwin-x64 darwin-arm64"
+  PUBLISH_INCLUDE_REGISTRY_PACKAGES: "1"
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # context — resolve PublishContext once, pin as job outputs
-  # ---------------------------------------------------------------------------
   context:
-    name: "Context"
+    name: Context
     runs-on: ubuntu-latest
     outputs:
       trigger: ${{ steps.ctx.outputs.trigger }}
@@ -71,81 +43,41 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      # Committed deps are link: into ../secure-exec — a bare clone at the
-      # committed ref is enough for pnpm install to resolve the links.
-      - name: Materialize secure-exec sibling (clone-only)
-        run: node scripts/secure-exec-dep.mjs prepare-build --clone-only
-      - name: Install publish scripts
-        run: pnpm install --frozen-lockfile --filter=publish
+      - run: pnpm install --frozen-lockfile --filter=publish
       - id: ctx
         name: Resolve publish context
         run: pnpm --filter=publish exec tsx src/ci/bin.ts context-output
 
-  # ---------------------------------------------------------------------------
-  # secure-exec-version — the published secure-exec this publish builds against
-  # ---------------------------------------------------------------------------
-  # The committed state is file deps at .github/refs/secure-exec; a PUBLISH needs real
-  # resolvable versions. Previews auto-cut (or reuse) a secure-exec preview at
-  # that exact sha; releases REQUIRE the secure_exec_version input to be a real
-  # secure-exec release (npm + crates.io) so npm and crates stay coherent.
-  # Cross-repo dispatch needs a token with workflow rights on secure-exec:
-  # SECURE_EXEC_DISPATCH_TOKEN (falls back to github.token, which can only
-  # verify, not dispatch).
-  secure-exec-version:
-    needs: [context]
-    name: "Resolve secure-exec version"
+  wasm-commands:
+    name: WASM Commands
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.resolve.outputs.version }}
-      registry_tag: ${{ steps.resolve.outputs.registry_tag }}
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - id: resolve
-        name: Resolve (release) or cut (preview) the secure-exec version
-        env:
-          GH_TOKEN: ${{ secrets.SECURE_EXEC_DISPATCH_TOKEN || github.token }}
-          SECURE_EXEC_REPO: rivet-dev/secure-exec
-        run: |
-          set -euo pipefail
-          if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then
-            v="${{ github.event.inputs.secure_exec_version }}"
-            if [ -z "$v" ]; then
-              echo "::error::releases require the secure_exec_version input (a real secure-exec release)"; exit 1
-            fi
-            case "$v" in 0.0.0-*) echo "::error::secure_exec_version must be a real release, not a preview"; exit 1;; esac
-            npm view "@secure-exec/core@$v" version >/dev/null
-            curl -sf "https://index.crates.io/se/cu/secure-exec-sidecar" | grep -q "\"vers\":\"$v\"" || { echo "::error::secure-exec-sidecar@$v is not on crates.io"; exit 1; }
-            echo "version=$v" >> "$GITHUB_OUTPUT"
-            echo "registry_tag=latest" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          sha=$(tr -d '[:space:]' < .github/refs/secure-exec)
-          short=${sha:0:7}
-          branch="agentos-dep-${short}"
-          version="0.0.0-${branch}.${short}"
-          if npm view "@secure-exec/core@${version}" version >/dev/null 2>&1; then
-            echo "secure-exec preview ${version} already published — reusing it"
-          else
-            echo "cutting secure-exec preview at ${sha} (branch ${branch})"
-            gh api "repos/${SECURE_EXEC_REPO}/git/refs" -f ref="refs/heads/${branch}" -f sha="${sha}"               || echo "branch ${branch} already exists"
-            gh workflow run publish.yaml -R "${SECURE_EXEC_REPO}" --ref "${branch}"
-            sleep 15
-            run=$(gh run list -R "${SECURE_EXEC_REPO}" --workflow=publish.yaml --branch "${branch}" -L1 --json databaseId --jq '.[0].databaseId')
-            gh run watch -R "${SECURE_EXEC_REPO}" "$run" --exit-status
-            npm view "@secure-exec/core@${version}" version >/dev/null
-          fi
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "registry_tag=${branch}" >> "$GITHUB_OUTPUT"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: registry/native -> registry/native/target
+          key: wasm-commands-${{ hashFiles('registry/native/Cargo.lock') }}
+      - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
+      - run: make -C registry/native commands
+      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-commands
+          path: packages/runtime-core/commands
+          if-no-files-found: error
 
-  # ---------------------------------------------------------------------------
-  # build-sidecar — debug (preview) or release (release) sidecar binaries
-  # ---------------------------------------------------------------------------
   build-sidecar:
-    needs: [context, secure-exec-version]
-    name: "Build sidecar (${{ matrix.platform }})"
+    needs: [context]
+    name: "Build sidecars (${{ matrix.platform }})"
     strategy:
       fail-fast: false
       matrix:
@@ -178,30 +110,23 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
-      - name: Swap deps to published versions (transient, never committed)
-        run: node scripts/secure-exec-dep.mjs release-swap "${{ needs.secure-exec-version.outputs.version }}" "${{ needs.secure-exec-version.outputs.registry_tag }}"
-      - run: pnpm install --no-frozen-lockfile --filter='!@agentos/website'
-      # On a preview the cargo deps stay path-based (crates.io has no preview
-      # track) — materialize ../secure-exec at the committed ref. No-op on
-      # releases (release-swap pinned the crates to the real release).
-      - name: Prepare secure-exec sibling
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/secure-exec-dep.mjs prepare-build
-      - name: Build sidecar binary
+      - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
+      - name: Build sidecar binaries
         id: build
         run: |
           set -euo pipefail
           out="target/sidecar-artifacts/${{ matrix.platform }}"
           mkdir -p "$out"
           if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then
-            cargo build --release -p agentos-sidecar --target ${{ matrix.target }}
+            flag="--release"
             profile="release"
           else
-            cargo build -p agentos-sidecar --target ${{ matrix.target }}
+            flag=""
             profile="debug"
           fi
+          cargo build $flag -p agentos-sidecar -p agentos-native-sidecar --target ${{ matrix.target }}
           cp "target/${{ matrix.target }}/${profile}/agentos-sidecar" "$out/agentos-sidecar"
+          cp "target/${{ matrix.target }}/${profile}/agentos-native-sidecar" "$out/agentos-native-sidecar"
           echo "dir=$out" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
@@ -209,13 +134,8 @@ jobs:
           path: ${{ steps.build.outputs.dir }}
           if-no-files-found: error
 
-  # ---------------------------------------------------------------------------
-  # build-plugin — agent-os actor plugin cdylib (debug preview / release)
-  # ---------------------------------------------------------------------------
-  # Ships inside the @rivet-dev/agentos-plugin-<platform> npm packages, declared
-  # as optionalDependencies of @rivet-dev/agentos.
   build-plugin:
-    needs: [context, secure-exec-version]
+    needs: [context]
     name: "Build plugin (${{ matrix.platform }})"
     strategy:
       fail-fast: false
@@ -249,15 +169,7 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
-      - name: Swap deps to published versions (transient, never committed)
-        run: node scripts/secure-exec-dep.mjs release-swap "${{ needs.secure-exec-version.outputs.version }}" "${{ needs.secure-exec-version.outputs.registry_tag }}"
-      - run: pnpm install --no-frozen-lockfile --filter='!@agentos/website'
-      # Preview: cargo stays path-based — materialize ../secure-exec at the
-      # committed ref. No-op on releases.
-      - name: Prepare secure-exec sibling
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/secure-exec-dep.mjs prepare-build
+      - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
       - name: Build plugin cdylib
         id: build
         run: |
@@ -280,10 +192,8 @@ jobs:
           path: ${{ steps.build.outputs.dir }}
           if-no-files-found: error
 
-  # darwin via osxcross in a Linux container (rivet's approach) — no macOS
-  # runners. The image builds both the sidecar binary and actor plugin cdylib.
   build-sidecar-darwin:
-    needs: [context, secure-exec-version]
+    needs: [context]
     name: "Build darwin binaries (${{ matrix.platform }})"
     strategy:
       fail-fast: false
@@ -298,18 +208,17 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Swap deps to published versions (transient, never committed)
-        run: node scripts/secure-exec-dep.mjs release-swap "${{ needs.secure-exec-version.outputs.version }}" "${{ needs.secure-exec-version.outputs.registry_tag }}"
-      - name: Log in to ghcr.io (pull the osxcross base image)
+      - name: Log in to ghcr.io
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
       - name: Cross-compile via osxcross
         run: |
           set -euo pipefail
+          if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then profile=release; else profile=debug; fi
           DOCKER_BUILDKIT=1 docker build \
             -f docker/build/darwin.Dockerfile \
             --build-arg TARGET=${{ matrix.target }} \
             --build-arg CLANG=${{ matrix.clang }} \
-            --build-arg TRIGGER=${{ needs.context.outputs.trigger }} \
+            --build-arg BUILD_PROFILE="${profile}" \
             -t agentos-darwin-${{ matrix.platform }} .
 
           sidecar_out="target/sidecar-artifacts/${{ matrix.platform }}"
@@ -317,9 +226,11 @@ jobs:
           mkdir -p "$sidecar_out" "$plugin_out"
           cid=$(docker create agentos-darwin-${{ matrix.platform }})
           docker cp "$cid:/artifacts/agentos-sidecar" "$sidecar_out/agentos-sidecar"
+          docker cp "$cid:/artifacts/agentos-native-sidecar" "$sidecar_out/agentos-native-sidecar"
           docker cp "$cid:/artifacts/libagentos_actor_plugin.dylib" "$plugin_out/libagentos_actor_plugin.dylib"
           docker rm "$cid"
           test -f "$sidecar_out/agentos-sidecar"
+          test -f "$sidecar_out/agentos-native-sidecar"
           test -f "$plugin_out/libagentos_actor_plugin.dylib"
       - uses: actions/upload-artifact@v4
         with:
@@ -332,13 +243,10 @@ jobs:
           path: target/plugin-artifacts/${{ matrix.platform }}
           if-no-files-found: error
 
-  # ---------------------------------------------------------------------------
-  # publish-npm — place binaries, build TS, publish all packages (all triggers)
-  # ---------------------------------------------------------------------------
   publish-npm:
-    needs: [context, secure-exec-version, build-sidecar, build-plugin, build-sidecar-darwin]
-    name: "Publish npm"
-    if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-plugin.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
+    needs: [context, wasm-commands, build-sidecar, build-plugin, build-sidecar-darwin]
+    name: Publish npm
+    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-plugin.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -349,9 +257,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
-      - name: Swap deps to published versions (transient, never committed)
-        run: node scripts/secure-exec-dep.mjs release-swap "${{ needs.secure-exec-version.outputs.version }}" "${{ needs.secure-exec-version.outputs.registry_tag }}"
-      - run: pnpm install --no-frozen-lockfile --filter='!@agentos/website'
+      - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-commands
+          path: packages/runtime-core/commands
       - uses: actions/download-artifact@v4
         with:
           pattern: sidecar-*
@@ -365,18 +275,17 @@ jobs:
           set -euo pipefail
           for p in $SIDECAR_PLATFORMS; do
             agent_bin="artifacts/sidecar-${p}/agentos-sidecar"
+            runtime_bin="artifacts/sidecar-${p}/agentos-native-sidecar"
             agent_dest="packages/sidecar-binary/npm/${p}"
-            if [ ! -f "$agent_bin" ]; then
-              echo "::error::missing agentos-sidecar binary artifact for ${p}"
-              exit 1
-            fi
-            if [ ! -d "$agent_dest" ]; then
-              echo "::error::missing platform package dir $agent_dest"
-              exit 1
-            fi
+            runtime_dest="packages/runtime-sidecar/npm/${p}"
+            test -f "$agent_bin"
+            test -f "$runtime_bin"
+            test -d "$agent_dest"
+            test -d "$runtime_dest"
             cp "$agent_bin" "${agent_dest}/agentos-sidecar"
             chmod +x "${agent_dest}/agentos-sidecar"
-            echo "Placed binaries for ${p}"
+            cp "$runtime_bin" "${runtime_dest}/agentos-native-sidecar"
+            chmod +x "${runtime_dest}/agentos-native-sidecar"
           done
       - name: Place plugin cdylib into platform packages
         run: |
@@ -388,41 +297,27 @@ jobs:
             esac
             lib="artifacts/plugin-${p}/${lib_name}"
             dest="packages/agentos-plugin/npm/${p}"
-            if [ ! -f "$lib" ]; then
-              echo "::error::missing plugin cdylib artifact for ${p}"
-              exit 1
-            fi
-            if [ ! -d "$dest" ]; then
-              echo "::error::missing plugin platform package dir $dest"
-              exit 1
-            fi
+            test -f "$lib"
+            test -d "$dest"
             cp "$lib" "${dest}/${lib_name}"
-            echo "Placed plugin cdylib for ${p}"
           done
-      - name: Bump package versions for build (version-only)
+      - name: Bump package versions for build
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
             --version ${{ needs.context.outputs.version }} \
             --version-only
-      - name: Install wasm-pack (for @rivet-dev/agentos-browser wasm build)
+      - name: Install wasm-pack
         run: |
           rustup target add wasm32-unknown-unknown
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      # @rivet-dev/agentos-browser's build compiles a wasm crate that path-depends
-      # on the secure-exec crates, so the sibling must be materialized before
-      # `turbo build` invokes cargo (the prepare-build-before-every-cargo invariant).
-      # No-op on releases (release-swap pinned the crates to the real release).
-      - name: Prepare secure-exec sibling
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/secure-exec-dep.mjs prepare-build
+      - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - name: Build TypeScript packages
         run: |
           npx turbo build \
             --filter='!@rivet-dev/agentos-playground' \
             --filter='!./examples/*' \
             --filter='!./examples/quickstart/*'
-      - name: Finalize package versions for publish (inject optionalDeps)
+      - name: Finalize package versions for publish
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
             --version ${{ needs.context.outputs.version }}
@@ -436,16 +331,9 @@ jobs:
             --retries 3 \
             ${{ needs.context.outputs.trigger == 'release' && '--release-mode' || '' }}
 
-  # ---------------------------------------------------------------------------
-  # release-assets — GitHub release + sidecar/pyodide assets + R2 (release only)
-  # ---------------------------------------------------------------------------
   release-assets:
     needs: [context, build-sidecar, build-sidecar-darwin]
-    name: "Release assets"
-    # Runs on BOTH preview and release: the "Stage release assets" step is
-    # exercised on every preview so staging bugs surface before a real release
-    # (this is exactly the kind of bug that previously only failed at release
-    # time). The GitHub-release + R2 upload steps below stay release-only.
+    name: Release assets
     if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -460,9 +348,6 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      # Bare sibling clone so the committed link: deps resolve for install.
-      - name: Materialize secure-exec sibling (clone-only)
-        run: node scripts/secure-exec-dep.mjs prepare-build --clone-only
       - run: pnpm install --frozen-lockfile --filter=publish
       - uses: actions/download-artifact@v4
         with:
@@ -479,27 +364,16 @@ jobs:
             [darwin-x64]=x86_64-apple-darwin
             [darwin-arm64]=aarch64-apple-darwin
           )
-          # Stage release assets: the platform sidecar binaries only.
-          #
-          # agent-os does NOT host pyodide. Those assets live in secure-exec
-          # (crates/execution/assets/pyodide), which does not exist in this repo:
-          # agent-os builds against the *published* secure-exec execution crate,
-          # whose build.rs stages zero-byte placeholders and disables guest
-          # Python ("no CDN dependency"), and nothing in agent-os fetches pyodide
-          # from its own release/R2 — secure-exec's release hosts it. Copying it
-          # here was vestigial copy-paste from secure-exec's publish.yaml and
-          # failed every release with
-          #   cp: cannot stat 'crates/execution/assets/pyodide/...': No such file
           mkdir -p release-assets
           for p in $SIDECAR_PLATFORMS; do
-            agent_bin="artifacts/sidecar-${p}/agentos-sidecar"
-            if [ -f "$agent_bin" ]; then
-              target="${PLATFORM_TARGET[$p]}"
-              cp "$agent_bin" "release-assets/agentos-sidecar-${target}"
-            else
-              echo "::warning::missing agentos-sidecar binary for ${p}"
-            fi
+            target="${PLATFORM_TARGET[$p]}"
+            cp "artifacts/sidecar-${p}/agentos-sidecar" "release-assets/agentos-sidecar-${target}"
+            cp "artifacts/sidecar-${p}/agentos-native-sidecar" "release-assets/agentos-native-sidecar-${target}"
           done
+          if [ -d crates/execution/assets/pyodide ]; then
+            mkdir -p release-assets/pyodide
+            cp -R crates/execution/assets/pyodide/. release-assets/pyodide/
+          fi
       - name: Create GitHub release and upload assets
         if: ${{ needs.context.outputs.trigger == 'release' }}
         env:
@@ -513,9 +387,8 @@ jobs:
             if [ "${NPM_TAG}" = "rc" ]; then PRERELEASE="--prerelease"; fi
             gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes $PRERELEASE
           fi
-          # --clobber so re-runs overwrite assets idempotently.
-          gh release upload "v${VERSION}" release-assets/* --clobber
-      - name: Upload sidecar binaries to R2 (best-effort)
+          gh release upload "v${VERSION}" release-assets/* release-assets/pyodide/* --clobber
+      - name: Upload release assets to R2
         if: ${{ needs.context.outputs.trigger == 'release' }}
         env:
           R2_RELEASES_ACCESS_KEY_ID: ${{ secrets.R2_RELEASES_ACCESS_KEY_ID }}
@@ -526,7 +399,7 @@ jobs:
         run: |
           set -uo pipefail
           if [ -z "${R2_RELEASES_ACCESS_KEY_ID:-}" ] || [ -z "${R2_RELEASES_SECRET_ACCESS_KEY:-}" ]; then
-            echo "R2 credentials not configured; skipping R2 upload (GitHub release assets are authoritative)."
+            echo "R2 credentials not configured; skipping R2 upload."
             exit 0
           fi
           set -e
@@ -535,12 +408,9 @@ jobs:
           pnpm --filter=publish exec tsx src/ci/bin.ts copy-r2 \
             --sha "$SHA" --version "$VERSION" --latest "$LATEST"
 
-  # ---------------------------------------------------------------------------
-  # publish-crates — crates.io (dry-run on preview, full publish on release)
-  # ---------------------------------------------------------------------------
   publish-crates:
-    needs: [context, secure-exec-version, build-sidecar, release-assets]
-    name: "Publish crates.io"
+    needs: [context, build-sidecar, release-assets]
+    name: Publish crates.io
     if: ${{ !cancelled() && needs.build-sidecar.result == 'success' && (needs.release-assets.result == 'success' || needs.release-assets.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
@@ -561,27 +431,20 @@ jobs:
           key: ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-
-      - name: Swap deps to published versions (transient, never committed)
-        run: node scripts/secure-exec-dep.mjs release-swap "${{ needs.secure-exec-version.outputs.version }}" "${{ needs.secure-exec-version.outputs.registry_tag }}"
-      - run: pnpm install --no-frozen-lockfile --filter='!@agentos/website'
-      # Preview dry-run: cargo stays path-based — materialize the sibling.
-      - name: Prepare secure-exec sibling
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/secure-exec-dep.mjs prepare-build
+      - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
       - name: Bump Cargo versions
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
             --version ${{ needs.context.outputs.version }} \
             --version-only
-      - name: Dry-run crate publish (preview)
+      - name: Dry-run crate publish
         if: ${{ needs.context.outputs.trigger != 'release' }}
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts publish-crates \
             --version ${{ needs.context.outputs.version }} \
             --dry-run \
             --allow-dirty
-      - name: Publish crates (release)
+      - name: Publish crates
         if: ${{ needs.context.outputs.trigger == 'release' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
