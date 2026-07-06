@@ -36,13 +36,6 @@ pub struct CreateSessionOptionsDto {
     pub additional_instructions: Option<String>,
 }
 
-/// `{ sessionId }` returned by `createSession`.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionIdDto {
-    pub session_id: String,
-}
-
 /// Result of `sendPrompt` exposed to the TS client.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -332,7 +325,7 @@ pub async fn create_session(
     vars: &mut Vars,
     agent_type: &str,
     dto: CreateSessionOptionsDto,
-) -> Result<SessionIdDto> {
+) -> Result<String> {
     let options = CreateSessionOptions {
         cwd: dto.cwd,
         env: dto.env,
@@ -374,7 +367,9 @@ pub async fn create_session(
     spawn_permission_pump(ctx, vm, vars, &session_id, &session_id);
     // Live adapter-crash notifications for connected clients (`agentCrashed`).
     spawn_exit_capture(ctx, vm, vars, &session_id, &session_id);
-    Ok(SessionIdDto { session_id })
+    // The TS mirror (`actor-actions.ts`) types this as `Promise<string>`, so the
+    // reply must be the bare session id, not a `{ sessionId }` wrapper.
+    Ok(session_id)
 }
 
 pub async fn send_prompt(
