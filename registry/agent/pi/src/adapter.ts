@@ -217,6 +217,16 @@ type PiToolLike = {
 
 type ExtensionFactoryLike = (api: unknown) => unknown;
 
+type DefaultResourceLoaderOptions = {
+	cwd?: string;
+	agentDir?: string;
+	settingsManager?: SettingsManagerInstanceLike;
+	appendSystemPrompt?: string;
+	appendSystemPromptOverride?: (appendSystemPrompt: string[]) => string[];
+	extensionFactories?: ExtensionFactoryLike[];
+	noExtensions?: boolean;
+};
+
 type PiSessionLike = {
 	readonly sessionId: string;
 	readonly thinkingLevel: string;
@@ -235,14 +245,9 @@ type PiSdkRuntime = {
 	AuthStorage: {
 		create(authPath?: string): unknown;
 	};
-	DefaultResourceLoader: new (options: {
-		cwd?: string;
-		agentDir?: string;
-		settingsManager?: SettingsManagerInstanceLike;
-		appendSystemPrompt?: string;
-		extensionFactories?: ExtensionFactoryLike[];
-		noExtensions?: boolean;
-	}) => MinimalResourceLoaderLike;
+	DefaultResourceLoader: new (
+		options: DefaultResourceLoaderOptions,
+	) => MinimalResourceLoaderLike;
 	DEFAULT_THINKING_LEVEL: string;
 	ModelRegistry: new (authStorage: unknown, modelsPath?: string) => {
 		find(provider: string, modelId: string): ModelLike | undefined;
@@ -590,6 +595,30 @@ class MinimalResourceLoader implements MinimalResourceLoaderLike {
 	extendResources(_paths: string[]): void {}
 }
 
+export function buildDefaultResourceLoaderOptions(options: {
+	cwd: string;
+	agentDir: string;
+	extensionFactories: ExtensionFactoryLike[];
+	appendSystemPrompt?: string;
+}): DefaultResourceLoaderOptions {
+	const loaderOptions: DefaultResourceLoaderOptions = {
+		cwd: options.cwd,
+		agentDir: options.agentDir,
+		noExtensions: true,
+		extensionFactories: options.extensionFactories,
+	};
+
+	if (options.appendSystemPrompt) {
+		const prompt = options.appendSystemPrompt;
+		loaderOptions.appendSystemPromptOverride = (baseAppend) => [
+			...baseAppend,
+			prompt,
+		];
+	}
+
+	return loaderOptions;
+}
+
 function findInstalledPackageRoot(packageName: string): string | null {
 	const searchPaths = require.resolve.paths(packageName) ?? [];
 	for (const basePath of searchPaths) {
@@ -851,13 +880,14 @@ export class PiSdkAgent implements Agent {
 		// extension runtime) is constructed when extensions are actually present.
 		const resourceLoader: MinimalResourceLoaderLike =
 			extensionFactories.length > 0
-				? new DefaultResourceLoader({
-						cwd: params.cwd,
-						agentDir,
-						noExtensions: true,
-						extensionFactories,
-						...(appendSystemPrompt ? { appendSystemPrompt } : {}),
-					})
+				? new DefaultResourceLoader(
+						buildDefaultResourceLoaderOptions({
+							cwd: params.cwd,
+							agentDir,
+							extensionFactories,
+							appendSystemPrompt,
+						}),
+					)
 				: new MinimalResourceLoader({
 						...(appendSystemPrompt ? { appendSystemPrompt } : {}),
 					});
