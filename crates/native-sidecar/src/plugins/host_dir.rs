@@ -22,7 +22,6 @@ use agentos_kernel::mount_table::{
     MountedFileSystem, MountedVirtualFileSystem, ReadOnlyFileSystem,
 };
 use agentos_kernel::resource_accounting::DEFAULT_MAX_PREAD_BYTES;
-use vfs::posix::TarFileSystem;
 use agentos_kernel::vfs::{
     normalize_path, VfsError, VfsResult, VirtualDirEntry, VirtualFileSystem, VirtualStat,
     VirtualTimeSpec, VirtualUtimeSpec,
@@ -37,6 +36,7 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::{FileExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use vfs::posix::TarFileSystem;
 
 const MAX_HOST_DIR_READ_BYTES: usize = DEFAULT_MAX_PREAD_BYTES;
 
@@ -1403,7 +1403,10 @@ mod tar_module_reader_tests {
         .expect("reader");
         let probe = "/opt/agentos/pkgs/pi/0.2.1/node_modules/@anthropic-ai/sdk/package.json";
         assert!(reader.path_exists(probe), "packed package.json must exist");
-        assert!(reader.read_to_string(probe).is_some(), "packed package.json must read");
+        assert!(
+            reader.read_to_string(probe).is_some(),
+            "packed package.json must read"
+        );
         let mut cache = Default::default();
         let dyn_reader: &mut dyn ModuleFsReader = &mut reader;
         let mut resolver = ModuleResolver::new(dyn_reader, &mut cache);
@@ -1412,13 +1415,22 @@ mod tar_module_reader_tests {
             "/opt/agentos/pkgs/pi/0.2.1/node_modules/@agentos-software/pi/dist/adapter.js",
             ModuleResolveMode::Require,
         );
-        assert!(resolved.is_some(), "require-mode resolution from the packed tar");
+        assert!(
+            resolved.is_some(),
+            "require-mode resolution from the packed tar"
+        );
         let resolved_import = resolver.resolve_module(
             "@anthropic-ai/sdk",
             "/opt/agentos/pkgs/pi/0.2.1/node_modules/@agentos-software/pi/dist/adapter.js",
             ModuleResolveMode::Import,
         );
-        assert!(resolved_import.is_some(), "import-mode resolution from the packed tar");
-        assert!(resolved.is_some(), "must resolve @anthropic-ai/sdk from the packed tar");
+        assert!(
+            resolved_import.is_some(),
+            "import-mode resolution from the packed tar"
+        );
+        assert!(
+            resolved.is_some(),
+            "must resolve @anthropic-ai/sdk from the packed tar"
+        );
     }
 }

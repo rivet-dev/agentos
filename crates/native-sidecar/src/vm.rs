@@ -597,6 +597,26 @@ where
             std::slice::from_ref(&descriptor),
             crate::package_projection::OPT_AGENTOS_ROOT,
         )?;
+        if new_mounts.iter().all(|mount| {
+            vm.configuration
+                .mounts
+                .iter()
+                .any(|existing| existing.guest_path == mount.guest_path)
+        }) {
+            let projected_commands = descriptor
+                .commands
+                .iter()
+                .map(|target| ProjectedCommand {
+                    name: target.command.clone(),
+                    guest_path: projected_command_guest_path(&target.command),
+                })
+                .collect();
+            let agents = projected_agents_from_descriptors(std::slice::from_ref(&descriptor));
+            return Ok(DispatchResult {
+                response: package_linked_response(request, projected_commands, agents),
+                events: Vec::new(),
+            });
+        }
         for mount in &new_mounts {
             if vm
                 .configuration
@@ -604,6 +624,16 @@ where
                 .iter()
                 .any(|existing| existing.guest_path == mount.guest_path)
             {
+                if let Some(command) = mount
+                    .guest_path
+                    .strip_prefix(crate::package_projection::OPT_AGENTOS_BIN)
+                    .and_then(|path| path.strip_prefix('/'))
+                    .filter(|path| !path.is_empty())
+                {
+                    return Err(SidecarError::InvalidState(format!(
+                        "command {command:?} is already provided by another package"
+                    )));
+                }
                 return Err(SidecarError::InvalidState(format!(
                     "agentos package mount already exists at {}",
                     mount.guest_path
@@ -656,9 +686,10 @@ where
             .collect();
         let agents = projected_agents_from_descriptors(std::slice::from_ref(&descriptor));
         if let Some(vm) = self.vms.get_mut(&vm_id) {
-            vm.projected_agent_launch.extend(
-                projected_agent_launch_from_descriptors(std::slice::from_ref(&descriptor)),
-            );
+            vm.projected_agent_launch
+                .extend(projected_agent_launch_from_descriptors(
+                    std::slice::from_ref(&descriptor),
+                ));
         }
 
         Ok(DispatchResult {
@@ -1407,9 +1438,7 @@ fn package_descriptors_from_wire(
 ) -> Result<Vec<crate::package_projection::PackageDescriptor>, SidecarError> {
     packages
         .iter()
-        .map(|package| {
-            crate::package_projection::read_package_manifest_from_path(&package.path)
-        })
+        .map(|package| crate::package_projection::read_package_manifest_from_path(&package.path))
         .collect()
 }
 

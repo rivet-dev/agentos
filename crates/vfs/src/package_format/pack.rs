@@ -169,8 +169,8 @@ pub fn pack_aospkg_from_tar_bytes(source_tar: &[u8]) -> VfsResult<(Vec<u8>, Pack
             .entries()
             .map_err(|e| VfsError::new("EINVAL", format!("read source tar entries: {e}")))?
         {
-            let mut entry =
-                entry.map_err(|e| VfsError::new("EINVAL", format!("read source tar entry: {e}")))?;
+            let mut entry = entry
+                .map_err(|e| VfsError::new("EINVAL", format!("read source tar entry: {e}")))?;
             let path = canonical_tar_path_of(&entry)?;
             let header = entry.header().clone();
             let entry_type = header.entry_type();
@@ -179,9 +179,9 @@ pub fn pack_aospkg_from_tar_bytes(source_tar: &[u8]) -> VfsResult<(Vec<u8>, Pack
             }
             if path == format!("/{MANIFEST_JSON_NAME}") {
                 let mut bytes = Vec::new();
-                entry.read_to_end(&mut bytes).map_err(|e| {
-                    VfsError::new("EIO", format!("read {MANIFEST_JSON_NAME}: {e}"))
-                })?;
+                entry
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| VfsError::new("EIO", format!("read {MANIFEST_JSON_NAME}: {e}")))?;
                 manifest_json = Some(bytes);
                 continue; // stripped: the vbare manifest is the runtime manifest
             }
@@ -199,9 +199,7 @@ pub fn pack_aospkg_from_tar_bytes(source_tar: &[u8]) -> VfsResult<(Vec<u8>, Pack
                 let target = entry
                     .link_name()
                     .map_err(|e| VfsError::new("EINVAL", format!("symlink target {rel}: {e}")))?
-                    .ok_or_else(|| {
-                        VfsError::new("EINVAL", format!("symlink {rel} has no target"))
-                    })?
+                    .ok_or_else(|| VfsError::new("EINVAL", format!("symlink {rel} has no target")))?
                     .into_owned();
                 let mut out = header.clone();
                 out.set_size(0);
@@ -294,8 +292,9 @@ pub fn pack_aospkg_from_tar_bytes(source_tar: &[u8]) -> VfsResult<(Vec<u8>, Pack
         .map_err(|e| VfsError::new("EINVAL", format!("encode mount index: {e}")))?;
     let header = encode_aospkg_header(manifest_bytes.len(), index_bytes.len())?;
 
-    let mut out =
-        Vec::with_capacity(AOSPKG_HEADER_LEN + manifest_bytes.len() + index_bytes.len() + mount_tar.len());
+    let mut out = Vec::with_capacity(
+        AOSPKG_HEADER_LEN + manifest_bytes.len() + index_bytes.len() + mount_tar.len(),
+    );
     out.write_all(&header).expect("vec write");
     out.write_all(&manifest_bytes).expect("vec write");
     out.write_all(&index_bytes).expect("vec write");
@@ -397,9 +396,7 @@ fn canonical_tar_path_of<R: Read>(entry: &tar::Entry<'_, R>) -> VfsResult<String
     let mut parts = Vec::new();
     for component in path.components() {
         match component {
-            std::path::Component::Normal(value) => {
-                parts.push(value.to_string_lossy().into_owned())
-            }
+            std::path::Component::Normal(value) => parts.push(value.to_string_lossy().into_owned()),
             std::path::Component::CurDir => {}
             _ => {
                 return Err(VfsError::new(
@@ -457,11 +454,9 @@ fn command_targets(
         .keys()
         .filter_map(|path| {
             let name = path.strip_prefix("/bin/")?;
-            (!name.contains('/') && is_projectable_command_name(name)).then(|| {
-                v1::CommandTarget {
-                    command: name.to_owned(),
-                    entry: format!("bin/{name}"),
-                }
+            (!name.contains('/') && is_projectable_command_name(name)).then(|| v1::CommandTarget {
+                command: name.to_owned(),
+                entry: format!("bin/{name}"),
             })
         })
         .collect::<Vec<_>>();

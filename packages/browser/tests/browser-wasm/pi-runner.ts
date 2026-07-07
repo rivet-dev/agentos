@@ -39,7 +39,14 @@ interface AcpMessage {
 export async function runPiTurn(opts: PiTurnOptions): Promise<PiTurnResult> {
 	const status = opts.onStatus ?? (() => {});
 	status("Loading pi…");
-	const bundleText = (await (await fetch(PI_BUNDLE_URL)).text()).replace(/^#![^\n]*\n/, "");
+	const bundleResponse = await fetch(PI_BUNDLE_URL);
+	if (!bundleResponse.ok) {
+		return {
+			stdout: "",
+			error: `pi adapter bundle not built (${PI_BUNDLE_URL} returned ${bundleResponse.status})`,
+		};
+	}
+	const bundleText = (await bundleResponse.text()).replace(/^#![^\n]*\n/, "");
 	const baseUrl = window.location.origin;
 
 	status("Booting the kernel + executor…");
@@ -113,6 +120,8 @@ export async function runPiTurn(opts: PiTurnOptions): Promise<PiTurnResult> {
 
 	status("Running pi turn: initialize → session/new → session/prompt…");
 	let execError: string | undefined;
+	let execDone = false;
+	let execResult: { errorMessage?: string } | undefined;
 	// onStart fires (with the execution id) right before the exec message is posted, so
 	// awaiting it guarantees: id is known, and our first write-stdin is queued AFTER the
 	// exec message (pi sets up its stdin listener first, then receives initialize).
@@ -127,7 +136,14 @@ export async function runPiTurn(opts: PiTurnOptions): Promise<PiTurnResult> {
 			onStart: (id: string) => { executionId = id; onStarted(); },
 			onStdio: (event: unknown) => stdio.push(event as never),
 		})
+		.then((result) => {
+			execDone = true;
+			execResult = result;
+			if (result?.errorMessage) execError = result.errorMessage;
+			return result;
+		})
 		.catch((error: unknown) => {
+			execDone = true;
 			execError = error instanceof Error ? error.stack || error.message : String(error);
 			return undefined;
 		});
@@ -138,7 +154,7 @@ export async function runPiTurn(opts: PiTurnOptions): Promise<PiTurnResult> {
 
 	const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 	const deadline = Date.now() + (opts.timeoutMs ?? 40_000);
-	while (!done && Date.now() < deadline && execError === undefined) {
+	while (!done && Date.now() < deadline && execError === undefined && !execDone) {
 		pumpLines();
 		await sleep(120);
 	}
@@ -149,6 +165,6 @@ export async function runPiTurn(opts: PiTurnOptions): Promise<PiTurnResult> {
 
 	if (done) status("Done.");
 	const out: PiTurnResult = { stdout: collectStdout(), answer: done ? answer : undefined };
-	if (!done) out.error = `no answer. execError=${execError ?? ""} stderr=${stdio.filter((e) => e.channel === "stderr").map((e) => { const p = e.message ?? e.data; return typeof p === "string" ? p : p instanceof Uint8Array ? decoder.decode(p) : ""; }).join("").slice(0, 800)}`;
+	if (!done) out.error = `no answer. execDone=${execDone} execResult=${JSON.stringify(execResult ?? null)} execError=${execError ?? ""} stdout=${collectStdout().slice(0, 800)} stderr=${stdio.filter((e) => e.channel === "stderr").map((e) => { const p = e.message ?? e.data; return typeof p === "string" ? p : p instanceof Uint8Array ? decoder.decode(p) : ""; }).join("").slice(0, 800)}`;
 	return out;
 }

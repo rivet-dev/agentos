@@ -392,7 +392,14 @@ describe.sequential("@rivet-dev/agentos actor plugin package bridge", () => {
 
 	test("inspector action calls target declared actor actions", () => {
 		const actorActions = readFileSync(
-			join(repoRoot, "packages", "agentos", "src", "actor-actions.ts"),
+			join(
+				repoRoot,
+				"packages",
+				"agentos",
+				"src",
+				"generated",
+				"actor-actions.generated.ts",
+			),
 			"utf8",
 		);
 		const inspectorSource = readFileSync(

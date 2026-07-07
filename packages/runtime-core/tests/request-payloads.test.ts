@@ -180,6 +180,7 @@ describe("request payload conversion", () => {
 				mtimeMs: null,
 				len: 10n,
 				offset: 2n,
+				maxDepth: null,
 			},
 		});
 

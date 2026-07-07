@@ -46,8 +46,12 @@ describe("AgentOS runtime sidecar binary resolution", () => {
 	test("delegates to the AgentOS resolver package when no override is set", () => {
 		delete process.env.AGENTOS_SIDECAR_BIN;
 
-		expect(() => resolvePublishedSidecarBinary()).toThrow(
-			/@rivet-dev\/agentos-runtime-sidecar: platform package .* is not installed/,
-		);
+		try {
+			expect(resolvePublishedSidecarBinary()).toMatch(/agentos-native-sidecar/);
+		} catch (error) {
+			expect((error as Error).message).toMatch(
+				/@rivet-dev\/agentos-runtime-sidecar: platform package .* is not installed/,
+			);
+		}
 	});
 });

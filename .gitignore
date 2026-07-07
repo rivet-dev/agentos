@@ -15,6 +15,7 @@ target/
 # TypeScript
 *.tsbuildinfo
 dist/
+packages/agentos/src/generated/
 
 # IDE
 .vscode/

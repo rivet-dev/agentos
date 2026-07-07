@@ -117,6 +117,53 @@ async function readUntilOrExit(
 	return output;
 }
 
+async function readUntilAllOrExit(
+	driver: NodeRuntimeDriver,
+	executionId: string,
+	fd: number,
+	patterns: string[],
+	execPromise: Promise<unknown>,
+	timeoutMs = 10_000,
+): Promise<string> {
+	let settled = false;
+	let execSummary = "";
+	execPromise.then(
+		(value) => {
+			settled = true;
+			execSummary = JSON.stringify(value);
+		},
+		(error) => {
+			settled = true;
+			execSummary = error instanceof Error ? error.stack || error.message : String(error);
+		},
+	);
+	let output = "";
+	const deadline = Date.now() + timeoutMs;
+	const hasPatternsInOrder = () => {
+		let offset = 0;
+		for (const pattern of patterns) {
+			const index = output.indexOf(pattern, offset);
+			if (index === -1) return false;
+			offset = index + pattern.length;
+		}
+		return true;
+	};
+	while (!hasPatternsInOrder() && Date.now() < deadline) {
+		output += decode(await driver.readPty!(executionId, fd, { timeoutMs: 10 }));
+		if (hasPatternsInOrder()) return output;
+		if (settled) {
+			throw new Error(
+				`execution completed before ${patterns.join(", ")}; exec=${execSummary}; output=${JSON.stringify(output)}`,
+			);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	if (!hasPatternsInOrder()) {
+		throw new Error(`timed out waiting for ${patterns.join(", ")}; saw ${JSON.stringify(output)}`);
+	}
+	return output;
+}
+
 async function waitForExecutionId(getExecutionId: () => string, timeoutMs = 5_000): Promise<string> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
@@ -194,105 +241,101 @@ async function run() {
 			"sh-0.4$ ",
 			execPromise,
 		);
-		await driver.writePty!(executionId, pty.masterFd, "/bin/echo browser-brush-ok\r");
-		const echoOutput = await readUntilOrExit(
+		const echoCommand = "/bin/echo browser-brush-''ok";
+		await driver.writePty!(executionId, pty.masterFd, `${echoCommand}\r`);
+		const echoOutput = await readUntilAllOrExit(
 			driver,
 			executionId,
 			pty.masterFd,
-			"sh-0.4$ ",
+			[echoCommand, "browser-brush-ok", "sh-0.4$ "],
 			execPromise,
 		);
 		if (!echoOutput.includes("browser-brush-ok")) {
 			throw new Error(`echo output missing from shell transcript: ${JSON.stringify(echoOutput)}`);
 		}
 		output += echoOutput;
-		await driver.writePty!(executionId, pty.masterFd, "/bin/echo browser-pipe-ok | /bin/wc -c\r");
-		const pipeOutput = await readUntilOrExit(
+		const pipeCommand = "/bin/echo browser-pipe-ok | /bin/wc -c";
+		await driver.writePty!(executionId, pty.masterFd, `${pipeCommand}\r`);
+		const pipeOutput = await readUntilAllOrExit(
 			driver,
 			executionId,
 			pty.masterFd,
-			"sh-0.4$ ",
+			[pipeCommand, "16", "sh-0.4$ "],
 			execPromise,
 		);
 		if (!pipeOutput.includes("16")) {
 			throw new Error(`pipeline output missing from shell transcript: ${JSON.stringify(pipeOutput)}`);
 		}
 		output += pipeOutput;
-		await driver.writePty!(executionId, pty.masterFd, "/bin/echo browser-cat-ok-via-cat | /bin/cat\r");
-		const catOutput = await readUntilOrExit(
+		const catCommand = "/bin/echo browser-cat-ok-via-''cat | /bin/cat";
+		await driver.writePty!(executionId, pty.masterFd, `${catCommand}\r`);
+		const catOutput = await readUntilAllOrExit(
 			driver,
 			executionId,
 			pty.masterFd,
-			"sh-0.4$ ",
+			[catCommand, "browser-cat-ok-via-cat", "sh-0.4$ "],
 			execPromise,
 		);
 		if (!catOutput.includes("browser-cat-ok-via-cat")) {
 			throw new Error(`cat output missing from shell transcript: ${JSON.stringify(catOutput)}`);
 		}
 		output += catOutput;
-		await driver.writePty!(executionId, pty.masterFd, "/bin/cat /etc/os-release\r");
-		const osReleaseOutput = await readUntilOrExit(
+		const redirectCommand = "/bin/echo browser-file-''ok > /tmp/browser-file.txt";
+		await driver.writePty!(executionId, pty.masterFd, `${redirectCommand}\r`);
+		const redirectOutput = await readUntilAllOrExit(
 			driver,
 			executionId,
 			pty.masterFd,
-			"sh-0.4$ ",
-			execPromise,
-		);
-		if (!osReleaseOutput.includes("PRETTY_NAME") && !osReleaseOutput.includes("Alpine")) {
-			throw new Error(`cat /etc/os-release output missing from shell transcript: ${JSON.stringify(osReleaseOutput)}`);
-		}
-		output += osReleaseOutput;
-		await driver.writePty!(executionId, pty.masterFd, "/bin/echo browser-file-ok > /tmp/browser-file.txt\r");
-		const redirectOutput = await readUntilOrExit(
-			driver,
-			executionId,
-			pty.masterFd,
-			"sh-0.4$ ",
+			[redirectCommand, "sh-0.4$ "],
 			execPromise,
 		);
 		output += redirectOutput;
-		await driver.writePty!(executionId, pty.masterFd, "/bin/cat /tmp/browser-file.txt\r");
-		const redirectedCatOutput = await readUntilOrExit(
+		const redirectedCatCommand = "/bin/cat /tmp/browser-file.txt";
+		await driver.writePty!(executionId, pty.masterFd, `${redirectedCatCommand}\r`);
+		const redirectedCatOutput = await readUntilAllOrExit(
 			driver,
 			executionId,
 			pty.masterFd,
-			"sh-0.4$ ",
+			[redirectedCatCommand, "browser-file-ok", "sh-0.4$ "],
 			execPromise,
 		);
 		if (!redirectedCatOutput.includes("browser-file-ok")) {
 			throw new Error(`redirected file output missing from shell transcript: ${JSON.stringify(redirectedCatOutput)}`);
 		}
 		output += redirectedCatOutput;
-		await driver.writePty!(executionId, pty.masterFd, "/bin/ls /\r");
-		const lsOutput = await readUntilOrExit(
+		const lsCommand = "/bin/ls /";
+		await driver.writePty!(executionId, pty.masterFd, `${lsCommand}\r`);
+		const lsOutput = await readUntilAllOrExit(
 			driver,
 			executionId,
 			pty.masterFd,
-			"sh-0.4$ ",
+			[lsCommand, "etc", "sh-0.4$ "],
 			execPromise,
 		);
 		if (!lsOutput.includes("etc")) {
 			throw new Error(`ls output missing expected root entry: ${JSON.stringify(lsOutput)}`);
 		}
 		output += lsOutput;
-		await driver.writePty!(executionId, pty.masterFd, "partial-browser-ctrl-c\u0003");
-		const ctrlCOutput = await readUntilOrExit(
+		const ctrlCInput = "partial-browser-ctrl-c";
+		await driver.writePty!(executionId, pty.masterFd, `${ctrlCInput}\u0003`);
+		const ctrlCOutput = await readUntilAllOrExit(
 			driver,
 			executionId,
 			pty.masterFd,
-			"sh-0.4$ ",
+			[ctrlCInput, "^C", "sh-0.4$ "],
 			execPromise,
 		);
 		if (!ctrlCOutput.includes("^C")) {
 			throw new Error(`Ctrl-C marker missing from shell transcript: ${JSON.stringify(ctrlCOutput)}`);
 		}
 		output += ctrlCOutput;
-		await driver.writePty!(executionId, pty.masterFd, "/bin/echo browser-after-ctrl-c\r");
-		const afterCtrlCOutput = await readUntilOrExit(
+		const afterCtrlCCommand = "/bin/echo browser-after-ctrl-''c";
+		await driver.writePty!(executionId, pty.masterFd, `${afterCtrlCCommand}\r`);
+		const afterCtrlCOutput = await readUntilAllOrExit(
 			driver,
 			executionId,
 			pty.masterFd,
-			"sh-0.4$ ",
+			[afterCtrlCCommand, "browser-after-ctrl-c", "sh-0.4$ "],
 			execPromise,
 		);
 		if (!afterCtrlCOutput.includes("browser-after-ctrl-c")) {

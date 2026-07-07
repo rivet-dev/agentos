@@ -41,6 +41,11 @@ const AGENT_WORKERS: Record<string, string> = {
 	"/bin/async-loopback-agent": "/async-loopback-agent.worker.js",
 	"/bin/async-proxy-agent": "/async-proxy-agent.worker.js",
 	"/bin/pty-loopback-agent": "/pty-loopback-agent.worker.js",
+	"/opt/agentos/bin/async-echo-agent": "/async-echo-agent.worker.js",
+	"/opt/agentos/bin/async-infer-agent": "/async-infer-agent.worker.js",
+	"/opt/agentos/bin/async-loopback-agent": "/async-loopback-agent.worker.js",
+	"/opt/agentos/bin/async-proxy-agent": "/async-proxy-agent.worker.js",
+	"/opt/agentos/bin/pty-loopback-agent": "/pty-loopback-agent.worker.js",
 };
 const DEFAULT_AGENT_WORKER_URL = "/async-echo-agent.worker.js";
 const ACP_NS = "dev.rivet.agent-os.acp";

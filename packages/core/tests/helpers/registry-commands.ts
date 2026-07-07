@@ -285,7 +285,7 @@ export function testOnlyCommandSoftware(
 	);
 	writeFileSync(
 		join(dir, "agentos-package.json"),
-		`${JSON.stringify({ name: "agentos-test-commands" }, null, 2)}\n`,
+		`${JSON.stringify({ name: "agentos-test-commands", version: "1.0.0" }, null, 2)}\n`,
 	);
 	return { packagePath: dir };
 }

@@ -7,6 +7,9 @@
 //              the built-in `node` command.
 // Both probes implement the same argv-dispatched case set and emit the same
 // `#`-prefixed marker protocol, so the host asserts the SAME strings for both.
+// The JS-node runtime is part of the default suite. The WASI-C runtime is gated
+// behind AGENTOS_CORE_PTY_C=1 because it requires local C/WASI fixtures and is
+// used as explicit native TTY validation.
 //
 // Each case's run(ctx) asserts the CORRECT (kernel-conformant) behavior. A cell
 // is run under `test.fails` when it is effectively known-broken:
@@ -14,7 +17,7 @@
 // so the correct-behavior assertion still RUNS and still throws honestly today —
 // `test.fails` records that expected failure and will turn RED the moment the
 // kernel / V8 TTY bridge is fixed (alerting that the flag is stale). Nothing is
-// skipped.
+// skipped for enabled runtimes.
 //
 // IMPORTANT (regression-guard integrity): for an it.fails cell the ONLY thing that
 // may throw is the load-bearing behavior assertion — `ctx.snapshot()` does NOT
@@ -59,13 +62,14 @@ const NODE_PROBE_GUEST_PATH = "/pty_probe.mjs";
 
 const WASI_SDK = resolve(
 	REPO_ROOT,
-	"../secure-exec/registry/native/c/vendor/wasi-sdk",
+	"registry/native/c/vendor/wasi-sdk",
 );
 const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
 
 const SETTLE_MS = 80;
 const WAIT_TIMEOUT_MS = 15_000;
 const TEST_TIMEOUT_MS = 60_000;
+const ENABLE_WASM_C_PTY = process.env.AGENTOS_CORE_PTY_C === "1";
 
 // ---------------------------------------------------------------------------
 // build / sidecar prerequisites
@@ -122,7 +126,7 @@ function materializePtyProbePackage(): string {
 	);
 	writeFileSync(
 		join(pkgDir, "agentos-package.json"),
-		JSON.stringify({ name: "pty-line-discipline-fixture" }),
+		JSON.stringify({ name: "pty-line-discipline-fixture", version: "1.0.0" }),
 	);
 	return pkgDir;
 }
@@ -673,7 +677,10 @@ const CASES: Case[] = [
 	},
 ];
 
-const RUNTIMES: Runtime[] = [{ name: "wasm-c" }, { name: "js-node" }];
+const RUNTIMES: Runtime[] = [
+	...(ENABLE_WASM_C_PTY ? ([{ name: "wasm-c" }] as const) : []),
+	{ name: "js-node" },
+];
 
 // ---------------------------------------------------------------------------
 // suite
@@ -684,11 +691,14 @@ describe("PTY line discipline matrix", () => {
 
 	beforeAll(async () => {
 		ensureSidecarBuilt();
-		const packageDir = materializePtyProbePackage();
 
 		const { AgentOs } = await import("../src/index.js");
+		const software = [];
+		if (ENABLE_WASM_C_PTY) {
+			software.push({ packagePath: materializePtyProbePackage() });
+		}
 		vm = await AgentOs.create({
-			software: [{ packagePath: packageDir }],
+			software,
 		});
 		await vm.writeFile(NODE_PROBE_GUEST_PATH, readFileSync(NODE_PROBE_SOURCE));
 	}, 180_000);

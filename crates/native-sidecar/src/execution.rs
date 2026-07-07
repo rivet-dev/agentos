@@ -11222,10 +11222,7 @@ fn build_module_reader(
                 .collect::<Vec<_>>()
         );
     }
-    crate::plugins::host_dir::HostDirModuleReader::from_mounts_and_package_tars(
-        pairs,
-        package_tars,
-    )
+    crate::plugins::host_dir::HostDirModuleReader::from_mounts_and_package_tars(pairs, package_tars)
 }
 
 fn host_node_modules_root(path: &Path) -> Option<PathBuf> {
@@ -11539,7 +11536,10 @@ fn stage_agentos_package_command(
     }
     let shadow_path = shadow_path_for_guest(vm, &real_entrypoint);
     if !shadow_path.is_file() {
-        let bytes = vm.kernel.read_file(&real_entrypoint).map_err(kernel_error)?;
+        let bytes = vm
+            .kernel
+            .read_file(&real_entrypoint)
+            .map_err(kernel_error)?;
         if let Some(parent) = shadow_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 SidecarError::Io(format!("failed to create wasm shadow parent: {error}"))

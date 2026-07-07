@@ -1,4 +1,7 @@
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 // Stage the base filesystem fixture into OUT_DIR. In-tree builds use the
 // canonical AgentOS runtime-core fixture from the current workspace; the

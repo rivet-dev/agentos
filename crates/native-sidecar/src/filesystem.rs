@@ -1962,9 +1962,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             if source_host.is_some() || destination_host.is_some() {
                 return rename_mapped_host_path(source, source_host, destination, destination_host);
             }
-            kernel
-                .rename(source, destination)
-                .map_err(kernel_error)?;
+            kernel.rename(source, destination).map_err(kernel_error)?;
             // Mirror the rename into the process shadow tree, otherwise the
             // exit-time shadow->kernel sync resurrects the stale source path
             // (the shadow walk only copies entries in, it cannot express

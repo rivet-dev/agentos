@@ -87,6 +87,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Install wasm-pack
+        run: |
+          rustup target add wasm32-unknown-unknown
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - run: |
           rm -rf /tmp/docs-theme
           git clone https://github.com/rivet-dev/docs-theme.git /tmp/docs-theme
@@ -94,6 +98,8 @@ jobs:
           rm -rf website/vendor/theme && mkdir -p website/vendor
           cp -r /tmp/docs-theme/packages/theme website/vendor/theme
       - run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: pnpm --dir packages/browser exec playwright install --with-deps chromium
       - uses: actions/download-artifact@v4
         with:
           name: wasm-commands
@@ -111,6 +117,11 @@ jobs:
       - run: cargo test -p agentos-client -- --test-threads=1
         env:
           AGENT_OS_CLIENT_ALLOW_E2E_SKIPS: '1'
+      - name: Reclaim Cargo target space before package tests
+        run: |
+          df -h .
+          cargo clean
+          df -h .
       - if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         run: pnpm test
         env:

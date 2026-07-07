@@ -99,7 +99,7 @@ describe.skipIf(REGISTRY_SH === undefined)("brush interactive PTY repaint", () =
 		);
 		writeFileSync(
 			join(fixtureDir, "agentos-package.json"),
-			JSON.stringify({ name: "brush-fixture" }),
+			JSON.stringify({ name: "brush-fixture", version: "1.0.0" }),
 		);
 		process.env.AGENTOS_SIDECAR_BIN = SIDECAR_BINARY;
 	});

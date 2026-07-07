@@ -17,7 +17,7 @@ import {
 } from "@rivet-dev/agentos-runtime-core/protocol-frames";
 
 const GENERATED_AUTH_FRAME_HEX =
-	"00137365637572652d657865632d73696465636172070007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e070001000000";
+	"00166167656e746f732d6e61746976652d73696465636172070007000000000000000006636f6e6e2d31000e67656e6572617465642d7465737405746f6b656e070001000000";
 const PROTOCOL_VERSION = 7;
 
 describe("generated sidecar protocol", () => {
@@ -107,6 +107,8 @@ describe("generated sidecar protocol", () => {
 						loopbackExemptPorts: new Uint16Array([3000]),
 						packages: [],
 						packagesMountAt: "",
+						bootstrapCommands: [],
+						toolShimCommands: [],
 					},
 				},
 			},
@@ -144,6 +146,8 @@ describe("generated sidecar protocol", () => {
 				loopback_exempt_ports: [3000],
 				packages: [],
 				packages_mount_at: "",
+				bootstrap_commands: [],
+				tool_shim_commands: [],
 			},
 		};
 
@@ -208,7 +212,12 @@ describe("generated sidecar protocol", () => {
 				},
 				payload: {
 					tag: "VmConfiguredResponse",
-					val: { appliedMounts: 2, appliedSoftware: 0 },
+					val: {
+						appliedMounts: 2,
+						appliedSoftware: 0,
+						projectedCommands: [],
+						agents: [],
+					},
 				},
 			},
 		};
@@ -227,6 +236,8 @@ describe("generated sidecar protocol", () => {
 				type: "vm_configured",
 				applied_mounts: 2,
 				applied_software: 0,
+				projected_commands: [],
+				agents: [],
 			},
 		});
 	});
@@ -307,6 +318,8 @@ describe("generated sidecar protocol", () => {
 						loopbackExemptPorts: new Uint16Array(),
 						packages: [],
 						packagesMountAt: "",
+						bootstrapCommands: [],
+						toolShimCommands: [],
 					},
 				},
 			},
@@ -332,6 +345,7 @@ describe("generated sidecar protocol", () => {
 			content: null,
 			encoding: null,
 			recursive: false,
+			maxDepth: null,
 			mode: null,
 			uid: null,
 			gid: null,

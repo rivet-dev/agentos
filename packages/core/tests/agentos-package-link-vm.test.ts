@@ -31,7 +31,7 @@ describe("agentos linkSoftware (VM)", () => {
 		);
 		writeFileSync(
 			join(pkgDir, "agentos-package.json"),
-			JSON.stringify({ name: "linked-tool" }),
+			JSON.stringify({ name: "linked-tool", version: "1.0.0" }),
 		);
 		const binPath = join(pkgDir, "bin", "linked-cmd");
 		writeFileSync(
@@ -93,7 +93,7 @@ describe("agentos linkSoftware (VM)", () => {
 		);
 		writeFileSync(
 			join(otherDir, "agentos-package.json"),
-			JSON.stringify({ name: "other-tool" }),
+			JSON.stringify({ name: "other-tool", version: "1.0.0" }),
 		);
 		const otherBin = join(otherDir, "bin", "linked-cmd");
 		writeFileSync(

@@ -49,7 +49,7 @@ const REQUIRED_WASM_COMMANDS = [
 
 export function ecosystemWasmCommandDirs(): string[] {
 	const commandsDir = resolveNodeRuntimeCommandsDir();
-	assertWasmCommandsPresent(commandsDir);
+	assertWasmCommandsPresent(commandsDir, requiredWasmCommands());
 	return [commandsDir];
 }
 
@@ -534,8 +534,20 @@ function gitInitCommitOp(): CommandBenchmarkOp {
 	};
 }
 
-function assertWasmCommandsPresent(commandsDir: string): void {
-	const missing = REQUIRED_WASM_COMMANDS.filter(
+function requiredWasmCommands(): readonly string[] {
+	const override = process.env.BENCH_REQUIRED_WASM_COMMANDS;
+	if (override === undefined) return REQUIRED_WASM_COMMANDS;
+	return override
+		.split(",")
+		.map((command) => command.trim())
+		.filter(Boolean);
+}
+
+function assertWasmCommandsPresent(
+	commandsDir: string,
+	requiredCommands: readonly string[],
+): void {
+	const missing = requiredCommands.filter(
 		(command) => !existsSync(join(commandsDir, command)),
 	);
 	if (missing.length > 0) {

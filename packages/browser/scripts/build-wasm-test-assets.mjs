@@ -72,20 +72,39 @@ const secureExecCommandsDir = path.join(
 	"release",
 	"commands",
 );
+const repoNativeCommandsDir = path.join(
+	repoRoot,
+	"registry",
+	"native",
+	"target",
+	"wasm32-wasip1",
+	"release",
+	"commands",
+);
+const runtimeCoreCommandsDir = path.join(repoRoot, "packages", "runtime-core", "commands");
+const coreutilsCommandsDir = path.join(repoRoot, "registry", "software", "coreutils", "bin");
 const browserCommandsDir = path.join(browserTestsDir, "commands");
-const realShellCommand = path.join(secureExecCommandsDir, "sh");
-if (existsSync(secureExecCommandsDir)) {
+
+function copyCommandsFrom(commandsDir) {
 	mkdirSync(browserCommandsDir, { recursive: true });
-	for (const entry of readdirSync(secureExecCommandsDir)) {
-		copyFileSync(path.join(secureExecCommandsDir, entry), path.join(browserCommandsDir, entry));
+	for (const entry of readdirSync(commandsDir)) {
+		copyFileSync(path.join(commandsDir, entry), path.join(browserCommandsDir, entry));
 	}
-	console.log(`copied real wasm commands from ${secureExecCommandsDir}`);
-} else if (existsSync(realShellCommand)) {
-	mkdirSync(browserCommandsDir, { recursive: true });
-	copyFileSync(realShellCommand, path.join(browserCommandsDir, "sh"));
-	console.log(`copied real sh command from ${realShellCommand}`);
+	console.log(`copied real wasm commands from ${commandsDir}`);
+}
+
+if (existsSync(repoNativeCommandsDir)) {
+	copyCommandsFrom(repoNativeCommandsDir);
+} else if (existsSync(secureExecCommandsDir)) {
+	copyCommandsFrom(secureExecCommandsDir);
+} else if (existsSync(runtimeCoreCommandsDir)) {
+	copyCommandsFrom(runtimeCoreCommandsDir);
+} else if (existsSync(coreutilsCommandsDir)) {
+	copyCommandsFrom(coreutilsCommandsDir);
 } else {
-	console.log(`skipping real sh command copy; missing ${realShellCommand}`);
+	console.log(
+		`skipping real wasm command copy; missing ${repoNativeCommandsDir}, ${secureExecCommandsDir}, ${runtimeCoreCommandsDir}, and ${coreutilsCommandsDir}`,
+	);
 }
 run(esbuildBin, [
 	workerEntry,

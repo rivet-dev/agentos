@@ -95,9 +95,13 @@ async fn vm_boots_and_runs_coreutils_from_packed_aospkg() {
     // Run real coreutils commands out of the packed tar mount.
     let (code, stdout, stderr) = spawn_capture(&os, "ls", vec![String::from("/")]).await;
     assert_eq!(code, 0, "ls / exit; stdout={stdout:?} stderr={stderr:?}");
-    assert!(stdout.contains("opt"), "ls / must list /opt: stdout={stdout:?} stderr={stderr:?}");
+    assert!(
+        stdout.contains("opt"),
+        "ls / must list /opt: stdout={stdout:?} stderr={stderr:?}"
+    );
 
-    let (code, stdout, stderr) = spawn_capture(&os, "cat", vec![String::from("/etc/hostname")]).await;
+    let (code, stdout, stderr) =
+        spawn_capture(&os, "cat", vec![String::from("/etc/hostname")]).await;
     assert_eq!(
         code, 0,
         "cat /etc/hostname exit; stdout={stdout:?} stderr={stderr:?}"

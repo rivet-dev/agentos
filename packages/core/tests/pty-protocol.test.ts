@@ -17,7 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
 const SECURE_EXEC_C_ROOT = resolve(
 	REPO_ROOT,
-	"../secure-exec/registry/native/c",
+	"registry/native/c",
 );
 const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
 const PTY_PROBE_COMMAND_DIR = resolve(SECURE_EXEC_C_ROOT, "build");
@@ -25,6 +25,7 @@ const PTY_PROBE_BINARY = resolve(PTY_PROBE_COMMAND_DIR, "pty_probe");
 
 const SETTLE_MS = 80;
 const WAIT_TIMEOUT_MS = 15_000;
+const ENABLE_WASM_C_PTY = process.env.AGENTOS_CORE_PTY_C === "1";
 
 function ensurePtyProbeBuilt(): void {
 	if (existsSync(PTY_PROBE_BINARY)) {
@@ -65,7 +66,7 @@ function materializePtyProbePackage(): string {
 	);
 	writeFileSync(
 		join(pkgDir, "agentos-package.json"),
-		JSON.stringify({ name: "pty-probe-fixture" }),
+		JSON.stringify({ name: "pty-probe-fixture", version: "1.0.0" }),
 	);
 	return pkgDir;
 }
@@ -137,7 +138,9 @@ async function waitForScreen(
 	);
 }
 
-describe("PTY protocol snapshots", () => {
+describe.skipIf(!ENABLE_WASM_C_PTY)(
+	"PTY protocol snapshots (set AGENTOS_CORE_PTY_C=1)",
+	() => {
 	let vm: AgentOs | undefined;
 	let term: Terminal | undefined;
 	let shellId: string | undefined;
@@ -222,4 +225,5 @@ describe("PTY protocol snapshots", () => {
 
 		await expect(vm.waitShell(shellId)).resolves.toBe(0);
 	}, 60_000);
-});
+	},
+);

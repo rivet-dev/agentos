@@ -280,7 +280,7 @@ describe("AgentOs ACP host dispatcher integration", () => {
 		});
 		expect(output.error).toBeUndefined();
 		expect(output.result).toEqual({
-			output: "hello from acp\n",
+			output: "hello from acp\r\nhello from acp\n",
 			truncated: false,
 			exitStatus: {
 				exitCode: 0,

@@ -309,8 +309,9 @@ impl MemBridgeFs {
                 if moved.is_empty() {
                     return Err(format!("ENOENT no such entry: {old_path}"));
                 }
-                entries
-                    .retain(|path, _| path != &old_path && !path.starts_with(&format!("{old_path}/")));
+                entries.retain(|path, _| {
+                    path != &old_path && !path.starts_with(&format!("{old_path}/"))
+                });
                 entries.extend(moved);
                 Ok(None)
             }
@@ -369,7 +370,8 @@ impl MemBridgeFs {
                 let mode = args
                     .get("mode")
                     .and_then(Value::as_u64)
-                    .ok_or_else(|| "EINVAL missing mode".to_string())? as u32;
+                    .ok_or_else(|| "EINVAL missing mode".to_string())?
+                    as u32;
                 let entry = entries
                     .get_mut(&path)
                     .ok_or_else(|| format!("ENOENT no such entry: {path}"))?;
@@ -504,7 +506,11 @@ async fn native_root_mount_files_visible_to_wasm_commands() {
         .exec("wc -c /workspace/data.txt", ExecOptions::default())
         .await
         .expect("exec wc");
-    assert_eq!(wc.exit_code, 0, "wc should exit 0 (stderr: {:?})", wc.stderr);
+    assert_eq!(
+        wc.exit_code, 0,
+        "wc should exit 0 (stderr: {:?})",
+        wc.stderr
+    );
     assert_eq!(
         wc.stdout.trim_start().split(' ').next().unwrap_or_default(),
         "17",

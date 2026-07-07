@@ -14,6 +14,7 @@
 			"outputs": ["dist/**"]
 		},
 		"check-types": {
+			"dependsOn": ["^build"],
 			"inputs": [
 				"src/**",
 				"tests/**",
@@ -24,6 +25,12 @@
 		"test": {
 			"inputs": ["src/**", "tests/**", "package.json"],
 			"dependsOn": ["^build", "check-types"]
+		},
+		"@rivet-dev/agentos-sidecar#build": {
+			"cache": false
+		},
+		"@rivet-dev/agentos-plugin#build": {
+			"cache": false
 		}
 	}
 }

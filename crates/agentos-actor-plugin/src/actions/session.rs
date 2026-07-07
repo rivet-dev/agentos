@@ -404,7 +404,7 @@ pub async fn create_session(
     spawn_permission_pump(ctx, vm, vars, &session_id, &session_id);
     // Live adapter-crash notifications for connected clients (`agentCrashed`).
     spawn_exit_capture(ctx, vm, vars, &session_id, &session_id);
-    // The TS mirror (`actor-actions.ts`) types this as `Promise<string>`, so the
+    // The generated TS action surface types this as `Promise<string>`, so the
     // reply must be the bare session id, not a `{ sessionId }` wrapper.
     Ok(session_id)
 }

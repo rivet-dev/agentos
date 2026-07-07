@@ -165,14 +165,14 @@ fn create_session_reply_is_bare_string_regression() {
 
 #[test]
 fn ts_action_interface_matches_rust_contract_fixture() {
-    let ts = include_str!("../../../packages/agentos/src/actor-actions.ts");
-    let normalized_ts = normalize_ws(ts);
+    let ts = contract::render_actor_actions_ts();
+    let normalized_ts = normalize_ws(&ts);
 
     for action in ACTION_CONTRACTS {
         let signature = normalize_ws(action.ts_signature);
         assert!(
             normalized_ts.contains(&signature),
-            "packages/agentos/src/actor-actions.ts signature drifted for {}.\nexpected snippet: {}",
+            "generated actor-actions signature drifted for {}.\nexpected snippet: {}",
             action.name,
             action.ts_signature
         );
@@ -197,7 +197,7 @@ fn ts_event_interface_matches_rust_contract_fixture() {
 
 #[test]
 fn ts_dto_field_names_match_rust_contract_fixture() {
-    let actor_actions = include_str!("../../../packages/agentos/src/actor-actions.ts");
+    let actor_actions = contract::render_actor_actions_ts();
     let actor_types = include_str!("../../../packages/agentos/src/types.ts");
     let core_agent_os = include_str!("../../../packages/core/src/agent-os.ts");
     let core_runtime = include_str!("../../../packages/core/src/runtime.ts");
@@ -260,20 +260,20 @@ fn ts_dto_field_names_match_rust_contract_fixture() {
         ),
         (
             "VmFetchResponse",
-            "packages/agentos/src/actor-actions.ts",
-            actor_actions,
+            "generated actor-actions",
+            &actor_actions,
             "export interface VmFetchResponse { status: number; statusText: string; headers: Record<string, string>; body: Uint8Array; }",
         ),
         (
             "WriteFileResult",
-            "packages/agentos/src/actor-actions.ts",
-            actor_actions,
+            "generated actor-actions",
+            &actor_actions,
             "export interface WriteFileResult { path: string; success: boolean; error?: string; }",
         ),
         (
             "ReadFileResult",
-            "packages/agentos/src/actor-actions.ts",
-            actor_actions,
+            "generated actor-actions",
+            &actor_actions,
             "export interface ReadFileResult { path: string; content?: Uint8Array; error?: string; }",
         ),
         (

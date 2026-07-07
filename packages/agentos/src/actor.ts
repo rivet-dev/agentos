@@ -16,9 +16,9 @@ import common from "@agentos-software/common";
 import { OPT_AGENTOS_ROOT } from "@rivet-dev/agentos-core";
 import { getSidecarPath } from "@rivet-dev/agentos-sidecar";
 import {
-	actor,
 	type ActorDefinition,
 	type ActorFactoryHandle,
+	actor,
 	type CoreRuntime,
 	type DatabaseProvider,
 	type NapiNativePluginOptions,
@@ -30,8 +30,8 @@ import {
 	agentOsActorConfigSchema,
 	nativeAgentOsOptionsSchema,
 } from "./config.js";
+import type { AgentOsActions } from "./generated/actor-actions.generated.js";
 import { getPluginPath } from "./plugin-binary.js";
-import type { AgentOsActions } from "./actor-actions.js";
 import type { AgentOsActorState, AgentOsActorVars } from "./types.js";
 
 /**
@@ -274,10 +274,10 @@ function buildNativeFactoryBuilder<TConnParams>(
 /**
  * Type alias for the `agentOS(...)` return type. Events are not typed at the TS
  * surface because the Rust plugin owns the broadcast set, but the ACTIONS are
- * typed via {@link AgentOsActions} — a TS mirror of the Rust dispatch in
- * `crates/agentos-actor-plugin/src/actions/mod.rs`. That is what gives
- * `createClient<typeof registry>()` a fully-typed handle (e.g. `handle.exec()`
- * returns `ExecResult`, not `unknown`). Keep the two in sync.
+ * typed via {@link AgentOsActions} — generated from the Rust dispatch contract
+ * table in `crates/agentos-actor-plugin/src/actions/contract_surface.rs`.
+ * That is what gives `createClient<typeof registry>()` a fully-typed handle
+ * (e.g. `handle.exec()` returns `ExecResult`, not `unknown`).
  */
 export type AgentOsActorDefinition<TConnParams> = ActorDefinition<
 	AgentOsActorState,

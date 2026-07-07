@@ -582,16 +582,17 @@ fn load_archive(path: PathBuf, file: File, identity: FileIdentity) -> VfsResult<
     .map_err(io_to_vfs)?;
 
     let container = parse_aospkg_header(&mmap)?;
-    let index = crate::package_format::versioned::decode_mount_index(&mmap[container.index.clone()])
-        .map_err(|error| VfsError::new("EINVAL", format!("decode .aospkg mount index: {error}")))?;
+    let index =
+        crate::package_format::versioned::decode_mount_index(&mmap[container.index.clone()])
+            .map_err(|error| {
+                VfsError::new("EINVAL", format!("decode .aospkg mount index: {error}"))
+            })?;
     validate_sorted_entries(&index.tar_entries)?;
 
     let mut nodes = BTreeMap::new();
     let mut children = BTreeMap::<String, BTreeSet<String>>::new();
     let dev = identity_device(&identity);
-    let mut next_ino = 1u64;
-
-    for entry in index.tar_entries {
+    for (next_ino, entry) in (1u64..).zip(index.tar_entries) {
         let path = entry.path;
         ensure_archive_path(&path)?;
         ensure_index_capacity(nodes.len() + 1)?;
@@ -626,7 +627,6 @@ fn load_archive(path: PathBuf, file: File, identity: FileIdentity) -> VfsResult<
                 dev,
             },
         );
-        next_ino += 1;
         add_child(&path, &mut children);
         if matches!(
             nodes.get(&path).map(|node| &node.kind),

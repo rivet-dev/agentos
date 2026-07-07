@@ -377,17 +377,14 @@ fn read_package_manifest_from_tar_with_dir(
     // then the versioned vbare PackageManifest. Do not parse tar headers, open
     // TarFileSystem, decode chunk2, or touch chunk3 here.
     let manifest = read_aospkg_manifest_chunk(tar)?;
-    PackageDescriptor::from_manifest(
-        dir,
-        Some(tar.to_string_lossy().into_owned()),
-        manifest,
-    )
+    PackageDescriptor::from_manifest(dir, Some(tar.to_string_lossy().into_owned()), manifest)
 }
 
 fn read_aospkg_manifest_chunk(path: &Path) -> Result<v1::PackageManifest, SidecarError> {
     // Container framing lives in vfs::package_format; this is the single
     // startup-critical chunk1 read shared with every host-side consumer.
-    read_manifest_chunk_from_file(path).map_err(|error| SidecarError::InvalidState(error.to_string()))
+    read_manifest_chunk_from_file(path)
+        .map_err(|error| SidecarError::InvalidState(error.to_string()))
 }
 
 pub fn build_package_leaf_mounts(

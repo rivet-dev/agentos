@@ -4,9 +4,7 @@
 //! string into phantom bytes injected into EVERY guest TCP stream (this broke
 //! all guest HTTP, including agent SDK -> LLM traffic).
 mod common;
-use agentos_client::config::{
-    AgentOsConfig, PatternPermissions, PermissionMode, Permissions,
-};
+use agentos_client::config::{AgentOsConfig, PatternPermissions, PermissionMode, Permissions};
 use agentos_client::ExecOptions;
 use std::io::Write;
 

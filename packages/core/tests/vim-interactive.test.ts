@@ -72,7 +72,7 @@ function materializeVimPackage(): { packagePath: string } {
 	);
 	writeFileSync(
 		join(packageDir, "agentos-package.json"),
-		JSON.stringify({ name: "vim" }),
+		JSON.stringify({ name: "vim", version: "1.0.0" }),
 	);
 	return { packagePath: packageDir };
 }

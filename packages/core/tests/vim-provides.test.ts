@@ -121,6 +121,7 @@ function materializeLocalEditorsPackage(withProvides: boolean): {
 		join(packageDir, "agentos-package.json"),
 		JSON.stringify({
 			name: "local-editors",
+			version: "1.0.0",
 			...(provides ? { provides } : {}),
 		}),
 	);

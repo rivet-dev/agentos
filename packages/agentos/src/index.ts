@@ -11,13 +11,12 @@ import type {
 	JsonRpcNotification,
 	PermissionRequest,
 } from "@rivet-dev/agentos-core";
+import { setup as rivetkitSetup } from "rivetkit";
 import { type AgentOsActorDefinition, createAgentOS } from "./actor.js";
 import type {
 	AgentOsActorConfigInput,
 	NativeAgentOsOptions,
 } from "./config.js";
-
-import { setup as rivetkitSetup } from "rivetkit";
 
 // 512 MiB — large agent prompts/results cross the actor websocket transport as
 // single messages; RivetKit's registry-level defaults (maxIncomingMessageSize
@@ -40,6 +39,9 @@ export const setup: typeof rivetkitSetup = ((
 		...input,
 	})) as typeof rivetkitSetup;
 
+// Re-export the software-definition helper so custom agents/tools/commands can
+// be defined without importing @rivet-dev/agentos-core directly.
+export { defineSoftware } from "@rivet-dev/agentos-core";
 export {
 	buildConfigJson,
 	type NodeModulesMountConfig,
@@ -48,22 +50,29 @@ export {
 export {
 	type AgentOsActorConfig,
 	type AgentOsActorConfigInput,
-	type NativeAgentOsOptions,
 	agentOsActorConfigSchema,
+	type NativeAgentOsOptions,
 	nativeAgentOsOptionsSchema,
 } from "./config.js";
-export { getPluginPath } from "./plugin-binary.js";
-
-// Re-export the software-definition helper so custom agents/tools/commands can
-// be defined without importing @rivet-dev/agentos-core directly.
-export { defineSoftware } from "@rivet-dev/agentos-core";
-
 export type {
+	AgentOsActions,
+	CreateSessionOptions,
+	DirEntry,
+	ReadFileResult,
+	ScheduledCronJob,
+	SignedPreviewUrl,
+	SpawnedProcess,
+	VmFetchOptions,
+	VmFetchResponse,
+	WriteFileResult,
+} from "./generated/actor-actions.generated.js";
+export { getPluginPath } from "./plugin-binary.js";
+export type {
+	AgentCrashedPayload,
 	AgentOsActionContext,
 	AgentOsActorState,
 	AgentOsActorVars,
 	AgentOsEvents,
-	AgentCrashedPayload,
 	CronEventPayload,
 	PermissionRequestPayload,
 	PersistedSessionEvent,
@@ -81,18 +90,6 @@ export type {
 	VmBootedPayload,
 	VmShutdownPayload,
 } from "./types.js";
-export type {
-	AgentOsActions,
-	CreateSessionOptions,
-	DirEntry,
-	ReadFileResult,
-	ScheduledCronJob,
-	SignedPreviewUrl,
-	SpawnedProcess,
-	VmFetchOptions,
-	VmFetchResponse,
-	WriteFileResult,
-} from "./actor-actions.js";
 
 export type AgentOSActorConfigInput<TConnParams = undefined> =
 	NativeAgentOsOptions & Omit<AgentOsActorConfigInput<TConnParams>, "options">;

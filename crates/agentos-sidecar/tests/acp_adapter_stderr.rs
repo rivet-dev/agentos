@@ -31,10 +31,9 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentos_native_sidecar::wire::{
-    AuthenticateRequest, BootstrapRootFilesystemRequest, ConnectionOwnership, CreateVmRequest,
-    ExtEnvelope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope, RequestFrame,
-    RequestPayload, ResponsePayload, RootFilesystemEntry, RootFilesystemEntryEncoding,
-    RootFilesystemEntryKind, SessionOwnership, SidecarPlacement, SidecarPlacementShared,
+    AuthenticateRequest, ConfigureVmRequest, ConnectionOwnership, CreateVmRequest, ExtEnvelope,
+    GuestRuntimeKind, OpenSessionRequest, OwnershipScope, PackageDescriptor, RequestFrame,
+    RequestPayload, ResponsePayload, SessionOwnership, SidecarPlacement, SidecarPlacementShared,
     VmOwnership,
 };
 use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig};
@@ -304,11 +303,11 @@ fn create_vm(
         ResponsePayload::VmCreatedResponse(response) => response.vm_id,
         other => panic!("unexpected create VM response: {other:?}"),
     };
-    bootstrap_mock_agent(sidecar, connection_id, session_id, &vm_id, cwd);
+    configure_mock_agent_package(sidecar, connection_id, session_id, &vm_id, cwd);
     vm_id
 }
 
-fn bootstrap_mock_agent(
+fn configure_mock_agent_package(
     sidecar: &mut NativeSidecar<RecordingBridge>,
     connection_id: &str,
     session_id: &str,
@@ -320,11 +319,18 @@ fn bootstrap_mock_agent(
         return;
     }
     let script = fs::read_to_string(&adapter).expect("read crashing adapter");
+    let package_dir = cwd.join("packages").join("pi");
+    let bin_dir = package_dir.join("bin");
+    fs::create_dir_all(&bin_dir).expect("create mock agent bin dir");
     let manifest = serde_json::json!({
         "name": "pi",
+        "version": "0.0.0",
         "agent": { "acpEntrypoint": "pi" },
     })
     .to_string();
+    fs::write(package_dir.join("agentos-package.json"), manifest)
+        .expect("write mock agent manifest");
+    fs::write(bin_dir.join("pi"), script).expect("write mock agent command");
     let result = sidecar
         .dispatch_wire_blocking(RequestFrame {
             schema: agentos_native_sidecar::wire::protocol_schema(),
@@ -334,58 +340,28 @@ fn bootstrap_mock_agent(
                 session_id: session_id.to_owned(),
                 vm_id: vm_id.to_owned(),
             }),
-            payload: RequestPayload::BootstrapRootFilesystemRequest(
-                BootstrapRootFilesystemRequest {
-                    entries: vec![
-                        root_dir("/opt"),
-                        root_dir("/opt/agentos"),
-                        root_dir("/opt/agentos/bin"),
-                        root_dir("/opt/agentos/pkgs"),
-                        root_dir("/opt/agentos/pkgs/pi"),
-                        root_dir("/opt/agentos/pkgs/pi/current"),
-                        root_file("/opt/agentos/bin/pi", script, true),
-                        root_file(
-                            "/opt/agentos/pkgs/pi/current/agentos-package.json",
-                            manifest,
-                            false,
-                        ),
-                    ],
-                },
-            ),
+            payload: RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
+                mounts: Vec::new(),
+                software: Vec::new(),
+                permissions: None,
+                module_access_cwd: None,
+                instructions: Vec::new(),
+                projected_modules: Vec::new(),
+                command_permissions: HashMap::new(),
+                loopback_exempt_ports: Vec::new(),
+                packages: vec![PackageDescriptor {
+                    path: package_dir.to_string_lossy().into_owned(),
+                }],
+                packages_mount_at: String::from("/opt/agentos"),
+                bootstrap_commands: Vec::new(),
+                tool_shim_commands: Vec::new(),
+            }),
         })
-        .expect("bootstrap crashing ACP package");
+        .expect("configure crashing ACP package");
     assert!(matches!(
         result.response.payload,
-        ResponsePayload::RootFilesystemBootstrappedResponse(_)
+        ResponsePayload::VmConfiguredResponse(_)
     ));
-}
-
-fn root_dir(path: &str) -> RootFilesystemEntry {
-    RootFilesystemEntry {
-        path: path.to_owned(),
-        kind: RootFilesystemEntryKind::Directory,
-        mode: Some(0o755),
-        uid: None,
-        gid: None,
-        content: None,
-        encoding: None,
-        target: None,
-        executable: false,
-    }
-}
-
-fn root_file(path: &str, content: String, executable: bool) -> RootFilesystemEntry {
-    RootFilesystemEntry {
-        path: path.to_owned(),
-        kind: RootFilesystemEntryKind::File,
-        mode: Some(if executable { 0o755 } else { 0o644 }),
-        uid: None,
-        gid: None,
-        content: Some(content),
-        encoding: Some(RootFilesystemEntryEncoding::Utf8),
-        target: None,
-        executable,
-    }
 }
 
 fn allow_all_permissions() -> vm_config::PermissionsPolicy {

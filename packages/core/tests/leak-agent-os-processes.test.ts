@@ -34,7 +34,6 @@ function makeAgentOs(): {
 		kernelMock,
 		{},
 		[],
-		new Map(),
 		[],
 		{},
 		{},

@@ -34,11 +34,10 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentos_native_sidecar::wire::{
-    AuthenticateRequest, BootstrapRootFilesystemRequest, ConnectionOwnership, CreateVmRequest,
-    EventFrame, EventPayload, ExtEnvelope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope,
-    RequestFrame, RequestPayload, ResponsePayload, RootFilesystemEntry,
-    RootFilesystemEntryEncoding, RootFilesystemEntryKind, SessionOwnership, SidecarPlacement,
-    SidecarPlacementShared, VmOwnership,
+    AuthenticateRequest, ConfigureVmRequest, ConnectionOwnership, CreateVmRequest, EventFrame,
+    EventPayload, ExtEnvelope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope,
+    PackageDescriptor, RequestFrame, RequestPayload, ResponsePayload, SessionOwnership,
+    SidecarPlacement, SidecarPlacementShared, VmOwnership,
 };
 use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig};
 use agentos_protocol::generated::v1::{
@@ -61,6 +60,8 @@ fn adapter_crash_restarts_or_evicts_and_emits_exit_event() {
     fs::write(&restartable, restartable_adapter_script()).expect("write restartable adapter");
     let unsupported = cwd.join("unsupported-adapter.mjs");
     fs::write(&unsupported, unsupported_adapter_script()).expect("write unsupported adapter");
+    let idle = cwd.join("idle-crash-adapter.mjs");
+    fs::write(&idle, idle_crash_adapter_script()).expect("write idle-crash adapter");
     let vm_id = create_vm(&mut sidecar, &connection_id, &session_id, &cwd);
 
     // ------------------------------------------------------------------
@@ -104,7 +105,7 @@ fn adapter_crash_restarts_or_evicts_and_emits_exit_event() {
     );
     let exit_event = decode_single_agent_exited_event(&events);
     assert_eq!(exit_event.session_id, "restartable-session");
-    assert_eq!(exit_event.agent_type, "pi");
+    assert_eq!(exit_event.agent_type, "restartable");
     assert_eq!(exit_event.exit_code, Some(7));
     assert_eq!(exit_event.restart, "restarted");
     assert_eq!(exit_event.restart_count, 1);
@@ -192,8 +193,6 @@ fn adapter_crash_restarts_or_evicts_and_emits_exit_event() {
     // Scenario 3: idle crash (between turns) is detected LAZILY on the
     // next request, still emits the exit event, and still auto-restarts.
     // ------------------------------------------------------------------
-    let idle = cwd.join("idle-crash-adapter.mjs");
-    fs::write(&idle, idle_crash_adapter_script()).expect("write idle-crash adapter");
     let created = dispatch_acp(
         &mut sidecar,
         10,
@@ -647,11 +646,11 @@ fn create_vm(
         ResponsePayload::VmCreatedResponse(response) => response.vm_id,
         other => panic!("unexpected create VM response: {other:?}"),
     };
-    bootstrap_mock_agents(sidecar, connection_id, session_id, &vm_id, cwd);
+    configure_mock_agent_packages(sidecar, connection_id, session_id, &vm_id, cwd);
     vm_id
 }
 
-fn bootstrap_mock_agents(
+fn configure_mock_agent_packages(
     sidecar: &mut NativeSidecar<RecordingBridge>,
     connection_id: &str,
     session_id: &str,
@@ -671,32 +670,27 @@ fn bootstrap_mock_agents(
     if adapters.is_empty() {
         return;
     }
-    let mut entries = vec![
-        root_dir("/opt"),
-        root_dir("/opt/agentos"),
-        root_dir("/opt/agentos/bin"),
-        root_dir("/opt/agentos/pkgs"),
-    ];
+    let package_root = cwd.join("packages");
+    fs::create_dir_all(&package_root).expect("create mock package root");
+    let mut packages = Vec::new();
     for adapter in adapters {
         let agent_type = agent_type_for_adapter(&adapter);
         let script = fs::read_to_string(&adapter).expect("read restart adapter");
+        let package_dir = package_root.join(&agent_type);
+        let bin_dir = package_dir.join("bin");
+        fs::create_dir_all(&bin_dir).expect("create mock agent bin dir");
         let manifest = serde_json::json!({
             "name": agent_type,
+            "version": "0.0.0",
             "agent": { "acpEntrypoint": agent_type },
         })
         .to_string();
-        entries.push(root_dir(&format!("/opt/agentos/pkgs/{agent_type}")));
-        entries.push(root_dir(&format!("/opt/agentos/pkgs/{agent_type}/current")));
-        entries.push(root_file(
-            &format!("/opt/agentos/bin/{agent_type}"),
-            script,
-            true,
-        ));
-        entries.push(root_file(
-            &format!("/opt/agentos/pkgs/{agent_type}/current/agentos-package.json"),
-            manifest,
-            false,
-        ));
+        fs::write(package_dir.join("agentos-package.json"), manifest)
+            .expect("write mock agent manifest");
+        fs::write(bin_dir.join(&agent_type), script).expect("write mock agent command");
+        packages.push(PackageDescriptor {
+            path: package_dir.to_string_lossy().into_owned(),
+        });
     }
     let result = sidecar
         .dispatch_wire_blocking(RequestFrame {
@@ -707,14 +701,25 @@ fn bootstrap_mock_agents(
                 session_id: session_id.to_owned(),
                 vm_id: vm_id.to_owned(),
             }),
-            payload: RequestPayload::BootstrapRootFilesystemRequest(
-                BootstrapRootFilesystemRequest { entries },
-            ),
+            payload: RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
+                mounts: Vec::new(),
+                software: Vec::new(),
+                permissions: None,
+                module_access_cwd: None,
+                instructions: Vec::new(),
+                projected_modules: Vec::new(),
+                command_permissions: HashMap::new(),
+                loopback_exempt_ports: Vec::new(),
+                packages,
+                packages_mount_at: String::from("/opt/agentos"),
+                bootstrap_commands: Vec::new(),
+                tool_shim_commands: Vec::new(),
+            }),
         })
-        .expect("bootstrap restart ACP packages");
+        .expect("configure restart ACP packages");
     assert!(matches!(
         result.response.payload,
-        ResponsePayload::RootFilesystemBootstrappedResponse(_)
+        ResponsePayload::VmConfiguredResponse(_)
     ));
 }
 
@@ -725,34 +730,6 @@ fn agent_type_for_adapter(adapter: &Path) -> String {
         .and_then(|name| name.strip_suffix("-adapter.mjs"))
         .unwrap_or("pi")
         .to_owned()
-}
-
-fn root_dir(path: &str) -> RootFilesystemEntry {
-    RootFilesystemEntry {
-        path: path.to_owned(),
-        kind: RootFilesystemEntryKind::Directory,
-        mode: Some(0o755),
-        uid: None,
-        gid: None,
-        content: None,
-        encoding: None,
-        target: None,
-        executable: false,
-    }
-}
-
-fn root_file(path: &str, content: String, executable: bool) -> RootFilesystemEntry {
-    RootFilesystemEntry {
-        path: path.to_owned(),
-        kind: RootFilesystemEntryKind::File,
-        mode: Some(if executable { 0o755 } else { 0o644 }),
-        uid: None,
-        gid: None,
-        content: Some(content),
-        encoding: Some(RootFilesystemEntryEncoding::Utf8),
-        target: None,
-        executable,
-    }
 }
 
 fn allow_all_permissions() -> vm_config::PermissionsPolicy {

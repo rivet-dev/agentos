@@ -86,10 +86,7 @@ fn tar_filesystem_rejects_unsorted_index() {
     })
     .unwrap();
     let index = encode_mount_index(v1::MountIndex {
-        tar_entries: vec![
-            entry("/z"),
-            entry("/a"),
-        ],
+        tar_entries: vec![entry("/z"), entry("/a")],
     })
     .unwrap();
     let header = encode_aospkg_header(manifest.len(), index.len()).unwrap();
@@ -170,7 +167,10 @@ fn pack_strips_agentos_package_json_and_uses_it_as_manifest_input() {
         .tar_entries
         .iter()
         .all(|entry| entry.path != "/agentos-package.json"));
-    assert!(index.tar_entries.iter().any(|entry| entry.path == "/bin/demo"));
+    assert!(index
+        .tar_entries
+        .iter()
+        .any(|entry| entry.path == "/bin/demo"));
     let mut mount = tar::Archive::new(std::io::Cursor::new(&aospkg[header.mount.clone()]));
     for entry in mount.entries().unwrap() {
         let entry = entry.unwrap();

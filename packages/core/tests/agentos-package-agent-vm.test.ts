@@ -88,6 +88,7 @@ describe("agentos agent package (VM)", () => {
 			JSON.stringify(
 				{
 					name: "mock-agent",
+					version: "1.0.0",
 					agent: { acpEntrypoint: "mock-agent-acp" },
 				},
 				null,

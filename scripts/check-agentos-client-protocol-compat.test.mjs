@@ -25,7 +25,7 @@ function writeSidecar(root, extra = "") {
 		root,
 		"crates/client/src/sidecar.rs",
 		[
-			"use secure_exec_client::wire;",
+			"use agentos_sidecar_client::wire;",
 			"",
 			"fn authenticate() {",
 			"\tlet _ = wire::RequestPayload::AuthenticateRequest(wire::AuthenticateRequest {",
@@ -44,7 +44,7 @@ test("allows generated wire imports and wire auth version", () => {
 		write(
 			root,
 			"crates/client/src/agent_os.rs",
-			"use secure_exec_client::wire;\n",
+			"use agentos_sidecar_client::wire;\n",
 		);
 
 		assert.deepEqual(checkAgentOsClientProtocolCompat({ root }), []);
@@ -242,7 +242,7 @@ test("rejects auth version regressions to the compatibility protocol surface", (
 		assert.deepEqual(checkAgentOsClientProtocolCompat({ root }), [
 			"crates/client/src/sidecar.rs:1:5 imports the live protocol compatibility surface; use secure_exec_client::wire for generated wire types or add this file to the migration inventory with justification",
 			"crates/client/src/sidecar.rs:5:21 imports the live protocol compatibility surface; use secure_exec_client::wire for generated wire types or add this file to the migration inventory with justification",
-			"crates/client/src/sidecar.rs must import secure_exec_client::wire",
+			"crates/client/src/sidecar.rs must import agentos_sidecar_client::wire",
 			"crates/client/src/sidecar.rs authenticate request must use wire::PROTOCOL_VERSION",
 		]);
 	});

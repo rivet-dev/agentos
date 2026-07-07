@@ -26,9 +26,11 @@ describe("Codex agent availability", () => {
 			await vm.dispose();
 		});
 
-		expect(vm.listAgents().some((agent) => agent.id === "codex")).toBe(false);
+		expect((await vm.listAgents()).some((agent) => agent.id === "codex")).toBe(
+			false,
+		);
 		await expect(vm.createSession("codex")).rejects.toThrow(
-			"Unknown agent type: codex",
+			/no projected .*codex.*agent\.acpEntrypoint/,
 		);
 	});
 });

@@ -614,17 +614,29 @@ fn projection_bench() {
         "PROJ_BENCH_COREUTILS_TAR",
         "registry/software/coreutils/dist/package.tar",
     );
-    let tar_tar = source_tar_path("PROJ_BENCH_TAR_TAR", "registry/software/tar/dist/package.tar");
-    let git_tar = source_tar_path("PROJ_BENCH_GIT_TAR", "registry/software/git/dist/package.tar");
+    let tar_tar = source_tar_path(
+        "PROJ_BENCH_TAR_TAR",
+        "registry/software/tar/dist/package.tar",
+    );
+    let git_tar = source_tar_path(
+        "PROJ_BENCH_GIT_TAR",
+        "registry/software/git/dist/package.tar",
+    );
 
     println!("\n# agentOS package load benchmark (.aospkg)");
-    println!("# FULL load = manifest chunk read + leaf mounts + tar mount open (index decode + mmap)");
+    println!(
+        "# FULL load = manifest chunk read + leaf mounts + tar mount open (index decode + mmap)"
+    );
     println!("# step4 additionally reads every regular file back through the mounted VFS");
     println!("# baseline = in-process tar extraction of the same source package.tar");
     println!("# pack (.tar -> .aospkg) runs once in setup and is excluded from all load stats");
     println!(
         "# page cache: {} (set PROJ_BENCH_COLD=1 for per-sample eviction)",
-        if cold { "COLD (evicted per sample)" } else { "warm" }
+        if cold {
+            "COLD (evicted per sample)"
+        } else {
+            "warm"
+        }
     );
     println!("# repo root = {}", repo_root().display());
 
@@ -679,7 +691,10 @@ fn coreutils_load_budget() {
         "registry/software/coreutils/dist/package.tar",
     );
     if !coreutils_tar.is_file() {
-        eprintln!("skipping coreutils_load_budget: {} not built", coreutils_tar.display());
+        eprintln!(
+            "skipping coreutils_load_budget: {} not built",
+            coreutils_tar.display()
+        );
         return;
     }
     let real = create_repacked_real_targets(&[("coreutils", &coreutils_tar)]);

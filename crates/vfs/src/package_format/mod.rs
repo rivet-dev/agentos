@@ -45,9 +45,7 @@ pub fn parse_aospkg_header_from_prefix(header: &[u8], file_len: usize) -> VfsRes
     if file_len < AOSPKG_HEADER_LEN {
         return Err(VfsError::new(
             "EINVAL",
-            format!(
-                ".aospkg file truncated: {file_len} bytes < {AOSPKG_HEADER_LEN} bytes"
-            ),
+            format!(".aospkg file truncated: {file_len} bytes < {AOSPKG_HEADER_LEN} bytes"),
         ));
     }
 
@@ -148,7 +146,10 @@ pub fn read_manifest_chunk_from_file(
     let file_len = usize::try_from(file_len).map_err(|_| {
         VfsError::new(
             "EOVERFLOW",
-            format!("{} is too large to address on this platform", path.display()),
+            format!(
+                "{} is too large to address on this platform",
+                path.display()
+            ),
         )
     })?;
     let mut header = [0u8; AOSPKG_HEADER_LEN];
@@ -176,7 +177,10 @@ pub fn validate_mount_range(
     let mount_base = u64::try_from(header.mount.start).map_err(|_| {
         VfsError::new(
             "EOVERFLOW",
-            format!(".aospkg mount base overflows u64: {} bytes", header.mount.start),
+            format!(
+                ".aospkg mount base overflows u64: {} bytes",
+                header.mount.start
+            ),
         )
     })?;
     let absolute_start = mount_base
@@ -188,7 +192,10 @@ pub fn validate_mount_range(
     let file_len = u64::try_from(header.mount.end).map_err(|_| {
         VfsError::new(
             "EOVERFLOW",
-            format!(".aospkg file length overflows u64: {} bytes", header.mount.end),
+            format!(
+                ".aospkg file length overflows u64: {} bytes",
+                header.mount.end
+            ),
         )
     })?;
     if absolute_end > file_len {

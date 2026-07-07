@@ -2261,6 +2261,9 @@ importers:
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
+      '@rivet-dev/agentos-plugin':
+        specifier: workspace:*
+        version: link:../agentos-plugin
       '@rivet-dev/agentos-sidecar':
         specifier: workspace:*
         version: link:../sidecar-binary
@@ -2331,6 +2334,8 @@ importers:
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.15)
+
+  packages/agentos-plugin: {}
 
   packages/agentos-sandbox:
     dependencies:

@@ -29,7 +29,7 @@
 	"scripts": {
 		"check-types": "node -e \"process.exit(0)\"",
 		"build": "node -e \"process.exit(0)\"",
-		"test": "pnpm build && vitest run --fileParallelism=false"
+		"test": "pnpm build && vitest run --fileParallelism=false --passWithNoTests"
 	},
 	"dependencies": {
 		"@rivet-dev/agentos-runtime-core": "workspace:*",

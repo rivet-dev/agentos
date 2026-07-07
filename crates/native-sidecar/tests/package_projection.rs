@@ -72,14 +72,15 @@ fn write_aospkg(root: &Path, source_tar: &Path) {
         .unwrap_or_else(|e| panic!("pack {} failed: {e}", source_tar.display()));
 }
 
-
 #[test]
 fn reads_version_from_agentos_package_json_and_errors_when_missing() {
     let pkg = unique_dir("ver");
     write_package(&pkg, "vt", "3.1.4", &["vt"]);
     finalize_package_tar(&pkg);
     assert_eq!(
-        read_package_manifest(pkg.to_str().unwrap()).unwrap().version,
+        read_package_manifest(pkg.to_str().unwrap())
+            .unwrap()
+            .version,
         "3.1.4"
     );
 
@@ -124,7 +125,12 @@ fn derives_commands_from_bin_dir() {
     let pkg = unique_dir("cmds");
     write_package(&pkg, "tool", "1.0.0", &["foo", "bar"]);
     finalize_package_tar(&pkg);
-    let mut commands = read_package_manifest(pkg.to_str().unwrap()).unwrap().commands.into_iter().map(|target| target.command).collect::<Vec<_>>();
+    let mut commands = read_package_manifest(pkg.to_str().unwrap())
+        .unwrap()
+        .commands
+        .into_iter()
+        .map(|target| target.command)
+        .collect::<Vec<_>>();
     commands.sort();
     assert_eq!(commands, vec!["bar".to_string(), "foo".to_string()]);
 }

@@ -15,6 +15,11 @@ test("the pi browser demo answers prompts end-to-end (with screenshots)", async 
 	await expect(page.locator("#status")).toHaveText("ready", { timeout: 20_000 });
 	await page.screenshot({ path: path.join(SHOTS, "01-demo-loaded.png") });
 
+	const bundlePresent = await page.evaluate(() =>
+		fetch("/pi-adapter.bundle.cjs").then((r) => r.ok).catch(() => false),
+	);
+	test.skip(!bundlePresent, "pi adapter bundle not built");
+
 	// Prompt 1: a question with a known mock answer.
 	await page.fill("#prompt", "What is 2+2?");
 	await page.click("#run");

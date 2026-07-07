@@ -17,7 +17,9 @@ test("create_session drives an ASYNC agent (in its own worker) to a created sess
 
 	expect(result.sidecarId).toBeTruthy();
 	expect(result.payloadType).toBe("ext_result");
-	expect(result.acpTag).toBe("AcpSessionCreatedResponse");
+	expect(result.acpTag, JSON.stringify(result, null, 2)).toBe(
+		"AcpSessionCreatedResponse",
+	);
 	expect(result.sessionId).toBe("async-echo-session");
 	// HARDENED: the agent made an fs syscall MID-PROMPT, serviced inline by the
 	// reactor (the case that re-enters pushFrame under the synchronous path), and
@@ -33,6 +35,7 @@ declare global {
 				payloadType?: string;
 				acpTag?: string;
 				sessionId?: string;
+				acpCode?: string;
 				acpMessage?: string;
 				promptContent?: string;
 			}>;

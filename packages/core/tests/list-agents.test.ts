@@ -31,7 +31,7 @@ describe("listAgents()", () => {
 			writeFileSync(
 				join(pkgDir, "agentos-package.json"),
 				JSON.stringify(
-					{ name, agent: { acpEntrypoint: `${name}-acp` } },
+					{ name, version: "1.0.0", agent: { acpEntrypoint: `${name}-acp` } },
 					null,
 					2,
 				),

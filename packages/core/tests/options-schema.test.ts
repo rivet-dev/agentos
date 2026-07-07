@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import { AgentOs, agentOsOptionsSchema } from "../src/index.js";
-import { parseAgentOsOptions } from "../src/options-schema.js";
 import {
 	getSandboxDisposeHooks,
 	resolveSandboxOptions,
@@ -57,13 +56,13 @@ describe("AgentOsOptions validation", () => {
 		} as never;
 
 		const options = await resolveSandboxOptions(
-			parseAgentOsOptions({
+			{
 				sandbox: {
 					provider: {
 						start: async () => client,
 					},
 				},
-			}),
+			} as never,
 		);
 		expect(options).not.toHaveProperty("sandbox");
 		expect(options.mounts?.[0]?.path).toBe("/mnt/sandbox");
@@ -77,14 +76,12 @@ describe("AgentOsOptions validation", () => {
 
 	test("advanced sandbox client leaves disposal manual by default", async () => {
 		const client = { baseUrl: "http://127.0.0.1:1234" } as never;
-		const parsed = parseAgentOsOptions({
+		const options = await resolveSandboxOptions({
 			sandbox: {
 				client,
 				mountPath: "/work",
 			},
-		});
-
-		const options = await resolveSandboxOptions(parsed);
+		} as never);
 		expect(options.mounts?.[0]?.path).toBe("/work");
 		expect(getSandboxDisposeHooks(options)).toHaveLength(0);
 	});
@@ -93,23 +90,23 @@ describe("AgentOsOptions validation", () => {
 		const client = { baseUrl: "http://127.0.0.1:1234" } as never;
 		await expect(
 			resolveSandboxOptions(
-				parseAgentOsOptions({
+				{
 					sandbox: {
 						client,
 						mount: false,
 					} as never,
-				}),
+				} as never,
 			),
 		).rejects.toThrow(/sandbox\.mount has been removed/);
 
 		await expect(
 			resolveSandboxOptions(
-				parseAgentOsOptions({
+				{
 					sandbox: {
 						client,
 						bindings: false,
 					} as never,
-				}),
+				} as never,
 			),
 		).rejects.toThrow(/sandbox\.bindings has been removed/);
 	});
@@ -118,12 +115,12 @@ describe("AgentOsOptions validation", () => {
 		const client = { baseUrl: "http://127.0.0.1:1234" } as never;
 		await expect(
 			resolveSandboxOptions(
-				parseAgentOsOptions({
+				{
 					sandbox: {
 						client,
 						basePath: "/app",
 					} as never,
-				}),
+				} as never,
 			),
 		).rejects.toThrow(/sandbox\.basePath has been removed/);
 	});

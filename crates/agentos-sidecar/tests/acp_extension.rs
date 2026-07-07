@@ -8,12 +8,11 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentos_native_sidecar::wire::{
-    AuthenticateRequest, BootstrapRootFilesystemRequest, ConnectionOwnership, CreateVmRequest,
-    EventFrame, EventPayload, ExtEnvelope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope,
-    RequestFrame, RequestPayload, ResponsePayload, RootFilesystemEntry,
-    RootFilesystemEntryEncoding, RootFilesystemEntryKind, SessionOwnership, SidecarPlacement,
-    SidecarPlacementShared, SidecarRequestPayload, SidecarResponseFrame, SidecarResponsePayload,
-    VmOwnership,
+    AuthenticateRequest, ConfigureVmRequest, ConnectionOwnership, CreateVmRequest, EventFrame,
+    EventPayload, ExtEnvelope, GuestRuntimeKind, OpenSessionRequest, OwnershipScope,
+    PackageDescriptor, RequestFrame, RequestPayload, ResponsePayload, SessionOwnership,
+    SidecarPlacement, SidecarPlacementShared, SidecarRequestPayload, SidecarResponseFrame,
+    SidecarResponsePayload, VmOwnership,
 };
 use agentos_native_sidecar::{NativeSidecar, NativeSidecarConfig};
 use agentos_protocol::generated::v1::{
@@ -27,6 +26,13 @@ use bridge_support::RecordingBridge;
 use serde_json::Value;
 
 #[test]
+fn acp_extension_suite() {
+    acp_extension_creates_reports_and_closes_session_over_ext();
+    acp_get_session_state_denies_cross_connection_session_id();
+    acp_close_session_denies_cross_connection_session_id();
+    acp_session_request_denies_cross_connection_prompt_and_cancel();
+}
+
 fn acp_extension_creates_reports_and_closes_session_over_ext() {
     assert_node_available();
     let mut sidecar = new_sidecar("agentos-acp-extension-create");
@@ -312,7 +318,6 @@ fn acp_extension_creates_reports_and_closes_session_over_ext() {
 ///
 /// This is the bounded SAFEGUARD assertion and runs by default. It is fast: it
 /// performs a single cross-connection read and asserts the deny.
-#[test]
 fn acp_get_session_state_denies_cross_connection_session_id() {
     assert_node_available();
     let mut sidecar = new_sidecar("agentos-acp-cross-conn-state");
@@ -415,7 +420,6 @@ fn acp_get_session_state_denies_cross_connection_session_id() {
 /// `AcpSessionClosedResponse` and tear the victim down (FAIL = vuln present).
 ///
 /// Bounded SAFEGUARD-shaped assertion: a single cross-connection close, fast.
-#[test]
 fn acp_close_session_denies_cross_connection_session_id() {
     assert_node_available();
     let mut sidecar = new_sidecar("agentos-acp-cross-conn-close");
@@ -529,7 +533,6 @@ fn acp_close_session_denies_cross_connection_session_id() {
 /// vuln present).
 ///
 /// Bounded SAFEGUARD-shaped assertion: a single cross-connection prompt, fast.
-#[test]
 fn acp_session_request_denies_cross_connection_prompt_and_cancel() {
     assert_node_available();
     let mut sidecar = new_sidecar("agentos-acp-cross-conn-drive");
@@ -1093,11 +1096,18 @@ fn bootstrap_mock_agents(
         return;
     }
     let script = fs::read_to_string(&adapter).expect("read mock adapter");
+    let package_dir = cwd.join("packages").join("pi");
+    let bin_dir = package_dir.join("bin");
+    fs::create_dir_all(&bin_dir).expect("create mock agent bin dir");
     let manifest = serde_json::json!({
         "name": "pi",
+        "version": "0.0.0",
         "agent": { "acpEntrypoint": "pi" },
     })
     .to_string();
+    fs::write(package_dir.join("agentos-package.json"), manifest)
+        .expect("write mock agent manifest");
+    fs::write(bin_dir.join("pi"), script).expect("write mock agent command");
     let result = sidecar
         .dispatch_wire_blocking(RequestFrame {
             schema: agentos_native_sidecar::wire::protocol_schema(),
@@ -1107,58 +1117,28 @@ fn bootstrap_mock_agents(
                 session_id: session_id.to_owned(),
                 vm_id: vm_id.to_owned(),
             }),
-            payload: RequestPayload::BootstrapRootFilesystemRequest(
-                BootstrapRootFilesystemRequest {
-                    entries: vec![
-                        root_dir("/opt"),
-                        root_dir("/opt/agentos"),
-                        root_dir("/opt/agentos/bin"),
-                        root_dir("/opt/agentos/pkgs"),
-                        root_dir("/opt/agentos/pkgs/pi"),
-                        root_dir("/opt/agentos/pkgs/pi/current"),
-                        root_file("/opt/agentos/bin/pi", script, true),
-                        root_file(
-                            "/opt/agentos/pkgs/pi/current/agentos-package.json",
-                            manifest,
-                            false,
-                        ),
-                    ],
-                },
-            ),
+            payload: RequestPayload::ConfigureVmRequest(ConfigureVmRequest {
+                mounts: Vec::new(),
+                software: Vec::new(),
+                permissions: None,
+                module_access_cwd: None,
+                instructions: Vec::new(),
+                projected_modules: Vec::new(),
+                command_permissions: HashMap::new(),
+                loopback_exempt_ports: Vec::new(),
+                packages: vec![PackageDescriptor {
+                    path: package_dir.to_string_lossy().into_owned(),
+                }],
+                packages_mount_at: String::from("/opt/agentos"),
+                bootstrap_commands: Vec::new(),
+                tool_shim_commands: Vec::new(),
+            }),
         })
-        .expect("bootstrap mock ACP package");
+        .expect("configure mock ACP package");
     assert!(matches!(
         result.response.payload,
-        ResponsePayload::RootFilesystemBootstrappedResponse(_)
+        ResponsePayload::VmConfiguredResponse(_)
     ));
-}
-
-fn root_dir(path: &str) -> RootFilesystemEntry {
-    RootFilesystemEntry {
-        path: path.to_owned(),
-        kind: RootFilesystemEntryKind::Directory,
-        mode: Some(0o755),
-        uid: None,
-        gid: None,
-        content: None,
-        encoding: None,
-        target: None,
-        executable: false,
-    }
-}
-
-fn root_file(path: &str, content: String, executable: bool) -> RootFilesystemEntry {
-    RootFilesystemEntry {
-        path: path.to_owned(),
-        kind: RootFilesystemEntryKind::File,
-        mode: Some(if executable { 0o755 } else { 0o644 }),
-        uid: None,
-        gid: None,
-        content: Some(content),
-        encoding: Some(RootFilesystemEntryEncoding::Utf8),
-        target: None,
-        executable,
-    }
 }
 
 fn allow_all_permissions() -> vm_config::PermissionsPolicy {

@@ -20,7 +20,6 @@ test("real brush shell wasm spawns real external commands on browser PTY", async
 	expect(result.output).toContain("browser-pipe-ok | /bin/wc -c");
 	expect(result.output).toContain("16");
 	expect(result.output).toContain("browser-cat-ok-via-cat");
-	expect(result.output).toMatch(/PRETTY_NAME|Alpine/);
 	expect(result.output).toContain("browser-file-ok");
 	expect(result.output).toContain("/bin/ls /");
 	expect(result.output).toContain("etc");

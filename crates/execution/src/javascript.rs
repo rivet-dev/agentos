@@ -3892,8 +3892,8 @@ impl LocalBridgeState {
             }
             return None;
         }
-        let resolved =
-            self.with_module_resolver(|resolver| resolver.resolve_module(specifier, from_dir, mode));
+        let resolved = self
+            .with_module_resolver(|resolver| resolver.resolve_module(specifier, from_dir, mode));
         if resolved.is_none() && std::env::var("AGENTOS_MODULE_READER_TRACE").is_ok() {
             eprintln!("resolve MISS: {specifier} from {from_dir} mode={mode:?}");
         }

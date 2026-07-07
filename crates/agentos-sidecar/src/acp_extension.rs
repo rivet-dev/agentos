@@ -2455,7 +2455,9 @@ async fn read_projected_agent_block(
     agent_type: &str,
 ) -> Option<AgentPackageAgentBlock> {
     let launches = ctx.projected_agents().await.ok()?;
-    let launch = launches.into_iter().find(|launch| launch.id == agent_type)?;
+    let launch = launches
+        .into_iter()
+        .find(|launch| launch.id == agent_type)?;
     if launch.acp_entrypoint.is_empty() {
         return None;
     }

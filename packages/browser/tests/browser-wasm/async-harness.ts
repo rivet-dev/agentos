@@ -177,6 +177,39 @@ export async function send(
 }
 
 export async function bootstrapVm(relay: KernelWorkerRelay) {
+	const agentPackages = [
+		["async-echo", "async-echo-agent"],
+		["async-infer", "async-infer-agent"],
+		["async-loopback", "async-loopback-agent"],
+		["async-proxy", "async-proxy-agent"],
+		["pty-loopback", "pty-loopback-agent"],
+	] as const;
+	const agentPackageEntries = agentPackages.flatMap(([name, acpEntrypoint]) => [
+		{
+			path: `/opt/agentos/pkgs/${name}/current/agentos-package.json`,
+			kind: "file",
+			mode: 0o644,
+			uid: 0,
+			gid: 0,
+			content: JSON.stringify({
+				name,
+				version: "1.0.0",
+				agent: { acpEntrypoint },
+			}),
+			encoding: "utf8",
+			executable: false,
+		},
+		{
+			path: `/opt/agentos/bin/${acpEntrypoint}`,
+			kind: "file",
+			mode: 0o755,
+			uid: 0,
+			gid: 0,
+			content: "",
+			encoding: "utf8",
+			executable: true,
+		},
+	]);
 	const authed = await send(
 		relay,
 		{ scope: "connection", connection_id: "client-hint" },
@@ -202,7 +235,12 @@ export async function bootstrapVm(relay: KernelWorkerRelay) {
 			type: "create_vm",
 			runtime: "java_script",
 			config: {
-				rootFilesystem: { mode: "ephemeral", disableDefaultBaseLayer: false, lowers: [], bootstrapEntries: [] },
+				rootFilesystem: {
+					mode: "ephemeral",
+					disableDefaultBaseLayer: false,
+					lowers: [],
+					bootstrapEntries: agentPackageEntries,
+				},
 				permissions: { fs: "allow", network: "allow", childProcess: "allow", process: "allow", env: "allow", binding: "allow" },
 			},
 		},
@@ -217,6 +255,8 @@ export interface SessionPromptGateResult {
 	payloadType?: string;
 	acpTag?: string;
 	sessionId?: string;
+	acpCode?: string;
+	acpMessage?: string;
 	promptContent?: string;
 }
 
@@ -306,9 +346,14 @@ export async function runSessionPromptGate(
 	const out: SessionPromptGateResult = { sidecarId, payloadType: created.type as string };
 	if (created.type === "ext" || created.type === "ext_result") {
 		const env = created.envelope as { payload: Uint8Array };
-		const decoded = decodeAcpResponse(env.payload) as { tag: string; val?: { sessionId?: string } };
+		const decoded = decodeAcpResponse(env.payload) as {
+			tag: string;
+			val?: { sessionId?: string; code?: string; message?: string };
+		};
 		out.acpTag = decoded.tag;
 		out.sessionId = decoded.val?.sessionId;
+		out.acpCode = decoded.val?.code;
+		out.acpMessage = decoded.val?.message;
 	}
 	if (out.acpTag !== "AcpSessionCreatedResponse" || !out.sessionId) return out;
 

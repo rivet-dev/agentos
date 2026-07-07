@@ -2851,18 +2851,23 @@ where
         Box::pin(async move {
             let (connection_id, session_id, vm_id) = self.vm_scope_for(&ownership)?;
             self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
-            let vm = self.vms.get(&vm_id).ok_or_else(|| {
-                SidecarError::InvalidState(format!("unknown VM {vm_id}"))
-            })?;
+            let vm = self
+                .vms
+                .get(&vm_id)
+                .ok_or_else(|| SidecarError::InvalidState(format!("unknown VM {vm_id}")))?;
             Ok(vm
                 .projected_agent_launch
                 .iter()
-                .map(|(id, launch): (&String, &crate::state::ProjectedAgentLaunch)| crate::extension::ProjectedAgentLaunchEntry {
-                    id: id.clone(),
-                    acp_entrypoint: launch.acp_entrypoint.clone(),
-                    env: launch.env.clone(),
-                    launch_args: launch.launch_args.clone(),
-                })
+                .map(
+                    |(id, launch): (&String, &crate::state::ProjectedAgentLaunch)| {
+                        crate::extension::ProjectedAgentLaunchEntry {
+                            id: id.clone(),
+                            acp_entrypoint: launch.acp_entrypoint.clone(),
+                            env: launch.env.clone(),
+                            launch_args: launch.launch_args.clone(),
+                        }
+                    },
+                )
                 .collect())
         })
     }

@@ -17,7 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
 const SECURE_EXEC_C_ROOT = resolve(
 	REPO_ROOT,
-	"../secure-exec/registry/native/c",
+	"registry/native/c",
 );
 const WASM_PROBE_BINARY = resolve(SECURE_EXEC_C_ROOT, "build/fs_probe");
 const NATIVE_PROBE_BINARY = resolve(
@@ -28,7 +28,12 @@ const PATCHED_LIBC = resolve(
 	SECURE_EXEC_C_ROOT,
 	"sysroot/lib/wasm32-wasi/libc.a",
 );
+const PATCHED_ERRNO = resolve(
+	SECURE_EXEC_C_ROOT,
+	"sysroot/include/wasm32-wasi/errno.h",
+);
 const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
+const HAS_PATCHED_SYSROOT = existsSync(PATCHED_LIBC) && existsSync(PATCHED_ERRNO);
 
 function hasCommand(command: string): boolean {
 	try {
@@ -41,16 +46,17 @@ function hasCommand(command: string): boolean {
 }
 
 // This test builds the fs_probe fixtures (native + wasm) and the workspace
-// sidecar on the fly, so it can only run with the secure-exec sibling checkout
-// present (absent on release pins, where prepare-build performs no clone) plus
-// make + cargo. The wasm C toolchain is the WASI SDK clang invoked by the
-// sibling Makefile (not a system `clang` on PATH), so it is not probed here.
-// Skip cleanly otherwise instead of hard-failing the run, matching
-// vim-native-parity.test.ts.
+// sidecar on the fly, so it can only run in a source checkout with the native C
+// fixture Makefile plus make + cargo. Building the patched sysroot also needs
+// cmake, unless it has already been materialized in this checkout. The wasm C
+// toolchain is the WASI SDK clang invoked by the Makefile (not a system `clang`
+// on PATH), so it is not probed here. Skip cleanly otherwise instead of
+// hard-failing the run, matching vim-native-parity.test.ts.
 const CAN_RUN =
 	existsSync(join(SECURE_EXEC_C_ROOT, "Makefile")) &&
 	hasCommand("make") &&
-	hasCommand("cargo");
+	hasCommand("cargo") &&
+	(HAS_PATCHED_SYSROOT || hasCommand("cmake"));
 
 function runChecked(
 	command: string,
@@ -61,6 +67,7 @@ function runChecked(
 		cwd: options.cwd,
 		encoding: "utf8",
 		env: { ...process.env, AGENTOS_WASM_SNAPSHOT_RUNNER: "off" },
+		maxBuffer: 32 * 1024 * 1024,
 	});
 	if (result.status !== 0) {
 		throw new Error(
@@ -79,23 +86,27 @@ function runChecked(
 }
 
 function ensureFsProbeBuilt(): void {
-	if (!existsSync(PATCHED_LIBC)) {
+	if (!HAS_PATCHED_SYSROOT) {
 		runChecked("make", ["sysroot"], {
 			cwd: SECURE_EXEC_C_ROOT,
 			label: "failed to build patched wasi-libc sysroot",
 		});
 	}
-	runChecked("make", ["build/native/fs_probe", "build/fs_probe"], {
-		cwd: SECURE_EXEC_C_ROOT,
-		label: "failed to build fs_probe parity fixtures",
-	});
+	runChecked(
+		"make",
+		[
+			"build/native/fs_probe",
+			"build/fs_probe",
+			"WASM_CFLAGS=--target=wasm32-wasi --sysroot=sysroot -O2 -flto -I include/",
+		],
+		{
+			cwd: SECURE_EXEC_C_ROOT,
+			label: "failed to build fs_probe parity fixtures",
+		},
+	);
 }
 
 function ensureWorkspaceSidecarBuilt(): void {
-	runChecked("node", ["scripts/secure-exec-dep.mjs", "prepare-build"], {
-		cwd: REPO_ROOT,
-		label: "failed to prepare secure-exec workspace dependency",
-	});
 	runChecked("cargo", ["build", "-q", "-p", "agentos-sidecar"], {
 		cwd: REPO_ROOT,
 		label: "failed to build workspace agentos-sidecar",
@@ -114,7 +125,7 @@ function materializeFsProbePackage(): string {
 	);
 	writeFileSync(
 		join(pkgDir, "agentos-package.json"),
-		JSON.stringify({ name: "fs-probe-fixture" }),
+		JSON.stringify({ name: "fs-probe-fixture", version: "1.0.0" }),
 	);
 	return pkgDir;
 }

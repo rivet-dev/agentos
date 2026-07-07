@@ -73,6 +73,7 @@ async function main(): Promise<void> {
 	process.env.BENCH_OP_FILTER = gateRows.map((row) => row.key).join(",");
 	process.env.BENCH_ITERATIONS ??= String(GATE_DEFAULTS.iterations);
 	process.env.BENCH_WARMUP ??= String(GATE_DEFAULTS.warmup);
+	process.env.BENCH_REQUIRED_WASM_COMMANDS ??= requiredWasmCommands(gateRows).join(",");
 
 	const { runLatencyMatrix } = await import("./run-all.js");
 	const matrix = await runLatencyMatrix();
@@ -127,6 +128,16 @@ function selectedGateRows(): GateRow[] {
 				lane: (lane ?? configured?.lane ?? "guest") as GateLane,
 			};
 		});
+}
+
+function requiredWasmCommands(gateRows: GateRow[]): string[] {
+	const commands = new Set<string>();
+	for (const row of gateRows) {
+		if (row.key === "ecosystem/ls_100") {
+			commands.add("ls");
+		}
+	}
+	return [...commands];
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

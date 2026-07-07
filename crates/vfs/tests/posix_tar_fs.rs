@@ -230,7 +230,14 @@ fn scan_tar_index(source_tar: &PathBuf) -> v1::MountIndex {
                 uid,
                 gid,
                 mtime,
-                link_target: Some(entry.link_name().unwrap().unwrap().to_string_lossy().into_owned()),
+                link_target: Some(
+                    entry
+                        .link_name()
+                        .unwrap()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
             })
         } else if entry_type.is_file() || entry_type == EntryType::Continuous {
             let offset = entry.raw_file_position();
