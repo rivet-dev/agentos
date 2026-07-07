@@ -152,6 +152,20 @@ EOF`);
 			expect(r.stdout.trim()).toBe("ok");
 		});
 
+		test("rm deletion is visible across execs and to the host", async () => {
+			await vm.writeFile("/tmp/rm-cross-exec.txt", "x");
+			const rm = await vm.exec("rm /tmp/rm-cross-exec.txt");
+			expect(rm.exitCode).toBe(0);
+			// The deletion must survive the exit-time shadow sync: the host
+			// filesystem API and a later exec both observe the file as gone.
+			expect(await vm.exists("/tmp/rm-cross-exec.txt")).toBe(false);
+			const probe = await vm.exec(
+				"sh -c 'test ! -f /tmp/rm-cross-exec.txt && echo gone'",
+			);
+			expect(probe.exitCode).toBe(0);
+			expect(probe.stdout.trim()).toBe("gone");
+		});
+
 		test("mkdir -p and rmdir", async () => {
 			const r = await vm.exec(
 				"mkdir -p /tmp/a/b/c && test -d /tmp/a/b/c && echo ok",

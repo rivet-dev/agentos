@@ -1964,8 +1964,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             }
             kernel
                 .rename(source, destination)
-                .map(|()| Value::Null)
-                .map_err(kernel_error)
+                .map_err(kernel_error)?;
+            // Mirror the rename into the process shadow tree, otherwise the
+            // exit-time shadow->kernel sync resurrects the stale source path
+            // (the shadow walk only copies entries in, it cannot express
+            // deletions).
+            rename_process_shadow_path(process, source, destination)?;
+            Ok(Value::Null)
         }
         "fs.rmdirSync" | "fs.promises.rmdir" => {
             let path =
@@ -1997,10 +2002,11 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 }
                 None => {}
             }
-            kernel
-                .remove_dir(path)
-                .map(|()| Value::Null)
-                .map_err(kernel_error)
+            kernel.remove_dir(path).map_err(kernel_error)?;
+            // Mirror the removal into the process shadow tree, otherwise the
+            // exit-time shadow->kernel sync resurrects the deleted directory.
+            remove_process_shadow_path(process, path)?;
+            Ok(Value::Null)
         }
         "fs.unlinkSync" | "fs.promises.unlink" => {
             let path =
@@ -2034,10 +2040,13 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                 }
                 None => {}
             }
-            kernel
-                .remove_file(path)
-                .map(|()| Value::Null)
-                .map_err(kernel_error)
+            kernel.remove_file(path).map_err(kernel_error)?;
+            // Mirror the deletion into the process shadow tree: wasm guest
+            // deletions route kernel-direct, and without removing the shadow
+            // copy the exit-time shadow->kernel sync resurrects the file for
+            // later builtins in the same shell and for subsequent execs.
+            remove_process_shadow_path(process, path)?;
+            Ok(Value::Null)
         }
         "fs.chmodSync" | "fs.promises.chmod" => {
             let path =
@@ -4347,6 +4356,52 @@ fn resolve_process_guest_path_to_host(
         &host_root,
         &normalized_guest_path,
     ))
+}
+
+/// Removes the host shadow copy of `guest_path` after a kernel-direct guest
+/// deletion so the exit-time shadow->kernel sync cannot resurrect it.
+fn remove_process_shadow_path(
+    process: &ActiveProcess,
+    guest_path: &str,
+) -> Result<(), SidecarError> {
+    let Some(shadow_path) = resolve_process_guest_path_to_host(process, guest_path) else {
+        return Ok(());
+    };
+    remove_shadow_path_if_exists(&shadow_path, guest_path)
+}
+
+/// Mirrors a kernel-direct guest rename into the host shadow tree. If the
+/// source shadow entry is missing the stale destination copy is still removed
+/// so the shadow walk cannot resurrect pre-rename content.
+fn rename_process_shadow_path(
+    process: &ActiveProcess,
+    source: &str,
+    destination: &str,
+) -> Result<(), SidecarError> {
+    let Some(source_shadow) = resolve_process_guest_path_to_host(process, source) else {
+        return Ok(());
+    };
+    let Some(destination_shadow) = resolve_process_guest_path_to_host(process, destination) else {
+        return Ok(());
+    };
+
+    if fs::symlink_metadata(&source_shadow).is_err() {
+        return remove_shadow_path_if_exists(&destination_shadow, destination);
+    }
+
+    if let Some(parent) = destination_shadow.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            SidecarError::Io(format!(
+                "failed to create shadow parent for rename {source} -> {destination}: {error}"
+            ))
+        })?;
+    }
+    remove_shadow_path_if_exists(&destination_shadow, destination)?;
+    fs::rename(&source_shadow, &destination_shadow).map_err(|error| {
+        SidecarError::Io(format!(
+            "failed to mirror guest rename {source} -> {destination} into shadow root: {error}"
+        ))
+    })
 }
 
 fn sync_host_directory_to_kernel(
