@@ -23,7 +23,14 @@
 			]
 		},
 		"test": {
-			"inputs": ["src/**", "tests/**", "package.json"],
+			"inputs": [
+				"src/**",
+				"tests/**",
+				"software/**/test/**",
+				"native/tests/**",
+				"scripts/**",
+				"package.json"
+			],
 			"dependsOn": ["^build", "check-types"]
 		},
 		"@rivet-dev/agentos-sidecar#build": {

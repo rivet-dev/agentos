@@ -50,6 +50,9 @@ importers:
       '@rivet-dev/agentos-runtime-core':
         specifier: workspace:*
         version: link:packages/runtime-core
+      '@rivet-dev/agentos-vm-test-harness':
+        specifier: workspace:*
+        version: link:packages/vm-test-harness
       '@types/node':
         specifier: ^22.19.15
         version: 22.19.15
@@ -2922,6 +2925,49 @@ importers:
         version: 22.19.15
       vitest:
         specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.15)
+
+  packages/vm-test-harness:
+    dependencies:
+      '@rivet-dev/agentos-runtime-core':
+        specifier: workspace:*
+        version: link:../runtime-core
+      '@xterm/headless':
+        specifier: ^6.0.0
+        version: 6.0.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  registry:
+    devDependencies:
+      '@agentos-software/common':
+        specifier: workspace:*
+        version: link:software/common
+      '@agentos-software/curl':
+        specifier: workspace:*
+        version: link:software/curl
+      '@rivet-dev/agentos-runtime-core':
+        specifier: workspace:*
+        version: link:../packages/runtime-core
+      '@rivet-dev/agentos-vm-test-harness':
+        specifier: workspace:*
+        version: link:../packages/vm-test-harness
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.15)
 
   registry/agent/claude:
