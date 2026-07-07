@@ -1,0 +1,472 @@
+---
+import "../../styles/global.css";
+
+type Status = "supported" | "experimental" | "unsupported" | "niche" | "obsolete";
+type Domain = { title: string; names: string[] };
+
+const posixSyscalls = `
+read write open close stat fstat lstat poll lseek mmap mprotect munmap brk rt_sigaction rt_sigprocmask
+rt_sigreturn ioctl pread64 pwrite64 readv writev access pipe select sched_yield msync dup dup2 pause
+nanosleep getitimer alarm setitimer getpid socket connect accept sendto recvfrom sendmsg recvmsg shutdown
+bind listen getsockname getpeername socketpair setsockopt getsockopt fork vfork execve exit wait4 kill uname
+fcntl flock fsync fdatasync truncate ftruncate getdents getcwd chdir fchdir rename mkdir rmdir creat link
+unlink symlink readlink chmod fchmod chown fchown lchown umask gettimeofday getrlimit getrusage sysinfo times
+getuid getgid setuid setgid geteuid getegid setpgid getppid getpgrp setsid setreuid setregid getgroups
+setgroups setresuid getresuid setresgid getresgid getpgid getsid rt_sigpending rt_sigtimedwait
+rt_sigqueueinfo rt_sigsuspend sigaltstack utime mknod statfs fstatfs getpriority setpriority sched_setparam
+sched_getparam sched_setscheduler sched_getscheduler sched_get_priority_max sched_get_priority_min
+sched_rr_get_interval mlock munlock mlockall munlockall prctl setrlimit sync time clock_gettime clock_getres
+clock_nanosleep exit_group utimes openat mkdirat mknodat fchownat futimesat newfstatat unlinkat renameat
+linkat symlinkat readlinkat fchmodat faccessat pselect6 ppoll utimensat accept4 dup3 pipe2 preadv pwritev
+prlimit64 getrandom copy_file_range statx close_range faccessat2
+`.trim().split(/\s+/);
+
+const supported = new Set([
+	"read", "write", "open", "close", "stat", "fstat", "lstat", "poll", "lseek", "pread64", "pwrite64",
+	"access", "pipe", "select", "sched_yield", "nanosleep", "getpid", "socket", "connect", "accept", "sendto",
+	"recvfrom", "shutdown", "bind", "listen", "getsockname", "getpeername", "setsockopt", "getsockopt", "exit",
+	"wait4", "kill", "fcntl", "fsync", "ftruncate", "getdents", "getcwd", "chdir", "fchdir", "rename", "mkdir",
+	"rmdir", "creat", "link", "unlink", "symlink", "readlink", "chmod", "fchmod", "getuid", "getgid", "geteuid",
+	"getegid", "getppid", "getpgrp", "getpgid", "rt_sigaction", "dup", "dup2", "clock_gettime", "clock_getres",
+	"clock_nanosleep", "exit_group", "getdents64", "openat", "mkdirat", "newfstatat", "unlinkat", "renameat",
+	"linkat", "symlinkat", "readlinkat", "fchmodat", "faccessat", "ppoll", "accept4", "dup3", "preadv",
+	"pwritev", "syncfs", "copy_file_range", "getrandom", "statx", "close_range", "openat2", "faccessat2",
+]);
+
+const experimental = new Set([
+	"mmap", "mprotect", "munmap", "msync", "ioctl", "readv", "writev", "sendmsg", "recvmsg", "socketpair",
+	"fdatasync", "getrlimit", "setrlimit", "prlimit64", "getgroups", "setgroups", "utime", "utimes",
+	"futimesat", "utimensat", "pipe2",
+]);
+
+// Classification below is by UNIVERSAL Linux/glibc semantics (not runtime-specific),
+// reconciled from three independent expert passes.
+
+// Deprecated / superseded in mainline Linux; kept only for legacy binaries.
+const obsolete = new Set(["vfork", "gettimeofday", "time"]);
+
+// Mainstream, current, general-purpose calls ordinary programs routinely hit — genuine gaps.
+const unsupported = new Set([
+	"brk", "rt_sigprocmask", "rt_sigreturn", "fork", "execve", "uname",
+	"truncate", "chown", "fchown", "umask", "pselect6",
+]);
+
+// Everything left over is current-but-specialized (credentials, RT scheduling, memory
+// locking, advanced signal queues, filesystem stats, device nodes) — niche.
+const rows = posixSyscalls.map((name) => {
+	const status: Status = supported.has(name)
+		? "supported"
+		: experimental.has(name)
+			? "experimental"
+			: obsolete.has(name)
+				? "obsolete"
+				: unsupported.has(name)
+					? "unsupported"
+					: "niche";
+	return { name, status };
+});
+
+type Row = (typeof rows)[number];
+
+const statusOrder: Record<Status, number> = {
+	supported: 0,
+	experimental: 1,
+	unsupported: 2,
+	niche: 3,
+	obsolete: 4,
+};
+
+const counts = {
+	supported: rows.filter((r) => r.status === "supported").length,
+	experimental: rows.filter((r) => r.status === "experimental").length,
+	unsupported: rows.filter((r) => r.status === "unsupported").length,
+	niche: rows.filter((r) => r.status === "niche").length,
+	obsolete: rows.filter((r) => r.status === "obsolete").length,
+};
+
+const domains: Domain[] = [
+	{
+		title: "Filesystem",
+		names: [
+			"open", "close", "stat", "fstat", "lstat", "access", "fsync", "fdatasync", "truncate",
+			"ftruncate", "getdents", "getcwd", "chdir", "fchdir", "rename", "mkdir", "rmdir",
+			"creat", "link", "unlink", "symlink", "readlink", "chmod", "fchmod", "chown",
+			"fchown", "lchown", "umask", "flock", "mknod", "statfs", "fstatfs", "openat",
+			"mkdirat", "mknodat", "fchownat", "newfstatat", "unlinkat", "renameat", "linkat",
+			"symlinkat", "readlinkat", "fchmodat", "faccessat", "futimesat", "utimensat",
+			"copy_file_range", "statx", "close_range", "faccessat2",
+		],
+	},
+	{
+		title: "I/O",
+		names: [
+			"read", "write", "lseek", "pread64", "pwrite64", "readv", "writev", "ioctl",
+			"pipe", "select", "poll", "ppoll", "pselect6", "dup", "dup2", "dup3", "pipe2",
+			"preadv", "pwritev", "fcntl", "sync",
+		],
+	},
+	{
+		title: "Network",
+		names: [
+			"socket", "connect", "accept", "sendto", "recvfrom", "sendmsg", "recvmsg", "shutdown",
+			"bind", "listen", "getsockname", "getpeername", "socketpair", "setsockopt",
+			"getsockopt", "accept4",
+		],
+	},
+	{
+		title: "Process",
+		names: [
+			"getpid", "fork", "vfork", "execve", "exit", "wait4", "kill", "uname", "getppid",
+			"getpgrp", "setpgid", "getsid", "setsid", "exit_group",
+		],
+	},
+	{
+		title: "Signals",
+		names: [
+			"rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "pause", "rt_sigpending",
+			"rt_sigtimedwait", "rt_sigqueueinfo", "rt_sigsuspend", "sigaltstack",
+		],
+	},
+	{
+		title: "Identity",
+		names: [
+			"getuid", "getgid", "setuid", "setgid", "geteuid", "getegid", "setreuid", "setregid",
+			"getgroups", "setgroups", "setresuid", "getresuid", "setresgid", "getresgid",
+			"getpgid",
+		],
+	},
+	{
+		title: "Time / Random",
+		names: [
+			"nanosleep", "getitimer", "alarm", "setitimer", "gettimeofday", "times", "time",
+			"clock_gettime", "clock_getres", "clock_nanosleep", "utime", "utimes", "getrandom",
+		],
+	},
+	{
+		title: "Memory",
+		names: ["mmap", "mprotect", "munmap", "brk", "msync", "mlock", "munlock", "mlockall", "munlockall"],
+	},
+	{
+		title: "Scheduling / Resources",
+		names: [
+			"sched_yield", "getrlimit", "getrusage", "sysinfo", "getpriority", "setpriority",
+			"sched_setparam", "sched_getparam", "sched_setscheduler", "sched_getscheduler",
+			"sched_get_priority_max", "sched_get_priority_min", "sched_rr_get_interval", "prctl",
+			"setrlimit", "prlimit64",
+		],
+	},
+];
+
+const rowByName = new Map(rows.map((r) => [r.name, r]));
+const groups = domains.map((domain) => {
+	const groupRows = domain.names
+		.map((name) => rowByName.get(name))
+		.filter((r): r is Row => Boolean(r))
+		.sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
+	const supportedCount = groupRows.filter((r) => r.status === "supported").length;
+	return { title: domain.title, rows: groupRows, supported: supportedCount, total: groupRows.length };
+});
+
+const tabs = [
+	{ id: "clean", label: "Clean" },
+	{ id: "term", label: "Terminal" },
+	{ id: "mosaic", label: "Mosaic" },
+];
+
+const legendKeys: { status: Status; label: string }[] = [
+	{ status: "supported", label: "supported" },
+	{ status: "experimental", label: "experimental" },
+	{ status: "unsupported", label: "unsupported" },
+	{ status: "niche", label: "niche" },
+	{ status: "obsolete", label: "obsolete" },
+];
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="robots" content="noindex, nofollow" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<title>POSIX Syscall Coverage</title>
+	</head>
+	<body>
+		<nav class="tabbar" aria-label="Variations">
+			{tabs.map((tab, i) => (
+				<button class:list={["tab", { active: i === 0 }]} data-tab={tab.id} type="button">
+					{tab.label}
+				</button>
+			))}
+		</nav>
+
+		<main class="stage">
+			{/* ── Clean (light) ─────────────────────────────── */}
+			<section class:list={["surface", "v-clean", "active"]} data-panel="clean">
+				<div class="head">
+					<span class="title">POSIX syscall coverage</span>
+					<span class="legend">
+						{legendKeys.map((k) => <span class:list={["key", k.status]}>{k.label}</span>)}
+					</span>
+				</div>
+				<div class="groups">
+					{groups.map((g) => (
+						<section class="group">
+							<h2>{g.title}<span class="gcount">{g.supported}/{g.total}</span></h2>
+							<div class="grid">
+								{g.rows.map((r) => <span class:list={["nm", r.status]}>{r.name}</span>)}
+							</div>
+						</section>
+					))}
+				</div>
+			</section>
+
+			{/* ── Terminal (dark) ───────────────────────────── */}
+			<section class:list={["surface", "v-term"]} data-panel="term">
+				<div class="head">
+					<span class="title">POSIX syscall coverage</span>
+					<span class="legend">
+						{legendKeys.map((k) => <span class:list={["key", k.status]}>{k.label}</span>)}
+					</span>
+				</div>
+				<div class="groups">
+					{groups.map((g) => (
+						<section class="group">
+							<h2><span class="hash">#</span>{g.title}<span class="gcount">{g.supported}/{g.total}</span></h2>
+							<div class="grid">
+								{g.rows.map((r) => <span class:list={["nm", r.status]}>{r.name}</span>)}
+							</div>
+						</section>
+					))}
+				</div>
+			</section>
+
+			{/* ── Mosaic (chips, dark) ──────────────────────── */}
+			<section class:list={["surface", "v-mosaic"]} data-panel="mosaic">
+				<div class="head">
+					<span class="title">POSIX syscall coverage</span>
+					<span class="legend">
+						{legendKeys.map((k) => <span class:list={["key", k.status]}>{k.label}</span>)}
+					</span>
+				</div>
+				<div class="groups">
+					{groups.map((g) => (
+						<section class="group">
+							<h2>{g.title}<span class="gcount">{g.supported}/{g.total}</span></h2>
+							<div class="chips">
+								{g.rows.map((r) => <span class:list={["chip", r.status]}>{r.name}</span>)}
+							</div>
+						</section>
+					))}
+				</div>
+			</section>
+		</main>
+
+		<script is:inline>
+			const tabs = document.querySelectorAll(".tab");
+			const panels = document.querySelectorAll(".surface");
+			tabs.forEach((tab) => {
+				tab.addEventListener("click", () => {
+					const id = tab.getAttribute("data-tab");
+					tabs.forEach((t) => t.classList.toggle("active", t === tab));
+					panels.forEach((p) => p.classList.toggle("active", p.getAttribute("data-panel") === id));
+				});
+			});
+		</script>
+	</body>
+</html>
+
+<style>
+	:global(body) {
+		margin: 0;
+		background: #14171a;
+		color: #e7eae6;
+		font-family: "Manrope", "Segoe UI", system-ui, sans-serif;
+		-webkit-font-smoothing: antialiased;
+	}
+
+	:global(astro-dev-toolbar) { display: none !important; }
+
+	/* ── shell / tabs ─────────────────────────────────── */
+	.tabbar {
+		display: flex;
+		gap: 6px;
+		justify-content: center;
+		flex-wrap: wrap;
+		padding: 18px 16px 4px;
+	}
+
+	.tab {
+		appearance: none;
+		border: 1px solid #2c3230;
+		background: #1b1f1d;
+		color: #9aa39d;
+		font: inherit;
+		font-size: 13px;
+		font-weight: 700;
+		padding: 8px 16px;
+		border-radius: 999px;
+		cursor: pointer;
+		transition: color 0.12s, background 0.12s, border-color 0.12s;
+	}
+
+	.tab:hover { color: #e7eae6; border-color: #3a423f; }
+	.tab.active { background: #e7eae6; color: #14171a; border-color: #e7eae6; }
+	.tab:focus-visible { outline: 2px solid #4ade80; outline-offset: 2px; }
+
+	.stage { display: grid; place-items: center; padding: 18px 16px 40px; }
+
+	/* every surface is a shareable 1:1 square; only .active shows */
+	.surface {
+		display: none;
+		box-sizing: border-box;
+		aspect-ratio: 1 / 1;
+		width: min(calc(100vw - 32px), calc(100vh - 150px), 900px);
+		overflow: hidden;
+	}
+	.surface.active { display: flex; flex-direction: column; }
+
+	/* ── shared header (small, infographic — no hero) ─── */
+	.head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 12px;
+		flex-wrap: wrap;
+	}
+	.title { font-size: clamp(14px, 1.9vmin, 18px); font-weight: 800; letter-spacing: -0.01em; }
+	.legend { display: inline-flex; gap: 13px; flex-wrap: wrap; }
+	.key {
+		font-size: 11px;
+		font-weight: 800;
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		text-transform: lowercase;
+	}
+	.key::before {
+		content: "";
+		width: 8px;
+		height: 8px;
+		border-radius: 2px;
+		background: currentColor;
+	}
+
+	/* ── shared group layout: pack domains into columns ─ */
+	.groups {
+		flex: 1;
+		min-height: 0;
+		column-count: 3;
+		column-gap: clamp(14px, 2.2vmin, 26px);
+	}
+	.group { break-inside: avoid; margin-bottom: clamp(10px, 1.8vmin, 18px); }
+	.group h2 {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		margin: 0 0 5px;
+		font-size: 10px;
+		font-weight: 800;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+	}
+	.gcount {
+		margin-left: auto;
+		font-family: "JetBrains Mono", monospace;
+		font-weight: 600;
+		font-size: 9px;
+		letter-spacing: 0;
+	}
+	.grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+		gap: 1px 8px;
+	}
+	.nm {
+		font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+		font-size: clamp(9px, 1.15vmin, 12px);
+		font-weight: 600;
+		line-height: 1.5;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	/* obsolete syscalls are struck through in every variant */
+	.nm.obsolete, .chip.obsolete {
+		text-decoration-line: line-through;
+		text-decoration-color: currentColor;
+		text-decoration-thickness: 2px;
+		text-decoration-skip-ink: none;
+	}
+
+	/* ═══ Clean (light) ═══════════════════════════════════ */
+	.v-clean {
+		background: #f7f8f5;
+		color: #14181a;
+		border: 1px solid #e4e7e0;
+		padding: clamp(24px, 3.6vmin, 44px);
+		gap: 18px;
+	}
+	.v-clean .head { padding-bottom: 12px; border-bottom: 1px solid #e4e7e0; }
+	.v-clean .group h2 { color: #7b837e; }
+	.v-clean .gcount { color: #a7aea8; }
+	.v-clean .nm.supported,    .v-clean .key.supported    { color: #15803d; }
+	.v-clean .nm.experimental, .v-clean .key.experimental { color: #1d4ed8; }
+	.v-clean .nm.unsupported,  .v-clean .key.unsupported  { color: #6b726c; }
+	.v-clean .nm.niche,        .v-clean .key.niche        { color: #aab0aa; }
+	.v-clean .nm.obsolete,     .v-clean .key.obsolete     { color: #b9beb8; }
+
+	/* ═══ Terminal (dark) ═════════════════════════════════ */
+	.v-term {
+		background: #0a0e0c;
+		color: #cdd6cf;
+		border: 1px solid #1c2521;
+		border-radius: 12px;
+		padding: clamp(22px, 3.4vmin, 40px);
+		gap: 18px;
+	}
+	.v-term .head { padding-bottom: 12px; border-bottom: 1px solid #17201b; }
+	.v-term .title { color: #e9f1ea; }
+	.v-term .group h2 { color: #66716a; }
+	.v-term .hash { color: #4ade80; font-weight: 700; }
+	.v-term .gcount { color: #4a544d; }
+	.v-term .nm.supported,    .v-term .key.supported    { color: #4ade80; }
+	.v-term .nm.experimental, .v-term .key.experimental { color: #38bdf8; }
+	.v-term .nm.unsupported,  .v-term .key.unsupported  { color: #98a29b; }
+	.v-term .nm.niche,        .v-term .key.niche        { color: #5c655e; }
+	.v-term .nm.obsolete,     .v-term .key.obsolete     { color: #464e48; }
+
+	/* ═══ Mosaic (filled chips, dark) ═════════════════════ */
+	.v-mosaic {
+		background: #0e1211;
+		color: #eef2ee;
+		padding: clamp(22px, 3.4vmin, 40px);
+		gap: 18px;
+	}
+	.v-mosaic .head { padding-bottom: 12px; border-bottom: 1px solid #1b211e; }
+	.v-mosaic .group h2 { color: #7c867f; }
+	.v-mosaic .gcount { color: #4d574f; }
+	.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+	.chip {
+		font-family: "JetBrains Mono", monospace;
+		font-size: clamp(9px, 1.15vmin, 12px);
+		font-weight: 600;
+		padding: 3px 7px;
+		border-radius: 5px;
+		white-space: nowrap;
+	}
+	.chip.supported    { background: #17904a; color: #eafff1; }
+	.chip.experimental { background: #1e57c4; color: #eaf2ff; }
+	.chip.unsupported  { background: transparent; color: #98a29b; border: 1px solid #3a423d; }
+	.chip.niche        { background: transparent; color: #5c655e; border: 1px dashed #2b332d; }
+	.chip.obsolete     { background: transparent; color: #464e48; border: 1px dashed #232823; }
+	.v-mosaic .key.supported    { color: #4ade80; }
+	.v-mosaic .key.experimental { color: #58a6ff; }
+	.v-mosaic .key.unsupported  { color: #98a29b; }
+	.v-mosaic .key.niche        { color: #5c655e; }
+	.v-mosaic .key.obsolete     { color: #464e48; }
+
+	@media (max-width: 620px) { .groups { column-count: 2; } }
+	@media (max-width: 420px) { .groups { column-count: 1; } }
+</style>
