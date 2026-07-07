@@ -626,13 +626,29 @@ impl AcpExtension {
                 process_id: session.process_id.clone(),
             })
             .await;
-        let _ = ctx
+        let sigterm = ctx
             .kill_process_wire(KillProcessRequest {
                 process_id: session.process_id.clone(),
                 signal: String::from("SIGTERM"),
             })
             .await;
-        if !wait_for_process_exit(&mut ctx, &session.process_id, SESSION_CLOSE_TIMEOUT).await {
+        // The adapter process may already be gone: it can exit out-of-band (crash /
+        // OOM, or a lazily-observed idle-time crash) *before* the client sends
+        // close_session. When it does, its `ProcessExited` event has already been
+        // emitted and drained, so `wait_for_process_exit` — which only polls the
+        // event stream and never checks current process state — can never observe
+        // it and blocks the full `SESSION_CLOSE_TIMEOUT` for SIGTERM *and* again
+        // after SIGKILL (~2× the timeout) before we ever reach resource disposal.
+        // Because close_session is serial per sidecar, that stall also blocks a
+        // `create_session` the host issues right after it (session recovery / a
+        // returning user whose idle session was evicted eats the full stall on
+        // their next turn). Detect the already-gone case from the SIGTERM result —
+        // reusing the same "adapter is gone" classification the prompt path uses —
+        // and skip straight to resource disposal.
+        let already_gone = matches!(&sigterm, Err(error) if is_process_already_gone(error));
+        if !already_gone
+            && !wait_for_process_exit(&mut ctx, &session.process_id, SESSION_CLOSE_TIMEOUT).await
+        {
             let _ = ctx
                 .kill_process_wire(KillProcessRequest {
                     process_id: session.process_id.clone(),
@@ -2551,6 +2567,21 @@ fn is_adapter_gone_error(error: &SidecarError) -> bool {
         return true;
     }
     matches!(error, SidecarError::InvalidState(message) if message.contains(ADAPTER_NO_ACTIVE_PROCESS_MARKER))
+}
+
+/// True when a kill/signal request failed because the target process no longer
+/// exists — i.e. it already exited before we tried to terminate it. Covers both
+/// the adapter-gone classification (`is_adapter_gone_error`) and the lower-level
+/// process-table `ESRCH` / "no such process" the signal path returns for a PID
+/// that has already been reaped. Used by `close_session` to skip the
+/// `wait_for_process_exit` dance (which can only observe a *future* exit event)
+/// when the process is already gone.
+fn is_process_already_gone(error: &SidecarError) -> bool {
+    if is_adapter_gone_error(error) {
+        return true;
+    }
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("esrch") || message.contains("no such process")
 }
 
 /// Extract the adapter exit code from an `ADAPTER_EXITED_ERROR_MARKER` error
