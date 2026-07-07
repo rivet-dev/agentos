@@ -5,6 +5,7 @@
 	"registry": {
 		"title": "unzip",
 		"description": "Extract zip archives.",
+		"icon": "ArchiveRestore",
 		"priority": 10
 	}
 }

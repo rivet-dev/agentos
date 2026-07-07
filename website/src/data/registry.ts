@@ -28,6 +28,12 @@ export interface RegistryEntryBase {
 	docsHref?: string;
 	// The session agent id, set for all generated agent entries.
 	agentId?: string;
+	// Guest commands the package links under /opt/agentos/bin (from the package
+	// manifest's `commands` list). Rendered on software detail pages and
+	// searchable on the registry index.
+	commands?: string[];
+	// Meta-packages: slugs of the registry entries this package bundles.
+	includes?: string[];
 }
 
 export interface RegistryEntryAvailable extends RegistryEntryBase {
@@ -88,6 +94,16 @@ export type RegistryEntry =
 // mounting) are curated by hand below.
 import generated from "../generated/registry.json";
 import { DEPLOY_TARGETS } from "./deploy-targets";
+
+// Prefilled new-issue URL for the "Request an Extension" CTAs (registry hero
+// and footer). No `labels=` param — GitHub silently drops it for users without
+// triage permission.
+export const REQUEST_EXTENSION_URL = `https://github.com/rivet-dev/agentos/issues/new?${new URLSearchParams(
+	{
+		title: "Registry request: ",
+		body: "**What package or extension do you need?**\n\n**What would you use it for?**\n",
+	},
+)}`;
 
 // Featured is a website decision, not package metadata: generated entries
 // with a slug in this set get the featured treatment on the registry page.

@@ -5,6 +5,7 @@
 	"registry": {
 		"title": "fd",
 		"description": "Fast file finder.",
+		"icon": "FileSearch",
 		"priority": 30
 	}
 }

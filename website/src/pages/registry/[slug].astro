@@ -145,6 +145,73 @@ const exampleHtml = exampleSource
 	? await highlightCodeHtml(exampleSource, "ts")
 	: null;
 
+// The registry ships in-repo WASM builds and most do not implement `--help`
+// (the fallback), so each override below is verified against its source under
+// registry/native. `null` means the command has no clean non-interactive demo
+// (needs a live server, an existing archive, network egress, or a TTY) — the
+// run section is skipped for those.
+const RUN_COMMAND_OVERRIDES: Record<string, string | null> = {
+	coreutils: "ls /home/agentos",
+	diffutils: null,
+	duckdb: "duckdb -c 'select 42;'",
+	file: "echo hello | file -",
+	findutils: "find /home/agentos -type d",
+	gawk: "echo 'hello world' | gawk '{print $2}'",
+	git: "git init",
+	grep: "echo agentos | grep agent",
+	"http-get": null,
+	jq: "echo 1 | jq '. + 1'",
+	ripgrep: "rg --files-with-matches TODO /home/agentos",
+	sed: "echo hello | sed s/hello/world/",
+	sqlite3: "sqlite3 :memory: 'select 1+1;'",
+	tree: "tree /home/agentos",
+	unzip: null,
+	vix: null,
+	wget: null,
+	yq: "echo 'name: agentos' | yq .name",
+	zip: "echo hello > hello.txt && zip demo.zip hello.txt",
+};
+
+const commandList = isSoftware ? (entry.commands ?? []) : [];
+const runCommand = commandList.length
+	? entry.slug in RUN_COMMAND_OVERRIDES
+		? RUN_COMMAND_OVERRIDES[entry.slug]
+		: `${commandList[0]} --help`
+	: null;
+// The command the snippet showcases: the first token of the invocation that
+// is one of the package's own commands (overrides may pipe through `echo`).
+const runShowcased = runCommand
+	? (runCommand.split(/\s+/).find((token) => commandList.includes(token)) ??
+		commandList[0])
+	: null;
+const runSource = runCommand
+	? `import { createClient } from "@rivet-dev/agentos/client";
+import type { registry } from "./server";
+
+const client = createClient<typeof registry>({
+  endpoint: "http://localhost:6420",
+});
+const agent = client.vm.getOrCreate("my-agent");
+
+// \`${runShowcased}\` is now available inside the VM.
+const result = await agent.exec("${runCommand}");
+console.log(result.stdout);`
+	: null;
+const runHtml = runSource ? await highlightCodeHtml(runSource, "ts") : null;
+
+// Command chips: coreutils ships 87 commands, so cap the always-visible list
+// and tuck the rest behind a native <details> (this page is static, no island).
+const COMMAND_CHIP_CAP = 24;
+const visibleCommands = commandList.slice(0, COMMAND_CHIP_CAP);
+const hiddenCommands = commandList.slice(COMMAND_CHIP_CAP);
+const commandChipClass =
+	"rounded border border-ink/10 bg-white/55 px-2 py-1 font-mono text-[12px] text-ink-soft";
+
+// Meta-packages: resolve bundled slugs to live entries for title + link.
+const includedEntries = (isSoftware ? (entry.includes ?? []) : [])
+	.map((slug) => registry.find((candidate) => candidate.slug === slug))
+	.filter((candidate) => candidate !== undefined);
+
 // Plain npm install is only shown for entries that aren't software or
 // sandbox-mounting (those show a registration example instead).
 const installCmd =
@@ -288,6 +355,68 @@ const EntryIcon = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
 							<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={exampleHtml} />
 						</InkPanel>
 					</section>
+
+					{runHtml && (
+						<section>
+							<h2 class="mb-3 text-xl font-medium text-ink">3. Run a command</h2>
+							<p class="mb-4 text-sm text-ink-soft">
+								Its commands are on the VM's{" "}
+								<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">$PATH</code>{" "}
+								— run them from your client with{" "}
+								<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">exec</code>.
+							</p>
+							<InkPanel className="mb-8">
+								<div class="overflow-x-auto px-5 py-4 font-mono text-[13px] leading-relaxed" set:html={runHtml} />
+							</InkPanel>
+						</section>
+					)}
+
+					{visibleCommands.length > 0 && (
+						<section class="mb-8">
+							<h2 class="mb-3 text-xl font-medium text-ink">Commands</h2>
+							<p class="mb-4 text-sm text-ink-soft">
+								Linked under{" "}
+								<code class="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[13px] text-ink">/opt/agentos/bin</code>{" "}
+								inside the VM:
+							</p>
+							<div class="flex flex-wrap gap-2">
+								{visibleCommands.map((cmd) => (
+									<code class={commandChipClass}>{cmd}</code>
+								))}
+							</div>
+							{hiddenCommands.length > 0 && (
+								<details class="mt-3">
+									<summary class="cursor-pointer text-sm text-ink-faint transition-colors hover:text-ink">
+										Show {hiddenCommands.length} more
+									</summary>
+									<div class="mt-3 flex flex-wrap gap-2">
+										{hiddenCommands.map((cmd) => (
+											<code class={commandChipClass}>{cmd}</code>
+										))}
+									</div>
+								</details>
+							)}
+						</section>
+					)}
+
+					{includedEntries.length > 0 && (
+						<section class="mb-8">
+							<h2 class="mb-3 text-xl font-medium text-ink">Includes</h2>
+							<p class="mb-4 text-sm text-ink-soft">
+								Registering this meta-package brings in these packages:
+							</p>
+							<div class="flex flex-wrap gap-2">
+								{includedEntries.map((included) => (
+									<a
+										href={`/registry/${included.slug}`}
+										class="rounded-lg border border-ink/20 px-3 py-1.5 font-mono text-sm text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
+									>
+										{included.title}
+									</a>
+								))}
+							</div>
+						</section>
+					)}
 
 					<div class="flex flex-wrap gap-3">
 						<a

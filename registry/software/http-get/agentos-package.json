@@ -4,6 +4,7 @@
 	],
 	"registry": {
 		"title": "http-get",
-		"description": "Minimal HTTP GET fetch helper."
+		"description": "Minimal HTTP GET fetch helper.",
+		"icon": "Download"
 	}
 }

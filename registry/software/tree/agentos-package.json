@@ -5,6 +5,7 @@
 	"registry": {
 		"title": "tree",
 		"description": "Display directory structure as a tree.",
+		"icon": "FolderTree",
 		"priority": 25
 	}
 }

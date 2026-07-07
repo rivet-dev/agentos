@@ -5,6 +5,7 @@
 	"registry": {
 		"title": "ripgrep",
 		"description": "Fast recursive search (rg).",
+		"icon": "Search",
 		"priority": 85
 	}
 }

@@ -2,6 +2,7 @@
 	"registry": {
 		"title": "Build Essential",
 		"description": "Meta-package: common + git + curl.",
+		"icon": "Hammer",
 		"priority": 100
 	}
 }

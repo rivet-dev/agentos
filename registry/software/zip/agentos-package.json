@@ -5,6 +5,7 @@
 	"registry": {
 		"title": "zip",
 		"description": "Create zip archives.",
+		"icon": "Archive",
 		"priority": 12
 	}
 }

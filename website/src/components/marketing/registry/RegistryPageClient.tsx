@@ -2,53 +2,78 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import type { RegistryEntry } from "../../../data/registry";
+import { REQUEST_EXTENSION_URL, type RegistryEntry } from "../../../data/registry";
 import { REGISTRY_ICONS } from "../../../data/registry-icons";
 
-const CATEGORY_ORDER: { type: string; label: string; description: string }[] = [
+const CATEGORY_ORDER: {
+	type: string;
+	id: string;
+	label: string;
+	description: string;
+}[] = [
 	{
 		type: "agent",
+		id: "agents",
 		label: "Agents",
 		description:
 			"Coding agents with programmatic API access and universal transcript format (ACP).",
 	},
 	{
 		type: "file-system",
+		id: "file-systems",
 		label: "File Systems",
 		description:
 			"Mount these file systems as the root or at any sub-path inside the agent's environment.",
 	},
 	{
 		type: "browser",
+		id: "browsers",
 		label: "Browsers",
 		description:
 			"Let agents browse the web from inside the VM with cloud browser providers.",
 	},
 	{
 		type: "sandbox-extension",
+		id: "sandbox-mounting",
 		label: "Sandbox Mounting",
 		description:
 			"agentOS is a hybrid OS. Mount sandbox file systems and interact with them via tools for heavier workloads. Use agentOS natively for lightweight tasks.",
 	},
 	{
 		type: "software",
+		id: "software",
 		label: "Software",
 		description:
 			"Wasm command packages that run inside the agent's environment. Install individually or use meta-packages.",
 	},
 	{
 		type: "tool",
+		id: "bindings",
 		label: "Bindings",
 		description:
 			"Host-side tools and integrations that extend agent capabilities.",
 	},
 	{
 		type: "deploy",
+		id: "deploy",
 		label: "Deploy",
 		description:
 			"Run agentOS in production on the platform of your choice.",
 	},
 ];
+
+// Includes commands so searching "rg" surfaces ripgrep and "ls" coreutils.
+function entryHaystack(entry: RegistryEntry): string {
+	return [
+		entry.title,
+		entry.description,
+		entry.slug,
+		"package" in entry ? (entry.package ?? "") : "",
+		...(entry.commands ?? []),
+	]
+		.join(" ")
+		.toLowerCase();
+}
 
 const MAX_GRID_ITEMS = 9;
 const CAROUSEL_INTERVAL = 5000;
@@ -83,8 +108,10 @@ function EntryIcon({
 		);
 	}
 
-	if (entry.icon) {
-		const IconComponent = REGISTRY_ICONS[entry.icon];
+	// A stale committed registry.json can carry an icon name this bundle does
+	// not know; fall through to the monogram instead of rendering undefined.
+	const IconComponent = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
+	if (IconComponent) {
 		return (
 			<IconComponent
 				style={{ width: size, height: size }}
@@ -133,8 +160,8 @@ function MonoIcon({
 		);
 	}
 
-	if (entry.icon) {
-		const IconComponent = REGISTRY_ICONS[entry.icon];
+	const IconComponent = entry.icon ? REGISTRY_ICONS[entry.icon] : undefined;
+	if (IconComponent) {
 		return (
 			<IconComponent
 				style={{ width: size, height: size }}
@@ -279,27 +306,33 @@ function FeaturedCarousel({
 }
 
 function CategorySection({
+	id,
 	label,
 	description,
 	entries,
 	theme,
 	hrefBase,
+	showAll = false,
 }: {
+	id: string;
 	label: string;
 	description: string;
 	entries: RegistryEntry[];
 	theme: RegistryTheme;
 	hrefBase: string;
+	// While searching, truncation would hide matches behind the "+N" tile.
+	showAll?: boolean;
 }) {
 	const [expanded, setExpanded] = useState(false);
-	const needsShowAll = entries.length > MAX_GRID_ITEMS;
-	const visible = expanded
+	const showEverything = expanded || showAll;
+	const needsShowAll = !showEverything && entries.length > MAX_GRID_ITEMS;
+	const visible = showEverything
 		? entries
 		: entries.slice(0, MAX_GRID_ITEMS - (needsShowAll ? 1 : 0));
 	const light = theme === "light";
 
 	return (
-		<section className="mb-12">
+		<section id={id} className="mb-12 scroll-mt-28">
 			<h2
 				className={
 					light
@@ -377,7 +410,7 @@ function CategorySection({
 					</a>
 				))}
 
-				{needsShowAll && !expanded && (
+				{needsShowAll && (
 					<button
 						onClick={() => setExpanded(true)}
 						className={
@@ -423,17 +456,56 @@ export default function RegistryPageClient({
 	const featured = entries.filter((entry) => entry.featured);
 	const light = theme === "light";
 
-	const categories = CATEGORY_ORDER.map(({ type, label, description }) => ({
+	const [query, setQuery] = useState("");
+	const search = query.trim().toLowerCase();
+	const visibleEntries = search
+		? entries.filter((entry) => entryHaystack(entry).includes(search))
+		: entries;
+
+	const categories = CATEGORY_ORDER.map(({ type, id, label, description }) => ({
+		id,
 		label,
 		description,
-		entries: entries.filter((entry) =>
+		entries: visibleEntries.filter((entry) =>
 			entry.types.includes(type as RegistryEntry["types"][number]),
 		),
 	})).filter((category) => category.entries.length > 0);
 
 	return (
 		<>
-			{featured.length > 0 && (
+			<div className="mb-10">
+				<input
+					type="search"
+					value={query}
+					onChange={(event) => setQuery(event.target.value)}
+					placeholder="Search the registry…"
+					aria-label="Search the registry"
+					className={
+						light
+							? "w-full rounded-lg border border-ink/10 bg-white/55 px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-ink/30 focus:outline-none"
+							: "w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white placeholder:text-white/40 focus:border-white/30 focus:outline-none"
+					}
+				/>
+				{categories.length > 1 && (
+					<div className="mt-4 flex flex-wrap justify-center gap-2">
+						{categories.map((category) => (
+							<a
+								key={category.id}
+								href={`#${category.id}`}
+								className={
+									light
+										? "rounded-full border border-ink/15 px-3 py-1 text-xs text-ink-soft no-underline transition-colors hover:border-ink/40 hover:text-ink"
+										: "rounded-full border border-white/20 px-3 py-1 text-xs text-white/60 no-underline transition-colors hover:border-white/40 hover:text-white"
+								}
+							>
+								{category.label}
+							</a>
+						))}
+					</div>
+				)}
+			</div>
+
+			{!search && featured.length > 0 && (
 				<FeaturedCarousel
 					entries={featured}
 					theme={theme}
@@ -441,14 +513,38 @@ export default function RegistryPageClient({
 				/>
 			)}
 
+			{search && categories.length === 0 && (
+				<div className="py-16 text-center">
+					<p
+						className={
+							light ? "mb-4 text-sm text-ink-soft" : "mb-4 text-sm text-white/60"
+						}
+					>
+						No matches for &ldquo;{query.trim()}&rdquo;
+					</p>
+					<button
+						onClick={() => setQuery("")}
+						className={
+							light
+								? "rounded-lg border border-ink/20 px-4 py-2 text-sm font-medium text-ink-soft transition-colors hover:border-ink/40 hover:text-ink"
+								: "rounded-lg border border-white/20 px-4 py-2 text-sm font-medium text-white/80 transition-colors hover:border-white/40 hover:text-white"
+						}
+					>
+						Clear search
+					</button>
+				</div>
+			)}
+
 			{categories.map((category) => (
 				<CategorySection
 					key={category.label}
+					id={category.id}
 					label={category.label}
 					description={category.description}
 					entries={category.entries}
 					theme={theme}
 					hrefBase={hrefBase}
+					showAll={search.length > 0}
 				/>
 			))}
 
@@ -494,7 +590,7 @@ export default function RegistryPageClient({
 						</svg>
 					</a>
 					<a
-						href="https://github.com/rivet-dev/agentos/issues"
+						href={REQUEST_EXTENSION_URL}
 						target="_blank"
 						rel="noopener noreferrer"
 						className={

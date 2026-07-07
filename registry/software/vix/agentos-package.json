@@ -5,6 +5,7 @@
 	],
 	"registry": {
 		"title": "vix",
-		"description": "Lightweight vi-style text editor."
+		"description": "Lightweight vi-style text editor.",
+		"icon": "FilePen"
 	}
 }

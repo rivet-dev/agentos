@@ -80,7 +80,13 @@
 			],
 			"priority": 100,
 			"package": "@agentos-software/build-essential",
-			"status": "available"
+			"status": "available",
+			"icon": "Hammer",
+			"includes": [
+				"common",
+				"curl",
+				"git"
+			]
 		},
 		{
 			"slug": "common",
@@ -91,7 +97,18 @@
 			],
 			"priority": 95,
 			"package": "@agentos-software/common",
-			"status": "available"
+			"status": "available",
+			"icon": "Package",
+			"includes": [
+				"coreutils",
+				"sed",
+				"grep",
+				"gawk",
+				"findutils",
+				"diffutils",
+				"tar",
+				"gzip"
+			]
 		},
 		{
 			"slug": "git",
@@ -103,7 +120,10 @@
 			"priority": 90,
 			"package": "@agentos-software/git",
 			"status": "available",
-			"image": "/images/registry/git.svg"
+			"image": "/images/registry/git.svg",
+			"commands": [
+				"git"
+			]
 		},
 		{
 			"slug": "ripgrep",
@@ -114,7 +134,11 @@
 			],
 			"priority": 85,
 			"package": "@agentos-software/ripgrep",
-			"status": "available"
+			"status": "available",
+			"icon": "Search",
+			"commands": [
+				"rg"
+			]
 		},
 		{
 			"slug": "jq",
@@ -126,7 +150,10 @@
 			"priority": 80,
 			"package": "@agentos-software/jq",
 			"status": "available",
-			"image": "/images/registry/jq.svg"
+			"image": "/images/registry/jq.svg",
+			"commands": [
+				"jq"
+			]
 		},
 		{
 			"slug": "sqlite3",
@@ -138,7 +165,10 @@
 			"priority": 75,
 			"package": "@agentos-software/sqlite3",
 			"status": "available",
-			"image": "/images/registry/sqlite3.svg"
+			"image": "/images/registry/sqlite3.svg",
+			"commands": [
+				"sqlite3"
+			]
 		},
 		{
 			"slug": "duckdb",
@@ -150,7 +180,10 @@
 			"priority": 70,
 			"package": "@agentos-software/duckdb",
 			"status": "available",
-			"image": "/images/registry/duckdb.svg"
+			"image": "/images/registry/duckdb.svg",
+			"commands": [
+				"duckdb"
+			]
 		},
 		{
 			"slug": "vim",
@@ -162,7 +195,10 @@
 			"priority": 65,
 			"package": "@agentos-software/vim",
 			"status": "available",
-			"image": "/images/registry/vim.svg"
+			"image": "/images/registry/vim.svg",
+			"commands": [
+				"vim"
+			]
 		},
 		{
 			"slug": "tar",
@@ -174,7 +210,10 @@
 			"priority": 60,
 			"package": "@agentos-software/tar",
 			"status": "available",
-			"image": "/images/registry/tar.svg"
+			"image": "/images/registry/tar.svg",
+			"commands": [
+				"tar"
+			]
 		},
 		{
 			"slug": "wget",
@@ -186,7 +225,10 @@
 			"priority": 55,
 			"package": "@agentos-software/wget",
 			"status": "available",
-			"image": "/images/registry/wget.svg"
+			"image": "/images/registry/wget.svg",
+			"commands": [
+				"wget"
+			]
 		},
 		{
 			"slug": "curl",
@@ -198,7 +240,10 @@
 			"priority": 50,
 			"package": "@agentos-software/curl",
 			"status": "available",
-			"image": "/images/registry/curl.svg"
+			"image": "/images/registry/curl.svg",
+			"commands": [
+				"curl"
+			]
 		},
 		{
 			"slug": "coreutils",
@@ -210,7 +255,96 @@
 			"priority": 45,
 			"package": "@agentos-software/coreutils",
 			"status": "available",
-			"image": "/images/registry/coreutils.svg"
+			"image": "/images/registry/coreutils.svg",
+			"commands": [
+				"sh",
+				"arch",
+				"b2sum",
+				"base32",
+				"base64",
+				"basename",
+				"basenc",
+				"cat",
+				"chmod",
+				"cksum",
+				"column",
+				"comm",
+				"cp",
+				"cut",
+				"date",
+				"dd",
+				"dircolors",
+				"dirname",
+				"du",
+				"echo",
+				"env",
+				"expand",
+				"expr",
+				"factor",
+				"false",
+				"fmt",
+				"fold",
+				"head",
+				"join",
+				"link",
+				"ln",
+				"logname",
+				"ls",
+				"md5sum",
+				"mkdir",
+				"mktemp",
+				"mv",
+				"nice",
+				"nl",
+				"nohup",
+				"nproc",
+				"numfmt",
+				"od",
+				"paste",
+				"pathchk",
+				"printenv",
+				"printf",
+				"ptx",
+				"pwd",
+				"readlink",
+				"realpath",
+				"rev",
+				"rm",
+				"rmdir",
+				"seq",
+				"sha1sum",
+				"sha224sum",
+				"sha256sum",
+				"sha384sum",
+				"sha512sum",
+				"shred",
+				"shuf",
+				"sleep",
+				"sort",
+				"split",
+				"stat",
+				"stdbuf",
+				"strings",
+				"sum",
+				"tac",
+				"tail",
+				"tee",
+				"test",
+				"timeout",
+				"touch",
+				"tr",
+				"true",
+				"truncate",
+				"tsort",
+				"uname",
+				"unexpand",
+				"uniq",
+				"unlink",
+				"wc",
+				"which",
+				"whoami",
+				"yes"
+			]
 		},
 		{
 			"slug": "grep",
@@ -222,7 +356,10 @@
 			"priority": 40,
 			"package": "@agentos-software/grep",
 			"status": "available",
-			"image": "/images/registry/grep.svg"
+			"image": "/images/registry/grep.svg",
+			"commands": [
+				"grep"
+			]
 		},
 		{
 			"slug": "sed",
@@ -234,7 +371,10 @@
 			"priority": 35,
 			"package": "@agentos-software/sed",
 			"status": "available",
-			"image": "/images/registry/sed.svg"
+			"image": "/images/registry/sed.svg",
+			"commands": [
+				"sed"
+			]
 		},
 		{
 			"slug": "fd",
@@ -245,7 +385,11 @@
 			],
 			"priority": 30,
 			"package": "@agentos-software/fd",
-			"status": "available"
+			"status": "available",
+			"icon": "FileSearch",
+			"commands": [
+				"fd"
+			]
 		},
 		{
 			"slug": "tree",
@@ -256,7 +400,11 @@
 			],
 			"priority": 25,
 			"package": "@agentos-software/tree",
-			"status": "available"
+			"status": "available",
+			"icon": "FolderTree",
+			"commands": [
+				"tree"
+			]
 		},
 		{
 			"slug": "gawk",
@@ -268,7 +416,10 @@
 			"priority": 20,
 			"package": "@agentos-software/gawk",
 			"status": "available",
-			"image": "/images/registry/gawk.svg"
+			"image": "/images/registry/gawk.svg",
+			"commands": [
+				"awk"
+			]
 		},
 		{
 			"slug": "findutils",
@@ -280,7 +431,11 @@
 			"priority": 15,
 			"package": "@agentos-software/findutils",
 			"status": "available",
-			"image": "/images/registry/findutils.svg"
+			"image": "/images/registry/findutils.svg",
+			"commands": [
+				"find",
+				"xargs"
+			]
 		},
 		{
 			"slug": "zip",
@@ -291,7 +446,11 @@
 			],
 			"priority": 12,
 			"package": "@agentos-software/zip",
-			"status": "available"
+			"status": "available",
+			"icon": "Archive",
+			"commands": [
+				"zip"
+			]
 		},
 		{
 			"slug": "unzip",
@@ -302,7 +461,11 @@
 			],
 			"priority": 10,
 			"package": "@agentos-software/unzip",
-			"status": "available"
+			"status": "available",
+			"icon": "ArchiveRestore",
+			"commands": [
+				"unzip"
+			]
 		},
 		{
 			"slug": "gzip",
@@ -314,7 +477,10 @@
 			"priority": 8,
 			"package": "@agentos-software/gzip",
 			"status": "available",
-			"image": "/images/registry/gzip.svg"
+			"image": "/images/registry/gzip.svg",
+			"commands": [
+				"gzip"
+			]
 		},
 		{
 			"slug": "diffutils",
@@ -326,7 +492,10 @@
 			"priority": 6,
 			"package": "@agentos-software/diffutils",
 			"status": "available",
-			"image": "/images/registry/diffutils.svg"
+			"image": "/images/registry/diffutils.svg",
+			"commands": [
+				"diff"
+			]
 		},
 		{
 			"slug": "yq",
@@ -337,7 +506,11 @@
 			],
 			"priority": 4,
 			"package": "@agentos-software/yq",
-			"status": "available"
+			"status": "available",
+			"icon": "Braces",
+			"commands": [
+				"yq"
+			]
 		},
 		{
 			"slug": "file",
@@ -348,7 +521,11 @@
 			],
 			"priority": 2,
 			"package": "@agentos-software/file",
-			"status": "available"
+			"status": "available",
+			"icon": "FileQuestion",
+			"commands": [
+				"file"
+			]
 		},
 		{
 			"slug": "codex-cli",
@@ -360,7 +537,11 @@
 			"priority": 0,
 			"package": "@agentos-software/codex-cli",
 			"status": "available",
-			"image": "/images/registry/codex.svg"
+			"image": "/images/registry/codex.svg",
+			"commands": [
+				"codex",
+				"codex-exec"
+			]
 		},
 		{
 			"slug": "http-get",
@@ -371,7 +552,11 @@
 			],
 			"priority": 0,
 			"package": "@agentos-software/http-get",
-			"status": "available"
+			"status": "available",
+			"icon": "Download",
+			"commands": [
+				"http_get"
+			]
 		},
 		{
 			"slug": "vix",
@@ -382,7 +567,11 @@
 			],
 			"priority": 0,
 			"package": "@agentos-software/vix",
-			"status": "available"
+			"status": "available",
+			"icon": "FilePen",
+			"commands": [
+				"vix"
+			]
 		}
 	]
 }

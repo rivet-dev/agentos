@@ -5,6 +5,7 @@
 	"registry": {
 		"title": "yq",
 		"description": "YAML/JSON processor.",
+		"icon": "Braces",
 		"priority": 4
 	}
 }

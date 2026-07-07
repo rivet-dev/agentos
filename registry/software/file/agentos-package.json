@@ -5,6 +5,7 @@
 	"registry": {
 		"title": "file",
 		"description": "Detect file types.",
+		"icon": "FileQuestion",
 		"priority": 2
 	}
 }
