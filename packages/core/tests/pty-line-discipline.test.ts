@@ -688,7 +688,7 @@ describe("PTY line discipline matrix", () => {
 
 		const { AgentOs } = await import("../src/index.js");
 		vm = await AgentOs.create({
-			software: [{ packageDir }],
+			software: [{ packagePath: packageDir }],
 		});
 		await vm.writeFile(NODE_PROBE_GUEST_PATH, readFileSync(NODE_PROBE_SOURCE));
 	}, 180_000);

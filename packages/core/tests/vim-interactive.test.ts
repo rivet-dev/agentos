@@ -61,7 +61,7 @@ function assertVimAvailable() {
 // sidecar projects it into `/opt/agentos/bin/vim` and registers the command, so
 // `openShell({ command: "vim" })` resolves it. Mirrors packages/shell/src/main.ts
 // and tests/pty-protocol.test.ts's package materialization.
-function materializeVimPackage(): { packageDir: string } {
+function materializeVimPackage(): { packagePath: string } {
 	const packageDir = mkdtempSync(join(tmpdir(), "agentos-vim-pkg-"));
 	const binDir = join(packageDir, "bin");
 	mkdirSync(binDir);
@@ -74,7 +74,7 @@ function materializeVimPackage(): { packageDir: string } {
 		join(packageDir, "agentos-package.json"),
 		JSON.stringify({ name: "vim" }),
 	);
-	return { packageDir };
+	return { packagePath: packageDir };
 }
 
 function screen(term: InstanceType<typeof Terminal>): string {

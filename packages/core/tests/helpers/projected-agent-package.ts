@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
 	mkdirSync,
@@ -61,21 +60,10 @@ export function createProjectedAgentPackage(
 	writeFileSync(binPath, `#!/usr/bin/env node\n${options.adapterScript}\n`);
 	chmodSync(binPath, 0o755);
 
-	// The sidecar mounts packages from `<dir>/package.tar` (directory projection is
-	// not supported); tar the built tree and hand back the dir that contains it.
-	const packDir = join(root, "packed");
-	mkdirSync(packDir, { recursive: true });
-	execFileSync("tar", [
-		"-cf",
-		join(packDir, "package.tar"),
-		"-C",
-		packageDir,
-		".",
-	]);
-
 	return {
 		packageDir,
-		software: { packageDir: packDir },
+		// `packagePath` accepts a transition package dir for local fixtures.
+		software: { packagePath: packageDir },
 		binPath,
 		cleanup: () => rmSync(root, { recursive: true, force: true }),
 	};

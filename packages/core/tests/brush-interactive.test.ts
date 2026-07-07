@@ -121,7 +121,7 @@ describe.skipIf(REGISTRY_SH === undefined)("brush interactive PTY repaint", () =
 		const { AgentOs } = await import("../src/index.js");
 		term = new Terminal({ cols: 80, rows: 14, allowProposedApi: true });
 		vm = await AgentOs.create({
-			software: [{ packageDir: fixtureDir }],
+			software: [{ packagePath: fixtureDir }],
 		});
 
 		({ shellId } = vm.openShell({
@@ -178,7 +178,7 @@ describe.skipIf(REGISTRY_SH === undefined)("brush interactive PTY repaint", () =
 		const { AgentOs } = await import("../src/index.js");
 		term = new Terminal({ cols: 80, rows: 14, allowProposedApi: true });
 		vm = await AgentOs.create({
-			software: [{ packageDir: fixtureDir }],
+			software: [{ packagePath: fixtureDir }],
 		});
 		await vm.writeFile("/tmp/marker.txt", "child-once-marker\n");
 

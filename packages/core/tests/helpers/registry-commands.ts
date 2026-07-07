@@ -1,11 +1,16 @@
 /**
  * Registry software packages for tests — STRICT, no silent skips.
  *
- * Every `@agentos-software/*` package exports `{ packageDir }` pointing at its
- * registry-built runtime dir (`dist/package/`). Importing this helper THROWS
- * with build instructions when a standard package is not built, instead of
- * letting suites silently skip: with the committed file-linked deps, "not
- * built" always means the sibling secure-exec registry needs building.
+ * Every `@agentos-software/*` package exports `{ packagePath }` pointing at its
+ * packed `.aospkg` (`dist/package.aospkg`). Importing this helper THROWS with
+ * build instructions when a standard package is not built, instead of letting
+ * suites silently skip: with the committed file-linked deps, "not built"
+ * always means the sibling registry needs building.
+ *
+ * Built-ness is checked against the `.aospkg` itself (present, non-trivial,
+ * correct magic) plus the sibling `dist/package/` transition dir's bin map
+ * when it exists (local registry builds produce both), so a stale or empty
+ * command set still fails loudly.
  *
  * The only sanctioned exception is the C-sysroot package set (duckdb,
  * http-get, sqlite3, wget, zip, unzip): those need the patched wasi C sysroot
@@ -17,11 +22,15 @@ import {
 	copyFileSync,
 	existsSync,
 	mkdirSync,
-	readFileSync,
+	openSync,
+	readdirSync,
+	readSync,
+	closeSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import codex from "@agentos-software/codex-cli";
 import coreutils from "@agentos-software/coreutils";
 import curl from "@agentos-software/curl";
@@ -40,57 +49,104 @@ import tree from "@agentos-software/tree";
 import yq from "@agentos-software/yq";
 
 export interface RegistryPackageRef {
-	packageDir: string;
+	packagePath: string;
 }
 
 const BUILD_INSTRUCTIONS =
-	"Build the registry in the sibling secure-exec checkout:\n" +
+	"Build the registry:\n" +
 	"  just registry-native   # native wasm binaries, once per checkout (slow)\n" +
-	"  just registry-build    # stage bin/ + assemble every dist/package\n" +
-	"See secure-exec registry/README.md.";
+	"  just registry-build    # stage bin/ + pack every dist/package.aospkg\n" +
+	"See registry/README.md.";
 
-/** Read a built package's `dist/package/package.json` bin map, or null. */
-function readBinMap(dir: string): Record<string, string> | null {
-	const manifestPath = join(dir, "package.json");
-	if (!existsSync(manifestPath)) return null;
+/** `.aospkg` container magic (crates/vfs/package-format/v1.bare). */
+const AOSPKG_MAGIC = Buffer.from([0x89, 0x41, 0x4f, 0x53]);
+
+/** True when the path is a plausible packed `.aospkg` (magic + header size). */
+function isPackedAospkg(path: string): boolean {
 	try {
-		const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-			bin?: Record<string, string>;
-		};
-		return manifest.bin ?? {};
+		if (statSync(path).size <= 16) return false;
+		const fd = openSync(path, "r");
+		try {
+			const head = Buffer.alloc(4);
+			readSync(fd, head, 0, 4, 0);
+			return head.equals(AOSPKG_MAGIC);
+		} finally {
+			closeSync(fd);
+		}
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * The unpacked manifest dir for a ref, when one is locally available: the
+ * transition dir itself, or the `dist/package/` sibling of a packed
+ * `dist/package.aospkg` (registry builds stage both).
+ */
+function manifestDir(pkg: RegistryPackageRef): string | null {
+	const path = pkg.packagePath;
+	const dir = path.endsWith(".aospkg")
+		? join(dirname(path), "package")
+		: path;
+	return existsSync(dir) ? dir : null;
+}
+
+/**
+ * A built package's staged commands, from its `bin/` directory listing (the
+ * transition dir carries only `agentos-package.json` + `bin/`; the command
+ * set is the packed `bin/` contents). Maps name -> package-relative path.
+ */
+function readBinMap(dir: string): Record<string, string> | null {
+	const binDir = join(dir, "bin");
+	if (!existsSync(binDir)) return null;
+	try {
+		const bin: Record<string, string> = {};
+		for (const entry of readdirSync(binDir)) {
+			bin[entry] = `bin/${entry}`;
+		}
+		return bin;
 	} catch {
 		return null;
 	}
 }
 
 function builtState(pkg: RegistryPackageRef): {
+	built: boolean;
 	bin: Record<string, string> | null;
 	missing: string[];
 } {
-	const bin = readBinMap(pkg.packageDir);
-	if (bin === null) return { bin, missing: [] };
-	const missing = Object.entries(bin)
-		.filter(([, rel]) => !existsSync(join(pkg.packageDir, rel)))
-		.map(([cmd]) => cmd);
-	return { bin, missing };
+	const packed = pkg.packagePath.endsWith(".aospkg");
+	const built = packed
+		? isPackedAospkg(pkg.packagePath)
+		: existsSync(join(pkg.packagePath, "agentos-package.json"));
+	const dir = manifestDir(pkg);
+	const bin = dir ? readBinMap(dir) : null;
+	const missing =
+		dir && bin
+			? Object.entries(bin)
+					.filter(([, rel]) => !existsSync(join(dir, rel)))
+					.map(([cmd]) => cmd)
+			: [];
+	return { built, bin, missing };
 }
 
 /**
- * Assert a registry package is built (assembled `dist/package` with a
- * non-empty, fully-present command set) and return it. Throws with build
- * instructions otherwise.
+ * Assert a registry package is built (a real packed `.aospkg`, with a
+ * non-empty, fully-present command set when the staged transition dir is
+ * available to inspect) and return it. Throws with build instructions
+ * otherwise.
  */
 export function requireBuilt<T extends RegistryPackageRef>(
 	pkg: T,
 	name: string,
 ): T {
-	const { bin, missing } = builtState(pkg);
-	if (bin === null) {
+	const { built, bin, missing } = builtState(pkg);
+	if (!built) {
 		throw new Error(
-			`registry package ${name} is NOT BUILT (no ${pkg.packageDir}/package.json).\n${BUILD_INSTRUCTIONS}`,
+			`registry package ${name} is NOT BUILT (no valid ${pkg.packagePath}).\n${BUILD_INSTRUCTIONS}`,
 		);
 	}
-	if (Object.keys(bin).length === 0) {
+	if (bin !== null && Object.keys(bin).length === 0) {
 		throw new Error(
 			`registry package ${name} is an EMPTY placeholder (no commands staged into bin/).\n${BUILD_INSTRUCTIONS}`,
 		);
@@ -106,22 +162,66 @@ export function requireBuilt<T extends RegistryPackageRef>(
 /**
  * Skip reason for the C-sysroot package set ONLY (duckdb, http-get, sqlite3,
  * wget, zip, unzip). These need the patched wasi C sysroot
- * (`make -C registry/native/c` in secure-exec), which most checkouts don't
- * build — a missing artifact is an environment limitation, not a forgotten
- * build, so suites may skip with this reason instead of throwing.
+ * (`make -C registry/native/c`), which most checkouts don't build — a missing
+ * artifact is an environment limitation, not a forgotten build, so suites may
+ * skip with this reason instead of throwing.
  */
 export function cSysrootPackageSkipReason(
 	...packages: Array<{ pkg: RegistryPackageRef; name: string }>
 ): string | false {
 	const unbuilt = packages.filter(({ pkg }) => {
-		const { bin, missing } = builtState(pkg);
-		return bin === null || Object.keys(bin).length === 0 || missing.length > 0;
+		const { built, bin, missing } = builtState(pkg);
+		return (
+			!built ||
+			(bin !== null && Object.keys(bin).length === 0) ||
+			missing.length > 0
+		);
 	});
 	if (unbuilt.length === 0) return false;
 	return (
 		`C-sysroot registry packages not built: ${unbuilt.map(({ name }) => name).join(", ")} ` +
-		"(needs the patched wasi C sysroot: `make -C registry/native/c` in secure-exec, then `just registry-build`)"
+		"(needs the patched wasi C sysroot: `make -C registry/native/c`, then `just registry-build`)"
 	);
+}
+
+/** True when a built package stages the named command (via its bin map). */
+export function packageCommandExists(
+	pkg: RegistryPackageRef,
+	command: string,
+): boolean {
+	const dir = manifestDir(pkg);
+	if (!dir) return false;
+	const bin = readBinMap(dir);
+	const rel = bin?.[command];
+	return typeof rel === "string" && existsSync(join(dir, rel));
+}
+
+/**
+ * The staged command dir (`<manifest dir>/bin`) of a built package — for
+ * harnesses that consume raw command dirs (e.g. `createWasmVmRuntime`).
+ * Throws when the staged transition dir is unavailable.
+ */
+export function packageCommandsDir(pkg: RegistryPackageRef): string {
+	const dir = manifestDir(pkg);
+	if (!dir) {
+		throw new Error(
+			`registry package has no staged transition dir next to ${pkg.packagePath}.\n${BUILD_INSTRUCTIONS}`,
+		);
+	}
+	return join(dir, "bin");
+}
+
+/** First REGISTRY_SOFTWARE package that stages the named command. Throws if none. */
+export function findPackageWithCommand(command: string): RegistryPackageRef {
+	const pkg = REGISTRY_SOFTWARE.find((candidate) =>
+		packageCommandExists(candidate, command),
+	);
+	if (!pkg) {
+		throw new Error(
+			`registry software does not provide "${command}".\n${BUILD_INSTRUCTIONS}`,
+		);
+	}
+	return pkg;
 }
 
 /** All standard registry software packages — throws at import if any is unbuilt. */
@@ -148,19 +248,20 @@ export const REGISTRY_SOFTWARE = (
 
 /**
  * Test-only commands (e.g. `xu`, a registry VM-test binary) ship in NO
- * software package — they exist only in the native build output of the linked
- * secure-exec checkout. Synthesize a minimal package around them so suites can
- * project them like any other software. Throws when the native build output is
- * absent (same build instructions as everything else).
+ * software package — they exist only in the native build output of the
+ * registry. Synthesize a minimal transition-dir package around them so suites
+ * can project them like any other software (`packagePath` accepts a package
+ * dir for local fixtures). Throws when the native build output is absent
+ * (same build instructions as everything else).
  */
 export function testOnlyCommandSoftware(
 	commands: string[] = ["xu"],
 ): RegistryPackageRef {
-	// registry/software/<pkg>/dist/package -> registry/native/.../commands, so
-	// this follows whichever secure-exec checkout the deps are linked to.
+	// registry/software/<pkg>/dist/package.aospkg -> registry/native/... — this
+	// follows whichever registry checkout the deps are linked to.
 	const nativeCommandsDir = join(
-		coreutils.packageDir,
-		"../../../..",
+		dirname(coreutils.packagePath),
+		"../../..",
 		"native/target/wasm32-wasip1/release/commands",
 	);
 	const dir = join(tmpdir(), `agentos-test-cmds-${process.pid}`);
@@ -186,5 +287,5 @@ export function testOnlyCommandSoftware(
 		join(dir, "agentos-package.json"),
 		`${JSON.stringify({ name: "agentos-test-commands" }, null, 2)}\n`,
 	);
-	return { packageDir: dir };
+	return { packagePath: dir };
 }

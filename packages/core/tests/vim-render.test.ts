@@ -71,7 +71,7 @@ describe.skipIf(!existsSync(VIM_BINARY))("vim full-screen rendering (strict)", (
 				JSON.stringify({ name: "vim", version: "0.0.0", bin: { vim: "bin/vim" } }),
 			);
 			writeFileSync(join(dir, "agentos-package.json"), JSON.stringify({ name: "vim" }));
-			vimPkg = { packageDir: dir };
+			vimPkg = { packagePath: dir };
 		} else {
 			vimPkg = (await import("@agentos-software/vim")).default;
 		}

@@ -790,7 +790,13 @@ const stdioTtyCache = new Map();
 function stdioFdIsKernelTty(fd) {
   const descriptor = Number(fd) >>> 0;
   if (descriptor > 2) return false;
-  if (KERNEL_STDIO_SYNC_RPC) return true;
+  // Even in kernel-stdio sync-RPC mode the answer must come from the kernel:
+  // that mode is on for EVERY sidecar wasm execution, including piped
+  // vm.exec() runs whose stdio is NOT a PTY. Hardcoding true here made
+  // non-interactive shells think they had a terminal (fd_fdstat_get reported
+  // CHARACTER_DEVICE, host_tty.isatty said 1), so they enabled raw mode and
+  // the kernel's truthful "not a PTY end" refusal trapped the guest with
+  // exit 1 after otherwise-successful commands.
   if (stdioTtyCache.has(descriptor)) return stdioTtyCache.get(descriptor);
   let isTty = false;
   try {

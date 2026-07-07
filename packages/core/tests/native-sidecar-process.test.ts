@@ -36,19 +36,16 @@ import {
 } from "../src/sidecar/rpc-client.js";
 import { findCargoBinary, resolveCargoBinary } from "../src/sidecar/cargo.js";
 import { serializePermissionsForSidecar } from "../src/sidecar/permissions.js";
-import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
+import {
+	findPackageWithCommand,
+	packageCommandsDir,
+} from "./helpers/registry-commands.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const SIDECAR_BINARY = join(REPO_ROOT, "target/debug/agentos-sidecar");
-const REGISTRY_COMMANDS_DIR = (() => {
-	const commandPackage = REGISTRY_SOFTWARE.find((pkg) =>
-		pkg.commands?.some((command) => command.name === "sh"),
-	);
-	if (!commandPackage) {
-		throw new Error("registry software does not provide sh");
-	}
-	return commandPackage.commandDir;
-})();
+const REGISTRY_COMMANDS_DIR = packageCommandsDir(
+	findPackageWithCommand("sh"),
+);
 const SIGNAL_STATE_CONTROL_PREFIX = "__AGENT_OS_SIGNAL_STATE__:";
 const ALLOW_ALL_VM_PERMISSIONS = {
 	fs: "allow",

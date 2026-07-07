@@ -88,7 +88,7 @@ function assertVimAvailable() {
 // package-relative path; without it, ship only the `bin/vim` command so bare vim
 // cannot source defaults.vim (the control case).
 function materializeLocalEditorsPackage(withProvides: boolean): {
-	packageDir: string;
+	packagePath: string;
 } {
 	const packageDir = mkdtempSync(join(tmpdir(), "agentos-local-editors-"));
 	const binDir = join(packageDir, "bin");
@@ -124,7 +124,7 @@ function materializeLocalEditorsPackage(withProvides: boolean): {
 			...(provides ? { provides } : {}),
 		}),
 	);
-	return { packageDir };
+	return { packagePath: packageDir };
 }
 
 function screen(term: InstanceType<typeof Terminal>): string {

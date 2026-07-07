@@ -3,7 +3,10 @@ import { join } from "node:path";
 import curlPackage from "@agentos-software/curl";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { AgentOs } from "../src/index.js";
-import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
+import {
+	packageCommandExists,
+	REGISTRY_SOFTWARE,
+} from "./helpers/registry-commands.js";
 
 vi.setConfig({ testTimeout: 45_000 });
 
@@ -656,7 +659,7 @@ EOF`);
 	describe("curl", () => {
 		useDescribeVm();
 
-		const hasCurl = existsSync(join(curlPackage.commandDir, "curl"));
+		const hasCurl = packageCommandExists(curlPackage, "curl");
 
 		const CURL_SCRIPT = `
 const net = require("net");
