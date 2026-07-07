@@ -229,7 +229,7 @@ export function convergedFilesystemSyncResponse(
 		case "fs.lstat":
 			return {
 				kind: SYNC_BRIDGE_KIND_JSON,
-				value: wireStatToVirtualStat(requireStat(result)),
+				value: virtualStatToSyncJson(wireStatToVirtualStat(requireStat(result))),
 			};
 		case "fs.writeFile":
 		case "fs.writeFileBinary":
@@ -251,25 +251,48 @@ export function convergedFilesystemSyncResponse(
 	}
 }
 
-/** Map a wire snake_case stat into the guest-facing camelCase `VirtualStat`. */
+/**
+ * Map a wire snake_case stat into the guest-facing camelCase `VirtualStat`.
+ * The bigint u64 fields narrow to numbers here (lossy above
+ * Number.MAX_SAFE_INTEGER, matching Node's default fs.stat).
+ */
 export function wireStatToVirtualStat(stat: LiveGuestFilesystemStat): VirtualStat {
 	return {
 		mode: stat.mode,
-		size: stat.size,
-		blocks: stat.blocks,
-		dev: stat.dev,
-		rdev: stat.rdev,
+		size: Number(stat.size),
+		sizeExact: stat.size,
+		blocks: Number(stat.blocks),
+		dev: Number(stat.dev),
+		rdev: Number(stat.rdev),
 		isDirectory: stat.is_directory,
 		isSymbolicLink: stat.is_symbolic_link,
 		atimeMs: stat.atime_ms,
 		mtimeMs: stat.mtime_ms,
 		ctimeMs: stat.ctime_ms,
 		birthtimeMs: stat.birthtime_ms,
-		ino: stat.ino,
-		nlink: stat.nlink,
+		ino: Number(stat.ino),
+		inoExact: stat.ino,
+		nlink: Number(stat.nlink),
+		nlinkExact: stat.nlink,
 		uid: stat.uid,
 		gid: stat.gid,
 	};
+}
+
+/**
+ * Drop the optional `*Exact` bigint fields before a stat crosses the JSON
+ * sync bridge: `JSON.stringify` throws on bigint, and the guest-side Node
+ * shim only consumes the numeric fields anyway. In-process consumers (e.g.
+ * the WASI filestat writer) keep the exact fields.
+ */
+export function virtualStatToSyncJson(stat: VirtualStat): VirtualStat {
+	const {
+		sizeExact: _sizeExact,
+		inoExact: _inoExact,
+		nlinkExact: _nlinkExact,
+		...jsonStat
+	} = stat;
+	return jsonStat;
 }
 
 /** Build a `VirtualDirEntry` from a directory child name and its lstat. */

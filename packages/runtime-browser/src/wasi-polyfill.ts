@@ -1389,11 +1389,17 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
         const view = this._memoryView();
         const offset = Number(statPtr) >>> 0;
         const filetype = stats ? this._filetypeForStats(stats) : fallbackType;
+        const ino =
+          typeof stats?.inoExact === "bigint" ? stats.inoExact : BigInt(stats?.ino ?? 0);
+        const nlink =
+          typeof stats?.nlinkExact === "bigint" ? stats.nlinkExact : BigInt(stats?.nlink ?? 1);
+        const size =
+          typeof stats?.sizeExact === "bigint" ? stats.sizeExact : BigInt(stats?.size ?? 0);
         view.setBigUint64(offset, 0n, true);
-        view.setBigUint64(offset + 8, BigInt(stats?.ino ?? 0), true);
+        view.setBigUint64(offset + 8, ino, true);
         view.setUint8(offset + 16, filetype);
-        view.setBigUint64(offset + 24, BigInt(stats?.nlink ?? 1), true);
-        view.setBigUint64(offset + 32, BigInt(stats?.size ?? 0), true);
+        view.setBigUint64(offset + 24, nlink, true);
+        view.setBigUint64(offset + 32, size, true);
         view.setBigUint64(offset + 40, BigInt(Math.trunc((stats?.atimeMs ?? 0) * 1000000)), true);
         view.setBigUint64(offset + 48, BigInt(Math.trunc((stats?.mtimeMs ?? 0) * 1000000)), true);
         view.setBigUint64(offset + 56, BigInt(Math.trunc((stats?.ctimeMs ?? 0) * 1000000)), true);
@@ -1592,10 +1598,22 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
       }
     }
 
+    _positionedIoOffset(offset) {
+      const explicitOffset = Number(offset);
+      if (!Number.isFinite(explicitOffset) || explicitOffset < 0) {
+        return null;
+      }
+      return explicitOffset;
+    }
+
     _fdPwrite(fd, iovs, iovsLen, offset, nwrittenPtr) {
       try {
         const bytes = this._collectIovs(iovs, iovsLen);
         const descriptor = Number(fd) >>> 0;
+        const explicitOffset = this._positionedIoOffset(offset);
+        if (explicitOffset === null) {
+          return __agentOSWasiErrnoInval;
+        }
         const handle = this._externalFdHandle(descriptor);
         if (
           (handle?.kind === "passthrough" || handle?.kind === "host-passthrough") &&
@@ -1609,7 +1627,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
             bytes,
             0,
             bytes.length,
-            Number(offset) >>> 0,
+            explicitOffset,
           );
           return this._writeUint32(nwrittenPtr, written);
         }
@@ -1625,7 +1643,7 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
           bytes,
           0,
           bytes.length,
-          Number(offset) >>> 0,
+          explicitOffset,
         );
         return this._writeUint32(nwrittenPtr, written);
       } catch {
@@ -1636,7 +1654,10 @@ if (typeof globalThis !== "undefined" && typeof globalThis.__agentOSWasiModule =
     _fdPread(fd, iovs, iovsLen, offset, nreadPtr) {
       try {
         const descriptor = Number(fd) >>> 0;
-        const explicitOffset = Number(offset) >>> 0;
+        const explicitOffset = this._positionedIoOffset(offset);
+        if (explicitOffset === null) {
+          return __agentOSWasiErrnoInval;
+        }
         const totalLength = this._boundedReadLength(iovs, iovsLen);
         const buffer = Buffer.alloc(totalLength);
         const handle = this._externalFdHandle(descriptor);

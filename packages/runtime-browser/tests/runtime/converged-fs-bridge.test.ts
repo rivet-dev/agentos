@@ -5,6 +5,7 @@ import {
 	convergedFilesystemSyncResponse,
 	type GuestFilesystemResult,
 	isSingleCallFilesystemOperation,
+	virtualStatToSyncJson,
 	wireStatToDirEntry,
 	wireStatToVirtualStat,
 } from "../../src/converged-fs-bridge.js";
@@ -17,18 +18,18 @@ import {
 
 const SAMPLE_STAT: LiveGuestFilesystemStat = {
 	mode: 0o100644,
-	size: 12,
-	blocks: 1,
-	dev: 2,
-	rdev: 0,
+	size: 12n,
+	blocks: 1n,
+	dev: 2n,
+	rdev: 0n,
 	is_directory: false,
 	is_symbolic_link: false,
 	atime_ms: 10,
 	mtime_ms: 20,
 	ctime_ms: 30,
 	birthtime_ms: 40,
-	ino: 7,
-	nlink: 1,
+	ino: 7n,
+	nlink: 1n,
 	uid: 1000,
 	gid: 1000,
 };
@@ -166,7 +167,7 @@ describe("converged filesystem bridge translation", () => {
 		);
 		expect(response).toEqual({
 			kind: SYNC_BRIDGE_KIND_JSON,
-			value: wireStatToVirtualStat(SAMPLE_STAT),
+			value: virtualStatToSyncJson(wireStatToVirtualStat(SAMPLE_STAT)),
 		});
 		expect(wireStatToVirtualStat(SAMPLE_STAT)).toMatchObject({
 			isDirectory: false,
@@ -174,6 +175,28 @@ describe("converged filesystem bridge translation", () => {
 			mtimeMs: 20,
 			birthtimeMs: 40,
 		});
+	});
+
+	it("keeps stat sync responses JSON-serializable despite bigint exact fields", () => {
+		const unsafe = BigInt(Number.MAX_SAFE_INTEGER) + 2n;
+		const response = convergedFilesystemSyncResponse(
+			"fs.stat",
+			result({
+				operation: "stat",
+				stat: { ...SAMPLE_STAT, size: unsafe, ino: unsafe, nlink: unsafe },
+			}),
+		);
+		if (response.kind !== SYNC_BRIDGE_KIND_JSON) {
+			throw new Error("expected JSON sync response");
+		}
+		// JSON.stringify throws on bigint; the sync bridge encodes with it.
+		const encoded = JSON.stringify(response.value);
+		const decoded = JSON.parse(encoded);
+		expect(decoded.ino).toBe(Number(unsafe));
+		expect(decoded.size).toBe(Number(unsafe));
+		expect(decoded).not.toHaveProperty("inoExact");
+		expect(decoded).not.toHaveProperty("sizeExact");
+		expect(decoded).not.toHaveProperty("nlinkExact");
 	});
 
 	it("returns NONE for mutations and JSON booleans for exists", () => {

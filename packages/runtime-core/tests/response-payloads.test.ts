@@ -57,6 +57,47 @@ describe("response payload conversion", () => {
 		});
 	});
 
+	it("preserves oversized guest directory entry sizes", () => {
+		const unsafeSize = BigInt(Number.MAX_SAFE_INTEGER) + 2n;
+
+		expect(
+			fromGeneratedResponsePayload({
+				tag: "GuestFilesystemResultResponse",
+				val: {
+					operation: protocol.GuestFilesystemOperation.ReadDir,
+					path: "/tmp",
+					content: null,
+					encoding: null,
+					entries: [
+						{
+							name: "huge.bin",
+							path: "/tmp/huge.bin",
+							isDirectory: false,
+							isSymbolicLink: false,
+							size: unsafeSize,
+						},
+					],
+					stat: null,
+					exists: null,
+					target: null,
+				},
+			}),
+		).toEqual({
+			type: "guest_filesystem_result",
+			operation: "read_dir",
+			path: "/tmp",
+			entries: [
+				{
+					name: "huge.bin",
+					path: "/tmp/huge.bin",
+					isDirectory: false,
+					isSymbolicLink: false,
+					size: unsafeSize,
+				},
+			],
+		});
+	});
+
 	it("maps guest kernel call results", () => {
 		const payload = new TextEncoder().encode(
 			JSON.stringify({ socketId: 3, written: 5 }),

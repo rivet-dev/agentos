@@ -30,7 +30,7 @@ export interface LiveGuestDirEntry {
 	path: string;
 	isDirectory: boolean;
 	isSymbolicLink: boolean;
-	size: number;
+	size: bigint;
 }
 
 export interface LiveSignalHandlerRegistration {
@@ -346,7 +346,7 @@ export function fromGeneratedResponsePayload(
 								path: entry.path,
 								isDirectory: entry.isDirectory,
 								isSymbolicLink: entry.isSymbolicLink,
-								size: bigIntToSafeNumber(entry.size, "guest dir entry size"),
+								size: entry.size,
 							})),
 						}
 					: {}),

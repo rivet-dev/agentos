@@ -28,21 +28,79 @@ describe("state conversion", () => {
 			}),
 		).toEqual({
 			mode: 0o100644,
-			size: 42,
-			blocks: 1,
-			dev: 2,
-			rdev: 0,
+			size: 42n,
+			blocks: 1n,
+			dev: 2n,
+			rdev: 0n,
 			is_directory: false,
 			is_symbolic_link: false,
 			atime_ms: 100,
 			mtime_ms: 200,
 			ctime_ms: 300,
 			birthtime_ms: 400,
-			ino: 10,
-			nlink: 1,
+			ino: 10n,
+			nlink: 1n,
 			uid: 1000,
 			gid: 1000,
 		});
+	});
+
+	it("preserves u64 stat identity fields above the JS safe integer range", () => {
+		// Host filesystems (overlayfs, FUSE, network mounts) can report
+		// dev/ino values above Number.MAX_SAFE_INTEGER; converting them to
+		// JS numbers here used to throw and break every stat over the mount.
+		const unsafe = BigInt(Number.MAX_SAFE_INTEGER) + 2n;
+
+		const stat = fromGeneratedGuestFilesystemStat({
+			mode: 0o100644,
+			size: unsafe,
+			blocks: unsafe,
+			dev: unsafe,
+			rdev: unsafe,
+			isDirectory: false,
+			isSymbolicLink: false,
+			atimeMs: 100n,
+			mtimeMs: 200n,
+			ctimeMs: 300n,
+			birthtimeMs: 400n,
+			ino: unsafe,
+			nlink: 1n,
+			uid: 1000,
+			gid: 1000,
+		});
+
+		expect(stat.dev).toBe(unsafe);
+		expect(stat.rdev).toBe(unsafe);
+		expect(stat.ino).toBe(unsafe);
+		expect(stat.size).toBe(unsafe);
+		expect(stat.blocks).toBe(unsafe);
+	});
+
+	it("converts guest stat timestamps lossily instead of throwing", () => {
+		const farFuture = 2n ** 60n;
+
+		const stat = fromGeneratedGuestFilesystemStat({
+			mode: 0o100644,
+			size: 42n,
+			blocks: 1n,
+			dev: 2n,
+			rdev: 0n,
+			isDirectory: false,
+			isSymbolicLink: false,
+			atimeMs: farFuture,
+			mtimeMs: farFuture,
+			ctimeMs: farFuture,
+			birthtimeMs: farFuture,
+			ino: 10n,
+			nlink: 1n,
+			uid: 1000,
+			gid: 1000,
+		});
+
+		expect(stat.atime_ms).toBe(Number(farFuture));
+		expect(stat.mtime_ms).toBe(Number(farFuture));
+		expect(stat.ctime_ms).toBe(Number(farFuture));
+		expect(stat.birthtime_ms).toBe(Number(farFuture));
 	});
 
 	it("maps generated socket state entries to live socket entries", () => {

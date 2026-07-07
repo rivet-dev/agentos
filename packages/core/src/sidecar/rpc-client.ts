@@ -1403,7 +1403,9 @@ export class NativeSidecarKernelProxy {
 				options?.maxDepth,
 			);
 		}
-		return this.client.readdirRecursive(this.session, this.vm, path, options);
+		return (
+			await this.client.readdirRecursive(this.session, this.vm, path, options)
+		).map((entry) => ({ ...entry, size: Number(entry.size) }));
 	}
 
 	async removeFile(path: string): Promise<void> {
@@ -2620,21 +2622,27 @@ function errnoError(code: string, message: string): Error {
 	return Object.assign(new Error(`${code}: ${message}`), { code });
 }
 
+// VirtualStat is a numeric, Node-default-shaped view: u64 fields above
+// Number.MAX_SAFE_INTEGER lose precision here, same as Node's non-bigint
+// fs.stat on the host.
 function toVirtualStat(stat: GuestFilesystemStat): VirtualStat {
 	return {
 		mode: stat.mode,
-		size: stat.size,
-		blocks: stat.blocks,
-		dev: stat.dev,
-		rdev: stat.rdev,
+		size: Number(stat.size),
+		sizeExact: stat.size,
+		blocks: Number(stat.blocks),
+		dev: Number(stat.dev),
+		rdev: Number(stat.rdev),
 		isDirectory: stat.is_directory,
 		isSymbolicLink: stat.is_symbolic_link,
 		atimeMs: stat.atime_ms,
 		mtimeMs: stat.mtime_ms,
 		ctimeMs: stat.ctime_ms,
 		birthtimeMs: stat.birthtime_ms,
-		ino: stat.ino,
-		nlink: stat.nlink,
+		ino: Number(stat.ino),
+		inoExact: stat.ino,
+		nlink: Number(stat.nlink),
+		nlinkExact: stat.nlink,
 		uid: stat.uid,
 		gid: stat.gid,
 	};

@@ -1,21 +1,25 @@
 import * as protocol from "./generated-protocol.js";
-import { bigIntToSafeNumber } from "./numbers.js";
 import { fromGeneratedProcessSnapshotStatus } from "./protocol-maps.js";
 
+// The u64 identity/size fields stay bigint: host filesystems (overlayfs,
+// FUSE, network mounts) can report dev/ino values above
+// Number.MAX_SAFE_INTEGER, and the Rust client keeps the same fields as u64.
+// Consumers that need JS numbers convert (lossily, like Node's default
+// fs.stat) at their own boundary.
 export interface LiveGuestFilesystemStat {
 	mode: number;
-	size: number;
-	blocks: number;
-	dev: number;
-	rdev: number;
+	size: bigint;
+	blocks: bigint;
+	dev: bigint;
+	rdev: bigint;
 	is_directory: boolean;
 	is_symbolic_link: boolean;
 	atime_ms: number;
 	mtime_ms: number;
 	ctime_ms: number;
 	birthtime_ms: number;
-	ino: number;
-	nlink: number;
+	ino: bigint;
+	nlink: bigint;
 	uid: number;
 	gid: number;
 }
@@ -46,21 +50,18 @@ export function fromGeneratedGuestFilesystemStat(
 ): LiveGuestFilesystemStat {
 	return {
 		mode: stat.mode,
-		size: bigIntToSafeNumber(stat.size, "guest filesystem stat size"),
-		blocks: bigIntToSafeNumber(stat.blocks, "guest filesystem stat blocks"),
-		dev: bigIntToSafeNumber(stat.dev, "guest filesystem stat dev"),
-		rdev: bigIntToSafeNumber(stat.rdev, "guest filesystem stat rdev"),
+		size: stat.size,
+		blocks: stat.blocks,
+		dev: stat.dev,
+		rdev: stat.rdev,
 		is_directory: stat.isDirectory,
 		is_symbolic_link: stat.isSymbolicLink,
-		atime_ms: bigIntToSafeNumber(stat.atimeMs, "guest filesystem stat atime"),
-		mtime_ms: bigIntToSafeNumber(stat.mtimeMs, "guest filesystem stat mtime"),
-		ctime_ms: bigIntToSafeNumber(stat.ctimeMs, "guest filesystem stat ctime"),
-		birthtime_ms: bigIntToSafeNumber(
-			stat.birthtimeMs,
-			"guest filesystem stat birthtime",
-		),
-		ino: bigIntToSafeNumber(stat.ino, "guest filesystem stat ino"),
-		nlink: bigIntToSafeNumber(stat.nlink, "guest filesystem stat nlink"),
+		atime_ms: Number(stat.atimeMs),
+		mtime_ms: Number(stat.mtimeMs),
+		ctime_ms: Number(stat.ctimeMs),
+		birthtime_ms: Number(stat.birthtimeMs),
+		ino: stat.ino,
+		nlink: stat.nlink,
 		uid: stat.uid,
 		gid: stat.gid,
 	};
