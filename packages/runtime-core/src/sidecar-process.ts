@@ -56,7 +56,27 @@ export { SidecarProcess as Sidecar };
 
 const BRIDGE_CONTRACT_VERSION = 1;
 
-export const NATIVE_SIDECAR_FRAME_TIMEOUT_MS = 120_000;
+const DEFAULT_NATIVE_SIDECAR_FRAME_TIMEOUT_MS = 120_000;
+
+// Per-frame timeout for the native sidecar protocol: how long the host waits for
+// a sidecar response frame before treating the sidecar as unresponsive. A single
+// long host request maps to one frame, so workloads with legitimately long turns
+// (an agent turn with many tool calls, media generation, etc.) can exceed the
+// default and be killed mid-turn with "timed out waiting for sidecar protocol
+// frame". The native sidecar is process-global (spawned once and multiplexed),
+// so this is an env override rather than a per-instance option.
+function resolveNativeSidecarFrameTimeoutMs(): number {
+	const raw = process.env.AGENTOS_SIDECAR_FRAME_TIMEOUT_MS;
+	if (raw !== undefined) {
+		const parsed = Number(raw);
+		if (Number.isFinite(parsed) && parsed > 0) {
+			return parsed;
+		}
+	}
+	return DEFAULT_NATIVE_SIDECAR_FRAME_TIMEOUT_MS;
+}
+
+export const NATIVE_SIDECAR_FRAME_TIMEOUT_MS = resolveNativeSidecarFrameTimeoutMs();
 const DEFAULT_SIDECAR_EVENT_BUFFER_CAPACITY = 4_096;
 const DEFAULT_SIDECAR_GRACEFUL_EXIT_MS = 5_000;
 const DEFAULT_SIDECAR_FORCE_EXIT_MS = 2_000;
