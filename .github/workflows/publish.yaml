@@ -22,6 +22,8 @@ env:
   R2_ENDPOINT: https://2a94c6a0ced8d35ea63cddc86c2681e7.r2.cloudflarestorage.com
   SIDECAR_PLATFORMS: "linux-x64-gnu linux-arm64-gnu darwin-x64 darwin-arm64"
   PUBLISH_INCLUDE_REGISTRY_PACKAGES: "1"
+  LINUX_GNU_LLVM_VERSION: "22"
+  LINUX_GNU_SYSROOT_TAG: "sysroot-20250207"
 
 jobs:
   context:
@@ -103,7 +105,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
-          key: ${{ matrix.target }}-${{ needs.context.outputs.trigger }}
+          key: ${{ matrix.target }}-${{ env.LINUX_GNU_SYSROOT_TAG }}-llvm-${{ env.LINUX_GNU_LLVM_VERSION }}-${{ needs.context.outputs.trigger }}
       - uses: actions/cache@v4
         with:
           path: ~/.cargo/.rusty_v8
@@ -111,6 +113,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
       - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
+      - name: Set up Linux GNU sysroot
+        run: scripts/ci/setup-linux-gnu-sysroot.sh
       - name: Build sidecar binaries
         id: build
         run: |
@@ -128,6 +132,16 @@ jobs:
           cp "target/${{ matrix.target }}/${profile}/agentos-sidecar" "$out/agentos-sidecar"
           cp "target/${{ matrix.target }}/${profile}/agentos-native-sidecar" "$out/agentos-native-sidecar"
           echo "dir=$out" >> "$GITHUB_OUTPUT"
+      - name: Check glibc floor
+        run: |
+          scripts/ci/check-linux-glibc-floor.sh \
+            "${{ steps.build.outputs.dir }}/agentos-sidecar" \
+            "${{ steps.build.outputs.dir }}/agentos-native-sidecar"
+      - name: Smoke-run in old Linux containers
+        run: |
+          scripts/ci/smoke-linux-artifacts.sh binary \
+            "${{ steps.build.outputs.dir }}/agentos-sidecar" \
+            "${{ steps.build.outputs.dir }}/agentos-native-sidecar"
       - uses: actions/upload-artifact@v4
         with:
           name: sidecar-${{ matrix.platform }}
@@ -162,7 +176,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
-          key: plugin-${{ matrix.target }}-${{ needs.context.outputs.trigger }}
+          key: plugin-${{ matrix.target }}-${{ env.LINUX_GNU_SYSROOT_TAG }}-llvm-${{ env.LINUX_GNU_LLVM_VERSION }}-${{ needs.context.outputs.trigger }}
       - uses: actions/cache@v4
         with:
           path: ~/.cargo/.rusty_v8
@@ -170,6 +184,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
       - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
+      - name: Set up Linux GNU sysroot
+        run: scripts/ci/setup-linux-gnu-sysroot.sh
       - name: Build plugin cdylib
         id: build
         run: |
@@ -186,6 +202,14 @@ jobs:
           cp "target/${{ matrix.target }}/${profile}/libagentos_actor_plugin.so" \
             "$out/libagentos_actor_plugin.so"
           echo "dir=$out" >> "$GITHUB_OUTPUT"
+      - name: Check glibc floor
+        run: |
+          scripts/ci/check-linux-glibc-floor.sh \
+            "${{ steps.build.outputs.dir }}/libagentos_actor_plugin.so"
+      - name: Smoke-run in old Linux containers
+        run: |
+          scripts/ci/smoke-linux-artifacts.sh shared-library \
+            "${{ steps.build.outputs.dir }}/libagentos_actor_plugin.so"
       - uses: actions/upload-artifact@v4
         with:
           name: plugin-${{ matrix.platform }}
