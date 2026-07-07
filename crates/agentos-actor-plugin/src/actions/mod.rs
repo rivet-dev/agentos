@@ -21,7 +21,7 @@ pub(crate) mod shell;
 use std::collections::HashMap;
 
 use agentos_client::AgentOs;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use rivet_actor_plugin_abi as abi;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -82,8 +82,83 @@ impl Vars {
 }
 
 /// Decode positional CBOR args into `T`.
+///
+/// The rivetkit client wire wraps values CBOR can't carry in JSON-compat
+/// envelopes (`["$Undefined", 0]`, `["$Uint8Array", base64]`, ... — see
+/// rivetkit `common/encoding.ts`). JS `undefined` is the one that reaches
+/// arbitrary action args (`handle.exec(cmd, undefined)`, options objects
+/// with explicitly-undefined fields), so revive it to null before serde;
+/// other envelopes keep their existing per-DTO handling.
+///
+/// Failures carry a bounded hex prefix of the raw payload: action decode
+/// errors surface to clients as opaque 500s, so the server-side log must be
+/// enough to diagnose an encoding mismatch without a wire capture.
 fn decode_as<T: DeserializeOwned>(args: &[u8]) -> Result<T> {
-    abi::codec::decode_positional(args)
+    decode_args_impl(args).map_err(|error| {
+        let prefix_len = args.len().min(96);
+        let mut hex = String::with_capacity(prefix_len * 2);
+        for byte in &args[..prefix_len] {
+            use std::fmt::Write;
+            let _ = write!(hex, "{byte:02x}");
+        }
+        let suffix = if args.len() > prefix_len { "…" } else { "" };
+        error.context(format!(
+            "action args cbor ({} bytes): {hex}{suffix}",
+            args.len()
+        ))
+    })
+}
+
+const JSON_COMPAT_UNDEFINED: &str = "$Undefined";
+
+fn decode_args_impl<T: DeserializeOwned>(args: &[u8]) -> Result<T> {
+    // Cheap pre-scan: the envelope always contains the literal sentinel text.
+    let needle = JSON_COMPAT_UNDEFINED.as_bytes();
+    let has_sentinel = args.windows(needle.len()).any(|w| w == needle);
+    if !has_sentinel {
+        return abi::codec::decode_positional(args);
+    }
+    let value: ciborium::Value = ciborium::from_reader(std::io::Cursor::new(args))
+        .context("decode action args from cbor")?;
+    let value = revive_undefined_envelopes(value);
+    let mut normalized = Vec::new();
+    ciborium::into_writer(&value, &mut normalized)
+        .context("re-encode revived action args")?;
+    abi::codec::decode_positional(&normalized)
+}
+
+/// Revive rivetkit `["$Undefined", 0]` envelopes recursively, matching JS
+/// semantics: positional/array occurrences become null, and object fields
+/// that are explicitly `undefined` are treated as absent (dropped) so
+/// `#[serde(default)]` fields on options DTOs apply their defaults.
+fn revive_undefined_envelopes(value: ciborium::Value) -> ciborium::Value {
+    use ciborium::Value;
+    match value {
+        Value::Array(items) => {
+            if is_undefined_envelope_items(&items) {
+                return Value::Null;
+            }
+            Value::Array(items.into_iter().map(revive_undefined_envelopes).collect())
+        }
+        Value::Map(entries) => Value::Map(
+            entries
+                .into_iter()
+                .filter(|(_, v)| !is_undefined_envelope(v))
+                .map(|(k, v)| (k, revive_undefined_envelopes(v)))
+                .collect(),
+        ),
+        Value::Tag(tag, inner) => Value::Tag(tag, Box::new(revive_undefined_envelopes(*inner))),
+        other => other,
+    }
+}
+
+fn is_undefined_envelope(value: &ciborium::Value) -> bool {
+    matches!(value, ciborium::Value::Array(items) if is_undefined_envelope_items(items))
+}
+
+fn is_undefined_envelope_items(items: &[ciborium::Value]) -> bool {
+    items.len() == 2
+        && matches!(&items[0], ciborium::Value::Text(tag) if tag == JSON_COMPAT_UNDEFINED)
 }
 
 /// Reply success: encode `value` with the JSON-compat byte wrapping (byte-exact
@@ -116,7 +191,9 @@ pub(crate) fn encode_event_arg<T: Serialize>(payload: &T) -> Result<Vec<u8>> {
 
 /// Reply failure with the error message (matches `ActionCall::err`).
 fn reply_err(host: &HostCtx, token: u64, error: anyhow::Error) {
-    let message = error.to_string();
+    // `{:#}` prints the full anyhow context chain — a bare top-level context
+    // like "decode positional action args" is undiagnosable from client logs.
+    let message = format!("{error:#}");
     host.log_warn(&format!("agent-os action failed: {message}"));
     host.reply_err(token, &message);
 }

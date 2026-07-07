@@ -213,3 +213,46 @@ fn assert_object_keys(action: &str, value: &CborValue, expected: &[&str]) {
 fn normalize_ws(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
+
+/// Regression: rivetkit clients encode JS `undefined` as the JSON-compat
+/// envelope `["$Undefined", 0]` (rivetkit `common/encoding.ts`). Explicitly
+/// passing an omitted trailing options arg (`handle.exec(cmd, undefined)`)
+/// or an explicitly-undefined options field (`{ env: undefined }`) must
+/// decode instead of failing with an opaque positional-decode error.
+#[test]
+fn undefined_envelopes_decode_as_absent_options() {
+    let undefined = CborValue::Array(vec![
+        CborValue::Text(String::from("$Undefined")),
+        CborValue::Integer(0.into()),
+    ]);
+
+    // exec("pwd", undefined)
+    let args = encode_args(&CborValue::Array(vec![
+        CborValue::Text(String::from("pwd")),
+        undefined.clone(),
+    ]));
+    contract::decode_action_args("exec", &args).expect("exec with trailing undefined options");
+
+    // exec("pwd", { env: undefined })
+    let args = encode_args(&CborValue::Array(vec![
+        CborValue::Text(String::from("pwd")),
+        CborValue::Map(vec![(
+            CborValue::Text(String::from("env")),
+            undefined.clone(),
+        )]),
+    ]));
+    contract::decode_action_args("exec", &args).expect("exec with undefined options field");
+
+    // createSession("pi", undefined)
+    let args = encode_args(&CborValue::Array(vec![
+        CborValue::Text(String::from("pi")),
+        undefined,
+    ]));
+    contract::decode_action_args("createSession", &args).expect("createSession with trailing undefined");
+}
+
+fn encode_args(value: &CborValue) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    ciborium::into_writer(value, &mut bytes).expect("encode test args");
+    bytes
+}
