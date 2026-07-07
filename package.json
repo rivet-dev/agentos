@@ -26,6 +26,7 @@
 		"@agentos-software/claude-code": "workspace:*",
 		"@agentos-software/codex": "workspace:*",
 		"@agentos-software/common": "workspace:*",
+		"@rivet-dev/agentos-vm-test-harness": "workspace:*",
 		"@rivet-dev/agentos-runtime-core": "workspace:*",
 		"@agentos-software/pi": "workspace:*",
 		"@types/node": "^22.19.15",
