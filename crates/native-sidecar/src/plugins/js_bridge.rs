@@ -329,10 +329,39 @@ struct JsBridgeVirtualStat {
     gid: u32,
 }
 
+/// Mask of the POSIX file-type bits within `st_mode`.
+const S_IFMT: u32 = 0o170000;
+const S_IFDIR: u32 = 0o040000;
+const S_IFREG: u32 = 0o100000;
+const S_IFLNK: u32 = 0o120000;
+
+impl JsBridgeVirtualStat {
+    /// Bridge backends (e.g. the actor plugin's durable-storage fs) may send
+    /// permission-only `mode` values and carry the entry type in the
+    /// `isDirectory` / `isSymbolicLink` booleans. Guest-facing consumers
+    /// (WASI filestat, Node `Stats.isFile()`) derive the type from `S_IFMT`
+    /// bits, so a bare permission mode reads as "unknown filetype" and breaks
+    /// `cat`/`cd`/`ls` on mount-backed paths. Normalize by deriving the type
+    /// bits from the booleans whenever the backend omitted them.
+    fn normalized_mode(&self) -> u32 {
+        if self.mode & S_IFMT != 0 {
+            return self.mode;
+        }
+        let type_bits = if self.is_symbolic_link {
+            S_IFLNK
+        } else if self.is_directory {
+            S_IFDIR
+        } else {
+            S_IFREG
+        };
+        type_bits | self.mode
+    }
+}
+
 impl From<JsBridgeVirtualStat> for VirtualStat {
     fn from(stat: JsBridgeVirtualStat) -> Self {
         Self {
-            mode: stat.mode,
+            mode: stat.normalized_mode(),
             size: stat.size,
             blocks: stat.blocks,
             dev: stat.dev,

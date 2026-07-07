@@ -392,18 +392,24 @@ async fn read_file(host: &HostCtx, path: &str) -> Result<String> {
     if entry.is_directory {
         bail!("EISDIR is a directory: {}", entry.path);
     }
-    // Fetch the content BLOB only here (lookup_entry is metadata-only now).
+    Ok(fetch_content(host, &entry.path).await?.unwrap_or_default())
+}
+
+/// Fetch the content BLOB with a dedicated query. `lookup_entry` is
+/// metadata-only (`NULL AS content`), so every consumer that actually needs
+/// bytes (`read_file`, `pread`, `truncate`, `link`) must fetch them here —
+/// reading `FsEntry::content` off a lookup silently yields empty data.
+async fn fetch_content(host: &HostCtx, path: &str) -> Result<Option<String>> {
     let mut rows = query_rows(
         host,
         "SELECT content FROM agent_os_fs_entries WHERE path = ?",
-        &[json!(entry.path)],
+        &[json!(path)],
     )
     .await?;
-    let content = match rows.first_mut() {
-        Some(row) => optional_content_col(row, "content")?,
-        None => None,
-    };
-    Ok(content.unwrap_or_default())
+    match rows.first_mut() {
+        Some(row) => optional_content_col(row, "content"),
+        None => Ok(None),
+    }
 }
 
 // --- ctx-free helpers (copied verbatim from rivetkit-agent-os::persistence) ---
@@ -846,11 +852,12 @@ async fn link_entry(host: &HostCtx, old_path: String, new_path: String) -> Resul
     if entry.is_directory {
         bail!("EPERM cannot hard-link directory: {old_path}");
     }
+    let content = fetch_content(host, &entry.path).await?;
     insert_entry(
         host,
         &new_path,
         false,
-        entry.content,
+        content,
         entry.mode,
         entry.size,
         entry.symlink_target,
@@ -896,7 +903,8 @@ async fn truncate_file(host: &HostCtx, path: &str, len: i64) -> Result<()> {
     if entry.is_directory {
         bail!("EISDIR is a directory: {}", entry.path);
     }
-    let mut bytes = decode_content(entry.content.as_deref().unwrap_or_default())?;
+    let content = fetch_content(host, &entry.path).await?;
+    let mut bytes = decode_content(content.as_deref().unwrap_or_default())?;
     bytes.resize(len as usize, 0);
     let content = BASE64.encode(bytes);
     run_stmt(
@@ -921,7 +929,8 @@ async fn pread_file(host: &HostCtx, path: &str, offset: i64, len: i64) -> Result
     if entry.is_directory {
         bail!("EISDIR is a directory: {}", entry.path);
     }
-    let bytes = decode_content(entry.content.as_deref().unwrap_or_default())?;
+    let content = fetch_content(host, &entry.path).await?;
+    let bytes = decode_content(content.as_deref().unwrap_or_default())?;
     let start = (offset as usize).min(bytes.len());
     let end = start.saturating_add(len as usize).min(bytes.len());
     Ok(BASE64.encode(&bytes[start..end]))

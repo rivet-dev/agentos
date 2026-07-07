@@ -390,6 +390,56 @@ async fn persistence_round_trips_fs_ops_against_real_sqlite() {
             "readDir should list hello.txt, got {names:?}"
         );
 
+        // pread must return the real byte range. Regression: pread used to
+        // read `entry.content` off the metadata-only lookup (`NULL AS
+        // content`), so every guest WASM read of a mount-backed root file
+        // came back empty (`cat` printed nothing, `wc -c` reported 0).
+        let pread = persistence::handle_fs_call(
+            &host,
+            "pread",
+            &json!({ "path": path, "offset": 6, "len": 7 }),
+        )
+        .await
+        .expect("pread");
+        assert_eq!(
+            pread,
+            Some(JsonValue::String(BASE64.encode(&content[6..13]))),
+            "pread must return the stored bytes, not the metadata-only view"
+        );
+
+        // Hard link must copy real content (same metadata-only-lookup bug).
+        let link_path = "/work/hello-link.txt";
+        persistence::handle_fs_call(
+            &host,
+            "link",
+            &json!({ "oldPath": path, "newPath": link_path }),
+        )
+        .await
+        .expect("link");
+        let link_read =
+            persistence::handle_fs_call(&host, "readFile", &json!({ "path": link_path }))
+                .await
+                .expect("readFile link");
+        assert_eq!(
+            link_read,
+            Some(JsonValue::String(content_b64.clone())),
+            "hard link must carry the original content"
+        );
+
+        // Truncate must preserve the retained prefix (it used to zero-fill
+        // from the metadata-only empty content).
+        persistence::handle_fs_call(&host, "truncate", &json!({ "path": path, "len": 5 }))
+            .await
+            .expect("truncate");
+        let truncated = persistence::handle_fs_call(&host, "readFile", &json!({ "path": path }))
+            .await
+            .expect("readFile after truncate");
+        assert_eq!(
+            truncated,
+            Some(JsonValue::String(BASE64.encode(&content[..5]))),
+            "truncate must keep the retained bytes intact"
+        );
+
         // removeFile → exists is now false.
         persistence::handle_fs_call(&host, "removeFile", &json!({ "path": path }))
             .await
