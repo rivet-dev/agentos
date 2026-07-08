@@ -1356,11 +1356,34 @@ ykAheWCsAteSEWVc0w==\n\
                 return fallback;
             }
 
-            let vendored = repo_root.join("packages/core/commands");
+            let vendored = repo_root.join("packages/runtime-core/commands");
             if vendored.exists() {
                 let staged = temp_dir("agentos-native-sidecar-vendored-commands");
                 for command in ["bash", "cat", "mkdir", "printf", "sh"] {
                     let source = vendored.join(command);
+                    let target = staged.join(command);
+                    fs::copy(&source, &target).unwrap_or_else(|error| {
+                        panic!(
+                            "copy vendored command {} -> {}: {error}",
+                            source.display(),
+                            target.display()
+                        )
+                    });
+                    let mut permissions = fs::metadata(&target)
+                        .expect("stat staged vendored command")
+                        .permissions();
+                    permissions.set_mode(0o755);
+                    fs::set_permissions(&target, permissions)
+                        .expect("chmod staged vendored command");
+                }
+                return staged;
+            }
+
+            let legacy_vendored = repo_root.join("packages/core/commands");
+            if legacy_vendored.exists() {
+                let staged = temp_dir("agentos-native-sidecar-vendored-commands");
+                for command in ["bash", "cat", "mkdir", "printf", "sh"] {
+                    let source = legacy_vendored.join(command);
                     let target = staged.join(command);
                     fs::copy(&source, &target).unwrap_or_else(|error| {
                         panic!(

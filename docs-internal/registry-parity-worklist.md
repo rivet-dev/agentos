@@ -138,14 +138,14 @@ so a reader sees the whole board at a glance.
 
 ## P0 — Runtime / VM correctness
 
-### 1. brush-shell `>>` append truncates instead of appending
+### 1. brush-shell `>>` append truncates instead of appending — DONE
 - **Broken:** `execSync` with `>>` onto a write-only file overwrites instead of
   appends. `expected 'changed' to be 'originalchanged'`. (issue: rivet-dev/agentos#1657)
 - **Objective:** `>>` opens `O_WRONLY|O_APPEND` against the kernel VFS and appends,
   identical to bash on Linux.
-- **Proof:** `bridge-child-process.test.ts` "append redirection … succeeds like
-  Linux" passes un-skipped, plus a direct VFS append test.
-- **rev:** `fix(runtime): honor >> append mode in guest shell VFS redirection`
+- **Proof:** `bridge-child-process.test.ts` append redirection tests pass
+  un-skipped; direct kernel append and native sidecar append regressions pass.
+- **rev:** `ouxrzutq` — `fix(runtime): honor >> append mode in guest shell VFS redirection`
 
 ### 2. brush-shell `cat < file` stdin redirection fails (exit 1)
 - **Broken:** `cat < stdin-input.txt` exits 1 — input redirection from a VFS path
