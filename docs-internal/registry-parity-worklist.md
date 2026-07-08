@@ -104,7 +104,7 @@ actual backing:
 | **wget** | DONE | our 174-line `wget.c` (dropped) | real GNU Wget vs our sysroot — stub `getrlimit`/`getgroups`, then build |
 | **http-get** | DONE | our 95-line `http_get.c` | dropped; real curl covers HTTP fetches |
 | **git** | TODO | our hand-rolled git from `sha1`+`flate2` | **real git** (upstream C), patched for WASI — **NOT gitoxide** |
-| **fd** | TODO | our `secureexec-fd` on raw `regex` (not sharkdp/fd) | real **fd** (sharkdp) |
+| **fd** | DONE | our `secureexec-fd` on raw `regex` (not sharkdp/fd) | real **fd** (sharkdp) |
 | **findutils** (`find`,`xargs`) | TODO | our hand-rolled on `regex`/shims | real GNU findutils, or `uutils/findutils` |
 | **tree** | DONE | our hand-rolled, zero deps | real `tree`, or an established one |
 | **grep** | TODO | our `secureexec-grep` on raw `regex` (**not** an established grep pkg) | **real GNU grep**, or a popular established grep (ripgrep's `grep` crates) |
@@ -226,9 +226,25 @@ works (`wasi-spawn` broker), so `xargs` is not a blocker.
   longer includes the deleted Rust tree crates in
   `2026-07-08T05-33-17-0700-tree-cargo-metadata-after-removing-empty-dirs.log`.
   Rev: `kpmrwxln` — `fix(tree): build upstream tree`.
-- **fd — moderate.** Swap `cmd-fd` to depend on real `fd-find` (like
-  coreutils→`uu_*`; `fd-lock` is already patched). Only real issue: the parallel
-  `ignore`/crossbeam walker needs the **serial-thread patch** (uu_sort pattern).
+- **fd — DONE.** Replaced the custom Rust `secureexec-fd` regex walker with
+  upstream sharkdp `fd-find` 10.4.2. Because `fd-find` is a bin-only crate,
+  `cmd-fd` now acts as the workspace build trigger while the toolchain builds
+  the upstream `fd` binary directly. WASI compatibility stays in dependency
+  patches: `fd-find` gets narrow file-type/path/receiver adjustments, and
+  `ignore` uses a serial walker on `wasm32-wasip1` instead of host threads. Proof:
+  clean patch dry-runs pass in
+  `2026-07-08T06-19-50-0700-fd-find-patch-clean-dry-run.log` and
+  `2026-07-08T06-26-52-0700-fd-ignore-patch-final-dry-run.log`;
+  clean upstream WASM build compiles `fd-find v10.4.2` in
+  `2026-07-08T06-21-54-0700-fd-upstream-wasm-rebuild-after-ignore-fix.log`;
+  runtime/package command hashes match in
+  `2026-07-08T06-22-42-0700-fd-copy-built-binary-hashes.log`; package build and
+  check-types pass in
+  `2026-07-08T06-24-27-0700-fd-package-build.log` and
+  `2026-07-08T06-25-41-0700-fd-check-types-final.log`; e2e fd tests pass 9/9,
+  including `fd --version` reporting `fd 10.4.2`, in
+  `2026-07-08T06-25-00-0700-fd-vitest-upstream-after-dir-format.log`.
+  Rev: `mrskpomv` — `fix(fd): build upstream fd-find`.
 - **grep — moderate.** Decision is real GNU grep (gnulib cascade → sysroot stubs)
   or ripgrep's `grep-*` crates (threads → serial patch). NB the current
   `secureexec-grep` also backs `rg`, so the shipped "ripgrep" is custom too.

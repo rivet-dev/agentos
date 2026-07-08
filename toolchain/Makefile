@@ -239,11 +239,17 @@ wasm-cmd: vendor patch-vendor patch-std wasm-opt-check
 	@crate_dir=$$(find ../software -path "*/native/crates/cmd-$(CMD)" -type d -print -quit); \
 	test -n "$$crate_dir" || test -d "crates/commands/$(CMD)" || { \
 		echo "ERROR: no software/*/native/crates/cmd-$(CMD) or crates/commands/$(CMD)"; exit 1; }
+	@cargo_pkg="cmd-$(CMD)"; cargo_bin="$(CMD)"; \
+	if [ "$(CMD)" = "fd" ]; then \
+		cargo_pkg="fd-find"; \
+		cargo_bin="fd"; \
+	fi; \
 	RUSTFLAGS="-C link-arg=-L$(WASI_SYSROOT_SELF_CONTAINED) --cfg tokio_unstable" \
 	cargo build --target $(WASM_TARGET) \
 		-Z build-std=std,panic_abort \
 		--release \
-		-p cmd-$(CMD)
+		-p $$cargo_pkg \
+		--bin $$cargo_bin
 	@mkdir -p $(COMMANDS_DIR)
 	@if command -v wasm-opt >/dev/null 2>&1; then \
 		wasm-opt -O3 --strip-debug --all-features "$(RELEASE_DIR)/$(CMD).wasm" -o "$(COMMANDS_DIR)/$(CMD)"; \
