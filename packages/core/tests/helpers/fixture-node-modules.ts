@@ -13,6 +13,7 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 
 /**
@@ -129,12 +130,11 @@ export function ensureFlatNodeModules(cwd: string): string {
 
 	const repoRoot = findRepoRoot(cwd);
 	const safe = packageName.replace(/[^a-z0-9]+/gi, "_");
-	const cacheRoot = join(
-		repoRoot,
-		"node_modules",
-		".cache",
-		"agentos-flat-fixtures",
-	);
+	const repoSafe = repoRoot.replace(/[^a-z0-9]+/gi, "_");
+	const cacheBase =
+		process.env.AGENTOS_FLAT_FIXTURE_CACHE_ROOT ??
+		join(tmpdir(), "agentos-flat-fixtures");
+	const cacheRoot = join(cacheBase, repoSafe);
 	mkdirSync(cacheRoot, { recursive: true });
 	const target = join(cacheRoot, safe);
 	const readyMarker = join(target, ".ready");

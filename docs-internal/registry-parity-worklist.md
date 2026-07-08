@@ -701,6 +701,19 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T15-00-00-0700-item12-pi-cli-sidecar-build-after-cc-restore-final.log`;
     `2026-07-08T15-01-00-0700-item12-pi-cli-focused-final-after-cc-restore.log`.
     Rev: `xqtkmsyn`.
+  - **claude — DONE.** Enabled the existing real `createSession('claude')`
+    session suite in default core Vitest coverage, projected the actual
+    `@agentos-software/claude-code` agent package, and replaced the missing
+    test-only `xu` binary dependency with a real PATH-backed `sh` command from
+    registry coreutils. The suite proves Claude ACP shell/tool flow, text-only
+    responses, nested Node `execSync`/`spawn`, session metadata/lifecycle,
+    modes, and raw ACP sends. The flat node_modules fixture cache now lives
+    outside root `node_modules` so VM mounts survive dependency refreshes.
+    Proof:
+    `2026-07-08T15-17-00-0700-item12-claude-cc-cache-restored-after-cache-move.log`;
+    `2026-07-08T15-17-00-0700-item12-claude-sidecar-build-after-cache-move.log`;
+    `2026-07-08T15-19-00-0700-item12-claude-session-after-cache-move.log`.
+    Rev: `rxmoulty`.
 - **Objective:** write real e2e tests proving each behaves like its Linux
  counterpart (jq processes real JSON, sed edits streams, tar round-trips archives,
   gzip round-trips, etc.); agents exercise the real ACP

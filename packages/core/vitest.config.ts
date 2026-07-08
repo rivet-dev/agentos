@@ -10,7 +10,6 @@ import { configDefaults, defineConfig } from "vitest/config";
 const SLOW_E2E_FILES = [
 	"tests/wasm-commands.test.ts", // ~24m
 	"tests/session-cleanup.test.ts", // ~12m
-	"tests/claude-session.test.ts", // ~7.5m
 	"tests/execute.test.ts",
 	"tests/filesystem.test.ts",
 	"tests/native-sidecar-process.test.ts",
