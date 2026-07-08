@@ -1213,7 +1213,10 @@ export class NodeFileSystem implements VirtualFileSystem {
 		offset: number,
 		data: Uint8Array,
 	): Promise<void> {
-		const handle = await fs.open(this.normalizeTarget(targetPath), "r+");
+		const handle = await fs.open(
+			this.normalizeTarget(targetPath),
+			fsSync.constants.O_WRONLY,
+		);
 		try {
 			await handle.write(data, 0, data.length, offset);
 		} finally {

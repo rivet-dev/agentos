@@ -890,6 +890,23 @@ export class SidecarProcess {
 		});
 	}
 
+	async pwrite(
+		session: AuthenticatedSession,
+		vm: CreatedVm,
+		path: string,
+		offset: number,
+		content: Uint8Array,
+	): Promise<void> {
+		const encoded = encodeGuestFilesystemContent(content);
+		await this.guestFilesystemCall(session, vm, {
+			operation: "pwrite",
+			path,
+			offset,
+			content: encoded.content,
+			encoding: encoded.encoding,
+		});
+	}
+
 	async mkdir(
 		session: AuthenticatedSession,
 		vm: CreatedVm,

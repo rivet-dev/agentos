@@ -319,7 +319,17 @@ describeIf(!skipReason, 'bridge child_process → kernel routing', () => {
       fs.chmodSync('/tmp/write-only.txt', 0o200);
       // A real shell opens the append target write-only, so a 0o200 file is
       // appendable even though it cannot be read back until the chmod below.
-      execSync("printf changed >> /tmp/write-only.txt", { encoding: 'utf-8' });
+      try {
+        execSync("printf changed >> /tmp/write-only.txt", { encoding: 'utf-8' });
+      } catch (error) {
+        console.error(JSON.stringify({
+          message: error instanceof Error ? error.message : String(error),
+          status: error && typeof error === 'object' && 'status' in error ? error.status : null,
+          stdout: error && typeof error === 'object' && 'stdout' in error ? String(error.stdout ?? '') : '',
+          stderr: error && typeof error === 'object' && 'stderr' in error ? String(error.stderr ?? '') : ''
+        }));
+        process.exit(99);
+      }
       fs.chmodSync('/tmp/write-only.txt', 0o600);
       console.log(JSON.stringify({
         mode: 'loaded',

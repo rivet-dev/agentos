@@ -6608,6 +6608,23 @@ where
         }
         let resolved = resolved;
         record_execute_phase("child_process_resolve_execution", phase_start.elapsed());
+        let parent_sync_roots = {
+            let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
+            let parent = vm
+                .active_processes
+                .get(process_id)
+                .ok_or_else(|| missing_process_error(vm_id, process_id))?;
+            (parent.host_write_dirty_recursive()
+                || !parent.clean_host_writes_are_observable_recursive())
+            .then(|| (parent.host_cwd.clone(), parent.guest_cwd.clone()))
+        };
+        if let Some((host_cwd, guest_cwd)) = parent_sync_roots {
+            let vm = self
+                .vms
+                .get_mut(vm_id)
+                .ok_or_else(|| missing_vm_error(vm_id))?;
+            sync_process_host_roots_to_kernel(vm, &host_cwd, &guest_cwd)?;
+        }
         let (parent_kernel_pid, child_process_id) = {
             let vm = self
                 .vms
@@ -7111,6 +7128,29 @@ where
         }
         let resolved = resolved;
         record_execute_phase("child_process_resolve_execution", phase_start.elapsed());
+        let parent_sync_roots = {
+            let vm = self.vms.get(vm_id).ok_or_else(|| missing_vm_error(vm_id))?;
+            let root = vm
+                .active_processes
+                .get(process_id)
+                .ok_or_else(|| missing_process_error(vm_id, process_id))?;
+            let parent =
+                Self::active_process_by_path(root, current_process_path).ok_or_else(|| {
+                    SidecarError::InvalidState(format!(
+                        "unknown child process path {current_process_label} during nested spawn"
+                    ))
+                })?;
+            (parent.host_write_dirty_recursive()
+                || !parent.clean_host_writes_are_observable_recursive())
+            .then(|| (parent.host_cwd.clone(), parent.guest_cwd.clone()))
+        };
+        if let Some((host_cwd, guest_cwd)) = parent_sync_roots {
+            let vm = self
+                .vms
+                .get_mut(vm_id)
+                .ok_or_else(|| missing_vm_error(vm_id))?;
+            sync_process_host_roots_to_kernel(vm, &host_cwd, &guest_cwd)?;
+        }
 
         let sidecar_requests = self.sidecar_requests.clone();
         let vm = self
@@ -9838,16 +9878,24 @@ fn sync_process_host_writes_to_kernel(
     vm: &mut VmState,
     process: &ActiveProcess,
 ) -> Result<(), SidecarError> {
+    sync_process_host_roots_to_kernel(vm, &process.host_cwd, &process.guest_cwd)
+}
+
+fn sync_process_host_roots_to_kernel(
+    vm: &mut VmState,
+    process_host_cwd: &Path,
+    process_guest_cwd: &str,
+) -> Result<(), SidecarError> {
     if vm.root_filesystem_mode != RootFilesystemMode::ReadOnly {
         let shadow_root = vm.cwd.clone();
         sync_host_directory_tree_to_kernel(vm, &shadow_root, "/")?;
     }
 
     if !path_is_within_root(
-        &normalize_host_path(&process.host_cwd),
+        &normalize_host_path(process_host_cwd),
         &normalize_host_path(&vm.cwd),
     ) {
-        sync_host_directory_tree_to_kernel(vm, &process.host_cwd, &process.guest_cwd)?;
+        sync_host_directory_tree_to_kernel(vm, process_host_cwd, process_guest_cwd)?;
     }
 
     Ok(())

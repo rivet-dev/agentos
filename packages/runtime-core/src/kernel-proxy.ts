@@ -2011,16 +2011,12 @@ export class NativeSidecarKernelProxy {
 				return this.client.pread(this.session, this.vm, path, offset, length);
 			},
 			pwrite: async (path, offset, data) => {
-				const bytes =
-					await this.createFilesystemView(includeLocalMounts).readFile(path);
-				const nextSize = Math.max(bytes.length, offset + data.length);
-				const updated = new Uint8Array(nextSize);
-				updated.set(bytes);
-				updated.set(data, offset);
-				await this.createFilesystemView(includeLocalMounts).writeFile(
-					path,
-					updated,
-				);
+				const local = includeLocalMounts ? this.resolveLocalMount(path) : null;
+				if (local) {
+					this.assertLocalWritable(local.mount);
+					return local.mount.fs.pwrite(local.relativePath, offset, data);
+				}
+				return this.client.pwrite(this.session, this.vm, path, offset, data);
 			},
 		};
 	}
