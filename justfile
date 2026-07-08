@@ -54,11 +54,11 @@ shell *args:
 
 # Run the agentos-sdk.dev site (landing + /docs) locally with hot reload
 docs:
-	pnpm --filter @agentos/website dev
+	pnpm --filter @rivet-dev/agentos-website dev
 
 # Build the agentos-sdk.dev site to website/dist
 docs-build:
-	pnpm --filter @agentos/website build
+	pnpm --filter @rivet-dev/agentos-website build
 
 test-bounded cmd='pnpm test':
 	#!/usr/bin/env bash

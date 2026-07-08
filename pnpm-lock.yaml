@@ -35,9 +35,6 @@ importers:
       '@agentos-software/pi':
         specifier: workspace:*
         version: link:software/pi
-      '@agentos/test-harness':
-        specifier: workspace:*
-        version: link:test-harness
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
@@ -53,6 +50,9 @@ importers:
       '@rivet-dev/agentos-runtime-core':
         specifier: workspace:*
         version: link:packages/runtime-core
+      '@rivet-dev/agentos-test-harness':
+        specifier: workspace:*
+        version: link:test-harness
       '@rivet-dev/agentos-vm-test-harness':
         specifier: workspace:*
         version: link:packages/vm-test-harness
@@ -2986,7 +2986,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3017,7 +3017,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@types/node':
@@ -3045,7 +3045,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3067,7 +3067,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@types/node':
@@ -3082,7 +3082,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3128,7 +3128,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@types/node':
@@ -3146,7 +3146,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3167,7 +3167,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3188,7 +3188,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3209,7 +3209,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3230,7 +3230,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3306,7 +3306,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@types/node':
@@ -3324,7 +3324,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3345,7 +3345,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3366,7 +3366,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3387,7 +3387,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3408,7 +3408,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3429,7 +3429,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3450,7 +3450,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3471,7 +3471,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3492,7 +3492,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3513,7 +3513,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3547,7 +3547,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3575,7 +3575,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3596,7 +3596,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3617,7 +3617,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3638,7 +3638,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3659,7 +3659,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3680,7 +3680,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3701,7 +3701,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3722,7 +3722,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3743,7 +3743,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3764,7 +3764,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
@@ -3785,7 +3785,7 @@ importers:
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../../packages/manifest
-      '@agentos/test-harness':
+      '@rivet-dev/agentos-test-harness':
         specifier: workspace:*
         version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':

@@ -12,7 +12,7 @@ import {
 	describeIf,
 	hasCWasmBinaries,
 	type Kernel,
-} from "@agentos/test-harness";
+} from "@rivet-dev/agentos-test-harness";
 
 interface HostileEntry {
 	name: string;

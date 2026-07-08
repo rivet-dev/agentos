@@ -22,7 +22,7 @@ RUN rustup toolchain install stable --profile minimal && \
     rustup target add "$TARGET"
 
 RUN corepack enable && \
-	pnpm install --no-frozen-lockfile --filter='!@agentos/website'
+	pnpm install --no-frozen-lockfile --filter='!@rivet-dev/agentos-website'
 
 RUN tu=$(echo "$TARGET" | tr 'a-z-' 'A-Z_') && \
     tl=$(echo "$TARGET" | tr - _) && \

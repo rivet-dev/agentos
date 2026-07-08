@@ -69,6 +69,21 @@ the guest — over inventing a softer fallback that hides the failure.
 
 - `scripts/publish` is the source of truth for npm/crates discovery, version
   rewriting, npm publish, crates publish, release assets, and R2 upload.
+- npm package scopes are load-bearing for version rewriting, so every package
+  must use the scope that matches how it publishes:
+  - `@rivet-dev/agentos-*` — core/internal packages, incl. private tooling and
+    test-only helpers (e.g. `@rivet-dev/agentos-test-harness`). The version
+    bumper pins these `workspace:*` deps to the build version without hitting
+    npm, so private/unpublished packages are safe here.
+  - `@agentos-software/*` — independently-versioned software packages. The
+    bumper resolves these `workspace:*` deps to their published npm `latest`,
+    so a package under this scope MUST be published to npm or the publish fails.
+  - The bare `@agentos/*` scope is NOT ours — we do not own that npm org, so no
+    package may use it (not even private, never-published ones). Everything
+    internal, including tooling, test helpers, and the website, lives under
+    `@rivet-dev/agentos-*`. Beyond the ownership problem, the bumper treats an
+    unrecognized scope as an independently-versioned software package and runs
+    `npm view` on it, which hard-fails for anything unpublished.
 - Publishable npm packages and Rust crates are AgentOS-owned. Compatibility
   `@secure-exec/*`, `secure-exec`, and `secure-exec-*` artifacts are emitted
   from the generated mirror.

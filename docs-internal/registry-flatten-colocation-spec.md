@@ -90,7 +90,7 @@ repo-root/
 │   └── target/                   #   shared cargo build output (gitignored)
 │
 ├── test-harness/                 ← private workspace pkg; shared vitest helpers + WASM VM runtime + binary resolution
-│   ├── package.json              #   @agentos/test-harness (private, not published)
+│   ├── package.json              #   @rivet-dev/agentos-test-harness (private, not published)
 │   └── src/{helpers,terminal-harness}.ts
 │
 └── packages/
@@ -173,7 +173,7 @@ Verified against the current tree:
 The old `agentos-registry` package and its `run-vitest.mjs` shim (which resolved
 vitest out of the outer store) **dissolve**. Replacement:
 
-- A private workspace package **`test-harness/`** (`@agentos/test-harness`, not
+- A private workspace package **`test-harness/`** (`@rivet-dev/agentos-test-harness`, not
   published) owns the shared helpers, terminal harness, and `createWasmVmRuntime`
   — the surface every test imports today from `registry/tests/helpers.ts`.
 - Each `software/<pkg>` gets a `test` script that runs **`agentos-toolchain test`**
@@ -181,14 +181,14 @@ vitest out of the outer store) **dissolve**. Replacement:
   the `test/` suite through the harness in a VM — the same runner external authors
   use. `turbo test` discovers and runs them — this is what re-attaches the suites
   to CI (fixing the current orphan + `@xterm/headless`-resolution bugs, since every
-  runner is now a workspace member). The `@agentos/test-harness` package supplies
+  runner is now a workspace member). The `@rivet-dev/agentos-test-harness` package supplies
   `createWasmVmRuntime` + helpers that both the CLI runner and the raw `*.test.ts`
   files import.
 - Command binaries are resolved from `toolchain/target` (Rust) and the toolchain
   C build dir via `AGENTOS_WASM_COMMANDS_DIR` / `AGENTOS_C_WASM_COMMANDS_DIR`,
   set once in the harness. No relative-path coupling to the build tree.
 - `runtime-core/tests/integration/` and `toolchain/conformance/` import the same
-  `@agentos/test-harness`.
+  `@rivet-dev/agentos-test-harness`.
 
 ## Leftover `registry/` files
 

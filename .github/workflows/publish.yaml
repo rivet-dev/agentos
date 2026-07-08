@@ -112,7 +112,7 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
-      - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
+      - run: pnpm install --frozen-lockfile --filter='!@rivet-dev/agentos-website'
       - name: Set up Linux GNU sysroot
         run: scripts/ci/setup-linux-gnu-sysroot.sh
       - name: Build sidecar binaries
@@ -183,7 +183,7 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
-      - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
+      - run: pnpm install --frozen-lockfile --filter='!@rivet-dev/agentos-website'
       - name: Set up Linux GNU sysroot
         run: scripts/ci/setup-linux-gnu-sysroot.sh
       - name: Build plugin cdylib
@@ -281,7 +281,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
-      - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
+      - run: pnpm install --frozen-lockfile --filter='!@rivet-dev/agentos-website'
       - uses: actions/download-artifact@v4
         with:
           name: wasm-commands
@@ -460,7 +460,7 @@ jobs:
           key: ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-x86_64-unknown-linux-gnu-rusty-v8-
-      - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
+      - run: pnpm install --frozen-lockfile --filter='!@rivet-dev/agentos-website'
       - name: Bump Cargo versions
         run: |
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \

@@ -10,8 +10,8 @@ import {
   describeIf,
   createIntegrationKernel,
   skipUnlessWasmBuilt,
-} from '@agentos/test-harness';
-import type { IntegrationKernelResult } from '@agentos/test-harness';
+} from '@rivet-dev/agentos-test-harness';
+import type { IntegrationKernelResult } from '@rivet-dev/agentos-test-harness';
 
 const wasmSkip = skipUnlessWasmBuilt();
 const TREE_COMMAND_TIMEOUT_MS = 20_000;

@@ -25,6 +25,6 @@
 		"@agentos-software/manifest": "workspace:*",
 		"@types/node": "^22.10.2",
 		"typescript": "^5.7.2",
-		"@agentos/test-harness": "workspace:*"
+		"@rivet-dev/agentos-test-harness": "workspace:*"
 	}
 }

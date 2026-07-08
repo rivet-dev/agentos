@@ -30,7 +30,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: |
           if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
-            npx turbo build --filter='!@agentos/website'
+            npx turbo build --filter='!@rivet-dev/agentos-website'
           else
             npx turbo build
           fi
@@ -108,7 +108,7 @@ jobs:
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - run: |
           if grep -qE '^[[:space:]]*-[[:space:]]*website[[:space:]]*$' pnpm-workspace.yaml; then
-            npx turbo build --filter='!@agentos/website'
+            npx turbo build --filter='!@rivet-dev/agentos-website'
           else
             npx turbo build
           fi

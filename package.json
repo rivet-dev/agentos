@@ -23,7 +23,7 @@
 		"@biomejs/biome": "^2.3",
 		"@copilotkit/llmock": "^1.6.0",
 		"@mariozechner/pi-coding-agent": "^0.60.0",
-		"@agentos/test-harness": "workspace:*",
+		"@rivet-dev/agentos-test-harness": "workspace:*",
 		"@rivet-dev/agentos-core": "workspace:*",
 		"@agentos-software/claude-code": "workspace:*",
 		"@agentos-software/codex": "workspace:*",

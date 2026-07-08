@@ -7,7 +7,7 @@ import {
 	describeIf,
 	hasWasmBinaries,
 	type Kernel,
-} from '@agentos/test-harness';
+} from '@rivet-dev/agentos-test-harness';
 
 describeIf(hasWasmBinaries, "wasmvm shell redirects", () => {
 	let kernel: Kernel | undefined;

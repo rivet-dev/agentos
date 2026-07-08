@@ -39,6 +39,6 @@
 		"@types/node": "^22.10.2",
 		"esbuild": "^0.27.4",
 		"typescript": "^5.7.2",
-		"@agentos/test-harness": "workspace:*"
+		"@rivet-dev/agentos-test-harness": "workspace:*"
 	}
 }

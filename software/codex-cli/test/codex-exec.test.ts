@@ -16,9 +16,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { createWasmVmRuntime } from '@agentos/test-harness';
-import { COMMANDS_DIR, createKernel, describeIf, hasWasmBinaries } from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
+import { createWasmVmRuntime } from '@rivet-dev/agentos-test-harness';
+import { COMMANDS_DIR, createKernel, describeIf, hasWasmBinaries } from '@rivet-dev/agentos-test-harness';
+import type { Kernel } from '@rivet-dev/agentos-test-harness';
 
 const hasCodexExec =
   process.env.AGENTOS_CODEX_WASM_E2E === '1' &&

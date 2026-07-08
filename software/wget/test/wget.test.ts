@@ -12,9 +12,9 @@
  */
 
 import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
-import { createWasmVmRuntime } from '@agentos/test-harness';
-import { C_BUILD_DIR, COMMANDS_DIR, createKernel, describeIf, hasCWasmBinaries } from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
+import { createWasmVmRuntime } from '@rivet-dev/agentos-test-harness';
+import { C_BUILD_DIR, COMMANDS_DIR, createKernel, describeIf, hasCWasmBinaries } from '@rivet-dev/agentos-test-harness';
+import type { Kernel } from '@rivet-dev/agentos-test-harness';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 
 // Minimal in-memory VFS for kernel tests

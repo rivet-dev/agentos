@@ -11,7 +11,7 @@ import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, type Server as HttpServer } from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { createWasmVmRuntime } from '@agentos/test-harness';
+import { createWasmVmRuntime } from '@rivet-dev/agentos-test-harness';
 import {
   allowAll,
   COMMANDS_DIR,
@@ -19,8 +19,8 @@ import {
   createKernel,
   describeIf,
   hasWasmBinaries,
-} from '@agentos/test-harness';
-import type { Kernel } from '@agentos/test-harness';
+} from '@rivet-dev/agentos-test-harness';
+import type { Kernel } from '@rivet-dev/agentos-test-harness';
 
 vi.setConfig({ testTimeout: 30_000 });
 
