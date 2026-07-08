@@ -292,7 +292,9 @@ fn append_path<W: Write>(
     }
     increment_entry_count(entry_count)?;
 
-    let meta = fs::symlink_metadata(&disk_path)?;
+    let meta = fs::symlink_metadata(&disk_path).map_err(|e| {
+        io::Error::new(e.kind(), format!("metadata {}: {}", disk_path.display(), e))
+    })?;
 
     if meta.is_dir() {
         append_dir(
@@ -548,11 +550,12 @@ fn do_list(archive_file: Option<&str>, gzip: bool, verbose: bool) -> io::Result<
         let entry = entry_result?;
         let path = entry.path()?;
 
+        let entry_type = entry.header().entry_type();
         if verbose {
             let h = entry.header();
             let size = h.size().unwrap_or(0);
             let mode = h.mode().unwrap_or(0o644);
-            let type_ch = match h.entry_type() {
+            let type_ch = match entry_type {
                 tar::EntryType::Directory => 'd',
                 tar::EntryType::Symlink => 'l',
                 _ => '-',
@@ -565,6 +568,8 @@ fn do_list(archive_file: Option<&str>, gzip: bool, verbose: bool) -> io::Result<
                 size,
                 path.display()
             )?;
+        } else if entry_type == tar::EntryType::Directory {
+            writeln!(out, "{}/", path.display())?;
         } else {
             writeln!(out, "{}", path.display())?;
         }

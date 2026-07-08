@@ -586,6 +586,20 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     Biome is not applicable for this package test path; it reported the file is
     ignored by config in
     `2026-07-08T13-17-55-0700-item12-sed-biome-check.log`. Rev: `wvpklkqv`.
+  - **tar — DONE.** Added package-local VM e2e coverage for the staged `tar`
+    command and tightened the tar wrapper for Linux-like directory listing and
+    missing-input error context. The suite proves archive creation/listing,
+    extraction into `-C` directories, gzip auto-detection by extension,
+    `--strip-components`, and missing create-input errors through the packaged
+    WASM command. Proof:
+    `2026-07-08T13-21-48-0700-item12-tar-toolchain-cmd-build-clean-vendor.log`;
+    `2026-07-08T13-22-51-0700-item12-tar-package-build-after-wrapper-fix.log`;
+    `2026-07-08T13-23-02-0700-item12-tar-package-e2e-final.log`;
+    `2026-07-08T13-23-02-0700-item12-tar-check-types-final.log`;
+    `2026-07-08T13-23-02-0700-item12-tar-cargo-fmt-check-final.log`.
+    Biome is not applicable for this package test path; it reported the file is
+    ignored by config in
+    `2026-07-08T13-23-12-0700-item12-tar-biome-check.log`. Rev: `rszmulmk`.
   - **jq — DONE.** Added package-local VM e2e coverage for the staged `jq`
     command and fixed the jaq-backed CLI wrapper to accept Linux-style file
     operands instead of only stdin. The suite now proves version output,
