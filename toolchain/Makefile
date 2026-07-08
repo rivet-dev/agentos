@@ -1,5 +1,8 @@
 WASM_TARGET := wasm32-wasip1
 RELEASE_DIR := target/$(WASM_TARGET)/release
+WASI_C_SYSROOT := $(CURDIR)/c/sysroot
+WASI_C_CC := $(CURDIR)/c/vendor/wasi-sdk/bin/clang
+WASI_C_AR := $(CURDIR)/c/vendor/wasi-sdk/bin/llvm-ar
 
 # Standalone binary output directory (configurable)
 COMMANDS_DIR ?= $(RELEASE_DIR)/commands
@@ -74,6 +77,9 @@ codex: c/vendor/wasi-sdk/bin/clang
 c/vendor/wasi-sdk/bin/clang:
 	$(MAKE) -C c wasi-sdk
 
+c/sysroot/lib/wasm32-wasi/libc.a:
+	$(MAKE) -C c sysroot
+
 # Strict variant (fails if the fork is absent) for environments that require the codex artifact.
 .PHONY: codex-required
 codex-required:
@@ -147,10 +153,13 @@ wasm-opt-check:
 	fi
 
 # Build all standalone command binaries, optimize, strip .wasm extension, create symlinks
-wasm: vendor patch-vendor patch-std wasm-opt-check
+wasm: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-check
 	# --cfg tokio_unstable lifts tokio's wasm `compile_error!` so the patched
 	# tokio process/net modules (std-patches/crates/tokio) compile on wasm32-wasip1.
 	# Needed by codex (tokio::process/net). Harmless for commands not using tokio.
+	CC_wasm32_wasip1="$(WASI_C_CC)" \
+	AR_wasm32_wasip1="$(WASI_C_AR)" \
+	CFLAGS_wasm32_wasip1="--sysroot=$(WASI_C_SYSROOT)" \
 	RUSTFLAGS="-C link-arg=-L$(WASI_SYSROOT_SELF_CONTAINED) --cfg tokio_unstable" \
 	cargo build --target $(WASM_TARGET) \
 		-Z build-std=std,panic_abort \
@@ -233,7 +242,7 @@ cmd/%:
 # Build ONE command binary (cargo package cmd-$(CMD) -> $(COMMANDS_DIR)/$(CMD)).
 # Usage: make wasm-cmd CMD=sh
 .PHONY: wasm-cmd
-wasm-cmd: vendor patch-vendor patch-std wasm-opt-check
+wasm-cmd: c/sysroot/lib/wasm32-wasi/libc.a vendor patch-vendor patch-std wasm-opt-check
 	@test -n "$(CMD)" || { echo "ERROR: pass CMD=<name> (a dir under crates/commands/)"; exit 1; }
 	@crate_dir=$$(find ../software -path "*/native/crates/cmd-$(CMD)" -type d -print -quit); \
 	test -n "$$crate_dir" || test -d "crates/commands/$(CMD)" || { \
@@ -246,6 +255,9 @@ wasm-cmd: vendor patch-vendor patch-std wasm-opt-check
 		cargo_pkg="ripgrep"; \
 		cargo_bin="rg"; \
 	fi; \
+	CC_wasm32_wasip1="$(WASI_C_CC)" \
+	AR_wasm32_wasip1="$(WASI_C_AR)" \
+	CFLAGS_wasm32_wasip1="--sysroot=$(WASI_C_SYSROOT)" \
 	RUSTFLAGS="-C link-arg=-L$(WASI_SYSROOT_SELF_CONTAINED) --cfg tokio_unstable" \
 	cargo build --target $(WASM_TARGET) \
 		-Z build-std=std,panic_abort \

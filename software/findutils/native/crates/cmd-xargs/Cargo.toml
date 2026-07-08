@@ -11,4 +11,4 @@ name = "xargs"
 path = "src/main.rs"
 
 [dependencies]
-shims = { package = "secureexec-shims", path = "../../../../../toolchain/crates/libs/shims" }
+findutils = { version = "0.9.0", default-features = false }

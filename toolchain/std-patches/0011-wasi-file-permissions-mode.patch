@@ -1,0 +1,10 @@
+--- a/library/std/src/sys/fs/unix.rs
++++ b/library/std/src/sys/fs/unix.rs
+@@ -778,7 +778,6 @@ impl FilePermissions {
+             self.mode |= 0o222;
+         }
+     }
+-    #[cfg(not(target_os = "wasi"))]
+     pub fn mode(&self) -> u32 {
+         self.mode as u32
+     }

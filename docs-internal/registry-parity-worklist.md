@@ -104,7 +104,7 @@ actual backing:
 | **http-get** | DONE | our 95-line `http_get.c` | dropped; real curl covers HTTP fetches |
 | **git** | DONE | our hand-rolled git from `sha1`+`flate2` | **real git** (upstream C), patched for WASI — **NOT gitoxide** |
 | **fd** | DONE | our `secureexec-fd` on raw `regex` (not sharkdp/fd) | real **fd** (sharkdp) |
-| **findutils** (`find`,`xargs`) | TODO | our hand-rolled on `regex`/shims | real GNU findutils, or `uutils/findutils` |
+| **findutils** (`find`,`xargs`) | DONE | our hand-rolled on `regex`/shims | replaced with `uutils/findutils` |
 | **tree** | DONE | our hand-rolled, zero deps | real `tree`, or an established one |
 | **grep** | DONE | our `secureexec-grep` on raw `regex` (**not** an established grep pkg) | real **GNU grep** |
 | **ripgrep** (`rg`) | DONE | our `secureexec-grep` recursive search shim, not real ripgrep | real upstream **ripgrep** |
@@ -313,9 +313,22 @@ works (`wasi-spawn` broker), so `xargs` is not a blocker.
   final UnZip e2e passes 6/6 in
   `2026-07-08T08-37-12-0700-unzip-test-final-after-current-sysroot-copy-after-install.log`.
   Rev: `nppnuxpr` — `fix(infozip): build upstream zip and unzip`.
-- **findutils — moderate→hard.** `find` is fs+regex (easy); `xargs` spawn already
-  works. **uutils/findutils** (Rust) avoids gnulib; **GNU findutils** (C) hits the
-  same gnulib cascade as wget. Prefer uutils unless GNU parity is required.
+- **findutils — DONE.** Replaced the custom Rust `find` crate with upstream
+  `uutils/findutils` 0.9.0 entrypoints for both `find` and `xargs`. Kept the fix
+  in the toolchain/sysroot layer: Rust WASI metadata extensions and process
+  `ExitStatusExt::signal()` are exposed for crates that expect Unix-like std
+  surfaces, while `xargs` still uses normal `std::process::Command` spawning
+  through the existing VM broker. Proof: `find` wasm build passes in
+  `2026-07-08T12-42-00-0700-findutils-find-build-after-permissions-mode-patch.log`;
+  `xargs` wasm build passes in
+  `2026-07-08T12-45-00-0700-findutils-xargs-build-after-find-success.log`;
+  package build passes in
+  `2026-07-08T12-51-00-0700-findutils-package-build-after-install.log`; sidecar
+  validation build passes in
+  `2026-07-08T12-35-00-0700-native-sidecar-build-after-forced-pnpm.log`; final
+  package e2e passes 5/5, including `xargs -n 2 echo` spawn batching, in
+  `2026-07-08T12-44-00-0700-findutils-vitest-uutils-after-depth-test-fix.log`.
+  Rev: `msknmmps`.
 
 Ranked easiest→hardest: **sqlite3-CLI · http-get (drop) · tree · fd · grep ·
 ripgrep · zip · unzip · findutils.**

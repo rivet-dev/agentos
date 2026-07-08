@@ -612,9 +612,9 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
-version = "0.4.44"
+version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
+checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
  "js-sys",
@@ -907,7 +907,8 @@ dependencies = [
 name = "cmd-find"
 version = "0.1.0"
 dependencies = [
- "secureexec-find",
+ "findutils",
+ "uucore 0.9.0",
 ]
 
 [[package]]
@@ -922,13 +923,6 @@ name = "cmd-fold"
 version = "0.1.0"
 dependencies = [
  "uu_fold",
-]
-
-[[package]]
-name = "cmd-git"
-version = "0.1.0"
-dependencies = [
- "secureexec-git",
 ]
 
 [[package]]
@@ -1411,7 +1405,7 @@ dependencies = [
 name = "cmd-xargs"
 version = "0.1.0"
 dependencies = [
- "secureexec-shims",
+ "findutils",
 ]
 
 [[package]]
@@ -1993,6 +1987,25 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+
+[[package]]
+name = "findutils"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "719cc0af0060da07d610f4faa20d2d46dca46ff6bdf778a4b4feec3a7c8af7ea"
+dependencies = [
+ "argmax",
+ "chrono",
+ "clap",
+ "faccess",
+ "itertools 0.14.0",
+ "nix 0.31.3",
+ "onig",
+ "regex",
+ "thiserror 2.0.18",
+ "uucore 0.9.0",
+ "walkdir",
+]
 
 [[package]]
 name = "fixed_decimal"
@@ -3412,6 +3425,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "onig"
+version = "6.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc3cbf698f9438986c11a880c90a6d04b9de27575afd28bbf45b154b6c709e2"
+dependencies = [
+ "bitflags 2.11.0",
+ "libc",
+ "once_cell",
+ "onig_sys",
+]
+
+[[package]]
+name = "onig_sys"
+version = "69.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e68317604e77e53b85896388e1a803c1d21b74c899ec9e5e1112db90735edd7"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
+
+[[package]]
 name = "os_display"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3575,6 +3610,12 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "pkg-config"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "plain"
@@ -4031,22 +4072,6 @@ name = "secureexec-file-cmd"
 version = "0.1.0"
 dependencies = [
  "infer",
-]
-
-[[package]]
-name = "secureexec-find"
-version = "0.1.0"
-dependencies = [
- "regex",
-]
-
-[[package]]
-name = "secureexec-git"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "secureexec-wasi-http",
- "sha1",
 ]
 
 [[package]]
@@ -5925,6 +5950,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "uucore"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "069b34217c27f611e1589f540f58118dbf226a9e407d38ab472052ff075a1dc2"
+dependencies = [
+ "bstr",
+ "clap",
+ "dunce",
+ "fluent",
+ "fluent-syntax",
+ "libc",
+ "nix 0.31.3",
+ "os_display",
+ "rustc-hash",
+ "rustix 1.1.4",
+ "thiserror 2.0.18",
+ "unic-langid",
+ "uucore_procs 0.9.0",
+ "wild",
+ "winapi-util",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "uucore_procs"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5939,6 +5988,16 @@ name = "uucore_procs"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f63e2d5083ff0983193a33e2d57fd271c7e3e3e7df8e46e8f471865647b2cbc"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "uucore_procs"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34337da211e7abfff7189b794afb3b5018fe356fb36474b73645458fc1201350"
 dependencies = [
  "proc-macro2",
  "quote",
