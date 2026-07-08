@@ -208,11 +208,9 @@ wasm: vendor patch-vendor patch-std wasm-opt-check
 #             (cargo package cmd-<name>, via wasm-cmd)
 #   C         the C opt-in set below  (toolchain/c, patched sysroot)
 #   codex     the codex fork build    (codex, codex-exec)
-#   external  hand-built drop-zone binaries with no source pipeline yet
 # `just toolchain-cmd <name>` calls this. `make wasm` builds the fast
 # Rust set; `make -C c programs install` builds/installs the fast C set.
 C_COMMANDS := zip unzip envsubst sqlite3 curl wget duckdb vim http_get
-EXTERNAL_COMMANDS := vix
 
 .PHONY: cmd/%
 cmd/%:
@@ -225,15 +223,8 @@ cmd/%:
 		$(MAKE) -C c sysroot "build/$$src" && $(MAKE) -C c install COMMANDS="$$name"; \
 	elif [ "$$name" = "codex" ] || [ "$$name" = "codex-exec" ]; then \
 		$(MAKE) codex-required; \
-	elif echo " $(EXTERNAL_COMMANDS) " | grep -q " $$name "; then \
-		if [ -f "$(COMMANDS_DIR)/$$name" ]; then \
-			echo "cmd/$$name: external hand-built binary present at $(COMMANDS_DIR)/$$name"; \
-		else \
-			echo "ERROR: '$$name' has no source pipeline yet — place the hand-built wasm binary at $(COMMANDS_DIR)/$$name (see software/README.md)"; \
-			exit 1; \
-		fi; \
 	else \
-		echo "ERROR: unknown command '$$name' (no software/*/native/crates/cmd-$$name or crates/commands/$$name; not in C_COMMANDS, codex, or EXTERNAL_COMMANDS)"; \
+		echo "ERROR: unknown command '$$name' (no software/*/native/crates/cmd-$$name or crates/commands/$$name; not in C_COMMANDS or codex)"; \
 		exit 1; \
 	fi
 

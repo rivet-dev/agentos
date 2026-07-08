@@ -415,18 +415,6 @@
 			"priority": 0,
 			"package": "@agentos-software/http-get",
 			"status": "available"
-		},
-		{
-			"slug": "vix",
-			"title": "vix",
-			"description": "Lightweight vi-style text editor.",
-			"types": [
-				"software"
-			],
-			"category": "editors",
-			"priority": 0,
-			"package": "@agentos-software/vix",
-			"status": "available"
 		}
 	]
 }
