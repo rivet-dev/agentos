@@ -1,11 +1,3 @@
-// `host_dir.rs` is `include!`d below rather than linked from the crate, so its
-// macOS-only `crate::macos_fs::…` references must resolve within this test
-// binary too. Wire the same module in (macOS only; on Linux those references
-// are `#[cfg]`d out and this module is unused).
-#[cfg(target_os = "macos")]
-#[path = "../src/macos_fs.rs"]
-mod macos_fs;
-
 // The source is `include!`d wholesale but this test only exercises the
 // filesystem-plugin subset, so items used elsewhere in the crate (e.g. the
 // session-thread `SessionModuleReader`) are legitimately unused here.
@@ -197,6 +189,106 @@ mod host_dir {
 
             fs::remove_dir_all(host_dir).expect("remove temp dir");
             fs::remove_dir_all(outside_dir).expect("remove outside temp dir");
+        }
+
+        // Regression: metadata reads must not require READ permission on the
+        // target under a non-root sidecar. POSIX `stat`/`exists` need only search
+        // on the parent, but the pre-fix code opened the leaf `O_RDONLY`, which
+        // falsely reported a statable-but-unreadable file as missing/`EACCES`.
+        #[test]
+        fn filesystem_stat_and_exists_do_not_require_read_permission() {
+            let host_dir = temp_dir("host-dir-plugin-stat-noread");
+            let secret = host_dir.join("secret.txt");
+            fs::write(&secret, b"classified").expect("seed host file");
+            fs::set_permissions(&secret, fs::Permissions::from_mode(0o000))
+                .expect("drop all perms on target");
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            assert!(
+                filesystem.exists("/secret.txt"),
+                "exists() must see a statable-but-unreadable file"
+            );
+            let stat = filesystem
+                .stat("/secret.txt")
+                .expect("stat must succeed without read permission");
+            assert_eq!(stat.size, "classified".len() as u64);
+            assert!(!stat.is_directory);
+
+            fs::set_permissions(&secret, fs::Permissions::from_mode(0o644))
+                .expect("restore perms for cleanup");
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+        }
+
+        // Regression: `chown`/`utimes` need ownership, not read, on the target.
+        #[test]
+        fn filesystem_chown_and_utimes_do_not_require_read_permission() {
+            let host_dir = temp_dir("host-dir-plugin-chown-noread");
+            let target = host_dir.join("locked.txt");
+            fs::write(&target, b"data").expect("seed host file");
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o000))
+                .expect("drop all perms on target");
+            let meta = fs::metadata(&target).expect("metadata before");
+            let (uid, gid) = (meta.uid(), meta.gid());
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            // chown to the same owner/group is permitted for a non-root owner and
+            // must not need read on the (0000) file.
+            filesystem
+                .chown("/locked.txt", uid, gid)
+                .expect("chown must succeed without read permission");
+            filesystem
+                .utimes("/locked.txt", 1_000, 2_000)
+                .expect("utimes must succeed without read permission");
+            assert_eq!(
+                fs::metadata(&target).expect("metadata after").mtime(),
+                2,
+                "utimes must have applied the mtime"
+            );
+
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o644))
+                .expect("restore perms for cleanup");
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
+        }
+
+        // Regression: an intermediate directory with execute-but-not-read
+        // permission (mode 0111) must still be traversable — the walk falls back
+        // to an `O_PATH` traversal anchor on Linux instead of failing `EACCES`
+        // (which kernel path resolution / `openat2` never did).
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn filesystem_traverses_search_only_intermediate_directory() {
+            let host_dir = temp_dir("host-dir-plugin-search-only");
+            let sub = host_dir.join("sub");
+            fs::create_dir(&sub).expect("create sub dir");
+            fs::write(sub.join("inner.txt"), b"hi").expect("seed inner file");
+            fs::set_permissions(&sub, fs::Permissions::from_mode(0o111))
+                .expect("make sub search-only");
+
+            let meta = fs::metadata(sub.join("inner.txt")).expect("inner metadata");
+            let (uid, gid) = (meta.uid(), meta.gid());
+
+            let mut filesystem = HostDirFilesystem::new(&host_dir).expect("create host dir fs");
+            // `stat` and every metadata MUTATOR must resolve through the
+            // search-only parent (`split_parent` uses the `O_PATH` anchor
+            // fallback), matching POSIX (search on the parent, not read).
+            let stat = filesystem
+                .stat("/sub/inner.txt")
+                .expect("stat through a search-only dir must succeed");
+            assert_eq!(stat.size, 2);
+            assert!(filesystem.exists("/sub/inner.txt"));
+            filesystem
+                .chown("/sub/inner.txt", uid, gid)
+                .expect("chown through a search-only parent must succeed");
+            filesystem
+                .utimes("/sub/inner.txt", 1_000, 2_000)
+                .expect("utimes through a search-only parent must succeed");
+            filesystem
+                .chmod("/sub/inner.txt", 0o600)
+                .expect("chmod through a search-only parent must succeed");
+
+            fs::set_permissions(&sub, fs::Permissions::from_mode(0o755))
+                .expect("restore perms for cleanup");
+            fs::remove_dir_all(host_dir).expect("remove temp dir");
         }
 
         #[test]

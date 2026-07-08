@@ -27,13 +27,6 @@ mod json_rpc;
 #[allow(dead_code, unused_imports)]
 #[path = "../src/limits.rs"]
 mod limits;
-// macOS-only: `filesystem`/`plugins::host_dir` (included above) reference
-// `crate::macos_fs::…`, which must resolve in this source-included test crate
-// too. Unused on Linux (those references are `#[cfg]`d out there).
-#[cfg(target_os = "macos")]
-#[allow(dead_code)]
-#[path = "../src/macos_fs.rs"]
-mod macos_fs;
 #[allow(dead_code)]
 #[path = "../src/metadata/mod.rs"]
 mod metadata;

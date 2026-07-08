@@ -11099,7 +11099,7 @@ fn runtime_guest_path_mappings(vm: &VmState) -> Vec<RuntimeGuestPathMapping> {
 /// inline against this reader — concurrently with the service loop — so a large
 /// cold-start module graph never serializes behind / starves an in-flight ACP
 /// `session/new` bootstrap on the single service-loop thread. The reader reads
-/// the same mounted tree the guest sees (anchored `openat2`, escaping-symlink
+/// the same mounted tree the guest sees (anchored resolve-beneath, escaping-symlink
 /// refusal), never the host-direct path translator. Returns `None` when the VM
 /// has no usable read-only mount, so resolution falls back to the service-loop
 /// kernel reader.

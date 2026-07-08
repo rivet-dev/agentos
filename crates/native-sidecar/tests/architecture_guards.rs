@@ -250,13 +250,14 @@ fn scan_class(root: &Path, files: &[PathBuf], class: &BannedClass) -> Vec<String
 /// real host files to seed the VFS, load runtime assets, and bridge guest FS
 /// syscalls to the host-dir mount.
 const FS_ALLOW: &[&str] = &[
-    // sidecar host-FS chokepoint + bootstrap
+    // sidecar host-FS chokepoint + bootstrap. `host_dir.rs` also contains the
+    // universal host-mount confinement primitive (the `confine` module: the
+    // single resolve-beneath walk using plain `openat(2)`, fd-anchored, no
+    // `openat2`, running identically on Linux, macOS, and gVisor). It replaced
+    // the deleted macOS-only `macos_fs.rs` cap-std fallback; see the `confine`
+    // module docs for why `openat2` was removed.
     "crates/sidecar/src/filesystem.rs",
     "crates/sidecar/src/plugins/host_dir.rs",
-    // macOS host-mount confinement primitives: the cap-std resolve-beneath walk
-    // that stands in for Linux `openat2(RESOLVE_BENEATH)` on darwin. Same
-    // sanctioned boundary as host_dir.rs/filesystem.rs, macOS-only.
-    "crates/sidecar/src/macos_fs.rs",
     "crates/sidecar/src/plugins/module_access.rs",
     // agentOS package projection: the sidecar is the host-side TCB that reads a
     // trusted, client-configured package's tar + `agentos-package.json` from the

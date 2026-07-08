@@ -23,22 +23,15 @@ use crate::{DispatchResult, NativeSidecar, NativeSidecarBridge, SidecarError};
 
 use base64::Engine;
 use nix::errno::Errno;
-use nix::fcntl::{open, OFlag};
-#[cfg(not(target_os = "macos"))]
-use nix::fcntl::{openat2, OpenHow, ResolveFlag};
+use nix::fcntl::OFlag;
 use nix::libc;
 
-// macOS has neither `O_PATH` (metadata-only anchor) nor `O_TMPFILE`. O_PATH
-// anchors are re-opened via `/dev/fd/N`, so a read-only open stands in; no
-// caller actually passes O_TMPFILE (it appears only in a defensive `intersects`
-// check), so an empty flag is an exact behavioural match there.
-#[cfg(not(target_os = "macos"))]
-const O_PATH_ANCHOR: OFlag = OFlag::O_PATH;
-#[cfg(target_os = "macos")]
+// The universal resolver (`crate::plugins::host_dir::confine`) never returns a metadata-only `O_PATH`
+// handle (macOS has no `O_PATH`); a read-only open stands in as the anchor and
+// every operation is performed fd-relative, so `O_RDONLY` is the portable
+// anchor open mode. `O_TMPFILE` is never passed by any caller (it appears only
+// in a defensive `intersects` check), so an empty flag matches exactly.
 const O_PATH_ANCHOR: OFlag = OFlag::O_RDONLY;
-#[cfg(not(target_os = "macos"))]
-const O_TMPFILE_FLAG: OFlag = OFlag::O_TMPFILE;
-#[cfg(target_os = "macos")]
 const O_TMPFILE_FLAG: OFlag = OFlag::empty();
 use agentos_execution::{
     JavascriptSyncRpcRequest, LocalResolvedModuleFormat, ModuleFsReader, ModuleResolveMode,
@@ -59,8 +52,8 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
-use std::os::fd::{AsRawFd, RawFd};
-use std::os::unix::fs::{symlink, FileExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
+use std::os::unix::fs::{symlink, FileExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -128,52 +121,96 @@ enum MappedRuntimeHostAccess {
     ReadOnly(MappedRuntimeHostPath),
 }
 
+/// An owned file descriptor resolved strictly beneath a mount root by
+/// [`crate::plugins::host_dir::confine::resolve_beneath`]. All operations go through the fd (fd-relative
+/// `*at` calls, `fstat`, fd `read`/`write`) — never a recovered path string — so
+/// they stay confined to the resolved object and TOCTOU-safe. The `OwnedFd`
+/// closes the descriptor on drop.
 #[derive(Debug)]
 struct AnchoredFd {
-    fd: RawFd,
+    fd: OwnedFd,
 }
 
 impl AnchoredFd {
-    #[cfg(not(target_os = "macos"))]
-    fn proc_path(&self) -> PathBuf {
-        PathBuf::from(format!("/proc/self/fd/{}", self.fd))
+    /// `fstat` the resolved object.
+    fn metadata(&self) -> std::io::Result<HostStat> {
+        nix::sys::stat::fstat(self.as_raw_fd())
+            .map(|stat| HostStat::from_filestat(&stat))
+            .map_err(errno_to_io)
     }
 
-    // macOS `/dev/fd/N` re-opens a *file* fd (the kernel dups it), standing in
-    // for Linux's `/proc/self/fd/N` at the file read/write/metadata call sites.
-    // It is NOT, however, a drop-in for directory work: `/dev/fd/N` is not a
-    // `readdir`-able directory and child components cannot be appended
-    // (`/dev/fd/N/child` fails). Directory enumeration uses [`readdir_path`];
-    // child mutations use fd-relative `*at` calls.
-    #[cfg(target_os = "macos")]
-    fn proc_path(&self) -> PathBuf {
-        PathBuf::from(format!("/dev/fd/{}", self.fd))
+    /// Read the entire resolved file via the fd.
+    fn read_bytes(&self) -> std::io::Result<Vec<u8>> {
+        read_all_from_fd(self.fd.as_fd())
     }
 
-    // Path to enumerate this fd's directory entries. Linux can `readdir`
-    // `/proc/self/fd/N` directly; macOS `/dev/fd/N` is not a readdir-able
-    // directory (it yields `ENOTDIR`), so recover the fd's real host path via
-    // `fcntl(F_GETPATH)` — the same fd→path recovery used elsewhere on macOS.
-    #[cfg(not(target_os = "macos"))]
-    fn readdir_path(&self) -> std::io::Result<PathBuf> {
-        Ok(self.proc_path())
+    /// Read the entire resolved file via the fd as UTF-8.
+    fn read_to_string(&self) -> std::io::Result<String> {
+        let bytes = self.read_bytes()?;
+        String::from_utf8(bytes)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
     }
-    #[cfg(target_os = "macos")]
-    fn readdir_path(&self) -> std::io::Result<PathBuf> {
-        crate::macos_fs::fd_real_path(self.fd)
+
+    /// Write `data` to the resolved file via the fd (the fd must have been opened
+    /// writable).
+    fn write_bytes(&self, data: &[u8]) -> std::io::Result<()> {
+        write_all_to_fd(self.fd.as_fd(), data)
+    }
+
+    /// `fchmod` the resolved object.
+    fn set_mode(&self, mode: u32) -> std::io::Result<()> {
+        nix::sys::stat::fchmod(
+            self.as_raw_fd(),
+            Mode::from_bits_truncate(mode as nix::libc::mode_t),
+        )
+        .map_err(errno_to_io)
+    }
+
+    /// `futimens` the resolved object.
+    fn set_times(&self, atime: &TimeSpec, mtime: &TimeSpec) -> std::io::Result<()> {
+        nix::sys::stat::futimens(self.as_raw_fd(), atime, mtime).map_err(errno_to_io)
+    }
+
+    /// Consume the handle, yielding the owned fd (e.g. to build a persistent
+    /// [`std::fs::File`]).
+    fn into_owned_fd(self) -> OwnedFd {
+        self.fd
     }
 }
 
 impl AsRawFd for AnchoredFd {
     fn as_raw_fd(&self) -> RawFd {
-        self.fd
+        self.fd.as_raw_fd()
     }
 }
 
-impl Drop for AnchoredFd {
-    fn drop(&mut self) {
-        let _ = nix::unistd::close(self.fd);
+/// Read an entire file from `fd` into a `Vec`, using fd `read` (no path re-open).
+fn read_all_from_fd(fd: BorrowedFd<'_>) -> std::io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut buf = [0_u8; 65536];
+    loop {
+        let read = nix::unistd::read(fd.as_raw_fd(), &mut buf).map_err(errno_to_io)?;
+        if read == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..read]);
     }
+    Ok(out)
+}
+
+/// Write all of `data` to `fd`, using fd `write` (no path re-open).
+fn write_all_to_fd(fd: BorrowedFd<'_>, mut data: &[u8]) -> std::io::Result<()> {
+    while !data.is_empty() {
+        let written = nix::unistd::write(fd, data).map_err(errno_to_io)?;
+        if written == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "failed to write whole buffer to mapped host fd",
+            ));
+        }
+        data = &data[written..];
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -838,7 +875,7 @@ pub(crate) fn normalize_python_vfs_rpc_path(path: &str) -> Result<String, Sideca
 
     // Root is `/`: Python may address the whole guest VFS. Textual `..` segments
     // are resolved by `normalize_path`, and the kernel enforces fs permissions
-    // plus mount-confinement (openat2 RESOLVE_BENEATH refuses escaping symlinks)
+    // plus mount-confinement (the resolve-beneath walk refuses escaping symlinks)
     // on every op — so confinement is the kernel's job, not a prefix check here.
     let normalized = normalize_path(path);
     debug_assert_eq!(PYTHON_VFS_RPC_GUEST_ROOT, "/");
@@ -934,7 +971,7 @@ impl ModuleFsReader for ProcessModuleFsReader<'_> {
         let normalized = self.normalize_guest_path(guest_path);
         if let Some(opened) = self.open_mapped_path(&normalized, "module.readFile", OFlag::O_RDONLY)
         {
-            if let Ok(source) = fs::read_to_string(opened.handle.proc_path()) {
+            if let Ok(source) = opened.handle.read_to_string() {
                 return Some(source);
             }
         }
@@ -946,8 +983,8 @@ impl ModuleFsReader for ProcessModuleFsReader<'_> {
     fn path_is_dir(&mut self, guest_path: &str) -> Option<bool> {
         let normalized = self.normalize_guest_path(guest_path);
         if let Some(opened) = self.open_mapped_path(&normalized, "module.stat", O_PATH_ANCHOR) {
-            if let Ok(metadata) = fs::metadata(opened.handle.proc_path()) {
-                return Some(metadata.is_dir());
+            if let Ok(metadata) = opened.handle.metadata() {
+                return Some(metadata.is_directory);
             }
         }
 
@@ -1268,22 +1305,16 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                         "open_mapped_beneath",
                         phase_start,
                     );
-                    let host_path = opened.host_path.clone();
                     let phase_start = Instant::now();
-                    return open_mapped_host_fd(
-                        process,
-                        host_path,
-                        Some(path.to_string()),
-                        opened.handle.proc_path(),
-                        flags,
-                    )
-                    .inspect(|_| {
-                        record_fs_sync_subphase(
-                            request.method.as_str(),
-                            "open_mapped_fd",
-                            phase_start,
-                        );
-                    });
+                    return open_mapped_host_fd(process, opened, Some(path.to_string())).inspect(
+                        |_| {
+                            record_fs_sync_subphase(
+                                request.method.as_str(),
+                                "open_mapped_fd",
+                                phase_start,
+                            );
+                        },
+                    );
                 }
                 Some(MappedRuntimeHostAccess::ReadOnly(_)) => {
                     return Err(read_only_mapped_runtime_host_path_error(path));
@@ -1548,7 +1579,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     OFlag::O_RDONLY,
                     Mode::empty(),
                 )?;
-                let content = fs::read(opened.handle.proc_path()).map_err(|error| {
+                let content = opened.handle.read_bytes().map_err(|error| {
                     SidecarError::Io(format!(
                         "failed to read mapped guest file {} -> {}: {error}",
                         path,
@@ -1596,7 +1627,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                                 .unwrap_or(0o666) as _,
                         ),
                     )?;
-                    fs::write(opened.handle.proc_path(), contents).map_err(|error| {
+                    opened.handle.write_bytes(&contents).map_err(|error| {
                         SidecarError::Io(format!(
                             "failed to write mapped guest file {} -> {}: {error}",
                             path,
@@ -1634,14 +1665,14 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     O_PATH_ANCHOR,
                     Mode::empty(),
                 )?;
-                let metadata = fs::metadata(opened.handle.proc_path()).map_err(|error| {
+                let metadata = opened.handle.metadata().map_err(|error| {
                     SidecarError::Io(format!(
                         "failed to stat mapped guest path {} -> {}: {error}",
                         path,
                         opened.host_path.display()
                     ))
                 })?;
-                return Ok(javascript_sync_rpc_host_stat_value(&metadata));
+                return Ok(metadata.to_value());
             }
             kernel
                 .stat_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path)
@@ -1730,14 +1761,14 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     O_PATH_ANCHOR,
                     Mode::empty(),
                 )?;
-                let metadata = fs::metadata(opened.handle.proc_path()).map_err(|error| {
+                let metadata = opened.handle.metadata().map_err(|error| {
                     SidecarError::Io(format!(
                         "failed to access mapped guest path {} -> {}: {error}",
                         path,
                         opened.host_path.display()
                     ))
                 })?;
-                if !filesystem_access_mode_is_allowed(metadata.permissions().mode(), mode) {
+                if !filesystem_access_mode_is_allowed(metadata.mode, mode) {
                     return Err(filesystem_access_denied(path, mode));
                 }
                 return Ok(Value::Null);
@@ -1779,7 +1810,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                             OFlag::O_RDONLY,
                             Mode::empty(),
                         )?;
-                        fs::read(opened.handle.proc_path()).map_err(|error| {
+                        opened.handle.read_bytes().map_err(|error| {
                             SidecarError::Io(format!(
                                 "failed to read mapped guest file {} -> {}: {error}",
                                 source,
@@ -1794,7 +1825,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                             OFlag::O_RDONLY,
                             Mode::empty(),
                         )?;
-                        fs::read(opened.handle.proc_path()).map_err(|error| {
+                        opened.handle.read_bytes().map_err(|error| {
                             SidecarError::Io(format!(
                                 "failed to read mapped guest file {} -> {}: {error}",
                                 source,
@@ -1814,7 +1845,9 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                             OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
                             Mode::from_bits_truncate(0o666),
                         )?;
-                        fs::write(opened.handle.proc_path(), contents)
+                        opened
+                            .handle
+                            .write_bytes(&contents)
                             .map(|()| Value::Null)
                             .map_err(|error| {
                                 SidecarError::Io(format!(
@@ -1865,7 +1898,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     O_PATH_ANCHOR,
                     Mode::empty(),
                 ) {
-                    Ok(opened) => fs::metadata(opened.handle.proc_path()).is_ok(),
+                    Ok(opened) => opened.handle.metadata().is_ok(),
                     Err(_) => false,
                 };
                 return Ok(Value::Bool(exists));
@@ -2071,11 +2104,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                     {
                         kernel.chmod(path, mode).map_err(kernel_error)?;
                     }
-                    fs::set_permissions(
-                        opened.handle.proc_path(),
-                        fs::Permissions::from_mode(mode & 0o7777),
-                    )
-                    .map_err(|error| {
+                    opened.handle.set_mode(mode & 0o7777).map_err(|error| {
                         SidecarError::Io(format!(
                             "failed to chmod mapped guest path {} -> {}: {error}",
                             path,
@@ -2139,24 +2168,16 @@ pub(crate) fn service_javascript_fs_sync_rpc(
             }
             match mapped_runtime_host_path(process, path, true) {
                 Some(MappedRuntimeHostAccess::Writable(mapped_host)) => {
-                    let mapped_host_exists = match fs::symlink_metadata(&mapped_host.host_path) {
-                        Ok(_) => true,
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                            materialize_mapped_host_path_from_kernel(
-                                kernel,
-                                kernel_pid,
-                                path,
-                                &mapped_host,
-                            )?;
-                            fs::symlink_metadata(&mapped_host.host_path).is_ok()
-                        }
-                        Err(error) => {
-                            return Err(SidecarError::Io(format!(
-                                "failed to inspect mapped guest path {} -> {}: {error}",
-                                path,
-                                mapped_host.host_path.display()
-                            )));
-                        }
+                    let mapped_host_exists = if mapped_runtime_host_path_exists(&mapped_host)? {
+                        true
+                    } else {
+                        materialize_mapped_host_path_from_kernel(
+                            kernel,
+                            kernel_pid,
+                            path,
+                            &mapped_host,
+                        )?;
+                        mapped_runtime_host_path_exists(&mapped_host)?
                     };
                     if mapped_host_exists {
                         let context = format!("failed to update mapped guest path times {path}");
@@ -2199,13 +2220,7 @@ pub(crate) fn service_javascript_fs_sync_rpc(
                             }
                         }
                         if let Some(opened) = &follow_handle {
-                            apply_host_path_utimens(
-                                &opened.handle.proc_path(),
-                                atime,
-                                mtime,
-                                true,
-                                &context,
-                            )?;
+                            apply_anchored_fd_utimens(&opened.handle, atime, mtime, &context)?;
                         } else if let Some(parent) = &parent_handle {
                             apply_mapped_child_utimens(parent, atime, mtime, &context)?;
                         }
@@ -2712,42 +2727,17 @@ fn read_only_mapped_runtime_host_path_error(guest_path: &str) -> SidecarError {
     SidecarError::Kernel(format!("EROFS: read-only filesystem: {guest_path}"))
 }
 
-#[cfg(not(target_os = "macos"))]
-fn mapped_runtime_resolve_flags() -> ResolveFlag {
-    ResolveFlag::RESOLVE_BENEATH | ResolveFlag::RESOLVE_NO_MAGICLINKS
-}
-
-/// Open `relative` strictly beneath the mapped mount root, returning an owned
-/// raw fd. Linux resolves with `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`
-/// anchored on `root_dir`; macOS has no such syscall and resolves beneath
-/// `host_root` with cap-std (see [`crate::macos_fs`]).
-#[cfg(not(target_os = "macos"))]
+/// Open `relative` strictly beneath the mapped mount root, returning the owned
+/// fd and the resolved (diagnostic-only) host path via the universal
+/// resolve-beneath walk in [`crate::plugins::host_dir::confine`]. See that
+/// module for why `openat2` is not used.
 fn mapped_runtime_open_fd(
-    root_dir: &AnchoredFd,
-    _host_root: &Path,
-    relative: &Path,
-    flags: OFlag,
-    mode: Mode,
-) -> Result<RawFd, Errno> {
-    openat2(
-        root_dir.as_raw_fd(),
-        relative,
-        OpenHow::new()
-            .flags(flags | OFlag::O_CLOEXEC)
-            .mode(mode)
-            .resolve(mapped_runtime_resolve_flags()),
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn mapped_runtime_open_fd(
-    _root_dir: &AnchoredFd,
     host_root: &Path,
     relative: &Path,
     flags: OFlag,
     mode: Mode,
-) -> Result<RawFd, Errno> {
-    crate::macos_fs::resolve_beneath(host_root, relative, flags, mode)
+) -> Result<crate::plugins::host_dir::confine::Resolved, Errno> {
+    crate::plugins::host_dir::confine::resolve_beneath(host_root, relative, flags, mode)
 }
 
 fn mapped_runtime_relative_path(mapped: &MappedRuntimeHostPath) -> Result<PathBuf, SidecarError> {
@@ -2776,44 +2766,24 @@ fn mapped_runtime_relative_path(mapped: &MappedRuntimeHostPath) -> Result<PathBu
     })
 }
 
-fn open_mapped_runtime_root_dir(
-    mapped: &MappedRuntimeHostPath,
-    operation: &str,
-) -> Result<AnchoredFd, SidecarError> {
-    let fd = open(
-        &mapped.host_root,
-        OFlag::O_CLOEXEC | OFlag::O_DIRECTORY | OFlag::O_RDONLY,
-        Mode::empty(),
-    )
-    .map_err(|error| {
-        SidecarError::Io(format!(
-            "{operation}: failed to open mapped host root {} for {}: {}",
-            mapped.host_root.display(),
-            mapped.guest_path,
-            std::io::Error::from_raw_os_error(error as i32)
-        ))
-    })?;
-    Ok(AnchoredFd { fd })
-}
-
 fn open_mapped_runtime_beneath(
     mapped: &MappedRuntimeHostPath,
     operation: &str,
     flags: OFlag,
     mode: Mode,
 ) -> Result<MappedRuntimeOpenedPath, SidecarError> {
-    let root_dir = open_mapped_runtime_root_dir(mapped, operation)?;
     let relative = mapped_runtime_relative_path(mapped)?;
     let open_mode = if flags.intersects(OFlag::O_CREAT | O_TMPFILE_FLAG) {
         mode
     } else {
         Mode::empty()
     };
-    let fd = mapped_runtime_open_fd(&root_dir, &mapped.host_root, &relative, flags, open_mode)
+    let resolved = mapped_runtime_open_fd(&mapped.host_root, &relative, flags, open_mode)
         .map_err(|error| mapped_runtime_open_error(operation, mapped, error))?;
-    let handle = AnchoredFd { fd };
-    let host_path = mapped_runtime_host_path_from_fd(mapped, operation, &handle)?;
-    Ok(MappedRuntimeOpenedPath { handle, host_path })
+    Ok(MappedRuntimeOpenedPath {
+        handle: AnchoredFd { fd: resolved.fd },
+        host_path: resolved.real_path,
+    })
 }
 
 fn open_mapped_runtime_directory_beneath(
@@ -2821,18 +2791,17 @@ fn open_mapped_runtime_directory_beneath(
     operation: &str,
     relative: &Path,
 ) -> Result<MappedRuntimeOpenedPath, SidecarError> {
-    let root_dir = open_mapped_runtime_root_dir(mapped, operation)?;
-    let fd = mapped_runtime_open_fd(
-        &root_dir,
+    let resolved = mapped_runtime_open_fd(
         &mapped.host_root,
         relative,
         OFlag::O_DIRECTORY | OFlag::O_RDONLY,
         Mode::empty(),
     )
     .map_err(|error| mapped_runtime_open_error(operation, mapped, error))?;
-    let handle = AnchoredFd { fd };
-    let host_path = mapped_runtime_host_path_from_fd(mapped, operation, &handle)?;
-    Ok(MappedRuntimeOpenedPath { handle, host_path })
+    Ok(MappedRuntimeOpenedPath {
+        handle: AnchoredFd { fd: resolved.fd },
+        host_path: resolved.real_path,
+    })
 }
 
 fn open_mapped_runtime_parent_beneath(
@@ -2928,8 +2897,11 @@ impl From<&fs::Metadata> for HostStat {
     }
 }
 
-#[cfg(target_os = "macos")]
 impl HostStat {
+    // `FileStat` field widths differ by platform (e.g. `st_dev`/`st_nlink` are
+    // narrower on macOS than on Linux), so these casts are load-bearing on macOS
+    // even though they are same-type on Linux.
+    #[allow(clippy::unnecessary_cast)]
     fn from_filestat(stat: &nix::sys::stat::FileStat) -> Self {
         use nix::sys::stat::SFlag;
         let fmt = stat.st_mode & SFlag::S_IFMT.bits();
@@ -2952,13 +2924,6 @@ impl HostStat {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-fn mapped_child_lstat(parent: &MappedRuntimeParentPath) -> std::io::Result<HostStat> {
-    Ok(HostStat::from(&fs::symlink_metadata(
-        mapped_runtime_parent_child_path(parent),
-    )?))
-}
-#[cfg(target_os = "macos")]
 fn mapped_child_lstat(parent: &MappedRuntimeParentPath) -> std::io::Result<HostStat> {
     let stat = nix::sys::stat::fstatat(
         Some(parent.directory.as_raw_fd()),
@@ -3023,49 +2988,19 @@ fn read_mapped_runtime_link(
     })
 }
 
-fn mapped_runtime_host_path_from_fd(
-    mapped: &MappedRuntimeHostPath,
-    operation: &str,
-    fd: &AnchoredFd,
-) -> Result<PathBuf, SidecarError> {
-    // Linux reads the magic symlink `/proc/self/fd/N`; macOS recovers the path
-    // with `fcntl(F_GETPATH)` (see [`crate::macos_fs::fd_real_path`]).
-    #[cfg(not(target_os = "macos"))]
-    let resolved = fs::read_link(fd.proc_path());
-    #[cfg(target_os = "macos")]
-    let resolved = crate::macos_fs::fd_real_path(fd.as_raw_fd());
-    resolved.map_err(|error| {
-        SidecarError::Io(format!(
-            "{operation}: failed to resolve anchored mapped guest path {}: {error}",
-            mapped.guest_path
-        ))
-    })
-}
-
-#[cfg(not(target_os = "macos"))]
-fn mapped_runtime_parent_child_path(parent: &MappedRuntimeParentPath) -> PathBuf {
-    parent.directory.proc_path().join(&parent.child_name)
-}
-
 // ---------------------------------------------------------------------------
 // Mapped-runtime child operations.
 //
-// On Linux these operate on the resolved parent fd by appending the child to
-// `/proc/self/fd/N`. macOS cannot append path components to `/dev/fd/N`, so it
-// performs the same operations with fd-relative `*at` calls anchored on the
-// resolved parent fd — TOCTOU-safe, mirroring the host_dir plugin.
+// Each operation is performed with an fd-relative `*at` call anchored on the
+// resolved parent fd — TOCTOU-safe and portable across Linux, macOS, and
+// gVisor. This is the single universal implementation (there is no longer a
+// Linux `/proc/self/fd`-append variant).
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "macos")]
 fn errno_to_io(error: Errno) -> std::io::Error {
     std::io::Error::from_raw_os_error(error as i32)
 }
 
-#[cfg(not(target_os = "macos"))]
-fn create_dir_at(dir: &AnchoredFd, name: &std::ffi::OsStr) -> std::io::Result<()> {
-    fs::create_dir(dir.proc_path().join(name))
-}
-#[cfg(target_os = "macos")]
 fn create_dir_at(dir: &AnchoredFd, name: &std::ffi::OsStr) -> std::io::Result<()> {
     nix::sys::stat::mkdirat(Some(dir.as_raw_fd()), name, Mode::from_bits_truncate(0o777))
         .map_err(errno_to_io)
@@ -3075,11 +3010,6 @@ fn mapped_child_create_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<
     create_dir_at(&parent.directory, parent.child_name.as_os_str())
 }
 
-#[cfg(not(target_os = "macos"))]
-fn mapped_child_is_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<bool> {
-    Ok(fs::symlink_metadata(mapped_runtime_parent_child_path(parent))?.is_dir())
-}
-#[cfg(target_os = "macos")]
 fn mapped_child_is_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<bool> {
     use nix::sys::stat::SFlag;
     let stat = nix::sys::stat::fstatat(
@@ -3091,11 +3021,6 @@ fn mapped_child_is_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<bool
     Ok(stat.st_mode & SFlag::S_IFMT.bits() == SFlag::S_IFDIR.bits())
 }
 
-#[cfg(not(target_os = "macos"))]
-fn mapped_child_remove_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<()> {
-    fs::remove_dir(mapped_runtime_parent_child_path(parent))
-}
-#[cfg(target_os = "macos")]
 fn mapped_child_remove_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<()> {
     nix::unistd::unlinkat(
         Some(parent.directory.as_raw_fd()),
@@ -3105,11 +3030,6 @@ fn mapped_child_remove_dir(parent: &MappedRuntimeParentPath) -> std::io::Result<
     .map_err(errno_to_io)
 }
 
-#[cfg(not(target_os = "macos"))]
-fn mapped_child_remove_file(parent: &MappedRuntimeParentPath) -> std::io::Result<()> {
-    fs::remove_file(mapped_runtime_parent_child_path(parent))
-}
-#[cfg(target_os = "macos")]
 fn mapped_child_remove_file(parent: &MappedRuntimeParentPath) -> std::io::Result<()> {
     nix::unistd::unlinkat(
         Some(parent.directory.as_raw_fd()),
@@ -3119,11 +3039,6 @@ fn mapped_child_remove_file(parent: &MappedRuntimeParentPath) -> std::io::Result
     .map_err(errno_to_io)
 }
 
-#[cfg(not(target_os = "macos"))]
-fn mapped_child_symlink(parent: &MappedRuntimeParentPath, target: &str) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(target, mapped_runtime_parent_child_path(parent))
-}
-#[cfg(target_os = "macos")]
 fn mapped_child_symlink(parent: &MappedRuntimeParentPath, target: &str) -> std::io::Result<()> {
     nix::unistd::symlinkat(
         target,
@@ -3133,11 +3048,6 @@ fn mapped_child_symlink(parent: &MappedRuntimeParentPath, target: &str) -> std::
     .map_err(errno_to_io)
 }
 
-#[cfg(not(target_os = "macos"))]
-fn mapped_child_read_link(parent: &MappedRuntimeParentPath) -> std::io::Result<PathBuf> {
-    fs::read_link(mapped_runtime_parent_child_path(parent))
-}
-#[cfg(target_os = "macos")]
 fn mapped_child_read_link(parent: &MappedRuntimeParentPath) -> std::io::Result<PathBuf> {
     nix::fcntl::readlinkat(
         Some(parent.directory.as_raw_fd()),
@@ -3148,24 +3058,8 @@ fn mapped_child_read_link(parent: &MappedRuntimeParentPath) -> std::io::Result<P
 }
 
 /// Set access/modification times on a mapped child without following symlinks
-/// (lutimes). Linux operates on `/proc/self/fd/N/child`; macOS uses fd-relative
-/// `utimensat` anchored on the resolved parent fd.
-#[cfg(not(target_os = "macos"))]
-fn apply_mapped_child_utimens(
-    parent: &MappedRuntimeParentPath,
-    atime: VirtualUtimeSpec,
-    mtime: VirtualUtimeSpec,
-    context: &str,
-) -> Result<(), SidecarError> {
-    apply_host_path_utimens(
-        &mapped_runtime_parent_child_path(parent),
-        atime,
-        mtime,
-        false,
-        context,
-    )
-}
-#[cfg(target_os = "macos")]
+/// (lutimes), using an fd-relative `utimensat` anchored on the resolved parent
+/// fd.
 fn apply_mapped_child_utimens(
     parent: &MappedRuntimeParentPath,
     atime: VirtualUtimeSpec,
@@ -3215,24 +3109,59 @@ fn apply_mapped_child_utimens(
     .map_err(|error| SidecarError::Io(format!("{context}: failed to set times: {error}")))
 }
 
-#[cfg(not(target_os = "macos"))]
-fn mapped_child_rename(
-    source: &MappedRuntimeParentPath,
-    destination: &MappedRuntimeParentPath,
-) -> std::io::Result<()> {
-    rename_mapped_host_path_with_fallback(
-        &mapped_runtime_parent_child_path(source),
-        &mapped_runtime_parent_child_path(destination),
-    )
+/// Set access/modification times on an already-resolved (symlink-followed)
+/// handle via fd-relative `futimens`. Used for the follow-symlink `utimes` path;
+/// `Omit` reads the existing time from the same fd (`fstat`), preserving
+/// nanosecond precision.
+fn apply_anchored_fd_utimens(
+    handle: &AnchoredFd,
+    atime: VirtualUtimeSpec,
+    mtime: VirtualUtimeSpec,
+    context: &str,
+) -> Result<(), SidecarError> {
+    let existing = match (atime, mtime) {
+        (VirtualUtimeSpec::Omit, _) | (_, VirtualUtimeSpec::Omit) => {
+            let stat = nix::sys::stat::fstat(handle.as_raw_fd())
+                .map_err(|error| SidecarError::Io(format!("{context}: failed to stat: {error}")))?;
+            Some((
+                VirtualTimeSpec {
+                    sec: stat.st_atime,
+                    nsec: stat.st_atime_nsec.max(0) as u32,
+                },
+                VirtualTimeSpec {
+                    sec: stat.st_mtime,
+                    nsec: stat.st_mtime_nsec.max(0) as u32,
+                },
+            ))
+        }
+        _ => None,
+    };
+    let existing_atime = existing
+        .as_ref()
+        .map(|(atime, _)| *atime)
+        .unwrap_or(VirtualTimeSpec { sec: 0, nsec: 0 });
+    let existing_mtime = existing
+        .as_ref()
+        .map(|(_, mtime)| *mtime)
+        .unwrap_or(VirtualTimeSpec { sec: 0, nsec: 0 });
+    let times = [
+        resolve_host_utime(atime, existing_atime),
+        resolve_host_utime(mtime, existing_mtime),
+    ];
+    handle
+        .set_times(&times[0], &times[1])
+        .map_err(|error| SidecarError::Io(format!("{context}: failed to set times: {error}")))
 }
-#[cfg(target_os = "macos")]
+
 fn mapped_child_rename(
     source: &MappedRuntimeParentPath,
     destination: &MappedRuntimeParentPath,
 ) -> std::io::Result<()> {
     // Same-filesystem rename is fd-relative (TOCTOU-safe). A cross-device rename
-    // (EXDEV) cannot be done fd-relative, so fall back to the path-based copy on
-    // the resolved real paths, exactly as the Linux fallback does.
+    // (EXDEV) cannot be done with `renameat`, so fall back to a copy+unlink — but
+    // still fd-relative, anchored on the CONFINED parent dir fds, never on
+    // `host_path` (a `confine::Resolved::real_path`, which is diagnostic-only and
+    // whose ancestors a concurrent guest could swap for an escaping symlink).
     match nix::fcntl::renameat(
         Some(source.directory.as_raw_fd()),
         source.child_name.as_os_str(),
@@ -3240,9 +3169,11 @@ fn mapped_child_rename(
         destination.child_name.as_os_str(),
     ) {
         Ok(()) => Ok(()),
-        Err(Errno::EXDEV) => move_mapped_host_path_across_devices(
-            &source.host_path.join(&source.child_name),
-            &destination.host_path.join(&destination.child_name),
+        Err(Errno::EXDEV) => move_across_devices_at(
+            source.directory.fd.as_fd(),
+            source.child_name.as_os_str(),
+            destination.directory.fd.as_fd(),
+            destination.child_name.as_os_str(),
         ),
         Err(error) => Err(errno_to_io(error)),
     }
@@ -3395,23 +3326,72 @@ fn mapped_host_open_is_writable(flags: u32) -> bool {
         || flags & libc::O_TRUNC as u32 != 0
 }
 
+fn mapped_runtime_exists_error(mapped: &MappedRuntimeHostPath, error: Errno) -> SidecarError {
+    if error == Errno::EXDEV {
+        return mapped_runtime_host_path_escape_error(mapped, &mapped.host_path);
+    }
+    SidecarError::Io(format!(
+        "failed to inspect mapped guest path {} -> {}: {}",
+        mapped.guest_path,
+        mapped.host_path.display(),
+        std::io::Error::from_raw_os_error(error as i32)
+    ))
+}
+
+/// Confined existence check (lstat semantics) for a mapped guest path. Resolves
+/// the PARENT strictly beneath the mapped root via the universal `confine` walk
+/// (which refuses ancestor `..`/symlink escapes) and `lstat`s the leaf through
+/// the anchored parent fd — never a path-based `fs::symlink_metadata`, whose
+/// ancestor resolution a guest could redirect out of the mapped root by swapping
+/// an ancestor for a symlink, leaking an out-of-root existence bit. A missing
+/// leaf OR a missing/non-directory ancestor yields `Ok(false)`; an escape yields
+/// a typed error.
+fn mapped_runtime_host_path_exists(mapped: &MappedRuntimeHostPath) -> Result<bool, SidecarError> {
+    use crate::plugins::host_dir::confine;
+
+    let relative = mapped_runtime_relative_path(mapped)?;
+    let leaf = match relative.file_name() {
+        Some(name) => name.to_os_string(),
+        // `.` is the mapped root itself: open it directly to test existence.
+        None => {
+            return match confine::resolve_dir_anchor_beneath(&mapped.host_root, Path::new(".")) {
+                Ok(_) => Ok(true),
+                Err(Errno::ENOENT) | Err(Errno::ENOTDIR) => Ok(false),
+                Err(error) => Err(mapped_runtime_exists_error(mapped, error)),
+            };
+        }
+    };
+    let parent_relative = relative
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+
+    let parent = match confine::resolve_dir_anchor_beneath(&mapped.host_root, &parent_relative) {
+        Ok(resolved) => resolved,
+        // A missing (or non-directory) ancestor means the leaf cannot exist yet.
+        Err(Errno::ENOENT) | Err(Errno::ENOTDIR) => return Ok(false),
+        Err(error) => return Err(mapped_runtime_exists_error(mapped, error)),
+    };
+    match nix::sys::stat::fstatat(
+        Some(parent.fd.as_raw_fd()),
+        leaf.as_os_str(),
+        nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW,
+    ) {
+        Ok(_) => Ok(true),
+        Err(Errno::ENOENT) => Ok(false),
+        Err(error) => Err(mapped_runtime_exists_error(mapped, error)),
+    }
+}
+
 fn materialize_mapped_host_path_from_kernel(
     kernel: &mut SidecarKernel,
     kernel_pid: u32,
     guest_path: &str,
     mapped: &MappedRuntimeHostPath,
 ) -> Result<(), SidecarError> {
-    let host_path = &mapped.host_path;
-    match fs::symlink_metadata(host_path) {
-        Ok(_) => return Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(SidecarError::Io(format!(
-                "failed to inspect mapped host path for {} -> {}: {error}",
-                guest_path,
-                host_path.display()
-            )));
-        }
+    if mapped_runtime_host_path_exists(mapped)? {
+        return Ok(());
     }
 
     if !kernel
@@ -3458,7 +3438,7 @@ fn materialize_mapped_host_path_from_kernel(
             OFlag::O_CREAT | OFlag::O_TRUNC | OFlag::O_WRONLY,
             Mode::from_bits_truncate((stat.mode & 0o7777) as _),
         )?;
-        fs::write(opened.handle.proc_path(), bytes).map_err(|error| {
+        opened.handle.write_bytes(&bytes).map_err(|error| {
             SidecarError::Io(format!(
                 "failed to materialize mapped guest file {} -> {}: {error}",
                 guest_path,
@@ -3469,59 +3449,32 @@ fn materialize_mapped_host_path_from_kernel(
 
     let opened =
         open_mapped_runtime_beneath(mapped, "fs.materialize", O_PATH_ANCHOR, Mode::empty())?;
-    fs::set_permissions(
-        opened.handle.proc_path(),
-        fs::Permissions::from_mode(stat.mode & 0o7777),
-    )
-    .map_err(|error| {
-        SidecarError::Io(format!(
-            "failed to set permissions for materialized mapped guest path {} -> {}: {error}",
-            guest_path,
-            opened.host_path.display()
-        ))
-    })?;
+    opened
+        .handle
+        .set_mode(stat.mode & 0o7777)
+        .map_err(|error| {
+            SidecarError::Io(format!(
+                "failed to set permissions for materialized mapped guest path {} -> {}: {error}",
+                guest_path,
+                opened.host_path.display()
+            ))
+        })?;
 
     Ok(())
 }
 
+/// Register a persistent guest file handle backed by an already-resolved
+/// mapped-host fd. The resolve-beneath open already applied the guest's access
+/// mode and creation flags, so the owned fd is turned directly into a
+/// [`std::fs::File`] — no path re-open, so there is no TOCTOU window and no
+/// `/proc/self/fd` dependency.
 fn open_mapped_host_fd(
     process: &mut ActiveProcess,
-    host_path: PathBuf,
+    opened: MappedRuntimeOpenedPath,
     guest_path: Option<String>,
-    proc_path: PathBuf,
-    flags: u32,
 ) -> Result<Value, SidecarError> {
-    let access_mode = flags & libc::O_ACCMODE as u32;
-    let mut options = OpenOptions::new();
-    match access_mode {
-        x if x == libc::O_WRONLY as u32 => {
-            options.write(true);
-        }
-        x if x == libc::O_RDWR as u32 => {
-            options.read(true).write(true);
-        }
-        _ => {
-            options.read(true);
-        }
-    }
-    if flags & libc::O_APPEND as u32 != 0 {
-        options.append(true);
-    }
-
-    let masked_flags = flags
-        & !(libc::O_ACCMODE as u32
-            | libc::O_APPEND as u32
-            | libc::O_CREAT as u32
-            | libc::O_EXCL as u32
-            | libc::O_TRUNC as u32);
-    options.custom_flags(masked_flags as i32);
-
-    let file = options.open(&proc_path).map_err(|error| {
-        SidecarError::Io(format!(
-            "failed to open mapped guest file {}: {error}",
-            host_path.display()
-        ))
-    })?;
+    let host_path = opened.host_path;
+    let file = std::fs::File::from(opened.handle.into_owned_fd());
     let fd = process.allocate_mapped_host_fd(crate::state::ActiveMappedHostFd {
         file,
         path: host_path,
@@ -3684,64 +3637,204 @@ fn rename_mapped_host_path(
     }
 }
 
-// On macOS the mapped rename is fd-relative (`renameat`); this path-based
-// fallback is only used by the Linux mapped-rename helper.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
-fn rename_mapped_host_path_with_fallback(source: &Path, destination: &Path) -> std::io::Result<()> {
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    match fs::rename(source, destination) {
-        Ok(()) => Ok(()),
-        Err(error) if error.raw_os_error() == Some(libc::EXDEV) => {
-            move_mapped_host_path_across_devices(source, destination)
-        }
-        Err(error) => Err(error),
-    }
+/// Cross-device move of `(src_dir, src_name)` to `(dst_dir, dst_name)` performed
+/// entirely fd-relative against the CONFINED parent directory fds — copy then
+/// unlink, recursing into directories with `openat(O_NOFOLLOW)` subdir fds.
+///
+/// This replaces a path-based `fs::copy`/`fs::rename` fallback that operated on
+/// `confine::Resolved::real_path` strings: those re-traverse from `/` and follow
+/// any ancestor symlink, so a guest racing `rmdir a; ln -s /etc a` could redirect
+/// the copy outside the mapped root. Anchoring every syscall on the pinned parent
+/// fds (and `O_NOFOLLOW` on every `openat`) keeps the move strictly confined:
+/// a leaf swapped to a symlink fails closed (`ELOOP`) rather than being followed,
+/// except a genuine symlink leaf, which is recreated verbatim (never dereferenced).
+fn move_across_devices_at(
+    src_dir: BorrowedFd<'_>,
+    src_name: &std::ffi::OsStr,
+    dst_dir: BorrowedFd<'_>,
+    dst_name: &std::ffi::OsStr,
+) -> std::io::Result<()> {
+    move_across_devices_at_depth(src_dir, src_name, dst_dir, dst_name, 0)
 }
 
-fn move_mapped_host_path_across_devices(source: &Path, destination: &Path) -> std::io::Result<()> {
-    let metadata = fs::symlink_metadata(source)?;
-    remove_existing_mapped_host_destination(destination)?;
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
+/// Maximum directory nesting a single cross-device move will descend. A hostile
+/// guest can nest directories arbitrarily deep (fd-relative `mkdirat` is not
+/// `PATH_MAX`-bounded), and unbounded recursion here would overflow the sidecar
+/// thread stack — a SIGSEGV that aborts every co-tenant VM — or exhaust file
+/// descriptors (two held per level). Bounded by default per the runtime's
+/// resource-safety invariant; deeper trees fail with the typed error below.
+const MAX_CROSS_DEVICE_MOVE_DEPTH: u32 = 256;
+
+fn move_across_devices_at_depth(
+    src_dir: BorrowedFd<'_>,
+    src_name: &std::ffi::OsStr,
+    dst_dir: BorrowedFd<'_>,
+    dst_name: &std::ffi::OsStr,
+    depth: u32,
+) -> std::io::Result<()> {
+    use nix::sys::stat::SFlag;
+
+    if depth > MAX_CROSS_DEVICE_MOVE_DEPTH {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "cross-device move exceeded max directory depth {MAX_CROSS_DEVICE_MOVE_DEPTH} \
+                 (raise MAX_CROSS_DEVICE_MOVE_DEPTH to allow deeper trees)"
+            ),
+        ));
     }
 
-    if metadata.file_type().is_symlink() {
-        let target = fs::read_link(source)?;
-        symlink(&target, destination)?;
-        fs::remove_file(source)?;
+    let stat = nix::sys::stat::fstatat(
+        Some(src_dir.as_raw_fd()),
+        src_name,
+        nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW,
+    )
+    .map_err(errno_to_io)?;
+    remove_dest_at(dst_dir, dst_name)?;
+
+    let fmt = stat.st_mode & SFlag::S_IFMT.bits();
+    let perm = Mode::from_bits_truncate((stat.st_mode & 0o7777) as _);
+
+    if fmt == SFlag::S_IFLNK.bits() {
+        let target =
+            nix::fcntl::readlinkat(Some(src_dir.as_raw_fd()), src_name).map_err(errno_to_io)?;
+        nix::unistd::symlinkat(target.as_os_str(), Some(dst_dir.as_raw_fd()), dst_name)
+            .map_err(errno_to_io)?;
+        nix::unistd::unlinkat(
+            Some(src_dir.as_raw_fd()),
+            src_name,
+            nix::unistd::UnlinkatFlags::NoRemoveDir,
+        )
+        .map_err(errno_to_io)?;
         return Ok(());
     }
 
-    if metadata.is_dir() {
-        fs::create_dir_all(destination)?;
-        for entry in fs::read_dir(source)? {
-            let entry = entry?;
-            let source_child = entry.path();
-            let destination_child = destination.join(entry.file_name());
-            move_mapped_host_path_across_devices(&source_child, &destination_child)?;
+    if fmt == SFlag::S_IFDIR.bits() {
+        // Create the destination owner-writable/searchable so the non-root
+        // sidecar can populate it even when the source mode lacks owner
+        // write/exec (e.g. `0o555`); the exact source mode is restored by the
+        // trailing `fchmod` after all children are copied.
+        nix::sys::stat::mkdirat(Some(dst_dir.as_raw_fd()), dst_name, perm | Mode::S_IRWXU)
+            .map_err(errno_to_io)?;
+        let src_sub = open_child_beneath(src_dir, src_name, true)?;
+        let dst_sub = open_child_beneath(dst_dir, dst_name, true)?;
+        for (name, _kind) in
+            crate::plugins::host_dir::confine::read_dir(src_sub.as_fd()).map_err(errno_to_io)?
+        {
+            move_across_devices_at_depth(
+                src_sub.as_fd(),
+                &name,
+                dst_sub.as_fd(),
+                &name,
+                depth + 1,
+            )?;
         }
-        fs::set_permissions(destination, metadata.permissions())?;
-        fs::remove_dir(source)?;
+        // Restore the source directory's exact mode (mkdirat used a temporary
+        // owner-writable mode above, and applied the umask).
+        nix::sys::stat::fchmod(dst_sub.as_raw_fd(), perm).map_err(errno_to_io)?;
+        nix::unistd::unlinkat(
+            Some(src_dir.as_raw_fd()),
+            src_name,
+            nix::unistd::UnlinkatFlags::RemoveDir,
+        )
+        .map_err(errno_to_io)?;
         return Ok(());
     }
 
-    fs::copy(source, destination)?;
-    fs::set_permissions(destination, metadata.permissions())?;
-    fs::remove_file(source)?;
+    if fmt != SFlag::S_IFREG.bits() {
+        // Only regular files, directories, and symlinks are movable. Special
+        // files (FIFO/socket/device) cannot be created through this VFS (no
+        // `mknod`), so a node here was placed by the host operator; refuse it
+        // rather than block indefinitely on an `O_RDONLY` open of a FIFO.
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "cross-device move: unsupported non-regular file in mapped root",
+        ));
+    }
+
+    // Regular file: stream the bytes fd→fd.
+    let src_fd = open_child_beneath(src_dir, src_name, false)?;
+    let dst_fd = rustix::fs::openat(
+        dst_dir,
+        dst_name,
+        rustix::fs::OFlags::WRONLY
+            | rustix::fs::OFlags::CREATE
+            | rustix::fs::OFlags::EXCL
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::from_bits_truncate((stat.st_mode & 0o7777) as _),
+    )
+    .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+    if let Err(error) = copy_fd_to_fd(src_fd.as_fd(), dst_fd.as_fd()) {
+        // Never leave a truncated destination behind on a failed move. This
+        // cleanup is best-effort; the ORIGINAL copy error is what propagates.
+        drop(dst_fd);
+        let _ = nix::unistd::unlinkat(
+            Some(dst_dir.as_raw_fd()),
+            dst_name,
+            nix::unistd::UnlinkatFlags::NoRemoveDir,
+        );
+        return Err(error);
+    }
+    nix::unistd::unlinkat(
+        Some(src_dir.as_raw_fd()),
+        src_name,
+        nix::unistd::UnlinkatFlags::NoRemoveDir,
+    )
+    .map_err(errno_to_io)
+}
+
+/// `openat` a single child of `dir` with `O_NOFOLLOW` (fails closed with `ELOOP`
+/// if the child is a symlink), returning an owned fd. `directory` opens it
+/// `O_DIRECTORY | O_RDONLY`; otherwise `O_RDONLY`.
+fn open_child_beneath(
+    dir: BorrowedFd<'_>,
+    name: &std::ffi::OsStr,
+    directory: bool,
+) -> std::io::Result<OwnedFd> {
+    let mut flags =
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC;
+    if directory {
+        flags |= rustix::fs::OFlags::DIRECTORY;
+    }
+    rustix::fs::openat(dir, name, flags, rustix::fs::Mode::empty())
+        .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))
+}
+
+/// Copy all bytes from `src` to `dst`, streaming through a fixed buffer (no whole
+/// -file allocation), using fd `read`/`write`.
+fn copy_fd_to_fd(src: BorrowedFd<'_>, dst: BorrowedFd<'_>) -> std::io::Result<()> {
+    let mut buf = [0_u8; 65536];
+    loop {
+        let read = nix::unistd::read(src.as_raw_fd(), &mut buf).map_err(errno_to_io)?;
+        if read == 0 {
+            break;
+        }
+        write_all_to_fd(dst, &buf[..read])?;
+    }
     Ok(())
 }
 
-fn remove_existing_mapped_host_destination(path: &Path) -> std::io::Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || metadata.is_file() => {
-            fs::remove_file(path)
+/// Remove an existing destination entry (fd-relative, nofollow): a file or
+/// symlink is unlinked, a directory is `rmdir`ed (fails if non-empty, matching
+/// rename-replace semantics), a missing entry is a no-op.
+fn remove_dest_at(dst_dir: BorrowedFd<'_>, name: &std::ffi::OsStr) -> std::io::Result<()> {
+    use nix::sys::stat::SFlag;
+    match nix::sys::stat::fstatat(
+        Some(dst_dir.as_raw_fd()),
+        name,
+        nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW,
+    ) {
+        Ok(stat) => {
+            let flags = if stat.st_mode & SFlag::S_IFMT.bits() == SFlag::S_IFDIR.bits() {
+                nix::unistd::UnlinkatFlags::RemoveDir
+            } else {
+                nix::unistd::UnlinkatFlags::NoRemoveDir
+            };
+            nix::unistd::unlinkat(Some(dst_dir.as_raw_fd()), name, flags).map_err(errno_to_io)
         }
-        Ok(metadata) if metadata.is_dir() => fs::remove_dir(path),
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
+        Err(Errno::ENOENT) => Ok(()),
+        Err(error) => Err(errno_to_io(error)),
     }
 }
 
@@ -3749,29 +3842,35 @@ fn mapped_readdir_entry_is_directory(
     mapped_host: &MappedRuntimeHostPath,
     directory: &MappedRuntimeOpenedPath,
     guest_dir_path: &str,
-    entry: &fs::DirEntry,
-    name: &str,
+    name: &std::ffi::OsStr,
+    kind: crate::plugins::host_dir::confine::EntryKind,
 ) -> Option<bool> {
-    let file_type = entry.file_type().ok()?;
-    if !file_type.is_symlink() {
-        return Some(file_type.is_dir());
-    }
-
-    let child = MappedRuntimeHostPath {
-        guest_path: normalize_path(&format!(
-            "{}/{}",
-            guest_dir_path.trim_end_matches('/'),
-            name
-        )),
-        host_root: mapped_host.host_root.clone(),
-        host_path: directory.host_path.join(entry.file_name()),
-    };
-    let opened =
-        open_mapped_runtime_beneath(&child, "fs.readdir entry", O_PATH_ANCHOR, Mode::empty())
+    match kind {
+        crate::plugins::host_dir::confine::EntryKind::Directory => Some(true),
+        crate::plugins::host_dir::confine::EntryKind::Other => Some(false),
+        // A symlink entry is followed by re-resolving it beneath the same root
+        // (fd-anchored), then classifying the target via `fstat`.
+        crate::plugins::host_dir::confine::EntryKind::Symlink => {
+            let name_str = name.to_str()?;
+            let child = MappedRuntimeHostPath {
+                guest_path: normalize_path(&format!(
+                    "{}/{}",
+                    guest_dir_path.trim_end_matches('/'),
+                    name_str
+                )),
+                host_root: mapped_host.host_root.clone(),
+                host_path: directory.host_path.join(name),
+            };
+            let opened = open_mapped_runtime_beneath(
+                &child,
+                "fs.readdir entry",
+                O_PATH_ANCHOR,
+                Mode::empty(),
+            )
             .ok()?;
-    fs::metadata(opened.handle.proc_path())
-        .map(|metadata| metadata.is_dir())
-        .ok()
+            opened.handle.metadata().map(|stat| stat.is_directory).ok()
+        }
+    }
 }
 
 pub(crate) fn service_javascript_fs_readdir_entries(
@@ -3791,41 +3890,40 @@ pub(crate) fn service_javascript_fs_readdir_entries(
             Mode::empty(),
         ) {
             Ok(directory) => {
-                let readdir_path = directory.handle.readdir_path().map_err(|error| {
-                    SidecarError::Io(format!(
-                        "failed to resolve mapped guest directory {} -> {}: {error}",
-                        path,
-                        directory.host_path.display()
-                    ))
-                })?;
-                for entry in fs::read_dir(readdir_path).map_err(|error| {
-                    SidecarError::Io(format!(
-                        "failed to read mapped guest directory {} -> {}: {error}",
-                        path,
-                        directory.host_path.display()
-                    ))
-                })? {
-                    let Ok(entry) = entry else { continue };
-                    let Ok(name) = entry.file_name().into_string() else {
-                        continue;
-                    };
+                let entries =
+                    crate::plugins::host_dir::confine::read_dir(directory.handle.fd.as_fd())
+                        .map_err(|error| {
+                            SidecarError::Io(format!(
+                                "failed to read mapped guest directory {} -> {}: {}",
+                                path,
+                                directory.host_path.display(),
+                                std::io::Error::from_raw_os_error(error as i32)
+                            ))
+                        })?;
+                for (name, kind) in entries {
                     if let Some(is_dir) = mapped_readdir_entry_is_directory(
                         &mapped_host,
                         &directory,
                         path,
-                        &entry,
                         &name,
+                        kind,
                     ) {
+                        let Ok(name) = name.into_string() else {
+                            continue;
+                        };
                         typed.insert(name, is_dir);
                     }
                 }
             }
+            // The host dir simply not existing yet is fine — fall through to the
+            // kernel VFS. Test existence through the confined walk (not a
+            // path-based `symlink_metadata`, whose ancestors a guest could
+            // redirect out of the mapped root); on a resolve error, keep the
+            // original readdir error rather than swallowing it.
             Err(_)
-                if matches!(
-                    fs::symlink_metadata(&mapped_host.host_path),
-                    Err(ref metadata_error)
-                        if metadata_error.kind() == std::io::ErrorKind::NotFound
-                ) => {}
+                if mapped_runtime_host_path_exists(&mapped_host)
+                    .map(|exists| !exists)
+                    .unwrap_or(false) => {}
             Err(error) => return Err(error),
         }
         match kernel.read_dir_with_types_for_process(EXECUTION_DRIVER_NAME, kernel_pid, path) {
@@ -4524,10 +4622,10 @@ fn ensure_guest_parent_dir(vm: &mut VmState, guest_path: &str) -> Result<(), Sid
 mod tests {
     use super::{
         create_mapped_runtime_directory, create_mapped_runtime_root_directory,
-        mapped_runtime_relative_path, mapped_runtime_symlink_metadata,
-        materialize_mapped_host_path_from_kernel, open_mapped_runtime_parent_beneath,
-        read_mapped_runtime_link, rename_mapped_host_path, MappedRuntimeHostAccess,
-        MappedRuntimeHostPath, SidecarError,
+        mapped_runtime_host_path_exists, mapped_runtime_relative_path,
+        mapped_runtime_symlink_metadata, materialize_mapped_host_path_from_kernel,
+        move_across_devices_at, open_mapped_runtime_parent_beneath, read_mapped_runtime_link,
+        rename_mapped_host_path, MappedRuntimeHostAccess, MappedRuntimeHostPath, SidecarError,
     };
     use crate::execution::javascript_sync_rpc_error_code;
     use crate::state::{SidecarKernel, EXECUTION_DRIVER_NAME, JAVASCRIPT_COMMAND};
@@ -4537,6 +4635,7 @@ mod tests {
     use agentos_kernel::permissions::Permissions;
     use agentos_kernel::vfs::MemoryFileSystem;
     use std::fs;
+    use std::os::fd::AsFd;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -4560,6 +4659,163 @@ mod tests {
         ));
         fs::create_dir_all(&path).expect("create temp dir");
         path
+    }
+
+    // Exercises the fd-relative cross-device move (the EXDEV rename fallback):
+    // a nested tree (file with a preserved non-default mode, a relative symlink,
+    // and a subdirectory) is moved anchored on the parent dir fds, and the source
+    // is removed. Directly drives `move_across_devices_at` (renameat would not
+    // return EXDEV within one filesystem).
+    #[test]
+    fn move_across_devices_copies_tree_fd_relative_and_removes_source() {
+        let root = temp_dir("mapped-xdev-move");
+        let src_parent = root.join("src");
+        let dst_parent = root.join("dst");
+        fs::create_dir_all(&src_parent).expect("src parent");
+        fs::create_dir_all(&dst_parent).expect("dst parent");
+
+        let item = src_parent.join("item");
+        fs::create_dir(&item).expect("item dir");
+        fs::write(item.join("a.txt"), b"hello").expect("a.txt");
+        fs::set_permissions(item.join("a.txt"), fs::Permissions::from_mode(0o640))
+            .expect("chmod a.txt");
+        std::os::unix::fs::symlink("a.txt", item.join("link")).expect("relative symlink");
+        fs::create_dir(item.join("sub")).expect("sub dir");
+        fs::write(item.join("sub/b.txt"), b"world").expect("b.txt");
+        // A subdirectory whose non-default mode must be restored exactly on the
+        // destination after it is populated (the dest is created owner-writable
+        // during population, then fchmod'd back).
+        fs::create_dir(item.join("mode")).expect("mode dir");
+        fs::write(item.join("mode/c.txt"), b"c").expect("c.txt");
+        fs::set_permissions(item.join("mode"), fs::Permissions::from_mode(0o700))
+            .expect("chmod mode dir");
+
+        let src_dir = fs::File::open(&src_parent).expect("open src parent dir");
+        let dst_dir = fs::File::open(&dst_parent).expect("open dst parent dir");
+        move_across_devices_at(
+            src_dir.as_fd(),
+            std::ffi::OsStr::new("item"),
+            dst_dir.as_fd(),
+            std::ffi::OsStr::new("moved"),
+        )
+        .expect("cross-device move");
+
+        let moved = dst_parent.join("moved");
+        assert_eq!(
+            fs::read(moved.join("a.txt")).expect("moved a.txt"),
+            b"hello"
+        );
+        assert_eq!(
+            fs::symlink_metadata(moved.join("a.txt"))
+                .expect("moved a.txt meta")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o640,
+            "file mode must be preserved"
+        );
+        assert_eq!(
+            fs::read_link(moved.join("link")).expect("moved link"),
+            PathBuf::from("a.txt"),
+            "relative symlink recreated verbatim"
+        );
+        assert_eq!(
+            fs::read(moved.join("sub/b.txt")).expect("moved b.txt"),
+            b"world"
+        );
+        assert_eq!(
+            fs::read(moved.join("mode/c.txt")).expect("moved mode/c.txt"),
+            b"c"
+        );
+        assert_eq!(
+            fs::symlink_metadata(moved.join("mode"))
+                .expect("moved mode dir")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700,
+            "the exact dir mode must be restored after population"
+        );
+        assert!(!item.exists(), "source tree must be removed after the move");
+
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    // The cross-device move must be depth-bounded: a hostile guest can nest
+    // directories arbitrarily deep, and unbounded recursion would overflow the
+    // sidecar stack (SIGSEGV). A tree past the limit fails closed with a typed,
+    // limit-naming error instead of crashing.
+    #[test]
+    fn move_across_devices_rejects_excessive_directory_depth() {
+        let root = temp_dir("mapped-xdev-depth");
+        let src_parent = root.join("src");
+        let dst_parent = root.join("dst");
+        fs::create_dir_all(&src_parent).expect("src parent");
+        fs::create_dir_all(&dst_parent).expect("dst parent");
+
+        let mut deep = src_parent.join("item");
+        fs::create_dir(&deep).expect("item");
+        for level in 0..300 {
+            deep.push(format!("d{level}"));
+            fs::create_dir(&deep).expect("nested dir");
+        }
+
+        let src_dir = fs::File::open(&src_parent).expect("open src parent");
+        let dst_dir = fs::File::open(&dst_parent).expect("open dst parent");
+        let error = move_across_devices_at(
+            src_dir.as_fd(),
+            std::ffi::OsStr::new("item"),
+            dst_dir.as_fd(),
+            std::ffi::OsStr::new("moved"),
+        )
+        .expect_err("a tree deeper than the limit must be rejected");
+        assert!(
+            error.to_string().contains("max directory depth"),
+            "expected a depth-limit error, got: {error}"
+        );
+
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    // S2: the mapped existence check must NOT follow an ancestor symlink out of
+    // the mapped root. A path-based `symlink_metadata` would follow `a -> outside`
+    // and report the out-of-root file as existing (an existence-bit leak); the
+    // confined walk refuses the escape instead.
+    #[test]
+    fn mapped_runtime_exists_refuses_ancestor_symlink_escape() {
+        let root = temp_dir("mapped-exists-escape");
+        let mapped_root = root.join("mapped");
+        let outside = root.join("outside");
+        fs::create_dir_all(&mapped_root).expect("mapped root");
+        fs::create_dir_all(&outside).expect("outside dir");
+        fs::write(outside.join("secret"), b"x").expect("outside secret");
+        std::os::unix::fs::symlink(&outside, mapped_root.join("a")).expect("ancestor symlink");
+
+        let mapped = MappedRuntimeHostPath {
+            guest_path: "/a/secret".to_string(),
+            host_path: mapped_root.join("a").join("secret"),
+            host_root: mapped_root.clone(),
+        };
+        let result = mapped_runtime_host_path_exists(&mapped);
+        assert!(
+            result.is_err(),
+            "ancestor-symlink escape must be refused (not followed to report the \
+             out-of-root file as existing), got {result:?}"
+        );
+
+        // A legitimate in-root path resolves without following anything outside.
+        fs::write(mapped_root.join("real.txt"), b"y").expect("in-root file");
+        let in_root = MappedRuntimeHostPath {
+            guest_path: "/real.txt".to_string(),
+            host_path: mapped_root.join("real.txt"),
+            host_root: mapped_root.clone(),
+        };
+        assert!(
+            mapped_runtime_host_path_exists(&in_root).expect("in-root exists check"),
+            "an in-root path must be reported as existing"
+        );
+
+        fs::remove_dir_all(&root).expect("cleanup");
     }
 
     fn test_kernel_with_process() -> (SidecarKernel, u32) {
@@ -4952,8 +5208,8 @@ mod tests {
     // Companion to the kernel-VFS test above, but resolving through the
     // `HostDirModuleReader` — the bridge-thread reader the live VM uses so module
     // resolution runs concurrently with the service loop instead of serializing
-    // behind it. It reads the SAME read-only `host_dir` mount (anchored openat2,
-    // escaping-symlink refusal) and must resolve the identical pnpm layout to the
+    // behind it. It reads the SAME read-only `host_dir` mount (anchored
+    // resolve-beneath, escaping-symlink refusal) and must resolve the identical pnpm layout to the
     // identical guest path, with no `.pnpm` scanning and the symlink-pointed
     // version winning over the decoy.
     #[test]
