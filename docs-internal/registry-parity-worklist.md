@@ -683,6 +683,14 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T13-12-51-0700-item12-jq-check-types-final.log`;
     `2026-07-08T13-12-51-0700-item12-jq-cargo-fmt-check-final.log`.
     Rev: `slnmvuqz`.
+  - **pi — DONE.** Enabled the existing real `createSession('pi')` headless
+    suite in default core Vitest coverage and unskipped the upstream Pi SDK bash
+    tool path. The suite proves initialization over the native sidecar
+    transport plus real ACP write-tool and bash-tool flows inside the VM. Proof:
+    `2026-07-08T14-37-00-0700-item12-cc-cache-restored-target-files.log`;
+    `2026-07-08T14-37-00-0700-item12-sidecar-build-after-manual-cc-restore.log`;
+    `2026-07-08T14-38-00-0700-item12-pi-headless-final-after-cc-restore.log`.
+    Rev: `mzuuypsm`.
 - **Objective:** write real e2e tests proving each behaves like its Linux
  counterpart (jq processes real JSON, sed edits streams, tar round-trips archives,
   gzip round-trips, etc.); agents exercise the real ACP

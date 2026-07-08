@@ -20,7 +20,6 @@ const SLOW_E2E_FILES = [
 	"tests/batch-file-ops.test.ts",
 	"tests/agentos-base-filesystem.test.ts",
 	"tests/pi-sdk-boot-probe.test.ts",
-	"tests/pi-headless.test.ts",
 	"tests/pi-tool-llmock.test.ts",
 	"tests/native-sidecar-process-permissions.test.ts",
 	"tests/pi-extensions.test.ts",
