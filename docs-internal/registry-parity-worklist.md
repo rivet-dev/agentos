@@ -567,6 +567,18 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
 ### 12. No tests at all — 9 software + 5 agents
 - **Broken:** zero e2e coverage: `gawk, sed, tar, gzip, jq, yq, diffutils,
   file, vim`; agents `claude, codex, opencode, pi, pi-cli`.
+- **Status:**
+  - **jq — DONE.** Added package-local VM e2e coverage for the staged `jq`
+    command and fixed the jaq-backed CLI wrapper to accept Linux-style file
+    operands instead of only stdin. The suite now proves version output,
+    file-backed array filtering, aggregate JSON construction, slurped NDJSON,
+    and invalid JSON parse errors through the packaged WASM command. Proof:
+    `2026-07-08T13-10-55-0700-item12-jq-toolchain-cmd-build-isolated-target.log`;
+    `2026-07-08T13-12-18-0700-item12-jq-package-build-after-wrapper-fix.log`;
+    `2026-07-08T13-12-51-0700-item12-jq-package-e2e-final.log`;
+    `2026-07-08T13-12-51-0700-item12-jq-check-types-final.log`;
+    `2026-07-08T13-12-51-0700-item12-jq-cargo-fmt-check-final.log`.
+    Rev: `slnmvuqz`.
 - **Objective:** write real e2e tests proving each behaves like its Linux
  counterpart (jq processes real JSON, sed edits streams, tar round-trips archives,
   gzip round-trips, etc.); agents exercise the real ACP
