@@ -7,11 +7,8 @@
  *   - SQL from command line arguments for multi-statement operations
  *   - Meta-commands (.dump, .schema, .tables)
  *
- * Note: kernel.exec() wraps commands in sh -c. Brush-shell currently returns
- * exit code 17 for all child commands. Tests verify stdout correctness.
- *
- * Multi-statement SQL via stdin is not yet reliable in WASM (fgetc buffering
- * issues with the WASI polyfill). Tests use SQL-as-argument for complex cases.
+ * The command is the official SQLite shell compiled against the AgentOS C
+ * sysroot, not the former local sqlite3_cli.c reimplementation.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -159,38 +156,55 @@ describeIf(hasSqlite3Binary, 'sqlite3 command', () => {
     expect(result.stdout.trim()).toBe('10\n20\n30');
   });
 
-  it('supports .tables meta-command via SQL setup', async () => {
+  it('supports .tables meta-command', async () => {
     const vfs = new SimpleVFS();
+    await vfs.mkdir('/tmp', { recursive: true });
     kernel = createKernel({ filesystem: vfs as any });
     await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
-    // Create tables via SQL argument, then query sqlite_master
-    const sql = "CREATE TABLE alpha(x); CREATE TABLE beta(y); SELECT name FROM sqlite_master WHERE type='table' ORDER BY 1;";
-    const result = await kernel.exec(`sqlite3 :memory: "${sql}"`);
-    const tables = result.stdout.trim().split('\n').sort();
-    expect(tables).toEqual(['alpha', 'beta']);
+    const createResult = await kernel.exec(
+      'sqlite3 /tmp/meta.db "CREATE TABLE alpha(x); CREATE TABLE beta(y);"'
+    );
+    expect(createResult.stderr).toBe('');
+
+    const result = await kernel.exec('sqlite3 /tmp/meta.db ".tables"');
+    expect(result.stdout).toContain('alpha');
+    expect(result.stdout).toContain('beta');
   });
 
-  it('supports .schema via sqlite_master query', async () => {
+  it('supports .schema meta-command', async () => {
     const vfs = new SimpleVFS();
+    await vfs.mkdir('/tmp', { recursive: true });
     kernel = createKernel({ filesystem: vfs as any });
     await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
-    const sql = "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT NOT NULL); SELECT sql FROM sqlite_master WHERE name='users';";
-    const result = await kernel.exec(`sqlite3 :memory: "${sql}"`);
-    expect(result.stdout.trim()).toContain('CREATE TABLE users');
+    const createResult = await kernel.exec(
+      'sqlite3 /tmp/schema.db "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT NOT NULL);"'
+    );
+    expect(createResult.stderr).toBe('');
+
+    const result = await kernel.exec('sqlite3 /tmp/schema.db ".schema users"');
+    expect(result.stdout).toContain('CREATE TABLE users');
+    expect(result.stdout).toContain('id INTEGER PRIMARY KEY');
   });
 
-  it('supports .dump style output via SQL', async () => {
+  it('supports .dump meta-command', async () => {
     const vfs = new SimpleVFS();
+    await vfs.mkdir('/tmp', { recursive: true });
     kernel = createKernel({ filesystem: vfs as any });
     await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
-    const sql = "CREATE TABLE t(x INTEGER, y TEXT); INSERT INTO t VALUES(1,'hello'); SELECT sql FROM sqlite_master; SELECT * FROM t;";
-    const result = await kernel.exec(`sqlite3 :memory: "${sql}"`);
-    const output = result.stdout.trim();
+    const createResult = await kernel.exec(
+      `sqlite3 /tmp/dump.db "CREATE TABLE t(x INTEGER, y TEXT); INSERT INTO t VALUES(1,'hello');"`
+    );
+    expect(createResult.stderr).toBe('');
+
+    const result = await kernel.exec('sqlite3 /tmp/dump.db ".dump"');
+    const output = result.stdout;
+    expect(output).toContain('BEGIN TRANSACTION');
     expect(output).toContain('CREATE TABLE t');
-    expect(output).toContain("1|hello");
+    expect(output).toContain("INSERT INTO t VALUES(1,'hello')");
+    expect(output).toContain('COMMIT');
   });
 
   it('handles SELECT with multiple columns', async () => {
@@ -249,43 +263,54 @@ describeIf(hasSqlite3Binary, 'sqlite3 command', () => {
 
   it('.tables meta-command lists created tables', async () => {
     const vfs = new SimpleVFS();
+    await vfs.mkdir('/tmp', { recursive: true });
     kernel = createKernel({ filesystem: vfs as any });
     await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
-    // Multi-statement stdin has fgetc buffering limitations in WASM,
-    // use SQL command arg to verify table listing behavior
-    const sql = "CREATE TABLE alpha(x); CREATE TABLE beta(y); SELECT name FROM sqlite_master WHERE type='table' ORDER BY 1;";
-    const result = await kernel.exec(`sqlite3 :memory: "${sql}"`);
-    const tables = result.stdout.trim().split('\n').sort();
-    expect(tables).toEqual(['alpha', 'beta']);
+    const createResult = await kernel.exec(
+      'sqlite3 /tmp/tables.db "CREATE TABLE alpha(x); CREATE TABLE beta(y);"'
+    );
+    expect(createResult.stderr).toBe('');
+
+    const result = await kernel.exec('sqlite3 /tmp/tables.db ".tables"');
+    expect(result.stdout).toContain('alpha');
+    expect(result.stdout).toContain('beta');
   });
 
   it('.schema meta-command shows CREATE TABLE statements', async () => {
     const vfs = new SimpleVFS();
+    await vfs.mkdir('/tmp', { recursive: true });
     kernel = createKernel({ filesystem: vfs as any });
     await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
-    // Query schema via sqlite_master (equivalent to .schema output)
-    const sql = "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT NOT NULL); SELECT sql FROM sqlite_master WHERE name='users';";
-    const result = await kernel.exec(`sqlite3 :memory: "${sql}"`);
+    const createResult = await kernel.exec(
+      'sqlite3 /tmp/schema-meta.db "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT NOT NULL);"'
+    );
+    expect(createResult.stderr).toBe('');
+
+    const result = await kernel.exec('sqlite3 /tmp/schema-meta.db ".schema users"');
     expect(result.stdout).toContain('CREATE TABLE users');
     expect(result.stdout).toContain('id INTEGER PRIMARY KEY');
   });
 
   it('.dump meta-command outputs INSERT statements for data', async () => {
     const vfs = new SimpleVFS();
+    await vfs.mkdir('/tmp', { recursive: true });
     kernel = createKernel({ filesystem: vfs as any });
     await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
-    // Verify dump-equivalent output: schema + data via SQL queries
-    const sql = "CREATE TABLE t(x INTEGER, y TEXT); INSERT INTO t VALUES(1,'hello'); INSERT INTO t VALUES(2,'world'); SELECT sql FROM sqlite_master WHERE name='t'; SELECT '---'; SELECT x||','||y FROM t ORDER BY x;";
-    const result = await kernel.exec(`sqlite3 :memory: "${sql}"`);
+    const createResult = await kernel.exec(
+      `sqlite3 /tmp/dump-meta.db "CREATE TABLE t(x INTEGER, y TEXT); INSERT INTO t VALUES(1,'hello'); INSERT INTO t VALUES(2,'world');"`
+    );
+    expect(createResult.stderr).toBe('');
+
+    const result = await kernel.exec('sqlite3 /tmp/dump-meta.db ".dump"');
     const output = result.stdout;
-    // Schema is preserved
+    expect(output).toContain('BEGIN TRANSACTION');
     expect(output).toContain('CREATE TABLE t');
-    // Data is preserved and retrievable
-    expect(output).toContain("1,hello");
-    expect(output).toContain("2,world");
+    expect(output).toContain("INSERT INTO t VALUES(1,'hello')");
+    expect(output).toContain("INSERT INTO t VALUES(2,'world')");
+    expect(output).toContain('COMMIT');
   });
 
   it('file-based DB persists data across separate exec calls', async () => {

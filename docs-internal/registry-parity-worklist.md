@@ -110,7 +110,7 @@ actual backing:
 | **grep** | TODO | our `secureexec-grep` on raw `regex` (**not** an established grep pkg) | **real GNU grep**, or a popular established grep (ripgrep's `grep` crates) |
 | **zip** | DONE | our 203-line `zip.c` over zlib/minizip (not Info-ZIP) | real Info-ZIP, or an established lib's CLI |
 | **unzip** | DONE | our 669-line `unzip.c` over zlib/minizip | real Info-ZIP unzip |
-| **sqlite3 CLI** | TODO | our 558-line `sqlite3_cli.c` (engine is real SQLite; the shell is ours) | real SQLite `shell.c` (its official CLI) |
+| **sqlite3 CLI** | DONE | our 558-line `sqlite3_cli.c` (engine is real SQLite; the shell is ours) | real SQLite `shell.c` (its official CLI) |
 | **vix** | DONE | from-scratch source-less drop-zone binary | deleted; real `vim` covers the editor slot |
 
 Note: `codex`/`codex-exec` = the rivet fork of OpenAI's codex — established fork,
@@ -165,11 +165,25 @@ ripgrep crates); **(b) gnulib `getrlimit`/`getgroups`** → sysroot stubs, alrea
 documented for wget (item #8) (hits GNU grep/findutils). Subprocess spawn already
 works (`wasi-spawn` broker), so `xargs` is not a blocker.
 
-- **sqlite3 CLI — trivial. Start here.** Engine is already the real amalgamation
-  (`libs/sqlite3/sqlite3.c`); the official `shell.c` **ships in the same fetched
-  zip**. Add `shell.c` to the `cp` in `toolchain/c/Makefile:174` and compile it in
-  place of `sqlite3_cli.c` (build rule ~498), reusing the existing SQLite mem/`-Os`
-  flags. Same real engine, real upstream shell.
+- **sqlite3 CLI — DONE.** Engine was already the real amalgamation
+  (`libs/sqlite3/sqlite3.c`); the command now builds the official upstream
+  `shell.c` from the same fetched zip as `sqlite3`. The local 558-line
+  `sqlite3_cli.c` reimplementation is deleted, `toolchain/c/build/sqlite3` is the
+  primary C output, `sqlite3_cli` remains only as a compatibility alias, and the
+  tracked runtime-core fallback command is refreshed to the same official shell.
+  Proof: official shell build passes in
+  `2026-07-08T05-04-47-0700-sqlite3-official-shell-build-command-name.log`;
+  package-focused e2e passes 16/16, including real `.tables`, `.schema`, and
+  `.dump` CLI arguments, in
+  `2026-07-08T05-07-06-0700-sqlite3-official-shell-tests-final-focused.log`;
+  package build/check-types pass in
+  `2026-07-08T05-07-52-0700-sqlite3-package-build-official-shell-final.log` and
+  `2026-07-08T05-07-52-0700-sqlite3-check-types-official-shell-final.log`;
+  runtime-core fallback command path passes `.tables` in
+  `2026-07-08T05-09-12-0700-sqlite3-runtime-core-command-fallback-test.log`;
+  aggregate C `programs` builds 57 commands in
+  `2026-07-08T05-09-53-0700-sqlite3-make-programs-final.log`.
+  Rev: `typytnkk` — `fix(sqlite3): build official SQLite shell`.
 - **http-get — drop, don't port.** `http_get.c` is a 95-line raw-socket **loopback
   test client**, not an HTTP fetcher; real curl covers GET. But it's imported by
   `packages/shell` and is the client in cross-runtime network tests — migrate those

@@ -71,7 +71,7 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 COMMANDS := zip unzip envsubst sqlite3 curl wget http_get
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
-PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler http_get dns_lookup sqlite3_cli curl wget fs_probe
+PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler http_get dns_lookup sqlite3 curl wget fs_probe
 
 # Discover all package command and test-program C source files.
 ALL_SOURCES := $(foreach dir,$(C_SOURCE_DIRS),$(wildcard $(dir)/*.c))
@@ -89,7 +89,7 @@ endif
 ifeq ($(wildcard $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a),)
   CUSTOM_WASM_PROG_NAMES :=
 else
-  CUSTOM_WASM_PROG_NAMES := curl wget
+  CUSTOM_WASM_PROG_NAMES := curl wget sqlite3
 endif
 
 WASM_PROG_NAMES := $(sort $(basename $(notdir $(SOURCES))) $(CUSTOM_WASM_PROG_NAMES))
@@ -166,12 +166,15 @@ DUCKDB_URL := https://github.com/duckdb/duckdb/archive/refs/tags/$(DUCKDB_VERSIO
 LIBS_DIR    := libs
 LIBS_CACHE  := .cache/libs
 
-libs/sqlite3/sqlite3.c:
+libs/sqlite3/sqlite3.c libs/sqlite3/sqlite3.h libs/sqlite3/shell.c:
 	@echo "Fetching sqlite3..."
 	@mkdir -p $(LIBS_CACHE) $(LIBS_DIR)/sqlite3
 	@curl -fSL "$(SQLITE3_URL)" -o "$(LIBS_CACHE)/sqlite3.zip"
 	@cd $(LIBS_CACHE) && unzip -qo sqlite3.zip
-	@cp $(LIBS_CACHE)/sqlite-amalgamation-*/sqlite3.c $(LIBS_CACHE)/sqlite-amalgamation-*/sqlite3.h $(LIBS_DIR)/sqlite3/
+	@cp $(LIBS_CACHE)/sqlite-amalgamation-*/sqlite3.c \
+	    $(LIBS_CACHE)/sqlite-amalgamation-*/sqlite3.h \
+	    $(LIBS_CACHE)/sqlite-amalgamation-*/shell.c \
+	    $(LIBS_DIR)/sqlite3/
 
 libs/zlib/zutil.c:
 	@echo "Fetching zlib..."
@@ -479,6 +482,11 @@ SQLITE_COMMON  := -DSQLITE_OMIT_WAL -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_THREAD
                   -DSQLITE_OMIT_LOCALTIME
 SQLITE_WASM    := -DSQLITE_OS_OTHER $(SQLITE_COMMON) -lwasi-emulated-signal -lwasi-emulated-mman
 SQLITE_NATIVE  := $(SQLITE_COMMON)
+SQLITE_SHELL_COMMON := -DSQLITE_OMIT_WAL -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_THREADSAFE=0 \
+                       -DSQLITE_OMIT_LOCALTIME -DSQLITE_NOHAVE_SYSTEM -DHAVE_READLINE=0
+SQLITE_SHELL_WASM := $(SQLITE_SHELL_COMMON) -D_WASI_EMULATED_PROCESS_CLOCKS \
+                     -lwasi-emulated-signal -lwasi-emulated-mman -lwasi-emulated-process-clocks
+SQLITE_SHELL_NATIVE := $(SQLITE_SHELL_COMMON)
 
 $(BUILD_DIR)/sqlite3_mem: $(call c_source,sqlite3_mem) libs/sqlite3/sqlite3.c $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
@@ -491,20 +499,26 @@ $(NATIVE_DIR)/sqlite3_mem: $(call c_source,sqlite3_mem) libs/sqlite3/sqlite3.c
 	$(NATIVE_CC) $(NATIVE_CFLAGS) $(SQLITE_NATIVE) -Ilibs/sqlite3 -o $@ \
 	    $(call c_source,sqlite3_mem) libs/sqlite3/sqlite3.c -lm -lpthread
 
-# sqlite3_cli: full CLI, links SQLite amalgamation (installed as sqlite3)
+# sqlite3: full official CLI, links SQLite amalgamation.
 # Uses -Os (not -O2) + no wasm-opt — higher optimization breaks SQLite's
 # internal function pointer tables in WASM indirect call table.
 # Uses --initial-memory=16777216 (16MB) for SQLite's malloc requirements.
-$(BUILD_DIR)/sqlite3_cli: $(call c_source,sqlite3_cli) libs/sqlite3/sqlite3.c $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/sqlite3: libs/sqlite3/shell.c libs/sqlite3/sqlite3.c $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
 	$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -Os -I include/ \
-	    $(SQLITE_WASM) -Ilibs/sqlite3 -Wl,--initial-memory=16777216 \
-	    -o $@ $(call c_source,sqlite3_cli) libs/sqlite3/sqlite3.c
+	    $(SQLITE_SHELL_WASM) -Ilibs/sqlite3 -Wl,--initial-memory=16777216 \
+	    -o $@ libs/sqlite3/shell.c libs/sqlite3/sqlite3.c
 
-$(NATIVE_DIR)/sqlite3_cli: $(call c_source,sqlite3_cli) libs/sqlite3/sqlite3.c
+$(BUILD_DIR)/sqlite3_cli: $(BUILD_DIR)/sqlite3
+	cp $< $@
+
+$(NATIVE_DIR)/sqlite3: libs/sqlite3/shell.c libs/sqlite3/sqlite3.c
 	@mkdir -p $(NATIVE_DIR)
-	$(NATIVE_CC) $(NATIVE_CFLAGS) $(SQLITE_NATIVE) -Ilibs/sqlite3 -o $@ \
-	    $(call c_source,sqlite3_cli) libs/sqlite3/sqlite3.c -lm -lpthread
+	$(NATIVE_CC) $(NATIVE_CFLAGS) $(SQLITE_SHELL_NATIVE) -Ilibs/sqlite3 -o $@ \
+	    libs/sqlite3/shell.c libs/sqlite3/sqlite3.c -lm -lpthread
+
+$(NATIVE_DIR)/sqlite3_cli: $(NATIVE_DIR)/sqlite3
+	cp $< $@
 
 # zip: links zlib + minizip
 ZLIB_SRCS   := libs/zlib/adler32.c libs/zlib/compress.c libs/zlib/crc32.c libs/zlib/deflate.c \
@@ -620,9 +634,6 @@ install:
 	@INSTALLED=0; \
 	for cmd in $(COMMANDS); do \
 		src="$$cmd"; \
-		case "$$cmd" in \
-			sqlite3) src="sqlite3_cli" ;; \
-		esac; \
 		if [ -f "$(BUILD_DIR)/$$src" ]; then \
 			cp "$(BUILD_DIR)/$$src" "$(COMMANDS_DIR)/$$cmd"; \
 			INSTALLED=$$((INSTALLED + 1)); \
