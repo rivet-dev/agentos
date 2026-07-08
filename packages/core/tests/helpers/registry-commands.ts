@@ -13,7 +13,7 @@
  * command set still fails loudly.
  *
  * The only sanctioned exception is the C-sysroot package set (duckdb,
- * http-get, sqlite3, wget, zip, unzip): those need the patched wasi C sysroot
+ * http-get, sqlite3, zip, unzip): those need the patched wasi C sysroot
  * that most checkouts don't have, so `cSysrootPackageSkipReason` reports a
  * skip reason instead of throwing. Everything else is load-or-throw.
  */
@@ -161,7 +161,7 @@ export function requireBuilt<T extends RegistryPackageRef>(
 
 /**
  * Skip reason for the C-sysroot package set ONLY (duckdb, http-get, sqlite3,
- * wget, zip, unzip). These need the patched wasi C sysroot
+ * zip, unzip). These need the patched wasi C sysroot
  * (`make -C toolchain/c`), which most checkouts don't build — a missing
  * artifact is an environment limitation, not a forgotten build, so suites may
  * skip with this reason instead of throwing.

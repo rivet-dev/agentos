@@ -71,11 +71,11 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 COMMANDS := zip unzip envsubst sqlite3 curl http_get
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
-PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler http_get dns_lookup sqlite3_cli curl wget fs_probe
+PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler http_get dns_lookup sqlite3_cli curl fs_probe
 
 # Discover all package command and test-program C source files.
 ALL_SOURCES := $(foreach dir,$(C_SOURCE_DIRS),$(wildcard $(dir)/*.c))
-SKIPPED_BULK_PROGRAMS := wget
+SKIPPED_BULK_PROGRAMS :=
 
 # Exclude patched-sysroot programs when only vanilla sysroot is available
 ifeq ($(wildcard $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a),)
@@ -559,23 +559,6 @@ $(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES)
 		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
 		--output "$(abspath $@)"
-
-# wget: minimal wget built on libcurl
-$(BUILD_DIR)/wget: $(call c_source,wget) $(CURL_SRCS) $(WASI_SDK_DIR)/bin/clang
-	@mkdir -p $(BUILD_DIR)
-	$(CC) $(WASM_CFLAGS) $(CURL_LIB_DEFS) $(CURL_INCLUDES) \
-	    -lwasi-emulated-signal \
-	    -o $@.wasm $(call c_source,wget) $(CURL_SRCS)
-	@if [ "$(HAS_WASM_OPT)" = "1" ]; then \
-		wasm-opt -O3 --strip-debug --all-features $@.wasm -o $@; \
-	else \
-		cp $@.wasm $@; \
-	fi
-	@rm -f $@.wasm
-
-$(NATIVE_DIR)/wget: $(call c_source,wget)
-	@mkdir -p $(NATIVE_DIR)
-	$(NATIVE_CC) $(NATIVE_CFLAGS) -o $@ $(call c_source,wget) -lcurl
 
 # duckdb: upstream DuckDB CLI built from source with our patched WASI/POSIX sysroot
 $(BUILD_DIR)/duckdb: libs/duckdb/CMakeLists.txt $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang $(WASI_SDK_DIR)/bin/clang++ cmake/FindThreads.cmake scripts/build-duckdb.sh include/fcntl.h include/ifaddrs.h include/net/if.h include/sys/ioctl.h

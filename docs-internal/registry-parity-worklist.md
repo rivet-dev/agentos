@@ -88,7 +88,7 @@ actual backing:
 | Command | Status | What it actually is | Replace with |
 |---|---|---|---|
 | **curl** | TODO | our custom driver over a libcurl fork | real `curl` CLI (upstream `src/tool_*.c`) |
-| **wget** | TODO | our 174-line `wget.c` | real GNU wget, or drop (curl covers it) |
+| **wget** | NOT POSSIBLE (WASI) | our 174-line `wget.c` | dropped; real `curl` covers network downloads |
 | **http-get** | TODO | our 95-line `http_get.c` | drop, or a real tool |
 | **git** | TODO | our hand-rolled git from `sha1`+`flate2` | **real git** (upstream C), patched for WASI — **NOT gitoxide** |
 | **fd** | TODO | our `secureexec-fd` on raw `regex` (not sharkdp/fd) | real **fd** (sharkdp) |
@@ -233,14 +233,28 @@ so a reader sees the whole board at a glance.
 
 ## P2 — Build / compile failures
 
-### 8. wget — does not compile (`duplicate symbol: getpeername`)
-- **Broken:** link error — wget's stub `getpeername` collides with the patched
-  sysroot's socket impl.
-- **Objective:** wget compiles cleanly against the patched sysroot (drop the stub;
-  use the real sysroot socket symbols) **and** downloads files e2e like Linux wget.
-- **Proof:** `make -C toolchain cmd/wget` succeeds; `software/wget/test/` passes
-  un-skipped (real download over the runtime network).
-- **rev:** `fix(wget): drop conflicting getpeername stub; build against sysroot sockets`
+### 8. wget — NOT POSSIBLE (WASI)
+- **Broken:** the shipped command was a custom 174-line `wget.c` wrapper, not real
+  GNU Wget. The original compile failure was a duplicate socket stub, but fixing
+  that would still leave a custom reimplementation, violating Cross-cutting #0.
+- **Tried:** GNU Wget 1.24.5 was configured for `wasm32-wasip1` with HTTP-only
+  features (`--without-ssl --without-zlib --without-libpsl --disable-iri`
+  and related auth/thread options disabled) against the patched sysroot. It
+  needed WASI patches for `inet_addr`, `O_BINARY`, process-group terminal checks,
+  `spawn.h`/`--use-askpass`, interactive `getpass`, gnulib `NSIG`, `F_DUPFD`, and
+  `flock`, then continued into more gnulib replacements requiring unsupported
+  `getrlimit`/`RLIMIT_NOFILE` and incompatible `getgroups` declarations.
+- **Outcome:** dropped the `wget` package and runtime command instead of shipping
+  another custom shim. The real upstream `curl` CLI built in #6 is the supported
+  network downloader.
+- **Proof:** `pnpm --dir packages/shell check-types` passes in
+  `2026-07-08T01-28-53-0700-item8-shell-check-types.txt`;
+  `pnpm --dir packages/runtime-core check-types` passes in
+  `2026-07-08T01-28-53-0700-item8-runtime-core-check-types.txt`;
+  `pnpm --dir packages/core check-types` passes in
+  `2026-07-08T01-28-54-0700-item8-core-check-types.txt`; lockfile validation
+  passes in `2026-07-08T01-29-03-0700-item8-pnpm-lockfile-check.txt`.
+- **rev:** `mxkxpnpn` — `fix(wget): drop unsupported wget package`
 
 ### 9. codex-cli — not buildable in-checkout (needs external fork)
 - **Broken:** requires the external `codex-rs` fork (`CODEX_REPO` absent); tests
@@ -268,14 +282,13 @@ so a reader sees the whole board at a glance.
 For each: replace `describe.skip` with `describeIf(binaryPresent)` **and** write
 real e2e tests that prove Linux-parity behavior — not smoke tests.
 
-### 11. Disabled suites — git, duckdb, wget, codex
+### 11. Disabled suites — git, duckdb, codex
 - **Broken:** tests exist but are `describe.skip`, so nothing runs even when the
   binary is present.
 - **Objective (per command, Linux parity):**
   - **git** — clone/commit/log/diff/branch against a real repo & remote.
   - **duckdb** — real analytical SQL, CSV read/write, file-backed DBs (the bar
     example: real duckdb, not a WASI-stripped `SELECT 1`).
-  - **wget** — real download (after #8).
   - **codex** — real run (after #9).
 - **Proof:** each un-skipped suite passes with real behavior.
 - **rev:** one per command, e.g. `test(duckdb): real analytical-SQL e2e; un-skip`
@@ -306,6 +319,5 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
 ## Sequencing note
 
 P0 first — several P1/P3 items depend on it: curl (#6) needs sockets/HTTP;
-sqlite3 file-DB tests (#11) need pwrite (#4); wget (#8) needs sockets. Fix the
-runtime layer, then the commands that ride on it, then backfill coverage. One jj
-rev per item throughout.
+sqlite3 file-DB tests (#11) need pwrite (#4). Fix the runtime layer, then the
+commands that ride on it, then backfill coverage. One jj rev per item throughout.

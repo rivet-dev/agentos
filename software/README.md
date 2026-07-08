@@ -68,7 +68,7 @@ per-binary entry point; it dispatches to whichever toolchain owns the command:
 | kind | commands | what it runs |
 |---|---|---|
 | Rust | any `software/<pkg>/native/crates/cmd-<name>` command crate (sh, ls, rg, …) | `cargo build -p cmd-<name>` (build-std) + `wasm-opt` |
-| C | `zip unzip envsubst sqlite3 curl wget duckdb` | `make -C c sysroot build/<src>` + per-command install |
+| C | `zip unzip envsubst sqlite3 curl duckdb` | `make -C c sysroot build/<src>` + per-command install |
 | codex | `codex`, `codex-exec` | the codex fork build (needs the fork checkout) |
 | C | `vim` (pinned upstream clone + bridge in `c/vim/`) | `make -C c sysroot build/vim` + install |
 
@@ -77,7 +77,7 @@ The default native build (`toolchain`) compiles the fast command gate to
 `wasm-opt -O3`, and drops the binaries in
 `toolchain/target/wasm32-wasip1/release/commands/`. The bulk gate
 intentionally excludes slow/heavy or non-default commands: `git`, `duckdb`,
-`vim`, `wget`, and the external `codex`/`codex-exec` fork build. Build those explicitly with
+`vim` and the external `codex`/`codex-exec` fork build. Build those explicitly with
 `just toolchain-cmd <name>` when working on them. Package builds then run
 `agentos-toolchain stage` (with `--if-missing skip`, so a checkout without the
 native build still assembles valid empty placeholders) followed by `tsc` and
@@ -90,7 +90,7 @@ packages are pnpm workspace members, so tests and examples resolve them via
 Exceptions:
 - `software/codex/wasm/` is the install target of the codex fork's build
   (`make -C toolchain codex`); `software/codex-cli` stages from it.
-- C-built commands (sqlite3, zip, unzip, curl, wget, duckdb) need the patched
+- C-built commands (sqlite3, zip, unzip, curl, duckdb) need the patched
   sysroot; `just toolchain-cmd <name>` builds it on demand. Without it
   those packages stay empty placeholders.
 - `vim` builds from source: `just toolchain-cmd vim` clones the pinned

@@ -165,7 +165,6 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 | `@agentos-software/tar` | tar | GNU tar archiver | rust | - | - |
 | `@agentos-software/tree` | tree | tree directory listing | rust | - | - |
 | `@agentos-software/unzip` | unzip | unzip archive extraction | c | - | - |
-| `@agentos-software/wget` | wget | GNU wget HTTP client | c | - | - |
 | `@agentos-software/yq` | yq | yq YAML/JSON processor | rust | - | - |
 | `@agentos-software/zip` | zip | zip archive creation | c | - | - |
 

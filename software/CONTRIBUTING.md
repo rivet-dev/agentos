@@ -34,7 +34,7 @@ From the repo root:
 
 ```bash
 just toolchain-build            # compile the fast native wasm command gate
-just toolchain-cmd <name> # build one command (required for git, duckdb, vim, wget, codex)
+just toolchain-cmd <name> # build one command (required for git, duckdb, vim, codex)
 just software-build <pkg>       # stage bin/ + assemble dist/package/
 pnpm --filter './software/*' test
 ```
