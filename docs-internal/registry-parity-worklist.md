@@ -568,6 +568,15 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
 - **Broken:** zero e2e coverage: `gawk, sed, tar, gzip, jq, yq, diffutils,
   file, vim`; agents `claude, codex, opencode, pi, pi-cli`.
 - **Status:**
+  - **gawk — DONE.** Added package-local VM e2e coverage for the staged `awk`
+    command. The suite proves file-backed field extraction, explicit field
+    separators, numeric aggregation, `-f` script-file execution, and missing
+    input-file errors through the packaged WASM command. Proof:
+    `2026-07-08T13-16-03-0700-item12-gawk-package-e2e-after-install.log`;
+    `2026-07-08T13-16-03-0700-item12-gawk-check-types-after-install.log`.
+    Biome is not applicable for this package test path; it reported the file is
+    ignored by config in
+    `2026-07-08T13-16-16-0700-item12-gawk-biome-check.log`. Rev: `pzxkurol`.
   - **jq — DONE.** Added package-local VM e2e coverage for the staged `jq`
     command and fixed the jaq-backed CLI wrapper to accept Linux-style file
     operands instead of only stdin. The suite now proves version output,
