@@ -3072,6 +3072,8 @@ class NativeKernel implements Kernel {
 					cwd: REPO_ROOT,
 					command: ensureNativeSidecarBinary(),
 					args: [],
+					gracefulExitMs: 100,
+					forceExitMs: 100,
 				}),
 			);
 		const session = await this.measureBoot("session_open", () =>

@@ -156,14 +156,17 @@ so a reader sees the whole board at a glance.
   un-skipped after the parent host-shadow pre-spawn sync fix in item 1.
 - **rev:** `lonnzuqw` — `test(registry): mark stdin redirection parity proven`
 
-### 3. WasmVM signal/dispose — SIGKILL/SIGTERM don't terminate; dispose hangs
+### 3. WasmVM signal/dispose — SIGKILL/SIGTERM don't terminate; dispose hangs — DONE
 - **Broken:** SIGKILL/SIGTERM don't kill guest processes; `dispose` times out
   (5 tests across `signal-forwarding.test.ts`, `dispose-behavior.test.ts`).
 - **Objective:** signals delivered to guest processes terminate them promptly and
   `dispose` tears down active WasmVM + Node processes, matching Linux signal
   semantics. **Not yet filed — file a separate issue.**
-- **Proof:** the 5 signal/dispose integration tests pass within their timeouts.
-- **rev:** `fix(runtime): deliver SIGKILL/SIGTERM to WasmVM processes and unblock dispose`
+- **Proof:** `signal-forwarding.test.ts` passes 5/5 in
+  `2026-07-07T23-11-36-0700-item3-signal-forwarding-final-pass-2.txt`;
+  `dispose-behavior.test.ts` passes 3/3 in
+  `2026-07-07T23-11-21-0700-item3-dispose-behavior-final-pass.txt`.
+- **rev:** `zkywnwup` — `fix(runtime): unblock WasmVM signal waits and dispose`
 
 ### 4. VFS missing `pwrite` — sqlite3 file-backed DBs don't persist
 - **Broken:** `filesystem method pwrite is unavailable` — sqlite3 file-backed DB
