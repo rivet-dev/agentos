@@ -16,7 +16,6 @@ const SLOW_E2E_FILES = [
 	"tests/native-sidecar-process.test.ts",
 	"tests/pi-vanilla-bash.test.ts",
 	"tests/opencode-session.test.ts",
-	"tests/git-quickstart.test.ts",
 	"tests/filesystem-move-delete.test.ts",
 	"tests/batch-file-ops.test.ts",
 	"tests/agentos-base-filesystem.test.ts",
@@ -30,7 +29,6 @@ const SLOW_E2E_FILES = [
 	"tests/readdir-recursive.test.ts",
 	"tests/cron-integration.test.ts",
 	"tests/pi-cli-headless.test.ts",
-	"tests/codex-fullturn.test.ts",
 ];
 
 // Pre-existing failures NOT caused by this branch (they were red before CI ever
@@ -51,9 +49,7 @@ const KNOWN_FAILING_E2E_FILES = [
 	"tests/pi-acp-adapter.test.ts",
 	"tests/process-lifecycle.test.ts",
 	// Registry-artifact / shell-behavior failures (red in both CI and local):
-	//  - duckdb-package: imports secure-exec software/duckdb/dist (unbuilt WASM in CI).
 	//  - shell-flat-api: openShell/writeShell/onShellData yields empty output.
-	"tests/duckdb-package.test.ts",
 	"tests/shell-flat-api.test.ts",
 ];
 

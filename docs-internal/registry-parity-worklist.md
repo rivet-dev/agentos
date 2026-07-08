@@ -526,9 +526,10 @@ so a reader sees the whole board at a glance.
 For each: replace `describe.skip` with `describeIf(binaryPresent)` **and** write
 real e2e tests that prove Linux-parity behavior — not smoke tests.
 
-### 11. Disabled suites — git, duckdb, codex
-- **Broken:** tests exist but are skipped or excluded from the default run, so
-  coverage can disappear even when the binary is present.
+### 11. Disabled suites — git, duckdb, codex — DONE
+- **Fixed:** the Git quickstart, DuckDB package, and Codex full-turn suites are no
+  longer excluded from the default core Vitest file set, so coverage cannot
+  disappear when the package artifacts are present.
 - **Status:**
   - **git — DONE.** The core quickstart e2e now exercises real upstream Git in a
     VM for local origin creation, commit, branch, clone, checkout, `log`, and a
@@ -562,7 +563,14 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T12-48-46-0700-item11-codex-required-build-fresh-cargo-home.log`,
     `2026-07-08T12-50-38-0700-item11-codex-required-build-path-dedot-cfg.log`.
     Rev: `ryqtvoqv`.
-- **rev:** one per command, e.g. `test(duckdb): real analytical-SQL e2e; un-skip`
+- **Final proof:** after removing the remaining core Vitest exclusions, the
+  explicit suites pass with real VM coverage: Git quickstart 1/1 in
+  `2026-07-08T14-35-00-0700-item11-status-git-quickstart-final.log`; DuckDB
+  package 4/4 in
+  `2026-07-08T14-36-00-0700-item11-status-duckdb-package-final.log`; Codex
+  full-turn 4/4 in
+  `2026-07-08T14-37-00-0700-item11-status-codex-fullturn-final.log`.
+- **rev:** `test(core): include registry parity suites by default`
 
 ### 12. No tests at all — 9 software + 5 agents
 - **Broken:** zero e2e coverage: `gawk, sed, tar, gzip, jq, yq, diffutils,
