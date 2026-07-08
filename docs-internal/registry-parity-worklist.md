@@ -106,7 +106,7 @@ actual backing:
 | **git** | TODO | our hand-rolled git from `sha1`+`flate2` | **real git** (upstream C), patched for WASI — **NOT gitoxide** |
 | **fd** | TODO | our `secureexec-fd` on raw `regex` (not sharkdp/fd) | real **fd** (sharkdp) |
 | **findutils** (`find`,`xargs`) | TODO | our hand-rolled on `regex`/shims | real GNU findutils, or `uutils/findutils` |
-| **tree** | TODO | our hand-rolled, zero deps | real `tree`, or an established one |
+| **tree** | DONE | our hand-rolled, zero deps | real `tree`, or an established one |
 | **grep** | TODO | our `secureexec-grep` on raw `regex` (**not** an established grep pkg) | **real GNU grep**, or a popular established grep (ripgrep's `grep` crates) |
 | **zip** | DONE | our 203-line `zip.c` over zlib/minizip (not Info-ZIP) | real Info-ZIP, or an established lib's CLI |
 | **unzip** | DONE | our 669-line `unzip.c` over zlib/minizip | real Info-ZIP unzip |
@@ -188,9 +188,28 @@ works (`wasi-spawn` broker), so `xargs` is not a blocker.
   test client**, not an HTTP fetcher; real curl covers GET. But it's imported by
   `packages/shell` and is the client in cross-runtime network tests — migrate those
   dependents first, then drop the command.
-- **tree — easy.** Real `tree` (Steve Baker) is a tiny plain-`Makefile` C program;
-  compile its `.c` directly against the sysroot. Pure readdir/stat — no
-  sockets/threads/spawn.
+- **tree — DONE.** Replaced the custom Rust `secureexec-tree`/`cmd-tree` crates
+  with upstream Steve Baker `tree` 2.3.2 from `OldManProgrammer/unix-tree`.
+  It builds as a C toolchain command from pinned source, stages into
+  `@agentos-software/tree`, and refreshes the tracked runtime-core fallback
+  command. Sysroot fixes live one layer down: install `<grp.h>` and provide
+  deterministic missing-group lookup stubs so upstream `-g` support links
+  without a tree-source WASI branch. Proof: upstream source inspection in
+  `2026-07-08T05-13-50-0700-tree-fetch-upstream-2.3.2-inspect.log`; sysroot
+  patch check passes in
+  `2026-07-08T05-18-16-0700-tree-wasi-libc-patch-check-group-lookup-fixed.log`;
+  Makefile build passes in
+  `2026-07-08T05-20-02-0700-tree-upstream-make-build.log`; package build and
+  check-types pass in
+  `2026-07-08T05-21-08-0700-tree-package-build-upstream-after-install.log` and
+  `2026-07-08T05-21-08-0700-tree-check-types-upstream-after-install.log`; e2e
+  tree tests pass 6/6 in
+  `2026-07-08T05-29-45-0700-tree-vitest-upstream-final.log`; aggregate C
+  `programs` builds 58 commands in
+  `2026-07-08T05-30-44-0700-tree-make-programs-final.log`; Cargo metadata no
+  longer includes the deleted Rust tree crates in
+  `2026-07-08T05-33-17-0700-tree-cargo-metadata-after-removing-empty-dirs.log`.
+  Rev: `kpmrwxln` — `fix(tree): build upstream tree`.
 - **fd — moderate.** Swap `cmd-fd` to depend on real `fd-find` (like
   coreutils→`uu_*`; `fd-lock` is already patched). Only real issue: the parallel
   `ignore`/crossbeam walker needs the **serial-thread patch** (uu_sort pattern).

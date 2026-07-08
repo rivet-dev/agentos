@@ -1353,13 +1353,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cmd-tree"
-version = "0.1.0"
-dependencies = [
- "secureexec-tree",
-]
-
-[[package]]
 name = "cmd-true"
 version = "0.1.0"
 dependencies = [
@@ -4029,10 +4022,6 @@ dependencies = [
  "flate2",
  "tar",
 ]
-
-[[package]]
-name = "secureexec-tree"
-version = "0.1.0"
 
 [[package]]
 name = "secureexec-wasi-http"

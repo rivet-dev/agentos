@@ -68,10 +68,10 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 
 # Fast real commands installed by the default software gate. Slow/heavy commands
 # (duckdb, vim) remain available through explicit parent `make cmd/<name>`.
-COMMANDS := zip unzip envsubst sqlite3 curl wget http_get
+COMMANDS := zip unzip envsubst sqlite3 curl wget tree http_get
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
-PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler http_get dns_lookup sqlite3 curl wget fs_probe
+PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler http_get dns_lookup sqlite3 curl wget tree fs_probe
 
 # Discover all package command and test-program C source files.
 ALL_SOURCES := $(foreach dir,$(C_SOURCE_DIRS),$(wildcard $(dir)/*.c))
@@ -89,7 +89,7 @@ endif
 ifeq ($(wildcard $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a),)
   CUSTOM_WASM_PROG_NAMES :=
 else
-  CUSTOM_WASM_PROG_NAMES := curl wget sqlite3
+  CUSTOM_WASM_PROG_NAMES := curl wget sqlite3 tree
 endif
 
 WASM_PROG_NAMES := $(sort $(basename $(notdir $(SOURCES))) $(CUSTOM_WASM_PROG_NAMES))
@@ -156,6 +156,8 @@ WGET_URL := https://ftp.gnu.org/gnu/wget/wget-$(WGET_VERSION).tar.gz
 WGET_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/wget-upstream
 WGET_UPSTREAM_OVERLAY_INCLUDE_DIR := overlays/wget/include
 WGET_UPSTREAM_OVERLAY_FILES := $(wildcard $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR)/*.h)
+TREE_VERSION := 2.3.2
+TREE_URL := https://gitlab.com/OldManProgrammer/unix-tree/-/archive/$(TREE_VERSION)/unix-tree-$(TREE_VERSION).tar.gz
 MINIZIP_URL := https://github.com/madler/zlib/archive/refs/tags/v1.3.1.zip
 # duckdb-wasm currently documents DuckDB v1.5.0 in its README. We build the
 # matching upstream DuckDB tag ourselves with our patched WASI/POSIX sysroot.
@@ -166,6 +168,10 @@ DUCKDB_URL := https://github.com/duckdb/duckdb/archive/refs/tags/$(DUCKDB_VERSIO
 LIBS_DIR    := libs
 LIBS_CACHE  := .cache/libs
 
+TREE_SOURCES := color.c file.c filter.c hash.c html.c info.c json.c list.c tree.c unix.c util.c xml.c strverscmp.c
+TREE_FILES := $(addprefix $(LIBS_DIR)/tree/,$(TREE_SOURCES) tree.h)
+TREE_WASM_FLAGS := -DLARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+
 libs/sqlite3/sqlite3.c libs/sqlite3/sqlite3.h libs/sqlite3/shell.c:
 	@echo "Fetching sqlite3..."
 	@mkdir -p $(LIBS_CACHE) $(LIBS_DIR)/sqlite3
@@ -175,6 +181,17 @@ libs/sqlite3/sqlite3.c libs/sqlite3/sqlite3.h libs/sqlite3/shell.c:
 	    $(LIBS_CACHE)/sqlite-amalgamation-*/sqlite3.h \
 	    $(LIBS_CACHE)/sqlite-amalgamation-*/shell.c \
 	    $(LIBS_DIR)/sqlite3/
+
+$(TREE_FILES): $(LIBS_DIR)/tree/.fetched
+
+$(LIBS_DIR)/tree/.fetched:
+	@echo "Fetching upstream tree $(TREE_VERSION)..."
+	@mkdir -p $(LIBS_CACHE) $(LIBS_DIR)/tree
+	@curl -fSL "$(TREE_URL)" -o "$(LIBS_CACHE)/tree-$(TREE_VERSION).tar.gz"
+	@rm -rf "$(LIBS_CACHE)/unix-tree-$(TREE_VERSION)"
+	@tar -xzf "$(LIBS_CACHE)/tree-$(TREE_VERSION).tar.gz" -C "$(LIBS_CACHE)"
+	@cp $(addprefix $(LIBS_CACHE)/unix-tree-$(TREE_VERSION)/,$(TREE_SOURCES) tree.h) $(LIBS_DIR)/tree/
+	@touch $@
 
 libs/zlib/zutil.c:
 	@echo "Fetching zlib..."
@@ -519,6 +536,18 @@ $(NATIVE_DIR)/sqlite3: libs/sqlite3/shell.c libs/sqlite3/sqlite3.c
 
 $(NATIVE_DIR)/sqlite3_cli: $(NATIVE_DIR)/sqlite3
 	cp $< $@
+
+# tree: upstream Steve Baker tree compiled from pinned C source.
+$(BUILD_DIR)/tree: $(TREE_FILES) $(WASI_SDK_DIR)/bin/clang $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a
+	@mkdir -p $(BUILD_DIR)
+	$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -O2 -I include/ \
+	    $(TREE_WASM_FLAGS) -I$(LIBS_DIR)/tree -o $@ \
+	    $(addprefix $(LIBS_DIR)/tree/,$(TREE_SOURCES))
+
+$(NATIVE_DIR)/tree: $(TREE_FILES)
+	@mkdir -p $(NATIVE_DIR)
+	$(NATIVE_CC) $(NATIVE_CFLAGS) $(TREE_WASM_FLAGS) -I$(LIBS_DIR)/tree -o $@ \
+	    $(addprefix $(LIBS_DIR)/tree/,$(TREE_SOURCES))
 
 # zip: links zlib + minizip
 ZLIB_SRCS   := libs/zlib/adler32.c libs/zlib/compress.c libs/zlib/crc32.c libs/zlib/deflate.c \
