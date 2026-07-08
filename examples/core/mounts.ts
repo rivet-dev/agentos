@@ -1,6 +1,9 @@
-import { agentOS, setup } from "@rivet-dev/agentos";
+import { AgentOs } from "@rivet-dev/agentos-core";
 
-const vm = agentOS({
+// Configure filesystem backends at boot. Native mount plugins (host
+// directories, S3, etc.) are passed via `plugin`, each identified by an `id`
+// and a `config` object.
+const vm = await AgentOs.create({
   mounts: [
     // Host directory (read-only)
     {
@@ -15,6 +18,3 @@ const vm = agentOS({
     },
   ],
 });
-
-export const registry = setup({ use: { vm } });
-registry.start();
