@@ -107,7 +107,7 @@ actual backing:
 | **findutils** (`find`,`xargs`) | TODO | our hand-rolled on `regex`/shims | real GNU findutils, or `uutils/findutils` |
 | **tree** | DONE | our hand-rolled, zero deps | real `tree`, or an established one |
 | **grep** | DONE | our `secureexec-grep` on raw `regex` (**not** an established grep pkg) | real **GNU grep** |
-| **ripgrep** (`rg`) | TODO | our `secureexec-grep` recursive search shim, not real ripgrep | real upstream **ripgrep** |
+| **ripgrep** (`rg`) | DONE | our `secureexec-grep` recursive search shim, not real ripgrep | real upstream **ripgrep** |
 | **zip** | DONE | our 203-line `zip.c` over zlib/minizip (not Info-ZIP) | real Info-ZIP, or an established lib's CLI |
 | **unzip** | DONE | our 669-line `unzip.c` over zlib/minizip | real Info-ZIP unzip |
 | **sqlite3 CLI** | DONE | our 558-line `sqlite3_cli.c` (engine is real SQLite; the shell is ours) | real SQLite `shell.c` (its official CLI) |
@@ -267,8 +267,20 @@ works (`wasi-spawn` broker), so `xargs` is not a blocker.
   and `2026-07-08T06-42-18-0700-grep-check-types-final.log`; e2e grep tests
   pass 8/8 in `2026-07-08T06-43-59-0700-grep-vitest-after-wrapper-cache-repair.log`.
   Rev: `uyukolvr` — `fix(grep): build upstream GNU grep`.
-  NB: `secureexec-grep` remains only because `@agentos-software/ripgrep` still
-  uses it for `rg`; replace `rg` with real ripgrep in a separate rev.
+- **ripgrep — DONE.** Replaced the `@agentos-software/ripgrep` package's custom
+  `secureexec-grep` recursive search shim with upstream ripgrep 15.1.0 from the
+  canonical `BurntSushi/ripgrep` crate/release. The local `cmd-rg` crate is now
+  only a build trigger, and `toolchain/Makefile` builds ripgrep's own `rg` bin
+  directly. The old `secureexec-grep` library is gone. Proof: latest upstream
+  release captured in `2026-07-08T06-50-40-0700-ripgrep-github-latest-release.json`;
+  crate metadata captured in `2026-07-08T06-52-00-0700-ripgrep-cargo-info.log`;
+  upstream WASM build passes in
+  `2026-07-08T06-56-00-0700-ripgrep-upstream-wasm-build-after-grep-dir-remove-fixed.log`;
+  package build and check-types pass in
+  `2026-07-08T06-58-55-0700-ripgrep-package-build-after-install.log` and
+  `2026-07-08T06-58-56-0700-ripgrep-check-types-after-install.log`; e2e ripgrep
+  tests pass 8/8 in `2026-07-08T07-02-00-0700-ripgrep-vitest-after-git-fixture.log`.
+  Rev: `msypkqmo` — `fix(ripgrep): build upstream ripgrep`.
 - **zip / unzip — moderate.** Real **Info-ZIP** source (fetch+pin like zlib/sqlite);
   zlib is already vendored. Filesystem + `isatty`/`utime`/`chmod`/perms stubs; no
   sockets/threads/spawn. Friction is Info-ZIP's crufty build, not syscalls.
@@ -472,12 +484,12 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
 - **Proof:** each un-skipped suite passes with real behavior.
 - **rev:** one per command, e.g. `test(duckdb): real analytical-SQL e2e; un-skip`
 
-### 12. No tests at all — 12 software + 5 agents
-- **Broken:** zero e2e coverage: `gawk, sed, grep, tar, gzip, jq, ripgrep, yq,
-  diffutils, file, vim`; agents `claude, codex, opencode, pi, pi-cli`.
+### 12. No tests at all — 9 software + 5 agents
+- **Broken:** zero e2e coverage: `gawk, sed, tar, gzip, jq, yq, diffutils,
+  file, vim`; agents `claude, codex, opencode, pi, pi-cli`.
 - **Objective:** write real e2e tests proving each behaves like its Linux
-  counterpart (jq processes real JSON, sed edits streams, tar round-trips archives,
-  grep/rg search real trees, gzip round-trips, etc.); agents exercise the real ACP
+ counterpart (jq processes real JSON, sed edits streams, tar round-trips archives,
+  gzip round-trips, etc.); agents exercise the real ACP
   adapter against the upstream SDK.
 - **Proof:** `software/<pkg>/test/` exists and passes for each; coverage gate green.
 - **rev:** one per package, e.g. `test(jq): add real JSON-processing e2e`

@@ -242,6 +242,9 @@ wasm-cmd: vendor patch-vendor patch-std wasm-opt-check
 	if [ "$(CMD)" = "fd" ]; then \
 		cargo_pkg="fd-find"; \
 		cargo_bin="fd"; \
+	elif [ "$(CMD)" = "rg" ]; then \
+		cargo_pkg="ripgrep"; \
+		cargo_bin="rg"; \
 	fi; \
 	RUSTFLAGS="-C link-arg=-L$(WASI_SYSROOT_SELF_CONTAINED) --cfg tokio_unstable" \
 	cargo build --target $(WASM_TARGET) \
