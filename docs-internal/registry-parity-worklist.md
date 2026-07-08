@@ -147,13 +147,14 @@ so a reader sees the whole board at a glance.
   un-skipped; direct kernel append and native sidecar append regressions pass.
 - **rev:** `ouxrzutq` — `fix(runtime): honor >> append mode in guest shell VFS redirection`
 
-### 2. brush-shell `cat < file` stdin redirection fails (exit 1)
+### 2. brush-shell `cat < file` stdin redirection fails (exit 1) — DONE
 - **Broken:** `cat < stdin-input.txt` exits 1 — input redirection from a VFS path
   isn't wired to the command's stdin. (issue: #1657)
 - **Objective:** `< file` feeds the VFS file to stdin; command reads it and exits 0,
   like Linux.
-- **Proof:** the "stdin redirection feeds the kernel VFS file" test passes.
-- **rev:** `fix(runtime): wire < stdin redirection from VFS in guest shell`
+- **Proof:** the "stdin redirection feeds the kernel VFS file" test passes
+  un-skipped after the parent host-shadow pre-spawn sync fix in item 1.
+- **rev:** `lonnzuqw` — `test(registry): mark stdin redirection parity proven`
 
 ### 3. WasmVM signal/dispose — SIGKILL/SIGTERM don't terminate; dispose hangs
 - **Broken:** SIGKILL/SIGTERM don't kill guest processes; `dispose` times out
