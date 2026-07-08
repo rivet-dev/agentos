@@ -23,13 +23,26 @@ Status: worklist · Owner: registry · Last updated: 2026-07-07
 >   real project is correct. Prefer the genuine upstream tool (real git, real
 >   grep) over a rewrite; a *popular, established* reimplementation is an
 >   acceptable fallback only when the real tool genuinely won't build.
-> - **"Not possible" is a valid outcome — but only after trying really hard.** If a
->   command cannot be built as the real (or an established) tool for WASI, do NOT
->   hand-roll a custom replacement. Instead mark it **`NOT POSSIBLE (WASI)`** in
->   this doc with a concrete explanation of exactly what blocks it (missing
->   syscall, unsupported threading, sysroot gap, etc.) and what was tried. Exhaust
->   real options first: patch the sysroot, patch the tool, stub the specific
->   missing syscall — a genuine effort, not a quick bail.
+> - **"Not possible" is a valid outcome — but only after trying really hard.** The
+>   sysroot is **ours**: a patched Rust std + libc with custom host-syscall imports
+>   (see CLAUDE.md → Software Build (WASM Toolchain)). A missing libc/POSIX API
+>   (`getrlimit`/`RLIMIT_NOFILE`, `getgroups`, …) is **NOT** a WASI wall — it is a
+>   stub/patch we add one layer down, and the build should proceed as if targeting
+>   native POSIX. Only if a command *still* cannot be built as the real (or an
+>   established) tool do you mark it **`NOT POSSIBLE (WASI)`** in this doc, with a
+>   concrete explanation of the genuine, documented wall (never "WASI lacks a
+>   syscall we could implement") and what was tried. Exhaust real options first:
+>   patch the sysroot, patch the tool, stub the specific missing syscall — a
+>   genuine effort, not a quick bail.
+> - **Commit clean revs — no stray artifacts.** Each rev must contain only the
+>   intended source + test changes. Never commit build outputs, vendored toolchain
+>   trees, `__pycache__`/`*.pyc`, generated binaries, or anything that belongs in
+>   `.gitignore`. Before `jj describe`, run `jj diff -r @ --summary` and confirm
+>   every path is intended — watch especially for `A` (added) paths under
+>   `toolchain/`, `**/target/`, `**/node_modules/`, `**/build/`, `**/__pycache__/`.
+>   Then **audit the entire stack up to main** (`jj diff -r 'main..@' --stat`, or
+>   per rev) and strip anything that slipped in with `jj restore --from <parent>
+>   <path>`, adding the pattern to `.gitignore` so it cannot recur.
 > - **One jj rev per item.** Concretely: **`jj new` before starting each item**,
 >   make that command's fix *and* its e2e test in that single change, `jj describe`
 >   it with a clear conventional-commit message, then `jj new` again for the next
@@ -88,7 +101,7 @@ actual backing:
 | Command | Status | What it actually is | Replace with |
 |---|---|---|---|
 | **curl** | TODO | our custom driver over a libcurl fork | real `curl` CLI (upstream `src/tool_*.c`) |
-| **wget** | NOT POSSIBLE (WASI) | our 174-line `wget.c` | dropped; real `curl` covers network downloads |
+| **wget** | TODO (retry) | our 174-line `wget.c` (dropped) | real GNU Wget vs our sysroot — stub `getrlimit`/`getgroups`, then build |
 | **http-get** | TODO | our 95-line `http_get.c` | drop, or a real tool |
 | **git** | TODO | our hand-rolled git from `sha1`+`flate2` | **real git** (upstream C), patched for WASI — **NOT gitoxide** |
 | **fd** | TODO | our `secureexec-fd` on raw `regex` (not sharkdp/fd) | real **fd** (sharkdp) |
@@ -233,28 +246,31 @@ so a reader sees the whole board at a glance.
 
 ## P2 — Build / compile failures
 
-### 8. wget — NOT POSSIBLE (WASI)
-- **Broken:** the shipped command was a custom 174-line `wget.c` wrapper, not real
-  GNU Wget. The original compile failure was a duplicate socket stub, but fixing
-  that would still leave a custom reimplementation, violating Cross-cutting #0.
-- **Tried:** GNU Wget 1.24.5 was configured for `wasm32-wasip1` with HTTP-only
-  features (`--without-ssl --without-zlib --without-libpsl --disable-iri`
-  and related auth/thread options disabled) against the patched sysroot. It
-  needed WASI patches for `inet_addr`, `O_BINARY`, process-group terminal checks,
+### 8. wget — TODO (retry against our own sysroot)
+- **Objective:** ship real GNU Wget as the `wget` command (real upstream tool,
+  patched as needed), proven by a real e2e download test. The old package was a
+  custom 174-line `wget.c` wrapper and was dropped — it must be restored as the
+  real tool, not re-added as a shim.
+- **Prior attempt (bailed too early):** GNU Wget 1.24.5 configured for
+  `wasm32-wasip1`, HTTP-only (`--without-ssl --without-zlib --without-libpsl
+  --disable-iri`, auth/thread options off) against the patched sysroot. It needed
+  WASI patches for `inet_addr`, `O_BINARY`, process-group terminal checks,
   `spawn.h`/`--use-askpass`, interactive `getpass`, gnulib `NSIG`, `F_DUPFD`, and
-  `flock`, then continued into more gnulib replacements requiring unsupported
-  `getrlimit`/`RLIMIT_NOFILE` and incompatible `getgroups` declarations.
-- **Outcome:** dropped the `wget` package and runtime command instead of shipping
-  another custom shim. The real upstream `curl` CLI built in #6 is the supported
-  network downloader.
-- **Proof:** `pnpm --dir packages/shell check-types` passes in
-  `2026-07-08T01-28-53-0700-item8-shell-check-types.txt`;
-  `pnpm --dir packages/runtime-core check-types` passes in
-  `2026-07-08T01-28-53-0700-item8-runtime-core-check-types.txt`;
-  `pnpm --dir packages/core check-types` passes in
-  `2026-07-08T01-28-54-0700-item8-core-check-types.txt`; lockfile validation
-  passes in `2026-07-08T01-29-03-0700-item8-pnpm-lockfile-check.txt`.
-- **rev:** `mxkxpnpn` — `fix(wget): drop unsupported wget package`
+  `flock` — all fine — then stopped at gnulib wanting `getrlimit`/`RLIMIT_NOFILE`
+  and an incompatible `getgroups`.
+- **Why that stop was wrong:** the sysroot is ours (see CLAUDE.md → Software Build
+  (WASM Toolchain)). `getrlimit` can return a fixed `RLIMIT_NOFILE`; `getgroups`
+  can return the single group. Those are a few-line stub in the patched
+  libc/host-import layer, exactly like the spawn/fd/user-group imports already
+  added. "WASI lacks it" is not a wall here.
+- **Retry plan:** (1) add `getrlimit`/`RLIMIT_NOFILE` and a compatible `getgroups`
+  to the sysroot (stub is acceptable); (2) clear the remaining gnulib cascade the
+  same way, one patch at a time; (3) patch Wget's own source only if a fix
+  genuinely cannot live in the libc layer; (4) restore the `wget` package/command
+  and prove it with a real e2e download test. Only mark `NOT POSSIBLE (WASI)`
+  again if a concrete, documented wall remains after that.
+- **Note:** real upstream `curl` (#6) already covers downloads, so wget is not
+  urgent — but it should be retried as the real tool, not left dropped.
 
 ### 9. codex-cli — not buildable in-checkout (needs external fork)
 - **Broken:** requires the external `codex-rs` fork (`CODEX_REPO` absent); tests
