@@ -88,7 +88,6 @@
 		"@agentos-software/git": "workspace:*",
 		"@agentos-software/grep": "workspace:*",
 		"@agentos-software/gzip": "workspace:*",
-		"@agentos-software/http-get": "workspace:*",
 		"@agentos-software/jq": "workspace:*",
 		"@agentos-software/opencode": "workspace:*",
 		"@agentos-software/pi": "workspace:*",

@@ -59,7 +59,7 @@ repo-root/
 │   │       ├── sh/ cat/ ls/ cp/ mv/ sort/ …   #   ~80 command crates
 │   │       └── (du/ expr/ column/ rev/ strings/  — 1:1 libs that belong to coreutils)
 │   │
-│   ├── sqlite3/ duckdb/ wget/ zip/ unzip/ http-get/     # C-based, native/c/<name>.c
+│   ├── sqlite3/ duckdb/ wget/ zip/ unzip/               # C-based, native/c/<name>.c
 │   ├── grep/ sed/ gawk/ jq/ yq/ fd/ ripgrep/ tree/ file/ tar/ gzip/ diffutils/ findutils/  # Rust, native/crates/
 │   │
 │   ├── claude/ codex/ opencode/ pi/ pi-cli/    # agent adapters — @agentos-software/*, JS only, no native/

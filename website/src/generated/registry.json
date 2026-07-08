@@ -403,18 +403,6 @@
 			"package": "@agentos-software/codex-cli",
 			"status": "available",
 			"image": "/images/registry/codex.svg"
-		},
-		{
-			"slug": "http-get",
-			"title": "http-get",
-			"description": "Minimal HTTP GET fetch helper.",
-			"types": [
-				"software"
-			],
-			"category": "networking",
-			"priority": 0,
-			"package": "@agentos-software/http-get",
-			"status": "available"
 		}
 	]
 }

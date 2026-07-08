@@ -213,7 +213,7 @@ wasm: vendor patch-vendor patch-std wasm-opt-check
 #   codex     the codex fork build    (codex, codex-exec)
 # `just toolchain-cmd <name>` calls this. `make wasm` builds the fast
 # Rust set; `make -C c programs install` builds/installs the fast C set.
-C_COMMANDS := zip unzip envsubst sqlite3 curl wget duckdb vim http_get
+C_COMMANDS := zip unzip envsubst sqlite3 curl wget duckdb vim
 
 .PHONY: cmd/%
 cmd/%:

@@ -19,7 +19,7 @@ import {
 } from '@rivet-dev/agentos-vm-test-harness';
 import type { IntegrationKernelResult, Kernel } from '@rivet-dev/agentos-vm-test-harness';
 
-const WASM_HTTP_GET = resolve(C_BUILD_DIR, 'http_get');
+const WASM_CURL = resolve(C_BUILD_DIR, 'curl');
 const WASM_HTTP_SERVER = resolve(C_BUILD_DIR, 'http_server');
 const WASM_TCP_ECHO = resolve(C_BUILD_DIR, 'tcp_echo');
 const WASM_TCP_SERVER = resolve(C_BUILD_DIR, 'tcp_server');
@@ -28,7 +28,7 @@ function skipReasonWasmNetwork(): string | false {
   const wasmSkipReason = skipUnlessWasmBuilt();
   if (wasmSkipReason) return wasmSkipReason;
   for (const [name, path] of [
-    ['http_get', WASM_HTTP_GET],
+    ['curl', WASM_CURL],
     ['http_server', WASM_HTTP_SERVER],
     ['tcp_echo', WASM_TCP_ECHO],
     ['tcp_server', WASM_TCP_SERVER],
@@ -231,7 +231,7 @@ describe('cross-runtime network integration', { timeout: 90_000 }, () => {
     expect(client.stdout.trim()).toBe('js-pong:ping');
   });
 
-  itIf(!wasmNetworkSkipReason, 'W1 WASM http_get -> JS node:http server over VM loopback', async () => {
+  itIf(!wasmNetworkSkipReason, 'W1 WASM curl -> JS node:http server over VM loopback', async () => {
     ctx = await createIntegrationKernel({
       runtimes: ['wasmvm', 'node'],
       commandDirs: [C_BUILD_DIR, COMMANDS_DIR],
@@ -239,13 +239,13 @@ describe('cross-runtime network integration', { timeout: 90_000 }, () => {
     const server = spawnGuestNodeProgram(ctx.kernel, guestJsHttpServer(3102));
     await waitForOutput(server, 'js http listening 3102', 'JS HTTP server');
 
-    const wasm = await ctx.kernel.exec('http_get 3102 /from-wasm');
+    const wasm = await ctx.kernel.exec('curl -fsS http://127.0.0.1:3102/from-wasm');
 
     server.process.kill(15);
     await server.process.wait().catch(() => {});
     expect(wasm.exitCode).toBe(0);
-    expect(wasm.stderr).not.toContain('socket error');
-    expect(wasm.stdout).toContain('body: js:GET:/from-wasm');
+    expect(wasm.stderr).toBe('');
+    expect(wasm.stdout.trim()).toBe('js:GET:/from-wasm');
   });
 
   itIf(!wasmNetworkSkipReason, 'J3 JS fetch -> WASM HTTP server over VM loopback', async () => {
@@ -341,7 +341,7 @@ describe('cross-runtime network integration', { timeout: 90_000 }, () => {
     expect(wasm.stdout).toContain('received: js-pong:hello');
   });
 
-  itIf(!wasmNetworkSkipReason, 'W3 WASM http_get -> WASM HTTP server over VM loopback', async () => {
+  itIf(!wasmNetworkSkipReason, 'W3 WASM curl -> WASM HTTP server over VM loopback', async () => {
     ctx = await createIntegrationKernel({
       runtimes: ['wasmvm', 'node'],
       commandDirs: [C_BUILD_DIR, COMMANDS_DIR],
@@ -349,12 +349,12 @@ describe('cross-runtime network integration', { timeout: 90_000 }, () => {
     const server = spawnGuestProgram(ctx.kernel, 'http_server', ['3108']);
     await waitForListener(ctx.kernel, 3108, 'WASM HTTP server');
 
-    const wasm = await ctx.kernel.exec('http_get 3108 /from-wasm');
+    const wasm = await ctx.kernel.exec('curl -fsS http://127.0.0.1:3108/from-wasm');
     const serverExit = await server.process.wait();
 
     expect(wasm.exitCode).toBe(0);
-    expect(wasm.stderr).not.toContain('socket error');
-    expect(wasm.stdout).toContain('body: wasm:GET:/from-wasm');
+    expect(wasm.stderr).toBe('');
+    expect(wasm.stdout.trim()).toBe('wasm:GET:/from-wasm');
     expect(serverExit).toBe(0);
   });
 
@@ -426,7 +426,7 @@ describe('cross-runtime network integration', { timeout: 90_000 }, () => {
     }
   });
 
-  itIf(!wasmNetworkSkipReason, 'O2 WASM http_get -> host loopback requires loopback exemption', async () => {
+  itIf(!wasmNetworkSkipReason, 'O2 WASM curl -> host loopback requires loopback exemption', async () => {
     const seenRequests: string[] = [];
     const hostServer = createHttpServer((req, res) => {
       seenRequests.push(req.url ?? '');
@@ -443,9 +443,9 @@ describe('cross-runtime network integration', { timeout: 90_000 }, () => {
         runtimes: ['wasmvm', 'node'],
         commandDirs: [C_BUILD_DIR, COMMANDS_DIR],
       });
-      const noExemption = await ctx.kernel.exec(`http_get ${port} /blocked`);
+      const noExemption = await ctx.kernel.exec(`curl -fsS http://127.0.0.1:${port}/blocked`);
       expect(noExemption.exitCode).not.toBe(0);
-      expect(noExemption.stderr).toMatch(/EACCES|Bad address|Connection refused|connect/);
+      expect(noExemption.stderr).toMatch(/EACCES|Bad address|Connection refused|connect|Failed to connect|Invalid argument/);
       expect(seenRequests).toEqual([]);
       await ctx.dispose();
 
@@ -454,10 +454,10 @@ describe('cross-runtime network integration', { timeout: 90_000 }, () => {
         commandDirs: [C_BUILD_DIR, COMMANDS_DIR],
         loopbackExemptPorts: [port],
       });
-      const allowed = await ctx.kernel.exec(`http_get ${port} /allowed`);
+      const allowed = await ctx.kernel.exec(`curl -fsS http://127.0.0.1:${port}/allowed`);
       expect(allowed.exitCode).toBe(0);
-      expect(allowed.stderr).not.toContain('socket error');
-      expect(allowed.stdout).toContain('body: host:/allowed');
+      expect(allowed.stderr).toBe('');
+      expect(allowed.stdout.trim()).toBe('host:/allowed');
       expect(seenRequests).toEqual(['/allowed']);
     } finally {
       await new Promise<void>((resolveClose) => hostServer.close(() => resolveClose()));

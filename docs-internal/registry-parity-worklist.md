@@ -102,7 +102,7 @@ actual backing:
 |---|---|---|---|
 | **curl** | DONE | our custom driver over a libcurl fork | real `curl` CLI (upstream `src/tool_*.c`) |
 | **wget** | DONE | our 174-line `wget.c` (dropped) | real GNU Wget vs our sysroot — stub `getrlimit`/`getgroups`, then build |
-| **http-get** | TODO | our 95-line `http_get.c` | drop, or a real tool |
+| **http-get** | DONE | our 95-line `http_get.c` | dropped; real curl covers HTTP fetches |
 | **git** | TODO | our hand-rolled git from `sha1`+`flate2` | **real git** (upstream C), patched for WASI — **NOT gitoxide** |
 | **fd** | TODO | our `secureexec-fd` on raw `regex` (not sharkdp/fd) | real **fd** (sharkdp) |
 | **findutils** (`find`,`xargs`) | TODO | our hand-rolled on `regex`/shims | real GNU findutils, or `uutils/findutils` |
@@ -184,10 +184,26 @@ works (`wasi-spawn` broker), so `xargs` is not a blocker.
   aggregate C `programs` builds 57 commands in
   `2026-07-08T05-09-53-0700-sqlite3-make-programs-final.log`.
   Rev: `typytnkk` — `fix(sqlite3): build official SQLite shell`.
-- **http-get — drop, don't port.** `http_get.c` is a 95-line raw-socket **loopback
-  test client**, not an HTTP fetcher; real curl covers GET. But it's imported by
-  `packages/shell` and is the client in cross-runtime network tests — migrate those
-  dependents first, then drop the command.
+- **http-get — DONE.** Dropped the 95-line raw-socket loopback client instead of
+  porting it: real curl now covers HTTP fetch behavior in DuckDB remote CSV tests,
+  runtime cross-network loopback tests, and the C conformance loopback row.
+  Removed the `@agentos-software/http-get` package, fallback command, shell/core
+  dependencies, registry listing, C command install entries, and lockfile package
+  edges. The low-level `http_get_test` fixture remains because it is a socket
+  diagnostic test program, not a shipped registry command. Proof: pnpm lockfile
+  refresh succeeds in
+  `2026-07-08T05-39-44-0700-http-get-pnpm-lock-refresh.log`; core and shell
+  type checks pass in
+  `2026-07-08T05-40-57-0700-http-get-core-check-types-after-install.log` and
+  `2026-07-08T05-41-34-0700-http-get-shell-check-types-final.log`; DuckDB test
+  file typecheck passes in
+  `2026-07-08T05-40-57-0700-http-get-duckdb-test-typecheck-after-install.log`;
+  aggregate C `programs` builds 57 commands, with `http_get` absent after stale
+  generated cleanup/install, in
+  `2026-07-08T05-41-34-0700-http-get-make-c-programs-without-command.log` and
+  `2026-07-08T05-43-24-0700-http-get-clear-stale-generated-and-install.log`;
+  cross-runtime network tests pass 11/11 with the WASM curl rows in
+  `2026-07-08T05-47-43-0700-http-get-runtime-cross-network-test-pass.log`.
 - **tree — DONE.** Replaced the custom Rust `secureexec-tree`/`cmd-tree` crates
   with upstream Steve Baker `tree` 2.3.2 from `OldManProgrammer/unix-tree`.
   It builds as a C toolchain command from pinned source, stages into
@@ -421,7 +437,7 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
 
 ### 12. No tests at all — 12 software + 5 agents
 - **Broken:** zero e2e coverage: `gawk, sed, grep, tar, gzip, jq, ripgrep, yq,
-  diffutils, file, http-get, vim`; agents `claude, codex, opencode, pi, pi-cli`.
+  diffutils, file, vim`; agents `claude, codex, opencode, pi, pi-cli`.
 - **Objective:** write real e2e tests proving each behaves like its Linux
   counterpart (jq processes real JSON, sed edits streams, tar round-trips archives,
   grep/rg search real trees, gzip round-trips, etc.); agents exercise the real ACP

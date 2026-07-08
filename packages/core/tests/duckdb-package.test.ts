@@ -5,19 +5,19 @@ import {
 	type ServerResponse,
 } from "node:http";
 import coreutils from "@agentos-software/coreutils";
+import curl from "@agentos-software/curl";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import duckdb from "@agentos-software/duckdb";
-import httpGet from "@agentos-software/http-get";
 import { AgentOs } from "../dist/index.js";
 import { cSysrootPackageSkipReason } from "./helpers/registry-commands.js";
 
 const DUCKDB_PACKAGE = duckdb;
-const HTTP_GET_PACKAGE = httpGet;
+const CURL_PACKAGE = curl;
 // C-sysroot packages are the ONE sanctioned skip: they need the patched wasi C
 // sysroot most checkouts don't build (see helpers/registry-commands.ts).
 const duckdbPackageSkipReason = cSysrootPackageSkipReason(
 	{ pkg: DUCKDB_PACKAGE, name: "duckdb" },
-	{ pkg: HTTP_GET_PACKAGE, name: "http-get" },
+	{ pkg: CURL_PACKAGE, name: "curl" },
 );
 
 function closeServer(server: Server) {
@@ -47,7 +47,7 @@ describe("duckdb registry package", () => {
 			await vm.dispose();
 		}
 		vm = await AgentOs.create({
-			software: options?.software ?? [coreutils, HTTP_GET_PACKAGE, DUCKDB_PACKAGE],
+			software: options?.software ?? [coreutils, CURL_PACKAGE, DUCKDB_PACKAGE],
 			...(options?.loopbackExemptPorts
 				? { loopbackExemptPorts: options.loopbackExemptPorts }
 				: {}),
@@ -106,7 +106,7 @@ describe("duckdb registry package", () => {
 			await recreateVm({ loopbackExemptPorts: [address.port] });
 
 			let result = await vm.exec(
-				`http_get ${address.port} /remote.csv /tmp/remote.csv`,
+				`curl -fsS -o /tmp/remote.csv http://127.0.0.1:${address.port}/remote.csv`,
 			);
 			expect(result.exitCode, result.stderr || result.stdout).toBe(0);
 
@@ -166,11 +166,11 @@ describe("duckdb registry package", () => {
 		async () => {
 		await vm.dispose();
 
-			const httpGetReadOnly = {
-			...HTTP_GET_PACKAGE,
-			commands: [{ name: "http_get", permissionTier: "read-only" as const }],
+			const curlReadOnly = {
+			...CURL_PACKAGE,
+			commands: [{ name: "curl", permissionTier: "read-only" as const }],
 		};
-		vm = await AgentOs.create({ software: [coreutils, httpGetReadOnly] });
+		vm = await AgentOs.create({ software: [coreutils, curlReadOnly] });
 
 		const server = createServer((req: IncomingMessage, res: ServerResponse) => {
 			res.writeHead(200, { "Content-Type": "text/plain" });
@@ -187,11 +187,13 @@ describe("duckdb registry package", () => {
 				throw new Error("failed to bind test HTTP server");
 			}
 			await recreateVm({
-				software: [coreutils, httpGetReadOnly],
+				software: [coreutils, curlReadOnly],
 				loopbackExemptPorts: [address.port],
 			});
 
-			const result = await vm.exec(`http_get ${address.port} /blocked`);
+			const result = await vm.exec(
+				`curl -fsS http://127.0.0.1:${address.port}/blocked`,
+			);
 			expect(result.exitCode).not.toBe(0);
 		} finally {
 			await closeServer(server);

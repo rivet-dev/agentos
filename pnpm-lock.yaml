@@ -2544,9 +2544,6 @@ importers:
       '@agentos-software/gzip':
         specifier: workspace:*
         version: link:../../software/gzip
-      '@agentos-software/http-get':
-        specifier: workspace:*
-        version: link:../../software/http-get
       '@agentos-software/jq':
         specifier: workspace:*
         version: link:../../software/jq
@@ -2853,9 +2850,6 @@ importers:
       '@agentos-software/gzip':
         specifier: workspace:*
         version: link:../../software/gzip
-      '@agentos-software/http-get':
-        specifier: workspace:*
-        version: link:../../software/http-get
       '@agentos-software/jq':
         specifier: workspace:*
         version: link:../../software/jq
@@ -3452,27 +3446,6 @@ importers:
         version: 2.1.9(@types/node@22.19.15)
 
   software/gzip:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../packages/manifest
-      '@agentos/test-harness':
-        specifier: workspace:*
-        version: link:../../test-harness
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.9
-        version: 2.1.9(@types/node@22.19.15)
-
-  software/http-get:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*

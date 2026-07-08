@@ -157,7 +157,6 @@ Browse pre-built agents, tools, filesystems, and software packages at the [agent
 | `@agentos-software/git` | git | git version control | rust | - | - |
 | `@agentos-software/grep` | grep | GNU grep pattern matching (grep, egrep, fgrep) | rust | - | - |
 | `@agentos-software/gzip` | gzip | GNU gzip compression (gzip, gunzip, zcat) | rust | - | - |
-| `@agentos-software/http-get` | http-get | Minimal HTTP GET fetch helper | c | - | - |
 | `@agentos-software/jq` | jq | jq JSON processor | rust | - | - |
 | `@agentos-software/ripgrep` | ripgrep | ripgrep fast recursive search | rust | - | - |
 | `@agentos-software/sed` | sed | GNU sed stream editor | rust | - | - |
