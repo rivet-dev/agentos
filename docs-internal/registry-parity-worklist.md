@@ -536,8 +536,16 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     eagerly requiring every registry package to be built. Proof:
     `2026-07-08T13-13-00-0700-item11-git-quickstart-final.log`.
     Rev: `svltqsmx`.
-  - **duckdb — TODO.** Needs real analytical SQL, CSV read/write, and file-backed
-    DB e2e kept runnable when the DuckDB package artifacts are present.
+  - **duckdb — DONE.** Rebuilt the upstream DuckDB package artifact from the
+    patched C sysroot and strengthened the package e2e so it validates only the
+    DuckDB/Curl packages it uses. The VM e2e now covers file-backed DML, real
+    analytical SQL, DuckDB CSV export, `read_csv_auto` re-import, and the
+    negative HTTP-URL path for DuckDB itself. Proof:
+    `2026-07-08T12-38-07-0700-item11-duckdb-package-build-after-install.log`;
+    `2026-07-08T12-46-18-0700-item11-duckdb-package-e2e-final-file-pass.log`;
+    `2026-07-08T12-46-11-0700-item11-core-tsc-duckdb-final-file-after-refresh.log`;
+    `2026-07-08T12-46-10-0700-item11-duckdb-biome-check-final-file-after-refresh.log`.
+    Rev: `qrwnvouk`.
   - **codex — TODO.** Needs the remaining real full-turn coverage un-skipped after
     #9.
 - **rev:** one per command, e.g. `test(duckdb): real analytical-SQL e2e; un-skip`
