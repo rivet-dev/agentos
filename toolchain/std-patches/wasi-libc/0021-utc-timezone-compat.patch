@@ -1,0 +1,56 @@
+Expose UTC timezone compatibility in the AgentOS WASI sysroot.
+
+AgentOS currently uses a minimal UTC timezone implementation. Provide the
+standard tzset/tzname/daylight/timezone surface as no-op UTC compatibility so
+upstream time code can compile without shipping timezone tables.
+
+diff --git a/libc-bottom-half/sources/host_timezone_compat.c b/libc-bottom-half/sources/host_timezone_compat.c
+new file mode 100644
+index 0000000..0b4ef74
+--- /dev/null
++++ b/libc-bottom-half/sources/host_timezone_compat.c
+@@ -0,0 +1,9 @@
++// UTC timezone compatibility for AgentOS WASI commands.
++
++long timezone = 0;
++int daylight = 0;
++char *tzname[2] = { "UTC", "UTC" };
++
++void tzset(void) {
++    // AgentOS VMs currently expose UTC only.
++}
+diff --git a/libc-top-half/musl/include/time.h b/libc-top-half/musl/include/time.h
+index f534148..919ae5d 100644
+--- a/libc-top-half/musl/include/time.h
++++ b/libc-top-half/musl/include/time.h
+@@ -97,9 +97,7 @@ struct tm *localtime_r (const time_t *__restrict, struct tm *__restrict);
+ char *asctime_r (const struct tm *__restrict, char *__restrict);
+ char *ctime_r (const time_t *, char *);
+ 
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no timezone tables */
+ void tzset (void);
+-#endif
+ 
+ struct itimerspec {
+ 	struct timespec it_interval;
+@@ -143,19 +141,15 @@ int timer_gettime (timer_t, struct itimerspec *);
+ int timer_getoverrun (timer_t);
+ #endif
+ 
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no timezone tables */
+ extern char *tzname[2];
+-#endif
+ 
+ #endif
+ 
+ 
+ #if defined(_XOPEN_SOURCE) || defined(_BSD_SOURCE) || defined(_GNU_SOURCE)
+ char *strptime (const char *__restrict, const char *__restrict, struct tm *__restrict);
+-#ifdef __wasilibc_unmodified_upstream /* WASI has no timezone tables */
+ extern int daylight;
+ extern long timezone;
+-#endif
+ extern int getdate_err;
+ struct tm *getdate (const char *);
+ #endif
+ 

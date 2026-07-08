@@ -32,6 +32,7 @@
 		"@agentos-software/tar": "workspace:*",
 		"@agentos-software/gzip": "workspace:*",
 		"@agentos-software/curl": "workspace:*",
+		"@agentos-software/wget": "workspace:*",
 		"@agentos-software/zip": "workspace:*",
 		"@agentos-software/unzip": "workspace:*",
 		"@agentos-software/jq": "workspace:*",

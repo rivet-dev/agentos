@@ -1,0 +1,131 @@
+Expose resource limits and supplementary groups in the AgentOS WASI sysroot.
+
+GNU Wget's configure script and source expect getgroups(2) and getrlimit(2).
+WASI has no kernel-backed process limits or supplementary group database, so the
+patched sysroot provides deterministic compatibility shims: one effective group
+and fixed per-process limit values.
+
+diff --git a/libc-bottom-half/sources/host_resource_user.c b/libc-bottom-half/sources/host_resource_user.c
+new file mode 100644
+index 0000000..8d91a2f
+--- /dev/null
++++ b/libc-bottom-half/sources/host_resource_user.c
+@@ -0,0 +1,83 @@
++// Process resource and group compatibility for AgentOS WASI commands.
++
++#include <errno.h>
++#include <stdint.h>
++#include <string.h>
++#include <sys/resource.h>
++#include <unistd.h>
++
++static int is_known_rlimit_resource(int resource) {
++    return resource >= 0 && resource < RLIMIT_NLIMITS;
++}
++
++static rlim_t default_limit_for(int resource) {
++    switch (resource) {
++        case RLIMIT_NOFILE:
++            return 1024;
++        case RLIMIT_CPU:
++        case RLIMIT_FSIZE:
++        case RLIMIT_DATA:
++        case RLIMIT_STACK:
++        case RLIMIT_CORE:
++#ifdef RLIMIT_RSS
++        case RLIMIT_RSS:
++#endif
++#ifdef RLIMIT_NPROC
++        case RLIMIT_NPROC:
++#endif
++#ifdef RLIMIT_MEMLOCK
++        case RLIMIT_MEMLOCK:
++#endif
++#ifdef RLIMIT_AS
++        case RLIMIT_AS:
++#endif
++        case RLIMIT_LOCKS:
++        case RLIMIT_SIGPENDING:
++        case RLIMIT_MSGQUEUE:
++        case RLIMIT_NICE:
++        case RLIMIT_RTPRIO:
++        case RLIMIT_RTTIME:
++            return RLIM_INFINITY;
++        default:
++            return 0;
++    }
++}
++
++int getgroups(int size, gid_t list[]) {
++    if (size < 0) {
++        errno = EINVAL;
++        return -1;
++    }
++
++    if (size == 0) {
++        return 1;
++    }
++
++    if (list == NULL) {
++        errno = EFAULT;
++        return -1;
++    }
++
++    list[0] = getgid();
++    return 1;
++}
++
++int getrlimit(int resource, struct rlimit *rlim) {
++    if (rlim == NULL || !is_known_rlimit_resource(resource)) {
++        errno = EINVAL;
++        return -1;
++    }
++
++    rlim->rlim_cur = default_limit_for(resource);
++    rlim->rlim_max = default_limit_for(resource);
++    return 0;
++}
++
++int setrlimit(int resource, const struct rlimit *rlim) {
++    if (rlim == NULL || !is_known_rlimit_resource(resource)) {
++        errno = EINVAL;
++        return -1;
++    }
++
++    return 0;
++}
+diff --git a/libc-top-half/musl/include/sys/resource.h b/libc-top-half/musl/include/sys/resource.h
+index d1fb724..deddb7f 100644
+--- a/libc-top-half/musl/include/sys/resource.h
++++ b/libc-top-half/musl/include/sys/resource.h
+@@ -1,4 +1,4 @@
+-#ifndef _WASI_EMULATED_PROCESS_CLOCKS
++#if !defined(_WASI_EMULATED_PROCESS_CLOCKS) && defined(__wasilibc_unmodified_upstream)
+ #error WASI lacks process-associated clocks; to enable emulation of the `getrusage` function using \
+ the wall clock, which isn't sensitive to whether the program is running or suspended, \
+ compile with -D_WASI_EMULATED_PROCESS_CLOCKS and link with -lwasi-emulated-process-clocks
+@@ -21,7 +21,7 @@ extern "C" {
+ 
+ #include <bits/alltypes.h>
+ #include <bits/resource.h>
+ 
+-#ifdef __wasilibc_unmodified_upstream /* Use alternate WASI libc headers */
++#if 1 /* AgentOS exposes POSIX resource-limit declarations in patched WASI. */
+ typedef unsigned long long rlim_t;
+ 
+ struct rlimit {
+diff --git a/libc-top-half/musl/include/unistd.h b/libc-top-half/musl/include/unistd.h
+index cb62f56..4d858a6 100644
+--- a/libc-top-half/musl/include/unistd.h
++++ b/libc-top-half/musl/include/unistd.h
+@@ -173,8 +173,8 @@ uid_t getuid(void);
+ uid_t geteuid(void);
+ gid_t getgid(void);
+ gid_t getegid(void);
++int getgroups(int, gid_t []);
+ 
+ #ifdef __wasilibc_unmodified_upstream /* WASI has no setuid etc. */
+-int getgroups(int, gid_t []);
+ int setuid(uid_t);
+ int seteuid(uid_t);
+ int setgid(gid_t);

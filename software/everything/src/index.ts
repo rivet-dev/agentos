@@ -7,6 +7,7 @@ import diffutils from "@agentos-software/diffutils";
 import tar from "@agentos-software/tar";
 import gzip from "@agentos-software/gzip";
 import curl from "@agentos-software/curl";
+import wget from "@agentos-software/wget";
 import zip from "@agentos-software/zip";
 import unzip from "@agentos-software/unzip";
 import jq from "@agentos-software/jq";
@@ -27,6 +28,7 @@ const everything = [
 	tar,
 	gzip,
 	curl,
+	wget,
 	zip,
 	unzip,
 	jq,
@@ -49,6 +51,7 @@ export {
 	tar,
 	gzip,
 	curl,
+	wget,
 	zip,
 	unzip,
 	jq,

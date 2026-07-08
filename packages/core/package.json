@@ -98,6 +98,7 @@
 		"@agentos-software/tar": "workspace:*",
 		"@agentos-software/tree": "workspace:*",
 		"@agentos-software/vim": "workspace:*",
+		"@agentos-software/wget": "workspace:*",
 		"@agentos-software/yq": "workspace:*",
 		"@anthropic-ai/claude-agent-sdk": "^0.2.87",
 		"@anthropic-ai/claude-code": "^2.1.86",

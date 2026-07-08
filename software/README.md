@@ -68,7 +68,7 @@ per-binary entry point; it dispatches to whichever toolchain owns the command:
 | kind | commands | what it runs |
 |---|---|---|
 | Rust | any `software/<pkg>/native/crates/cmd-<name>` command crate (sh, ls, rg, …) | `cargo build -p cmd-<name>` (build-std) + `wasm-opt` |
-| C | `zip unzip envsubst sqlite3 curl duckdb` | `make -C c sysroot build/<src>` + per-command install |
+| C | `zip unzip envsubst sqlite3 curl wget duckdb` | `make -C c sysroot build/<src>` + per-command install |
 | codex | `codex`, `codex-exec` | the codex fork build (needs the fork checkout) |
 | C | `vim` (pinned upstream clone + bridge in `c/vim/`) | `make -C c sysroot build/vim` + install |
 
@@ -90,7 +90,7 @@ packages are pnpm workspace members, so tests and examples resolve them via
 Exceptions:
 - `software/codex/wasm/` is the install target of the codex fork's build
   (`make -C toolchain codex`); `software/codex-cli` stages from it.
-- C-built commands (sqlite3, zip, unzip, curl, duckdb) need the patched
+- C-built commands (sqlite3, zip, unzip, curl, wget, duckdb) need the patched
   sysroot; `just toolchain-cmd <name>` builds it on demand. Without it
   those packages stay empty placeholders.
 - `vim` builds from source: `just toolchain-cmd vim` clones the pinned

@@ -68,10 +68,10 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 
 # Fast real commands installed by the default software gate. Slow/heavy commands
 # (duckdb, vim) remain available through explicit parent `make cmd/<name>`.
-COMMANDS := zip unzip envsubst sqlite3 curl http_get
+COMMANDS := zip unzip envsubst sqlite3 curl wget http_get
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
-PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler http_get dns_lookup sqlite3_cli curl fs_probe
+PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler http_get dns_lookup sqlite3_cli curl wget fs_probe
 
 # Discover all package command and test-program C source files.
 ALL_SOURCES := $(foreach dir,$(C_SOURCE_DIRS),$(wildcard $(dir)/*.c))
@@ -89,7 +89,7 @@ endif
 ifeq ($(wildcard $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a),)
   CUSTOM_WASM_PROG_NAMES :=
 else
-  CUSTOM_WASM_PROG_NAMES := curl
+  CUSTOM_WASM_PROG_NAMES := curl wget
 endif
 
 WASM_PROG_NAMES := $(sort $(basename $(notdir $(SOURCES))) $(CUSTOM_WASM_PROG_NAMES))
@@ -151,6 +151,11 @@ CURL_RELEASE_URL := https://github.com/curl/curl/releases/download/curl-$(CURL_R
 CURL_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/curl-upstream
 CURL_UPSTREAM_OVERLAY_DIR := ../../software/curl/native/c/overlay
 CURL_UPSTREAM_OVERLAY_FILES := $(wildcard $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.h $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.h)
+WGET_VERSION := 1.24.5
+WGET_URL := https://ftp.gnu.org/gnu/wget/wget-$(WGET_VERSION).tar.gz
+WGET_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/wget-upstream
+WGET_UPSTREAM_OVERLAY_INCLUDE_DIR := overlays/wget/include
+WGET_UPSTREAM_OVERLAY_FILES := $(wildcard $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR)/*.h)
 MINIZIP_URL := https://github.com/madler/zlib/archive/refs/tags/v1.3.1.zip
 # duckdb-wasm currently documents DuckDB v1.5.0 in its README. We build the
 # matching upstream DuckDB tag ourselves with our patched WASI/POSIX sysroot.
@@ -555,6 +560,19 @@ $(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES)
 		--cache-dir "$(abspath $(LIBS_CACHE))" \
 		--build-dir "$(abspath $(CURL_UPSTREAM_BUILD_DIR))" \
 		--overlay-dir "$(abspath $(CURL_UPSTREAM_OVERLAY_DIR))" \
+		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--output "$(abspath $@)"
+
+$(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-wget-upstream.sh \
+		--version "$(WGET_VERSION)" \
+		--url "$(WGET_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(WGET_UPSTREAM_BUILD_DIR))" \
+		--overlay-include-dir "$(abspath $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR))" \
 		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
 		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \

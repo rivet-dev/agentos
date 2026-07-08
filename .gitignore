@@ -49,6 +49,7 @@ registry/native/c/build/
 registry/native/c/vendor/
 registry/native/c/libs/
 registry/native/c/.cache/
+toolchain/c/.cache/
 registry/native/c/sysroot/
 registry/software/*/wasm/
 software/*/wasm/

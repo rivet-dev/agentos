@@ -2565,6 +2565,9 @@ importers:
       '@agentos-software/vim':
         specifier: workspace:*
         version: link:../../software/vim
+      '@agentos-software/wget':
+        specifier: workspace:*
+        version: link:../../software/wget
       '@agentos-software/yq':
         specifier: workspace:*
         version: link:../../software/yq
@@ -2877,6 +2880,9 @@ importers:
       '@agentos-software/vim':
         specifier: workspace:*
         version: link:../../software/vim
+      '@agentos-software/wget':
+        specifier: workspace:*
+        version: link:../../software/wget
       '@agentos-software/yq':
         specifier: workspace:*
         version: link:../../software/yq
@@ -3293,6 +3299,9 @@ importers:
       '@agentos-software/unzip':
         specifier: workspace:*
         version: link:../unzip
+      '@agentos-software/wget':
+        specifier: workspace:*
+        version: link:../wget
       '@agentos-software/yq':
         specifier: workspace:*
         version: link:../yq
@@ -3715,6 +3724,27 @@ importers:
         version: 2.1.9(@types/node@22.19.15)
 
   software/vim:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/wget:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*

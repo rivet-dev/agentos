@@ -1776,6 +1776,91 @@ function writeBytesToGuestIovs(iovs, iovsLen, bytes) {
   return written >>> 0;
 }
 
+function guestIovByteLength(iovs, iovsLen) {
+  if (!(instanceMemory instanceof WebAssembly.Memory)) {
+    throw new Error('WebAssembly memory is not available');
+  }
+
+  const view = new DataView(instanceMemory.buffer);
+  let total = 0;
+  for (let index = 0; index < (Number(iovsLen) >>> 0); index += 1) {
+    const entryOffset = (Number(iovs) >>> 0) + index * 8;
+    total += view.getUint32(entryOffset + 4, true);
+  }
+  return total >>> 0;
+}
+
+function readHostNetSocketToGuestIovs(socket, iovs, iovsLen, nreadPtr) {
+  try {
+    const requestedLength = guestIovByteLength(iovs, iovsLen);
+    if (requestedLength === 0) {
+      return writeGuestUint32(nreadPtr, 0);
+    }
+
+    if (socket.nonblock) {
+      let queued = dequeueHostNetBytes(socket, requestedLength);
+      if (queued.length > 0) {
+        return writeGuestUint32(nreadPtr, writeBytesToGuestIovs(iovs, iovsLen, queued));
+      }
+      if (socket.lastError) return WASI_ERRNO_FAULT;
+      if (socket.readableEnded || socket.closed || !socket.socketId) {
+        return writeGuestUint32(nreadPtr, 0);
+      }
+      pollHostNetSocket(socket, 0);
+      queued = dequeueHostNetBytes(socket, requestedLength);
+      if (queued.length > 0) {
+        return writeGuestUint32(nreadPtr, writeBytesToGuestIovs(iovs, iovsLen, queued));
+      }
+      if (socket.readableEnded || socket.closed || !socket.socketId) {
+        return writeGuestUint32(nreadPtr, 0);
+      }
+      return WASI_ERRNO_AGAIN;
+    }
+
+    const deadline =
+      socket.recvTimeoutMs == null ? null : Date.now() + Math.max(0, socket.recvTimeoutMs);
+    while (true) {
+      const queued = dequeueHostNetBytes(socket, requestedLength);
+      if (queued.length > 0) {
+        return writeGuestUint32(nreadPtr, writeBytesToGuestIovs(iovs, iovsLen, queued));
+      }
+      if (socket.lastError) return WASI_ERRNO_FAULT;
+      if (socket.readableEnded || socket.closed || !socket.socketId) {
+        return writeGuestUint32(nreadPtr, 0);
+      }
+
+      const pollWaitMs =
+        deadline == null ? 50 : Math.max(0, Math.min(50, deadline - Date.now()));
+      if (deadline != null && pollWaitMs === 0) {
+        return WASI_ERRNO_AGAIN;
+      }
+      pollHostNetSocket(socket, pollWaitMs);
+      if (deadline != null && Date.now() >= deadline) {
+        return WASI_ERRNO_AGAIN;
+      }
+    }
+  } catch {
+    return WASI_ERRNO_FAULT;
+  }
+}
+
+function writeHostNetSocketFromGuestIovs(socket, iovs, iovsLen, nwrittenPtr) {
+  if (!socket?.socketId || socket.closed) {
+    return WASI_ERRNO_BADF;
+  }
+
+  try {
+    const bytes = collectGuestIovBytes(iovs, iovsLen);
+    if (bytes.length === 0) {
+      return writeGuestUint32(nwrittenPtr, 0);
+    }
+    const written = Number(callSyncRpc('net.write', [socket.socketId, bytes])) >>> 0;
+    return writeGuestUint32(nwrittenPtr, written);
+  } catch {
+    return WASI_ERRNO_FAULT;
+  }
+}
+
 function dequeuePipeBytes(pipe, maxBytes) {
   const requested = Math.max(0, Number(maxBytes) >>> 0);
   if (requested === 0 || pipe.chunks.length === 0) {
@@ -2700,8 +2785,9 @@ function callSyncRpc(method, args = []) {
 }
 
 const hostNetSockets = new Map();
-let nextHostNetSocketFd = 0x40000000;
+let nextHostNetSocketFd = 4096;
 const HOST_NET_TIMEOUT_SENTINEL = '__agentos_net_timeout__';
+const HOST_NET_MSG_PEEK = 0x0001;
 
 function getHostNetSocket(fd) {
   return hostNetSockets.get(Number(fd) >>> 0) ?? null;
@@ -2730,6 +2816,76 @@ function dequeueHostNetBytes(socket, maxBytes) {
   }
 
   return Buffer.concat(parts);
+}
+
+function peekHostNetBytes(socket, maxBytes) {
+  const requested = Math.max(0, Number(maxBytes) >>> 0);
+  if (requested === 0 || socket.readChunks.length === 0) {
+    return Buffer.alloc(0);
+  }
+
+  const parts = [];
+  let remaining = requested;
+  for (const chunk of socket.readChunks) {
+    if (remaining === 0) break;
+    const chunkLength = Math.min(chunk.length, remaining);
+    parts.push(chunk.subarray(0, chunkLength));
+    remaining -= chunkLength;
+  }
+
+  return Buffer.concat(parts);
+}
+
+function decodeHostNetSocketReadResult(result) {
+  if (result == null) {
+    return { kind: 'end' };
+  }
+
+  if (result === HOST_NET_TIMEOUT_SENTINEL) {
+    return { kind: 'timeout' };
+  }
+
+  if (typeof result === 'string') {
+    if (result === HOST_NET_TIMEOUT_SENTINEL) {
+      return { kind: 'timeout' };
+    }
+    return { kind: 'data', bytes: Buffer.from(result, 'base64') };
+  }
+
+  const decoded = decodeSyncRpcValue(result);
+  if (Buffer.isBuffer(decoded)) {
+    return { kind: 'data', bytes: decoded };
+  }
+  if (decoded == null) {
+    return { kind: 'end' };
+  }
+  if (decoded === HOST_NET_TIMEOUT_SENTINEL) {
+    return { kind: 'timeout' };
+  }
+  return { kind: 'timeout' };
+}
+
+function readReadyHostNetSocket(socket) {
+  if (!socket?.socketId || socket.closed) {
+    socket.readableEnded = true;
+    return null;
+  }
+
+  const result = decodeHostNetSocketReadResult(
+    callSyncRpc('net.socket_read', [socket.socketId]),
+  );
+  if (result.kind === 'data') {
+    if (result.bytes.length > 0) {
+      socket.readChunks.push(Buffer.from(result.bytes));
+    }
+    return result;
+  }
+  if (result.kind === 'end') {
+    socket.readableEnded = true;
+    socket.closed = true;
+    socket.socketId = null;
+  }
+  return result;
 }
 
 function pollHostNetSocket(socket, waitMs) {
@@ -2763,6 +2919,20 @@ function pollHostNetSocket(socket, waitMs) {
     socket.lastError = String(event.message || event.code || 'socket error');
     socket.closed = true;
     socket.socketId = null;
+    return event;
+  }
+
+  if (event.readable === true || (Number(event.revents) & 0x001) !== 0) {
+    return readReadyHostNetSocket(socket);
+  }
+
+  if (event.hangup === true) {
+    socket.readableEnded = true;
+    return event;
+  }
+
+  if (event.error === true) {
+    socket.lastError = 'socket error';
     return event;
   }
 
@@ -3493,15 +3663,14 @@ const hostNetImport = {
     }
 
     try {
-      if ((Number(flags) >>> 0) !== 0) {
-        // Non-zero recv flags are currently ignored in the WASM host_net shim.
-      }
+      const recvFlags = Number(flags) >>> 0;
+      const peek = (recvFlags & HOST_NET_MSG_PEEK) !== 0;
 
       // Non-blocking sockets (O_NONBLOCK via net_set_nonblock, used by libxcb's poll_for_*):
       // pull whatever is queued, do ONE short readiness probe, and return EAGAIN if still empty
       // instead of blocking. libxcb assumes its "poll" reads never block on an empty socket.
       if (socket.nonblock) {
-        let queued = dequeueHostNetBytes(socket, bufLen);
+        let queued = peek ? peekHostNetBytes(socket, bufLen) : dequeueHostNetBytes(socket, bufLen);
         if (queued.length > 0) {
           return writeGuestBytes(bufPtr, bufLen, queued, retReceivedPtr);
         }
@@ -3510,7 +3679,7 @@ const hostNetImport = {
           return writeGuestUint32(retReceivedPtr, 0);
         }
         pollHostNetSocket(socket, 0);
-        queued = dequeueHostNetBytes(socket, bufLen);
+        queued = peek ? peekHostNetBytes(socket, bufLen) : dequeueHostNetBytes(socket, bufLen);
         if (queued.length > 0) {
           return writeGuestBytes(bufPtr, bufLen, queued, retReceivedPtr);
         }
@@ -3523,7 +3692,7 @@ const hostNetImport = {
       const deadline =
         socket.recvTimeoutMs == null ? null : Date.now() + Math.max(0, socket.recvTimeoutMs);
       while (true) {
-        const queued = dequeueHostNetBytes(socket, bufLen);
+        const queued = peek ? peekHostNetBytes(socket, bufLen) : dequeueHostNetBytes(socket, bufLen);
         if (queued.length > 0) {
           return writeGuestBytes(bufPtr, bufLen, queued, retReceivedPtr);
         }
@@ -4868,6 +5037,11 @@ const KERNEL_POLLHUP = 0x0010;
 
 wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
   const numericFd = Number(fd) >>> 0;
+  const hostNetSocket = getHostNetSocket(numericFd);
+  if (hostNetSocket) {
+    return readHostNetSocketToGuestIovs(hostNetSocket, iovs, iovsLen, nreadPtr);
+  }
+
   const handle = __agentOSWasiMeasurePhase('fd_read', 'lookup_handle', () =>
     lookupFdHandle(numericFd)
   );
@@ -5522,10 +5696,15 @@ wasiImport.fd_prestat_dir_name = (fd, pathPtr, pathLen) => {
 };
 
 wasiImport.fd_write = (fd, iovs, iovsLen, nwrittenPtr) => {
+  const numericFd = Number(fd) >>> 0;
+  const hostNetSocket = getHostNetSocket(numericFd);
+  if (hostNetSocket) {
+    return writeHostNetSocketFromGuestIovs(hostNetSocket, iovs, iovsLen, nwrittenPtr);
+  }
+
   const handle = __agentOSWasiMeasurePhase('fd_write', 'lookup_handle', () =>
     lookupFdHandle(fd)
   );
-  const numericFd = Number(fd) >>> 0;
   if (handle?.kind === 'pipe-write') {
     try {
       const bytes = __agentOSWasiMeasurePhase('fd_write', 'guest_iov_collect', () =>

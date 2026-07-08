@@ -100,16 +100,16 @@ actual backing:
 ### ❌ CUSTOM WE BUILT — flag & replace with a real/established impl
 | Command | Status | What it actually is | Replace with |
 |---|---|---|---|
-| **curl** | TODO | our custom driver over a libcurl fork | real `curl` CLI (upstream `src/tool_*.c`) |
-| **wget** | TODO (retry) | our 174-line `wget.c` (dropped) | real GNU Wget vs our sysroot — stub `getrlimit`/`getgroups`, then build |
+| **curl** | DONE | our custom driver over a libcurl fork | real `curl` CLI (upstream `src/tool_*.c`) |
+| **wget** | DONE | our 174-line `wget.c` (dropped) | real GNU Wget vs our sysroot — stub `getrlimit`/`getgroups`, then build |
 | **http-get** | TODO | our 95-line `http_get.c` | drop, or a real tool |
 | **git** | TODO | our hand-rolled git from `sha1`+`flate2` | **real git** (upstream C), patched for WASI — **NOT gitoxide** |
 | **fd** | TODO | our `secureexec-fd` on raw `regex` (not sharkdp/fd) | real **fd** (sharkdp) |
 | **findutils** (`find`,`xargs`) | TODO | our hand-rolled on `regex`/shims | real GNU findutils, or `uutils/findutils` |
 | **tree** | TODO | our hand-rolled, zero deps | real `tree`, or an established one |
 | **grep** | TODO | our `secureexec-grep` on raw `regex` (**not** an established grep pkg) | **real GNU grep**, or a popular established grep (ripgrep's `grep` crates) |
-| **zip** | TODO | our 203-line `zip.c` over zlib/minizip (not Info-ZIP) | real Info-ZIP, or an established lib's CLI |
-| **unzip** | TODO | our 669-line `unzip.c` over zlib/minizip | real Info-ZIP unzip |
+| **zip** | DONE | our 203-line `zip.c` over zlib/minizip (not Info-ZIP) | real Info-ZIP, or an established lib's CLI |
+| **unzip** | DONE | our 669-line `unzip.c` over zlib/minizip | real Info-ZIP unzip |
 | **sqlite3 CLI** | TODO | our 558-line `sqlite3_cli.c` (engine is real SQLite; the shell is ours) | real SQLite `shell.c` (its official CLI) |
 | **vix** | DONE | from-scratch source-less drop-zone binary | deleted; real `vim` covers the editor slot |
 
@@ -129,6 +129,69 @@ impl *before* their tests are written, so the tests validate real behavior.
 
 **Decisions (settled):** git → **real git** (not gitoxide). grep → **real GNU
 grep**, or a popular established grep if the real one won't build.
+
+**git — where the issues are (assessment):**
+- **LICENSE — RESOLVED, not a blocker.** Each command ships as its **own published
+  npm package**, so a GPL-2.0 git binary in `@agentos-software/git` is **mere
+  aggregation** — it does not affect the Apache-2.0 licensing of agentOS or any
+  other package. Ship the git package under GPL-2.0 (offer its source) and we're
+  compliant. This **supersedes** the clean-room-reimpl rationale in
+  `toolchain/std-patches/git/README.md` ("cannot be vendored due to license
+  restrictions"): that premise no longer holds — go with **real git** (upstream C)
+  and update/remove that README. (gitoxide stays ruled out.)
+- **Technical WASI issues if we do build real git** (from that README + git's own
+  build knobs), easiest → hardest:
+  - `mmap` (packfiles/index) → build `NO_MMAP=1` (malloc+read). Fine.
+  - signals (SIGPIPE/SIGCHLD) → build without; WASI has none. Fine.
+  - threads (index-pack/pack-objects) → `NO_PTHREADS`; single-threaded, slower. Fine.
+  - `fork()`+`exec()` in `run_command.c` (hooks, filters, remote helpers) → route to
+    `posix_spawn` via the `wasi-spawn` broker (spawn IS supported — same fix as wget).
+  - **Network transport (clone/fetch/push) — the hard part.** Smart-HTTP needs the
+    `git-remote-https` **helper subprocess** + libcurl; `git://` needs raw sockets;
+    ssh needs an `ssh` subprocess. Each helper must itself exist as a module.
+  - symlink checkout → `core.symlinks=false` fallback (WASI symlink support is
+    partial); local time → UTC like elsewhere.
+- **Bottom line:** license is a non-issue (separate published package = mere
+  aggregation). **local** git (init/add/commit/log/diff/branch/merge/status/
+  checkout) is very achievable; **remote** git (clone/fetch/push over
+  smart-HTTP/ssh) is the real effort. Proceed with real git.
+
+**Replacement findings — what each remaining ❌ tool will take (investigated):**
+
+The recurring wall is **never a syscall** — it's one of two known, already-solved
+patterns: **(a) no threads** on `wasm32-wasip1` → serial patch like
+`toolchain/std-patches/crates/uu_sort/0001-wasi-serial-sort.patch` (hits real fd &
+ripgrep crates); **(b) gnulib `getrlimit`/`getgroups`** → sysroot stubs, already
+documented for wget (item #8) (hits GNU grep/findutils). Subprocess spawn already
+works (`wasi-spawn` broker), so `xargs` is not a blocker.
+
+- **sqlite3 CLI — trivial. Start here.** Engine is already the real amalgamation
+  (`libs/sqlite3/sqlite3.c`); the official `shell.c` **ships in the same fetched
+  zip**. Add `shell.c` to the `cp` in `toolchain/c/Makefile:174` and compile it in
+  place of `sqlite3_cli.c` (build rule ~498), reusing the existing SQLite mem/`-Os`
+  flags. Same real engine, real upstream shell.
+- **http-get — drop, don't port.** `http_get.c` is a 95-line raw-socket **loopback
+  test client**, not an HTTP fetcher; real curl covers GET. But it's imported by
+  `packages/shell` and is the client in cross-runtime network tests — migrate those
+  dependents first, then drop the command.
+- **tree — easy.** Real `tree` (Steve Baker) is a tiny plain-`Makefile` C program;
+  compile its `.c` directly against the sysroot. Pure readdir/stat — no
+  sockets/threads/spawn.
+- **fd — moderate.** Swap `cmd-fd` to depend on real `fd-find` (like
+  coreutils→`uu_*`; `fd-lock` is already patched). Only real issue: the parallel
+  `ignore`/crossbeam walker needs the **serial-thread patch** (uu_sort pattern).
+- **grep — moderate.** Decision is real GNU grep (gnulib cascade → sysroot stubs)
+  or ripgrep's `grep-*` crates (threads → serial patch). NB the current
+  `secureexec-grep` also backs `rg`, so the shipped "ripgrep" is custom too.
+- **zip / unzip — moderate.** Real **Info-ZIP** source (fetch+pin like zlib/sqlite);
+  zlib is already vendored. Filesystem + `isatty`/`utime`/`chmod`/perms stubs; no
+  sockets/threads/spawn. Friction is Info-ZIP's crufty build, not syscalls.
+- **findutils — moderate→hard.** `find` is fs+regex (easy); `xargs` spawn already
+  works. **uutils/findutils** (Rust) avoids gnulib; **GNU findutils** (C) hits the
+  same gnulib cascade as wget. Prefer uutils unless GNU parity is required.
+
+Ranked easiest→hardest: **sqlite3-CLI · http-get (drop) · tree · fd · grep · zip ·
+unzip · findutils.**
 
 ## Status tracking (how the driver reports progress in this doc)
 
@@ -227,6 +290,13 @@ so a reader sees the whole board at a glance.
   build/protocol checks pass in
   `2026-07-08T00-41-51-0700-item6-runtime-core-build-tls-flags.txt`.
 - **rev:** `oxoqrwvk` — `fix(curl): build the real curl CLI for WASI`
+- **Note (how well it works):** it *is* the real curl CLI (`src/tool_main.c`) plus a
+  custom `vtls/wasi_tls.c` backend (`USE_WASI_TLS`) — HTTPS runs through the host
+  TLS bridge, not OpenSSL. Real HTTP(S) `GET/POST/-I/-D/-L/-u/-F/-o/-O/-w/-K` all
+  work because it's genuine curl. Known gaps from the trimmed `./configure`:
+  `--compressed`/gzip response decode (`--without-zlib`), brotli/zstd, `libpsl`
+  cookie-suffix checks, LDAP, and no CA bundle (cert trust is whatever `wasi_tls`
+  enforces). Those are the 5 skipped tests. Verdict: solid for real HTTP(S).
 
 ### 7. zip / unzip — hostile-archive hardening cases fail (3 each) — DONE
 - **Broken:** fallback parser doesn't reject a wrapping local offset, doesn't skip
@@ -246,31 +316,26 @@ so a reader sees the whole board at a glance.
 
 ## P2 — Build / compile failures
 
-### 8. wget — TODO (retry against our own sysroot)
-- **Objective:** ship real GNU Wget as the `wget` command (real upstream tool,
-  patched as needed), proven by a real e2e download test. The old package was a
-  custom 174-line `wget.c` wrapper and was dropped — it must be restored as the
-  real tool, not re-added as a shim.
-- **Prior attempt (bailed too early):** GNU Wget 1.24.5 configured for
-  `wasm32-wasip1`, HTTP-only (`--without-ssl --without-zlib --without-libpsl
-  --disable-iri`, auth/thread options off) against the patched sysroot. It needed
-  WASI patches for `inet_addr`, `O_BINARY`, process-group terminal checks,
-  `spawn.h`/`--use-askpass`, interactive `getpass`, gnulib `NSIG`, `F_DUPFD`, and
-  `flock` — all fine — then stopped at gnulib wanting `getrlimit`/`RLIMIT_NOFILE`
-  and an incompatible `getgroups`.
-- **Why that stop was wrong:** the sysroot is ours (see CLAUDE.md → Software Build
-  (WASM Toolchain)). `getrlimit` can return a fixed `RLIMIT_NOFILE`; `getgroups`
-  can return the single group. Those are a few-line stub in the patched
-  libc/host-import layer, exactly like the spawn/fd/user-group imports already
-  added. "WASI lacks it" is not a wall here.
-- **Retry plan:** (1) add `getrlimit`/`RLIMIT_NOFILE` and a compatible `getgroups`
-  to the sysroot (stub is acceptable); (2) clear the remaining gnulib cascade the
-  same way, one patch at a time; (3) patch Wget's own source only if a fix
-  genuinely cannot live in the libc layer; (4) restore the `wget` package/command
-  and prove it with a real e2e download test. Only mark `NOT POSSIBLE (WASI)`
-  again if a concrete, documented wall remains after that.
-- **Note:** real upstream `curl` (#6) already covers downloads, so wget is not
-  urgent — but it should be retried as the real tool, not left dropped.
+### 8. wget — DONE
+- **Resolved:** the `wget` command is real upstream GNU Wget 1.24.5 built for
+  `wasm32-wasip1`, HTTP-only for now (`--without-ssl --without-zlib
+  --without-libpsl --disable-iri`) against the patched AgentOS C sysroot. The old
+  custom 174-line wrapper stays removed.
+- **Sysroot/runtime fixes:** Wget builds without a Wget-source WASI fork by adding
+  the missing POSIX surface one layer down: process/terminal headers including
+  `spawn.h`, signal/process/timezone compatibility, overrideable `FD_SETSIZE`,
+  Wget-only `_POSIX_TIMERS` overlay, POSIX socket `read`/`write` routing through
+  `host_net`, low host-net fds, and `MSG_PEEK` queue preservation in the WASM
+  runner. Configure is seeded so gnulib trusts the sysroot `select` instead of
+  replacing it with a host-net-incompatible fallback.
+- **Proof:** focused basename download passes in
+  `2026-07-08T04-33-31-0700-item8-wget-vitest-focused-clean-msg-peek.log`; full
+  Wget e2e suite passes 5/5 in
+  `2026-07-08T04-33-41-0700-item8-wget-vitest-full-clean-msg-peek.log`. Final
+  runner syntax and wasi-libc patch checks pass in
+  `2026-07-08T04-34-02-0700-item8-node-check-wasm-runner-final.log` and
+  `2026-07-08T04-34-02-0700-item8-wasi-libc-patch-check-final.log`.
+- **rev:** `zuosnzmq` — `fix(wget): build real GNU Wget for WASI`
 
 ### 9. codex-cli — DONE
 - **Resolved:** the `codex`/`codex-exec` package now has an AgentOS-owned wrapper
@@ -349,3 +414,92 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
 P0 first — several P1/P3 items depend on it: curl (#6) needs sockets/HTTP;
 sqlite3 file-DB tests (#11) need pwrite (#4). Fix the runtime layer, then the
 commands that ride on it, then backfill coverage. One jj rev per item throughout.
+
+---
+
+## Candidate software (future additions)
+
+Constraint: **C or Rust only** (no Go/Haskell/Python). Real upstream tool or an
+established project, same rules as above. **Focus: tools agents invoke headless
+and programmatically** — no TUI/visual tools, no dev/build toolchains, no
+raw-socket tools. Feasibility: 🟢 easy (fs/compute), 🟡 needs a known pattern
+(spawn→`wasi-spawn`, PTY, host TCP/DNS bridge).
+
+**Atuin-validated priority (from 348K real shell commands):** by actual usage the
+clear wins are **jj** (18,929 — 3rd overall after sed/rg/grep) and **tmux**
+(1,268), then **perl** (563). Modest but real: ssh/rsync (~23 each), psql (20),
+dig (10), redis-cli (8), less (4), openssl (3). **Zero usage in this history:**
+zstd, xz, gpg, ffmpeg, age, mlr, socat, nc, screen — generically useful but not
+agent-triggered here, so lower priority. Big unserved *demand*:
+**ps (1,364) + pkill (866) + pgrep (755) ≈ 3K** — see process management below.
+
+**Cross-source validation (Homebrew + Debian popcon + agent-sandbox base images +
+SWE-agent/OpenHands/Terminal-Bench trajectories):** independent sources converge
+tightly on the list below. **Every agent-sandbox image (OpenHands, devcontainers,
+GH Actions) pre-installs:** curl, wget, git, jq, tmux, gnupg, xz, zip/unzip, rsync,
+ssh, less, vim, tree, procps, psmisc, socat, netcat, ripgrep, bzip2, lz4, sqlite3,
+patch, file — near-exact overlap with what we ship/plan. Real **agent
+trajectories** are dominated by coreutils (ls/rm/find/mkdir/cat/mv/chmod) + python
++ curl/wget + grep/sed + openssl + ps — all shipped or listed. New adds surfaced:
+**imagemagick** ⭐ (C, image ops — high popularity), **openssl** (confirmed
+high-use), **aria2 / brotli / parallel / sshpass** (base-image staples). Method
+signals worth knowing: (1) agents **edit files ~2:1 over running shell commands**,
+and the dominant shell idiom is "write a python repro script, run it, `rm` it" —
+so a solid coreutils + python + curl/grep/sed/openssl core matters more than tool
+breadth; (2) `git` is **rare inside agent turns** (harnesses extract the diff
+out-of-band) but stays essential; (3) a **long tail of project-specific CLIs**
+(`dvc`, `sqlglot`, `sanic`, …) comes from pip/npm install, not the registry.
+
+**Requested (add):** ssh 🟡, rsync 🟡, tmux/screen 🟡 (PTY — session persistence),
+gpg 🟡, ffmpeg 🟡 (media transcode — heavy but headless), jj 🟢, dig 🟡,
+nslookup 🟡, less ⭐🟡 (pager), openssl ⭐🟡 (TLS/certs/keys/hashing).
+tail/head/cat are already in coreutils — confirm present.
+
+**Text / stream:** less ⭐🟡, **perl** ⭐🟡 (ubiquitous `-pe`/`-ne` text munging —
+big C runtime but real; 563 uses in history), miller `mlr` 🟢 (CSV/JSON),
+xmlstarlet 🟢, pcre2grep 🟢. (jq/yq/sed/awk/grep/head/tail already covered.)
+
+**Networking (host TCP/DNS bridge only):** openssl ⭐🟡, ssh 🟡, nc/netcat 🟡
+(TCP/UDP), socat 🟡, whois 🟢, dig/nslookup 🟡, redis-cli / psql client 🟡,
+aria2 🟡 (C++ downloader), sshpass 🟢 (ssh password helper).
+
+**VCS:** git (item above), jj 🟢.
+
+**Crypto:** gpg 🟡, openssl 🟡, age 🟢 (Rust), minisign 🟢.
+
+**Compression:** xz, zstd, bzip2, lz4, brotli, p7zip (7z) — all ⭐🟢, common + easy.
+
+**Media / image:** ffmpeg 🟡 (transcode), imagemagick ⭐🟡 (C, image ops — high
+popularity; agents do image work).
+
+**Files / sync:** rsync 🟡, diff/patch 🟢, rename 🟢, fdupes 🟢 (find/fd tracked
+above).
+
+**Session:** tmux/screen 🟡 (PTY).
+
+**Process management (add — real procps-ng + psmisc, C; ps/pkill/pgrep ≈ 3K uses):**
+- **Need the `/proc` prerequisite (below):** ps, pgrep, pkill, pidof, pstree,
+  killall, uptime, free, vmstat, w, pwdx, pmap 🟡.
+- **Signal-only — already work via the kernel (no /proc):** kill, killall-by-PID.
+  (kill, sleep, timeout, env, nohup, nproc, nice/renice are coreutils — confirm
+  they're shipped via uutils rather than re-adding.)
+
+**⚙️ Runtime prerequisite — implement `/proc` (process-table-backed):** procps
+reads `/proc/<pid>/{stat,cmdline,status,comm}` and enumerates `/proc/<pid>/`. The
+**kernel already owns the process table** (`crates/kernel/src/process_table.rs`),
+so expose a read-only procfs view of it to the guest (per-PID stat/cmdline/status
++ directory enumeration). Scope it minimal — just the fields procps parses, backed
+by the existing process table, not a full Linux procfs. Unlocks the whole
+ps/pkill/pgrep family (and top/htop later if ever wanted). **This is a runtime/VFS
+item, do it before the procps packages.**
+
+**Excluded — not worth it / not possible here:**
+- **TUI / visual-only:** gitui, lazygit, eza, dust, ncdu, bat, delta, broot, k9s,
+  skim/fzf — a terminal UI has no agent value.
+- **top / htop — excluded (TUIs).** (ps/pkill/pgrep and the rest of procps-ng +
+  psmisc are ADD items above, gated on the `/proc` runtime prerequisite.)
+- **Raw sockets:** ping, traceroute, mtr, nmap (need raw/ICMP, not just TCP).
+- **ptrace:** strace, ltrace, gdb, lldb, valgrind — genuinely impossible on WASI.
+- **Dev / build toolchains:** make, cmake, clang/gcc, binutils, pkg-config,
+  ctags — out of scope.
+- **Go-only:** rclone, gh, kubectl — no C/Rust equivalent.
