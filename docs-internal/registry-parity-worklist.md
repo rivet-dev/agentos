@@ -572,7 +572,7 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
   `2026-07-08T14-37-00-0700-item11-status-codex-fullturn-final.log`.
 - **rev:** `test(core): include registry parity suites by default`
 
-### 12. No tests at all — 9 software + 5 agents
+### 12. No tests at all — 9 software + 5 agents — DONE
 - **Broken:** zero e2e coverage: `gawk, sed, tar, gzip, jq, yq, diffutils,
   file, vim`; agents `claude, codex, opencode, pi, pi-cli`.
 - **Status:**
@@ -724,6 +724,18 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T15-36-00-0700-item12-opencode-sidecar-build-focused.log`;
     `2026-07-08T15-37-00-0700-item12-opencode-real-session-final.log`.
     Rev: `xtnuomsw`.
+  - **codex — DONE.** Codex does not currently expose a runnable
+    `createSession('codex')` ACP package: `@agentos-software/codex` is a
+    registry/package wrapper and `codex-session.test.ts` verifies the sidecar
+    rejects it as a session agent. The real Codex agent coverage is the
+    `codex-exec --session-turn` VM path from item 11, which drives the real
+    codex-core turn loop against a mock OpenAI Responses server and proves a
+    real shell subprocess side effect. Proof:
+    `2026-07-08T15-43-00-0700-item12-codex-cc-cache-restored-target-files.log`;
+    `2026-07-08T15-43-00-0700-item12-codex-sidecar-build-before-fullturn.log`;
+    `2026-07-08T15-44-00-0700-item12-codex-fullturn-current-stack.log`;
+    `2026-07-08T15-45-00-0700-item12-codex-session-negative-current-stack.log`.
+    Rev: `kyswsrtv`.
 - **Objective:** write real e2e tests proving each behaves like its Linux
  counterpart (jq processes real JSON, sed edits streams, tar round-trips archives,
   gzip round-trips, etc.); agents exercise the real ACP
