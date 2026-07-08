@@ -227,13 +227,25 @@ impl AcpCore {
         };
 
         let _ = host.close_stdin(&session.process_id);
-        let _ = host.kill_agent(&session.process_id, "SIGTERM");
-        if host
-            .wait_for_exit(&session.process_id, SESSION_CLOSE_TIMEOUT_MS)?
-            .is_none()
+        // Mirror of the native `close_session` short-circuit: an adapter that
+        // already exited (crash / OOM / idle eviction, recorded on the session
+        // as `closed`) has no future exit to wait for, and signalling its
+        // reaped PID fails with a process-gone error. Skip the SIGTERM → wait
+        // → SIGKILL → wait dance (~2× `SESSION_CLOSE_TIMEOUT_MS` of dead
+        // waiting) in that case.
+        let adapter_already_gone = session.closed || {
+            let sigterm = host.kill_agent(&session.process_id, "SIGTERM");
+            matches!(&sigterm, Err(error) if is_process_already_gone_error(error))
+        };
+        if !adapter_already_gone
+            && host
+                .wait_for_exit(&session.process_id, SESSION_CLOSE_TIMEOUT_MS)?
+                .is_none()
         {
-            let _ = host.kill_agent(&session.process_id, "SIGKILL");
-            let _ = host.wait_for_exit(&session.process_id, SESSION_CLOSE_TIMEOUT_MS)?;
+            let sigkill = host.kill_agent(&session.process_id, "SIGKILL");
+            if !matches!(&sigkill, Err(error) if is_process_already_gone_error(error)) {
+                let _ = host.wait_for_exit(&session.process_id, SESSION_CLOSE_TIMEOUT_MS)?;
+            }
         }
 
         Ok(AcpResponse::AcpSessionClosedResponse(
@@ -1121,6 +1133,18 @@ fn is_unknown_session_error(response: &Value) -> bool {
         .is_some_and(|kind| kind == "unknown_session")
 }
 
+/// True when a signal/kill request failed because the target process no longer
+/// exists — the process-table `ESRCH` / "no such process" / "has no active
+/// process" errors surfaced for an already-reaped PID. `close_session` uses
+/// this to skip the exit wait when the adapter is already gone. Mirrors the
+/// native sidecar's `is_process_already_gone_error`.
+fn is_process_already_gone_error(error: &AcpCoreError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("esrch")
+        || message.contains("no such process")
+        || message.contains("has no active process")
+}
+
 /// Write a JSON-RPC message as a single newline-terminated line to the agent's
 /// stdin (no waiting). Used by the resumable handshake.
 fn write_json_line<H: AcpHost>(
@@ -1327,6 +1351,104 @@ mod tests {
         assert_eq!(core.session_count(), 0);
         assert_eq!(host.closed_stdin, vec!["proc-s1".to_string()]);
         assert_eq!(host.killed, vec![("proc-s1".into(), "SIGTERM".into())]);
+    }
+
+    /// Host whose adapter process is already gone: `wait_for_exit` would time
+    /// out (returns `None`), so any wait the engine performs is dead time. The
+    /// wait counter proves the short-circuit: a regression re-enters the
+    /// SIGTERM → wait → SIGKILL → wait sequence and records 2 waits.
+    #[derive(Default)]
+    struct GoneAdapterHost {
+        kill_error: Option<String>,
+        killed: Vec<(String, String)>,
+        waits: usize,
+    }
+
+    impl AcpHost for GoneAdapterHost {
+        fn spawn_agent(&mut self, _: SpawnAgentRequest) -> Result<SpawnedAgent, AcpCoreError> {
+            unreachable!("close_session does not spawn")
+        }
+        fn bind_session(&mut self, _: &str, _: &str) -> Result<(), AcpCoreError> {
+            Ok(())
+        }
+        fn write_stdin(&mut self, _: &str, _: &[u8]) -> Result<(), AcpCoreError> {
+            unreachable!()
+        }
+        fn close_stdin(&mut self, _: &str) -> Result<(), AcpCoreError> {
+            Ok(())
+        }
+        fn poll_output(&mut self, _: &str) -> Result<Option<AgentOutput>, AcpCoreError> {
+            Ok(None)
+        }
+        fn kill_agent(&mut self, process_id: &str, signal: &str) -> Result<(), AcpCoreError> {
+            self.killed
+                .push((process_id.to_string(), signal.to_string()));
+            match &self.kill_error {
+                Some(message) => Err(AcpCoreError::InvalidState(message.clone())),
+                None => Ok(()),
+            }
+        }
+        fn wait_for_exit(&mut self, _: &str, _: u64) -> Result<Option<i32>, AcpCoreError> {
+            self.waits += 1;
+            Ok(None) // the exit event was already drained; a wait can only time out
+        }
+        fn write_file(&mut self, _: &str, _: &[u8]) -> Result<(), AcpCoreError> {
+            Ok(())
+        }
+        fn read_file(&mut self, _: &str) -> Result<Vec<u8>, AcpCoreError> {
+            Ok(Vec::new())
+        }
+        fn now_ms(&self) -> u64 {
+            0
+        }
+    }
+
+    #[test]
+    fn close_session_skips_teardown_wait_when_session_already_closed() {
+        let mut core = AcpCore::new();
+        let mut dead = record("s1", "conn-a");
+        dead.closed = true;
+        dead.exit_code = Some(137);
+        core.insert_session(dead);
+        let mut host = GoneAdapterHost::default();
+        let resp = core
+            .close_session(
+                &mut host,
+                "conn-a",
+                &AcpCloseSessionRequest {
+                    session_id: "s1".into(),
+                },
+            )
+            .expect("close");
+        assert!(matches!(resp, AcpResponse::AcpSessionClosedResponse(_)));
+        assert_eq!(core.session_count(), 0);
+        // Already-observed exit: no signals sent, no dead waiting.
+        assert!(host.killed.is_empty());
+        assert_eq!(host.waits, 0);
+    }
+
+    #[test]
+    fn close_session_skips_teardown_wait_when_sigterm_reports_process_gone() {
+        let mut core = AcpCore::new();
+        core.insert_session(record("s1", "conn-a"));
+        let mut host = GoneAdapterHost {
+            kill_error: Some(String::from("process proc-s1: no such process (ESRCH)")),
+            ..GoneAdapterHost::default()
+        };
+        let resp = core
+            .close_session(
+                &mut host,
+                "conn-a",
+                &AcpCloseSessionRequest {
+                    session_id: "s1".into(),
+                },
+            )
+            .expect("close");
+        assert!(matches!(resp, AcpResponse::AcpSessionClosedResponse(_)));
+        // SIGTERM was attempted, classified as process-gone, and both waits
+        // (and the SIGKILL escalation) were skipped.
+        assert_eq!(host.killed, vec![("proc-s1".into(), "SIGTERM".into())]);
+        assert_eq!(host.waits, 0);
     }
 
     #[test]

@@ -626,37 +626,38 @@ impl AcpExtension {
                 process_id: session.process_id.clone(),
             })
             .await;
-        let sigterm = ctx
-            .kill_process_wire(KillProcessRequest {
-                process_id: session.process_id.clone(),
-                signal: String::from("SIGTERM"),
-            })
-            .await;
-        // The adapter process may already be gone: it can exit out-of-band (crash /
-        // OOM, or a lazily-observed idle-time crash) *before* the client sends
-        // close_session. When it does, its `ProcessExited` event has already been
-        // emitted and drained, so `wait_for_process_exit` — which only polls the
-        // event stream and never checks current process state — can never observe
-        // it and blocks the full `SESSION_CLOSE_TIMEOUT` for SIGTERM *and* again
-        // after SIGKILL (~2× the timeout) before we ever reach resource disposal.
-        // Because close_session is serial per sidecar, that stall also blocks a
-        // `create_session` the host issues right after it (session recovery / a
-        // returning user whose idle session was evicted eats the full stall on
-        // their next turn). Detect the already-gone case from the SIGTERM result —
-        // reusing the same "adapter is gone" classification the prompt path uses —
-        // and skip straight to resource disposal.
-        let already_gone = matches!(&sigterm, Err(error) if is_process_already_gone(error));
-        if !already_gone
+        // The adapter may already be gone: it can crash, OOM, or idle-evict
+        // before the client sends close_session, and its `ProcessExitedEvent`
+        // has then already been drained from the shared per-ownership event
+        // queue (usually by the prompt exchange loop, which records it as
+        // `session.closed`). `wait_for_process_exit` only observes *future*
+        // events, so without a short-circuit an already-dead adapter burns
+        // `SESSION_CLOSE_TIMEOUT` twice (~10s) signalling a PID that no longer
+        // exists — and because extension dispatch is serialized, a
+        // `create_session` issued right after (session recovery for a
+        // returning user) stalls behind the dead wait.
+        let adapter_already_gone = session.closed || {
+            let sigterm = ctx
+                .kill_process_wire(KillProcessRequest {
+                    process_id: session.process_id.clone(),
+                    signal: String::from("SIGTERM"),
+                })
+                .await;
+            matches!(&sigterm, Err(error) if is_process_already_gone_error(error))
+        };
+        if !adapter_already_gone
             && !wait_for_process_exit(&mut ctx, &session.process_id, SESSION_CLOSE_TIMEOUT).await
         {
-            let _ = ctx
+            let sigkill = ctx
                 .kill_process_wire(KillProcessRequest {
                     process_id: session.process_id.clone(),
                     signal: String::from("SIGKILL"),
                 })
                 .await;
-            let _ =
-                wait_for_process_exit(&mut ctx, &session.process_id, SESSION_CLOSE_TIMEOUT).await;
+            if !matches!(&sigkill, Err(error) if is_process_already_gone_error(error)) {
+                let _ = wait_for_process_exit(&mut ctx, &session.process_id, SESSION_CLOSE_TIMEOUT)
+                    .await;
+            }
         }
         let _ = ctx
             .dispose_session_resources_wire(&request.session_id)
@@ -2571,14 +2572,13 @@ fn is_adapter_gone_error(error: &SidecarError) -> bool {
     matches!(error, SidecarError::InvalidState(message) if message.contains(ADAPTER_NO_ACTIVE_PROCESS_MARKER))
 }
 
-/// True when a kill/signal request failed because the target process no longer
-/// exists — i.e. it already exited before we tried to terminate it. Covers both
-/// the adapter-gone classification (`is_adapter_gone_error`) and the lower-level
-/// process-table `ESRCH` / "no such process" the signal path returns for a PID
-/// that has already been reaped. Used by `close_session` to skip the
-/// `wait_for_process_exit` dance (which can only observe a *future* exit event)
-/// when the process is already gone.
-fn is_process_already_gone(error: &SidecarError) -> bool {
+/// True when a signal/kill request failed because the target process no longer
+/// exists: either the adapter-gone classification the prompt path uses
+/// (`is_adapter_gone_error`) or the lower-level process-table `ESRCH` /
+/// "no such process" error the signal path returns for an already-reaped PID.
+/// `close_session` uses this to skip `wait_for_process_exit` — which can only
+/// observe a *future* exit event — when the process is already gone.
+fn is_process_already_gone_error(error: &SidecarError) -> bool {
     if is_adapter_gone_error(error) {
         return true;
     }
