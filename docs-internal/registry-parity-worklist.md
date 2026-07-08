@@ -622,6 +622,20 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     Biome is not applicable for this package test path; it reported the file is
     ignored by config in
     `2026-07-08T13-29-23-0700-item12-yq-biome-check.log`. Rev: `znlmtymu`.
+  - **diffutils — DONE.** Added package-local VM e2e coverage for the staged
+    `diff` command and fixed recursive directory output to print the compared
+    file pair before hunk output, matching the Linux `diff -r` shape. The suite
+    proves identical-file exit 0, normal and unified diffs, brief output,
+    ignore-case/whitespace/blank-line flags, recursive directory comparisons,
+    and missing-input errors through the packaged WASM command. Proof:
+    `2026-07-08T13-32-10-0700-item12-diffutils-toolchain-cmd-build.log`;
+    `2026-07-08T13-34-45-0700-item12-diffutils-package-build-after-recursive-header.log`;
+    `2026-07-08T13-35-04-0700-item12-diffutils-package-e2e-final.log`;
+    `2026-07-08T13-35-04-0700-item12-diffutils-check-types-final.log`;
+    `2026-07-08T13-35-04-0700-item12-diffutils-cargo-fmt-check-final.log`.
+    Biome is not applicable for this package test path; it reported the file is
+    ignored by config in
+    `2026-07-08T13-35-04-0700-item12-diffutils-biome-check.log`.
   - **jq — DONE.** Added package-local VM e2e coverage for the staged `jq`
     command and fixed the jaq-backed CLI wrapper to accept Linux-style file
     operands instead of only stdin. The suite now proves version output,

@@ -272,6 +272,14 @@ fn diff_files(path_a: &Path, path_b: &Path, opts: &Options) -> Result<bool, Stri
         return Ok(true);
     }
 
+    if opts.recursive {
+        print_stdout_line(format_args!(
+            "diff -r {} {}",
+            path_a.display(),
+            path_b.display()
+        ))?;
+    }
+
     // Diff the original text for output (all output logic inline to avoid lifetime issues)
     let diff = TextDiff::from_lines(&text_a, &text_b);
     let label_a = format!("{}", path_a.display());
