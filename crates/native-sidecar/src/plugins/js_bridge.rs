@@ -517,6 +517,18 @@ impl VirtualFileSystem for JsBridgeFilesystem {
     }
 
     fn realpath(&self, path: &str) -> VfsResult<String> {
+        // The mount root always exists — it IS the mount point — so resolve it
+        // locally like `host_dir` does instead of round-tripping the bridge.
+        // Host-side drivers frequently cannot canonicalize their own root and
+        // return ENOENT for it, and because a js_bridge mount root is not a
+        // symlink leaf, `MountTable::realpath` propagates that ENOENT instead
+        // of falling back to the lexical path. The kernel permission wrapper
+        // resolves every operation's subject through `realpath` first, so that
+        // ENOENT aborts e.g. a readdir of the mount root before the readDir
+        // bridge call is ever issued.
+        if path.is_empty() || path == "/" {
+            return Ok(String::from("/"));
+        }
         self.parse_required(
             "realpath",
             path,

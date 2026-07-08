@@ -993,6 +993,19 @@ ykAheWCsAteSEWVc0w==\n\
             Arc<Mutex<MemoryFileSystem>>,
             Arc<Mutex<Vec<JsBridgeCallRecord>>>,
         ) {
+            install_memory_js_bridge_handler_with_options(sidecar, false)
+        }
+
+        /// `fail_realpath` simulates host-side drivers that cannot canonicalize
+        /// their own paths and answer every `realpath` bridge call with ENOENT
+        /// — the shape that used to break readdir of a js_bridge mount root.
+        fn install_memory_js_bridge_handler_with_options(
+            sidecar: &mut NativeSidecar<RecordingBridge>,
+            fail_realpath: bool,
+        ) -> (
+            Arc<Mutex<MemoryFileSystem>>,
+            Arc<Mutex<Vec<JsBridgeCallRecord>>>,
+        ) {
             let filesystem = Arc::new(Mutex::new(MemoryFileSystem::new()));
             let calls = Arc::new(Mutex::new(Vec::<JsBridgeCallRecord>::new()));
             let handler_filesystem = filesystem.clone();
@@ -1111,11 +1124,15 @@ ykAheWCsAteSEWVc0w==\n\
                             .map_err(|error| format!("{}: {error}", error.code()))
                     }
                     "realpath" => {
-                        let path = call_args["path"].as_str().expect("realpath path");
-                        filesystem
-                            .realpath(path)
-                            .map(|resolved| Some(json!(resolved)))
-                            .map_err(|error| format!("{}: {error}", error.code()))
+                        if fail_realpath {
+                            Err(String::from("ENOENT: no such file or directory"))
+                        } else {
+                            let path = call_args["path"].as_str().expect("realpath path");
+                            filesystem
+                                .realpath(path)
+                                .map(|resolved| Some(json!(resolved)))
+                                .map_err(|error| format!("{}: {error}", error.code()))
+                        }
                     }
                     "symlink" => {
                         let target = call_args["target"].as_str().expect("symlink target");
@@ -7458,6 +7475,92 @@ ykAheWCsAteSEWVc0w==\n\
                 .expect_err("stat should fail");
             assert_eq!(stat_error.code(), "EIO");
         }
+
+        fn configure_vm_js_bridge_mount_readdir_of_mount_root_survives_broken_driver_realpath() {
+            // Regression: readdir of a js_bridge mount root used to fail with
+            // ENOENT before any readDir bridge call was issued. The kernel
+            // permission wrapper resolves every subject through `realpath`
+            // first, and host-side drivers that cannot canonicalize their own
+            // root answer the mount-root realpath with ENOENT — which
+            // `MountTable::realpath` propagates for non-symlink-leaf mounts.
+            // The mount root must resolve locally, without a bridge realpath.
+            let mut sidecar = create_test_sidecar();
+            let (filesystem, calls) =
+                install_memory_js_bridge_handler_with_options(&mut sidecar, true);
+            filesystem
+                .lock()
+                .expect("lock js bridge fs")
+                .write_file("/hello.txt", b"hi".to_vec())
+                .expect("seed js bridge fs");
+
+            let (connection_id, session_id) =
+                authenticate_and_open_session(&mut sidecar).expect("authenticate and open session");
+            let vm_id = create_vm(
+                &mut sidecar,
+                &connection_id,
+                &session_id,
+                PermissionsPolicy::allow_all(),
+            )
+            .expect("create vm");
+
+            sidecar
+                .dispatch_blocking(request(
+                    4,
+                    OwnershipScope::vm(&connection_id, &session_id, &vm_id),
+                    RequestPayload::ConfigureVm(ConfigureVmRequest {
+                        mounts: vec![MountDescriptor {
+                            guest_path: String::from("/workspace"),
+                            read_only: false,
+                            plugin: MountPluginDescriptor {
+                                id: String::from("js_bridge"),
+                                config: json!({ "mountId": "mount-root" }).to_string(),
+                            },
+                        }],
+                        software: Vec::new(),
+                        permissions: None,
+                        module_access_cwd: None,
+                        instructions: Vec::new(),
+                        projected_modules: Vec::new(),
+                        command_permissions: std::collections::HashMap::new(),
+                        loopback_exempt_ports: Vec::new(),
+                        packages: Vec::new(),
+                        packages_mount_at: String::new(),
+                        bootstrap_commands: Vec::new(),
+                        tool_shim_commands: Vec::new(),
+                    }),
+                ))
+                .expect("configure js_bridge mount");
+
+            let vm = sidecar.vms.get_mut(&vm_id).expect("configured vm");
+            let entries = vm
+                .kernel
+                .filesystem_mut()
+                .read_dir("/workspace")
+                .expect("readdir of js_bridge mount root");
+            assert!(
+                entries.iter().any(|entry| entry == "hello.txt"),
+                "mount-root readdir should list seeded entries, got {entries:?}"
+            );
+
+            let calls = calls.lock().expect("lock js bridge calls");
+            assert!(
+                calls
+                    .iter()
+                    .any(|call| call.operation == "readDir"
+                        || call.operation == "readDirWithTypes"),
+                "readdir must reach the bridge; recorded operations: {:?}",
+                calls
+                    .iter()
+                    .map(|call| call.operation.clone())
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        #[test]
+        fn configure_vm_js_bridge_mount_root_readdir_without_bridge_realpath() {
+            configure_vm_js_bridge_mount_readdir_of_mount_root_survives_broken_driver_realpath();
+        }
+
         fn configure_vm_instantiates_sandbox_agent_mounts_through_the_plugin_registry() {
             let server = MockSandboxAgentServer::start("agentos-native-sidecar-sandbox", None);
             fs::write(server.root().join("hello.txt"), "hello from sandbox")
@@ -21012,6 +21115,7 @@ console.log(JSON.stringify({
             configure_vm_js_bridge_mount_rejects_oversized_read_payloads();
             configure_vm_js_bridge_mount_rejects_pread_payloads_above_requested_length();
             configure_vm_js_bridge_mount_maps_callback_errors_to_errno_codes();
+            configure_vm_js_bridge_mount_readdir_of_mount_root_survives_broken_driver_realpath();
             configure_vm_instantiates_sandbox_agent_mounts_through_the_plugin_registry();
             configure_vm_instantiates_s3_mounts_through_the_plugin_registry();
             configure_vm_instantiates_object_s3_mounts_through_the_plugin_registry();
