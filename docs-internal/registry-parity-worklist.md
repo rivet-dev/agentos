@@ -609,6 +609,19 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     Biome is not applicable for this package test path; it reported the file is
     ignored by config in
     `2026-07-08T13-25-12-0700-item12-gzip-biome-check.log`. Rev: `tlstlwvy`.
+  - **yq — DONE.** Added package-local VM e2e coverage for the staged `yq`
+    command and fixed the wrapper to accept file operands instead of only
+    stdin. The suite proves YAML filtering, YAML-to-JSON query output,
+    explicit JSON/TOML/XML input formats, and invalid YAML parse errors through
+    the packaged WASM command. Proof:
+    `2026-07-08T13-27-36-0700-item12-yq-toolchain-cmd-build.log`;
+    `2026-07-08T13-28-59-0700-item12-yq-package-build-after-file-operands.log`;
+    `2026-07-08T13-29-10-0700-item12-yq-package-e2e-final.log`;
+    `2026-07-08T13-29-10-0700-item12-yq-check-types-final.log`;
+    `2026-07-08T13-29-11-0700-item12-yq-cargo-fmt-check-final.log`.
+    Biome is not applicable for this package test path; it reported the file is
+    ignored by config in
+    `2026-07-08T13-29-23-0700-item12-yq-biome-check.log`. Rev: `znlmtymu`.
   - **jq — DONE.** Added package-local VM e2e coverage for the staged `jq`
     command and fixed the jaq-backed CLI wrapper to accept Linux-style file
     operands instead of only stdin. The suite now proves version output,

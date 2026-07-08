@@ -5,6 +5,7 @@
 
 use std::ffi::OsString;
 use std::fmt;
+use std::fs::File as FsFile;
 use std::io::{self, Read, Write};
 
 use jaq_core::load::{Arena, File, Loader};
@@ -35,6 +36,7 @@ struct YqOptions {
     compact: bool,
     null_input: bool,
     slurp: bool,
+    input_paths: Vec<String>,
 }
 
 /// Entry point for yq command.
@@ -76,6 +78,7 @@ fn parse_args(args: &[String]) -> Result<YqOptions, String> {
         compact: false,
         null_input: false,
         slurp: false,
+        input_paths: Vec::new(),
     };
 
     let mut filter_set = false;
@@ -85,6 +88,16 @@ fn parse_args(args: &[String]) -> Result<YqOptions, String> {
         let arg = &args[i];
 
         if arg == "--" {
+            let remaining = &args[i + 1..];
+            if !filter_set {
+                if let Some(filter) = remaining.first() {
+                    opts.filter = filter.clone();
+                    filter_set = true;
+                    opts.input_paths.extend(remaining.iter().skip(1).cloned());
+                }
+            } else {
+                opts.input_paths.extend(remaining.iter().cloned());
+            }
             break;
         }
 
@@ -151,7 +164,7 @@ fn parse_args(args: &[String]) -> Result<YqOptions, String> {
             opts.filter = arg.clone();
             filter_set = true;
         } else {
-            return Err(format!("unexpected argument: {}", arg));
+            opts.input_paths.push(arg.clone());
         }
 
         i += 1;
@@ -404,15 +417,45 @@ fn record_output_value(output_count: &mut usize) -> Result<(), String> {
 }
 
 fn read_limited_string<R: Read>(reader: R) -> Result<String, String> {
+    read_limited_source(reader, "stdin", MAX_INPUT_BYTES)
+}
+
+fn read_limited_source<R: Read>(reader: R, label: &str, limit: usize) -> Result<String, String> {
     let mut input = String::new();
     reader
-        .take((MAX_INPUT_BYTES + 1) as u64)
+        .take((limit + 1) as u64)
         .read_to_string(&mut input)
-        .map_err(|e| format!("failed to read stdin: {}", e))?;
-    if input.len() > MAX_INPUT_BYTES {
-        return Err("stdin exceeds size limit".to_string());
+        .map_err(|e| format!("failed to read {}: {}", label, e))?;
+    if input.len() > limit {
+        return Err(format!("{} exceeds size limit", label));
     }
     Ok(input)
+}
+
+fn read_sources(opts: &YqOptions) -> Result<Vec<String>, String> {
+    if opts.input_paths.is_empty() {
+        return Ok(vec![read_limited_string(io::stdin())?]);
+    }
+
+    let mut total = 0usize;
+    let mut sources = Vec::new();
+    for path in &opts.input_paths {
+        let remaining = MAX_INPUT_BYTES.saturating_sub(total);
+        let data = if path == "-" {
+            read_limited_source(io::stdin(), "stdin", remaining)?
+        } else {
+            let file = FsFile::open(path).map_err(|e| format!("failed to open {}: {}", path, e))?;
+            read_limited_source(file, path, remaining)?
+        };
+        total = total
+            .checked_add(data.len())
+            .ok_or_else(|| "input exceeds size limit".to_string())?;
+        if total > MAX_INPUT_BYTES {
+            return Err("input exceeds size limit".to_string());
+        }
+        sources.push(data);
+    }
+    Ok(sources)
 }
 
 fn insert_or_array(
@@ -810,37 +853,39 @@ fn write_toml_string(out: &mut LimitedString, s: &str) -> Result<(), String> {
 fn run_yq(args: &[String]) -> Result<i32, String> {
     let opts = parse_args(args)?;
 
-    // Read input
-    let stdin_data = if opts.null_input {
-        String::new()
+    let sources = if opts.null_input {
+        Vec::new()
     } else {
-        read_limited_string(io::stdin())?
+        read_sources(&opts)?
     };
 
-    // Determine input format
-    let in_format = opts.input_format.unwrap_or_else(|| {
-        if opts.null_input {
-            Format::Yaml
-        } else {
-            detect_format(&stdin_data)
-        }
-    });
+    let input_formats: Vec<Format> = if opts.null_input {
+        vec![opts.input_format.unwrap_or(Format::Yaml)]
+    } else {
+        sources
+            .iter()
+            .map(|source| opts.input_format.unwrap_or_else(|| detect_format(source)))
+            .collect()
+    };
+    let default_input_format = input_formats.first().copied().unwrap_or(Format::Yaml);
 
     // Default output format: YAML for YAML input, otherwise matches input
-    let out_format = opts.output_format.unwrap_or(in_format);
+    let out_format = opts.output_format.unwrap_or(default_input_format);
 
     // Parse input to JSON, then convert to jaq Val
     let inputs = if opts.null_input {
         vec![Val::from(serde_json::Value::Null)]
     } else {
-        let json_val = parse_input(&stdin_data, in_format)?;
+        let json_values: Result<Vec<_>, _> = sources
+            .iter()
+            .zip(input_formats.iter().copied())
+            .map(|(source, format)| parse_input(source, format))
+            .collect();
+        let mut json_values = json_values?;
         if opts.slurp {
-            match json_val {
-                serde_json::Value::Array(_) => vec![Val::from(json_val)],
-                _ => vec![Val::from(serde_json::Value::Array(vec![json_val]))],
-            }
+            vec![Val::from(serde_json::Value::Array(json_values))]
         } else {
-            vec![Val::from(json_val)]
+            json_values.drain(..).map(Val::from).collect()
         }
     };
 
