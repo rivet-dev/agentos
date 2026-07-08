@@ -636,6 +636,20 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     Biome is not applicable for this package test path; it reported the file is
     ignored by config in
     `2026-07-08T13-35-04-0700-item12-diffutils-biome-check.log`.
+  - **file — DONE.** Added package-local VM e2e coverage for the staged `file`
+    command and fixed shebang script classification to run before generic magic
+    detection, producing Linux-like script descriptions instead of raw
+    `text/x-shellscript`. The suite proves text, JSON, script, PNG, empty-file,
+    directory, brief, MIME, stdin, and missing-input behavior through the
+    packaged WASM command. Proof:
+    `2026-07-08T13-39-36-0700-item12-file-toolchain-cmd-build.log`;
+    `2026-07-08T13-40-33-0700-item12-file-package-build-after-shebang-fix.log`;
+    `2026-07-08T13-41-05-0700-item12-file-package-e2e-final-after-install.log`;
+    `2026-07-08T13-41-05-0700-item12-file-check-types-final-after-install.log`;
+    `2026-07-08T13-40-47-0700-item12-file-cargo-fmt-check-final.log`.
+    Biome is not applicable for this package test path; it reported the file is
+    ignored by config in
+    `2026-07-08T13-41-05-0700-item12-file-biome-check-final-after-install.log`.
   - **jq — DONE.** Added package-local VM e2e coverage for the staged `jq`
     command and fixed the jaq-backed CLI wrapper to accept Linux-style file
     operands instead of only stdin. The suite now proves version output,
