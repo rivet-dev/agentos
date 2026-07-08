@@ -577,6 +577,15 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     Biome is not applicable for this package test path; it reported the file is
     ignored by config in
     `2026-07-08T13-16-16-0700-item12-gawk-biome-check.log`. Rev: `pzxkurol`.
+  - **sed — DONE.** Added package-local VM e2e coverage for the staged `sed`
+    command. The suite proves file-operand substitutions, addressed `-n`
+    printing, addressed deletion, multiple `-e` expressions, and missing
+    input-file errors through the packaged WASM command. Proof:
+    `2026-07-08T13-17-46-0700-item12-sed-package-e2e-initial.log`;
+    `2026-07-08T13-17-46-0700-item12-sed-check-types-initial.log`.
+    Biome is not applicable for this package test path; it reported the file is
+    ignored by config in
+    `2026-07-08T13-17-55-0700-item12-sed-biome-check.log`. Rev: `wvpklkqv`.
   - **jq — DONE.** Added package-local VM e2e coverage for the staged `jq`
     command and fixed the jaq-backed CLI wrapper to accept Linux-style file
     operands instead of only stdin. The suite now proves version output,
