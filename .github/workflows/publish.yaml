@@ -21,7 +21,7 @@ env:
   R2_BUCKET: rivet-releases
   R2_ENDPOINT: https://2a94c6a0ced8d35ea63cddc86c2681e7.r2.cloudflarestorage.com
   SIDECAR_PLATFORMS: "linux-x64-gnu linux-arm64-gnu darwin-x64 darwin-arm64"
-  PUBLISH_INCLUDE_REGISTRY_PACKAGES: "1"
+  RUST_TOOLCHAIN: "1.91.1"
   LINUX_GNU_LLVM_VERSION: "22"
   LINUX_GNU_SYSROOT_TAG: "sysroot-20250207"
 
@@ -66,7 +66,8 @@ jobs:
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: registry/native -> registry/native/target
+          workspaces: registry/native -> target
+          cache-workspace-crates: true
           key: wasm-commands-${{ hashFiles('registry/native/Cargo.lock') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
       - run: make -C registry/native commands
@@ -79,7 +80,7 @@ jobs:
 
   build-sidecar:
     needs: [context]
-    name: "Build sidecars (${{ matrix.platform }})"
+    name: "Build linux native artifacts (${{ matrix.platform }})"
     strategy:
       fail-fast: false
       matrix:
@@ -88,132 +89,79 @@ jobs:
             runner: [self-hosted, agentos-builder]
             target: x86_64-unknown-linux-gnu
           - platform: linux-arm64-gnu
-            runner: ubuntu-22.04-arm
+            runner: [self-hosted, agentos-builder-arm64]
             target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: docker/setup-buildx-action@v3
         with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
-          key: ${{ matrix.target }}-${{ env.LINUX_GNU_SYSROOT_TAG }}-llvm-${{ env.LINUX_GNU_LLVM_VERSION }}-${{ needs.context.outputs.trigger }}
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cargo/.rusty_v8
-          key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
-      - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
-      - name: Set up Linux GNU sysroot
-        run: scripts/ci/setup-linux-gnu-sysroot.sh
-      - name: Build sidecar binaries
-        id: build
+          name: agentos-${{ matrix.platform }}
+          keep-state: ${{ contains(matrix.runner, 'self-hosted') }}
+      - name: Resolve build profile
+        id: mode
         run: |
           set -euo pipefail
-          out="target/sidecar-artifacts/${{ matrix.platform }}"
-          mkdir -p "$out"
           if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then
-            flag="--release"
-            profile="release"
+            echo "profile=release" >> "$GITHUB_OUTPUT"
           else
-            flag=""
-            profile="debug"
+            echo "profile=debug" >> "$GITHUB_OUTPUT"
           fi
-          cargo build $flag -p agentos-sidecar -p agentos-native-sidecar --target ${{ matrix.target }}
-          cp "target/${{ matrix.target }}/${profile}/agentos-sidecar" "$out/agentos-sidecar"
-          cp "target/${{ matrix.target }}/${profile}/agentos-native-sidecar" "$out/agentos-native-sidecar"
-          echo "dir=$out" >> "$GITHUB_OUTPUT"
+      - name: Build linux artifacts
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/build/linux-gnu.Dockerfile
+          build-args: |
+            TARGET=${{ matrix.target }}
+            BUILD_PROFILE=${{ steps.mode.outputs.profile }}
+            CACHE_PLATFORM=${{ matrix.platform }}
+            RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
+            LINUX_GNU_LLVM_VERSION=${{ env.LINUX_GNU_LLVM_VERSION }}
+            LINUX_GNU_SYSROOT_TAG=${{ env.LINUX_GNU_SYSROOT_TAG }}
+          tags: agentos-linux-${{ matrix.platform }}
+          load: true
+      - name: Extract linux artifacts
+        id: extract
+        run: |
+          set -euo pipefail
+          sidecar_out="target/sidecar-artifacts/${{ matrix.platform }}"
+          plugin_out="target/plugin-artifacts/${{ matrix.platform }}"
+          mkdir -p "$sidecar_out" "$plugin_out"
+          cid=$(docker create agentos-linux-${{ matrix.platform }})
+          docker cp "$cid:/artifacts/agentos-sidecar" "$sidecar_out/agentos-sidecar"
+          docker cp "$cid:/artifacts/agentos-native-sidecar" "$sidecar_out/agentos-native-sidecar"
+          docker cp "$cid:/artifacts/libagentos_actor_plugin.so" "$plugin_out/libagentos_actor_plugin.so"
+          docker rm "$cid"
+          test -f "$sidecar_out/agentos-sidecar"
+          test -f "$sidecar_out/agentos-native-sidecar"
+          test -f "$plugin_out/libagentos_actor_plugin.so"
+          echo "sidecar_dir=$sidecar_out" >> "$GITHUB_OUTPUT"
+          echo "plugin_dir=$plugin_out" >> "$GITHUB_OUTPUT"
       - name: Check glibc floor
         run: |
           scripts/ci/check-linux-glibc-floor.sh \
-            "${{ steps.build.outputs.dir }}/agentos-sidecar" \
-            "${{ steps.build.outputs.dir }}/agentos-native-sidecar"
-      - name: Smoke-run in old Linux containers
+            "${{ steps.extract.outputs.sidecar_dir }}/agentos-sidecar" \
+            "${{ steps.extract.outputs.sidecar_dir }}/agentos-native-sidecar" \
+            "${{ steps.extract.outputs.plugin_dir }}/libagentos_actor_plugin.so"
+      - name: Smoke-run binaries in old Linux containers
         run: |
           scripts/ci/smoke-linux-artifacts.sh binary \
-            "${{ steps.build.outputs.dir }}/agentos-sidecar" \
-            "${{ steps.build.outputs.dir }}/agentos-native-sidecar"
+            "${{ steps.extract.outputs.sidecar_dir }}/agentos-sidecar" \
+            "${{ steps.extract.outputs.sidecar_dir }}/agentos-native-sidecar"
+      - name: Smoke-run plugin in old Linux containers
+        run: |
+          scripts/ci/smoke-linux-artifacts.sh shared-library \
+            "${{ steps.extract.outputs.plugin_dir }}/libagentos_actor_plugin.so"
       - uses: actions/upload-artifact@v4
         with:
           name: sidecar-${{ matrix.platform }}
-          path: ${{ steps.build.outputs.dir }}
+          path: ${{ steps.extract.outputs.sidecar_dir }}
           if-no-files-found: error
-
-  build-plugin:
-    needs: [context]
-    name: "Build plugin (${{ matrix.platform }})"
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux-x64-gnu
-            runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-          - platform: linux-arm64-gnu
-            runner: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
-          key: plugin-${{ matrix.target }}-${{ env.LINUX_GNU_SYSROOT_TAG }}-llvm-${{ env.LINUX_GNU_LLVM_VERSION }}-${{ needs.context.outputs.trigger }}
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cargo/.rusty_v8
-          key: ${{ runner.os }}-${{ matrix.target }}-rusty-v8-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.target }}-rusty-v8-
-      - run: pnpm install --frozen-lockfile --filter='!@agentos/website'
-      - name: Set up Linux GNU sysroot
-        run: scripts/ci/setup-linux-gnu-sysroot.sh
-      - name: Build plugin cdylib
-        id: build
-        run: |
-          set -euo pipefail
-          out="target/plugin-artifacts/${{ matrix.platform }}"
-          mkdir -p "$out"
-          if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then
-            cargo build --release -p agentos-actor-plugin --target ${{ matrix.target }}
-            profile="release"
-          else
-            cargo build -p agentos-actor-plugin --target ${{ matrix.target }}
-            profile="debug"
-          fi
-          cp "target/${{ matrix.target }}/${profile}/libagentos_actor_plugin.so" \
-            "$out/libagentos_actor_plugin.so"
-          echo "dir=$out" >> "$GITHUB_OUTPUT"
-      - name: Check glibc floor
-        run: |
-          scripts/ci/check-linux-glibc-floor.sh \
-            "${{ steps.build.outputs.dir }}/libagentos_actor_plugin.so"
-      - name: Smoke-run in old Linux containers
-        run: |
-          scripts/ci/smoke-linux-artifacts.sh shared-library \
-            "${{ steps.build.outputs.dir }}/libagentos_actor_plugin.so"
       - uses: actions/upload-artifact@v4
         with:
           name: plugin-${{ matrix.platform }}
-          path: ${{ steps.build.outputs.dir }}
+          path: ${{ steps.extract.outputs.plugin_dir }}
           if-no-files-found: error
 
   build-sidecar-darwin:
@@ -224,27 +172,47 @@ jobs:
       matrix:
         include:
           - platform: darwin-x64
+            runner: [self-hosted, agentos-builder]
             target: x86_64-apple-darwin
             clang: x86_64-apple-darwin20.4
           - platform: darwin-arm64
+            runner: [self-hosted, agentos-builder]
             target: aarch64-apple-darwin
             clang: aarch64-apple-darwin20.4
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+        with:
+          name: agentos-${{ matrix.platform }}
+          keep-state: true
       - name: Log in to ghcr.io
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-      - name: Cross-compile via osxcross
+      - name: Compute build profile
+        id: mode
         run: |
           set -euo pipefail
-          if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then profile=release; else profile=debug; fi
-          DOCKER_BUILDKIT=1 docker build \
-            -f docker/build/darwin.Dockerfile \
-            --build-arg TARGET=${{ matrix.target }} \
-            --build-arg CLANG=${{ matrix.clang }} \
-            --build-arg BUILD_PROFILE="${profile}" \
-            -t agentos-darwin-${{ matrix.platform }} .
-
+          if [ "${{ needs.context.outputs.trigger }}" = "release" ]; then
+            echo "profile=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "profile=debug" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Cross-compile via osxcross
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/build/darwin.Dockerfile
+          build-args: |
+            TARGET=${{ matrix.target }}
+            CLANG=${{ matrix.clang }}
+            BUILD_PROFILE=${{ steps.mode.outputs.profile }}
+            CACHE_PLATFORM=${{ matrix.platform }}
+            RUST_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }}
+          tags: agentos-darwin-${{ matrix.platform }}
+          load: true
+      - name: Extract darwin artifacts
+        run: |
+          set -euo pipefail
           sidecar_out="target/sidecar-artifacts/${{ matrix.platform }}"
           plugin_out="target/plugin-artifacts/${{ matrix.platform }}"
           mkdir -p "$sidecar_out" "$plugin_out"
@@ -256,6 +224,14 @@ jobs:
           test -f "$sidecar_out/agentos-sidecar"
           test -f "$sidecar_out/agentos-native-sidecar"
           test -f "$plugin_out/libagentos_actor_plugin.dylib"
+          case "${{ matrix.platform }}" in
+            darwin-x64) expected_arch="x86_64" ;;
+            darwin-arm64) expected_arch="arm64" ;;
+            *) echo "unknown darwin platform: ${{ matrix.platform }}" >&2; exit 2 ;;
+          esac
+          file "$sidecar_out/agentos-sidecar" | grep -F "$expected_arch"
+          file "$sidecar_out/agentos-native-sidecar" | grep -F "$expected_arch"
+          file "$plugin_out/libagentos_actor_plugin.dylib" | grep -F "$expected_arch"
       - uses: actions/upload-artifact@v4
         with:
           name: sidecar-${{ matrix.platform }}
@@ -268,9 +244,9 @@ jobs:
           if-no-files-found: error
 
   publish-npm:
-    needs: [context, wasm-commands, build-sidecar, build-plugin, build-sidecar-darwin]
+    needs: [context, wasm-commands, build-sidecar, build-sidecar-darwin]
     name: Publish npm
-    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-plugin.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
+    if: ${{ !cancelled() && needs.wasm-commands.result == 'success' && needs.build-sidecar.result == 'success' && needs.build-sidecar-darwin.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -330,14 +306,13 @@ jobs:
           pnpm --filter=publish exec tsx src/ci/bin.ts bump-versions \
             --version ${{ needs.context.outputs.version }} \
             --version-only
-      - name: Install wasm-pack
-        run: |
-          rustup target add wasm32-unknown-unknown
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - name: Build TypeScript packages
+        env:
+          AGENTOS_SKIP_NATIVE_META_BUILD: "1"
         run: |
           npx turbo build \
+            --filter='!@rivet-dev/agentos-plugin' \
             --filter='!@rivet-dev/agentos-playground' \
             --filter='!./examples/*' \
             --filter='!./examples/quickstart/*'
@@ -394,6 +369,7 @@ jobs:
             cp "artifacts/sidecar-${p}/agentos-sidecar" "release-assets/agentos-sidecar-${target}"
             cp "artifacts/sidecar-${p}/agentos-native-sidecar" "release-assets/agentos-native-sidecar-${target}"
           done
+          chmod +x release-assets/agentos-sidecar-* release-assets/agentos-native-sidecar-*
           if [ -d crates/execution/assets/pyodide ]; then
             mkdir -p release-assets/pyodide
             cp -R crates/execution/assets/pyodide/. release-assets/pyodide/
