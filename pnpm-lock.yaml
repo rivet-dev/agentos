@@ -3257,6 +3257,12 @@ importers:
       '@agentos-software/diffutils':
         specifier: workspace:*
         version: link:../diffutils
+      '@agentos-software/duckdb':
+        specifier: workspace:*
+        version: link:../duckdb
+      '@agentos-software/envsubst':
+        specifier: workspace:*
+        version: link:../envsubst
       '@agentos-software/fd':
         specifier: workspace:*
         version: link:../fd
@@ -3269,6 +3275,9 @@ importers:
       '@agentos-software/gawk':
         specifier: workspace:*
         version: link:../gawk
+      '@agentos-software/git':
+        specifier: workspace:*
+        version: link:../git
       '@agentos-software/grep':
         specifier: workspace:*
         version: link:../grep
@@ -3284,6 +3293,9 @@ importers:
       '@agentos-software/sed':
         specifier: workspace:*
         version: link:../sed
+      '@agentos-software/sqlite3':
+        specifier: workspace:*
+        version: link:../sqlite3
       '@agentos-software/tar':
         specifier: workspace:*
         version: link:../tar
@@ -3293,6 +3305,9 @@ importers:
       '@agentos-software/unzip':
         specifier: workspace:*
         version: link:../unzip
+      '@agentos-software/vim':
+        specifier: workspace:*
+        version: link:../vim
       '@agentos-software/wget':
         specifier: workspace:*
         version: link:../wget

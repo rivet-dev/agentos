@@ -686,12 +686,20 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
 
 ## Cross-cutting / misc
 
-### 13. `everything` meta-package has no `agentos-package.json`
-- **Broken:** parse-failed in the audit — the bundle has no manifest.
-- **Objective:** valid manifest (or confirm the bundle mechanism is intentional and
-  fix discovery accordingly) so `everything` resolves like the other bundles.
-- **Proof:** manifest present/valid; package resolves and installs its members.
-- **rev:** `fix(everything): add valid agentos-package.json`
+### 13. `everything` meta-package has no `agentos-package.json` — DONE
+- **Fixed:** added the missing meta-package manifest, aligned the bundle with all
+  current command packages (`duckdb`, `envsubst`, `git`, `sqlite3`, and `vim`
+  were missing), and refreshed the workspace lockfile edges.
+- **Proof:** `software/everything/test/everything.test.ts` proves the manifest is
+  present and the default export resolves every command package descriptor once.
+  Package build/check-types pass in
+  `2026-07-08T14-21-00-0700-item13-everything-build-after-install.log` and
+  `2026-07-08T14-21-00-0700-item13-everything-check-types-after-install.log`;
+  the package test passes 2/2 in
+  `2026-07-08T14-21-00-0700-item13-everything-test-after-install.log`;
+  layout validation passes in
+  `2026-07-08T14-22-00-0700-item13-check-layout.log`.
+- **rev:** `fix(everything): add valid package manifest`
 
 ---
 

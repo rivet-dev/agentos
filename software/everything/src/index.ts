@@ -8,6 +8,11 @@ import tar from "@agentos-software/tar";
 import gzip from "@agentos-software/gzip";
 import curl from "@agentos-software/curl";
 import wget from "@agentos-software/wget";
+import duckdb from "@agentos-software/duckdb";
+import envsubst from "@agentos-software/envsubst";
+import git from "@agentos-software/git";
+import sqlite3 from "@agentos-software/sqlite3";
+import vim from "@agentos-software/vim";
 import zip from "@agentos-software/zip";
 import unzip from "@agentos-software/unzip";
 import jq from "@agentos-software/jq";
@@ -29,6 +34,11 @@ const everything = [
 	gzip,
 	curl,
 	wget,
+	duckdb,
+	envsubst,
+	git,
+	sqlite3,
+	vim,
 	zip,
 	unzip,
 	jq,
@@ -52,6 +62,11 @@ export {
 	gzip,
 	curl,
 	wget,
+	duckdb,
+	envsubst,
+	git,
+	sqlite3,
+	vim,
 	zip,
 	unzip,
 	jq,
