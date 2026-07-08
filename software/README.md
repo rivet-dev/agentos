@@ -71,7 +71,6 @@ per-binary entry point; it dispatches to whichever toolchain owns the command:
 | C | `zip unzip envsubst sqlite3 curl wget duckdb` | `make -C c sysroot build/<src>` + per-command install |
 | codex | `codex`, `codex-exec` | the codex fork build (needs the fork checkout) |
 | C | `vim` (pinned upstream clone + bridge in `c/vim/`) | `make -C c sysroot build/vim` + install |
-| external | `vix` | validates the hand-built binary is in the drop zone; errors with instructions otherwise |
 
 The default native build (`toolchain`) compiles the fast command gate to
 `wasm32-wasip1` with a patched std (`-Z build-std`, `toolchain/std-patches/`), runs
@@ -98,8 +97,6 @@ Exceptions:
   vim tag and compiles it against the patched sysroot + the termios/termcap
   bridge in `software/vim/native/c/vim-bridge/` (its runtime tree is staged by the
   package `scripts/stage-runtime.mjs` and applied via manifest `provides`).
-- `vix` is the one remaining external drop-zone binary (no source pipeline):
-  place the hand-built wasm at `toolchain/target/.../commands/vix`.
 
 ## Publishing
 

@@ -65,7 +65,7 @@ repo-root/
 │   ├── claude/ codex/ opencode/ pi/ pi-cli/    # agent adapters — @agentos-software/*, JS only, no native/
 │   │   ├── package.json  agentos-package.json (kind: "agent")  src/adapter.ts  test/
 │   │
-│   ├── vim/ vix/                                # editors (vim = C in native/c/; vix = external binary, no source)
+│   ├── vim/                                     # editor (C in native/c/)
 │   └── browserbase/ build-essential/ common/ everything/   # meta/external — manifest only, no native/
 │
 ├── toolchain/                     ← shared WASM build infra (NOT a package; nothing here is @agentos-software/*)
@@ -120,6 +120,15 @@ test-program fixtures stay in `toolchain/test-programs/` (not scattered into
    `kind: "agent"` in the manifest and have no `native/`. Command packages carry
    `kind: "software"` (or omit; default). This `kind` field is what distinguishes
    them — not folder location.
+5. **`native/` holds the REAL upstream tool, patched — never a reimplementation.**
+   A command package's `native/` must build the genuine upstream program (GNU
+   coreutils, real `curl`/`git`/`jq`, GNU grep/sed/gawk/tar/gzip/diffutils, …)
+   fetched + pinned and patched for WASI — not a from-scratch Rust/C rewrite, a
+   stub, or a hand-rolled CLI over a library. The only exception is a tool whose
+   canonical upstream *is* the Rust project (`ripgrep`, `fd`). Several current
+   commands violate this (coreutils=uutils, grep, curl driver, and the
+   `secureexec-*` rewrites) — tracked in `registry-parity-worklist.md`
+   Cross-cutting #0; new packages must not add more.
 
 ## What moves where
 

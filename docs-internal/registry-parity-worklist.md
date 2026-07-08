@@ -12,8 +12,30 @@ Status: worklist · Owner: registry · Last updated: 2026-07-07
 > that only does `SELECT 1`.
 >
 > **Rules:**
-> - **One jj rev per item.** New change per fix; `jj describe` with a clear
->   conventional-commit message; do not batch unrelated fixes into one rev.
+> - **🚧 REAL TOOL, NOT A REIMPLEMENTATION (the load-bearing rule).** Every command
+>   must be the **real upstream tool** (GNU coreutils, GNU grep/sed/gawk, real
+>   `curl`, real `git`, real `jq`, GNU tar/gzip/diffutils, …) compiled to
+>   `wasm32-wasip1` and **patched as needed** for WASI. Do **NOT** ship a
+>   from-scratch Rust/C rewrite, a stub, or a hand-rolled CLI over a library.
+>   Reimplementations drift from Linux behavior in a thousand small ways and are
+>   exactly why several commands fail parity. Sole exception: when the upstream
+>   canonical tool *is itself* the Rust project (**ripgrep**, **fd**) — then the
+>   real project is correct. Prefer the genuine upstream tool (real git, real
+>   grep) over a rewrite; a *popular, established* reimplementation is an
+>   acceptable fallback only when the real tool genuinely won't build.
+> - **"Not possible" is a valid outcome — but only after trying really hard.** If a
+>   command cannot be built as the real (or an established) tool for WASI, do NOT
+>   hand-roll a custom replacement. Instead mark it **`NOT POSSIBLE (WASI)`** in
+>   this doc with a concrete explanation of exactly what blocks it (missing
+>   syscall, unsupported threading, sysroot gap, etc.) and what was tried. Exhaust
+>   real options first: patch the sysroot, patch the tool, stub the specific
+>   missing syscall — a genuine effort, not a quick bail.
+> - **One jj rev per item.** Concretely: **`jj new` before starting each item**,
+>   make that command's fix *and* its e2e test in that single change, `jj describe`
+>   it with a clear conventional-commit message, then `jj new` again for the next
+>   item. One command per rev — never batch two commands (or unrelated changes)
+>   into one rev. Verify the folder + branch first (`pwd`, `jj log -r @`) since the
+>   working copy is shared.
 > - **Parity, not workarounds.** Fix the real cause (VFS syscall, shell semantics,
 >   link conflict, missing feature). If a WASI limitation forces a deviation from
 >   Linux, that is a finding to surface — not something to paper over in the test.
@@ -29,6 +51,88 @@ Status: worklist · Owner: registry · Last updated: 2026-07-07
 - **P1 — broken shipped commands**: packages that build but don't work like Linux.
 - **P2 — build/compile failures**: packages that can't be produced at all.
 - **P3 — disabled/absent coverage**: real behavior exists but no real test proves it.
+
+---
+
+## ⚠️ Cross-cutting #0 — Command provenance: replace reimplementations with real tools
+
+**This is the highest-leverage item and reshapes several below.** Audit revealed
+that **most commands are NOT the real Linux tool** — they are custom Rust rewrites
+(`secureexec-*` crates) or `uutils`, plus at least one hand-rolled C CLI (curl).
+Per the load-bearing rule, each must become the **real upstream tool** compiled to
+WASI and patched as needed.
+
+**Rule (your call):** an **established project** — whether it's the real upstream
+tool *or* an established third-party package that does the real work (uutils,
+jaq, etc.) — is **fine**. **Custom code we wrote ourselves** is **not** and must
+be replaced with a real/established implementation. Audit of every command's
+actual backing:
+
+### ✅ Established — keep (real upstream tool or established package doing the work)
+| Command(s) | Backing |
+|---|---|
+| coreutils (`sh`+80) | **uutils** (`uucore`) — established Rust project |
+| ripgrep (`rg`) | real ripgrep |
+| duckdb, vim | real upstream C source, patched for WASI |
+| sqlite3 **engine** | real SQLite amalgamation (⚠️ but the *CLI* is ours — see below) |
+| jq | **jaq** (`jaq-core/std/json`) — established Rust jq |
+| yq | jaq + `serde_yaml`/`toml`/`quick-xml` — established parsers (thin glue is ours) |
+| sed | `sed` crate (published) |
+| gawk (`awk`) | `awk-rs` crate (published) |
+| tar | `tar` crate (established) |
+| gzip | `flate2` (established) |
+| diffutils (`diff`) | `similar` crate (established) |
+| file | `infer` crate (established magic-byte lib; note: not real libmagic `file`) |
+
+### ❌ CUSTOM WE BUILT — flag & replace with a real/established impl
+| Command | Status | What it actually is | Replace with |
+|---|---|---|---|
+| **curl** | TODO | our custom driver over a libcurl fork | real `curl` CLI (upstream `src/tool_*.c`) |
+| **wget** | TODO | our 174-line `wget.c` | real GNU wget, or drop (curl covers it) |
+| **http-get** | TODO | our 95-line `http_get.c` | drop, or a real tool |
+| **git** | TODO | our hand-rolled git from `sha1`+`flate2` | **real git** (upstream C), patched for WASI — **NOT gitoxide** |
+| **fd** | TODO | our `secureexec-fd` on raw `regex` (not sharkdp/fd) | real **fd** (sharkdp) |
+| **findutils** (`find`,`xargs`) | TODO | our hand-rolled on `regex`/shims | real GNU findutils, or `uutils/findutils` |
+| **tree** | TODO | our hand-rolled, zero deps | real `tree`, or an established one |
+| **grep** | TODO | our `secureexec-grep` on raw `regex` (**not** an established grep pkg) | **real GNU grep**, or a popular established grep (ripgrep's `grep` crates) |
+| **zip** | TODO | our 203-line `zip.c` over zlib/minizip (not Info-ZIP) | real Info-ZIP, or an established lib's CLI |
+| **unzip** | TODO | our 669-line `unzip.c` over zlib/minizip | real Info-ZIP unzip |
+| **sqlite3 CLI** | TODO | our 558-line `sqlite3_cli.c` (engine is real SQLite; the shell is ours) | real SQLite `shell.c` (its official CLI) |
+| **vix** | DONE | from-scratch source-less drop-zone binary | deleted; real `vim` covers the editor slot |
+
+Note: `codex`/`codex-exec` = the rivet fork of OpenAI's codex — established fork,
+external build (tracked separately in #9).
+
+**Objective:** replace each ❌ with a real/established implementation built to
+`wasm32-wasip1` and patched only where WASI forces it. The ✅ rows stay.
+
+**Approach:** one command at a time, one jj rev each: swap our custom code for the
+established source (fetched + pinned like sqlite/duckdb), wire into the toolchain,
+patch for WASI, prove parity with real e2e tests.
+
+**Interaction with other items:** subsumes several below — curl (#6) is "build the
+real curl," and the `no-test` packages (#12) that are ❌ here should move to a real
+impl *before* their tests are written, so the tests validate real behavior.
+
+**Decisions (settled):** git → **real git** (not gitoxide). grep → **real GNU
+grep**, or a popular established grep if the real one won't build.
+
+## Status tracking (how the driver reports progress in this doc)
+
+Update this doc as you go — it is the single source of truth for status. For each
+❌ command, set one status and keep it current:
+
+- **`TODO`** — not started.
+- **`IN PROGRESS`** — being built; note the current blocker if any.
+- **`DONE`** — the real/established tool builds and passes a real un-skipped e2e
+  test; link the jj rev.
+- **`NOT POSSIBLE (WASI)`** — only after a genuine effort. Write a concrete
+  explanation: exactly what blocks it, what you tried (sysroot patch, tool patch,
+  syscall stub), and why it can't be made to work. This is a documented dead-end,
+  never a silent fallback to a custom rewrite.
+
+Mark each row's status inline in the table (or as a short line under the command)
+so a reader sees the whole board at a glance.
 
 ---
 
@@ -82,14 +186,17 @@ Status: worklist · Owner: registry · Last updated: 2026-07-07
 
 ## P1 — Broken shipped commands
 
-### 6. curl — exits 1 on every operation (including `--version`)
-- **Broken:** 24/30 `curl.test.ts` fail; every op returns exit 1, even
-  `curl --version`. The binary is non-functional in the VM as built.
-- **Objective:** real curl behavior — GET/POST, headers (`-I`/`-D`), redirects
-  (`-L`), auth (`-u`), multipart (`-F`), file output (`-o`/`-O`), `-w`, `-K` — all
-  work like Linux curl over the runtime's socket/HTTP layer. **Not** a fetch-shim.
+### 6. curl — reimplemented CLI, exits 1 on every operation (incl. `--version`)
+- **Broken:** the `curl` command is a **hand-rolled `curl.c` driver** over a
+  libcurl fork, not the real curl command-line tool — so 24/30 `curl.test.ts` fail
+  and every op returns exit 1, even `curl --version`.
+- **Objective (per Cross-cutting #0):** **build the real curl command-line tool**
+  (upstream `src/tool_*.c`) to `wasm32-wasip1` against the patched sysroot,
+  patched only where WASI forces it — replacing the custom driver. All real curl
+  behavior (GET/POST, `-I`/`-D`, `-L`, `-u`, `-F`, `-o`/`-O`, `-w`, `-K`) then
+  works because it *is* curl, not a shim.
 - **Proof:** `software/curl/test/` (the existing 30 tests) pass un-weakened.
-- **rev:** `fix(curl): make curl functional in the VM (real HTTP over runtime sockets)`
+- **rev:** `fix(curl): build the real curl CLI for WASI; drop the custom driver`
 
 ### 7. zip / unzip — hostile-archive hardening cases fail (3 each)
 - **Broken:** fallback parser doesn't reject a wrapping local offset, doesn't skip
@@ -123,36 +230,15 @@ Status: worklist · Owner: registry · Last updated: 2026-07-07
 - **Proof:** codex builds in CI/dev; `software/codex-cli/test/` runs un-skipped.
 - **rev:** `build(codex-cli): make the codex-rs fork build reproducible`
 
-### 10. vix — external binary, no source or build recipe in repo
-- **Broken:** `EXTERNAL_COMMANDS` — a hand-built WASM binary dropped in with **no
-  source and no build pipeline** committed. Also the shipped
-  `software/vix/dist/package.aospkg` is a **1100-byte manifest stub that does NOT
-  embed the wasm** — the real 214 KB binary is injected at build time.
-- **Provenance (recovered):** vix is a **from-scratch 309-line single-file C
-  editor** (`vix.c`) — *not* a port of vis/neatvi/nvi/busybox/elvis. It avoids
-  `termios.h` entirely, using three guest imports
-  (`host_tty::{isatty,get_size,set_raw_mode}`, same ABI as
-  `toolchain/.../c/programs/pty_probe.c`) for raw mode + window size, plus VT100;
-  supports insert mode and `:w`/`:wq`/`:q`. Built by Claude thread
-  `46371327-9e48-4c4c-8150-10dd21d7bf0f` (2026-06-29). Source, recipe, and binary
-  are **preserved and reproducible** in
-  `~/progress/agent-os/2026-06-28-just-shell-fix/` → `vix.c`, `BUILD-vix.md`,
-  `vix.wasm` (214 KB, md5 `a6e650f03493ad0dff230691d67ee3bd`). Original build:
-  ```
-  $WASI_SDK/bin/clang --target=wasm32-wasip1 --sysroot=$WASI_SDK/share/wasi-sysroot \
-    -O2 -I <c>/include -o vix.wasm vix.c      # vanilla sysroot, no termios
-  ```
-- **Decide first:** keep vix at all? A real **vim** (11.5 MB, `wasm32-wasip1`) now
-  exists (#11), so vix's role is "tiny editor with no bundled runtime." Either (a)
-  keep it and properly source it, or (b) drop the package in favor of vim.
-- **Objective (if kept):** commit `vix.c` into `software/vix/native/c/`, add a real
-  build recipe (host_tty imports + the sysroot), wire it into `toolchain` as a
-  normal C command, **remove the `EXTERNAL_COMMANDS` drop-zone hack**, and fix the
-  `.aospkg` so it actually embeds the binary. Then a real editor e2e test (raw-mode
-  keystrokes through the VM PTY → `:wq` writes the VFS file).
-- **Proof:** `make -C toolchain cmd/vix` builds from committed source (no dropped
-  binary); `software/vix/test/` drives real modal editing and asserts the written file.
-- **rev:** `build(vix): commit vix.c + build recipe; drop EXTERNAL_COMMANDS; embed binary in aospkg`
+### 10. vix — DONE (deleted)
+- **Resolved:** `vix` was a from-scratch, source-less drop-zone binary — exactly
+  the kind of hand-rolled artifact this repo should not carry. **Removed entirely**
+  (package dir, shell import/dep, `EXTERNAL_COMMANDS` Makefile hack, README rows,
+  website registry entry) in rev
+  `chore(registry): remove vix package; document real-tool (no-reimplementation) principle`.
+  Real `vim` (#11) covers the editor slot. Preserved source (`vix.c`, `BUILD-vix.md`,
+  `vix.wasm`) remains in `~/progress/agent-os/2026-06-28-just-shell-fix/` if ever
+  needed. No further work.
 
 ---
 
