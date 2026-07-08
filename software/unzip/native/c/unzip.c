@@ -18,6 +18,7 @@
 
 #define MAX_PATH_LEN 4096
 #define WRITE_BUF_SIZE 8192
+#define MAX_ARCHIVE_BYTES (512u * 1024u * 1024u)
 
 /* Cap per-entry allocation in the fallback parser. Hostile central directory
  * records can claim sizes up to 4 GiB; refuse anything above this bound. */
@@ -189,33 +190,52 @@ static uint32_t read_le32(const unsigned char *p) {
 }
 
 static int read_archive_bytes(const char *archive, unsigned char **out, size_t *out_len) {
-    FILE *f = fopen(archive, "rb");
-    long size;
-    unsigned char *data;
-    if (!f)
+    int fd = open(archive, O_RDONLY);
+    size_t cap = WRITE_BUF_SIZE;
+    size_t len = 0;
+    unsigned char *data = NULL;
+    if (fd < 0)
         return -1;
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        return -1;
-    }
-    size = ftell(f);
-    if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return -1;
-    }
-    data = (unsigned char *)malloc((size_t)size);
+
+    data = (unsigned char *)malloc(cap);
     if (!data) {
-        fclose(f);
+        close(fd);
         return -1;
     }
-    if (fread(data, 1, (size_t)size, f) != (size_t)size) {
-        free(data);
-        fclose(f);
-        return -1;
+
+    for (;;) {
+        if (len == cap) {
+            size_t next_cap = cap * 2;
+            unsigned char *next;
+            if (next_cap <= cap || next_cap > MAX_ARCHIVE_BYTES) {
+                free(data);
+                close(fd);
+                return -1;
+            }
+            next = (unsigned char *)realloc(data, next_cap);
+            if (!next) {
+                free(data);
+                close(fd);
+                return -1;
+            }
+            data = next;
+            cap = next_cap;
+        }
+
+        ssize_t got = read(fd, data + len, cap - len);
+        if (got < 0) {
+            free(data);
+            close(fd);
+            return -1;
+        }
+        if (got == 0)
+            break;
+        len += (size_t)got;
     }
-    fclose(f);
+
+    close(fd);
     *out = data;
-    *out_len = (size_t)size;
+    *out_len = len;
     return 0;
 }
 
@@ -232,6 +252,14 @@ static int find_eocd(const unsigned char *data, size_t len, size_t *eocd_offset)
             break;
     }
     return -1;
+}
+
+static int locate_eocd(const unsigned char *data, size_t len, size_t *eocd_offset) {
+    if (len >= 22 && read_le32(data + len - 22) == 0x06054b50) {
+        *eocd_offset = len - 22;
+        return 0;
+    }
+    return find_eocd(data, len, eocd_offset);
 }
 
 static const char *entry_output_name(const char *name, size_t name_len) {
@@ -257,11 +285,44 @@ static int inflate_raw_entry(const unsigned char *src, size_t src_len, unsigned 
 
 static int simple_archive_entries(const unsigned char *data, size_t len, size_t *cd_offset, uint16_t *entry_count) {
     size_t eocd;
-    if (len < 22 || find_eocd(data, len, &eocd) != 0 || eocd > len - 22)
+    if (len < 22 || locate_eocd(data, len, &eocd) != 0 || eocd > len - 22)
         return -1;
     *entry_count = read_le16(data + eocd + 10);
     *cd_offset = read_le32(data + eocd + 16);
     return *cd_offset < len ? 0 : -1;
+}
+
+static int archive_requires_fallback_parser(const char *archive) {
+    unsigned char *data = NULL;
+    size_t len = 0;
+    size_t eocd;
+    uint32_t cd_size;
+    uint32_t cd_offset;
+    int requires_fallback = 0;
+
+    if (read_archive_bytes(archive, &data, &len) != 0)
+        return 0;
+    if (len >= 22) {
+        for (size_t pos = len - 22; pos + 22 <= len; pos--) {
+            if (read_le32(data + pos) == 0x06054b50 &&
+                read_le32(data + pos + 12) == 0xffffffffu) {
+                requires_fallback = 1;
+                break;
+            }
+            if (pos == 0)
+                break;
+        }
+    }
+    if (len >= 22 && locate_eocd(data, len, &eocd) == 0 && eocd <= len - 22) {
+        cd_size = read_le32(data + eocd + 12);
+        cd_offset = read_le32(data + eocd + 16);
+        if ((size_t)cd_offset > eocd ||
+            (size_t)cd_size > eocd - (size_t)cd_offset) {
+            requires_fallback = 1;
+        }
+    }
+    free(data);
+    return requires_fallback;
 }
 
 static int simple_list_archive(const char *archive) {
@@ -352,7 +413,9 @@ static int simple_extract_archive(const char *archive, const char *outdir) {
         comment_len = read_le16(data + pos + 32);
         local_offset = read_le32(data + pos + 42);
         size_t header_len = 46 + (size_t)name_len + (size_t)extra_len + (size_t)comment_len;
-        if (header_len > len - pos || (size_t)local_offset > len - 30) {
+        if (header_len > len - pos || len < 30 || (size_t)local_offset > len - 30) {
+            fprintf(stderr, "unzip: error reading local header for '%.*s'\n",
+                    (int)name_len, data + pos + 46);
             errors++;
             break;
         }
@@ -448,6 +511,7 @@ static int simple_extract_archive(const char *archive, const char *outdir) {
     free(data);
     if (errors > 0) {
         fprintf(stderr, "unzip: completed with %d error(s)\n", errors);
+        fflush(stderr);
         return 1;
     }
     return 0;
@@ -455,6 +519,9 @@ static int simple_extract_archive(const char *archive, const char *outdir) {
 
 /* List archive contents */
 static int list_archive(const char *archive) {
+    if (archive_requires_fallback_parser(archive))
+        return simple_list_archive(archive);
+
     unzFile uf = open_archive(archive);
     if (!uf) {
         return simple_list_archive(archive);
@@ -569,6 +636,9 @@ static int extract_current_file(unzFile uf, const char *outdir) {
 
 /* Extract all files from the archive */
 static int extract_archive(const char *archive, const char *outdir) {
+    if (archive_requires_fallback_parser(archive))
+        return simple_extract_archive(archive, outdir);
+
     unzFile uf = open_archive(archive);
     if (!uf) {
         return simple_extract_archive(archive, outdir);
@@ -586,26 +656,31 @@ static int extract_archive(const char *archive, const char *outdir) {
 
     unz_global_info gi;
     if (unzGetGlobalInfo(uf, &gi) != UNZ_OK) {
-        fprintf(stderr, "unzip: cannot read archive info\n");
         unzClose(uf);
-        return 1;
+        return simple_extract_archive(archive, outdir);
     }
 
     int errors = 0;
+    int retry_simple = 0;
     for (uLong i = 0; i < gi.number_entry; i++) {
-        if (extract_current_file(uf, outdir) != 0)
+        if (extract_current_file(uf, outdir) != 0) {
             errors++;
+            retry_simple = 1;
+            break;
+        }
 
         if (i + 1 < gi.number_entry) {
             if (unzGoToNextFile(uf) != UNZ_OK) {
-                fprintf(stderr, "unzip: error iterating archive\n");
                 unzClose(uf);
-                return 1;
+                return simple_extract_archive(archive, outdir);
             }
         }
     }
 
     unzClose(uf);
+
+    if (retry_simple)
+        return simple_extract_archive(archive, outdir);
 
     if (errors > 0) {
         fprintf(stderr, "unzip: completed with %d error(s)\n", errors);

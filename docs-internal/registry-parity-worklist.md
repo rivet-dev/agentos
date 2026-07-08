@@ -215,15 +215,19 @@ so a reader sees the whole board at a glance.
   `2026-07-08T00-41-51-0700-item6-runtime-core-build-tls-flags.txt`.
 - **rev:** `oxoqrwvk` — `fix(curl): build the real curl CLI for WASI`
 
-### 7. zip / unzip — hostile-archive hardening cases fail (3 each)
+### 7. zip / unzip — hostile-archive hardening cases fail (3 each) — DONE
 - **Broken:** fallback parser doesn't reject a wrapping local offset, doesn't skip
   empty-normalized-name entries, doesn't cap hostile uncompressed sizes before
   allocating.
 - **Objective:** unzip rejects/handles malformed & hostile archives the way a
   hardened Linux unzip does (bounded allocation, typed errors), and zip↔unzip
   roundtrips remain correct.
-- **Proof:** `software/zip/test/` + `software/unzip/test/` hardening cases pass.
-- **rev:** `fix(unzip): bound allocation and reject malformed archive entries`
+- **Proof:** `software/unzip/test/` passes 6/6 in
+  `2026-07-08T00-57-22-0700-item7-unzip-test-final-pass.txt`; `software/zip/test/`
+  passes 2/2 in `2026-07-08T00-57-22-0700-item7-zip-test-final-pass.txt`.
+  Package type checks pass in `2026-07-08T00-57-39-0700-item7-unzip-check-types.txt`
+  and `2026-07-08T00-57-39-0700-item7-zip-check-types.txt`.
+- **rev:** `krxkqtnx` — `fix(unzip): harden fallback archive parsing`
 
 ---
 
