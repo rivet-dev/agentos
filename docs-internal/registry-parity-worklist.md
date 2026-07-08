@@ -281,9 +281,21 @@ works (`wasi-spawn` broker), so `xargs` is not a blocker.
   `2026-07-08T06-58-56-0700-ripgrep-check-types-after-install.log`; e2e ripgrep
   tests pass 8/8 in `2026-07-08T07-02-00-0700-ripgrep-vitest-after-git-fixture.log`.
   Rev: `msypkqmo` — `fix(ripgrep): build upstream ripgrep`.
-- **zip / unzip — moderate.** Real **Info-ZIP** source (fetch+pin like zlib/sqlite);
-  zlib is already vendored. Filesystem + `isatty`/`utime`/`chmod`/perms stubs; no
-  sockets/threads/spawn. Friction is Info-ZIP's crufty build, not syscalls.
+- **zip / unzip — DONE.** Replaced both custom minizip-based C wrappers with real
+  upstream Info-ZIP Zip 3.0 and UnZip 6.0 release tarballs, built through the C
+  toolchain. Runtime/sysroot fixes stayed one layer down: temp-file, ownership,
+  `system`/`popen`/`pclose` compatibility in patched wasi-libc; overlay rename
+  over destination whiteouts; and WASI host-passthrough read/write offset
+  tracking after `fd_seek`. Proof: wasi-libc patch check passes in
+  `2026-07-08T08-34-29-0700-wasi-libc-patch-check-final.log`; native sidecar
+  build passes in `2026-07-08T08-34-07-0700-sidecar-build-final-runner-format.log`;
+  VFS rename regression passes in
+  `2026-07-08T08-34-29-0700-vfs-core-rename-whiteout-final.log`; final Zip e2e
+  passes 2/2 in
+  `2026-07-08T08-36-45-0700-zip-test-final-after-current-sysroot-copy-after-install.log`;
+  final UnZip e2e passes 6/6 in
+  `2026-07-08T08-37-12-0700-unzip-test-final-after-current-sysroot-copy-after-install.log`.
+  Rev: `nppnuxpr` — `fix(infozip): build upstream zip and unzip`.
 - **findutils — moderate→hard.** `find` is fs+regex (easy); `xargs` spawn already
   works. **uutils/findutils** (Rust) avoids gnulib; **GNU findutils** (C) hits the
   same gnulib cascade as wget. Prefer uutils unless GNU parity is required.
@@ -396,19 +408,30 @@ so a reader sees the whole board at a glance.
   cookie-suffix checks, LDAP, and no CA bundle (cert trust is whatever `wasi_tls`
   enforces). Those are the 5 skipped tests. Verdict: solid for real HTTP(S).
 
-### 7. zip / unzip — hostile-archive hardening cases fail (3 each) — DONE
-- **Broken:** fallback parser doesn't reject a wrapping local offset, doesn't skip
-  empty-normalized-name entries, doesn't cap hostile uncompressed sizes before
-  allocating.
-- **Objective:** unzip rejects/handles malformed & hostile archives the way a
-  hardened Linux unzip does (bounded allocation, typed errors), and zip↔unzip
-  roundtrips remain correct.
-- **Proof:** `software/unzip/test/` passes 6/6 in
-  `2026-07-08T00-57-22-0700-item7-unzip-test-final-pass.txt`; `software/zip/test/`
-  passes 2/2 in `2026-07-08T00-57-22-0700-item7-zip-test-final-pass.txt`.
-  Package type checks pass in `2026-07-08T00-57-39-0700-item7-unzip-check-types.txt`
-  and `2026-07-08T00-57-39-0700-item7-zip-check-types.txt`.
-- **rev:** `krxkqtnx` — `fix(unzip): harden fallback archive parsing`
+### 7. zip / unzip — replace custom wrappers with real Info-ZIP — DONE
+- **Broken:** the shipped commands were custom C wrappers over zlib/minizip, not
+  real Zip/UnZip. The old fallback parser also diverged from hardened Linux unzip
+  behavior on wrapping local offsets, empty normalized names, and hostile size
+  declarations.
+- **Objective:** build real upstream Info-ZIP Zip and UnZip to `wasm32-wasip1`,
+  patching the AgentOS sysroot/runtime where needed, and prove real zip↔unzip
+  roundtrips plus malformed-archive rejection in VM e2e tests.
+- **Resolved:** upstream Info-ZIP Zip 3.0 and UnZip 6.0 now build from release
+  tarballs through the C toolchain. The custom `software/zip/native/c/zip.c` and
+  `software/unzip/native/c/unzip.c` sources are deleted. Required compatibility
+  lives one layer down: patched wasi-libc temp-file, ownership, `system`, `popen`,
+  and `pclose` surfaces; VFS overlay rename-over-whiteout cleanup; and
+  host-passthrough `fd_seek` offset tracking in the WASI runner.
+- **Proof:** wasi-libc patch check passes in
+  `2026-07-08T08-34-29-0700-wasi-libc-patch-check-final.log`; native sidecar
+  build passes in `2026-07-08T08-34-07-0700-sidecar-build-final-runner-format.log`;
+  VFS rename regression passes in
+  `2026-07-08T08-34-29-0700-vfs-core-rename-whiteout-final.log`; `software/zip`
+  e2e passes 2/2 in
+  `2026-07-08T08-36-45-0700-zip-test-final-after-current-sysroot-copy-after-install.log`;
+  `software/unzip` e2e passes 6/6 in
+  `2026-07-08T08-37-12-0700-unzip-test-final-after-current-sysroot-copy-after-install.log`.
+- **rev:** `nppnuxpr` — `fix(infozip): build upstream zip and unzip`
 
 ---
 

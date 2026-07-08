@@ -71,7 +71,7 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 COMMANDS := zip unzip envsubst sqlite3 curl wget grep tree
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
-PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget grep tree fs_probe
+PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget grep tree zip unzip fs_probe
 
 # Discover all package command and test-program C source files.
 ALL_SOURCES := $(foreach dir,$(C_SOURCE_DIRS),$(wildcard $(dir)/*.c))
@@ -89,7 +89,7 @@ endif
 ifeq ($(wildcard $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a),)
   CUSTOM_WASM_PROG_NAMES :=
 else
-  CUSTOM_WASM_PROG_NAMES := curl wget grep sqlite3 tree
+  CUSTOM_WASM_PROG_NAMES := curl wget grep sqlite3 tree zip unzip
 endif
 
 WASM_PROG_NAMES := $(sort $(basename $(notdir $(SOURCES))) $(CUSTOM_WASM_PROG_NAMES))
@@ -136,7 +136,6 @@ $(WASI_SDK_DIR)/bin/clang:
 # All downloads cached in libs/ — add libs/ to .gitignore.
 
 SQLITE3_URL := https://www.sqlite.org/2024/sqlite-amalgamation-3470200.zip
-ZLIB_URL    := https://github.com/madler/zlib/archive/refs/tags/v1.3.1.zip
 CJSON_URL   := https://github.com/DaveGamble/cJSON/archive/refs/tags/v1.7.18.zip
 CURL_COMMIT := main
 CURL_FORK_REPO_PREFIX := secure
@@ -159,9 +158,14 @@ WGET_UPSTREAM_OVERLAY_FILES := $(wildcard $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR)/*
 GREP_VERSION := 3.12
 GREP_URL := https://ftp.gnu.org/gnu/grep/grep-$(GREP_VERSION).tar.xz
 GREP_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/grep-upstream
+INFOZIP_ZIP_VERSION := 30
+INFOZIP_ZIP_URL := https://downloads.sourceforge.net/infozip/zip$(INFOZIP_ZIP_VERSION).tar.gz
+INFOZIP_ZIP_BUILD_DIR := $(BUILD_DIR)/infozip-zip-upstream
+INFOZIP_UNZIP_VERSION := 60
+INFOZIP_UNZIP_URL := https://downloads.sourceforge.net/infozip/unzip$(INFOZIP_UNZIP_VERSION).tar.gz
+INFOZIP_UNZIP_BUILD_DIR := $(BUILD_DIR)/infozip-unzip-upstream
 TREE_VERSION := 2.3.2
 TREE_URL := https://gitlab.com/OldManProgrammer/unix-tree/-/archive/$(TREE_VERSION)/unix-tree-$(TREE_VERSION).tar.gz
-MINIZIP_URL := https://github.com/madler/zlib/archive/refs/tags/v1.3.1.zip
 # duckdb-wasm currently documents DuckDB v1.5.0 in its README. We build the
 # matching upstream DuckDB tag ourselves with our patched WASI/POSIX sysroot.
 DUCKDB_VERSION := v1.5.0
@@ -196,26 +200,6 @@ $(LIBS_DIR)/tree/.fetched:
 	@cp $(addprefix $(LIBS_CACHE)/unix-tree-$(TREE_VERSION)/,$(TREE_SOURCES) tree.h) $(LIBS_DIR)/tree/
 	@touch $@
 
-libs/zlib/zutil.c:
-	@echo "Fetching zlib..."
-	@mkdir -p $(LIBS_CACHE) $(LIBS_DIR)/zlib
-	@curl -fSL "$(ZLIB_URL)" -o "$(LIBS_CACHE)/zlib.zip"
-	@cd $(LIBS_CACHE) && unzip -qo zlib.zip
-	@cp $(LIBS_CACHE)/zlib-*/*.c $(LIBS_CACHE)/zlib-*/*.h $(LIBS_DIR)/zlib/
-
-libs/minizip/ioapi.c:
-	@echo "Fetching minizip (from zlib contrib)..."
-	@mkdir -p $(LIBS_CACHE) $(LIBS_DIR)/minizip
-	@if [ ! -f "$(LIBS_CACHE)/zlib.zip" ]; then \
-		curl -fSL "$(MINIZIP_URL)" -o "$(LIBS_CACHE)/zlib.zip"; \
-		cd $(LIBS_CACHE) && unzip -qo zlib.zip; \
-	fi
-	@cp $(LIBS_CACHE)/zlib-*/contrib/minizip/ioapi.c $(LIBS_CACHE)/zlib-*/contrib/minizip/ioapi.h \
-	    $(LIBS_CACHE)/zlib-*/contrib/minizip/zip.c $(LIBS_CACHE)/zlib-*/contrib/minizip/zip.h \
-	    $(LIBS_CACHE)/zlib-*/contrib/minizip/unzip.c $(LIBS_CACHE)/zlib-*/contrib/minizip/unzip.h \
-	    $(LIBS_CACHE)/zlib-*/contrib/minizip/crypt.h \
-	    $(LIBS_DIR)/minizip/
-
 libs/cjson/cJSON.c:
 	@echo "Fetching cJSON..."
 	@mkdir -p $(LIBS_CACHE) $(LIBS_DIR)/cjson
@@ -240,8 +224,8 @@ libs/duckdb/CMakeLists.txt:
 	@tar -xzf "$(LIBS_CACHE)/duckdb.tar.gz" --strip-components=1 -C $(LIBS_DIR)/duckdb
 
 .PHONY: fetch-libs fetch-fast-libs clean-libs
-fetch-libs: libs/sqlite3/sqlite3.c libs/zlib/zutil.c libs/minizip/ioapi.c libs/cjson/cJSON.c libs/curl/lib/easy.c libs/duckdb/CMakeLists.txt
-fetch-fast-libs: libs/sqlite3/sqlite3.c libs/zlib/zutil.c libs/minizip/ioapi.c libs/cjson/cJSON.c libs/curl/lib/easy.c
+fetch-libs: libs/sqlite3/sqlite3.c libs/cjson/cJSON.c libs/curl/lib/easy.c libs/duckdb/CMakeLists.txt
+fetch-fast-libs: libs/sqlite3/sqlite3.c libs/cjson/cJSON.c libs/curl/lib/easy.c
 
 clean-libs:
 	rm -rf $(LIBS_DIR) $(LIBS_CACHE)
@@ -552,43 +536,28 @@ $(NATIVE_DIR)/tree: $(TREE_FILES)
 	$(NATIVE_CC) $(NATIVE_CFLAGS) $(TREE_WASM_FLAGS) -I$(LIBS_DIR)/tree -o $@ \
 	    $(addprefix $(LIBS_DIR)/tree/,$(TREE_SOURCES))
 
-# zip: links zlib + minizip
-ZLIB_SRCS   := libs/zlib/adler32.c libs/zlib/compress.c libs/zlib/crc32.c libs/zlib/deflate.c \
-               libs/zlib/infback.c libs/zlib/inffast.c libs/zlib/inflate.c libs/zlib/inftrees.c \
-               libs/zlib/trees.c libs/zlib/uncompr.c libs/zlib/zutil.c
-MINIZIP_SRCS := libs/minizip/ioapi.c libs/minizip/zip.c
-ZIP_INCLUDES := -Ilibs/zlib -Ilibs/minizip
-
-$(BUILD_DIR)/zip: $(call c_source,zip) $(ZLIB_SRCS) $(MINIZIP_SRCS) $(WASI_SDK_DIR)/bin/clang
+# zip/unzip: upstream Info-ZIP releases built against the patched C sysroot.
+$(BUILD_DIR)/zip: scripts/build-infozip-upstream.sh $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(WASM_CFLAGS) $(ZIP_INCLUDES) -o $@.wasm $(call c_source,zip) $(ZLIB_SRCS) $(MINIZIP_SRCS)
-	@if [ "$(HAS_WASM_OPT)" = "1" ]; then \
-		wasm-opt -O3 --strip-debug $@.wasm -o $@; \
-	else \
-		cp $@.wasm $@; \
-	fi
-	@rm -f $@.wasm
+	bash scripts/build-infozip-upstream.sh \
+		--tool zip \
+		--version "$(INFOZIP_ZIP_VERSION)" \
+		--url "$(INFOZIP_ZIP_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(INFOZIP_ZIP_BUILD_DIR))" \
+		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
+		--output "$(abspath $@)"
 
-$(NATIVE_DIR)/zip: $(call c_source,zip) $(ZLIB_SRCS) $(MINIZIP_SRCS)
-	@mkdir -p $(NATIVE_DIR)
-	$(NATIVE_CC) $(NATIVE_CFLAGS) $(ZIP_INCLUDES) -o $@ $(call c_source,zip) $(ZLIB_SRCS) $(MINIZIP_SRCS)
-
-# unzip: links zlib + minizip (unzip side)
-MINIZIP_UNZIP_SRCS := libs/minizip/ioapi.c libs/minizip/unzip.c
-
-$(BUILD_DIR)/unzip: $(call c_source,unzip) $(ZLIB_SRCS) $(MINIZIP_UNZIP_SRCS) $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/unzip: scripts/build-infozip-upstream.sh $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(WASM_CFLAGS) $(ZIP_INCLUDES) -o $@.wasm $(call c_source,unzip) $(ZLIB_SRCS) $(MINIZIP_UNZIP_SRCS)
-	@if [ "$(HAS_WASM_OPT)" = "1" ]; then \
-		wasm-opt -O3 --strip-debug $@.wasm -o $@; \
-	else \
-		cp $@.wasm $@; \
-	fi
-	@rm -f $@.wasm
-
-$(NATIVE_DIR)/unzip: $(call c_source,unzip) $(ZLIB_SRCS) $(MINIZIP_UNZIP_SRCS)
-	@mkdir -p $(NATIVE_DIR)
-	$(NATIVE_CC) $(NATIVE_CFLAGS) $(ZIP_INCLUDES) -o $@ $(call c_source,unzip) $(ZLIB_SRCS) $(MINIZIP_UNZIP_SRCS)
+	bash scripts/build-infozip-upstream.sh \
+		--tool unzip \
+		--version "$(INFOZIP_UNZIP_VERSION)" \
+		--url "$(INFOZIP_UNZIP_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(INFOZIP_UNZIP_BUILD_DIR))" \
+		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
+		--output "$(abspath $@)"
 
 # curl_test: links libcurl (HTTP/HTTPS build for WASM via host_net + host_tls)
 CURL_SRCS := $(wildcard libs/curl/lib/*.c) $(wildcard libs/curl/lib/vauth/*.c) \

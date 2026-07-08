@@ -1661,6 +1661,8 @@ impl VirtualFileSystem for OverlayFileSystem {
         let mut snapshot_entries = Vec::new();
         self.collect_snapshot_entries(&old_normalized, &mut snapshot_entries)?;
 
+        self.clear_path_metadata(&resolved_new_normalized)?;
+        self.clear_subtree_metadata(&resolved_new_normalized)?;
         if let Ok(destination_stat) = self.merged_lstat(&resolved_new_normalized) {
             if destination_stat.is_directory
                 && !destination_stat.is_symbolic_link
@@ -1678,7 +1680,6 @@ impl VirtualFileSystem for OverlayFileSystem {
                         .remove_file(&resolved_new_normalized)?;
                 }
             }
-            self.clear_subtree_metadata(&resolved_new_normalized)?;
         }
 
         self.stage_snapshot_entries_in_upper(&snapshot_entries)?;
@@ -1983,6 +1984,31 @@ mod tests {
 
         assert!(!overlay.exists("/a"));
         assert_error_code(overlay.read_dir("/a"), "ENOENT");
+    }
+
+    #[test]
+    fn rename_clears_destination_whiteout() {
+        let lower = MemoryFileSystem::new();
+        let mut overlay = OverlayFileSystem::new(vec![lower], OverlayMode::Ephemeral);
+        overlay
+            .write_file("/archive.zip", b"old".to_vec())
+            .expect("create old archive");
+        overlay
+            .remove_file("/archive.zip")
+            .expect("whiteout old archive");
+        overlay
+            .write_file("/workspace-temp", b"new".to_vec())
+            .expect("create replacement");
+
+        overlay
+            .rename("/workspace-temp", "/archive.zip")
+            .expect("rename replacement over whiteout");
+
+        assert_eq!(
+            overlay.read_file("/archive.zip").expect("read renamed file"),
+            b"new"
+        );
+        assert!(!overlay.exists("/workspace-temp"));
     }
 
     #[test]
