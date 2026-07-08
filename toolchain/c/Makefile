@@ -710,8 +710,8 @@ clean:
 # --- vim: real vim 9.2 -> wasm32-wasip1 against the full-OS libc ---
 #
 # vim compiles as a normal terminal program against the PATCHED sysroot plus a
-# small bridge library (vim/): termios via host_tty (raw-mode + winsize),
-# a termcap stub (builtin termcaps), and POSIX stubs the full-OS libc lacks.
+# small bridge library (vim/): a termcap stub (builtin termcaps), and POSIX
+# stubs the full-OS libc still lacks. Termios/process spawning live in sysroot.
 # Recipe recovered from the original hand build (see vim/ headers). The result
 # lands in $(BUILD_DIR)/vim; `make -C .. cmd/vim` installs it into the shared
 # commands dir. NOTE: run as `vim -n <file>` docs-wise is no longer needed —
@@ -720,7 +720,7 @@ VIM_VERSION ?= v9.2.0780
 VIM_SRC := libs/vim
 VIM_BRIDGE_SRC := ../../software/vim/native/c/vim-bridge
 VIM_BRIDGE_BUILD := $(BUILD_DIR)/vim-bridge
-VIM_BRIDGE_OBJS := $(VIM_BRIDGE_BUILD)/termios_bridge.o $(VIM_BRIDGE_BUILD)/termcap_stub.o $(VIM_BRIDGE_BUILD)/posix_stubs.o
+VIM_BRIDGE_OBJS := $(VIM_BRIDGE_BUILD)/termcap_stub.o $(VIM_BRIDGE_BUILD)/posix_stubs.o
 VIM_WCC := $(VIM_BRIDGE_BUILD)/wcc
 
 .PHONY: fetch-vim
@@ -733,6 +733,7 @@ $(VIM_BRIDGE_BUILD)/%.o: $(VIM_BRIDGE_SRC)/%.c $(WASI_SDK_DIR)/bin/clang sysroot
 	$(CC) --target=wasm32-wasip1 --sysroot=$(PATCHED_SYSROOT) -O2 -I $(VIM_BRIDGE_SRC) -c -o $@ $<
 
 $(VIM_BRIDGE_BUILD)/libtermcap.a: $(VIM_BRIDGE_OBJS)
+	rm -f $@
 	$(WASI_SDK_DIR)/bin/llvm-ar rcs $@ $(VIM_BRIDGE_OBJS)
 
 # Wrapper compiler: every vim TU gets the sysroot, the bridge headers, and the
@@ -747,22 +748,25 @@ $(VIM_WCC): $(WASI_SDK_DIR)/bin/clang
 	@chmod +x $@
 
 $(BUILD_DIR)/vim: fetch-vim $(VIM_BRIDGE_BUILD)/libtermcap.a $(VIM_WCC) wasm-opt-check
+	rm -f $(VIM_SRC)/src/auto/config.cache
 	cd $(VIM_SRC)/src && \
-	CC="$(abspath $(VIM_WCC))" \
-	LDFLAGS="$(abspath $(VIM_BRIDGE_BUILD)/termios_bridge.o) -L$(abspath $(VIM_BRIDGE_BUILD))" \
+CC="$(abspath $(VIM_WCC))" \
+LDFLAGS="-L$(abspath $(VIM_BRIDGE_BUILD))" \
 	vim_cv_toupper_broken=no \
 	vim_cv_terminfo=no \
 	vim_cv_tgetent=zero \
 	vim_cv_getcwd_broken=no \
 	vim_cv_stat_ignores_slash=no \
 	vim_cv_memmove_handles_overlap=yes \
-	vim_cv_bcopy_handles_overlap=yes \
-	vim_cv_memcpy_handles_overlap=yes \
-	vim_cv_tty_group=world \
-	vim_cv_tty_mode=0620 \
-	./configure --host=wasm32-wasip1 --build=$$(cc -dumpmachine 2>/dev/null || echo x86_64-pc-linux-gnu) \
+vim_cv_bcopy_handles_overlap=yes \
+vim_cv_memcpy_handles_overlap=yes \
+vim_cv_tty_group=world \
+vim_cv_tty_mode=0620 \
+ac_cv_header_dlfcn_h=no \
+./configure --host=wasm32-wasip1 --build=$$(cc -dumpmachine 2>/dev/null || echo x86_64-pc-linux-gnu) \
 		--with-features=normal --with-tlib=termcap \
 		--disable-gui --without-x --disable-nls --disable-channel \
+		--without-wayland \
 		--disable-netbeans --disable-selinux --disable-gpm --disable-sysmouse \
 		--disable-icon-cache-update --disable-desktop-database-update
 	$(MAKE) -C $(VIM_SRC)/src vim

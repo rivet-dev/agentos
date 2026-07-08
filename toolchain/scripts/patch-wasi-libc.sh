@@ -301,8 +301,8 @@ fi
 
 # Remove libc objects that conflict with host_socket.o.
 # Our socket patch replaces these entry points with host_net-backed versions.
-"$WASI_AR" d "$SYSROOT_LIB/libc.a" accept-wasip1.o send.o recv.o select.o poll.o getsockopt.o 2>/dev/null || true
-echo "Removed conflicting accept-wasip1.o/send.o/recv.o/select.o/poll.o/getsockopt.o from libc.a"
+"$WASI_AR" d "$SYSROOT_LIB/libc.a" accept-wasip1.o send.o recv.o select.o poll.o getsockopt.o ioctl.o 2>/dev/null || true
+echo "Removed conflicting accept-wasip1.o/send.o/recv.o/select.o/poll.o/getsockopt.o/ioctl.o from libc.a"
 
 # Remove musl's original signal entry points so host_sigaction.o is the only
 # resolver for sigaction()/signal() in the patched sysroot.

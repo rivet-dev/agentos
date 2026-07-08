@@ -650,6 +650,20 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     Biome is not applicable for this package test path; it reported the file is
     ignored by config in
     `2026-07-08T13-41-05-0700-item12-file-biome-check-final-after-install.log`.
+  - **vim — DONE.** Built/staged the real upstream Vim command without app
+    source forks by keeping terminal/process compatibility in the patched C
+    sysroot, disabling host Wayland/dlfcn detection at configure time, and
+    trimming the Vim-local bridge down to package-specific gaps. Added
+    package-local VM e2e coverage that proves the packaged binary starts with
+    `-libcall` and edits/writes a file in Ex mode with the packaged runtime.
+    Proof:
+    `2026-07-08T14-03-20-0700-item12-vim-toolchain-cmd-build-final-ioctl.log`;
+    `2026-07-08T14-04-03-0700-item12-vim-package-build-final.log`;
+    `2026-07-08T14-04-03-0700-item12-vim-check-types-final.log`;
+    `2026-07-08T14-04-09-0700-item12-vim-package-e2e-final.log`.
+    Biome is not applicable for this package test path; it reported the file is
+    ignored by config in
+    `2026-07-08T14-04-51-0700-item12-vim-biome-check.log`.
   - **jq — DONE.** Added package-local VM e2e coverage for the staged `jq`
     command and fixed the jaq-backed CLI wrapper to accept Linux-style file
     operands instead of only stdin. The suite now proves version output,
