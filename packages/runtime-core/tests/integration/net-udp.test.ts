@@ -1,234 +1,161 @@
 /**
  * Integration test for WasmVM UDP sockets.
  *
- * Spawns the udp_echo C program as WASM (bind → recvfrom → sendto echo → close),
- * sends datagrams from a kernel client socket, and verifies the echo response
- * and message boundary preservation.
+ * Spawns the udp_echo C program as WASM and sends datagrams from a guest Node
+ * process over VM loopback.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createWasmVmRuntime } from '@rivet-dev/agentos-vm-test-harness';
+import { afterEach, describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import {
-  AF_INET,
-  COMMANDS_DIR,
-  C_BUILD_DIR,
-  createKernel,
-  describeIf,
-  hasWasmBinaries,
-  SOCK_DGRAM,
-} from '@rivet-dev/agentos-vm-test-harness';
-import type { Kernel } from '@rivet-dev/agentos-vm-test-harness';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+	C_BUILD_DIR,
+	COMMANDS_DIR,
+	createIntegrationKernel,
+	describeIf,
+	skipUnlessWasmBuilt,
+} from "@rivet-dev/agentos-vm-test-harness";
+import type {
+	IntegrationKernelResult,
+	Kernel,
+} from "@rivet-dev/agentos-vm-test-harness";
 
-const hasCWasmBinaries = existsSync(join(C_BUILD_DIR, 'udp_echo'));
+const WASM_UDP_ECHO = resolve(C_BUILD_DIR, "udp_echo");
 
 function skipReason(): string | false {
-  if (!hasWasmBinaries) return 'WASM binaries not built (run make wasm in native/wasmvm/)';
-  if (!hasCWasmBinaries) return 'udp_echo WASM binary not built (run make -C native/wasmvm/c sysroot && make -C native/wasmvm/c programs)';
-  return false;
+	const wasmSkipReason = skipUnlessWasmBuilt();
+	if (wasmSkipReason) return wasmSkipReason;
+	if (!existsSync(WASM_UDP_ECHO)) {
+		return `udp_echo WASM binary not found at ${WASM_UDP_ECHO}`;
+	}
+	return false;
 }
 
-// Minimal in-memory VFS (same as net-server)
-class SimpleVFS {
-  private files = new Map<string, Uint8Array>();
-  private dirs = new Set<string>(['/']);
-  private symlinks = new Map<string, string>();
-
-  async readFile(path: string): Promise<Uint8Array> {
-    const data = this.files.get(path);
-    if (!data) throw new Error(`ENOENT: ${path}`);
-    return data;
-  }
-  async readTextFile(path: string): Promise<string> {
-    return new TextDecoder().decode(await this.readFile(path));
-  }
-  async pread(path: string, offset: number, length: number): Promise<Uint8Array> {
-    const data = await this.readFile(path);
-    return data.slice(offset, offset + length);
-  }
-  async readDir(path: string): Promise<string[]> {
-    const prefix = path === '/' ? '/' : path + '/';
-    const entries: string[] = [];
-    for (const p of [...this.files.keys(), ...this.dirs]) {
-      if (p !== path && p.startsWith(prefix)) {
-        const rest = p.slice(prefix.length);
-        if (!rest.includes('/')) entries.push(rest);
-      }
-    }
-    return entries;
-  }
-  async readDirWithTypes(path: string) {
-    return (await this.readDir(path)).map((name) => ({
-      name,
-      isDirectory: this.dirs.has(path === '/' ? `/${name}` : `${path}/${name}`),
-    }));
-  }
-  async writeFile(path: string, content: string | Uint8Array): Promise<void> {
-    const data = typeof content === 'string' ? new TextEncoder().encode(content) : content;
-    this.files.set(path, new Uint8Array(data));
-    const parts = path.split('/').filter(Boolean);
-    for (let i = 1; i < parts.length; i++) {
-      this.dirs.add('/' + parts.slice(0, i).join('/'));
-    }
-  }
-  async createDir(path: string) { this.dirs.add(path); }
-  async mkdir(path: string, _options?: { recursive?: boolean }) { this.dirs.add(path); }
-  async exists(path: string): Promise<boolean> {
-    return this.files.has(path) || this.dirs.has(path) || this.symlinks.has(path);
-  }
-  async stat(path: string) {
-    const isDir = this.dirs.has(path);
-    const isSymlink = this.symlinks.has(path);
-    const data = this.files.get(path);
-    if (!isDir && !isSymlink && !data) throw new Error(`ENOENT: ${path}`);
-    return {
-      mode: isSymlink ? 0o120777 : (isDir ? 0o40755 : 0o100644),
-      size: data?.length ?? 0,
-      isDirectory: isDir,
-      isSymbolicLink: isSymlink,
-      atimeMs: Date.now(),
-      mtimeMs: Date.now(),
-      ctimeMs: Date.now(),
-      birthtimeMs: Date.now(),
-      ino: 0,
-      nlink: 1,
-      uid: 1000,
-      gid: 1000,
-    };
-  }
-  async chmod() {}
-  async rename(from: string, to: string) {
-    const data = this.files.get(from);
-    if (data) { this.files.set(to, data); this.files.delete(from); }
-  }
-  async unlink(path: string) { this.files.delete(path); this.symlinks.delete(path); }
-  async rmdir(path: string) { this.dirs.delete(path); }
-  async symlink(target: string, linkPath: string) {
-    this.symlinks.set(linkPath, target);
-    const parts = linkPath.split('/').filter(Boolean);
-    for (let i = 1; i < parts.length; i++) {
-      this.dirs.add('/' + parts.slice(0, i).join('/'));
-    }
-  }
-  async readlink(path: string): Promise<string> {
-    const target = this.symlinks.get(path);
-    if (!target) throw new Error(`EINVAL: ${path}`);
-    return target;
-  }
+interface RunningGuestProgram {
+	process: ReturnType<Kernel["spawn"]>;
+	stdoutChunks: Uint8Array[];
+	stderrChunks: Uint8Array[];
 }
 
-// Wait for a kernel UDP binding on the given port (poll with timeout)
-async function waitForUdpBinding(
-  kernel: Kernel,
-  port: number,
-  timeoutMs = 10_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const bound = kernel.socketTable.findBoundUdp({ host: '0.0.0.0', port });
-    if (bound) return;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  throw new Error(`Timed out waiting for UDP binding on port ${port}`);
+function decodeChunks(chunks: Uint8Array[]): string {
+	return chunks.map((chunk) => new TextDecoder().decode(chunk)).join("");
+}
+
+function spawnGuestProgram(
+	kernel: Kernel,
+	command: string,
+	args: string[],
+): RunningGuestProgram {
+	const stdoutChunks: Uint8Array[] = [];
+	const stderrChunks: Uint8Array[] = [];
+	const process = kernel.spawn(command, args, {
+		onStdout: (chunk) => stdoutChunks.push(chunk),
+		onStderr: (chunk) => stderrChunks.push(chunk),
+	});
+	return { process, stdoutChunks, stderrChunks };
+}
+
+async function runGuestNodeProgram(
+	kernel: Kernel,
+	code: string,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+	const program = spawnGuestProgram(kernel, "node", ["-e", code]);
+	const exitCode = await program.process.wait();
+	return {
+		exitCode,
+		stdout: decodeChunks(program.stdoutChunks),
+		stderr: decodeChunks(program.stderrChunks),
+	};
+}
+
+async function waitForUdpBinding(kernel: Kernel, port: number): Promise<void> {
+	const deadline = Date.now() + 20_000;
+	while (Date.now() < deadline) {
+		if (kernel.socketTable.findBoundUdp({ host: "0.0.0.0", port })) {
+			return;
+		}
+		await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+	}
+	throw new Error(`Timed out waiting for UDP binding on port ${port}`);
+}
+
+async function runUdpEchoCase(
+	kernel: Kernel,
+	port: number,
+	message: string,
+): Promise<{ client: { exitCode: number; stdout: string; stderr: string }; server: RunningGuestProgram }> {
+	const server = spawnGuestProgram(kernel, "udp_echo", [String(port)]);
+	await waitForUdpBinding(kernel, port);
+
+	const client = await runGuestNodeProgram(
+		kernel,
+		[
+			"const dgram = require('dgram');",
+			"const client = dgram.createSocket('udp4');",
+			`const payload = Buffer.from(${JSON.stringify(message)});`,
+			"const timer = setTimeout(() => { console.error('timeout'); client.close(); process.exit(1); }, 5000);",
+			"client.on('message', (msg) => { clearTimeout(timer); console.log(msg.toString()); client.close(); });",
+			"client.on('error', (error) => { clearTimeout(timer); console.error(error); client.close(); process.exit(1); });",
+			`client.bind(0, '127.0.0.1', () => client.send(payload, ${port}, '127.0.0.1'));`,
+		].join("\n"),
+	);
+
+	return { client, server };
 }
 
 const TEST_PORT = 9877;
-const CLIENT_PID = 999; // Fake PID for test-side client sockets
 
-describeIf(!skipReason(), 'WasmVM UDP integration', { timeout: 30_000 }, () => {
-  let kernel: Kernel;
-  let vfs: SimpleVFS;
+describeIf(!skipReason(), "WasmVM UDP integration", { timeout: 30_000 }, () => {
+	let ctx: IntegrationKernelResult | undefined;
 
-  beforeEach(async () => {
-    vfs = new SimpleVFS();
-    kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
-  });
+	afterEach(async () => {
+		await ctx?.dispose();
+		ctx = undefined;
+	});
 
-  afterEach(async () => {
-    await kernel?.dispose();
-  });
+	it("udp_echo: recv datagram and echo it back", async () => {
+		ctx = await createIntegrationKernel({
+			runtimes: ["wasmvm", "node"],
+			commandDirs: [C_BUILD_DIR, COMMANDS_DIR],
+		});
 
-  it('udp_echo: recv datagram and echo it back', async () => {
-    // Start the WASM UDP echo server (blocks on recvfrom until we send)
-    const execPromise = kernel.exec(`udp_echo ${TEST_PORT}`);
+		const { client, server } = await runUdpEchoCase(
+			ctx.kernel,
+			TEST_PORT,
+			"hello",
+		);
+		const serverExit = await server.process.wait();
 
-    // Wait for the server to finish bind
-    await waitForUdpBinding(kernel, TEST_PORT);
+		expect(client.exitCode).toBe(0);
+		expect(client.stderr).toBe("");
+		expect(client.stdout.trim()).toBe("hello");
+		expect(serverExit).toBe(0);
+		expect(decodeChunks(server.stdoutChunks)).toContain(
+			"listening on port 9877",
+		);
+		expect(decodeChunks(server.stdoutChunks)).toContain("received: hello");
+		expect(decodeChunks(server.stdoutChunks)).toContain("echoed: 5");
+	});
 
-    // Create a client UDP socket and bind to an ephemeral port
-    const st = kernel.socketTable;
-    const clientId = st.create(AF_INET, SOCK_DGRAM, 0, CLIENT_PID);
-    await st.bind(clientId, { host: '127.0.0.1', port: 0 });
+	it("udp_echo: message boundaries are preserved", async () => {
+		ctx = await createIntegrationKernel({
+			runtimes: ["wasmvm", "node"],
+			commandDirs: [C_BUILD_DIR, COMMANDS_DIR],
+		});
 
-    // Send "hello" to the echo server
-    const encoder = new TextEncoder();
-    st.sendTo(clientId, encoder.encode('hello'), 0, { host: '127.0.0.1', port: TEST_PORT });
+		const { client, server } = await runUdpEchoCase(
+			ctx.kernel,
+			TEST_PORT + 1,
+			"boundary-test-message",
+		);
+		const serverExit = await server.process.wait();
 
-    // Wait for the echo response
-    const decoder = new TextDecoder();
-    let reply = '';
-    const recvDeadline = Date.now() + 10_000;
-    while (Date.now() < recvDeadline) {
-      const result = st.recvFrom(clientId, 1024);
-      if (result && result.data.length > 0) {
-        reply = decoder.decode(result.data);
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 20));
-    }
-
-    expect(reply).toBe('hello');
-
-    // Close client socket
-    st.close(clientId, CLIENT_PID);
-
-    // Wait for exec to complete (server exits after echoing one datagram)
-    const result = await execPromise;
-
-    expect(result.stdout).toContain('listening on port 9877');
-    expect(result.stdout).toContain('received: hello');
-    expect(result.stdout).toContain('echoed: 5');
-    expect(result.exitCode).toBe(0);
-  });
-
-  it('udp_echo: message boundaries are preserved', async () => {
-    // Start the WASM UDP echo server
-    const execPromise = kernel.exec(`udp_echo ${TEST_PORT + 1}`);
-
-    // Wait for the server to finish bind
-    await waitForUdpBinding(kernel, TEST_PORT + 1);
-
-    // Create a client UDP socket
-    const st = kernel.socketTable;
-    const clientId = st.create(AF_INET, SOCK_DGRAM, 0, CLIENT_PID);
-    await st.bind(clientId, { host: '127.0.0.1', port: 0 });
-
-    // Send a message — the echo server echoes exactly one datagram
-    const encoder = new TextEncoder();
-    const msg = 'boundary-test-message';
-    st.sendTo(clientId, encoder.encode(msg), 0, { host: '127.0.0.1', port: TEST_PORT + 1 });
-
-    // Receive the echo — it must be the exact message (not fragmented/merged)
-    const decoder = new TextDecoder();
-    let reply = '';
-    const recvDeadline = Date.now() + 10_000;
-    while (Date.now() < recvDeadline) {
-      const result = st.recvFrom(clientId, 1024);
-      if (result && result.data.length > 0) {
-        reply = decoder.decode(result.data);
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 20));
-    }
-
-    // Message boundary preserved: exact content, exact length
-    expect(reply).toBe(msg);
-    expect(reply.length).toBe(msg.length);
-
-    st.close(clientId, CLIENT_PID);
-    const result = await execPromise;
-    expect(result.exitCode).toBe(0);
-  });
+		expect(client.exitCode).toBe(0);
+		expect(client.stderr).toBe("");
+		expect(client.stdout.trim()).toBe("boundary-test-message");
+		expect(serverExit).toBe(0);
+		expect(decodeChunks(server.stdoutChunks)).toContain(
+			"received: boundary-test-message",
+		);
+	});
 });

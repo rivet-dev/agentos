@@ -126,6 +126,7 @@ const NON_TERMINATING_SIGNALS = new Set([
 	"SIGURG",
 	"SIGWINCH",
 ]);
+const LOCALLY_TERMINATING_SIGNALS = new Set(["SIGKILL", "SIGTERM"]);
 const NON_CANONICAL_SIGNAL_NAMES = new Set([
 	"SIGCLD",
 	"SIGIOT",
@@ -1486,16 +1487,6 @@ export class NativeSidecarKernelProxy {
 			return;
 		}
 
-		if (entry.exitViaEvent) {
-			// The sidecar drains process output before it emits `process_exited`,
-			// the stdio frame stream is FIFO, and this pump dispatches events in
-			// order. Once the exit event reaches this entry, no trailing output can
-			// follow it; one zero-delay turn is cheap insurance for same-tick
-			// listener scheduling.
-			await drainTrailingProcessOutputTurn(0);
-			return;
-		}
-
 		let observedGeneration = entry.outputGeneration;
 		let quietTurns = 0;
 		let delayMs = 0;
@@ -1721,9 +1712,12 @@ export class NativeSidecarKernelProxy {
 			if (timedOut) {
 				void killPromise.catch(() => {});
 			}
+			const hasGuestHandler =
+				this.signalStates.get(entry.pid)?.handlers.has(signal) ?? false;
 			if (
 				entry.exitCode === null &&
-				!NON_TERMINATING_SIGNALS.has(sidecarSignal) &&
+				!hasGuestHandler &&
+				LOCALLY_TERMINATING_SIGNALS.has(sidecarSignal) &&
 				(entry.driver === "wasmvm" || timedOut)
 			) {
 				this.finishProcess(entry, 128 + signal);

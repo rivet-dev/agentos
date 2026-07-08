@@ -483,6 +483,7 @@ impl ActiveProcess {
             next_mapped_host_fd: MAPPED_HOST_FD_START,
             pending_execution_events: VecDeque::new(),
             pending_self_signal_exit: None,
+            pending_wasm_signals: VecDeque::new(),
             child_processes: BTreeMap::new(),
             next_child_process_id: 0,
             http_servers: BTreeMap::new(),
@@ -4523,6 +4524,8 @@ where
         let (connection_id, session_id, vm_id) = self.vm_scope_for(&request.ownership)?;
         self.require_owned_vm(&connection_id, &session_id, &vm_id)?;
 
+        self.drain_root_signal_state_events(&vm_id, &payload.process_id)?;
+
         let handlers = self
             .vms
             .get(&vm_id)
@@ -4534,6 +4537,77 @@ where
             response: signal_state_response(request, payload.process_id, handlers),
             events: Vec::new(),
         })
+    }
+
+    fn drain_root_signal_state_events(
+        &mut self,
+        vm_id: &str,
+        process_id: &str,
+    ) -> Result<(), SidecarError> {
+        let mut deferred = VecDeque::new();
+
+        loop {
+            let event = {
+                let Some(vm) = self.vms.get_mut(vm_id) else {
+                    break;
+                };
+                let Some(process) = vm.active_processes.get_mut(process_id) else {
+                    break;
+                };
+                if let Some(event) = process.pending_execution_events.pop_front() {
+                    Some(event)
+                } else {
+                    match process.execution.poll_event_blocking(Duration::ZERO) {
+                        Ok(event) => event,
+                        Err(SidecarError::Execution(message))
+                            if (process.runtime == GuestRuntimeKind::JavaScript
+                                && closed_javascript_event_channel(&message))
+                                || (process.runtime == GuestRuntimeKind::Python
+                                    && closed_python_event_channel(&message))
+                                || (process.runtime == GuestRuntimeKind::WebAssembly
+                                    && closed_wasm_event_channel(&message)) =>
+                        {
+                            None
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+            };
+
+            let Some(event) = event else {
+                break;
+            };
+
+            match event {
+                ActiveExecutionEvent::SignalState {
+                    signal,
+                    registration,
+                } => {
+                    if let Some(vm) = self.vms.get_mut(vm_id) {
+                        apply_process_signal_state_update(
+                            &mut vm.signal_states,
+                            process_id,
+                            signal,
+                            registration,
+                        );
+                    }
+                }
+                other => deferred.push_back(other),
+            }
+        }
+
+        if let Some(vm) = self.vms.get_mut(vm_id) {
+            if let Some(process) = vm.active_processes.get_mut(process_id) {
+                for event in deferred.into_iter().rev() {
+                    if process.pending_execution_events.len() >= MAX_PROCESS_EVENT_QUEUE {
+                        return Err(process_event_queue_overflow_error());
+                    }
+                    process.pending_execution_events.push_front(event);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub(crate) async fn get_zombie_timer_count(
@@ -4627,7 +4701,7 @@ where
                 KillBehavior::SharedV8DispatchOrTerminate
             }
             ActiveExecution::Wasm(execution) if execution.uses_shared_v8_runtime() => {
-                KillBehavior::SharedV8Terminate
+                KillBehavior::SharedV8DispatchOrTerminate
             }
             ActiveExecution::Python(execution) if execution.uses_shared_v8_runtime() => {
                 KillBehavior::SharedV8Terminate
@@ -4680,8 +4754,37 @@ where
                 }
             }
             KillBehavior::SharedV8DispatchOrTerminate => {
-                if signal != 0 && !dispatch_v8_process_signal(process, signal)? {
-                    process.execution.terminate()?;
+                if signal != 0 {
+                    let is_shared_wasm = matches!(
+                        &process.execution,
+                        ActiveExecution::Wasm(execution) if execution.uses_shared_v8_runtime()
+                    );
+                    if is_shared_wasm {
+                        let action = vm
+                            .signal_states
+                            .get(process_id)
+                            .and_then(|handlers| handlers.get(&(signal as u32)))
+                            .map(|registration| &registration.action);
+                        match action {
+                            Some(SignalDispositionAction::Ignore) => {}
+                            Some(SignalDispositionAction::User) => {
+                                process.pending_wasm_signals.push_back(signal);
+                            }
+                            Some(SignalDispositionAction::Default) | None => {
+                                if !matches!(
+                                    canonical_signal_name(signal),
+                                    Some("SIGWINCH" | "SIGCHLD" | "SIGURG")
+                                ) {
+                                    process.execution.terminate()?;
+                                    process.queue_pending_execution_event(
+                                        ActiveExecutionEvent::Exited(128 + signal),
+                                    )?;
+                                }
+                            }
+                        }
+                    } else if !dispatch_v8_process_signal(process, signal)? {
+                        process.execution.terminate()?;
+                    }
                 }
             }
             KillBehavior::Noop => {}
@@ -8747,9 +8850,10 @@ where
                         "ESRCH: unknown process pid {target_pid}"
                     )));
                 };
-                if let Some(session) = target.execution.javascript_v8_session_handle().filter(
-                    |_| matches!(&target.execution, ActiveExecution::Javascript(execution) if execution.uses_shared_v8_runtime())
-                        || matches!(&target.execution, ActiveExecution::Wasm(execution) if execution.uses_shared_v8_runtime()),
+                if matches!(&target.execution, ActiveExecution::Wasm(execution) if execution.uses_shared_v8_runtime()) {
+                    target.pending_wasm_signals.push_back(signal);
+                } else if let Some(session) = target.execution.javascript_v8_session_handle().filter(
+                    |_| matches!(&target.execution, ActiveExecution::Javascript(execution) if execution.uses_shared_v8_runtime()),
                 ) {
                     dispatch_v8_session_signal_async(session, signal);
                 } else if !dispatch_v8_process_signal(target, signal)? {
@@ -16754,6 +16858,10 @@ where
                 "action": "default",
             }))
         }
+        "process.take_signal" => {
+            let signal = process.pending_wasm_signals.pop_front();
+            Ok(signal.map(Value::from).unwrap_or(Value::Null).into())
+        }
         "process.umask" => {
             let new_mask = javascript_sync_rpc_arg_u32_optional(&request.args, 0, "process umask")?;
             kernel
@@ -24141,6 +24249,13 @@ fn dispatch_v8_process_signal(process: &ActiveProcess, signal: i32) -> Result<bo
     let Some(signal_name) = signal_name_for_stream_event(signal) else {
         return Ok(false);
     };
+    if matches!(&process.execution, ActiveExecution::Wasm(execution) if execution.uses_shared_v8_runtime())
+    {
+        if let Some(session) = process.execution.javascript_v8_session_handle() {
+            dispatch_v8_session_signal_async(session, signal);
+            return Ok(true);
+        }
+    }
     process.execution.send_javascript_stream_event(
         "signal",
         json!({

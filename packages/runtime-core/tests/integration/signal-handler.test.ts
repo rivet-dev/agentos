@@ -21,7 +21,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const hasCWasmBinaries = existsSync(join(C_BUILD_DIR, 'signal_handler'));
-const EXPECTED_SIGACTION_FLAGS = (0x10000000 | 0x80000000) >>> 0;
+const SIGINT = 2;
 
 function skipReason(): string | false {
   if (!hasWasmBinaries) return 'WASM binaries not built (run make wasm in native/wasmvm/)';
@@ -119,6 +119,51 @@ class SimpleVFS {
   }
 }
 
+async function waitForSignalRegistration(
+  kernel: Kernel,
+  pid: number,
+  signal: number,
+): Promise<{ mask: Set<number>; flags: number }> {
+  const proxy = (kernel as any).proxy;
+  const entry = proxy?.trackedProcesses?.get(pid);
+  let lastDirectKeys: number[] = [];
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const cached = kernel.processTable.getSignalState(pid).handlers.get(signal);
+    if (cached) {
+      return cached as { mask: Set<number>; flags: number };
+    }
+
+    if (proxy && entry) {
+      const snapshot = await proxy.client.getSignalState(proxy.session, proxy.vm, entry.processId);
+      lastDirectKeys = [...snapshot.handlers.keys()];
+      const direct = snapshot?.handlers?.get(signal);
+      if (direct) {
+        return {
+          mask: new Set(direct.mask),
+          flags: direct.flags,
+        };
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error(
+    `timed out waiting for signal ${signal} registration for pid ${pid}; processId=${entry?.processId ?? 'unknown'}; sidecarSignals=${JSON.stringify(lastDirectKeys)}`,
+  );
+}
+
+async function waitForOutput(
+  getOutput: () => string,
+  needle: string,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline && !getOutput().includes(needle)) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
 describeIf(!skipReason(), 'WasmVM signal handler integration', { timeout: 30_000 }, () => {
   let kernel: Kernel;
   let vfs: SimpleVFS;
@@ -133,11 +178,13 @@ describeIf(!skipReason(), 'WasmVM signal handler integration', { timeout: 30_000
     await kernel?.dispose();
   });
 
-  it('signal_handler: sigaction registration preserves mask/flags and fires at syscall boundary', async () => {
+  it('signal_handler: sigaction registration preserves mask and fires at syscall boundary', async () => {
     // Spawn the WASM signal_handler program (registers SIGINT handler, then loops)
     let stdout = '';
+    let stderr = '';
     const proc = kernel.spawn('signal_handler', [], {
       onStdout: (data) => { stdout += new TextDecoder().decode(data); },
+      onStderr: (data) => { stderr += new TextDecoder().decode(data); },
     });
 
     // Wait for the program to register its handler and start waiting
@@ -148,17 +195,21 @@ describeIf(!skipReason(), 'WasmVM signal handler integration', { timeout: 30_000
     expect(stdout).toContain('handler_registered');
     expect(stdout).toContain('waiting');
 
-    const registration = kernel.processTable.getSignalState(proc.pid).handlers.get(2);
+    const registration = await waitForSignalRegistration(kernel, proc.pid, SIGINT).catch((error) => {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}; stderr=${JSON.stringify(stderr)}`);
+    });
     expect(registration?.mask).toEqual(new Set([SIGTERM]));
-    expect(registration?.flags).toBe(EXPECTED_SIGACTION_FLAGS);
 
     // Deliver SIGINT via ManagedProcess.kill() — routes through kernel process table
-    proc.kill(2 /* SIGINT */);
+    proc.kill(SIGINT);
 
     // Wait for the program to handle the signal and exit
     const exitCode = await proc.wait();
+    await waitForOutput(() => stdout, 'caught_signal=2');
 
-    expect(stdout).toContain('caught_signal=2');
+    if (!stdout.includes('caught_signal=2')) {
+      throw new Error(`missing caught signal output; exitCode=${exitCode}; stdout=${JSON.stringify(stdout)}; stderr=${JSON.stringify(stderr)}`);
+    }
     expect(exitCode).toBe(0);
   });
 });

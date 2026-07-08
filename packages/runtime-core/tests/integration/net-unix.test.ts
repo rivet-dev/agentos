@@ -1,197 +1,125 @@
 /**
  * Integration test for WasmVM Unix domain sockets.
  *
- * Spawns the unix_socket C program as WASM (socket(AF_UNIX) → bind → listen →
- * accept → recv → send "pong" → close), connects from the kernel as a client,
- * and verifies data exchange via in-kernel loopback routing.
+ * Spawns the unix_socket C program as WASM and connects to it from a guest Node
+ * process through an AF_UNIX path.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createWasmVmRuntime } from '@rivet-dev/agentos-vm-test-harness';
+import { afterEach, describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import {
-  AF_UNIX,
-  COMMANDS_DIR,
-  C_BUILD_DIR,
-  createKernel,
-  describeIf,
-  hasWasmBinaries,
-  SOCK_STREAM,
-} from '@rivet-dev/agentos-vm-test-harness';
-import type { Kernel } from '@rivet-dev/agentos-vm-test-harness';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+	C_BUILD_DIR,
+	COMMANDS_DIR,
+	createIntegrationKernel,
+	describeIf,
+	skipUnlessWasmBuilt,
+} from "@rivet-dev/agentos-vm-test-harness";
+import type {
+	IntegrationKernelResult,
+	Kernel,
+} from "@rivet-dev/agentos-vm-test-harness";
 
-const hasCWasmBinaries = existsSync(join(C_BUILD_DIR, 'unix_socket'));
+const WASM_UNIX_SOCKET = resolve(C_BUILD_DIR, "unix_socket");
 
 function skipReason(): string | false {
-  if (!hasWasmBinaries) return 'WASM binaries not built (run make wasm in native/wasmvm/)';
-  if (!hasCWasmBinaries) return 'unix_socket WASM binary not built (run make -C native/wasmvm/c sysroot && make -C native/wasmvm/c programs)';
-  return false;
+	const wasmSkipReason = skipUnlessWasmBuilt();
+	if (wasmSkipReason) return wasmSkipReason;
+	if (!existsSync(WASM_UNIX_SOCKET)) {
+		return `unix_socket WASM binary not found at ${WASM_UNIX_SOCKET}`;
+	}
+	return false;
 }
 
-// Minimal in-memory VFS (same as net-server)
-class SimpleVFS {
-  private files = new Map<string, Uint8Array>();
-  private dirs = new Set<string>(['/']);
-  private symlinks = new Map<string, string>();
-
-  async readFile(path: string): Promise<Uint8Array> {
-    const data = this.files.get(path);
-    if (!data) throw new Error(`ENOENT: ${path}`);
-    return data;
-  }
-  async readTextFile(path: string): Promise<string> {
-    return new TextDecoder().decode(await this.readFile(path));
-  }
-  async pread(path: string, offset: number, length: number): Promise<Uint8Array> {
-    const data = await this.readFile(path);
-    return data.slice(offset, offset + length);
-  }
-  async readDir(path: string): Promise<string[]> {
-    const prefix = path === '/' ? '/' : path + '/';
-    const entries: string[] = [];
-    for (const p of [...this.files.keys(), ...this.dirs]) {
-      if (p !== path && p.startsWith(prefix)) {
-        const rest = p.slice(prefix.length);
-        if (!rest.includes('/')) entries.push(rest);
-      }
-    }
-    return entries;
-  }
-  async readDirWithTypes(path: string) {
-    return (await this.readDir(path)).map((name) => ({
-      name,
-      isDirectory: this.dirs.has(path === '/' ? `/${name}` : `${path}/${name}`),
-    }));
-  }
-  async writeFile(path: string, content: string | Uint8Array): Promise<void> {
-    const data = typeof content === 'string' ? new TextEncoder().encode(content) : content;
-    this.files.set(path, new Uint8Array(data));
-    const parts = path.split('/').filter(Boolean);
-    for (let i = 1; i < parts.length; i++) {
-      this.dirs.add('/' + parts.slice(0, i).join('/'));
-    }
-  }
-  async createDir(path: string) { this.dirs.add(path); }
-  async mkdir(path: string, _options?: { recursive?: boolean }) { this.dirs.add(path); }
-  async exists(path: string): Promise<boolean> {
-    return this.files.has(path) || this.dirs.has(path) || this.symlinks.has(path);
-  }
-  async stat(path: string) {
-    const isDir = this.dirs.has(path);
-    const isSymlink = this.symlinks.has(path);
-    const data = this.files.get(path);
-    if (!isDir && !isSymlink && !data) throw new Error(`ENOENT: ${path}`);
-    return {
-      mode: isSymlink ? 0o120777 : (isDir ? 0o40755 : 0o100644),
-      size: data?.length ?? 0,
-      isDirectory: isDir,
-      isSymbolicLink: isSymlink,
-      atimeMs: Date.now(),
-      mtimeMs: Date.now(),
-      ctimeMs: Date.now(),
-      birthtimeMs: Date.now(),
-      ino: 0,
-      nlink: 1,
-      uid: 1000,
-      gid: 1000,
-    };
-  }
-  async chmod() {}
-  async rename(from: string, to: string) {
-    const data = this.files.get(from);
-    if (data) { this.files.set(to, data); this.files.delete(from); }
-  }
-  async unlink(path: string) { this.files.delete(path); this.symlinks.delete(path); }
-  async rmdir(path: string) { this.dirs.delete(path); }
-  async symlink(target: string, linkPath: string) {
-    this.symlinks.set(linkPath, target);
-    const parts = linkPath.split('/').filter(Boolean);
-    for (let i = 1; i < parts.length; i++) {
-      this.dirs.add('/' + parts.slice(0, i).join('/'));
-    }
-  }
-  async readlink(path: string): Promise<string> {
-    const target = this.symlinks.get(path);
-    if (!target) throw new Error(`EINVAL: ${path}`);
-    return target;
-  }
+interface RunningGuestProgram {
+	process: ReturnType<Kernel["spawn"]>;
+	stdoutChunks: Uint8Array[];
+	stderrChunks: Uint8Array[];
 }
 
-// Wait for a kernel Unix domain socket listener at the given path (poll with timeout)
+function decodeChunks(chunks: Uint8Array[]): string {
+	return chunks.map((chunk) => new TextDecoder().decode(chunk)).join("");
+}
+
+function spawnGuestProgram(
+	kernel: Kernel,
+	command: string,
+	args: string[],
+): RunningGuestProgram {
+	const stdoutChunks: Uint8Array[] = [];
+	const stderrChunks: Uint8Array[] = [];
+	const process = kernel.spawn(command, args, {
+		onStdout: (chunk) => stdoutChunks.push(chunk),
+		onStderr: (chunk) => stderrChunks.push(chunk),
+	});
+	return { process, stdoutChunks, stderrChunks };
+}
+
+async function runGuestNodeProgram(
+	kernel: Kernel,
+	code: string,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+	const program = spawnGuestProgram(kernel, "node", ["-e", code]);
+	const exitCode = await program.process.wait();
+	return {
+		exitCode,
+		stdout: decodeChunks(program.stdoutChunks),
+		stderr: decodeChunks(program.stderrChunks),
+	};
+}
+
 async function waitForUnixListener(
-  kernel: Kernel,
-  path: string,
-  timeoutMs = 10_000,
+	kernel: Kernel,
+	path: string,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const listener = kernel.socketTable.findListener({ path });
-    if (listener) return;
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  throw new Error(`Timed out waiting for Unix listener on ${path}`);
+	const deadline = Date.now() + 20_000;
+	while (Date.now() < deadline) {
+		if (kernel.socketTable.findListener({ path })) {
+			return;
+		}
+		await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+	}
+	throw new Error(`Timed out waiting for Unix listener on ${path}`);
 }
 
-const SOCK_PATH = '/tmp/test.sock';
-const CLIENT_PID = 999; // Fake PID for test-side client sockets
+const SOCK_PATH = "/tmp/test.sock";
 
-describeIf(!skipReason(), 'WasmVM Unix domain socket integration', { timeout: 30_000 }, () => {
-  let kernel: Kernel;
-  let vfs: SimpleVFS;
+describeIf(!skipReason(), "WasmVM Unix domain socket integration", { timeout: 30_000 }, () => {
+	let ctx: IntegrationKernelResult | undefined;
 
-  beforeEach(async () => {
-    vfs = new SimpleVFS();
-    // Create /tmp so the socket file can be created
-    await vfs.mkdir('/tmp');
-    kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
-  });
+	afterEach(async () => {
+		await ctx?.dispose();
+		ctx = undefined;
+	});
 
-  afterEach(async () => {
-    await kernel?.dispose();
-  });
+	it("unix_socket: accept connection, recv data, send pong", async () => {
+		ctx = await createIntegrationKernel({
+			runtimes: ["wasmvm", "node"],
+			commandDirs: [C_BUILD_DIR, COMMANDS_DIR],
+		});
+		await ctx.kernel.mkdir("/tmp");
+		const server = spawnGuestProgram(ctx.kernel, "unix_socket", [SOCK_PATH]);
+		await waitForUnixListener(ctx.kernel, SOCK_PATH);
 
-  it('unix_socket: accept connection, recv data, send pong', async () => {
-    // Start the WASM Unix socket server (blocks on accept until we connect)
-    const execPromise = kernel.exec(`unix_socket ${SOCK_PATH}`);
+		const client = await runGuestNodeProgram(
+			ctx.kernel,
+			[
+				"const net = require('net');",
+				`const client = net.connect({ path: ${JSON.stringify(SOCK_PATH)} }, () => client.write('ping'));`,
+				"client.on('data', (chunk) => { console.log(chunk.toString()); client.end(); });",
+				"client.on('error', (error) => { console.error(error); process.exit(1); });",
+			].join("\n"),
+		);
+		const serverExit = await server.process.wait();
 
-    // Wait for the server to finish bind+listen
-    await waitForUnixListener(kernel, SOCK_PATH);
-
-    // Create a client socket and connect via loopback
-    const st = kernel.socketTable;
-    const clientId = st.create(AF_UNIX, SOCK_STREAM, 0, CLIENT_PID);
-    await st.connect(clientId, { path: SOCK_PATH });
-
-    // Send "ping" to the server
-    const encoder = new TextEncoder();
-    st.send(clientId, encoder.encode('ping'));
-
-    // Wait for the server to process and send its reply
-    const decoder = new TextDecoder();
-    let reply = '';
-    const recvDeadline = Date.now() + 10_000;
-    while (Date.now() < recvDeadline) {
-      const chunk = st.recv(clientId, 256);
-      if (chunk && chunk.length > 0) {
-        reply += decoder.decode(chunk);
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 20));
-    }
-
-    expect(reply).toBe('pong');
-
-    // Close client socket
-    st.close(clientId, CLIENT_PID);
-
-    // Wait for exec to complete (server exits after handling one connection)
-    const result = await execPromise;
-
-    expect(result.stdout).toContain(`listening on ${SOCK_PATH}`);
-    expect(result.stdout).toContain('received: ping');
-    expect(result.stdout).toContain('sent: 4');
-    expect(result.exitCode).toBe(0);
-  });
+		expect(client.exitCode).toBe(0);
+		expect(client.stderr).toBe("");
+		expect(client.stdout.trim()).toBe("pong");
+		expect(serverExit).toBe(0);
+		expect(decodeChunks(server.stdoutChunks)).toContain(
+			`listening on ${SOCK_PATH}`,
+		);
+		expect(decodeChunks(server.stdoutChunks)).toContain("received: ping");
+		expect(decodeChunks(server.stdoutChunks)).toContain("sent: 4");
+	});
 });

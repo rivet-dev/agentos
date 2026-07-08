@@ -181,14 +181,20 @@ so a reader sees the whole board at a glance.
   and `2026-07-07T23-19-11-0700-item4-sqlite3-check-types.txt`.
 - **rev:** `klrzzkro` — `fix(vfs): expose positioned writes in test kernel`
 
-### 5. Socket-layer failures (net-server/udp/unix, signal_handler)
+### 5. Socket-layer failures (net-server/udp/unix, signal_handler) — DONE
 - **Broken:** in the audit run, `st.create is not a function` + a `LinkError` in
   net tests; signal_handler didn't catch signals. May be partial-build artifacts.
 - **Objective:** TCP/UDP/Unix socket + signal test programs run to completion in
   the VM with real socket semantics. **First reconfirm on a full build** — if it
   reproduces, fix the socket-table wiring / link error.
-- **Proof:** net-server/net-udp/net-unix/signal-handler suites pass on a full build.
-- **rev:** `fix(runtime): repair socket-table wiring for net/signal tests` (only if confirmed)
+- **Proof:** net-server/net-udp/net-unix/signal-handler suites pass together in
+  `2026-07-08T00-23-43-0700-item5-four-suites-take-signal-bridge.txt`.
+  Runtime and native sidecar builds pass in
+  `2026-07-08T00-24-02-0700-item5-final-runtime-core-build.txt` and
+  `2026-07-08T00-24-02-0700-item5-final-native-sidecar-build.txt`; native
+  embedded signal coverage passes in
+  `2026-07-08T00-24-02-0700-item5-final-native-embedded-runtime-signal-suite.txt`.
+- **rev:** `zvyxkkyv` — `fix(runtime): repair Wasm socket and signal integration`
 
 ---
 
