@@ -475,6 +475,7 @@ export interface Kernel extends KernelInterface {
 	removeFile(path: string): Promise<void>;
 	removeDir(path: string): Promise<void>;
 	rename(oldPath: string, newPath: string): Promise<void>;
+	pwrite(path: string, offset: number, data: Uint8Array): Promise<void>;
 	vmFetch(request: {
 		port: number;
 		method: string;
@@ -2983,6 +2984,15 @@ class NativeKernel implements Kernel {
 	async rename(oldPath: string, newPath: string): Promise<void> {
 		await this.ensureReady();
 		return this.proxy!.rename(oldPath, newPath);
+	}
+
+	async pwrite(
+		targetPath: string,
+		offset: number,
+		data: Uint8Array,
+	): Promise<void> {
+		await this.ensureReady();
+		return this.proxy!.vfs.pwrite(targetPath, offset, data);
 	}
 
 	private tryResolveMountedCommand(command: string): boolean {

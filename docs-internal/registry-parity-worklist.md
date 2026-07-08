@@ -168,14 +168,18 @@ so a reader sees the whole board at a glance.
   `2026-07-07T23-11-21-0700-item3-dispose-behavior-final-pass.txt`.
 - **rev:** `zkywnwup` — `fix(runtime): unblock WasmVM signal waits and dispose`
 
-### 4. VFS missing `pwrite` — sqlite3 file-backed DBs don't persist
+### 4. VFS missing `pwrite` — sqlite3 file-backed DBs don't persist — DONE
 - **Broken:** `filesystem method pwrite is unavailable` — sqlite3 file-backed DB
   can't persist across exec calls.
 - **Objective:** the VFS implements positioned writes (`pwrite`/`pwritev`) so any
   command doing positioned I/O (sqlite3, and others) behaves like Linux.
-- **Proof:** sqlite3 "file-based DB persists across separate exec calls" passes;
-  add a direct VFS pwrite test.
-- **rev:** `fix(vfs): implement pwrite for positioned writes`
+- **Proof:** sqlite3 "file-based DB persists across separate exec calls" passes
+  in `2026-07-07T23-18-45-0700-item4-sqlite3-file-db-pwrite-pass.txt`; direct
+  mounted JS VFS `pwrite` test passes in
+  `2026-07-07T23-18-45-0700-item4-runtime-core-custom-vfs-pwrite-pass.txt`.
+  Type/build checks pass in `2026-07-07T23-19-11-0700-item4-runtime-core-build.txt`
+  and `2026-07-07T23-19-11-0700-item4-sqlite3-check-types.txt`.
+- **rev:** `klrzzkro` — `fix(vfs): expose positioned writes in test kernel`
 
 ### 5. Socket-layer failures (net-server/udp/unix, signal_handler)
 - **Broken:** in the audit run, `st.create is not a function` + a `LinkError` in
