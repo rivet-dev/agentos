@@ -1,5 +1,10 @@
 {
 	"$schema": "https://turbo.build/schema.json",
+	"globalEnv": ["AGENTOS_SKIP_NATIVE_META_BUILD"],
+	"globalDependencies": [
+		"crates/sidecar-protocol/protocol/**",
+		"packages/build-tools/scripts/compile-sidecar-protocol.mjs"
+	],
 	"tasks": {
 		"//#fmt": {
 			"cache": false
@@ -28,6 +33,16 @@
 		},
 		"@rivet-dev/agentos-sidecar#build": {
 			"cache": false
+		},
+		"@rivet-dev/agentos-runtime-core#build": {
+			"dependsOn": ["^build"],
+			"inputs": [
+				"src/**",
+				"scripts/**",
+				"tsconfig.json",
+				"package.json"
+			],
+			"outputs": ["dist/**", "commands/**"]
 		},
 		"@rivet-dev/agentos-plugin#build": {
 			"cache": false

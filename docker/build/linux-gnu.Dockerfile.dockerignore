@@ -1,0 +1,8 @@
+# Permissive context for the Linux native build. Send source, drop generated
+# artifacts that the in-container build regenerates.
+.git
+**/node_modules
+**/target
+**/dist
+**/.astro
+**/.turbo
