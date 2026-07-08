@@ -50,7 +50,7 @@ Use the built-in `memory` plugin for an ephemeral mounted directory in the nativ
 
 <Tab title="Custom JS VFS">
 
-Use `mountFs()` for a callback-backed JS filesystem driver. The driver must live in the same JS process as the `AgentOs` instance, such as direct core usage or a custom RivetKit actor that owns an `AgentOs` instance.
+Use `mountFs()` for a callback-backed JS filesystem driver. The driver must live in the same JS process as the `AgentOs` instance, such as direct core usage or a custom RivetKit actor that owns an `AgentOs` instance. `mountFs()` works on a running VM too — it returns a promise that resolves once the mount is visible to guest code, and rejects if delivery to the runtime fails.
 
 <CodeSnippet file="examples/filesystem/mount-custom-vfs.ts" />
 

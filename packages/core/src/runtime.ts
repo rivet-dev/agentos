@@ -330,8 +330,8 @@ export interface Kernel extends KernelInterface {
 		path: string,
 		fs: VirtualFileSystem,
 		options?: { readOnly?: boolean },
-	): void;
-	unmountFs(path: string): void;
+	): void | Promise<void>;
+	unmountFs(path: string): void | Promise<void>;
 	readFile(path: string): Promise<Uint8Array>;
 	writeFile(path: string, content: string | Uint8Array): Promise<void>;
 	mkdir(path: string): Promise<void>;

@@ -339,6 +339,16 @@ interface NativeSidecarKernelProxyOptions {
 		SidecarProcess["configureVm"]
 	>[2]["commandPermissions"];
 	loopbackExemptPorts?: number[];
+	/**
+	 * The boot `configureVm` payload pieces beyond mounts/permissions. Rust
+	 * `configure_vm` rebuilds the whole VM configuration from each payload, so
+	 * every runtime mount reconfigure must resend these or a post-boot
+	 * `mountFs()` silently drops the `/opt/agentos` package projections and
+	 * tool shim commands applied at boot.
+	 */
+	packages?: Parameters<SidecarProcess["configureVm"]>[2]["packages"];
+	packagesMountAt?: string;
+	toolShimCommands?: string[];
 	commandGuestPaths: ReadonlyMap<string, string>;
 	onWasmCommandResolved?: (command: string) => void;
 	onDispose?: () => Promise<void>;
@@ -371,6 +381,13 @@ export class NativeSidecarKernelProxy {
 		| Parameters<SidecarProcess["configureVm"]>[2]["commandPermissions"]
 		| undefined;
 	private readonly loopbackExemptPorts: number[] | undefined;
+	// Mutable: runtime `linkSoftware` appends via `registerLinkedPackage` so
+	// later mount reconfigures resend linked packages too, not just boot ones.
+	private packages: NonNullable<
+		Parameters<SidecarProcess["configureVm"]>[2]["packages"]
+	>;
+	private readonly packagesMountAt: string | undefined;
+	private readonly toolShimCommands: string[] | undefined;
 	private readonly commandDrivers: Map<string, string>;
 	private readonly onWasmCommandResolved:
 		| ((command: string) => void)
@@ -420,6 +437,9 @@ export class NativeSidecarKernelProxy {
 		this.permissions = options.permissions;
 		this.commandPermissions = options.commandPermissions;
 		this.loopbackExemptPorts = options.loopbackExemptPorts;
+		this.packages = options.packages ? [...options.packages] : [];
+		this.packagesMountAt = options.packagesMountAt;
+		this.toolShimCommands = options.toolShimCommands;
 		this.commandDrivers = buildCommandMap(options.commandGuestPaths);
 		this.onWasmCommandResolved = options.onWasmCommandResolved;
 		this.onDispose = options.onDispose;
@@ -446,6 +466,18 @@ export class NativeSidecarKernelProxy {
 	): void {
 		for (const name of commandGuestPaths.keys()) {
 			this.commandDrivers.set(name, "wasmvm");
+		}
+	}
+
+	/**
+	 * Record a runtime-linked package (`linkSoftware`) so mount reconfigures
+	 * resend it. Rust `configure_vm` rebuilds the whole VM configuration from
+	 * each payload, so a linked package omitted here would be silently
+	 * unprojected from `/opt/agentos` by the next `mountFs`/`unmountFs`.
+	 */
+	registerLinkedPackage(descriptor: { path: string }): void {
+		if (!this.packages.some((pkg) => pkg.path === descriptor.path)) {
+			this.packages.push({ path: descriptor.path });
 		}
 	}
 
@@ -1504,7 +1536,7 @@ export class NativeSidecarKernelProxy {
 		path: string,
 		driver: VirtualFileSystem,
 		options?: { readOnly?: boolean; sidecarMount?: SidecarMountDescriptor },
-	): void {
+	): Promise<void> {
 		this.localMounts.unshift({
 			path: posixPath.normalize(path),
 			fs: driver,
@@ -1514,18 +1546,27 @@ export class NativeSidecarKernelProxy {
 		this.localMounts.sort(
 			(left, right) => right.path.length - left.path.length,
 		);
-		void this.reconfigureSidecarMounts().catch(() => {});
+		// Resolves once the sidecar has the mount; a swallowed rejection here
+		// used to turn reconfigure failures into silently missing guest mounts.
+		// The local catch only guards callers that drop the promise — awaiting
+		// callers still observe the rejection.
+		const applied = this.reconfigureSidecarMounts();
+		applied.catch(() => {});
+		return applied;
 	}
 
-	unmountFs(path: string): void {
+	unmountFs(path: string): Promise<void> {
 		const normalized = posixPath.normalize(path);
 		const index = this.localMounts.findIndex(
 			(mount) => mount.path === normalized,
 		);
-		if (index >= 0) {
-			this.localMounts.splice(index, 1);
-			void this.reconfigureSidecarMounts().catch(() => {});
+		if (index < 0) {
+			return Promise.resolve();
 		}
+		this.localMounts.splice(index, 1);
+		const applied = this.reconfigureSidecarMounts();
+		applied.catch(() => {});
+		return applied;
 	}
 
 	private desiredSidecarMounts(): SidecarMountDescriptor[] {
@@ -1550,11 +1591,18 @@ export class NativeSidecarKernelProxy {
 			if (this.disposed) {
 				return;
 			}
+			// Rust `configure_vm` rebuilds the whole VM configuration from this
+			// payload, so resend the boot packages / tool shim commands too —
+			// omitting them here strips the `/opt/agentos` projections and tool
+			// shims from the VM as a side effect of a runtime mount change.
 			await this.client.configureVm(this.session, this.vm, {
 				mounts: this.desiredSidecarMounts(),
 				permissions: this.permissions,
 				commandPermissions: this.commandPermissions,
 				loopbackExemptPorts: this.loopbackExemptPorts,
+				packages: this.packages,
+				packagesMountAt: this.packagesMountAt,
+				toolShimCommands: this.toolShimCommands,
 			});
 		};
 		const previous = this.mountReconfigurePromise ?? Promise.resolve();

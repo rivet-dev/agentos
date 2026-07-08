@@ -119,12 +119,12 @@ describe("mount integration", () => {
 	test("runtime mountFs and unmountFs work", async () => {
 		vm = await createMountVm();
 
-		vm.mountFs("/mnt/dynamic", createInMemoryFileSystem());
+		await vm.mountFs("/mnt/dynamic", createInMemoryFileSystem());
 		await vm.writeFile("/mnt/dynamic/test.txt", "dynamic");
 		const data = await vm.readFile("/mnt/dynamic/test.txt");
 		expect(new TextDecoder().decode(data)).toBe("dynamic");
 
-		vm.unmountFs("/mnt/dynamic");
+		await vm.unmountFs("/mnt/dynamic");
 		await expect(vm.readFile("/mnt/dynamic/test.txt")).rejects.toThrow();
 		// Runtime mount + unmount each trigger a full sidecar reconfigure, so this
 		// integration test needs more than the 30s default (see PR #1521 CI).
@@ -134,7 +134,7 @@ describe("mount integration", () => {
 		const mounted = createRecordingFilesystem();
 		vm = await createMountVm();
 
-		vm.mountFs("/mnt/custom", mounted.fs);
+		await vm.mountFs("/mnt/custom", mounted.fs);
 		await vm.writeFile("/mnt/custom/note.txt", "from custom vfs");
 
 		expect(
@@ -143,7 +143,7 @@ describe("mount integration", () => {
 		expect(mounted.calls).toContain("writeFile:/note.txt");
 		expect(mounted.calls).toContain("readFile:/note.txt");
 
-		vm.unmountFs("/mnt/custom");
+		await vm.unmountFs("/mnt/custom");
 		await expect(vm.readFile("/mnt/custom/note.txt")).rejects.toThrow();
 		// Runtime mount + unmount each trigger a full sidecar reconfigure, so this
 		// integration test needs more than the 30s default (see PR #1521 CI).
@@ -177,7 +177,7 @@ describe("mount integration", () => {
 		const mounted = createRecordingFilesystem();
 		vm = await createMountVm();
 
-		vm.mountFs("/mnt/custom", mounted.fs);
+		await vm.mountFs("/mnt/custom", mounted.fs);
 		await vm.writeFile("/mnt/custom/host.txt", "from host api");
 		const result = await vm.execArgv("node", [
 			"-e",

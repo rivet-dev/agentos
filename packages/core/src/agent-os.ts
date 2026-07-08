@@ -2821,6 +2821,12 @@ export class AgentOs {
 					permissions: sidecarPermissions,
 					commandPermissions: {},
 					loopbackExemptPorts: options?.loopbackExemptPorts,
+					// Retained for runtime mount reconfigures: `configure_vm` is
+					// replace-on-write for the whole payload, so post-boot mountFs
+					// must resend the boot packages and tool shims.
+					packages: sidecarPackages,
+					packagesMountAt: OPT_AGENTOS_ROOT,
+					toolShimCommands: toolBootstrapCommands,
 					commandGuestPaths,
 					onDispose: cleanup,
 					// The native process is owned by the AgentOsSidecar handle and
@@ -3238,18 +3244,24 @@ export class AgentOs {
 		);
 	}
 
-	mountFs(
+	/**
+	 * Mount a filesystem into the running VM. Resolves once the mount has been
+	 * delivered to the native sidecar, so guest code can use it immediately
+	 * after the returned promise settles; a delivery failure rejects instead of
+	 * leaving the mount silently host-only.
+	 */
+	async mountFs(
 		path: string,
 		driver: VirtualFileSystem,
 		options?: { readOnly?: boolean },
-	): void {
+	): Promise<void> {
 		this._assertSafeAbsolutePath(path);
-		this.#kernel.mountFs(path, driver, { readOnly: options?.readOnly });
+		await this.#kernel.mountFs(path, driver, { readOnly: options?.readOnly });
 	}
 
-	unmountFs(path: string): void {
+	async unmountFs(path: string): Promise<void> {
 		this._assertSafeAbsolutePath(path);
-		this.#kernel.unmountFs(path);
+		await this.#kernel.unmountFs(path);
 	}
 
 	async move(from: string, to: string): Promise<void> {
@@ -3541,6 +3553,10 @@ export class AgentOs {
 					]),
 				),
 			);
+			// Retain the linked package for runtime mount reconfigures:
+			// `configure_vm` is replace-on-write, so a later `mountFs` that
+			// resent only the boot packages would unproject this one.
+			this.#kernel.registerLinkedPackage({ path: ref.path });
 		}
 		// The client parses no manifests: an `agent` block in the linked package is
 		// picked up by the sidecar (it owns the projected `/opt/agentos` and answers

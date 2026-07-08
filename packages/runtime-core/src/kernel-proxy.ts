@@ -1262,6 +1262,10 @@ export class NativeSidecarKernelProxy {
 		return this.client.rename(this.session, this.vm, oldPath, newPath);
 	}
 
+	// Test-runtime only: runtime mounts registered here stay host-side local
+	// compat mounts and are not delivered to the sidecar. The production proxy
+	// in @rivet-dev/agentos-core reconfigures sidecar mounts on every
+	// mountFs/unmountFs.
 	mountFs(
 		path: string,
 		driver: VirtualFileSystem,

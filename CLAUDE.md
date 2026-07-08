@@ -39,6 +39,13 @@ by default, warn near threshold, and fail with a typed error that names the
 limit and how to raise it. Host-visible warnings/errors must reach stderr/log
 or structured trace paths, not stay trapped in the VM.
 
+Never swallow errors silently. Every failure must either propagate as a hard,
+typed error to the caller (preferred) or be clearly logged at the failure site;
+empty `catch`/`let _ =` on fallible operations and fire-and-forget promises
+that drop rejections are bugs, not defensive coding. For guest-visible
+surfaces, prefer matching Linux behavior — the correct POSIX errno delivered to
+the guest — over inventing a softer fallback that hides the failure.
+
 ## Runtime And Registry
 
 - The projected `/opt/agentos` filesystem is the source of truth for software
