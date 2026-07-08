@@ -200,7 +200,7 @@ so a reader sees the whole board at a glance.
 
 ## P1 — Broken shipped commands
 
-### 6. curl — reimplemented CLI, exits 1 on every operation (incl. `--version`)
+### 6. curl — reimplemented CLI, exits 1 on every operation (incl. `--version`) — DONE
 - **Broken:** the `curl` command is a **hand-rolled `curl.c` driver** over a
   libcurl fork, not the real curl command-line tool — so 24/30 `curl.test.ts` fail
   and every op returns exit 1, even `curl --version`.
@@ -209,8 +209,11 @@ so a reader sees the whole board at a glance.
   patched only where WASI forces it — replacing the custom driver. All real curl
   behavior (GET/POST, `-I`/`-D`, `-L`, `-u`, `-F`, `-o`/`-O`, `-w`, `-K`) then
   works because it *is* curl, not a shim.
-- **Proof:** `software/curl/test/` (the existing 30 tests) pass un-weakened.
-- **rev:** `fix(curl): build the real curl CLI for WASI; drop the custom driver`
+- **Proof:** `software/curl/test/` passes un-weakened: 25 passed, 5 skipped in
+  `2026-07-08T00-41-57-0700-item6-curl-test-after-tls-flags.txt`. Runtime runner
+  build/protocol checks pass in
+  `2026-07-08T00-41-51-0700-item6-runtime-core-build-tls-flags.txt`.
+- **rev:** `oxoqrwvk` — `fix(curl): build the real curl CLI for WASI`
 
 ### 7. zip / unzip — hostile-archive hardening cases fail (3 each)
 - **Broken:** fallback parser doesn't reject a wrapping local offset, doesn't skip

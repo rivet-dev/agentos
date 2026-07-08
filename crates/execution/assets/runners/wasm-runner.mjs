@@ -2833,6 +2833,7 @@ const HOST_NET_SOCK_DGRAM = 5;
 const HOST_NET_SOCKET_TYPE_MASK = 0xf;
 const HOST_NET_SOL_SOCKET = 1;
 const HOST_NET_WASI_SOL_SOCKET = 0x7fffffff;
+const HOST_NET_SO_ERROR = 4;
 const HOST_NET_SO_RCVTIMEO_64 = 20;
 const HOST_NET_SO_RCVTIMEO_32 = 66;
 const HOST_NET_TIMEVAL_BYTES = 16;
@@ -3676,6 +3677,32 @@ const hostNetImport = {
     }
     return WASI_ERRNO_SUCCESS;
   },
+  net_getsockopt(fd, level, optname, optvalPtr, optvalLenPtr) {
+    const socket = getHostNetSocket(fd);
+    if (!socket || socket.closed) {
+      return WASI_ERRNO_BADF;
+    }
+
+    try {
+      const optvalLen = readGuestUint32(optvalLenPtr);
+      const normalizedLevel = Number(level) >>> 0;
+      const normalizedOptname = Number(optname) >>> 0;
+      if (
+        (normalizedLevel === HOST_NET_SOL_SOCKET ||
+          normalizedLevel === HOST_NET_WASI_SOL_SOCKET) &&
+        normalizedOptname === HOST_NET_SO_ERROR
+      ) {
+        if (optvalLen < 4) {
+          return WASI_ERRNO_INVAL;
+        }
+        new DataView(instanceMemory.buffer).setInt32(Number(optvalPtr) >>> 0, 0, true);
+        return writeGuestUint32(optvalLenPtr, 4);
+      }
+      return WASI_ERRNO_INVAL;
+    } catch {
+      return WASI_ERRNO_FAULT;
+    }
+  },
   net_close(fd) {
     const numericFd = Number(fd) >>> 0;
     const socket = hostNetSockets.get(numericFd);
@@ -3699,7 +3726,7 @@ const hostNetImport = {
       return WASI_ERRNO_FAULT;
     }
   },
-  net_tls_connect(fd, hostnamePtr, hostnameLen) {
+  net_tls_connect(fd, hostnamePtr, hostnameLen, flags = 0) {
     const socket = getHostNetSocket(fd);
     if (!socket?.socketId || socket.closed) {
       return WASI_ERRNO_BADF;
@@ -3708,7 +3735,7 @@ const hostNetImport = {
     try {
       const servername = readGuestString(hostnamePtr, hostnameLen);
       const tlsOptions = { servername };
-      if (guestEnv.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
+      if ((Number(flags) & 1) === 1 || guestEnv.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
         tlsOptions.rejectUnauthorized = false;
       }
       callSyncRpc('net.socket_upgrade_tls', [
@@ -4818,6 +4845,10 @@ const delegateManagedFdClose =
   typeof wasiImport.fd_close === 'function'
     ? wasiImport.fd_close.bind(wasiImport)
     : null;
+const delegateManagedFdRenumber =
+  typeof wasiImport.fd_renumber === 'function'
+    ? wasiImport.fd_renumber.bind(wasiImport)
+    : null;
 const delegateManagedFdPrestatGet =
   typeof wasiImport.fd_prestat_get === 'function'
     ? wasiImport.fd_prestat_get.bind(wasiImport)
@@ -5660,6 +5691,66 @@ wasiImport.fd_close = (fd) => {
         delegateManagedFdClose(fd)
       )
     : WASI_ERRNO_BADF;
+};
+
+wasiImport.fd_renumber = (from, to) => {
+  try {
+    const sourceFd = Number(from) >>> 0;
+    const targetFd = Number(to) >>> 0;
+    if (sourceFd === targetFd) {
+      return lookupFdHandle(sourceFd) || delegateManagedFdRefCounts.has(sourceFd)
+        ? WASI_ERRNO_SUCCESS
+        : WASI_ERRNO_BADF;
+    }
+
+    const syntheticHandle = syntheticFdEntries.get(sourceFd);
+    const passthroughHandle = passthroughHandles.get(sourceFd);
+    const retainedSpawnOutputHandle = retainedSpawnOutputHandlesByFd.get(sourceFd);
+    if (!syntheticHandle && !passthroughHandle && !retainedSpawnOutputHandle) {
+      if (rejectClosedPassthroughFd(sourceFd)) {
+        return WASI_ERRNO_BADF;
+      }
+      return delegateManagedFdRenumber
+        ? delegateManagedFdRenumber(sourceFd, targetFd)
+        : WASI_ERRNO_BADF;
+    }
+
+    if (
+      syntheticFdEntries.has(targetFd) ||
+      passthroughHandles.has(targetFd) ||
+      retainedSpawnOutputHandlesByFd.has(targetFd) ||
+      delegateManagedFdRefCounts.has(targetFd)
+    ) {
+      const closeResult = wasiImport.fd_close(targetFd);
+      if (closeResult !== WASI_ERRNO_SUCCESS) {
+        return closeResult;
+      }
+    }
+
+    if (syntheticHandle) {
+      syntheticFdEntries.delete(sourceFd);
+      syntheticFdEntries.set(targetFd, syntheticHandle);
+    } else if (passthroughHandle) {
+      passthroughHandles.delete(sourceFd);
+      passthroughHandles.set(targetFd, passthroughHandle);
+      closedPassthroughFds.add(sourceFd);
+      closedPassthroughFds.delete(targetFd);
+    } else {
+      retainedSpawnOutputHandlesByFd.delete(sourceFd);
+      retainedSpawnOutputHandlesByFd.set(targetFd, retainedSpawnOutputHandle);
+    }
+
+    nextSyntheticFd = Math.max(nextSyntheticFd, targetFd + 1);
+    traceHostProcess('fd-renumber', {
+      from: sourceFd,
+      to: targetFd,
+      syntheticKind: syntheticHandle?.kind ?? null,
+      passthroughKind: passthroughHandle?.kind ?? null,
+    });
+    return WASI_ERRNO_SUCCESS;
+  } catch {
+    return WASI_ERRNO_FAULT;
+  }
 };
 
 wasiImport.poll_oneoff = (inPtr, outPtr, nsubscriptions, neventsPtr) => {
