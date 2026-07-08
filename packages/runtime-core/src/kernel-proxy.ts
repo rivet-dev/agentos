@@ -118,6 +118,14 @@ const PREFERRED_SIGNAL_NAMES = [
 	"SIGEMT",
 	"SIGINFO",
 ] as const;
+const NON_TERMINATING_SIGNALS = new Set([
+	"0",
+	"SIGCHLD",
+	"SIGCONT",
+	"SIGSTOP",
+	"SIGURG",
+	"SIGWINCH",
+]);
 const NON_CANONICAL_SIGNAL_NAMES = new Set([
 	"SIGCLD",
 	"SIGIOT",
@@ -418,7 +426,10 @@ export class NativeSidecarKernelProxy {
 			liveProcesses.map((entry) => this.signalProcess(entry, 15)),
 		);
 
-		await this.client.disposeVm(this.session, this.vm).catch(() => {});
+		await Promise.race([
+			this.client.disposeVm(this.session, this.vm),
+			new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+		]).catch(() => {});
 		for (const entry of liveProcesses) {
 			if (entry.exitCode === null) {
 				// The sidecar dispose path already performs TERM/KILL escalation for any
@@ -679,13 +690,19 @@ export class NativeSidecarKernelProxy {
 				}
 				entry.pendingKillSignal = signal;
 				void entry.startPromise.then(async () => {
-					if (entry.exitCode !== null || entry.pendingKillSignal === null) {
+					if (entry.pendingKillSignal === null) {
 						return;
 					}
 					const pendingSignal = entry.pendingKillSignal;
 					entry.pendingKillSignal = null;
 					await this.signalProcess(entry, pendingSignal);
 				});
+				if (
+					(signal === 9 || signal === 15) &&
+					entry.exitCode === null
+				) {
+					this.finishProcess(entry, 128 + signal);
+				}
 			},
 			wait: async () => {
 				const exitCode = await this.waitForTrackedProcess(entry);
@@ -1683,14 +1700,34 @@ export class NativeSidecarKernelProxy {
 		entry: TrackedProcessEntry,
 		signal: number,
 	): Promise<void> {
-		await this.signalRefreshes.get(entry.pid);
+		const sidecarSignal = toSidecarSignalName(signal);
+		let timedOut = false;
+		const killPromise = this.client.killProcess(
+			this.session,
+			this.vm,
+			entry.processId,
+			sidecarSignal,
+		);
 		try {
-			await this.client.killProcess(
-				this.session,
-				this.vm,
-				entry.processId,
-				toSidecarSignalName(signal),
-			);
+			await Promise.race([
+				killPromise,
+				new Promise<void>((resolve) =>
+					setTimeout(() => {
+						timedOut = true;
+						resolve();
+					}, 1000),
+				),
+			]);
+			if (timedOut) {
+				void killPromise.catch(() => {});
+			}
+			if (
+				entry.exitCode === null &&
+				!NON_TERMINATING_SIGNALS.has(sidecarSignal) &&
+				(entry.driver === "wasmvm" || timedOut)
+			) {
+				this.finishProcess(entry, 128 + signal);
+			}
 		} catch (error) {
 			if (isNoSuchProcessError(error) || isUnknownVmError(error)) {
 				return;

@@ -4155,7 +4155,13 @@ const hostProcessImport = {
         },
         sleep_ms(milliseconds) {
           try {
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(milliseconds) >>> 0);
+            const waitArray = new Int32Array(new SharedArrayBuffer(4));
+            const deadline = Date.now() + (Number(milliseconds) >>> 0);
+            while (Date.now() < deadline) {
+              // Keep guest sleeps interruptible by V8 termination during SIGTERM,
+              // SIGKILL, and VM disposal.
+              Atomics.wait(waitArray, 0, 0, Math.max(1, Math.min(10, deadline - Date.now())));
+            }
             return WASI_ERRNO_SUCCESS;
           } catch {
             return WASI_ERRNO_FAULT;
@@ -5728,7 +5734,9 @@ wasiImport.poll_oneoff = (inPtr, outPtr, nsubscriptions, neventsPtr) => {
     });
   }
 
-  if (!hasSyntheticSubscription && !hasRemappedPassthroughSubscription) {
+  const hasClockSubscription = subscriptions.some((subscription) => subscription.kind === 'clock');
+
+  if (!hasSyntheticSubscription && !hasRemappedPassthroughSubscription && !hasClockSubscription) {
     return delegateManagedPollOneoff
       ? delegateManagedPollOneoff(inPtr, outPtr, nsubscriptions, neventsPtr)
       : WASI_ERRNO_BADF;
@@ -5895,7 +5903,7 @@ wasiImport.poll_oneoff = (inPtr, outPtr, nsubscriptions, neventsPtr) => {
     );
   }
 
-  if (readyEvents.length === 0 && subscriptions.some((subscription) => subscription.kind === 'clock')) {
+  if (readyEvents.length === 0 && hasClockSubscription) {
     const clockSubscription = subscriptions.find((subscription) => subscription.kind === 'clock');
     readyEvents.push({
       userdata: clockSubscription.userdata,
