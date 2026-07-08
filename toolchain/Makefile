@@ -24,7 +24,6 @@ COMMAND_PACKAGES := $(addprefix -p cmd-,$(COMMAND_NAMES))
 
 # Alias symlinks: link_name:target_binary
 ALIAS_SYMLINKS := \
-	egrep:grep fgrep:grep \
 	gunzip:gzip zcat:gzip \
 	bash:sh \
 	dir:ls vdir:ls \
@@ -213,7 +212,7 @@ wasm: vendor patch-vendor patch-std wasm-opt-check
 #   codex     the codex fork build    (codex, codex-exec)
 # `just toolchain-cmd <name>` calls this. `make wasm` builds the fast
 # Rust set; `make -C c programs install` builds/installs the fast C set.
-C_COMMANDS := zip unzip envsubst sqlite3 curl wget duckdb vim
+C_COMMANDS := zip unzip envsubst sqlite3 curl wget grep duckdb vim
 
 .PHONY: cmd/%
 cmd/%:

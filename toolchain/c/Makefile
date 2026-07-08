@@ -68,10 +68,10 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 
 # Fast real commands installed by the default software gate. Slow/heavy commands
 # (duckdb, vim) remain available through explicit parent `make cmd/<name>`.
-COMMANDS := zip unzip envsubst sqlite3 curl wget tree
+COMMANDS := zip unzip envsubst sqlite3 curl wget grep tree
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
-PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget tree fs_probe
+PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget grep tree fs_probe
 
 # Discover all package command and test-program C source files.
 ALL_SOURCES := $(foreach dir,$(C_SOURCE_DIRS),$(wildcard $(dir)/*.c))
@@ -89,7 +89,7 @@ endif
 ifeq ($(wildcard $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a),)
   CUSTOM_WASM_PROG_NAMES :=
 else
-  CUSTOM_WASM_PROG_NAMES := curl wget sqlite3 tree
+  CUSTOM_WASM_PROG_NAMES := curl wget grep sqlite3 tree
 endif
 
 WASM_PROG_NAMES := $(sort $(basename $(notdir $(SOURCES))) $(CUSTOM_WASM_PROG_NAMES))
@@ -156,6 +156,9 @@ WGET_URL := https://ftp.gnu.org/gnu/wget/wget-$(WGET_VERSION).tar.gz
 WGET_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/wget-upstream
 WGET_UPSTREAM_OVERLAY_INCLUDE_DIR := overlays/wget/include
 WGET_UPSTREAM_OVERLAY_FILES := $(wildcard $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR)/*.h)
+GREP_VERSION := 3.12
+GREP_URL := https://ftp.gnu.org/gnu/grep/grep-$(GREP_VERSION).tar.xz
+GREP_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/grep-upstream
 TREE_VERSION := 2.3.2
 TREE_URL := https://gitlab.com/OldManProgrammer/unix-tree/-/archive/$(TREE_VERSION)/unix-tree-$(TREE_VERSION).tar.gz
 MINIZIP_URL := https://github.com/madler/zlib/archive/refs/tags/v1.3.1.zip
@@ -616,6 +619,18 @@ $(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES)
 		--cache-dir "$(abspath $(LIBS_CACHE))" \
 		--build-dir "$(abspath $(WGET_UPSTREAM_BUILD_DIR))" \
 		--overlay-include-dir "$(abspath $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR))" \
+		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--output "$(abspath $@)"
+
+$(BUILD_DIR)/grep: scripts/build-grep-upstream.sh $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-grep-upstream.sh \
+		--version "$(GREP_VERSION)" \
+		--url "$(GREP_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(GREP_UPSTREAM_BUILD_DIR))" \
 		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
 		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \

@@ -1,6 +1,6 @@
 # Registry Linux-Parity Worklist
 
-Status: worklist · Owner: registry · Last updated: 2026-07-07
+Status: worklist · Owner: registry · Last updated: 2026-07-08
 
 ## Goal (hand this to the driver agent)
 
@@ -85,7 +85,6 @@ actual backing:
 | Command(s) | Backing |
 |---|---|
 | coreutils (`sh`+80) | **uutils** (`uucore`) — established Rust project |
-| ripgrep (`rg`) | real ripgrep |
 | duckdb, vim | real upstream C source, patched for WASI |
 | sqlite3 **engine** | real SQLite amalgamation (⚠️ but the *CLI* is ours — see below) |
 | jq | **jaq** (`jaq-core/std/json`) — established Rust jq |
@@ -107,7 +106,8 @@ actual backing:
 | **fd** | DONE | our `secureexec-fd` on raw `regex` (not sharkdp/fd) | real **fd** (sharkdp) |
 | **findutils** (`find`,`xargs`) | TODO | our hand-rolled on `regex`/shims | real GNU findutils, or `uutils/findutils` |
 | **tree** | DONE | our hand-rolled, zero deps | real `tree`, or an established one |
-| **grep** | TODO | our `secureexec-grep` on raw `regex` (**not** an established grep pkg) | **real GNU grep**, or a popular established grep (ripgrep's `grep` crates) |
+| **grep** | DONE | our `secureexec-grep` on raw `regex` (**not** an established grep pkg) | real **GNU grep** |
+| **ripgrep** (`rg`) | TODO | our `secureexec-grep` recursive search shim, not real ripgrep | real upstream **ripgrep** |
 | **zip** | DONE | our 203-line `zip.c` over zlib/minizip (not Info-ZIP) | real Info-ZIP, or an established lib's CLI |
 | **unzip** | DONE | our 669-line `unzip.c` over zlib/minizip | real Info-ZIP unzip |
 | **sqlite3 CLI** | DONE | our 558-line `sqlite3_cli.c` (engine is real SQLite; the shell is ours) | real SQLite `shell.c` (its official CLI) |
@@ -245,9 +245,30 @@ works (`wasi-spawn` broker), so `xargs` is not a blocker.
   including `fd --version` reporting `fd 10.4.2`, in
   `2026-07-08T06-25-00-0700-fd-vitest-upstream-after-dir-format.log`.
   Rev: `mrskpomv` — `fix(fd): build upstream fd-find`.
-- **grep — moderate.** Decision is real GNU grep (gnulib cascade → sysroot stubs)
-  or ripgrep's `grep-*` crates (threads → serial patch). NB the current
-  `secureexec-grep` also backs `rg`, so the shipped "ripgrep" is custom too.
+- **grep — DONE.** Replaced the `@agentos-software/grep` package's custom
+  `secureexec-grep` command wrapper with upstream GNU grep 3.12 from the official
+  GNU release tarball. The real GNU `grep` binary builds through the C toolchain;
+  `egrep` and `fgrep` are separate tiny WASM launchers that preserve GNU's
+  upstream obsolescent scripts by spawning `grep -E` / `grep -F` through the
+  AgentOS process broker. Sysroot fix stayed one layer down: wasi-libc no longer
+  advertises/exports its nonstandard two-argument `opendirat`, which conflicted
+  with gnulib's helper. Proof: official GNU release listing captured in
+  `2026-07-08T06-29-11-0700-grep-gnu-ftp-latest.log`; configure options captured
+  in `2026-07-08T06-29-39-0700-grep-upstream-configure-help-probe.log`;
+  sysroot `opendirat` patch check and rebuild pass in
+  `2026-07-08T06-34-27-0700-grep-wasi-libc-opendirat-patch-check-definition.log`
+  and `2026-07-08T06-34-33-0700-grep-sysroot-rebuild-opendirat-definition.log`;
+  GNU grep build passes in
+  `2026-07-08T06-35-01-0700-grep-gnu-wasm-build-after-opendirat-symbol.log`;
+  `egrep`/`fgrep` launcher builds pass in
+  `2026-07-08T06-40-07-0700-grep-egrep-wrapper-build.log` and
+  `2026-07-08T06-40-42-0700-grep-fgrep-wrapper-build.log`; package build and
+  check-types pass in `2026-07-08T06-42-24-0700-grep-package-build-final.log`
+  and `2026-07-08T06-42-18-0700-grep-check-types-final.log`; e2e grep tests
+  pass 8/8 in `2026-07-08T06-43-59-0700-grep-vitest-after-wrapper-cache-repair.log`.
+  Rev: `uyukolvr` — `fix(grep): build upstream GNU grep`.
+  NB: `secureexec-grep` remains only because `@agentos-software/ripgrep` still
+  uses it for `rg`; replace `rg` with real ripgrep in a separate rev.
 - **zip / unzip — moderate.** Real **Info-ZIP** source (fetch+pin like zlib/sqlite);
   zlib is already vendored. Filesystem + `isatty`/`utime`/`chmod`/perms stubs; no
   sockets/threads/spawn. Friction is Info-ZIP's crufty build, not syscalls.
@@ -255,8 +276,8 @@ works (`wasi-spawn` broker), so `xargs` is not a blocker.
   works. **uutils/findutils** (Rust) avoids gnulib; **GNU findutils** (C) hits the
   same gnulib cascade as wget. Prefer uutils unless GNU parity is required.
 
-Ranked easiest→hardest: **sqlite3-CLI · http-get (drop) · tree · fd · grep · zip ·
-unzip · findutils.**
+Ranked easiest→hardest: **sqlite3-CLI · http-get (drop) · tree · fd · grep ·
+ripgrep · zip · unzip · findutils.**
 
 ## Status tracking (how the driver reports progress in this doc)
 

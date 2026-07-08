@@ -1,0 +1,27 @@
+--- a/libc-bottom-half/headers/public/__header_dirent.h
++++ b/libc-bottom-half/headers/public/__header_dirent.h
+@@ -39,7 +39,6 @@ struct dirent *readdir(DIR *);
+ void rewinddir(DIR *);
+ void seekdir(DIR *, long);
+ long telldir(DIR *);
+-DIR *opendirat(int, const char *);
+ void rewinddir(DIR *);
+ int scandirat(int, const char *, struct dirent ***,
+               int (*)(const struct dirent *),
+--- a/libc-bottom-half/sources/at_fdcwd.c
++++ b/libc-bottom-half/sources/at_fdcwd.c
+@@ -52,14 +52,6 @@ int mkdirat(int dirfd, const char *pathname, mode_t mode) {
+     return __wasilibc_nocwd_mkdirat_nomode(dirfd, pathname);
+ }
+ 
+-DIR *opendirat(int dirfd, const char *path) {
+-    if (dirfd == AT_FDCWD || path[0] == '/') {
+-        return opendir(path);
+-    }
+-
+-    return __wasilibc_nocwd_opendirat(dirfd, path);
+-}
+-
+ int scandirat(int dirfd, const char *dirp, struct dirent ***namelist,
+               int (*filter)(const struct dirent *),
+               int (*compar)(const struct dirent **, const struct dirent **)) {

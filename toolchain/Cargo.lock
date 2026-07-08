@@ -841,6 +841,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmd-egrep"
+version = "0.1.0"
+dependencies = [
+ "secureexec-shims",
+]
+
+[[package]]
 name = "cmd-env"
 version = "0.1.0"
 dependencies = [
@@ -883,6 +890,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmd-fgrep"
+version = "0.1.0"
+dependencies = [
+ "secureexec-shims",
+]
+
+[[package]]
 name = "cmd-file"
 version = "0.1.0"
 dependencies = [
@@ -915,13 +929,6 @@ name = "cmd-git"
 version = "0.1.0"
 dependencies = [
  "secureexec-git",
-]
-
-[[package]]
-name = "cmd-grep"
-version = "0.1.0"
-dependencies = [
- "secureexec-grep",
 ]
 
 [[package]]

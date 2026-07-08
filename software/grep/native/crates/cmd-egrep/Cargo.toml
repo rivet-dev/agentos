@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-egrep"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "egrep launcher for GNU grep"
+
+[[bin]]
+name = "egrep"
+path = "src/main.rs"
+
+[dependencies]
+shims = { package = "secureexec-shims", path = "../../../../../toolchain/crates/libs/shims" }
