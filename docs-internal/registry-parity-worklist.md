@@ -546,8 +546,22 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T12-46-11-0700-item11-core-tsc-duckdb-final-file-after-refresh.log`;
     `2026-07-08T12-46-10-0700-item11-duckdb-biome-check-final-file-after-refresh.log`.
     Rev: `qrwnvouk`.
-  - **codex — TODO.** Needs the remaining real full-turn coverage un-skipped after
-    #9.
+  - **codex — DONE.** Un-skipped the remaining real `codex-exec --session-turn`
+    full-turn coverage. The suite now proves the model turn, on-request shell
+    tool call, real subprocess filesystem side effect, and adapter-supplied
+    history replay in one VM-backed file with 4/4 passing. For this coverage
+    rev, the package was staged from existing real 29 MB `codex`/`codex-exec`
+    artifacts because rebuilding the external Codex fork in this checkout hit
+    dependency gating failures (`path-dedot`, then `tokio`/`rustls-native-certs`);
+    the failed rebuild logs are kept as proof. Proof:
+    `2026-07-08T12-52-54-0700-item11-codex-cli-package-build-from-prior-artifacts-after-install.log`;
+    `2026-07-08T12-54-08-0700-item11-codex-fullturn-final-unskipped.log`;
+    `2026-07-08T12-54-42-0700-item11-core-tsc-codex-final.log`;
+    `2026-07-08T12-54-42-0700-item11-codex-biome-check-final.log`;
+    rebuild blockers:
+    `2026-07-08T12-48-46-0700-item11-codex-required-build-fresh-cargo-home.log`,
+    `2026-07-08T12-50-38-0700-item11-codex-required-build-path-dedot-cfg.log`.
+    Rev: `ryqtvoqv`.
 - **rev:** one per command, e.g. `test(duckdb): real analytical-SQL e2e; un-skip`
 
 ### 12. No tests at all — 9 software + 5 agents
