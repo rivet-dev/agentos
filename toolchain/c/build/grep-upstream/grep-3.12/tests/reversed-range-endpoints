@@ -1,0 +1,18 @@
+#!/bin/sh
+# Ensure that an invalid range like [b-a] evokes exit status of 2.
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+printf 'grep: Invalid range end\n' > exp
+for prog in grep 'grep -E'; do
+  # exit status must be 2, not 1
+  returns_ 2 $prog '[b-a]' < /dev/null > out 2>&1 || fail=1
+
+  # Normalize the diagnostic prefix from e.g., "/mnt/dir/grep: " to "grep: "
+  sed 's/^[^:]*: /grep: /' out > k && mv k out
+
+  compare exp out || fail=1
+done
+
+Exit $fail

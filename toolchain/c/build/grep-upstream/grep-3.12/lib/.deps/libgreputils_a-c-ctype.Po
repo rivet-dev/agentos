@@ -1,0 +1,3 @@
+libgreputils_a-c-ctype.o: c-ctype.c ../config.h c-ctype.h
+../config.h:
+c-ctype.h:

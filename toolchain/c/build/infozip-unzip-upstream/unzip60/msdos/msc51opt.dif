@@ -1,0 +1,62 @@
+Date: Mon, 28 Aug 1995 23:53:23 CET +0100
+From: "Christian Spieler, Institut fuer Kernphysik, Schlossgartenstr. 9,
+      D-64289 Darmstadt" <SPIELER@linac.ikp.physik.th-darmstadt.de>
+Subject: More MSC 5.1 related patches for UnZip 5.20f2
+
+
+D) I want to suggest two small patches to allow the use of
+   full optimization (including loop optimization) when compiling UnZip
+   with MSC (5.1, and probably newer). There are only two small pieces
+   of code (containing to deeply nested loops) that break MSC 5.1's loop
+   optimization. I have guarded these loops with "#pragma loop_opt (off)"
+   to allow loop optimization for the rest of the code. Here are the patches:
+
+===================== cut here ========================
+diff -c ./inflate.c ./modif/inflate.c
+*** ./inflate.c	Thu Oct 05 14:57:38 1995
+--- ./modif/inflate.c	Thu Oct 05 14:58:24 1995
+***************
+*** 1162,1173 ****
+--- 1162,1179 ----
+          {                       /* too few codes for k-w bit table */
+            f -= a + 1;           /* deduct codes from patterns left */
+            xp = c + k;
++ #if defined (MSC)
++ #pragma loop_opt (off)
++ #endif /* MS C compilers */
+            while (++j < z)       /* try smaller tables up to z bits */
+            {
+              if ((f <<= 1) <= *++xp)
+                break;            /* enough codes to use up j bits */
+              f -= *xp;           /* else deduct codes from patterns */
+            }
++ #if defined (MSC)
++ #pragma loop_opt ()
++ #endif /* MS C compilers */
+          }
+          if ((unsigned)w + j > el && (unsigned)w < el)
+            j = el - w;           /* make EOB code end at table */
+diff -c ./zipinfo.c ./modif/zipinfo.c
+*** ./zipinfo.c	Thu Oct 05 14:51:58 1995
+--- ./modif/zipinfo.c	Thu Oct 05 14:52:42 1995
+***************
+*** 1134,1145 ****
+--- 1134,1151 ----
+                      workspace[10] = 'E';
+  
+                  p = attribs;
++ #if defined (MSC) && (!defined (_MSC_VER) || _MSC_VER < 600)
++ #pragma loop_opt (off)
++ #endif /* MS C, Version < 6.00 */
+                  for (k = j = 0;  j < 3;  ++j) {     /* groups of permissions */
+                      for (i = 0;  i < 4;  ++i, ++k)  /* perms within a group */
+                          if (workspace[k])
+                              *p++ = workspace[k];
+                      *p++ = ',';                     /* group separator */
+                  }
++ #if defined (MSC) && (!defined (_MSC_VER) || _MSC_VER < 600)
++ #pragma loop_opt ()
++ #endif /* MS C, Version < 6.00 */
+                  *--p = ' ';   /* overwrite last comma */
+                  if ((p - attribs) < 12)
+                      sprintf(&attribs[12], "%d.%d", hostver/10, hostver%10);

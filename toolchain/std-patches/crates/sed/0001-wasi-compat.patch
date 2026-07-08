@@ -1,0 +1,106 @@
+--- a/Cargo.toml	2026-03-16 14:04:42.858897799 -0700
++++ Cargo.toml	2026-03-16 14:04:58.166883109 -0700
+@@ -58,8 +58,9 @@
+ path = "benches/sed_bench.rs"
+ harness = false
+ 
+-[dependencies.assert_fs]
+-version = "1.1.3"
++# wasmVM: removed assert_fs, predicates (test-only, not WASI compatible)
++# wasmVM: removed sysinfo, ctor, clap_complete, clap_mangen, textwrap (unused in source)
++# wasmVM: removed terminal_size (stubbed in compiler.rs for WASI)
+ 
+ [dependencies.clap]
+ version = "4.4"
+@@ -68,15 +69,6 @@
+     "cargo",
+ ]
+ 
+-[dependencies.clap_complete]
+-version = "4.5"
+-
+-[dependencies.clap_mangen]
+-version = "0.2"
+-
+-[dependencies.ctor]
+-version = "0.6.0"
+-
+ [dependencies.fancy-regex]
+ version = "0.17.0"
+ 
+@@ -92,27 +84,14 @@
+ [dependencies.phf]
+ version = "0.13.0"
+ 
+-[dependencies.predicates]
+-version = "3.1.3"
+-
+ [dependencies.regex]
+ version = "1.10.4"
+ 
+-[dependencies.sysinfo]
+-version = "0.37"
+-
+ [dependencies.tempfile]
+ version = "3.10.1"
+ 
+-[dependencies.terminal_size]
+-version = "0.4.2"
+-
+-[dependencies.textwrap]
+-version = "0.16.1"
+-features = ["terminal_size"]
+-
+ [dependencies.uucore]
+-version = "0.5.0"
++version = "0.7.0"
+ features = ["libc"]
+ 
+ [dev-dependencies.chrono]
+@@ -141,18 +120,14 @@
+ version = "3.10.1"
+ 
+ [dev-dependencies.uucore]
+-version = "0.5.0"
++version = "0.7.0"
+ features = [
+     "libc",
+     "entries",
+     "process",
+     "signals",
+-    "benchmark",
+ ]
+ 
+-[dev-dependencies.uutests]
+-version = "0.5.0"
+-
+ [build-dependencies.phf_codegen]
+ version = "0.13.0"
+ 
+
+--- a/src/sed/compiler.rs	2026-03-16 14:04:42.858897799 -0700
++++ src/sed/compiler.rs	2026-03-16 14:05:09.882873178 -0700
+@@ -24,7 +24,7 @@
+ use std::path::PathBuf;
+ use std::rc::Rc;
+ 
+-use terminal_size::{Width, terminal_size};
++// wasmVM: terminal_size removed for WASI — no TTY in WASM
+ use uucore::error::{UResult, USimpleError};
+ 
+ const DEFAULT_OUTPUT_WIDTH: usize = 60;
+@@ -996,12 +996,9 @@
+ }
+ 
+ /// Return the width of the command's terminal or a default.
++// wasmVM: terminal_size stubbed — WASI has no TTY, always return default
+ fn output_width() -> usize {
+-    if let Some((Width(w), _)) = terminal_size() {
+-        w as usize
+-    } else {
+-        DEFAULT_OUTPUT_WIDTH
+-    }
++    DEFAULT_OUTPUT_WIDTH
+ }
+ 
+ /// Compile commands that take a number as an argument.

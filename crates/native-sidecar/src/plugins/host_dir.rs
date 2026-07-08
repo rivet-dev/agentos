@@ -1874,7 +1874,7 @@ mod tar_module_reader_tests {
     #[test]
     fn tar_reader_resolves_packed_node_modules() {
         let aospkg = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../registry/agent/pi/dist/package.aospkg");
+            .join("../../software/pi/dist/package.aospkg");
         if !aospkg.is_file() {
             eprintln!("skip: pi aospkg not built");
             return;

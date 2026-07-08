@@ -1,0 +1,47 @@
+#!/bin/sh
+# Check characters outside the Unicode BMP in the search string.
+
+# Copyright 2021-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+require_compiled_in_MB_support
+
+case $(uname -s) in
+  CYGWIN*)
+    skip_ 'surrogate-pair search string on Cygwin, where it cannot work';;
+esac
+
+fail=0
+
+LC_ALL=en_US.UTF-8
+export LC_ALL
+
+# On platforms like 32-bit AIX where WCHAR_MAX == 0xFFFF, skip this check,
+# since the corresponding Unicode characters are not supported.
+printf '\360\220\200\200\n' >in || framework_failure_
+grep '^.$' in >out || fail=1
+compare in out || skip_ 'platform does not support U+10000'
+
+printf '\360\220\220\205\n' > in || framework_failure_
+
+for opt in '' -i -E -F -iE -iF; do
+  grep --file=in $opt in > out 2>&1 || fail=1
+  compare in out || fail=1
+done
+
+Exit $fail

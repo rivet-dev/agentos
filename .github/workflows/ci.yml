@@ -42,6 +42,7 @@ jobs:
       - run: node scripts/check-agentos-client-protocol-compat.mjs
       - run: node --test scripts/verify-fixed-versions.test.mjs
       - run: node scripts/verify-fixed-versions.mjs
+      - run: pnpm check-layout
       - run: cargo fmt --check
       - run: pnpm check-types
       - run: pnpm lint
@@ -63,11 +64,11 @@ jobs:
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: registry/native -> target
+          workspaces: toolchain -> toolchain/target
           cache-workspace-crates: true
-          key: wasm-commands-${{ hashFiles('registry/native/Cargo.lock') }}
+          key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
-      - run: make -C registry/native commands
+      - run: make -C toolchain commands
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - uses: actions/upload-artifact@v4
         with:

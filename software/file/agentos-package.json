@@ -1,0 +1,11 @@
+{
+	"commands": [
+		"file"
+	],
+	"registry": {
+		"title": "file",
+		"description": "Detect file types.",
+		"priority": 2,
+		"category": "core"
+	}
+}

@@ -1,0 +1,2 @@
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ar qc libduckdb_hyperloglog.a CMakeFiles/duckdb_hyperloglog.dir/hyperloglog.cpp.obj CMakeFiles/duckdb_hyperloglog.dir/sds.cpp.obj
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ranlib libduckdb_hyperloglog.a

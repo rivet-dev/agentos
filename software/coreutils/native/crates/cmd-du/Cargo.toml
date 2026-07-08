@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-du"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "du standalone binary for secure-exec VM"
+
+[[bin]]
+name = "du"
+path = "src/main.rs"
+
+[dependencies]
+secureexec-du = { path = "../du" }

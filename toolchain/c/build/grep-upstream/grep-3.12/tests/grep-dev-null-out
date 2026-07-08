@@ -1,0 +1,13 @@
+#!/bin/sh
+# Outputting to /dev/null.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_timeout_
+
+${AWK-awk} 'BEGIN {while (1) print "x"}' </dev/null |
+  returns_ 124 timeout 10 grep x >/dev/null || fail=1
+
+echo abc | grep b >>/dev/null || fail=1
+
+Exit $fail

@@ -1,0 +1,434 @@
+There are now several entry points to the dll.
+
+There is a single "unzipping" entry point of:
+
+int WINAPI Wiz_SingleEntryUnzip(int ifnc, char **ifnv, int xfnc, char **xfnv,
+                                LPDCL lpDCL, LPUSERFUNCTIONS lpUserFunc)
+
+where the arguments are:
+
+ifnc       = number of file names being passed. If all files are to be
+             extracted, then this can be zero.
+ifnv       = file names to be unarchived. Wildcard patterns are recognized
+             and expanded. If all files are to be extracted, then this can
+             be NULL.
+xfnc       = number of "file names to be excluded from processing" being
+             passed. If all files are to be extracted, set this to zero.
+xfnv       = file names to be excluded from the unarchiving process. Wildcard
+             characters are allowed and expanded. If all files are to be
+             extracted, set this argument to NULL.
+lpDCL      = pointer to a structure with the flags for setting the
+             various options, as well as the zip file name.
+lpUserFunc = pointer to a structure that contains pointers to functions
+             in the calling application, as well as sizes passed back to
+             the calling application etc. See below for a detailed description
+             of all the parameters.
+
+This calling wrapper for Wiz_SingleEntryUnzip() provides a method to pass
+file lists as plain strings instead of the usual string arrays.
+For VB Users only...:
+
+int WINAPI Wiz_SingleEntryUnzpList(unsigned int ifnc, LPCSTR ExtList,
+                                   unsigned int xfnc, LPCSTR ExcList,
+                                   LPDCL lpDCL, LPUSERFUNCTIONS lpUserFunc)
+
+ifnc       = number of file names being passed. If all files are to be
+             extracted, then this can be zero.
+ExtList    = Pointer to a list of file names to be extracted, separated by
+             white space. If all files are to be extracted, then this should
+             be NULL. Parameter ifnc should have an accurate count of the
+             number of filenames being passed in.
+xfnc       = number of "file names to be excluded from processing" being
+             passed. If all files are to be extracted, set this to zero.
+ExcList    = Pointer to a list of file names to be excluded from processing.
+             Parameter xfnc should have an accurate count of the number of
+             the number of filenames being passed in.
+lpDCL      = pointer to a structure with the flags for setting the
+             various options, as well as the zip file name.
+lpUserFunc = pointer to a structure that contains pointers to functions
+             in the calling application, as well as sizes passed back to
+             the calling application etc.
+
+
+The DCL structure collects the set of option flags supported by the WinDLL
+interface to control the operation of the main function calls.
+The first member of this structure is now a version identifier that should
+be used to check structural compatibility of a passed option struct with
+the expected structure layout. The C header file containing the reference
+definition of the DCL structure also provides a symbol denoting the currently
+valid StructVersID:
+
+#define UZ_DCL_STRUCTVER        0x600
+
+The layout of the DCL structure is shown below:
+
+typedef struct {
+ unsigned StructVersID  = struct version id (= UZ_DCL_STRUCTVER)
+ int ExtractOnlyNewer   = TRUE for "update" without interaction
+                          (extract only newer/new files, without queries)
+ int SpaceToUnderscore  = TRUE if convert space to underscore
+ int PromptToOverwrite  = TRUE if prompt to overwrite is wanted
+ int fQuiet             = quiet flag:
+                           0 = all messages, 1 = few messages, 2 = no messages
+ int ncflag             = write to stdout if TRUE
+ int ntflag             = test zip file
+ int nvflag             = verbose listing
+ int nfflag             = "freshen" (replace existing files by newer versions)
+ int nzflag             = display zip file comment
+ int ndflag             = controls (sub)directory recreation during extraction
+                          0 = junk paths from filenames
+                          1 = "safe" usage of paths in filenames (skip "../")
+                          2 = allow also unsafe path components (dir traversal)
+ int noflag             = always overwriting existing files if TRUE
+ int naflag             = do end-of-line translation
+ int nZIflag            = get ZipInfo if TRUE
+ int B_flag             = backup existing files if TRUE
+ int C_flag             = be case insensitive if TRUE
+ int D_flag             = controls restoration of timestamps
+                          0 = restore all timestamps (default)
+                          1 = skip restoration of timestamps for folders
+                              created on behalf of directory entries in the
+                              Zip archive
+                          2 = do not restore any timestamps; extracted files
+                              and directories get stamped with the current time
+ int U_flag             = controls UTF-8 filename coding support
+                          0 = automatic UTF-8 translation enabled (default)
+                          1 = recognize UTF-8 coded names, but all non-ASCII
+                              characters are "escaped" into "#Uxxxx"
+                          2 = UTF-8 support is disabled, filename handling
+                              works exactly as in previous UnZip versions
+ int fPrivilege         = 1 => restore ACLs in user mode,
+                          2 => try to use privileges for restoring ACLs
+ LPSTR lpszZipFN        = zip file name
+ LPSTR lpszExtractDir   = directory to extract to. This should be NULL if you
+                          are extracting to the current directory.
+} DCL, far * LPDCL;
+
+REMARKS:
+The four extract-mode flags ExtractOnlyNewer, nfflag, PromptToOverwrite, and
+noflag control which of the selected archive entries are actually processed.
+They are mapped to UnZip's command line qualifiers "-u", "-f", "-o", "-n"
+according to the following decision matrix:
+ _____________________________________________________________________
+ | UnZip 1)|| Extract-  | nfflag | noflag | PrompTo-  | lpUserFunc   |
+ | options || OnlyNewer |        |        | Overwrite | ->replape()  |
+ =====================================================================
+ | none 2) ||   false   |  false |  false |   true    |queryfunc() 5)|
+ | -o      ||   false   |  false |  true  |   false   |     N/A      |
+ | -n      ||   false   |  false |  false |   false   |     N/A      |
+ |---------||-----------|--------|--------|-----------|--------------|
+ | -u      ||   true    |  false |  false |   true    |queryfunc() 5)|
+ | -uo     ||   true    |  false |  true  |   false   |     N/A      |
+ | -un  3) ||   true    |  false |  false |   false   |     N/A      |
+ |---------||-----------|--------|--------|-----------|--------------|
+ | -f      ||    N/A    |  true  |  false |   true    |queryfunc() 5)|
+ | -fo     ||    N/A    |  true  |  true  |   false   |     N/A      |
+ | -fn  4) ||    N/A    |  true  |  false |   false   |     N/A      |
+ ---------------------------------------------------------------------
+ Legend: true:  integer number <> 0
+         false: integer number 0
+         N/A:   not applicable, could be set to any value
+ NOTES:
+ 1) The UnZip options are explained in the generic UnZip manual, see
+    "unzip.txt" or "man/unzip.1".
+ 2) no options from the set "ufno" are specified.
+ 3) -un is functionally equivalent to -n
+ 4) -fn is functionally equivalent to "do nothing", so this combination
+    does not make sense.
+ 5) queryfunc() is a callback function provided by the caller of the
+    unzip dll that may return one of the following result keys:
+     IDM_REPLACE_NO, IDM_REPLACE_YES,
+     IDM_REPLACE_ALL, IDM_REPLACE_NONE,
+     IDM_REPLACE_RENAME
+     (IDM_REPLACE_TEXT, IDM_REPLACE_HELP are defined but not used)
+    UnZip's internal code treats a "NULL" lpUserFunc->replace() function
+    pointer as "{return IDM_REPLACE_NONE}". However, currently, the windll
+    interface checks for this function pointer to be not NULL and signals
+    a fatal error if this condition is not fulfilled.
+
+
+The typedef's for the function pointers in the structure USERFUNCTIONS
+are shown immediately below.
+
+typedef unsigned short ush;
+typedef int (WINAPI DLLPRNT) (LPSTR, unsigned long);
+typedef int (WINAPI DLLPASSWORD) (LPSTR pwbuf, int bufsiz,
+    LPCSTR promptmsg, LPCSTR entryname);
+typedef int (WINAPI DLLSERVICE) (LPCSTR entryname, z_uint8 uncomprsiz);
+typedef int (WINAPI DLLSERVICE_I32) (LPCSTR entryname,
+    unsigned long ucsz_lo, unsigned long ucsz_hi);
+typedef void (WINAPI DLLSND) (void);
+typedef int (WINAPI DLLREPLACE) (LPSTR efnam, unsigned efbufsiz);
+typedef void (WINAPI DLLMESSAGE) (z_uint8 ucsize, z_uint8 csize,
+    unsigned cfactor,
+    unsigned mo, unsigned dy, unsigned yr, unsigned hh, unsigned mm,
+    char c, LPCSTR filename, LPCSTR methbuf, unsigned long crc, char fCrypt);
+typedef void (WINAPI DLLMESSAGE_I32) (unsigned long ucsiz_l,
+    unsigned long ucsiz_h, unsigned long csiz_l, unsigned long csiz_h,
+    unsigned cfactor,
+    unsigned mo, unsigned dy, unsigned yr, unsigned hh, unsigned mm,
+    char c, LPCSTR filename, LPCSTR methbuf, unsigned long crc, char fCrypt);
+
+Structure USERFUNCTIONS
+
+typedef struct {
+ DLLPRNT *print;        = a pointer to the application's print routine.
+ DLLSND *sound;         = a pointer to the application's sound routine. This
+                          can be NULL if your application doesn't use
+                          sound.
+ DLLREPLACE *replace    = a pointer to the application's replace routine. The
+                          replace routine may modify the content of the efnam
+                          string buffer, but must not write beyond its fixed
+                          size of efbufsiz bytes! (This is a potential security
+                          leak of the windll interface.) When modifying the
+                          efnam buffer, the replace routine should return
+                          the status IDM_REPLACE_RENAME.
+ DLLPASSWORD *password  = a pointer to the application's password routine.
+                          This function should return one of the status values
+                          IZ_PW_ENTERED (0), IZ_PW_CANCEL (-1),
+                          IZ_PW_CANCEL_ALL (-2), IZ_PW_ERROR (5).
+ DLLMESSAGE *SendApplicationMessage = a pointer to the application's routine
+                          for displaying information about specific files
+                          in the archive. Used for listing the contents of
+                          an archive.
+ DLLSERVICE *ServCallBk  = Callback function designed to be used for
+                          allowing the application to process Windows messages,
+                          or canceling the operation, as well as giving the
+                          option of a progress indicator. If this function
+                          returns a non-zero value, then it will terminate
+                          what it is doing. It provides the application with
+                          the name of the archive member it has just processed,
+                          as well as it's original size.
+ DLLMESSAGE_I32 *SendApplicationMessage_i32 = variant of SendApplicationMessage
+                          callback, for environments that do not support the
+                          64-bit integer types required to transfer "large"
+                          ZIP64-compatible sizes.
+ DLLSERVICE_I32 *ServCallBk_i32  = variant of the ServCallBk callback function,
+                          for environments that do not support 64-bit integers.
+ [NOTE: The _i32 variants of the SendApplicationMessage and ServCallBk callback
+        functions are only called when the corresponding "regular" callback
+        function pointers are set to NULL.  For the i386 architecture, the
+        "..._i32" calling interfaces are binary identical with the
+        corresponding regular __int64-aware interfaces.]
+ [NOTE: The values below are filled in only when listing the contents of an
+        archive.]
+ z_uint8 TotalSizeComp  = value to be filled in by the dll for the
+                          compressed total size of the archive. Note this
+                          value does not include the size of the archive
+                          header and central directory list.
+ z_uint8 TotalSize      = value to be filled in by the dll for the total
+                          size of all files in the archive.
+ z_uint8 NumMembers     = total number of files in the archive.
+ unsigned CompFactor    = value to be filled in by the dll for the overall
+                          compression factor. This could actually be computed
+                          from the other values, but it is available.
+ WORD cchComment        = flag to be set if archive has a comment
+} USERFUNCTIONS, far * LPUSERFUNCTIONS;
+
+Wiz_SingleEntryUnzip() returns a PKWARE compatible error code (0 if no
+error or warning). For an explanation of the supported error codes see
+the UnZip user documentation (the UnZip man page).
+
+For examples of how the actual calls to the dll are set up in WiZ, look in
+the files action.c and wizmain.c in the WiZ source directory. For a trival
+example of how to load and call the dll, look in uzexampl.c and uzexampl.h.
+
+For examples of how the actual loading and unloading of the dll's themselves
+was done, look in wizmain.c in the WiZ source directory. Note that WiZ looks
+specifically for a particular version number of the dll, and also expects to
+find the company name to be Info-ZIP. This is to protect from getting
+different versions of the dll loaded, with resulting unknown behavior.
+
+Additional entry points:
+
+    const UzpVer * WINAPI UzpVersion(void);
+
+where UzpVer is defined as:
+
+typedef struct _UzpVer {
+    ulg structlen;            /* length of the struct being passed */
+    ulg flag;                 /* bit 0: is_beta   bit 1: uses_zlib */
+    LPCSTR betalevel;         /* e.g. "g BETA" or "" */
+    LPCSTR date;              /* e.g. "9 Oct 08" (beta) or "9 October 2008" */
+    LPCSTR zlib_version;      /* e.g. "1.2.3" or NULL */
+    _version_type unzip;      /* current UnZip version */
+    _version_type zipinfo;    /* current ZipInfo version */
+    _version_type os2dll;     /* OS2DLL version (retained for compatibility) */
+    _version_type windll;     /* WinDLL version (retained for compatibility) */
+    _version_type dllapimin;  /* last incompatible change of library API */
+} UzpVer;
+
+and _version_type is defined as:
+
+typedef struct _ver {
+    uch major;              /* e.g., integer 5 */
+    uch minor;              /* e.g., 2 */
+    uch patchlevel;         /* e.g., 0 */
+    uch not_used;
+} _version_type;
+
+    See api.c for exactly what UzpVersion does, but the short description is
+    "UzpVersion() returns a pointer to a dll-internal static structure
+    containing the unzip32.dll version information".
+
+For usage with languages that do not support function which return pointers
+to structures, the variant UzpVersion2() allows to retrieve the version info
+into a memory area supplied by the caller:
+
+    unsigned WINAPI UzpVersion2(UzpVer2 far *);
+
+where UzpVer2 is defined as:
+
+typedef struct _UzpVer2 {
+    ulg structlen;            /* length of the struct being passed */
+    ulg flag;                 /* bit 0: is_beta   bit 1: uses_zlib */
+    char betalevel[10];       /* e.g. "g BETA" or "" */
+    char date[20];            /* e.g. "9 Oct 08" (beta) or "9 October 2008" */
+    char zlib_version[10];    /* e.g. "1.2.3" or NULL */
+    _version_type unzip;      /* current UnZip version */
+    _version_type zipinfo;    /* current ZipInfo version */
+    _version_type os2dll;     /* OS2DLL version (retained for compatibility) */
+    _version_type windll;     /* WinDLL version (retained for compatibility) */
+    _version_type dllapimin;  /* last incompatible change of library API */
+} UzpVer2;
+
+   See api.c for the exact function of UzpVersion2, but the short description
+   is "fill in the version information in the UzpVer2 structure".
+
+void WINAPI Wiz_NoPrinting(int flag)
+
+   This entry point simply turns off all messages to the calling application if
+   flag is true, and turns them on if flag is false.
+
+int WINAPI Wiz_Validate(LPSTR archive, int AllCodes)
+
+   If AllCodes is FALSE, then Unz_Validate returns TRUE if archive points to a
+   valid archive, and FALSE otherwise. If AllCodes is TRUE, then Unz_Validate
+   returns whatever error code process_zipfiles returns, without evaluating it.
+
+int WINAPI Wiz_UnzipToMemory(LPSTR zip, LPSTR file, LPUSERFUNCTIONS lpUserFunc,
+                             UzpBuffer *retstr)
+
+   Where UzpBuffer is defined as:
+
+   typedef struct _UzpBuffer {
+      ulg strlength; /* length of string */
+      char * strptr; /* pointer to string */
+   } UzpBuffer
+
+   Pass the name of the zip file in zip and the name of the file you wish to
+   extract in file. UzpUnzipToMemory will create a buffer and return it in
+   *retstr. 0 on return indicates failure.
+
+void WINAPI UzpFreeMemBuffer(UzpBuffer *retstr)
+   Use this routine to release the return data space allocated by the function
+   Wiz_UnzipToMemory().
+
+int WINAPI Wiz_Grep(LPSTR archive, LPSTR file, LPSTR pattern, int cmd,
+                    int SkipBin, LPUSERFUNCTIONS lpUserFunc)
+
+   Pass the name of the zip file in "zip", the name of the zip entry you wish
+   to perform the "grep" on in "file", and the string you wish to look for in
+   "pattern". There are four possible options for cmd:
+
+   0 => case insensitive search
+   1 => case sensitive search
+   2 => case insensitive search, whole words only
+   3 => case sensitive search, whole words only
+
+   If SkipBin is TRUE, then any binary (loosely interpreted) files will be
+   ignored.
+
+   lpUserFunc is a pointer to a USERFUNCTION structure as shown above.
+
+   UzpGrep returns:
+
+   -1 => error such as unable to allocate memory, unable to find file, etc.
+    0 => match not found, based on the search criteria
+    1 => match found, based on the search criteria
+
+There is an additional function call that does not specifically deal with
+"unzipping", but is a quite useful function that is currently used in Wiz
+itself in several places. This call is currently only available in the
+static library, not in the DLL.
+
+Match the pattern (wildcard) against the string (fixed):
+
+  match(const char *string, const char *pattern, int ignore_case);
+
+or, when UnZips WILD_SEP_AT_DIR compile-time option was set:
+
+  match(const char *string, const char *pattern, int ignore_case, int sepc);
+
+  returns TRUE if string matches pattern, FALSE otherwise.  In the pattern:
+
+     `*' matches any sequence of characters (zero or more)
+     `?' matches any single character
+     [SET] matches any character in the specified set,
+     [!SET] or [^SET] matches any character not in the specified set.
+
+  In case the code was compiled with WILD_STOP_AT_DIR enabled, the pattern
+  wildcard functionality is modified as follows:
+     `*' matches any sequence of characters (zero or more) until the first
+         occurence of the separating character denoted by `sepc'
+     `**' matches any sequence of characters (zero or more)
+
+  A set is composed of characters or ranges; a range looks like ``character
+  hyphen character'' (as in 0-9 or A-Z).  [0-9a-zA-Z_] is the minimal set of
+  characters allowed in the [..] pattern construct.  Other characters are
+  allowed (i.e., 8-bit characters) if your system will support them.
+
+  To suppress the special syntactic significance of any of ``[]*?!^-\'', in-
+  side or outside a [..] construct, and match the character exactly, precede
+  it with a ``\'' (backslash).
+
+The remaining functions are linked together. Their use would be as
+follows (explanations for each function are shown further below):
+
+    #include "windll.h"
+    #include "structs.h"
+    MyApiCallingRoutine()
+    {
+        CREATEGLOBALS();
+        .
+        .
+        .
+        Wiz_Init(pG, lpUserFunctions); /* Set up user functions */
+        /* zvoid *pG, LPUSERFUNCTIONS lpUserFunctions */
+        .
+        .
+        do {
+          .
+          .
+          Wiz_SetOpts(pG, lpDCL); /* Set up unzipping options */
+          /* zvoid *pG, LPDCL lpDCL */
+          .
+          .
+          Wiz_Unzip(pG, ifnc, ifnv, xfnc, xfnv); /* Unzip files */
+          .
+          .
+        } while (!finished_condition)
+        .
+        .
+        DESTROYGLOBALS();
+    }
+
+Each entry point is as defined below:
+
+    BOOL WINAPI Wiz_Init(zvoid *, LPUSERFUNCTIONS);
+
+    BOOL WINAPI Wiz_SetOpts(zvoid *, LPDCL);
+
+    int WINAPI Wiz_Unzip(zvoid *, int, char **, int, char **);
+
+Note that you should use either Wiz_SingleEntryUnzip OR the series of calls
+described above. Using both, depending on how you do it, could cause
+problems. The series of "lower level" gives you more freedom to add additional
+functionalities, whereas the single-entry api is easier to use. When using
+the "series" of calls, make sure that Wiz_SetOpts and Wiz_Unzip are always
+used together! When successfully called, Wiz_SetOpts has allocated some
+internal structures which are in turn free'd by Wiz_Unzip.
+
+Last revised January 18, 2009.
+
+Mike White, Christian Spieler

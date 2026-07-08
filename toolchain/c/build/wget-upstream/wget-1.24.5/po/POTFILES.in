@@ -1,0 +1,30 @@
+# List of files which containing translatable strings.
+# Copyright (C) 1995-2011, 2018-2024 Free Software Foundation, Inc.
+
+# Package source files
+src/connect.c
+src/convert.c
+src/cookies.c
+src/ftp-ls.c
+src/ftp.c
+src/gnutls.c
+src/host.c
+src/html-url.c
+src/http.c
+src/init.c
+src/iri.c
+src/log.c
+src/main.c
+src/metalink.c
+src/mswindows.c
+src/netrc.c
+src/openssl.c
+src/progress.c
+src/ptimer.c
+src/recur.c
+src/res.c
+src/retr.c
+src/spider.c
+src/url.c
+src/utils.c
+src/warc.c

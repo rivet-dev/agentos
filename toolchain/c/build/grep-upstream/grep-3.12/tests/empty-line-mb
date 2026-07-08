@@ -1,0 +1,29 @@
+#! /bin/sh
+# Exercise bugs in grep-2.13 with -i, -n and an RE of ^$ in a multi-byte locale.
+#
+# Copyright (C) 2012-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+
+LC_ALL=en_US.UTF-8
+export LC_ALL
+
+printf 'a\n\nb\n' > in || framework_failure_
+printf '2:\n' > exp || framework_failure_
+
+printf 'a\nb\n' > in2 || framework_failure_
+
+grep -n -i '^$' in > out || fail=1
+compare exp out || fail=1
+
+# Expect no match: with grep-2.13 this would mistakenly exit 0
+grep -i '^$' in2 > out && fail=1
+compare /dev/null out || fail=1
+
+Exit $fail

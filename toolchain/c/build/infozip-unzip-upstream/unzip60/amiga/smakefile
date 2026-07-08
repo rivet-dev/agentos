@@ -1,0 +1,629 @@
+#===========================================================================
+# Makefile for UnZip, ZipInfo, fUnZip, MakeSFX      AMIGA SAS/C Version 6.58
+# Version:  5.53                                    last revised:  25 Dec 06
+#===========================================================================
+# from John Bush <john.bush@east.sun.com>
+#            or: <JBush@bix.com>
+
+# updated for SAS/C Version 6.56+ and AmigaDOS 3.1 (V40)
+# by Haidinger Walter <walthaid@unix.ict.tuwien.ac.at>
+
+# additional supplements and maintenance by Paul Kienitz
+
+# This makefile should work with at least AmigaDOS 2.04 (V37)  (not tested)
+# and will probably not work with AmigaDOS 1.3 (V34)
+
+# If you have any improvements, critics or else please feel free to mail.
+# Any response is appreciated. Haidinger Walter <walthaid@unix.ict.tuwien.ac.at>
+
+# Available targets:
+# all           builds all executables below
+# unzip         builds unzip executable
+# unzipsfx      builds unzipsfx executable
+# funzip        builds funzip executable
+# makesfx       builds makesfx executable
+# clean         remove all files created by the compilation
+# spotless      like clean target but removes binaries too
+
+
+##########################
+# USER MACRO DEFINITIONS #
+##########################
+
+# Set the processor to generate code for UnZip and fUnZip. Specify one of:
+# ANY 68000 68010 68020 68030 68040 68060  (Default: ANY or 68000)
+
+# Use of the assembly versions is not supported yet since some of the asm
+# source file do not assemble with 68000 instructions.
+# Any help is appreciated of course.
+
+CUSECPU = ANY
+
+# Uncomment both CUTIL and LUTIL to make use of utility.library of OS 2.04+
+# The utility.library is *not* used for UnZipSFX to ensure maximum portability
+# between the different Amiga systems (minimal config: 68000 and OS 1.2).
+# You can change this by adding the $(LUTIL) macro in the UnZipSFX linking
+# rules (See below: Final output targets, UnZipSFX:).
+# WARNINGS when using the utility library:
+# 1. All Executables will *only* work with AmigaDOS 2.04 (v37) or higher.
+# 2. You *need not* compile/link with short-integers using the
+#    utility.library. It will crash your machine. See Libraries below.
+#
+# Default: commented (not used)
+#
+#CUTIL = UTILLIB DEFINE=_UTILLIB
+#LUTIL = WITH SC:LIB/utillib.with    # include necessary linker defines
+
+
+# Choose one stack-handling method (default=faster)
+# StackExtend: Dynamic runtime stack extension. You won't notice stack overflows.
+# StackCheck: On a stack overflow a requester appears which allows you to exit.
+# Note that either stack watching will slow down your executable because of the
+# extra code run on each function entry. On the other hand, you won't crash
+# anymore due to stack overflows. However, you should not have *any* stack
+# problems with info-zip if you raise your stack to 20000 (which I'd
+# recommend as a minimum default stack for all applications) or more using the
+# shell stack command. Type 'Stack 20000' or add it to your S:Shell-Startup.
+# BTW: Typing 'Stack' prints your current stack size.
+#
+CSTACK = NOSTACKCHECK STACKEXTEND     # slow, but always works
+#CSTACK = STACKCHECK NOSTACKEXTEND    # slow, requester & graceful exit
+#CSTACK = NOSTACKCHECK NOSTACKEXTEND  # faster but relies on larger stack (>=10K)
+
+#
+# LIBRARIES
+# ---------
+
+# Choose one DATAOPTS , SASLIB and LSTARTUP
+# Always comment/uncomment all macros of a set.
+
+# Library to use with near data and 2-byte integers
+# Notes: o  slower than 4-byte integers with 68000 cpu
+#        o  *not* recommended due to poor overall performance
+#        o  see comment in amiga/osdep.h
+#DATAOPTS = DATA=NEAR SHORTINTEGERS DEF=_NEAR_DATA
+#SASLIB   = scs
+#LSTARTUP = cres.o
+
+# Library to use with near data and 4-byte integers (DEFAULT)
+# *** use this with the utility.library ***
+DATAOPTS = DATA=NEAR DEF=_NEAR_DATA
+SASLIB   = sc
+LSTARTUP = cres.o
+
+# Library to use with far data and 2-byte integers
+# use if DYN_ALLOC is not defined
+# old default - far data always works but is slower
+#DATAOPTS = DATA=FAR SHORTINTEGERS DEF=_FAR_DATA
+#SASLIB   = scsnb
+#LSTARTUP = c.o
+
+# Library to use with far data and 4-byte integers
+# if everything else fails: try this
+#DATAOPTS = DATA=FAR DEF=_FAR_DATA
+#SASLIB   = scnb
+#LSTARTUP = c.o
+
+
+#
+# DEBUGGING
+# ---------
+
+# Default: No debugging information added.
+# The two macros below will be overwritten if you choose to add
+# debug info, therefore need to comment.
+CDBG = NODEBUG NOPROFILE NOCOVERAGE    # default: no debug info
+LDBG = STRIPDEBUG                      # default: no debug info
+
+# Compiler and loader debug flags.  Uncomment as needed.  Recomment when done.
+# Optimization disabled for faster compilation (by using NOOPT)
+#CDBG1 = DEF=DEBUG DEF=DEBUG_TIME     # enables Info-ZIP's debug output
+
+# Enable profiling and coverage when desired. Option COVERAGE commented
+# seperately because running coverage may corrupt your drive in case of a
+# system crash since a file 'cover.dat' is created in your working directory.
+# Note that the use of COVERAGE forces the use of the c.o startup module.
+#CDBG2 = PROFILE
+#CDBG3 = COVERAGE        # must use c.o startup code:
+#LSTARTUP = c.o          # Uncomment *only* when you use COVERAGE
+
+# *Uncomment* _HERE_ macros CDBG and LDBG to include debugging information
+#CDBG = $(CDBG1) $(CDBG2) $(CDBG3) ADDSYM DEBUG=FULLFLUSH STACKCHECK NOOPT
+#LDBG = ADDSYM
+# Optional use of memwatch.library which can be found in your
+# sc:extras/memlib directory. Please read the short docs (memlib.doc).
+# Note that memlib has a small bug: MWTerm() displays always the first entry.
+# Get the latest version from aminet (dev/debug/memlib.lha) or
+# contact me to get the patch. Uncomment all macros to use.
+#CMEMLIB  = DEFINE=MWDEBUG=1       # define to enable library
+#LMEMLIB  = SC:LIB/memwatch.lib    # path to library
+#LSTARTUP = c.o                    # must use c.o with memlib!
+
+
+#
+# MAPPING
+# -------
+
+# Map filenames used when mapping (no need to comment)
+#
+MAPFS = unzip.map               # UnZip    map filename
+MAPFX = unzipsfx.map            # UnZipSFX map filename
+MAPFF = funzip.map              # fUnZip   map filename
+MAPFM = makesfx.map             # MakeSFX  map filename
+
+# Map file output: Uncomment to highlight and bold headings.
+#
+#MAPFSTYLE = FANCY
+
+# Map flags for each EXECUTABLE. Uncomment to enable mapping.
+# For map options please refer to:
+# SAS/C v6 manual, volume 1: user's guide, chapter 8, page 136: map
+# Default: all options enabled: f,h,l,o,s,x
+#                                 |-> options start here
+#LMAPS = $(MAPFSTYLE) MAP $(MAPFS) f,h,l,o,s,x   # UnZip    maps
+#LMAPX = $(MAPFSTYLE) MAP $(MAPFX) f,h,l,o,s,x   # UnZipSFX maps
+#LMAPF = $(MAPFSTYLE) MAP $(MAPFF) f,h,l,o,s,x   # fUnZip   maps
+#LMAPM = $(MAPFSTYLE) MAP $(MAPFM) f,h,l,o,s,x   # MakeSFX  maps
+
+
+#
+# LISTINGS
+# --------
+
+# Listfile-extensions for each executable (enter *with* dot)
+#
+LISTEXTS = .lst         # extension for UnZip and MakeSFX listfiles
+LISTEXTX = .xlst        # extension for UnZipSFX listfiles
+LISTEXTF = .flst        # extension for fUnZip listfiles
+
+
+# List files and cross references for each OBJECT.
+# Add/remove flags as needed. All listed by default.
+# Use LISTINCLUDES only to determine the dependencies for smake
+#
+CLISTOPT = LISTHEADERS LISTMACROS # LISTSYSTEM LISTINCLUDES
+CXREFOPT = XHEAD XSYS
+#
+# Uncomment to enable listing (default: commented)
+# *** WARNING: List files require *lots* of disk space!
+#
+#CLIST = LIST $(CLISTOPT)
+#CXREF = XREF $(CXREFOPT)
+
+
+#
+# SUPPRESSED COMPILER WARNINGS
+# ----------------------------
+
+# Compiler warnings to ignore
+#
+# Warning 105 : module does not define any externally-known symbols
+# Warning 304 : Dead assignment eliminated...
+# Note    306 : ...function inlined...
+# Warning 317 : possibly uninitialized variable...
+# Comment to enable.
+#
+CIGNORE = IGNORE=105,304,306,317
+
+
+#
+# OBJECT EXTENSIONS
+#
+
+# Extensions used for objects of each executeable.
+# Transformation rules require unique extensions.
+# Enter *with* dot.
+#
+O  = .o         # general extension for objects
+OX = .xo        # extension for special UnZipSFX objects
+OF = .fo        # extension for special fUnZip objects
+
+
+# Filename used to store converted options from environment variable
+# LOCAL_UNZIP. Default: scoptions_local_unzip
+#
+CWITHOPT = scoptions_local_unzip
+
+
+# Filenames to store compiler options to prevent command line overflow
+#
+# Options file for UnZip and fUnZip
+CFILEC = scoptions-unzip
+# Options file for UnZipSFX
+CFILEX = scoptions-unzipsfx
+# Special options for MakeSFX
+CFILEM = scoptions-makesfx
+
+
+# Temp filenames for object lists to load using linker "WITH" command.
+#
+OBJLISTS = unzip_objlist.with            # UnZip    object list
+OBJLISTX = unzipsfx_objlist.with         # UnZipSFX object list
+OBJLISTF = funzip_objlist.with           # fUnZip   object list
+OBJLISTM = makesfx_objlist.with          # MakeSFX  object list
+
+
+# Filenames to store linker options
+#
+LWITHS = unzip.lnk                       # UnZip    linker options
+LWITHX = unzipsfx.lnk                    # UnZipSFX linker options
+LWITHF = funzip.lnk                      # fUnZip   linker options
+LWITHM = makesfx.lnk                     # MakeSFX  linker options
+
+
+######################################
+#  NOTHING TO CHANGE BEYOND HERE ... #
+######################################
+
+
+# Compiler definitions
+#
+CC = sc
+#
+# Optimizer flags
+#
+OPTPASSES = 6     # set number of global optimizer passes
+#
+OPT1 = OPT OPTINL OPTINLOCAL OPTTIME OPTLOOP OPTSCHED
+OPT2 = OPTCOMP=$(OPTPASSES) OPTDEP=$(OPTPASSES) OPTRDEP=$(OPTPASSES)
+OPT  = $(OPT1) $(OPT2)
+
+# Compiler flags
+#
+# cpu flags for UnZip and fUnZip
+CCPUOPTSF = CPU=$(CUSECPU) $(CUTIL)
+# cpu flags for UnzipSFX and MakeSFX (ensures portability to all Amigas)
+CCPUOPTXM = CPU=ANY
+
+CDEFINES = $(CMEMLIB) $(CDEFINES) DEF=AMIGA DEF=PROTO
+COPTIONS = CODE=NEAR NMINC VERBOSE STRINGMERGE PARAMETERS=BOTH
+COPTIONS = $(COPTIONS) ERRORREXX NOERRORCONSOLE MEMSIZE=HUGE $(CLIST) $(CXREF)
+COPTIONS = $(COPTIONS) $(CSTACK) STRICT UNSCHAR NOICONS
+COPTIONS = $(COPTIONS) $(CIGNORE) $(OPT) $(CDBG)
+# common compiler flags
+CFLAGSC  = $(CDEFINES) $(DATAOPTS) $(COPTIONS)
+# special compiler flags with $(DATAOPTS) excluded
+CFLAGSS  = $(CDEFINES) $(COPTIONS)
+
+# Linker definitions
+#  See SASLIB definition above
+#
+LD = slink
+# special linker flags for UnZip to create pure (i.e. resident) binary.
+LDFLAGSS = FROM SC:LIB/$(LSTARTUP)
+# common linker flags for all other executeables
+LDFLAGSC = FROM SC:LIB/c.o
+
+LDFLAGS2 = NOICONS $(LDBG)
+# special linker flags to select library set above
+LIBFLAGSS = LIB $(LMEMLIB) SC:LIB/$(SASLIB).lib SC:LIB/amiga.lib
+# common linker flags
+LIBFLAGSC = LIB $(LMEMLIB) SC:LIB/sc.lib SC:LIB/amiga.lib
+
+
+##################
+# TARGET OBJECTS #
+##################
+
+
+# UnZip Objects
+OBJS1 = unzip$(O) crc32$(O) crypt$(O) envargs$(O) explode$(O)
+OBJS2 = extract$(O) fileio$(O) globals$(O) list$(O) inflate$(O) match$(O)
+OBJS3 = process$(O) ttyio$(O) ubz2err$(O) unreduce$(O) unshrink$(O) zipinfo$(O)
+OBJSA = amiga$(O) timezone$(O)
+OBJS  = $(OBJS1) $(OBJS2) $(OBJS3) $(OBJSA)
+
+# UnZipSFX Objects
+OBJX1 = unzip$(OX) extract$(OX) inflate$(OX) match$(OX) process$(OX)
+OBJXI = crypt$(OX) crc32$(OX) fileio$(OX) globals$(OX) ttyio$(OX) ubz2err$(OX)
+OBJXA = amiga$(OX) timezone$(OX)
+OBJX  = $(OBJX1) $(OBJXI) $(OBJXA)
+
+# fUnZip Objects
+OBJF1 = funzip$(O)
+OBJF2 = crc32$(OF) crypt$(OF) globals$(OF) inflate$(OF) ttyio$(OF)
+OBJFA = filedate$(OF) stat$(O)
+OBJF  = $(OBJF1) $(OBJF2) $(OBJFA)
+
+# MakeSFX Objects
+OBJM = makesfx$(O)
+
+# Common header files
+UNZIP_H1 = unzip.h unzpriv.h globals.h
+UNZIP_HA = amiga/amiga.h amiga/z-stat.h
+UNZIP_H  = $(UNZIP_H1) $(UNZIP_HA)
+
+# Output targets
+UNZIPS = UnZip UnZipSFX fUnZip MakeSFX
+
+
+#######################################
+# DEFAULT TARGET AND PROCESSING RULES #
+#######################################
+
+all: request flush $(UNZIPS)
+
+# UnZip transformation rules
+#
+.c$(O) :
+        $(CC) WITH=$(CFILEC) LISTFILE=$>$(LISTEXTS) OBJNAME=$@ $*.c
+
+# UnZipSFX transformation rules
+#
+.c$(OX):
+        $(CC) DEF=SFX WITH=$(CFILEC) LISTFILE=$>$(LISTEXTX) OBJNAME=$@ $*.c
+
+# fUnZip transformation rules
+#
+.c$(OF):
+        $(CC) DEF=FUNZIP WITH=$(CFILEC) LISTFILE=$>$(LISTEXTF) OBJNAME=$@ $*.c
+
+
+#########################
+# Final output targets. #
+#########################
+
+unzip:    local_unzip CommonFlags $(OBJS)
+          @Echo "$(OBJS)" >$(OBJLISTS)
+          Type $(OBJLISTS)
+# -----
+# Note:   Change $(LDFLAGSS) to $(LDFLAGSC) if DYN_ALLOC is *not* defined.
+# -----
+          @Echo "$(LDFLAGSS) $(LUTIL) WITH $(OBJLISTS) $(LIBFLAGSS) " \
+                "$(LDFLAGS2) $(LMAPS)" >$(LWITHS)
+          Type $(LWITHS)
+          $(LD) TO UnZip    WITH $(LWITHS)
+
+funzip:   local_unzip CommonFlags $(OBJF)
+          @Echo "$(OBJF)" >$(OBJLISTF)
+          Type $(OBJLISTF)
+          @Echo "$(LDFLAGSC) $(LUTIL) WITH $(OBJLISTF) $(LIBFLAGSS) " \
+                "$(LDFLAGS2) $(LMAPF)" >$(LWITHF)
+          Type $(LWITHF)
+          $(LD) TO fUnZip   WITH $(LWITHF)
+
+unzipsfx: local_unzip SFXFlags $(OBJX)
+          @Echo "$(OBJX)" >$(OBJLISTX)
+          Type $(OBJLISTX)
+# ----
+# Note:   Insert $(LUTIL) here, to use utility library with UnZipSFX.
+# -----                      vvvvvvv
+          @Echo "$(LDFLAGSC)          WITH $(OBJLISTX) $(LIBFLAGSS) " \
+                "$(LDFLAGS2) $(LMAPX)" >$(LWITHX)
+          Type $(LWITHX)
+          $(LD) TO UnZipSFX WITH $(LWITHX)
+
+
+makesfx:  MakeSFXFlags $(OBJM)
+          @Echo "$(OBJM)" >$(OBJLISTM)
+          Type $(OBJLISTM)
+          @Echo "$(LDFLAGSC) $(LUTIL) WITH $(OBJLISTM) $(LIBFLAGSC) " \
+                "$(LDFLAGS2) $(LMAPM)" >$(LWITHM)
+          Type $(LWITHM)
+          # never use short-integers with MakeSFX !
+          $(LD) TO MakeSFX  WITH $(LWITHM)
+
+clean:
+        -Delete >nil: $(OBJS) quiet
+        -Delete >nil: $(OBJX) quiet
+        -Delete >nil: $(OBJF) quiet
+        -Delete >nil: $(OBJM) quiet
+        -Delete >nil: $(OBJLISTS) $(OBJLISTX) $(OBJLISTF) $(OBJLISTM) quiet
+        -Delete >nil: $(MAPFS) $(MAPFX) $(MAPFF) $(MAPFM) quiet
+        -Delete >nil: \#?$(LISTEXTS) \#?$(LISTEXTX) \#?$(LISTEXTF) quiet
+        -Delete >nil: $(CWITHOPT) $(CFILEC) $(CFILEX) $(CFILEM) quiet
+        -Delete >nil: SCOPTIONS SASCOPTS quiet
+        -Delete >nil: $(LWITHS) $(LWITHX) $(LWITHF) $(LWITHM) quiet
+        -Delete >nil: \#?.q.?? \#?.tmp \#?.cov quiet
+
+spotless: clean
+        -Delete >nil: $(UNZIPS) quiet
+
+
+# UnZip dependencies:
+# (objects not needed by Amiga port are commented)
+
+# special rule for adding Amiga internal version number to UnZip
+amiga$(O):          amiga/amiga.c amiga/filedate.c amiga/stat.c $(UNZIP_H) crypt.h timezone.h env:Workbench
+stat$(O):           amiga/stat.c     amiga/z-stat.h
+filedate$(O):       amiga/filedate.c crypt.h timezone.h
+api$(O):            api.c      $(UNZIP_H) unzvers.h #zlib.h
+apihelp$(O):        apihelp.c  $(UNZIP_H) unzvers.h
+crc32$(O):          crc32.c    $(UNZIP_H) zip.h crc32.h
+crypt$(O):          crypt.c    $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+envargs$(O):        envargs.c  $(UNZIP_H)
+explode$(O):        explode.c  $(UNZIP_H)
+extract$(O):        extract.c  $(UNZIP_H) crc32.h crypt.h
+fileio$(O):         fileio.c   $(UNZIP_H) crc32.h crypt.h ttyio.h ebcdic.h
+globals$(O):        globals.c  $(UNZIP_H)
+inflate$(O):        inflate.c  $(UNZIP_H) inflate.h #zlib.h
+list$(O):           list.c     $(UNZIP_H)
+match$(O):          match.c    $(UNZIP_H)
+process$(O):        process.c  $(UNZIP_H) crc32.h
+timezone$(O):       timezone.c $(UNZIP_H) zip.h timezone.h
+ttyio$(O):          ttyio.c    $(UNZIP_H) zip.h crypt.h ttyio.h
+ubz2err$(O):        ubz2err.c  $(UNZIP_H)
+unreduce$(O):       unreduce.c $(UNZIP_H)
+unshrink$(O):       unshrink.c $(UNZIP_H)
+unzip$(O):          unzip.c    $(UNZIP_H) crypt.h unzvers.h consts.h #zlib.h
+#unzipstb$(O):       unzipstb.c $(UNZIP_H) unzvers.h
+zipinfo$(O):        zipinfo.c  $(UNZIP_H)
+
+
+# UnZipSFX dependencies:
+#
+# special rule for adding Amiga internal version number to UnZipSFX
+amiga$(OX):      amiga/amiga.c amiga/filedate.c amiga/stat.c $(UNZIP_H) crypt.h timezone.h
+unzip$(OX):      unzip.c    $(UNZIP_H) crypt.h unzvers.h consts.h
+crc32$(OX):      crc32.c    $(UNZIP_H) zip.h crc32.h
+crypt$(OX):      crypt.c    $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+extract$(OX):    extract.c  $(UNZIP_H) crc32.h crypt.h
+fileio$(OX):     fileio.c   $(UNZIP_H) crc32.h crypt.h ttyio.h ebcdic.h
+globals$(OX):    globals.c  $(UNZIP_H)
+inflate$(OX):    inflate.c  $(UNZIP_H) inflate.h #zlib.h
+match$(OX):      match.c    $(UNZIP_H)
+process$(OX):    process.c  $(UNZIP_H) crc32.h
+timezone$(OX):   timezone.c $(UNZIP_H) zip.h timezone.h
+ttyio$(OX):      ttyio.c    $(UNZIP_H) zip.h crypt.h ttyio.h
+ubz2err$(OX):    ubz2err.c  $(UNZIP_H)
+
+
+# fUnZip dependencies:
+#
+funzip$(O):      funzip.c   $(UNZIP_H) crc32.h crypt.h ttyio.h
+crc32$(OF):      crc32.c    $(UNZIP_H) zip.h crc32.h
+crypt$(OF):      crypt.c    $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+globals$(OF):    globals.c  $(UNZIP_H)
+inflate$(OF):    inflate.c  $(UNZIP_H) inflate.h crypt.h #zlib.h
+ttyio$(OF):      ttyio.c    $(UNZIP_H) zip.h crypt.h ttyio.h
+filedate$(OF):   amiga/filedate.c crypt.h
+
+
+# MakeSFX dependencies
+#
+# special transformation rules to never use shortintegers:
+makesfx$(O):      amiga/makesfx.c
+        $(CC) WITH=$(CFILEM) LISTFILE=$>$(LISTEXTS) OBJNAME=$@ $*.c
+
+
+########################
+# DEPENDECIES END HERE #
+########################
+
+# flush all libraries to provide more mem for compilation
+flush:
+        @Avail flush >nil:
+
+# write common compiler flags to file and echo to user
+CommonFlags:
+        @Echo "$(CFLAGSC)" "$(CCPUOPTSF)" >$(CFILEC)
+        @Type "$(CWITHOPT)"              >>$(CFILEC)
+        -Type $(CFILEC)
+
+SFXFlags:
+        @Echo "$(CFLAGSC)" "$(CCPUOPTXM)" >$(CFILEX)
+        @Type "$(CWITHOPT)"              >>$(CFILEX)
+        -Type $(CFILEX)
+
+# write special MakeSFX flags
+MakeSFXFlags:
+        @Echo "$(CFLAGSS) $(CCPUOPTXM) DATA=NEAR NOSHORTINTEGERS" >$(CFILEM)
+        # not really needed but if someday used:
+        @Type "$(CWITHOPT)" >>$(CFILEM)
+        -Type $(CFILEM)
+
+
+# special rule for adding Amiga internal version number to amiga.c
+amiga$(O):
+        rx > env:VersionDate "say '""'translate(date('E'),'.','/')'""'"
+        $(CC) WITH=$(CFILEC) LISTFILE=$>$(LISTEXTS) OBJNAME=$@ $*.c
+        -Delete env:VersionDate
+
+
+# needed in amiga/amiga.c
+# should be set in startup-sequence, but just in case:
+# (only works with OS 2.04 and above)
+
+env\:WorkBench:
+        @Execute < < (Workbench_smk.tmp)
+           FailAt 21
+           If not exists ENV:Workbench
+              Version >nil:
+              SetEnv Workbench $$Workbench
+           Endif
+        <
+
+
+# #################
+# ### LOCAL_UNZIP ###
+# #################
+#
+# Read environment variable LOCAL_UNZIP and convert options from old Lattice
+# v5 to new SAS/C v6 format. You may also use the new DEFINE= syntax but
+# be sure not to mix v5 and v6 options, otherwise lctosc will be confused.
+#
+# e.g.: to define FOO_ONE and FOO_TWO enter:
+#
+# SetEnv LOCAL_UNZIP "-DFOO_ONE -DFOO_TWO"
+#
+# To make this permanent, i.e. survive an reboot, put the statement into
+# your startup-sequence or (for AmigaDOS 2.0 or higher only) make sure
+# LOCAL_UNZIP is stored in the ENVARC: directory too. To do this, simply
+# copy the file from ENV: to ENVARC:
+#   Copy ENV:LOCAL_UNZIP ENVARC:
+#
+# For a list of all valid non-standard compilation options see the INSTALL
+# file in the root zip tree. Please read the notes there before using the
+# non-standard options.
+#
+# e.g.: To use the non-standard timezone environment variable "INFOZIP_TZ"
+#	(or another arbitary name) instead of "TZ", type in your shell:
+#
+#	Setenv LOCAL_UNZIP "-DTZ_ENVVAR=*"INFOZIP_TZ*""
+#
+# Note that you need to escape the quotes of INFOZIP_TZ with leading stars.
+# To verify that LOCAL_UNZIP has been saved correctly, use the Getenv command:
+#
+#	Getenv LOCAL_UNZIP
+#
+# ...should display:
+#
+#	-DTZ_ENVVAR="INFOZIP_TZ"
+#
+
+local_unzip:
+        @Execute < < (Local_UnZip_smk.tmp)
+           Failat 21
+           Echo ""
+           If exists ENV:LOCAL_UNZIP
+              Echo "Using environment variable LOCAL_UNZIP !"
+              Echo "LOCAL_UNZIP: " NOLINE
+              GetEnv LOCAL_UNZIP
+              Copy >NIL: ENV:LOCAL_UNZIP SASCOPTS
+           Else
+              Echo "You could use envvar LOCAL_UNZIP to set your special compilation options."
+              Echo "See the makefile for more information (LOCAL_UNZIP section)."
+              Delete >nil: SASCOPTS quiet
+           Endif
+           Echo ""
+           ; Do not remove the lctosc command! If LOCAL_UNZIP is unset, an
+           ; empty file is created which needed by CommonFlags !
+           ; Moreover, lctosc also accepts new v6 options, i.e. only changes
+           ; known v5 options. Try `lctosc -Dfoo' and `lctosc DEFINE=foo'.
+           ; However, you *must not* mix v5 and v6 options!
+           lctosc > $(CWITHOPT)
+           ; Now make sure that env:sc/scoptions are NOT used
+           ; we just create an empty file. The options are stored elsewhere.
+           Echo > SCOPTIONS "" NOLINE
+        <
+
+
+
+# Echo request to the user
+#
+request:
+        @Echo ""
+        @Echo " This makefile is for use with SAS/C version 6.58."
+        @Echo " If you still have an older version, please upgrade!"
+        @Echo " Patches are available on the Aminet under biz/patch/sc\#?."
+        @Echo ""
+        @Echo " Just a simple request..."
+        @Echo " Please give me a mail that you compiled whether you encounter any errors"
+        @Echo " or not. I'd just like to know how many Amiga users actually make use of"
+        @Echo " this makefile."
+        @Echo " If you mail me, I'll put you on my mailing-list and notify you whenever"
+        @Echo " new versions of Info-Zip are released."
+        @Echo " Have a look at the makefile for changes like CPU type, UtilLib, Stack, etc."
+        @Echo " Feel free to mail comments, suggestions, critics..."
+        @Echo " Enjoy Info-Zip !"
+        @Echo " Haidinger Walter, <walthaid@unix.ict.tuwien.ac.at>"
+        @Echo ""
+
+# Echo help in case of an error
+#
+.ONERROR:
+        @Echo ""
+        @Echo "[sigh] An error running this makefile was detected."
+        @Echo "This message may also appear if you interrupted smake by pressing CTRL-C."
+        @Echo "Contact Info-ZIP authors at Zip-Bugs@lists.wku.edu or me for help."
+        @Echo "Haidinger Walter, <walthaid@unix.ict.tuwien.ac.at>"

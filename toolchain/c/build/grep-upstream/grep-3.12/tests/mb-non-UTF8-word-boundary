@@ -1,0 +1,29 @@
+#!/bin/sh
+# grep -Fw could false-match when using a non-UTF8 multibyte locale.
+
+# Copyright 2019-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_JP_EUC_locale_
+
+fail=0
+
+echo ab > in || framework_failure_
+
+# This would mistakenly print its input line from grep-2.28..3.3
+returns_ 1 grep -Fw b in || fail=1
+
+Exit $fail

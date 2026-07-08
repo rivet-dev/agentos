@@ -1,0 +1,43 @@
+#!/bin/sh
+# Exercise a DFA range bug that arises only with a unibyte encoding
+# for which the wide-char-to-single-byte mapping is nontrivial.
+# E.g., the regexp, [C] would fail to match C in a unibyte locale like
+# ru_RU.KOI8-R for any C whose wide-char representation differed from
+# its single-byte equivalent.
+
+# Copyright (C) 2011-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_ru_RU_koi8_r
+LC_ALL=ru_RU.KOI8-R
+export LC_ALL
+
+fail=0
+
+i=128
+while :; do
+  in=in-$i
+  octal=$(printf '%03o' $i)
+  b=$(printf "\\$octal")
+  echo "$b" > $in || framework_failure_
+  grep "[$b]" $in > out || fail=1
+  compare out $in || fail=1
+
+  test $i = 255 && break
+  i=$(expr $i + 1)
+done
+
+Exit $fail

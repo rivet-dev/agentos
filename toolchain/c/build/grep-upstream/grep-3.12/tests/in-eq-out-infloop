@@ -1,0 +1,41 @@
+#!/bin/sh
+# Demonstrate the disk-filling infloop when redirecting to an input file.
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_timeout_
+
+# Use an input file large enough that the problem is reproducible in spite
+# of buffering effects.  Just larger than 256KB should be adequate.
+v=$(printf %063d 0)'
+'
+# 64 * 2^12 = 256k
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  v="$v$v"
+done
+
+echo "$v" > out || framework_failure_
+
+for arg in out - ''; do
+  # Accommodate both 'out' and '(standard input)', as well as
+  # the multi-byte quoting we see on OS/X-based systems.
+  echo grep: ...: input file is also the output > err.exp || framework_failure_
+
+  # Require an exit status of 2.
+  # grep-2.8 and earlier would infloop with $arg = out.
+  # grep-2.10 and earlier would infloop with $arg = - or $arg = ''.
+  timeout 10 grep 0 $arg < out >> out 2> err; st=$?; test $st = 2 || fail=1
+  sed 's/grep: .*: /grep: ...: /' err > k && mv k err
+  # Normalize the diagnostic prefix from e.g., "/mnt/dir/grep: " to "grep: "
+  sed 's/^[^:]*: /grep: /' err > k && mv k err
+  compare err.exp err || fail=1
+
+  # But with each of the following options it must not exit-2.
+  for i in -q -m1 -l -L; do
+    timeout 10 grep $i 0 $arg < out >> out 2> err; st=$?
+    test $st = 2 && fail=1
+  done
+
+  timeout 10 grep -2 0 $arg < out >> out 2> err; st=$?
+  test $st = 2 || fail=1
+done
+
+Exit $fail

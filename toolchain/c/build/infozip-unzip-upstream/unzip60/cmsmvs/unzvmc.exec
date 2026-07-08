@@ -1,0 +1,56 @@
+/* VMCOMPIL EXEC   Unzip compile for VM/CMS                           */
+/*                 Author : George Petrov, 11 Apr 1995                */
+
+signal on error
+
+parms = '(long def(VM_CMS)'
+/* Add local options */
+/* "TARGET(COMPAT)" is required for V2.2 compiler */
+parms = parms 'TARGET(COMPAT) SOURCE'
+
+
+say 'Compiling UNZIP C...'
+'cc unzip c 'parms
+say 'Compiling CRC32 C...'
+'cc crc32 c 'parms
+say 'Compiling CRYPT C...'
+'cc crypt c 'parms
+say 'Compiling ENVARGS C...'
+'cc envargs c 'parms
+say 'Compiling EXPLODE C...'
+'cc explode c 'parms
+say 'Compiling EXTRACT C...'
+'cc extract c 'parms
+say 'Compiling FILEIO C...'
+'cc fileio c 'parms
+say 'Compiling GLOBALS C...'
+'cc globals c 'parms
+say 'Compiling INFLATE C...'
+'cc inflate c 'parms
+say 'Compiling PROCESS C...'
+'cc process c 'parms
+say 'Compiling LIST C...'
+'cc list c 'parms
+say 'Compiling MATCH C...'
+'cc match c 'parms
+say 'Compiling TTYIO C...'
+'cc ttyio c 'parms
+say 'Compiling UNREDUCE C...'
+'cc unreduce c 'parms
+say 'Compiling UNSHRINK C...'
+'cc unshrink c 'parms
+say 'Compiling ZIPINFO C...'
+'cc zipinfo c 'parms
+say 'Compiling VMMVS C...'
+'cc vmmvs c 'parms
+
+say 'Linking all files...'
+'cmod unzip unzip crc32 crypt envargs explode extract fileio globals',
+           'inflate list match process ttyio unreduce unshrink zipinfo vmmvs'
+say 'All Done!'
+say "To run enter : UNZIP parms"
+exit rc
+
+error:
+say 'Error during compilation!'
+exit rc

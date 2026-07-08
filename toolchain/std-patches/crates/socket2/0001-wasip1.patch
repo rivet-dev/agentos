@@ -1,0 +1,20 @@
+# socket2 0.6.x excludes wasm32-wasip1 (`not(target_env = "p1")`) → "doesn't support
+# the compile target". Include p1 so it routes to sys/unix.rs (the patched wasi-libc
+# host_net provides the socket fns; codex's HTTP uses wasi-http, so socket2 only needs
+# to COMPILE as a transitive dep of tokio::net/mio/reqwest). Pipeline-only codex port.
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@
+-#[cfg_attr(
+-    any(unix, all(target_os = "wasi", not(target_env = "p1"))),
+-    path = "sys/unix.rs"
+-)]
++#[cfg_attr(any(unix, target_os = "wasi"), path = "sys/unix.rs")]
+ #[cfg_attr(windows, path = "sys/windows.rs")]
+ mod sys;
+ 
+-#[cfg(not(any(windows, unix, all(target_os = "wasi", not(target_env = "p1")))))]
++#[cfg(not(any(windows, unix, target_os = "wasi")))]
+ compile_error!("Socket2 doesn't support the compile target");
+# NOTE: verify sys/unix.rs compiles on wasip1 (some fns may need stubbing if wasi-libc
+# lacks them); if so, add a sys/wasi.rs stub instead. socket2 is compile-only for codex.

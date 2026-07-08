@@ -1,0 +1,339 @@
+Things to do for GNU grep
+
+  Copyright (C) 1992, 1997-2002, 2004-2025 Free Software Foundation, Inc.
+
+  Copying and distribution of this file, with or without modification,
+  are permitted in any medium without royalty provided the copyright
+  notice and this notice are preserved.
+
+===============
+Short term work
+===============
+
+See where we are with UTF-8 performance.
+
+Merge Debian patches that seem relevant.
+
+Go through patches in Savannah.
+
+Fix --directories=read.
+
+Write better Texinfo documentation for grep.  The manual page would be a
+good place to start, but Info documents are also supposed to contain a
+tutorial and examples.
+
+Some tests in tests/spencer2.tests should have failed!  Need to filter out
+some bugs in dfa.[ch]/regex.[ch].
+
+Multithreading?
+
+GNU grep originally did 32-bit arithmetic.  Although it has moved to
+64-bit on 64-bit platforms by using types like ptrdiff_t and size_t,
+this conversion has not been entirely systematic and should be checked.
+
+Lazy dynamic linking of the PCRE library.
+
+Check FreeBSD’s integration of zgrep (-Z) and bzgrep (-J) in one
+binary.  Is there a possibility of doing even better by automatically
+checking the magic of binary files ourselves (0x1F 0x8B for gzip, 0x1F
+0x9D for compress, and 0x42 0x5A 0x68 for bzip2)?  Once what to do with
+the PCRE library is decided, do the same for libz and libbz2.
+
+
+===================
+Matching algorithms
+===================
+
+Take a look at these and consider opportunities for merging or cloning:
+
+   -- http://osrd.org/projects/grep/global-regular-expression-print-tools-grep-variants
+   -- ja-grep’s mlb2 patch (Japanese grep)
+      <http://distcache.freebsd.org/ports-distfiles/grep-2.4.2-mlb2.patch.gz>
+   -- lgrep (from lv, a Powerful Multilingual File Viewer / Grep)
+      <http://www.mt.cs.keio.ac.jp/person/narita/lv/>;
+   -- cgrep (Context grep) <https://awgn.github.io/cgrep/>
+      seems like nice work;
+   -- sgrep (Struct grep) <https://www.cs.helsinki.fi/u/jjaakkol/sgrep.html>;
+   -- agrep (Approximate grep) <https://www.tgries.de/agrep/>,
+      from glimpse;
+   -- nr-grep (Nondeterministic reverse grep)
+      <https://www.dcc.uchile.cl/~gnavarro/software/>;
+   -- ggrep (Grouse grep) <http://www.grouse.com.au/ggrep/>;
+   -- freegrep <https://github.com/howardjp/freegrep>;
+
+Check some new algorithms for matching.  See, for example, Faro &
+Lecroq (cited in kwset.c).
+
+Fix the DFA matcher to never use exponential space.  (Fortunately, these
+cases are rare.)
+
+
+============================
+Standards: POSIX and Unicode
+============================
+
+For POSIX compliance issues, see POSIX 1003.1.
+
+Current support for the POSIX [= =] and [. .] constructs is limited to
+platforms whose regular expression matchers are sufficiently
+compatible with the GNU C library so that the --without-included-regex
+option of ‘configure’ is in effect.  Extend this support to non-glibc
+platforms, where --with-included-regex is in effect, by modifying the
+included version of the regex code to defer to the native version when
+handling [= =] and [. .].
+
+For Unicode, interesting things to check include the Unicode Standard
+<https://www.unicode.org/standard/standard.html> and the Unicode Technical
+Standard #18 (<https://www.unicode.org/reports/tr18/> “Unicode Regular
+Expressions”).  Talk to Bruno Haible who’s maintaining GNU libunistring.
+See also Unicode Standard Annex #15 (<https://www.unicode.org/reports/tr15/>
+“Unicode Normalization Forms”), already implemented by GNU libunistring.
+
+In particular, --ignore-case needs to be evaluated against the standards.
+We may want to deviate from POSIX if Unicode provides better or clearer
+semantics.
+
+POSIX and --ignore-case
+-----------------------
+
+For this issue, interesting things to check in POSIX include the
+Open Group Base Specifications, Chapter “Regular Expressions”, in
+particular Section “Regular Expression General Requirements” and its
+paragraph about caseless matching (this may not have been fully
+thought through and that this text may be self-contradicting
+[specifically: “of either data or patterns” versus all the rest]).
+See:
+
+http://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap09.html#tag_09_02
+
+In particular, consider the following with POSIX’s approach to case
+folding in mind.  Assume a non-Turkic locale with a character
+repertoire reduced to the following various forms of “LATIN LETTER I”:
+
+  0049;LATIN CAPITAL LETTER I;Lu;0;L;;;;;N;;;;0069;
+  0069;LATIN SMALL LETTER I;Ll;0;L;;;;;N;;;0049;;0049
+  0130;LATIN CAPITAL LETTER I WITH DOT ABOVE;Lu;0;L;0049 0307;;;;N;\
+    LATIN CAPITAL LETTER I DOT;;;0069;
+  0131;LATIN SMALL LETTER DOTLESS I;Ll;0;L;;;;;N;;;0049;;0049
+
+UTF-8 octet lengths differ between U+0049 (0x49) and U+0069 (0x69)
+versus U+0130 (0xC4 0xB0) and U+0131 (0xC4 0xB1).  This implies that
+whole UTF-8 strings cannot be case-converted in place, using the same
+memory buffer, and that the needed octet-size of the new buffer cannot
+merely be guessed (although there’s a simple upper bound of five times
+the size of the input, as the longest UTF-8 encoding of any character
+is five bytes).
+
+We have
+
+  lc(I) = i, uc(I) = I
+  lc(i) = i, uc(i) = I
+  lc(İ) = i, uc(İ) = İ
+  lc(ı) = ı, uc(ı) = I
+
+where lc() and uc() denote lower-case and upper-case conversions.
+
+There are several candidate --ignore-case logics.  Using the
+
+  if (lc(input_wchar) == lc(pattern_wchar))
+
+logic leads to the following matches:
+
+    \in  I  i  İ  ı
+  pat\   ----------
+   I  |  Y  Y  Y  n
+   i  |  Y  Y  Y  n
+   İ  |  Y  Y  Y  n
+   ı  |  n  n  n  Y
+
+There is a lack of symmetry between CAPITAL and SMALL LETTERs with
+this.  Using the
+
+  if (uc(input_wchar) == uc(pattern_wchar))
+
+logic (which is what GNU grep currently does although this is not
+documented or guaranteed in the future), leads to the following
+matches:
+
+    \in  I  i  İ  ı
+  pat\   ----------
+   I  |  Y  Y  n  Y
+   i  |  Y  Y  n  Y
+   İ  |  n  n  Y  n
+   ı  |  Y  Y  n  Y
+
+There is a lack of symmetry between CAPITAL and SMALL LETTERs with
+this.
+
+Using the
+
+  if (lc(input_wchar) == lc(pattern_wchar)
+      || uc(input_wchar) == uc(pattern_wchar))
+
+logic leads to the following matches:
+
+    \in  I  i  İ  ı
+  pat\   ----------
+   I  |  Y  Y  Y  Y
+   i  |  Y  Y  Y  Y
+   İ  |  Y  Y  Y  n
+   ı  |  Y  Y  n  Y
+
+There is some elegance and symmetry with this.  But there are
+potentially two conversions to be made per input character.  If the
+pattern is pre-converted, two copies of it need to be kept and used in
+a mutually coherent fashion.
+
+Using the
+
+  if (input_wchar  == pattern_wchar
+      || lc(input_wchar) == pattern_wchar
+      || uc(input_wchar) == pattern_wchar)
+
+logic (a plausible interpretation of POSIX) leads to the following
+matches:
+
+    \in  I  i  İ  ı
+  pat\   ----------
+   I  |  Y  Y  n  Y
+   i  |  Y  Y  Y  n
+   İ  |  n  n  Y  n
+   ı  |  n  n  n  Y
+
+There is a different CAPITAL/SMALL symmetry with this.  But there’s
+also a loss of pattern/input symmetry that’s unique to it.  Also there
+are potentially two conversions to be made per input character.
+
+Using the
+
+  if (lc(uc(input_wchar)) == lc(uc(pattern_wchar)))
+
+logic leads to the following matches:
+
+    \in  I  i  İ  ı
+  pat\   ----------
+   I  |  Y  Y  Y  Y
+   i  |  Y  Y  Y  Y
+   İ  |  Y  Y  Y  Y
+   ı  |  Y  Y  Y  Y
+
+This shows total symmetry and transitivity (at least in this example
+analysis).  There are two conversions to be made per input character,
+but support could be added for having a single straight mapping
+performing a composition of the two conversions.
+
+Any optimization in the implementation of each logic must not change
+its basic semantic.
+
+
+Unicode and --ignore-case
+-------------------------
+
+For this issue, interesting things to check in Unicode include:
+
+  - The Unicode Standard, Chapter 3
+    (<https://www.unicode.org/versions/Unicode9.0.0/ch03.pdf>
+    “Conformance”), Section 3.13 (“Default Case Algorithms”) and the
+    toCasefold() case conversion operation.
+
+  - The Unicode Standard, Chapter 4
+    (<https://www.unicode.org/versions/Unicode9.0.0/ch04.pdf>
+    “Character Properties”), Section 4.2 (“Case”) and
+    the <https://www.unicode.org/Public/UNIDATA/SpecialCasing.txt>
+    SpecialCasing.txt and
+    <https://www.unicode.org/Public/UNIDATA/CaseFolding.txt>
+    CaseFolding.txt files.
+
+  - The Unicode Standard, Chapter 5
+    (<https://www.unicode.org/versions/Unicode9.0.0/ch05.pdf>
+    “Implementation Guidelines”), Section 5.18 (“Case Mappings”),
+    Subsection “Caseless Matching”.
+
+  - The Unicode case charts <https://www.unicode.org/charts/case/>.
+
+Unicode uses the
+
+  if (toCasefold(input_wchar_string) == toCasefold(pattern_wchar_string))
+
+logic for caseless matching.  Consider the “LATIN LETTER I” example
+mentioned above.  In a non-Turkic locale, simple case folding yields
+
+  toCasefold_simple(U+0049) = U+0069
+  toCasefold_simple(U+0069) = U+0069
+  toCasefold_simple(U+0130) = U+0130
+  toCasefold_simple(U+0131) = U+0131
+
+which leads to the following matches:
+
+    \in  I  i  İ  ı
+  pat\   ----------
+   I  |  Y  Y  n  n
+   i  |  Y  Y  n  n
+   İ  |  n  n  Y  n
+   ı  |  n  n  n  Y
+
+This is different from anything so far!
+
+In a non-Turkic locale, full case folding yields
+
+  toCasefold_full(U+0049) = U+0069
+  toCasefold_full(U+0069) = U+0069
+  toCasefold_full(U+0130) = <U+0069, U+0307>
+  toCasefold_full(U+0131) = U+0131
+
+with
+
+  0307;COMBINING DOT ABOVE;Mn;230;NSM;;;;;N;NON-SPACING DOT ABOVE;;;;
+
+which leads to the following matches:
+
+    \in  I  i  İ  ı
+  pat\   ----------
+   I  |  Y  Y  *  n
+   i  |  Y  Y  *  n
+   İ  |  n  n  Y  n
+   ı  |  n  n  n  Y
+
+This is just sad!
+
+Having toCasefold(U+0131), simple or full, map to itself instead of
+U+0069 is in contradiction with the rules of Section 5.18 of the
+Unicode Standard since toUpperCase(U+0131) is U+0049.  Same thing for
+toCasefold_simple(U+0130) since toLowerCase(U+0131) is U+0069.  The
+justification for the weird toCasefold_full(U+0130) mapping is
+unknown; it doesn’t even make sense to add a dot (U+0307) to a letter
+that already has one (U+0069).  It would have been so simple to put
+them all in the same equivalence class!
+
+Otherwise, also consider the following problem with Unicode’s approach
+on case folding in mind.  Assume that we want to perform
+
+  echo 'AßBC' | grep -i 'Sb'
+
+which corresponds to
+
+  input:    U+0041 U+00DF U+0042 U+0043 U+000A
+  pattern:  U+0053 U+0062
+
+Following CaseFolding.txt, applying the toCasefold() transformation to
+these yields
+
+  input:    U+0061 U+0073 U+0073 U+0062 U+0063 U+000A
+  pattern:                U+0073 U+0062
+
+so, according to this approach, the input should match the pattern.
+As long as the original input line is to be reported to the user as a
+whole, there is no problem (from the user’s point-of-view;
+implementation is complicated by this).
+
+However, consider both these GNU extensions:
+
+  echo 'AßBC' | grep -i --only-matching 'Sb'
+  echo 'AßBC' | grep -i --color=always  'Sb'
+
+What is to be reported in these cases, since the match begins in the
+*middle* of the original input character ‘ß’?
+
+Unicode’s toCasefold() cannot be implemented in terms of POSIX’s
+towctrans() since that can only return a single wint_t value per input
+wint_t value.

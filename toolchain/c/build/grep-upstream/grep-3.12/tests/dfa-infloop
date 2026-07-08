@@ -1,0 +1,12 @@
+#!/bin/sh
+# This would infloop for some unreleased versions between 2.26 and 2.27
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_timeout_
+
+fail=0
+
+echo cx > in || framework_failure_
+returns_ 1 timeout 10 env LC_ALL=C grep -E 'c\b[x ]' in || fail=1
+
+Exit $fail

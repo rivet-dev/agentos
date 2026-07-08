@@ -1,0 +1,936 @@
+# Traducció missatges de GNU grep al català.
+# Copyright (C) 2002 Free Software Foundation, Inc.
+# This file is distributed under the same license as the grep package.
+# Enric Alberola Rosell <enricalberola@wanadoo.es>, 2002, 2010.
+# Àngel Mompó <mecatxis@mecatxis.cat>, 2010, 2011, 2012, 2014, 2017, 2019.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: GNU grep-3.1.48\n"
+"Report-Msgid-Bugs-To: bug-grep@gnu.org\n"
+"POT-Creation-Date: 2025-04-10 09:02-0700\n"
+"PO-Revision-Date: 2019-07-18 22:11+0200\n"
+"Last-Translator: Àngel Mompó <mecatxis@mecatxis.cat>\n"
+"Language-Team: Catalan <ca@dodds.net>\n"
+"Language: ca\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Bugs: Report translation errors to the Language-Team address.\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Generator: Gtranslator 2.91.7\n"
+
+#: lib/argmatch.c:145
+#, c-format
+msgid "invalid argument %s for %s"
+msgstr "l'argument %s no és vàlid per %s"
+
+#: lib/argmatch.c:146
+#, c-format
+msgid "ambiguous argument %s for %s"
+msgstr "l'argument %s és ambigu per %s"
+
+#: lib/argmatch.c:165 lib/argmatch.h:242
+msgid "Valid arguments are:"
+msgstr "Els arguments vàlids són:"
+
+#: lib/c-stack.c:190
+msgid "program error"
+msgstr "error del programa"
+
+#: lib/c-stack.c:191
+msgid "stack overflow"
+msgstr "desbordament de la pila"
+
+#: lib/closeout.c:121 src/grep.c:1352
+msgid "write error"
+msgstr "error d'escriptura"
+
+#: lib/dfa.c:910
+msgid "unbalanced ["
+msgstr "[ desaparellat"
+
+#: lib/dfa.c:1031
+msgid "invalid character class"
+msgstr "La classe de caràcter no és vàlida"
+
+#: lib/dfa.c:1159
+msgid "character class syntax is [[:space:]], not [:space:]"
+msgstr "La sintaxi de la classe de caràcter és [[:espai:]], no [:espai:]"
+
+#: lib/dfa.c:1234
+msgid "unfinished \\ escape"
+msgstr "Codi d'escapada \\ inacabat"
+
+#: lib/dfa.c:1344
+#, fuzzy
+msgid "? at start of expression"
+msgstr "L'expressió regular no és vàlida"
+
+#: lib/dfa.c:1356
+#, fuzzy
+msgid "* at start of expression"
+msgstr "L'expressió regular no és vàlida"
+
+#: lib/dfa.c:1370
+#, fuzzy
+msgid "+ at start of expression"
+msgstr "L'expressió regular no és vàlida"
+
+#: lib/dfa.c:1425
+msgid "{...} at start of expression"
+msgstr ""
+
+#: lib/dfa.c:1428
+msgid "invalid content of \\{\\}"
+msgstr "el context de \\{\\} no és vàlid"
+
+#: lib/dfa.c:1430
+msgid "regular expression too big"
+msgstr "l'expressió regular és massa gran"
+
+#: lib/dfa.c:1580
+msgid "stray \\ before unprintable character"
+msgstr ""
+
+#: lib/dfa.c:1582
+msgid "stray \\ before white space"
+msgstr ""
+
+#: lib/dfa.c:1593
+#, c-format
+msgid "stray \\ before %s"
+msgstr ""
+
+#: lib/dfa.c:1594 lib/dfa.c:1597
+msgid "stray \\"
+msgstr ""
+
+#: lib/dfa.c:1948
+msgid "unbalanced ("
+msgstr "( desaparellat"
+
+#: lib/dfa.c:2065
+msgid "no syntax specified"
+msgstr "no s'ha especificat cap sintaxi"
+
+#: lib/dfa.c:2076
+msgid "unbalanced )"
+msgstr ") desaparellat"
+
+#: lib/error.c:208
+msgid "Unknown system error"
+msgstr "Error desconegut del sistema"
+
+#: lib/getopt.c:282
+#, c-format
+msgid "%s: option '%s%s' is ambiguous\n"
+msgstr "%s: l'opció «%s%s» és ambigua\n"
+
+#: lib/getopt.c:288
+#, c-format
+msgid "%s: option '%s%s' is ambiguous; possibilities:"
+msgstr "%s: l'opció «%s%s» és ambigua; possibilitats:"
+
+#: lib/getopt.c:322
+#, c-format
+msgid "%s: unrecognized option '%s%s'\n"
+msgstr "%s: no es reconeix l'opció «%s%s»\n"
+
+#: lib/getopt.c:348
+#, c-format
+msgid "%s: option '%s%s' doesn't allow an argument\n"
+msgstr "%s: l'opció «%s%s» no permet un argument\n"
+
+#: lib/getopt.c:363
+#, c-format
+msgid "%s: option '%s%s' requires an argument\n"
+msgstr "%s: l'opció «%s%s» necessita un argument\n"
+
+#: lib/getopt.c:624
+#, c-format
+msgid "%s: invalid option -- '%c'\n"
+msgstr "%s: l'opció no és vàlida -- «%c»\n"
+
+#: lib/getopt.c:639 lib/getopt.c:685
+#, c-format
+msgid "%s: option requires an argument -- '%c'\n"
+msgstr "%s: l'opció necessita un argument -- «%c»\n"
+
+#: lib/obstack.c:320 lib/obstack.c:322 lib/xalloc-die.c:34
+msgid "memory exhausted"
+msgstr "memòria exhaurida"
+
+#: lib/openat-die.c:38
+msgid "unable to record current working directory"
+msgstr "no es pot enregistrar el directori de treball actual"
+
+#: lib/openat-die.c:57
+msgid "failed to return to initial working directory"
+msgstr "no s'ha pogut tornar al directori de treball inicial"
+
+#: lib/xbinary-io.c:36
+#, c-format
+msgid "failed to set file descriptor text/binary mode"
+msgstr "No s'ha pogut establir el mode del descriptor de fitxers text/binari"
+
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  For example, a French Unicode local should translate
+#. these to U+00AB (LEFT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), and U+00BB (RIGHT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), respectively.
+#.
+#. If the catalog has no translation, we will try to
+#. use Unicode U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. Unicode U+2019 (RIGHT SINGLE QUOTATION MARK).  If the
+#. current locale is not Unicode, locale_quoting_style
+#. will quote 'like this', and clocale_quoting_style will
+#. quote "like this".  You should always include translations
+#. for "`" and "'" even if U+2018 and U+2019 are appropriate
+#. for your locale.
+#.
+#. If you don't know what to put here, please see
+#. <https://en.wikipedia.org/wiki/Quotation_marks_in_other_languages>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:354
+msgid "`"
+msgstr "«"
+
+#: lib/quotearg.c:355
+msgid "'"
+msgstr "»"
+
+#: lib/regcomp.c:122
+msgid "Success"
+msgstr "Èxit"
+
+#: lib/regcomp.c:125
+msgid "No match"
+msgstr "No coincideix"
+
+#: lib/regcomp.c:128
+msgid "Invalid regular expression"
+msgstr "L'expressió regular no és vàlida"
+
+#: lib/regcomp.c:131
+msgid "Invalid collation character"
+msgstr "La compaginació del caràcter no és vàlida"
+
+#: lib/regcomp.c:134
+msgid "Invalid character class name"
+msgstr "El nom de la classe del caràcter no és vàlida"
+
+#: lib/regcomp.c:137
+msgid "Trailing backslash"
+msgstr "Barra inversa final"
+
+#: lib/regcomp.c:140
+msgid "Invalid back reference"
+msgstr "La referència anterior no és vàlida"
+
+#: lib/regcomp.c:143
+msgid "Unmatched [, [^, [:, [., or [="
+msgstr "Falten o sobren  [, [^, [:, [., o [="
+
+#: lib/regcomp.c:146
+msgid "Unmatched ( or \\("
+msgstr "falten o sobren ( o \\("
+
+#: lib/regcomp.c:149
+msgid "Unmatched \\{"
+msgstr "Falten o sobren \\{"
+
+#: lib/regcomp.c:152
+msgid "Invalid content of \\{\\}"
+msgstr "El context de \\{\\} no és vàlid"
+
+#: lib/regcomp.c:155
+msgid "Invalid range end"
+msgstr "L'abast no és vàlid"
+
+#: lib/regcomp.c:158
+msgid "Memory exhausted"
+msgstr "Memòria exhaurida"
+
+#: lib/regcomp.c:161
+msgid "Invalid preceding regular expression"
+msgstr "L'expressió regular precedent no és vàlida"
+
+#: lib/regcomp.c:164
+msgid "Premature end of regular expression"
+msgstr "Final prematur de l'expressió regular"
+
+#: lib/regcomp.c:167
+msgid "Regular expression too big"
+msgstr "L'expressió regular és massa gran"
+
+#: lib/regcomp.c:170
+msgid "Unmatched ) or \\)"
+msgstr "Falten o sobren ) o \\)"
+
+#: lib/regcomp.c:650
+msgid "No previous regular expression"
+msgstr "No hi ha una expressió regular prèvia"
+
+#: lib/version-etc.c:73
+#, c-format
+msgid "Packaged by %s (%s)\n"
+msgstr "Empaquetat per %s (%s)\n"
+
+#: lib/version-etc.c:76
+#, c-format
+msgid "Packaged by %s\n"
+msgstr "Empaquetat per %s\n"
+
+#. TRANSLATORS: Translate "(C)" to the copyright symbol
+#. (C-in-a-circle), if this symbol is available in the user's
+#. locale.  Otherwise, do not translate "(C)"; leave it as-is.
+#: lib/version-etc.c:83
+msgid "(C)"
+msgstr "(C)"
+
+#. TRANSLATORS: The %s placeholder is the web address of the GPL license.
+#: lib/version-etc.c:88
+#, fuzzy, c-format
+msgid ""
+"License GPLv3+: GNU GPL version 3 or later <%s>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+msgstr ""
+"\n"
+"Llicència GPLv3+: GNU GPL versió 3 o posterior <http://gnu.org/licenses/gpl."
+"html>.\n"
+"Aquest programari és lliure: podeu modificar-lo i redistribuir-lo si voleu.\n"
+"No hi ha CAP GARANTIA, en la mesura que ho permeti la llei.\n"
+"\n"
+
+#. TRANSLATORS: %s denotes an author name.
+#: lib/version-etc.c:105
+#, c-format
+msgid "Written by %s.\n"
+msgstr "Escrit per %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:109
+#, c-format
+msgid "Written by %s and %s.\n"
+msgstr "Escrit per %s i %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:113
+#, c-format
+msgid "Written by %s, %s, and %s.\n"
+msgstr "Escrit per %s, %s i %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:120
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"Escrit per %s, %s, %s.\n"
+"i %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:127
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"Escrit per %s, %s, %s.\n"
+"%s, i %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:134
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, and %s.\n"
+msgstr ""
+"Escrit per %s, %s, %s.\n"
+"%s, %s, i %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:142
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, and %s.\n"
+msgstr ""
+"Escrit per %s, %s, %s.\n"
+"%s, %s, %s, i %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:150
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"Escrit per %s, %s, %s.\n"
+"%s, %s, %s, %s,\n"
+"i %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:159
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"Escrit per %s, %s, %s.\n"
+"%s, %s, %s, %s,\n"
+"%s, i %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:170
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, and others.\n"
+msgstr ""
+"Escrit per %s, %s, %s.\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, i altres.\n"
+
+#. TRANSLATORS: The placeholder indicates the bug-reporting address
+#. for this package.  Please add _another line_ saying
+#. "Report translation bugs to <...>\n" with the address for translation
+#. bugs (typically your translation team's web or email address).
+#: lib/version-etc.c:249
+#, fuzzy, c-format
+msgid "Report bugs to: %s\n"
+msgstr ""
+"\n"
+"Informeu dels errors a: %s\n"
+
+#: lib/version-etc.c:251
+#, c-format
+msgid "Report %s bugs to: %s\n"
+msgstr "Informeu dels errors de %s a: %s\n"
+
+#: lib/version-etc.c:255 lib/version-etc.c:257
+#, c-format
+msgid "%s home page: <%s>\n"
+msgstr "Pàgina inicial de %s: <%s>\n"
+
+#: lib/version-etc.c:260
+#, fuzzy, c-format
+msgid "General help using GNU software: <%s>\n"
+msgstr ""
+"Ajuda general d'utilització del programari de GNU: <https://www.gnu.org/"
+"gethelp/>\n"
+
+#: src/dfasearch.c:57
+#, fuzzy, c-format
+msgid "warning: %s"
+msgstr "aví­s: %s: %s"
+
+#: src/grep.c:657
+msgid "(standard input)"
+msgstr "(entrada estàndard)"
+
+#: src/grep.c:838
+msgid "invalid context length argument"
+msgstr "la longitud de l'argument no és vàlida"
+
+#: src/grep.c:911
+msgid "input is too large to count"
+msgstr "l'entrada és massa llarga per a comptar"
+
+#: src/grep.c:1656
+#, fuzzy, c-format
+msgid "%s: binary file matches"
+msgstr "Hi ha coincidències en el fitxer binari %s\n"
+
+#: src/grep.c:1694
+#, fuzzy, c-format
+msgid "%s: warning: recursive directory loop"
+msgstr "bucle de directori recursiu"
+
+#: src/grep.c:1914
+#, fuzzy, c-format
+msgid "%s: input file is also the output"
+msgstr "el fitxer d'entrada %s és també la sortida"
+
+#: src/grep.c:1976 src/grep.c:1983
+#, c-format
+msgid "Usage: %s [OPTION]... PATTERNS [FILE]...\n"
+msgstr "Forma d'ús: %s [OPCIÓ]... PATRONS [FITXER] ...\n"
+
+#: src/grep.c:1978
+#, c-format
+msgid "Try '%s --help' for more information.\n"
+msgstr "Feu servir «%s --help» per a obtenir més informació.\n"
+
+#: src/grep.c:1984
+#, c-format
+msgid "Search for PATTERNS in each FILE.\n"
+msgstr "Busca els PATRONS a cada FITXER.\n"
+
+#: src/grep.c:1985
+#, c-format
+msgid ""
+"Example: %s -i 'hello world' menu.h main.c\n"
+"PATTERNS can contain multiple patterns separated by newlines.\n"
+"\n"
+"Pattern selection and interpretation:\n"
+msgstr ""
+"Exemple: %s -i «hola món» menu.h main.c\n"
+"PATRONS pot contenir diversos patrons separats per salts de línia.\n"
+"\n"
+"Selecció i interpretació del patró:\n"
+
+#: src/grep.c:1990
+#, c-format
+msgid ""
+"  -E, --extended-regexp     PATTERNS are extended regular expressions\n"
+"  -F, --fixed-strings       PATTERNS are strings\n"
+"  -G, --basic-regexp        PATTERNS are basic regular expressions\n"
+"  -P, --perl-regexp         PATTERNS are Perl regular expressions\n"
+msgstr ""
+"  -E, --extended-regexp     PATRONS són expressions regulars ampliades\n"
+"  -F, --fixed-strings       PATRONS són conjunts de cadenes separades per "
+"salts de línia\n"
+"  -G, --basic-regexp        PATRONS són expressions regulars bàsiques (per "
+"defecte)\n"
+"  -P, --perl-regexp         PATRONS són expressions regulars de Perl\n"
+
+#: src/grep.c:1996
+#, fuzzy, c-format
+msgid ""
+"  -e, --regexp=PATTERNS     use PATTERNS for matching\n"
+"  -f, --file=FILE           take PATTERNS from FILE\n"
+"  -i, --ignore-case         ignore case distinctions in patterns and data\n"
+"      --no-ignore-case      do not ignore case distinctions (default)\n"
+"  -w, --word-regexp         match only whole words\n"
+"  -x, --line-regexp         match only whole lines\n"
+"  -z, --null-data           a data line ends in 0 byte, not newline\n"
+msgstr ""
+"  -e, --regexp=PATRONS      utilitza els PATRONS per la comparació\n"
+"  -f, --file=FITXER         obté els PATRONS del FITXER\n"
+"  -i, --ignore-case         no diferencia entre majúscules i minúscules\n"
+"  -w, --word-regexp         força la concordança amb paraules completes\n"
+"  -x, --line-regexp         força la concordança amb línies completes\n"
+"  -z, --null-data           una línia de dades acaba amb byte 0 i no amb un "
+"salt de línia\n"
+
+#: src/grep.c:2004
+#, c-format
+msgid ""
+"\n"
+"Miscellaneous:\n"
+"  -s, --no-messages         suppress error messages\n"
+"  -v, --invert-match        select non-matching lines\n"
+"  -V, --version             display version information and exit\n"
+"      --help                display this help text and exit\n"
+msgstr ""
+"\n"
+"Miscel·lània:\n"
+"  -s, --no-messages         suprimeix els missatges d'error\n"
+"  -v, --invert-match        selecciona les línies que no coincideixen\n"
+"  -V, --version             mostra la informació sobre la versió i surt\n"
+"      --help                mostra aquesta ajuda i surt\n"
+
+#: src/grep.c:2011
+#, c-format
+msgid ""
+"\n"
+"Output control:\n"
+"  -m, --max-count=NUM       stop after NUM selected lines\n"
+"  -b, --byte-offset         print the byte offset with output lines\n"
+"  -n, --line-number         print line number with output lines\n"
+"      --line-buffered       flush output on every line\n"
+"  -H, --with-filename       print file name with output lines\n"
+"  -h, --no-filename         suppress the file name prefix on output\n"
+"      --label=LABEL         use LABEL as the standard input file name "
+"prefix\n"
+msgstr ""
+"\n"
+"Control de sortida:\n"
+"  -m, --max-count=NUM       s'atura després de NUM coincidències\n"
+"  -b, --byte-offset         mostra el byte de desplaçament amb les línies de "
+"sortida\n"
+"  -n, --line-number         mostra el número de lí­nia amb les línies de "
+"sortida\n"
+"      --line-buffered       bolca la sortida a cada línia\n"
+"  -H, --with-filename       mostra el nom del fitxer amb les línies de "
+"sortida\n"
+"  -h, --no-filename         elimina els noms dels fitxers de la sortida\n"
+"      --label=ETIQUETA      fes servir ETIQUETA com a prefix del nom del "
+"fitxer per l'entrada estàndard\n"
+
+#: src/grep.c:2022
+#, c-format
+msgid ""
+"  -o, --only-matching       show only nonempty parts of lines that match\n"
+"  -q, --quiet, --silent     suppress all normal output\n"
+"      --binary-files=TYPE   assume that binary files are TYPE;\n"
+"                            TYPE is 'binary', 'text', or 'without-match'\n"
+"  -a, --text                equivalent to --binary-files=text\n"
+msgstr ""
+"  -o, --only-matching       mostra només la part de la línia que "
+"coincideixi\n"
+"  -q, --quiet, --silent     elimina la sortida normal\n"
+"      --binary-files=TIPUS  assumeix que els fitxers binaris són de tipus "
+"TIPUS;\n"
+"                            TIPUS pot ser «binary», «text» o «without-"
+"match»\n"
+"  -a, --text                equivalent a --binary-files=text\n"
+
+#: src/grep.c:2029
+#, c-format
+msgid ""
+"  -I                        equivalent to --binary-files=without-match\n"
+"  -d, --directories=ACTION  how to handle directories;\n"
+"                            ACTION is 'read', 'recurse', or 'skip'\n"
+"  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n"
+"                            ACTION is 'read' or 'skip'\n"
+"  -r, --recursive           like --directories=recurse\n"
+"  -R, --dereference-recursive  likewise, but follow all symlinks\n"
+msgstr ""
+"  -I                        equivalent a --binary-files=without-match\n"
+"  -d, --directories=ACCIÓ   com cal tractar els directoris;\n"
+"                            ACCIÓ pot ser: «read», «recurse», o «skip»\n"
+"  -D, --devices=ACCIÓ       com tractar els dispositius, FIFOs i sòcols;\n"
+"                            ACCIÓ pot ser: «read» o «skip»\n"
+"  -r, --recursive           equivalent a --directories=recurse\n"
+"  -R, --dereference-recursive  igual que l'anterior, però segueix tots els "
+"enllaços simbòlics\n"
+
+#: src/grep.c:2038
+#, fuzzy, c-format
+msgid ""
+"      --include=GLOB        search only files that match GLOB (a file "
+"pattern)\n"
+"      --exclude=GLOB        skip files that match GLOB\n"
+"      --exclude-from=FILE   skip files that match any file pattern from "
+"FILE\n"
+"      --exclude-dir=GLOB    skip directories that match GLOB\n"
+msgstr ""
+"      --include=GLOB........  busca els fitxers que coincideixin amb GLOB "
+"(un fitxer patró)\n"
+"      --exclude=GLOB ........ salta els fitxers i directoris que "
+"coincideixin amb GLOB\n"
+"      --exclude-from=FITXER   salta els fitxers que coincideixin amb "
+"qualsevol fitxer patró del FITXER\n"
+"      --exclude-dir=GLOB  ...salta els directoris que coincideixin amb "
+"GLOB.\n"
+
+#: src/grep.c:2045
+#, c-format
+msgid ""
+"  -L, --files-without-match  print only names of FILEs with no selected "
+"lines\n"
+"  -l, --files-with-matches  print only names of FILEs with selected lines\n"
+"  -c, --count               print only a count of selected lines per FILE\n"
+"  -T, --initial-tab         make tabs line up (if needed)\n"
+"  -Z, --null                print 0 byte after FILE name\n"
+msgstr ""
+"  -L, --files-without-match  mostra només els noms dels FITXERs que no "
+"tinguin cap línia seleccionada\n"
+"  -l, --files-with-matches  mostra només els noms dels FITXERs que "
+"continguin alguna línia seleccionada\n"
+"  -c, --count               mostra només el nombre de línies selecionades "
+"per FITXER\n"
+"  -T, --initial-tab         alinea les tabulacions (si cal)\n"
+"  -Z, --null                mostra byte 0 després del nom de FITXER\n"
+
+#: src/grep.c:2051
+#, c-format
+msgid ""
+"\n"
+"Context control:\n"
+"  -B, --before-context=NUM  print NUM lines of leading context\n"
+"  -A, --after-context=NUM   print NUM lines of trailing context\n"
+"  -C, --context=NUM         print NUM lines of output context\n"
+msgstr ""
+"\n"
+"Control del context:\n"
+"  -B, --before-context=NOMBRE mostra un NOMBRE de línies del context "
+"anterior\n"
+"  -A, --after-context=NOMBRE  mostra un NOMBRE de línies del context "
+"posterior\n"
+"  -C, --context=NOMBRE        mostra un NOMBRE de línies del context de "
+"sortida\n"
+
+#: src/grep.c:2058
+#, fuzzy, c-format
+msgid ""
+"  -NUM                      same as --context=NUM\n"
+"      --group-separator=SEP  print SEP on line between matches with context\n"
+"      --no-group-separator  do not print separator for matches with context\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       use markers to highlight the matching strings;\n"
+"                            WHEN is 'always', 'never', or 'auto'\n"
+"  -U, --binary              do not strip CR characters at EOL (MSDOS/"
+"Windows)\n"
+"\n"
+msgstr ""
+"  -NUM                        el mateix que --context=NUM\n"
+"      --color[=QUAN],\n"
+"      --colour[=QUAN]         ressalta amb marcadors les cadenes "
+"coincidents;\n"
+"                              QUAN pot ser: «always», «never» o «auto»\n"
+"  -U, --binary                no elimina els caràcters CR als EOL (MSDOS/"
+"Windows)\n"
+"\n"
+
+#: src/grep.c:2067
+#, fuzzy, c-format
+msgid ""
+"When FILE is '-', read standard input.  If no FILE is given, read standard\n"
+"input, but with -r, recursively search the working directory instead.  With\n"
+"fewer than two FILEs, assume -h.  Exit status is 0 if any line is selected,\n"
+"1 otherwise; if any error occurs and -q is not given, the exit status is 2.\n"
+msgstr ""
+"Quan el FITXER és «-», llegeix l'entrada estàndard. Si no s'indica el "
+"FITXER, llegeix «.» \n"
+"si és recursiu i «-» si no ho és. Si s'indiquen menys de dos FITXERs, "
+"assumeix -h.\n"
+"L'estat de sortida és 0 si s'havia seleccionat alguna línia (o algun fitxer "
+"si -L), si no 1.\n"
+"Si hi ha algun error i no s'ha indicat -q, l'estat de sortida és 2.\n"
+
+#: src/grep.c:2110
+msgid "conflicting matchers specified"
+msgstr "s'han especificat expressions conflictives"
+
+#: src/grep.c:2117
+#, fuzzy
+msgid "Perl matching not supported in a --disable-perl-regexp build"
+msgstr ""
+"el suport per l'opció -P no està  compilat a aquest binari --disable-perl-"
+"regexp"
+
+#: src/grep.c:2119
+#, c-format
+msgid "invalid matcher %s"
+msgstr "l'expressió %s no és vàlida"
+
+#: src/grep.c:2541
+msgid "unknown devices method"
+msgstr "el mètode de dispositius és desconegut"
+
+#: src/grep.c:2690
+msgid "invalid max count"
+msgstr "el comptador de màxims no és vàlid"
+
+#: src/grep.c:2747
+msgid "unknown binary-files type"
+msgstr "el tipus de fitxer binari és desconegut"
+
+#: src/grep.c:2832
+#, fuzzy
+msgid ""
+"Written by Mike Haertel and others; see\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+msgstr "la resta, vegeu <https://git.sv.gnu.org/cgit/grep.git/tree/AUTHORS>"
+
+#: src/grep.c:2939
+#, c-format
+msgid "warning: GREP_COLOR='%s' is deprecated; use GREP_COLORS='mt=%s'"
+msgstr ""
+
+#: src/pcresearch.c:89
+#, c-format
+msgid ""
+"\n"
+"grep -P uses PCRE2 %s\n"
+msgstr ""
+
+#: src/pcresearch.c:167
+#, fuzzy
+msgid "-P supports only unibyte locales on this platform"
+msgstr "-P només permet la configuració local en unibyte i en UTF-8"
+
+#: src/pcresearch.c:169
+msgid "-P supports only unibyte and UTF-8 locales"
+msgstr "-P només permet la configuració local en unibyte i en UTF-8"
+
+#: src/pcresearch.c:192
+msgid "the -P option only supports a single pattern"
+msgstr "l'opció -P només suporta un sol patró"
+
+# PCRE is 'Perl Compatible Regular Expression'
+#: src/pcresearch.c:288
+msgid "exceeded PCRE's line length limit"
+msgstr "s'ha superat el límit de longitud de línia del PCRE"
+
+#: src/pcresearch.c:366
+#, fuzzy, c-format
+msgid "%s: memory exhausted"
+msgstr "memòria exhaurida"
+
+#: src/pcresearch.c:369
+#, fuzzy, c-format
+msgid "%s: exhausted PCRE JIT stack"
+msgstr "S'ha acabat la pila del PCRE JIT"
+
+# PCRE is 'Perl Compatible Regular Expression'
+#: src/pcresearch.c:373
+#, fuzzy, c-format
+msgid "%s: exceeded PCRE's backtracking limit"
+msgstr "s'ha superat el límit de l'estratègia «tornada enrere» del PCRE"
+
+# PCRE is 'Perl Compatible Regular Expression'
+#: src/pcresearch.c:378
+#, fuzzy, c-format
+msgid "%s: exceeded PCRE's nested backtracking limit"
+msgstr "s'ha superat el límit de l'estratègia «tornada enrere» del PCRE"
+
+#: src/pcresearch.c:382
+#, c-format
+msgid "%s: PCRE detected recurse loop"
+msgstr ""
+
+# PCRE is 'Perl Compatible Regular Expression'
+#: src/pcresearch.c:387
+#, fuzzy, c-format
+msgid "%s: exceeded PCRE's heap limit"
+msgstr "s'ha superat el límit de l'estratègia «tornada enrere» del PCRE"
+
+#: src/pcresearch.c:396
+#, fuzzy, c-format
+msgid "%s: internal PCRE error: %d"
+msgstr "error intern del PCRE: %d"
+
+#, fuzzy, c-format
+#~ msgid "JIT internal error: %d"
+#~ msgstr "error intern"
+
+#~ msgid "failed to allocate memory for the PCRE JIT stack"
+#~ msgstr "no s'ha pogut assignar memòria per la pila JIT del PCRE"
+
+#~ msgid "internal error (should never happen)"
+#~ msgstr "error intern (no hauria de passar mai)"
+
+#, c-format
+#~ msgid "warning: GREP_OPTIONS is deprecated; please use an alias or script"
+#~ msgstr "avís: GREP_OPTIONS està desfasat; feu servir un alies o un script"
+
+#~ msgid "invalid %s%s argument '%s'"
+#~ msgstr "l'argument «%s» de %s%s no és vàlid"
+
+#~ msgid "invalid suffix in %s%s argument '%s'"
+#~ msgstr "el sufix «%s» de %s%s no és vàlid"
+
+#~ msgid "%s%s argument '%s' too large"
+#~ msgstr "l'argument «%s» de %s%s és massa gran"
+
+#~ msgid "%s home page: <https://www.gnu.org/software/%s/>\n"
+#~ msgstr "Pàgina inicial de %s: <https://www.gnu.org/software/%s/>\n"
+
+#~ msgid "Mike Haertel"
+#~ msgstr "Mike Haertel"
+
+#~ msgid "%s: option '--%s' doesn't allow an argument\n"
+#~ msgstr "%s: l'opció «--%s» no permet un argument\n"
+
+#~ msgid "%s: unrecognized option '--%s'\n"
+#~ msgstr "%s: l'opció és desconeguda «--%s»\n"
+
+#~ msgid "%s: option '-W %s' is ambiguous\n"
+#~ msgstr "%s: l'opció «-W %s» és ambigua\n"
+
+#~ msgid "%s: option '-W %s' doesn't allow an argument\n"
+#~ msgstr "%s: l'opció «-W %s» no permet un argument\n"
+
+#~ msgid "%s: option '-W %s' requires an argument\n"
+#~ msgstr "%s: l'opció «-W %s» necessita un argument\n"
+
+#~ msgid "lseek failed"
+#~ msgstr "l'lseek ha fallat"
+
+#~ msgid "PATTERN is, by default, a basic regular expression (BRE).\n"
+#~ msgstr "El PATRÓ és, per defecte, una expressió regular bàsica (ERB).\n"
+
+#~ msgid ""
+#~ "'egrep' means 'grep -E'.  'fgrep' means 'grep -F'.\n"
+#~ "Direct invocation as either 'egrep' or 'fgrep' is deprecated.\n"
+#~ msgstr ""
+#~ "«egrep» ara és «grep -E». «fgrep» ara és «grep -F».\n"
+#~ "La crida directa tant de «egrep» com de «fgrep» és obsoleta.\n"
+
+#~ msgid "unescaped ^ or $ not supported with -Pz"
+#~ msgstr "falta el caràcter d'escapada de ^ o no es permet $ amb -Pz"
+
+#~ msgid "GNU Grep home page: <%s>\n"
+#~ msgstr "Pàgina principal del Grep de GNU: <%s>\n"
+
+#~ msgid "invalid UTF-8 byte sequence in input"
+#~ msgstr "la seqüència d'entrada UTF-8 byte no és vàlida"
+
+#~ msgid "PATTERN is an extended regular expression (ERE).\n"
+#~ msgstr "El PATRÓ és una expressió regular ampliada (ERA).\n"
+
+#~ msgid "Invocation as 'egrep' is deprecated; use 'grep -E' instead.\n"
+#~ msgstr "La crida com a «egrep» està desfasada; feu servir «grep -E».\n"
+
+#~ msgid "PATTERN is a set of newline-separated fixed strings.\n"
+#~ msgstr ""
+#~ "El PATRÓ és un conjunt de cadenes fixes separades per salts de línia.\n"
+
+#~ msgid "Invocation as 'fgrep' is deprecated; use 'grep -F' instead.\n"
+#~ msgstr "La crida com a «fgrep» està desfasada; feu servir «grep -F».\n"
+
+#~ msgid "%s can only use the %s pattern syntax"
+#~ msgstr "%s només pot fer servir la sintaxis de patró %s"
+
+#~ msgid "the --mmap option has been a no-op since 2010"
+#~ msgstr "la opció --mmap no fa res des del 2010"
+
+#~ msgid "unfinished repeat count"
+#~ msgstr "comptador de repeticions inacabat"
+
+#~ msgid "malformed repeat count"
+#~ msgstr "comptador de repeticions defectuós"
+
+#~ msgid "writing output"
+#~ msgstr "s'escriu a la sortida"
+
+#~ msgid ""
+#~ "in GREP_COLORS=\"%s\", the \"%s\" capacity needs a value (\"=...\"); "
+#~ "skipped"
+#~ msgstr ""
+#~ "a GREP_COLORS=\"%s\", la capacitat \"%s\" necessita un valor (\"=..\"). "
+#~ "S'ha omés"
+
+#~ msgid ""
+#~ "in GREP_COLORS=\"%s\", the \"%s\" capacity is boolean and cannot take a "
+#~ "value (\"=%s\"); skipped"
+#~ msgstr ""
+#~ "a GREP_COLORS=\"%s\", la capacitat \"%s\" és booleana i no pot tenir el "
+#~ "valor (\"=%s\"). S'ha omés"
+
+#~ msgid "in GREP_COLORS=\"%s\", the \"%s\" capacity %s"
+#~ msgstr "a GREP_COLORS=\"%s\", la capacitat \"%s\" %s"
+
+#~ msgid ""
+#~ "stopped processing of ill-formed GREP_COLORS=\"%s\" at remaining "
+#~ "substring \"%s\""
+#~ msgstr ""
+#~ "s'ha deixat de processar de les subcadenes GREP_COLORS=\"%s\" mal "
+#~ "formades \"%s\""

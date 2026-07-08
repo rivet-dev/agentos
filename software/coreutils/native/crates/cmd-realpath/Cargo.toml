@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-realpath"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "realpath standalone binary for secure-exec VM"
+
+[[bin]]
+name = "realpath"
+path = "src/main.rs"
+
+[dependencies]
+uu_realpath = "0.7.0"

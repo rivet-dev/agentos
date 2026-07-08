@@ -1,0 +1,49 @@
+#!/bin/sh
+# grep-2.17 would take nearly 200x longer to run the command below.
+# The 200x is on an Intel i7-based system.
+# On an AMD FX-4100, it would take up to 2500x longer.
+
+# Copyright 2014-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+# This test is susceptible to failure due to differences in
+# system load during the two test runs, so we'll mark it as
+# "expensive", making it less likely to be run by regular users.
+expensive_
+require_perl_
+
+# Make the input large enough so that even on high-end systems
+# the unibyte test takes at least 10ms of user time.
+n_lines=100000
+while :; do
+  yes $(printf '%078d' 0) | sed ${n_lines}q > in || framework_failure_
+  ubyte_ms=$(LC_ALL=C user_time_ 1 grep -i foobar in) || fail=1
+  test $ubyte_ms -ge 10 && break
+  n_lines=$(expr $n_lines + 200000)
+done
+
+require_JP_EUC_locale_
+mbyte_ms=$(user_time_ 1 grep -i foobar in) || fail=1
+
+# The duration of the multi-byte run must be no more than 30 times
+# that of the single-byte one.
+# A multiple of 3 seems to be enough for i5,i7, but AMD needs >25.
+returns_ 1 expr $ubyte_ms '<' $mbyte_ms / 30 || fail=1
+
+Exit $fail

@@ -1,9 +1,0 @@
-{
-	"commands": [
-		"http_get"
-	],
-	"registry": {
-		"title": "http-get",
-		"description": "Minimal HTTP GET fetch helper."
-	}
-}

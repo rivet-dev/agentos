@@ -1,0 +1,403 @@
+diff -ruN '--exclude=*.orig' src/cursor/sys/wasi.rs src/cursor/sys/wasi.rs
+--- a/src/cursor/sys/wasi.rs	1969-12-31 16:00:00.000000000 -0800
++++ b/src/cursor/sys/wasi.rs	2026-03-20 11:47:50.140876109 -0700
+@@ -0,0 +1,10 @@
++//! WASI-specific cursor functions.
++
++use std::io;
++
++/// Returns the cursor position (column, row).
++/// On WASI, returns (0, 0) as a stub — cursor position queries via DSR
++/// are not supported without full terminal emulation.
++pub fn position() -> io::Result<(u16, u16)> {
++    Ok((0, 0))
++}
+diff -ruN '--exclude=*.orig' src/cursor/sys.rs src/cursor/sys.rs
+--- a/src/cursor/sys.rs	1973-11-29 13:33:09.000000000 -0800
++++ b/src/cursor/sys.rs	2026-03-20 11:47:57.676888146 -0700
+@@ -6,6 +6,9 @@
+ #[cfg(windows)]
+ #[cfg(feature = "events")]
+ pub use self::windows::position;
++#[cfg(target_os = "wasi")]
++#[cfg(feature = "events")]
++pub use self::wasi::position;
+ #[cfg(windows)]
+ pub(crate) use self::windows::{
+     move_down, move_left, move_right, move_to, move_to_column, move_to_next_line,
+@@ -18,3 +21,7 @@
+ #[cfg(unix)]
+ #[cfg(feature = "events")]
+ pub(crate) mod unix;
++
++#[cfg(target_os = "wasi")]
++#[cfg(feature = "events")]
++pub(crate) mod wasi;
+diff -ruN '--exclude=*.orig' src/event/filter.rs src/event/filter.rs
+--- a/src/event/filter.rs	1973-11-29 13:33:09.000000000 -0800
++++ b/src/event/filter.rs	2026-03-20 11:49:15.561010721 -0700
+@@ -55,6 +55,11 @@
+         matches!(*event, InternalEvent::Event(_))
+     }
+ 
++    #[cfg(target_os = "wasi")]
++    fn eval(&self, event: &InternalEvent) -> bool {
++        matches!(*event, InternalEvent::Event(_))
++    }
++
+     #[cfg(windows)]
+     fn eval(&self, _: &InternalEvent) -> bool {
+         true
+diff -ruN '--exclude=*.orig' src/event/read.rs src/event/read.rs
+--- a/src/event/read.rs	1973-11-29 13:33:09.000000000 -0800
++++ b/src/event/read.rs	2026-03-20 11:48:37.492951213 -0700
+@@ -2,6 +2,8 @@
+ 
+ #[cfg(unix)]
+ use crate::event::source::unix::UnixInternalEventSource;
++#[cfg(target_os = "wasi")]
++use crate::event::source::wasi::WasiEventSource;
+ #[cfg(windows)]
+ use crate::event::source::windows::WindowsEventSource;
+ #[cfg(feature = "event-stream")]
+@@ -21,6 +23,8 @@
+         let source = WindowsEventSource::new();
+         #[cfg(unix)]
+         let source = UnixInternalEventSource::new();
++        #[cfg(target_os = "wasi")]
++        let source = WasiEventSource::new();
+ 
+         let source = source.ok().map(|x| Box::new(x) as Box<dyn EventSource>);
+ 
+diff -ruN '--exclude=*.orig' src/event/source/wasi.rs src/event/source/wasi.rs
+--- a/src/event/source/wasi.rs	1969-12-31 16:00:00.000000000 -0800
++++ b/src/event/source/wasi.rs	2026-03-20 11:48:21.468925937 -0700
+@@ -0,0 +1,139 @@
++//! WASI event source — reads raw bytes from stdin and parses ANSI escape sequences.
++
++use std::collections::VecDeque;
++use std::io;
++use std::time::Duration;
++
++#[cfg(feature = "event-stream")]
++use super::super::sys::Waker;
++use super::{EventSource, InternalEvent};
++use crate::event::sys::unix::parse::parse_event;
++
++#[link(wasm_import_module = "host_tty")]
++unsafe extern "C" {
++    fn read(ptr: *mut u8, len: usize, timeout_ms: usize) -> usize;
++}
++
++const BLOCKING_TIMEOUT_MS: usize = usize::MAX;
++const CONTINUATION_TIMEOUT_MS: usize = 10;
++
++fn timeout_to_ms(timeout: Option<Duration>) -> usize {
++    match timeout {
++        None => BLOCKING_TIMEOUT_MS,
++        Some(timeout) => timeout
++            .as_millis()
++            .min((BLOCKING_TIMEOUT_MS - 1) as u128) as usize,
++    }
++}
++
++/// WASI event source that reads from stdin and parses terminal input.
++pub(crate) struct WasiEventSource {
++    parser: Parser,
++}
++
++impl WasiEventSource {
++    pub fn new() -> io::Result<Self> {
++        Ok(Self {
++            parser: Parser::default(),
++        })
++    }
++}
++
++impl EventSource for WasiEventSource {
++    fn try_read(&mut self, timeout: Option<Duration>) -> io::Result<Option<InternalEvent>> {
++        if let Some(event) = self.parser.next() {
++            return Ok(Some(event));
++        }
++
++        let mut buf = [0u8; 1];
++        let n = unsafe { read(buf.as_mut_ptr(), buf.len(), timeout_to_ms(timeout)) };
++        if n == 0 {
++            return Ok(None);
++        }
++
++        self.parser.advance(&buf[..n], true);
++        while self.parser.has_pending_prefix() {
++            if let Some(event) = self.parser.next() {
++                return Ok(Some(event));
++            }
++
++            let n = unsafe { read(buf.as_mut_ptr(), buf.len(), CONTINUATION_TIMEOUT_MS) };
++            if n == 0 {
++                self.parser.finish();
++                break;
++            }
++            self.parser.advance(&buf[..n], true);
++        }
++
++        Ok(self.parser.next())
++    }
++
++    #[cfg(feature = "event-stream")]
++    fn waker(&self) -> Waker {
++        unimplemented!("event-stream not supported on WASI")
++    }
++}
++
++#[derive(Debug)]
++struct Parser {
++    buffer: Vec<u8>,
++    internal_events: VecDeque<InternalEvent>,
++}
++
++impl Default for Parser {
++    fn default() -> Self {
++        Self {
++            buffer: Vec::with_capacity(256),
++            internal_events: VecDeque::with_capacity(128),
++        }
++    }
++}
++
++impl Parser {
++    fn has_pending_prefix(&self) -> bool {
++        !self.buffer.is_empty()
++    }
++
++    fn finish(&mut self) {
++        if self.buffer.is_empty() {
++            return;
++        }
++
++        match parse_event(&self.buffer, false) {
++            Ok(Some(event)) => {
++                self.internal_events.push_back(event);
++                self.buffer.clear();
++            }
++            Ok(None) | Err(_) => {
++                self.buffer.clear();
++            }
++        }
++    }
++
++    fn advance(&mut self, buffer: &[u8], more: bool) {
++        for (idx, byte) in buffer.iter().enumerate() {
++            let more = idx + 1 < buffer.len() || more;
++
++            self.buffer.push(*byte);
++
++            match parse_event(&self.buffer, more) {
++                Ok(Some(event)) => {
++                    self.internal_events.push_back(event);
++                    self.buffer.clear();
++                }
++                Ok(None) => {}
++                Err(_) => {
++                    self.buffer.clear();
++                }
++            }
++        }
++    }
++}
++
++impl Iterator for Parser {
++    type Item = InternalEvent;
++
++    fn next(&mut self) -> Option<Self::Item> {
++        self.internal_events.pop_front()
++    }
++}
+diff -ruN '--exclude=*.orig' src/event/source.rs src/event/source.rs
+--- a/src/event/source.rs	1973-11-29 13:33:09.000000000 -0800
++++ b/src/event/source.rs	2026-03-20 11:48:26.148933334 -0700
+@@ -6,6 +6,8 @@
+ 
+ #[cfg(unix)]
+ pub(crate) mod unix;
++#[cfg(target_os = "wasi")]
++pub(crate) mod wasi;
+ #[cfg(windows)]
+ pub(crate) mod windows;
+ 
+diff -ruN '--exclude=*.orig' src/event/sys.rs src/event/sys.rs
+--- a/src/event/sys.rs	1973-11-29 13:33:09.000000000 -0800
++++ b/src/event/sys.rs	2026-03-20 11:48:04.948899731 -0700
+@@ -3,7 +3,7 @@
+ #[cfg(all(windows, feature = "event-stream"))]
+ pub(crate) use windows::waker::Waker;
+ 
+-#[cfg(unix)]
++#[cfg(any(unix, target_os = "wasi"))]
+ pub(crate) mod unix;
+ #[cfg(windows)]
+ pub(crate) mod windows;
+diff -ruN '--exclude=*.orig' src/event.rs src/event.rs
+--- a/src/event.rs	1973-11-29 13:33:09.000000000 -0800
++++ b/src/event.rs	2026-03-20 11:50:25.121117643 -0700
+@@ -247,7 +247,7 @@
+ pub fn read() -> std::io::Result<Event> {
+     match read_internal(&EventFilter)? {
+         InternalEvent::Event(event) => Ok(event),
+-        #[cfg(unix)]
++        #[cfg(any(unix, target_os = "wasi"))]
+         _ => unreachable!(),
+     }
+ }
+@@ -677,7 +677,7 @@
+             }
+             match modifier {
+                 KeyModifiers::SHIFT => f.write_str("Shift")?,
+-                #[cfg(unix)]
++                #[cfg(any(unix, target_os = "wasi"))]
+                 KeyModifiers::CONTROL => f.write_str("Control")?,
+                 #[cfg(windows)]
+                 KeyModifiers::CONTROL => f.write_str("Ctrl")?,
+@@ -1175,13 +1175,13 @@
+     /// An event.
+     Event(Event),
+     /// A cursor position (`col`, `row`).
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     CursorPosition(u16, u16),
+     /// The progressive keyboard enhancement flags enabled by the terminal.
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     KeyboardEnhancementFlags(KeyboardEnhancementFlags),
+     /// Attributes and architectural class of the terminal.
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     PrimaryDeviceAttributes,
+ }
+ 
+diff -ruN '--exclude=*.orig' src/terminal/sys/wasi.rs src/terminal/sys/wasi.rs
+--- a/src/terminal/sys/wasi.rs	1969-12-31 16:00:00.000000000 -0800
++++ b/src/terminal/sys/wasi.rs	2026-03-20 11:47:29.268842595 -0700
+@@ -0,0 +1,66 @@
++//! WASI-specific terminal functions.
++//!
++//! On WASI, the terminal is accessed through the WasmVM PTY.
++//! Raw mode is tracked locally (the host PTY handles actual terminal discipline).
++//! Terminal size is read from COLUMNS/LINES environment variables.
++
++use std::io;
++use std::sync::atomic::{AtomicBool, Ordering};
++
++use crate::terminal::WindowSize;
++
++static RAW_MODE_ENABLED: AtomicBool = AtomicBool::new(false);
++
++#[link(wasm_import_module = "host_tty")]
++unsafe extern "C" {
++    fn set_raw_mode(enabled: u32) -> u32;
++}
++
++pub(crate) fn is_raw_mode_enabled() -> bool {
++    RAW_MODE_ENABLED.load(Ordering::SeqCst)
++}
++
++pub(crate) fn enable_raw_mode() -> io::Result<()> {
++    let errno = unsafe { set_raw_mode(1) };
++    if errno != 0 {
++        return Err(io::Error::from_raw_os_error(errno as i32));
++    }
++    RAW_MODE_ENABLED.store(true, Ordering::SeqCst);
++    Ok(())
++}
++
++pub(crate) fn disable_raw_mode() -> io::Result<()> {
++    let errno = unsafe { set_raw_mode(0) };
++    if errno != 0 {
++        return Err(io::Error::from_raw_os_error(errno as i32));
++    }
++    RAW_MODE_ENABLED.store(false, Ordering::SeqCst);
++    Ok(())
++}
++
++pub(crate) fn size() -> io::Result<(u16, u16)> {
++    let cols = std::env::var("COLUMNS")
++        .ok()
++        .and_then(|s| s.parse().ok())
++        .unwrap_or(80u16);
++    let rows = std::env::var("LINES")
++        .ok()
++        .and_then(|s| s.parse().ok())
++        .unwrap_or(24u16);
++    Ok((cols, rows))
++}
++
++pub(crate) fn window_size() -> io::Result<WindowSize> {
++    let (cols, rows) = size()?;
++    Ok(WindowSize {
++        columns: cols,
++        rows,
++        width: cols.saturating_mul(8),
++        height: rows.saturating_mul(16),
++    })
++}
++
++#[cfg(feature = "events")]
++pub fn supports_keyboard_enhancement() -> io::Result<bool> {
++    Ok(false)
++}
+diff -ruN '--exclude=*.orig' src/terminal/sys.rs src/terminal/sys.rs
+--- a/src/terminal/sys.rs	1973-11-29 13:33:09.000000000 -0800
++++ b/src/terminal/sys.rs	2026-03-20 11:47:39.788859519 -0700
+@@ -18,6 +18,14 @@
+     set_size, set_window_title, size, window_size,
+ };
+ 
++#[cfg(target_os = "wasi")]
++#[cfg(feature = "events")]
++pub use self::wasi::supports_keyboard_enhancement;
++#[cfg(target_os = "wasi")]
++pub(crate) use self::wasi::{
++    disable_raw_mode, enable_raw_mode, is_raw_mode_enabled, size, window_size,
++};
++
+ #[cfg(windows)]
+ mod windows;
+ 
+@@ -25,3 +33,6 @@
+ pub mod file_descriptor;
+ #[cfg(unix)]
+ mod unix;
++
++#[cfg(target_os = "wasi")]
++mod wasi;
+diff -ruN '--exclude=*.orig' src/terminal.rs src/terminal.rs
+--- a/src/terminal.rs	1973-11-29 13:33:09.000000000 -0800
++++ b/src/terminal.rs	2026-03-20 11:47:45.304868367 -0700
+@@ -114,6 +114,11 @@
+     {
+         sys::is_raw_mode_enabled()
+     }
++
++    #[cfg(target_os = "wasi")]
++    {
++        Ok(sys::is_raw_mode_enabled())
++    }
+ }
+ 
+ /// Enables raw mode.
+diff -ruN '--exclude=*.orig' src/tty.rs src/tty.rs
+--- a/src/tty.rs	1973-11-29 13:33:09.000000000 -0800
++++ b/src/tty.rs	2026-03-20 11:48:47.536966986 -0700
+@@ -52,3 +52,13 @@
+         ok == 1
+     }
+ }
++
++/// On WASI, the WasmVM PTY provides terminal semantics.
++/// stdin/stdout/stderr are always connected to the PTY slave,
++/// so we report them as TTYs.
++#[cfg(target_os = "wasi")]
++impl<S> IsTty for S {
++    fn is_tty(&self) -> bool {
++        true
++    }
++}

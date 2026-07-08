@@ -1,0 +1,22 @@
+#! /bin/sh
+# Simple PCRE tests.
+#
+# Copyright (C) 2001, 2006, 2009-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_pcre_
+
+fail=0
+
+echo | grep -P '\s*$' || fail=1
+echo | grep -zP '\s$' || fail=1
+echo '.ab' | returns_ 1 grep -Pwx ab || fail=1
+echo x | grep -Pz '[^a]' || fail=1
+printf 'x\n\0' | returns_ 1 grep -zP 'x$' || fail=1
+printf 'a\nb\0' | grep -zxP a && fail=1
+
+Exit $fail

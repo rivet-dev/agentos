@@ -1,0 +1,226 @@
+================================
+For UnZip 6.1/who knows:
+================================
+
+   o add extraction support for other compression algorithms used by new
+     PKZIP, WinZIP, 7-Zip versions
+     - LZMA, compression type 14 (most important, because of its efficiency)
+     - PPMd, compression type 98 (maybe, less important)
+     - WavPacked, compression type 97 (maybe, less important)
+
+       LZMA is first-level priority for 6.1, other formats may be taken
+       into consideration
+
+   o add support for reading AES encrypted archives
+     - WinZIP format (priority 1)
+     - PKZip format (priority 2)
+
+        top level item for 6.1
+
+   o add multi-part zipfile handling
+
+        major feature for 6.x!
+
+        could happen for 6.1
+
+   o better support for multilingual uses and different codepages;
+     support unicode (UTF-8 coded) filenames and comment texts
+
+        a requested feature getting more and more important,
+        - partially done for the Windows port in 6.0
+          (support restricted for chars of the current system codepage)
+        - partially done (beta state) for Unix
+          (requires native codepage to be UTF-8)
+
+   o complete support for UTF-8 coded entry names (and comments)
+     - add new "win32_wide" port to extend unicode support on Windows
+       beyond the restrictions of the current (ANSI) system codepage
+     - revise/extend the WinDLL interface to allow passing of "wide"
+       string argument data
+     - add simple built-in character translation between UTF-8 and the
+       old (ISO-8851-1 / IBM850) code pages to allow old systems without
+       standard UTF-8 support to read UTF-8 encoded archives.
+     - extend the built-in translation tables to support other language
+       regions besides "Western_Latin1" (e.g. Russian-kyrillic, Japanese,
+       Chinese)
+     - streamline the multilingual codepage and UTF-8 support for the UNIX
+       port (standard codepage translation facility?, like WideChar<->AnsiCP
+       translation functions under MS Windows)
+
+        should happen for 6.1
+        (there is internal alpha-state code for better "wide" support on
+        Windows available at the time of the 6.0 release)
+
+   o revise the "extended charcodes" handling in decryption password to
+     support UTF-8 encoding on Unicode-aware systems where the "native"
+     character coding is NOT UTF-8 (e.g. Windows).
+
+   o revise the command line interface for more compatibility with Zip'
+     command parser
+     - implement the versatile command parser from Zip 3.0.
+     - add "long option" definitions for all existing options; revise
+       the UnZip user manual to document the long-option alternatives.
+     - add support for reading the "process these entries" and the "skip
+       these entries" pattern lists from a file (or from separate files ?).
+     - add a (long) option to switch off UnZip's internal pattern matching
+       on filename arguments.
+
+        probably in 6.1,
+        (first prototype of the revised command parser was available at the
+        time of the 6.0 release)
+
+   o add command line options for miscellaneous features requested by users
+     and/or development team members:
+     - display the Info-ZIP software license
+     - more fine-tuning for file attributes set/restored at extraction, like:
+       set/clear archive attribute on DOS/OS2/WIN32;
+       apply/skip standard or user-defined umask filter on UNIX (& Unix-alike)
+     - additional time-stamp related processing filters
+     - more listing display modifications
+     - overriding the default date-time display style
+     - ...
+
+     All these options are of minor importance and/or would collide with
+     existing "one-character" options.  The current UnZip maintainer does not
+     want to reserve any of the few not-yet-occupied short option characters.
+     for one of these features.   So, any implementation effort for items
+     of this feature wish-list has to be delayed until the "long option"
+     support of the revised command line parser becomes available.
+
+       some option may get implemented in 6.1
+
+   o support for
+     and/or development team members:
+
+   o add new low-level, binary API; rewrite "normal" (command-line) UnZip
+     to use it
+
+        maybe soon (maybe 6.1)
+
+   o MSDOS/WIN32/others: detection of "reserved" names (= names of character
+     devices, or system extensions that look like a characters device driver)
+     at runtime; with the goal of emitting "meaningful" error messages and/or
+     rename queries.
+     (Currently, these reserved names are catched as "non-deletable files".
+      On MSDOS and WIN32, when the RTL stat() function allows to identify
+      character devices, the "reserved" names are automatically prefixed with
+      an underscore.)
+
+   o redesign "file exists -- is newer/older -- overwrite/skip/rename"
+     logic in extract.c and the corresponding system specific mapname()
+     services; to prevent superfluous decryption key prompts for entry
+     that will be skipped, later.
+
+   o rewrite to use fread/fseek/etc.  [eventually: test
+     write(bytes) vs. fwrite(words), especially on Crays/Alphas]
+
+        soon (probably in conjunction with multi-part handling)
+
+   o incorporate new backfill version of inflate()
+
+        wait for zlib version
+
+   o check NEXTBYTE for EOF in crypt.c, funzip.c and explode.c, too
+
+        whenever
+
+   o add option to force completely non-interactive operation (no queries
+     for overwrite/rename, password, etc.); also allow some sort of non-
+     interactive password provision?  (file? command-line? env. variable?)
+
+        someday?
+
+   o add testing of extra fields (if have CRC)
+
+        later
+
+   o rewrite to allow use as a filter
+
+        way, way later...
+
+   o add Unix hard-link support?
+
+        way, way later...
+
+   o add ".ini" file support as a (more elaborate) alternative to the presently
+     supported preconfiguring abilities via special environment variables
+     (UNZIP on many systems...)?
+
+        way, way later (if ever)...
+
+   o add option to search zipfile contents for a string and print the
+     results? ("zipgrep" option--e.g., unzip -g or unzip -S) (easy for
+     fixed strings, hard for wildcards/true regex's)
+
+        way, way later, if at all...probably use libregex
+
+   o add -y "display symlinks" option to zipinfo?  various sorting options?
+     (-St date/time, -Sn name)?
+
+        who knows
+
+   o add "in-depth" option to zipinfo? (check local headers against
+     central, etc.)--make it a better debugging tool (or just create
+     zipfix)
+
+        who knows (zip -F, -FF already exist)
+
+Some maintenance or OS specific topics for 6.0 release:
+
+   * add "unix-style-path -> partitioned-dataset filename" conversion
+     to MVS port
+
+   * should we add support for (null) entry names (empty entry name field), to
+     conform to the PKWARE specification?
+
+
+=======================================
+
+Requested features:
+
+ - extract or exclude on basis of UID [Armin Bub, Armin.Bub@bk.bosch.de, 970904]
+
+=======================================
+
+   o miscellaneous little stuff:  whenever
+     --------------------------
+
+ - change DOS -f/-u stuff to use DOS API for getting filetimes, not stat()
+
+ - add (-N?) option to lose all user input and/or switch to "(*input)()"
+   function, replaceable by UzpAltMain() param
+ - add -@ option to read from stdin (zip) or from file (PKZIP)?  (go32 built-in)
+ - add -oo option to overwrite OS/2 and DOS system and hidden files, too
+ - add option to compute MD5 checksum on files and/or on entire zipfile?
+
+ - decide whether to use WinGUI "skipping" diagnostics in extract.c
+ - combine "y/n/A/N" query/response stuff into unified section with query
+    function(s) (InputFn?)
+ - disable ^V code in remaining mapname() routines
+
+ - change filename-matching logic so case-insensitive if case-sensitive fails?
+
+ - allow multiple dir creation with -d option? [Bob Maynard]
+
+ - use gcc -pg, gprof to do profiling on unzip
+
+ - Doug Patriarche (doug.patriarche.bvdhp01@nt.com) Northern Telecom Canada Ltd.
+    "I need to do a port of zip/unzip for Wind River Systems' VxWorks OS"
+    [GRR:  15 March 95 -> "early June"]
+
+
+Features from old BUGS file (mostly duplicates of other entries above):
+
+ - ignore case for internal filename match on non-Unix systems, unless file-
+    specs enclosed in single quotes
+ - modify to decompress input stream if part of a pipe, but continue using
+    central directory if not (BIG job!)--extended local header capability
+ - add zipinfo option(s) to sort alphabetically, by date/time, in reverse, etc.
+ - when listing filenames, use '?' for non-printables? [Thomas Wolff, 92.6.1]
+ - add zipinfo "in-depth" option? (check local vs. central filenames, etc.)
+ - create zipcat program to concatenate zipfiles
+ - add -oo option (overwrite and override)?  no user queries (if bad password,
+    skip file; if disk full, take default action; if VMS special on non-VMS,
+    unpack anyway; etc.)
+ - add -Q[Q[Q]] option (quiet mode on comments, cautions, warnings and errors)?
+    forget -oo, or make synonym?  Default level -Q?

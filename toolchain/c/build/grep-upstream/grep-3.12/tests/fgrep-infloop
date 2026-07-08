@@ -1,0 +1,27 @@
+#!/bin/sh
+# This would infloop for grep-2.6.1
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+require_timeout_
+require_compiled_in_MB_support
+
+encode() { echo "$1" | tr ABC '\357\274\241'; }
+
+encode ABC > in || framework_failure_
+fail=0
+
+for LOC in en_US.UTF-8 $LOCALE_FR_UTF8; do
+  out=out1-$LOC
+  LC_ALL=$LOC timeout 10s grep -F "$(encode BC)" in > $out
+  status=$?
+  if test $status -eq 0; then
+    compare in $out
+  elif test $status -eq 1; then
+    compare_dev_null_ /dev/null $out
+  else
+    test $status -eq 2
+  fi || fail=1
+done
+
+Exit $fail

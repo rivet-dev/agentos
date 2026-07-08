@@ -1,0 +1,99 @@
+#! /bin/sh
+# Test whether \s matches SP and UTF-8 multi-byte white space characters.
+#
+# Copyright (C) 2013-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+
+LC_ALL=en_US.UTF-8
+export LC_ALL
+
+# It would have been nice to be able to use all UTF8 characters
+# with the Unicode WSpace=Y character property,
+# https://en.wikipedia.org/wiki/Whitespace_character, but that
+# would currently cause distracting failures everywhere I've tried.
+# Instead, I've listed each with an indicator column, telling what
+# this test should do if the system's locale/tools produce the
+# wrong answer.
+
+# The values in that column:
+# X required on all systems (fail if \s or \S fail to work as expected)
+# x required on "modern enough" systems
+# O optional: \s or \S misbehavior elicits a warning, but never failure
+
+utf8_space_characters=$(sed 's/.*: *//;s/  */\\x/g' <<\EOF
+U+0009 Horizontal Tab:            X 09
+U+000A Line feed:                 O 0a
+U+000B Vertical Tab:              X 0b
+U+000C Form feed:                 X 0c
+U+000D Carriage return:           X 0d
+U+0020 SPACE:                     X 20
+U+0085 Next line:                 O 85
+U+00A0 NO-BREAK SPACE:            O c2 a0
+U+1680 OGHAM SPACE MARK:          x e1 9a 80
+U+2000 EN QUAD:                   x e2 80 80
+U+2001 EM QUAD:                   x e2 80 81
+U+2002 EN SPACE:                  x e2 80 82
+U+2003 EM SPACE:                  x e2 80 83
+U+2004 THREE-PER-EM SPACE:        x e2 80 84
+U+2005 FOUR-PER-EM SPACE:         x e2 80 85
+U+2006 SIX-PER-EM SPACE:          x e2 80 86
+U+2007 FIGURE SPACE:              O e2 80 87
+U+2008 PUNCTUATION SPACE:         x e2 80 88
+U+2009 THIN SPACE:                x e2 80 89
+U+200A HAIR SPACE:                x e2 80 8a
+U+200B ZERO WIDTH SPACE:          O e2 80 8b
+U+202F NARROW NO-BREAK SPACE:     O e2 80 af
+U+205F MEDIUM MATHEMATICAL SPACE: x e2 81 9f
+U+3000 IDEOGRAPHIC SPACE:         x e3 80 80
+EOF
+)
+
+fail=0
+
+# On systems that are not "modern enough," simply warn when an "x"-marked
+# character is not classified as white space.  Too many systems
+# have inadequate UTF-8 tables in this respect, and that lack should not
+# discourage/confuse those who consider whether to install grep.
+
+# As for what constitutes "modern enough", I've arbitrarily started
+# with "Fedora 20 or newer".  Tested additions welcome.
+modern_enough=0
+grep -iE 'fedora release [2-9][0-9]+\b' /etc/redhat-release >/dev/null 2>&1 \
+  && modern_enough=1
+
+for i in $utf8_space_characters; do
+  eval 'fail() { fail=1; }'
+  m=ERROR
+  case $i in
+      X*) ;;
+      x*) test $modern_enough = 1 || { eval 'fail() { :; }'; m=warning; } ;;
+      O*) m=warning; eval 'fail() { :; }' ;;
+      *) warn_ "unexpected prefix: $i"; exit 1 ;;
+  esac
+
+  # Strip the prefix byte.
+  i=${i#?}
+
+  hex_printf_ "$i" | grep -q '^\s$' \
+      || { warn_ " $m: \\s failed to match $i in the $LC_ALL locale"; fail; }
+  hex_printf_ "$i" | returns_ 1 grep -q '\S' \
+      || { warn_ " $m: \\S mistakenly matched $i in the $LC_ALL locale"; fail; }
+done
+
+
+# This is a separate test, only nominally related to \s.
+# It is solely to get coverage of a code path (exercising dfa.c's
+# match_mb_charset function) that would have otherwise been untouched.
+# However, as of the change-set adding this new test, match_mb_charset
+# is unreachable via grep.
+printf '\0' | returns_ 1 grep -aE '^\s?$' > out 2>&1 || fail=1
+compare /dev/null out
+
+Exit $fail

@@ -1,0 +1,466 @@
+Checking whether the ASM compiler is GNU using "--version" did not match "(GNU assembler)|(GCC)|(Free Software Foundation)":
+clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)
+Target: wasm32-unknown-wasi
+Thread model: posix
+InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin
+Determining if the os_signpost_interval_begin exist failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-AwmpHM
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_66342/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-AwmpHM'
+/usr/bin/gmake  -f CMakeFiles/cmTC_66342.dir/build.make CMakeFiles/cmTC_66342.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-AwmpHM'
+Building C object CMakeFiles/cmTC_66342.dir/CheckSymbolExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD  -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -MD -MT CMakeFiles/cmTC_66342.dir/CheckSymbolExists.c.o -MF CMakeFiles/cmTC_66342.dir/CheckSymbolExists.c.o.d -o CMakeFiles/cmTC_66342.dir/CheckSymbolExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-AwmpHM/CheckSymbolExists.c
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-AwmpHM/CheckSymbolExists.c:2:10: fatal error: 'os/signpost.h' file not found
+    2 | #include <os/signpost.h>
+      |          ^~~~~~~~~~~~~~~
+1 error generated.
+gmake[2]: *** [CMakeFiles/cmTC_66342.dir/build.make:79: CMakeFiles/cmTC_66342.dir/CheckSymbolExists.c.o] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-AwmpHM'
+gmake[1]: *** [Makefile:127: cmTC_66342/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-AwmpHM'
+
+
+File CheckSymbolExists.c:
+/* */
+#include <os/signpost.h>
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef os_signpost_interval_begin
+  return ((int*)(&os_signpost_interval_begin))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+Determining if the __mips_hard_float exist failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KEgFUW
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_97c2d/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KEgFUW'
+/usr/bin/gmake  -f CMakeFiles/cmTC_97c2d.dir/build.make CMakeFiles/cmTC_97c2d.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KEgFUW'
+Building C object CMakeFiles/cmTC_97c2d.dir/CheckSymbolExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD  -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -MD -MT CMakeFiles/cmTC_97c2d.dir/CheckSymbolExists.c.o -MF CMakeFiles/cmTC_97c2d.dir/CheckSymbolExists.c.o.d -o CMakeFiles/cmTC_97c2d.dir/CheckSymbolExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KEgFUW/CheckSymbolExists.c
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KEgFUW/CheckSymbolExists.c:7:19: error: use of undeclared identifier '__mips_hard_float'
+    7 |   return ((int*)(&__mips_hard_float))[argc];
+      |                   ^
+1 error generated.
+gmake[2]: *** [CMakeFiles/cmTC_97c2d.dir/build.make:79: CMakeFiles/cmTC_97c2d.dir/CheckSymbolExists.c.o] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KEgFUW'
+gmake[1]: *** [Makefile:127: cmTC_97c2d/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KEgFUW'
+
+
+File CheckSymbolExists.c:
+/* */
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef __mips_hard_float
+  return ((int*)(&__mips_hard_float))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+Determining if the _ABIO32 exist failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V3edLa
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_f9869/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V3edLa'
+/usr/bin/gmake  -f CMakeFiles/cmTC_f9869.dir/build.make CMakeFiles/cmTC_f9869.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V3edLa'
+Building C object CMakeFiles/cmTC_f9869.dir/CheckSymbolExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD  -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -MD -MT CMakeFiles/cmTC_f9869.dir/CheckSymbolExists.c.o -MF CMakeFiles/cmTC_f9869.dir/CheckSymbolExists.c.o.d -o CMakeFiles/cmTC_f9869.dir/CheckSymbolExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V3edLa/CheckSymbolExists.c
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V3edLa/CheckSymbolExists.c:7:19: error: use of undeclared identifier '_ABIO32'
+    7 |   return ((int*)(&_ABIO32))[argc];
+      |                   ^
+1 error generated.
+gmake[2]: *** [CMakeFiles/cmTC_f9869.dir/build.make:79: CMakeFiles/cmTC_f9869.dir/CheckSymbolExists.c.o] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V3edLa'
+gmake[1]: *** [Makefile:127: cmTC_f9869/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V3edLa'
+
+
+File CheckSymbolExists.c:
+/* */
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef _ABIO32
+  return ((int*)(&_ABIO32))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+Determining if the function __gcc_personality_v0 exists in the gcc_s failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7qLYEY
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_56e3f/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7qLYEY'
+/usr/bin/gmake  -f CMakeFiles/cmTC_56e3f.dir/build.make CMakeFiles/cmTC_56e3f.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7qLYEY'
+Building C object CMakeFiles/cmTC_56e3f.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=__gcc_personality_v0 -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -MD -MT CMakeFiles/cmTC_56e3f.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_56e3f.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_56e3f.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7qLYEY/CheckFunctionExists.c
+Linking C executable cmTC_56e3f
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_56e3f.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=__gcc_personality_v0 -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_56e3f.dir/CheckFunctionExists.c.o -o cmTC_56e3f  -lgcc_s -lwasi-emulated-pthread 
+wasm-ld: error: unable to find library -lgcc_s
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+gmake[2]: *** [CMakeFiles/cmTC_56e3f.dir/build.make:100: cmTC_56e3f] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7qLYEY'
+gmake[1]: *** [Makefile:127: cmTC_56e3f/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7qLYEY'
+
+
+
+Determining if the function __absvdi2 exists in the gcc failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-DA2uD1
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_8616f/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-DA2uD1'
+/usr/bin/gmake  -f CMakeFiles/cmTC_8616f.dir/build.make CMakeFiles/cmTC_8616f.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-DA2uD1'
+Building C object CMakeFiles/cmTC_8616f.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=__absvdi2 -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -MD -MT CMakeFiles/cmTC_8616f.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_8616f.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_8616f.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-DA2uD1/CheckFunctionExists.c
+Linking C executable cmTC_8616f
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_8616f.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=__absvdi2 -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_8616f.dir/CheckFunctionExists.c.o -o cmTC_8616f  -lgcc -lwasi-emulated-pthread 
+wasm-ld: error: unable to find library -lgcc
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+gmake[2]: *** [CMakeFiles/cmTC_8616f.dir/build.make:100: cmTC_8616f] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-DA2uD1'
+gmake[1]: *** [Makefile:127: cmTC_8616f/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-DA2uD1'
+
+
+
+Performing C SOURCE FILE Test C_SUPPORTS_COMMENT_LIB_PRAGMA failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zd4L73
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_b2052/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zd4L73'
+/usr/bin/gmake  -f CMakeFiles/cmTC_b2052.dir/build.make CMakeFiles/cmTC_b2052.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zd4L73'
+Building C object CMakeFiles/cmTC_b2052.dir/src.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DC_SUPPORTS_COMMENT_LIB_PRAGMA  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -Werror=unknown-pragmas -MD -MT CMakeFiles/cmTC_b2052.dir/src.c.o -MF CMakeFiles/cmTC_b2052.dir/src.c.o.d -o CMakeFiles/cmTC_b2052.dir/src.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zd4L73/src.c
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zd4L73/src.c:2:9: error: unknown pragma ignored [-Werror,-Wunknown-pragmas]
+    2 | #pragma comment(lib, "c")
+      |         ^
+1 error generated.
+gmake[2]: *** [CMakeFiles/cmTC_b2052.dir/build.make:79: CMakeFiles/cmTC_b2052.dir/src.c.o] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zd4L73'
+gmake[1]: *** [Makefile:127: cmTC_b2052/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zd4L73'
+
+
+Source file was:
+
+#pragma comment(lib, "c")
+int main(void) { return 0; }
+
+
+Determining if the __arm__ exist failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HUXlaz
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_54e22/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HUXlaz'
+/usr/bin/gmake  -f CMakeFiles/cmTC_54e22.dir/build.make CMakeFiles/cmTC_54e22.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HUXlaz'
+Building C object CMakeFiles/cmTC_54e22.dir/CheckSymbolExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD  -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_54e22.dir/CheckSymbolExists.c.o -MF CMakeFiles/cmTC_54e22.dir/CheckSymbolExists.c.o.d -o CMakeFiles/cmTC_54e22.dir/CheckSymbolExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HUXlaz/CheckSymbolExists.c
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HUXlaz/CheckSymbolExists.c:7:19: error: use of undeclared identifier '__arm__'
+    7 |   return ((int*)(&__arm__))[argc];
+      |                   ^
+1 error generated.
+gmake[2]: *** [CMakeFiles/cmTC_54e22.dir/build.make:79: CMakeFiles/cmTC_54e22.dir/CheckSymbolExists.c.o] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HUXlaz'
+gmake[1]: *** [Makefile:127: cmTC_54e22/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HUXlaz'
+
+
+File CheckSymbolExists.c:
+/* */
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef __arm__
+  return ((int*)(&__arm__))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+Determining if the __USING_SJLJ_EXCEPTIONS__ exist failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-tTc3eV
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_68515/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-tTc3eV'
+/usr/bin/gmake  -f CMakeFiles/cmTC_68515.dir/build.make CMakeFiles/cmTC_68515.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-tTc3eV'
+Building C object CMakeFiles/cmTC_68515.dir/CheckSymbolExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD  -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_68515.dir/CheckSymbolExists.c.o -MF CMakeFiles/cmTC_68515.dir/CheckSymbolExists.c.o.d -o CMakeFiles/cmTC_68515.dir/CheckSymbolExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-tTc3eV/CheckSymbolExists.c
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-tTc3eV/CheckSymbolExists.c:7:19: error: use of undeclared identifier '__USING_SJLJ_EXCEPTIONS__'
+    7 |   return ((int*)(&__USING_SJLJ_EXCEPTIONS__))[argc];
+      |                   ^
+1 error generated.
+gmake[2]: *** [CMakeFiles/cmTC_68515.dir/build.make:79: CMakeFiles/cmTC_68515.dir/CheckSymbolExists.c.o] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-tTc3eV'
+gmake[1]: *** [Makefile:127: cmTC_68515/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-tTc3eV'
+
+
+File CheckSymbolExists.c:
+/* */
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef __USING_SJLJ_EXCEPTIONS__
+  return ((int*)(&__USING_SJLJ_EXCEPTIONS__))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+Determining if the __ARM_DWARF_EH__ exist failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JPiv3a
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_f4374/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JPiv3a'
+/usr/bin/gmake  -f CMakeFiles/cmTC_f4374.dir/build.make CMakeFiles/cmTC_f4374.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JPiv3a'
+Building C object CMakeFiles/cmTC_f4374.dir/CheckSymbolExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD  -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_f4374.dir/CheckSymbolExists.c.o -MF CMakeFiles/cmTC_f4374.dir/CheckSymbolExists.c.o.d -o CMakeFiles/cmTC_f4374.dir/CheckSymbolExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JPiv3a/CheckSymbolExists.c
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JPiv3a/CheckSymbolExists.c:7:19: error: use of undeclared identifier '__ARM_DWARF_EH__'
+    7 |   return ((int*)(&__ARM_DWARF_EH__))[argc];
+      |                   ^
+1 error generated.
+gmake[2]: *** [CMakeFiles/cmTC_f4374.dir/build.make:79: CMakeFiles/cmTC_f4374.dir/CheckSymbolExists.c.o] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JPiv3a'
+gmake[1]: *** [Makefile:127: cmTC_f4374/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JPiv3a'
+
+
+File CheckSymbolExists.c:
+/* */
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef __ARM_DWARF_EH__
+  return ((int*)(&__ARM_DWARF_EH__))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+Determining if the function dladdr exists in the dl failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-veKGRd
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_35e82/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-veKGRd'
+/usr/bin/gmake  -f CMakeFiles/cmTC_35e82.dir/build.make CMakeFiles/cmTC_35e82.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-veKGRd'
+Building C object CMakeFiles/cmTC_35e82.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=dladdr -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_35e82.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_35e82.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_35e82.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-veKGRd/CheckFunctionExists.c
+Linking C executable cmTC_35e82
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_35e82.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=dladdr -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_35e82.dir/CheckFunctionExists.c.o -o cmTC_35e82  -ldl -lwasi-emulated-pthread 
+wasm-ld: error: CMakeFiles/cmTC_35e82.dir/CheckFunctionExists.c.o: undefined symbol: dladdr
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+gmake[2]: *** [CMakeFiles/cmTC_35e82.dir/build.make:100: cmTC_35e82] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-veKGRd'
+gmake[1]: *** [Makefile:127: cmTC_35e82/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-veKGRd'
+
+
+
+Determining if the function pthread_once exists in the pthread failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-NsFkOn
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_abbc6/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-NsFkOn'
+/usr/bin/gmake  -f CMakeFiles/cmTC_abbc6.dir/build.make CMakeFiles/cmTC_abbc6.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-NsFkOn'
+Building C object CMakeFiles/cmTC_abbc6.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=pthread_once -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_abbc6.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_abbc6.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_abbc6.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-NsFkOn/CheckFunctionExists.c
+Linking C executable cmTC_abbc6
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_abbc6.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=pthread_once -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_abbc6.dir/CheckFunctionExists.c.o -o cmTC_abbc6  -lpthread -lwasi-emulated-pthread 
+wasm-ld: error: unable to find library -lpthread
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+gmake[2]: *** [CMakeFiles/cmTC_abbc6.dir/build.make:100: cmTC_abbc6] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-NsFkOn'
+gmake[1]: *** [Makefile:127: cmTC_abbc6/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-NsFkOn'
+
+
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_EHSC_FLAG failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-W9XuYq
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_a3133/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-W9XuYq'
+/usr/bin/gmake  -f CMakeFiles/cmTC_a3133.dir/build.make CMakeFiles/cmTC_a3133.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-W9XuYq'
+Building CXX object CMakeFiles/cmTC_a3133.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_EHSC_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -EHsc -MD -MT CMakeFiles/cmTC_a3133.dir/src.cxx.o -MF CMakeFiles/cmTC_a3133.dir/src.cxx.o.d -o CMakeFiles/cmTC_a3133.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-W9XuYq/src.cxx
+clang++: error: unknown argument: '-EHsc'
+gmake[2]: *** [CMakeFiles/cmTC_a3133.dir/build.make:79: CMakeFiles/cmTC_a3133.dir/src.cxx.o] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-W9XuYq'
+gmake[1]: *** [Makefile:127: cmTC_a3133/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-W9XuYq'
+
+
+Source file was:
+int main() { return 0; }
+
+Determining if the function dladdr exists in the dl failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9VIuIT
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_b6775/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9VIuIT'
+/usr/bin/gmake  -f CMakeFiles/cmTC_b6775.dir/build.make CMakeFiles/cmTC_b6775.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9VIuIT'
+Building C object CMakeFiles/cmTC_b6775.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=dladdr -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_b6775.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_b6775.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_b6775.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9VIuIT/CheckFunctionExists.c
+Linking C executable cmTC_b6775
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_b6775.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=dladdr -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_b6775.dir/CheckFunctionExists.c.o -o cmTC_b6775  -ldl -lwasi-emulated-pthread 
+wasm-ld: error: CMakeFiles/cmTC_b6775.dir/CheckFunctionExists.c.o: undefined symbol: dladdr
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+gmake[2]: *** [CMakeFiles/cmTC_b6775.dir/build.make:100: cmTC_b6775] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9VIuIT'
+gmake[1]: *** [Makefile:127: cmTC_b6775/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9VIuIT'
+
+
+
+Determining if the function pthread_once exists in the pthread failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JXUCBK
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_51e48/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JXUCBK'
+/usr/bin/gmake  -f CMakeFiles/cmTC_51e48.dir/build.make CMakeFiles/cmTC_51e48.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JXUCBK'
+Building C object CMakeFiles/cmTC_51e48.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=pthread_once -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_51e48.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_51e48.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_51e48.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JXUCBK/CheckFunctionExists.c
+Linking C executable cmTC_51e48
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_51e48.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=pthread_once -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_51e48.dir/CheckFunctionExists.c.o -o cmTC_51e48  -lpthread -lwasi-emulated-pthread 
+wasm-ld: error: unable to find library -lpthread
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+gmake[2]: *** [CMakeFiles/cmTC_51e48.dir/build.make:100: cmTC_51e48] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JXUCBK'
+gmake[1]: *** [Makefile:127: cmTC_51e48/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-JXUCBK'
+
+
+
+Determining if the function __cxa_thread_atexit_impl exists in the c failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Edlv6K
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_a20fa/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Edlv6K'
+/usr/bin/gmake  -f CMakeFiles/cmTC_a20fa.dir/build.make CMakeFiles/cmTC_a20fa.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Edlv6K'
+Building C object CMakeFiles/cmTC_a20fa.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=__cxa_thread_atexit_impl -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_a20fa.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_a20fa.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_a20fa.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Edlv6K/CheckFunctionExists.c
+Linking C executable cmTC_a20fa
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_a20fa.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=__cxa_thread_atexit_impl -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_a20fa.dir/CheckFunctionExists.c.o -o cmTC_a20fa  -lc -lwasi-emulated-pthread 
+wasm-ld: error: CMakeFiles/cmTC_a20fa.dir/CheckFunctionExists.c.o: undefined symbol: __cxa_thread_atexit_impl
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+gmake[2]: *** [CMakeFiles/cmTC_a20fa.dir/build.make:100: cmTC_a20fa] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Edlv6K'
+gmake[1]: *** [Makefile:127: cmTC_a20fa/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Edlv6K'
+
+
+
+Determining if the __PICOLIBC__ exist failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-nuEXEX
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_c04b8/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-nuEXEX'
+/usr/bin/gmake  -f CMakeFiles/cmTC_c04b8.dir/build.make CMakeFiles/cmTC_c04b8.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-nuEXEX'
+Building C object CMakeFiles/cmTC_c04b8.dir/CheckSymbolExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD  -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_c04b8.dir/CheckSymbolExists.c.o -MF CMakeFiles/cmTC_c04b8.dir/CheckSymbolExists.c.o.d -o CMakeFiles/cmTC_c04b8.dir/CheckSymbolExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-nuEXEX/CheckSymbolExists.c
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-nuEXEX/CheckSymbolExists.c:8:19: error: use of undeclared identifier '__PICOLIBC__'
+    8 |   return ((int*)(&__PICOLIBC__))[argc];
+      |                   ^
+1 error generated.
+gmake[2]: *** [CMakeFiles/cmTC_c04b8.dir/build.make:79: CMakeFiles/cmTC_c04b8.dir/CheckSymbolExists.c.o] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-nuEXEX'
+gmake[1]: *** [Makefile:127: cmTC_c04b8/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-nuEXEX'
+
+
+File CheckSymbolExists.c:
+/* */
+#include <string.h>
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef __PICOLIBC__
+  return ((int*)(&__PICOLIBC__))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+Determining if the function pthread_create exists in the pthread failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-3Ufyzl
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_cd26e/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-3Ufyzl'
+/usr/bin/gmake  -f CMakeFiles/cmTC_cd26e.dir/build.make CMakeFiles/cmTC_cd26e.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-3Ufyzl'
+Building C object CMakeFiles/cmTC_cd26e.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=pthread_create -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_cd26e.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_cd26e.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_cd26e.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-3Ufyzl/CheckFunctionExists.c
+Linking C executable cmTC_cd26e
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_cd26e.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=pthread_create -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_cd26e.dir/CheckFunctionExists.c.o -o cmTC_cd26e  -lpthread -lwasi-emulated-pthread 
+wasm-ld: error: unable to find library -lpthread
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+gmake[2]: *** [CMakeFiles/cmTC_cd26e.dir/build.make:100: cmTC_cd26e] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-3Ufyzl'
+gmake[1]: *** [Makefile:127: cmTC_cd26e/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-3Ufyzl'
+
+
+
+Determining if the function clock_gettime exists in the rt failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Sgi7AK
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_6b2fe/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Sgi7AK'
+/usr/bin/gmake  -f CMakeFiles/cmTC_6b2fe.dir/build.make CMakeFiles/cmTC_6b2fe.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Sgi7AK'
+Building C object CMakeFiles/cmTC_6b2fe.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=clock_gettime -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_6b2fe.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_6b2fe.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_6b2fe.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Sgi7AK/CheckFunctionExists.c
+Linking C executable cmTC_6b2fe
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_6b2fe.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=clock_gettime -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_6b2fe.dir/CheckFunctionExists.c.o -o cmTC_6b2fe  -lrt -lwasi-emulated-pthread 
+wasm-ld: error: unable to find library -lrt
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+gmake[2]: *** [CMakeFiles/cmTC_6b2fe.dir/build.make:100: cmTC_6b2fe] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Sgi7AK'
+gmake[1]: *** [Makefile:127: cmTC_6b2fe/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Sgi7AK'
+
+
+
+Determining if the function __atomic_fetch_add_8 exists in the atomic failed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7FhBEu
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_31f18/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7FhBEu'
+/usr/bin/gmake  -f CMakeFiles/cmTC_31f18.dir/build.make CMakeFiles/cmTC_31f18.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7FhBEu'
+Building C object CMakeFiles/cmTC_31f18.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=__atomic_fetch_add_8 -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -MD -MT CMakeFiles/cmTC_31f18.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_31f18.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_31f18.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7FhBEu/CheckFunctionExists.c
+Linking C executable cmTC_31f18
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_31f18.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=__atomic_fetch_add_8 -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_31f18.dir/CheckFunctionExists.c.o -o cmTC_31f18  -latomic -lwasi-emulated-pthread 
+wasm-ld: error: unable to find library -latomic
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+gmake[2]: *** [CMakeFiles/cmTC_31f18.dir/build.make:100: cmTC_31f18] Error 1
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7FhBEu'
+gmake[1]: *** [Makefile:127: cmTC_31f18/fast] Error 2
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-7FhBEu'
+
+
+

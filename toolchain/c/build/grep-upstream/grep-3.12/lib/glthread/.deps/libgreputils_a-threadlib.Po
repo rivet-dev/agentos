@@ -1,0 +1,2 @@
+glthread/libgreputils_a-threadlib.o: glthread/threadlib.c ../config.h
+../config.h:

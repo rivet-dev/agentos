@@ -4,6 +4,7 @@ export interface RegistryEntryBase {
 	slug: string;
 	title: string;
 	description: string;
+	category?: string;
 	types: (
 		| "file-system"
 		| "tool"
@@ -80,7 +81,7 @@ export type RegistryEntry =
 	| RegistryEntryConfig
 	| RegistryEntryExternal;
 
-// Agent and software entries are generated from the monorepo's registry/ tree
+// Agent and software entries are generated from the monorepo's software/ catalog
 // by scripts/gen-registry.mjs — a package is listed iff its
 // agentos-package.json has a `registry` block with title + description. Run
 // `pnpm dev`/`pnpm build` (or the script directly) to refresh after editing a

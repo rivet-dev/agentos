@@ -1,0 +1,67 @@
+#!/bin/sh
+# Check that "grep -r" does the right thing with symbolic links.
+
+# Copyright (C) 2012-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# written by Paul Eggert
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+mkdir dir || framework_failure_
+echo a > dir/a || framework_failure_
+echo b > dir/b || framework_failure_
+ln -s a dir/c || framework_failure_
+ln -s . dir/d || framework_failure_
+ln -s dangling dir/e || framework_failure_
+
+touch out || framework_failure_
+
+for recursion in '' -r -R
+do
+  for files in '' '*'
+  do
+    case $recursion,$files in
+      -R,* | *,'*') expected_status=2 ;;
+      *) expected_status=0 ;;
+    esac
+
+    (cd dir && grep $recursion '^' $files <a ) >grepout
+    test $? -eq $expected_status || fail=1
+
+    case $recursion,$files in
+      ,)
+         exp='a\n' ;;
+      ,'*' | -R,)
+         exp='a:a\nb:b\nc:a\n' ;;
+      -r,)
+         exp='a:a\nb:b\n' ;;
+      -r,'*')
+         exp='a:a\nb:b\nc:a\nd/a:a\nd/b:b\n' ;;
+      -R,'*')
+         exp='a:a\nb:b\nc:a\nd/a:a\nd/b:b\nd/c:a\n' ;;
+      *)
+         framework_failure_ ;;
+    esac
+
+    printf "$exp" >exp || framework_failure_
+
+    LC_ALL=C sort grepout >out || fail=1
+
+    compare exp out || fail=1
+  done
+done
+
+Exit $fail

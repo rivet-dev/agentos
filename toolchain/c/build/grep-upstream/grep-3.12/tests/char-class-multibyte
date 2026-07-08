@@ -1,0 +1,30 @@
+#!/bin/sh
+# This would segfault for grep-2.6
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+require_compiled_in_MB_support
+
+printf 'é\n'      > exp1 || framework_failure_
+fail=0
+
+for LOC in en_US.UTF-8 $LOCALE_FR_UTF8; do
+  out=out1-$LOC
+  printf 'á\nç\né\n' | LC_ALL=$LOC grep '[é]' > $out || fail=1
+  compare exp1 $out || fail=1
+done
+
+printf 'É\n'      > exp2 || framework_failure_
+
+for LOC in en_US.UTF-8 $LOCALE_FR_UTF8; do
+  out=out2-$LOC
+  printf 'Á\nÇ\nÉ\n' | LC_ALL=$LOC grep '[É]' > $out || fail=1
+  compare exp2 $out || fail=1
+done
+
+for LOC in en_US.UTF-8 $LOCALE_FR_UTF8; do
+  out=out3-$LOC
+  printf '\303\n' | returns_ 1 env LC_ALL=$LOC grep '[é]' > $out || fail=1
+done
+
+Exit $fail

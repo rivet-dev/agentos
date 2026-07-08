@@ -54,9 +54,9 @@ export interface RegistryPackageRef {
 
 const BUILD_INSTRUCTIONS =
 	"Build the registry:\n" +
-	"  just registry-native   # native wasm binaries, once per checkout (slow)\n" +
-	"  just registry-build    # stage bin/ + pack every dist/package.aospkg\n" +
-	"See registry/README.md.";
+	"  just toolchain-build   # native wasm binaries, once per checkout (slow)\n" +
+	"  just software-build    # stage bin/ + pack every dist/package.aospkg\n" +
+	"See software/README.md.";
 
 /** `.aospkg` container magic (crates/vfs/package-format/v1.bare). */
 const AOSPKG_MAGIC = Buffer.from([0x89, 0x41, 0x4f, 0x53]);
@@ -131,7 +131,7 @@ function builtState(pkg: RegistryPackageRef): {
 }
 
 /**
- * Assert a registry package is built (a real packed `.aospkg`, with a
+ * Assert a software package is built (a real packed `.aospkg`, with a
  * non-empty, fully-present command set when the staged transition dir is
  * available to inspect) and return it. Throws with build instructions
  * otherwise.
@@ -143,17 +143,17 @@ export function requireBuilt<T extends RegistryPackageRef>(
 	const { built, bin, missing } = builtState(pkg);
 	if (!built) {
 		throw new Error(
-			`registry package ${name} is NOT BUILT (no valid ${pkg.packagePath}).\n${BUILD_INSTRUCTIONS}`,
+			`software package ${name} is NOT BUILT (no valid ${pkg.packagePath}).\n${BUILD_INSTRUCTIONS}`,
 		);
 	}
 	if (bin !== null && Object.keys(bin).length === 0) {
 		throw new Error(
-			`registry package ${name} is an EMPTY placeholder (no commands staged into bin/).\n${BUILD_INSTRUCTIONS}`,
+			`software package ${name} is an EMPTY placeholder (no commands staged into bin/).\n${BUILD_INSTRUCTIONS}`,
 		);
 	}
 	if (missing.length > 0) {
 		throw new Error(
-			`registry package ${name} is missing built commands: ${missing.join(", ")}.\n${BUILD_INSTRUCTIONS}`,
+			`software package ${name} is missing built commands: ${missing.join(", ")}.\n${BUILD_INSTRUCTIONS}`,
 		);
 	}
 	return pkg;
@@ -162,7 +162,7 @@ export function requireBuilt<T extends RegistryPackageRef>(
 /**
  * Skip reason for the C-sysroot package set ONLY (duckdb, http-get, sqlite3,
  * wget, zip, unzip). These need the patched wasi C sysroot
- * (`make -C registry/native/c`), which most checkouts don't build — a missing
+ * (`make -C toolchain/c`), which most checkouts don't build — a missing
  * artifact is an environment limitation, not a forgotten build, so suites may
  * skip with this reason instead of throwing.
  */
@@ -179,8 +179,8 @@ export function cSysrootPackageSkipReason(
 	});
 	if (unbuilt.length === 0) return false;
 	return (
-		`C-sysroot registry packages not built: ${unbuilt.map(({ name }) => name).join(", ")} ` +
-		"(needs the patched wasi C sysroot: `make -C registry/native/c`, then `just registry-build`)"
+		`C-sysroot software packages not built: ${unbuilt.map(({ name }) => name).join(", ")} ` +
+		"(needs the patched wasi C sysroot: `make -C toolchain/c`, then `just software-build`)"
 	);
 }
 
@@ -205,7 +205,7 @@ export function packageCommandsDir(pkg: RegistryPackageRef): string {
 	const dir = manifestDir(pkg);
 	if (!dir) {
 		throw new Error(
-			`registry package has no staged transition dir next to ${pkg.packagePath}.\n${BUILD_INSTRUCTIONS}`,
+			`software package has no staged transition dir next to ${pkg.packagePath}.\n${BUILD_INSTRUCTIONS}`,
 		);
 	}
 	return join(dir, "bin");
@@ -257,12 +257,12 @@ export const REGISTRY_SOFTWARE = (
 export function testOnlyCommandSoftware(
 	commands: string[] = ["xu"],
 ): RegistryPackageRef {
-	// registry/software/<pkg>/dist/package.aospkg -> registry/native/... — this
+	// software/<pkg>/dist/package.aospkg -> toolchain/... — this
 	// follows whichever registry checkout the deps are linked to.
 	const nativeCommandsDir = join(
 		dirname(coreutils.packagePath),
-		"../../..",
-		"native/target/wasm32-wasip1/release/commands",
+		"../../../..",
+		"toolchain/target/wasm32-wasip1/release/commands",
 	);
 	const dir = join(tmpdir(), `agentos-test-cmds-${process.pid}`);
 	const binDir = join(dir, "bin");

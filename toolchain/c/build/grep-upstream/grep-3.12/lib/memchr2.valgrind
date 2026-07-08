@@ -1,0 +1,30 @@
+# Suppress a valgrind message about use of uninitialized memory in memchr2().
+
+# Copyright (C) 2009-2025 Free Software Foundation, Inc.
+#
+# This file is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; either version 2.1 of the
+# License, or (at your option) any later version.
+#
+# This file is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Like memchr, it is safe to overestimate the length when the terminator
+# is guaranteed to be found.  In this case, we may end up reading a word
+# that is partially uninitialized, but this use is OK for a speedup.
+{
+    memchr2-value4
+    Memcheck:Value4
+    fun:memchr2
+}
+{
+    memchr2-value8
+    Memcheck:Value8
+    fun:memchr2
+}

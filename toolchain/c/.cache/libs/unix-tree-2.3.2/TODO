@@ -1,0 +1,32 @@
+Should do:
+
+- Use stdint.h and inttypes.h to standardize the int sizes and format strings.
+  Not sure how cross-platform this would be.
+
+- Add --DU option to fully report disk usage, taking into account files that
+  are not displayed in the output.
+
+- Make wide character support less of a hack.
+
+- Fully support HTML colorization properly and allow for an external stylesheet.
+
+- Might be nice to prune files by things like type, mode, access/modify/change
+  time, uid/gid, etc. ala find.
+
+- Just incorporate the stat structure into _info, since we now need most of
+  the structure anyway.
+
+- Move as many globals into a struct or structs to reduce namespace pollution.
+
+- Add support for more xattr attributes, such as user.xdg.*, trusted.mimetype,
+  etc.
+
+Maybe do:
+
+- With the addition of TREE_COLORS, add some custom options to perhaps colorize
+  metadata like the permissions, date, username, etc, and change the color of
+  the tree lines and so on.
+
+- Refactor color.c.
+
+- Output BSON on stddata instead of JSON.

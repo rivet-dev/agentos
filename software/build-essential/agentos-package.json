@@ -1,0 +1,8 @@
+{
+	"registry": {
+		"title": "Build Essential",
+		"description": "Meta-package: common + git + curl.",
+		"priority": 100,
+		"category": "meta"
+	}
+}

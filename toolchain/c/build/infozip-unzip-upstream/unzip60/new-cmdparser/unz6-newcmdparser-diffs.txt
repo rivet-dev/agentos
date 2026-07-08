@@ -1,0 +1,3476 @@
+diff -ru2 unz60e03/unzip.c u6e3_np/unzip.c
+--- unz60e03/unzip.c	Wed Mar 19 13:08:38 2008
++++ u6e3_np/unzip.c	Mon Mar 24 14:16:58 2008
+@@ -128,4 +128,6 @@
+     "error:  command line parameter #%d exceeds internal size limit\n";
+ #endif /* !SFX */
++static ZCONST char Far NoMemArgsList[] =
++  "error:  no memory for arguments list";
+ 
+ #if (defined(REENTRANT) && !defined(NO_EXCEPT_SIGNALS))
+@@ -245,5 +247,5 @@
+    static ZCONST char Far local3[] = "\
+   -Y  treat \".nnn\" as \";nnn\" version         -2  force ODS2 names\n\
+-  --D restore dir (-D: no) timestamps        -M  pipe through \"more\" pager\n\
++  -D- restore dir (-D: no) timestamps        -M  pipe through \"more\" pager\n\
+   (Must quote upper-case options, like \"-V\", unless SET PROC/PARSE=EXTEND.)\
+ \n\n";
+@@ -251,5 +253,5 @@
+    static ZCONST char Far local3[] = "\n\
+   -Y  treat \".nnn\" as \";nnn\" version         -2  force ODS2 names\n\
+-  --D restore dir (-D: no) timestamps\n\
++  -D- restore dir (-D: no) timestamps\n\
+   (Must quote upper-case options, like \"-V\", unless SET PROC/PARSE=EXTEND.)\
+ \n\n";
+@@ -694,5 +696,5 @@
+     char *p;
+ #endif
+-#if (defined(DOS_FLX_H68_NLM_OS2_W32) || !defined(SFX))
++#if ((defined(WIN32) && defined(__RSXNT__)) || !defined(SFX))
+     int i;
+ #endif
+@@ -1053,4 +1055,45 @@
+      * 'forward slashes' for user's convenience (include zipfile name itself)
+      */
++    {
++        /* pfnames */
++
++        char **names;
++
++        for (names = G.pfnames; *names; names++) {
++#ifdef __human68k__
++            extern char *_toslash(char *);
++            _toslash(*names);
++#else /* !__human68k__ */
++            char *q = *names;
++
++            while (*q != '\0') {
++                if (*q == '\\')
++                    *q = '/';
++                INCSTR(q);
++            }
++#endif /* ?__human68k__ */
++        }
++    }
++    {
++        /* G.wildzipfn */
++
++#ifdef __human68k__
++        extern char *_toslash(char *);
++        _toslash(*G.wildzipfn);
++#else /* !__human68k__ */
++        char *q = G.wildzipfn;
++
++        while (*q != '\0') {
++            if (*q == '\\')
++                *q = '/';
++            INCSTR(q);
++        }
++#endif /* ?__human68k__ */
++    }
++#endif /* DOS_FLX_H68_NLM_OS2_W32 */
++
++
++#if 0
++#ifdef DOS_FLX_H68_NLM_OS2_W32
+ #ifdef SFX
+     for (G.pfnames = argv, i = argc;  i > 0;  --i) {
+@@ -1074,11 +1117,18 @@
+     }
+ #endif /* DOS_FLX_H68_NLM_OS2_W32 */
++#endif /* 0 */
+ 
++/*
+ #ifndef SFX
+     G.wildzipfn = *argv++;
+ #endif
++*/
+ 
+ #if (defined(SFX) && !defined(SFX_EXDIR)) /* only check for -x */
+ 
++# if 0
++    /* all this should be done in the options call now */
++
++
+     G.filespecs = argc;
+     G.xfilespecs = 0;
+@@ -1104,7 +1154,10 @@
+     } else
+         G.process_all_files = TRUE;      /* for speed */
++# endif
+ 
+ #else /* !SFX || SFX_EXDIR */             /* check for -x or -d */
+ 
++# if 0
++
+     G.filespecs = argc;
+     G.xfilespecs = 0;
+@@ -1118,9 +1171,9 @@
+         while (*++pp) {
+             Trace((stderr, "pp - argv = %d\n", pp-argv));
+-#ifdef CMS_MVS
++# ifdef CMS_MVS
+             if (!uO.exdir && STRNICMP(*pp, "-d", 2) == 0) {
+-#else
++# else
+             if (!uO.exdir && strncmp(*pp, "-d", 2) == 0) {
+-#endif
++# endif
+                 int firstarg = (pp == argv);
+ 
+@@ -1177,4 +1230,5 @@
+     } else
+         G.process_all_files = TRUE;      /* for speed */
++# endif
+ 
+     if (uO.exdir != (char *)NULL && !G.extract_flag)    /* -d ignored */
+@@ -1260,4 +1314,269 @@
+ 
+ 
++/*
++  -------------------------------------------------------
++  Command Line Options
++  -------------------------------------------------------
++
++  Valid command line options.
++
++  The function get_option() uses this table to check if an
++  option is valid and if it takes a value (also called an
++  option parameter).  To add an option to unzip just add it
++  to this table and add a case in the main switch to handle
++  it.  If either shortopt or longopt not used set to "".
++
++   The fields:
++       option_group - UZO for UnZip option, ZIO for ZipInfo option
++       shortopt     - short option name (1 or 2 chars)
++       longopt      - long option name
++       value_type   - see zip.h for constants
++       negatable    - option is negatable with trailing -
++       ID           - unsigned long int returned for option
++       name         - short description of option which is
++                        returned on some errors and when options
++                        are listed with -so option, can be NULL
++*/
++
++/* Most option IDs are set to the shortopt char.  For
++   multichar short options set to arbitrary unused constant. */
++#define o_so            0x101
++
++
++/* The below is from the old main command line code with a few changes.
++   Note that UnZip and ZipInfo filter out their own options based on the
++   option_group value, so the same option letter can be used for both. */
++
++static struct option_struct far options[] = {
++
++  /* UnZip options */
++
++  /* short longopt                      value_type        negatable
++       ID    name */
++#ifdef RISCOS
++    {UZO, "/",  "",                     o_REQUIRED_VALUE, o_NEGATABLE,
++       '/',  "override Unzip$Exts"},
++#endif
++    {UZO, "a",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'a',  "text conv (EOL char, ASCII->EBCDIC"},
++#if (defined(DLL) && defined(API_DOC))
++    {UZO, "A",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'A',  "extended help for API"},
++#endif
++    {UZO, "b",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'b',  "binary, no ASCII conversions"},
++#ifdef UNIXBACKUP
++    {UZO, "B",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'B',  "back up existing files"},
++#endif
++#ifdef CMS_MVS
++    {UZO, "B",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'b',  "CMS/MVS binary"},
++#endif
++    {UZO, "c",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'c',  "output to stdout"},
++#ifdef CMS_MVS
++    /* for CMS_MVS map to lower case */
++    {UZO, "C",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'C',  "CMS/MVS lower case"},
++#endif
++#if (!defined(SFX) || defined(SFX_EXDIR))
++    {UZO, "d",  "",                     o_REQUIRED_VALUE, o_NEGATABLE,
++       'd',  "extraction root directory"},
++#endif
++#if (!defined(NO_TIMESTAMPS))
++    {UZO, "D",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'D',  "don't restore dir (-DD: any) timestamps"},
++#endif
++    {UZO, "e",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'e',  "extract (not used?)"},
++#ifdef MACOS
++    {UZO, "E",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'E',  "display Mac e.f. when restoring"},
++#endif
++    {UZO, "f",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'f',  "freshen (extract only newer files)"},
++#if (defined(RISCOS) || defined(ACORN_FTYPE_NFS))
++    {UZO, "F",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'F',  "Acorn filetype & NFS extension handling"},
++#endif
++    {UZO, "h",  "",                     o_NO_VALUE,       o_NOT_NEGATABLE,
++       'h',  "help"},
++#ifdef MACOS
++    {UZO, "i",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'i',  "ignore filenames stored in Mac ef"},
++#endif
++    {UZO, "j",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'j',  "junk directories, extract names only"},
++#if (defined(ATH_BEO) || defined(MACOS))
++    {UZO, "J",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'J',  "Junk AtheOS, BeOS or MacOS file attrs"},
++#endif
++#ifdef ATH_BEO_UNX
++    {UZO, "K",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'K',  "retain SUID/SGID/Tacky attrs"},
++#endif
++#ifndef SFX
++    {UZO, "l",  "",                     o_NO_VALUE,       o_NEGATABLE,
++        'l',  "listing verbosity"},
++#endif
++#ifndef CMS_MVS
++    {UZO, "L",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'L',  "convert (some) names to lower"},
++#endif
++#ifdef MORE
++# ifdef CMS_MVS
++    {UZO, "m",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'm',  "pipe output through more"},
++# endif
++    {UZO, "M",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'M',  "pipe output through more"},
++#endif /* MORE */
++    {UZO, "n",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'n',  "never overwrite files (no prompting)"},
++#ifdef AMIGA
++    {UZO, "N",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'N',  "restore comments as filenotes"},
++#endif
++    {UZO, "o",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'o',  "overwrite files without prompting"},
++    {UZO, "p",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'p',  "pipe extraction to stdout, no messages"},
++#if CRYPT
++    {UZO, "P",  "",                     o_REQUIRED_VALUE, o_NEGATABLE,
++       'P',  "password"},
++#endif
++    {UZO, "q",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'q',  "quiet"},
++#ifdef QDOS
++    {UZO, "Q",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'Q',  "QDOS flags"},
++#endif
++#ifdef TANDEM
++    {UZO, "r",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'r',  "remove file extensions"},
++#endif
++#ifdef DOS_FLX_NLM_OS2_W32
++    {UZO, "s",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       's',  "spaces to underscores"},
++#endif
++#ifdef VMS
++    {UZO, "S",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'S',  "VMS extract text as Stream LF"},
++#endif
++    {UZO, "t",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       't',  "test"},
++#ifdef TIMESTAMP
++    {UZO, "T",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'T',  "timestamps"},
++#endif
++    {UZO, "u",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'u',  "update (extract only new/newer files)"},
++#ifdef UNICODE_SUPPORT
++    {UZO, "U",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'U',  "escape non-ASCII Unicode, disable Unicode"},
++#else /* !UNICODE_SUPPORT */
++# ifndef CMS_MVS
++    {UZO, "U",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'U',  "names to lower case"},
++# endif /* !CMS_MVS */
++#endif /* ?UNICODE_SUPPORT */
++#ifndef SFX
++    {UZO, "v",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'v',  "verbose"},
++#endif
++#ifndef CMS_MVS
++    {UZO, "V",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'V',  "don't strip VMS version numbers"},
++#endif
++#ifdef WILD_STOP_AT_DIR
++    {UZO, "W",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'W',  "wildcard * doesn't span /"},
++#endif
++    {UZO, "x",  "",                     o_VALUE_LIST,     o_NOT_NEGATABLE,
++       'x',  "exclude this list of files"},
++#if (defined(RESTORE_UIDGID) || defined(RESTORE_ACL))
++    {UZO, "X",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'X',  "restore owner/prot or UID/GID or ACLs"},
++#endif
++#ifdef VMS
++    {UZO, "Y",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'Y',  "VMS treat .nnn as ;nnn version"},
++#endif
++    {UZO, "z",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'z',  "display zipfile comment"},
++#ifndef SFX
++    {UZO, "Z",  "",                     o_NO_VALUE,       o_NOT_NEGATABLE,
++       'Z',  "ZipInfo mode"},
++#endif
++#ifdef VMS
++    {UZO, "2",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       '2',  "Force ODS2-compliant names."},
++#endif
++#ifdef DOS_H68_OS2_W32
++    {UZO, "$",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       '$',  "extract volume labels"},
++#endif
++#if (!defined(RISCOS) && !defined(CMS_MVS) && !defined(TANDEM))
++    {UZO, ":",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       ':',  "don't skip ../ path elements"},
++#endif
++#ifdef UNIX
++    {UZO, "^",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       '^',  "allow control chars in filenames"},
++#endif
++
++#ifndef NO_ZIPINFO
++  /* ZipInfo options */
++
++  /* short longopt                      value_type        negatable
++       ID    name (help text) */
++    {ZIO, "1",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       '1',  "shortest list"},
++    {ZIO, "2",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       '2',  "names and headers"},
++#ifndef CMS_MVS
++    {ZIO, "C",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'C',  "ignore case"},
++#endif
++    {ZIO, "h",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'h',  "header line"},
++    {ZIO, "l",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'l',  "longer listing"},
++    {ZIO, "m",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'm',  "medium listing"},
++#ifdef MORE
++    {ZIO, "M",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'M',  "output like more"},
++#endif
++    {ZIO, "s",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       's',  "shorter list"},
++    {ZIO, "t",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       't',  "totals line"},
++    {ZIO, "T",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'T',  "decimal time format"},
++#ifdef UNICODE_SUPPORT
++    {ZIO, "U",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'U',  "escape non-ASCII Unicode, disable Unicode"},
++#endif
++    {ZIO, "v",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'v',  "turbo-verbose listing"},
++#ifdef WILD_STOP_AT_DIR
++    {ZIO, "W",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'W',  "wild stop at /"},
++#endif
++    {ZIO, "x",  "",                     o_VALUE_LIST,     o_NOT_NEGATABLE,
++       'x',  "exclude this list of files"},
++    {ZIO, "z",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'z',  "print zipfile comment"},
++    {ZIO, "Z",  "",                     o_NO_VALUE,       o_NEGATABLE,
++       'Z',  "ZipInfo mode"},
++#endif /* !NO_ZIPINFO */
++
++    /* the end of the list */
++    {0,   NULL, NULL,                   o_NO_VALUE,       o_NOT_NEGATABLE,
++       0,    NULL} /* end has option_ID = 0 */
++  };
++
+ 
+ 
+@@ -1271,502 +1590,649 @@
+     char ***pargv;
+ {
+-    char **argv, *s;
+-    int argc, c, error=FALSE, negative=0;
++    char **args;
++    int argc, error=FALSE;
+ 
++    /* used by get_option */
++    unsigned long option; /* option ID returned by get_option */
++    int argcnt = 0;       /* current argcnt in args */
++    int argnum = 0;       /* arg number */
++    int optchar = 0;      /* option state */
++    char *value = NULL;   /* non-option arg, option value or NULL */
++    int negative = 0;     /* 1 = option negated */
++    int fna = 0;          /* current first non-opt arg */
++    int optnum = 0;       /* index in table */
+ 
+-    argc = *pargc;
+-    argv = *pargv;
+ 
+-    while (++argv, (--argc > 0 && *argv != NULL && **argv == '-')) {
+-        s = *argv + 1;
+-        while ((c = *s++) != 0) {    /* "!= 0":  prevent Turbo C warning */
+-#ifdef CMS_MVS
+-            switch (tolower(c))
+-#else
+-            switch (c)
+-#endif
+-            {
+-                case ('-'):
+-                    ++negative;
+-                    break;
++    /* since get_option() returns xfiles and files one at a time, store them
++       in linked lists until have them all */
++
++    int file_count = 0;
++    struct file_list *next_file;
++
++    /* files to extract */
++    int in_files_count = 0;
++    struct file_list *in_files = NULL;
++    struct file_list *next_in_files = NULL;
++
++    /* files to exclude in -x list */
++    int in_xfiles_count = 0;
++    struct file_list *in_xfiles = NULL;
++    struct file_list *next_in_xfiles = NULL;
++
++    G.wildzipfn = NULL;
++
++    /* make copy of args that can use with insert_arg() used by get_option() */
++    args = copy_args(*pargv, 0);
++
++
++    /* Initialize lists */
++    G.filespecs = 0;
++    G.xfilespecs = 0;
++
++
++    /*
++    -------------------------------------------
++    Process command line using get_option
++    -------------------------------------------
++
++    Each call to get_option() returns either a command
++    line option and possible value or a non-option argument.
++    Arguments are permuted so that all options (-r, -b temp)
++    are returned before non-option arguments (zipfile).
++    Returns 0 when nothing left to read.
++    */
++
++    /* set argnum = 0 on first call to init get_option */
++    argnum = 0;
++
++    /* get_option returns the option ID and updates parameters:
++           args    - usually same as argv if no argument file support
++           argcnt  - current argc for args
++           value   - char* to value (free() when done with it) or NULL if none
++           negated - option was negated with trailing -
++    */
++
++    while ((option = get_option(UZO, &args, &argcnt, &argnum,
++                                &optchar, &value, &negative,
++                                &fna, &optnum, 0)))
++    {
++        if(option == o_BAD_ERR) {
++          return(PK_PARAM);
++        }
++
++        switch (option)
++        {
+ #ifdef RISCOS
+-                case ('/'):
+-                    if (negative) {   /* negative not allowed with -/ swap */
+-                        Info(slide, 0x401, ((char *)slide,
+-                          "error:  must give extensions list"));
+-                        return(PK_PARAM);  /* don't extract here by accident */
+-                    }
+-                    exts2swap = s; /* override Unzip$Exts */
+-                    s += strlen(s);
+-                    break;
+-#endif
+-                case ('a'):
+-                    if (negative) {
+-                        uO.aflag = MAX(uO.aflag-negative,0);
+-                        negative = 0;
+-                    } else
+-                        ++uO.aflag;
+-                    break;
++            case ('/'):
++                if (negative) {   /* negative not allowed with -/ swap */
++                    Info(slide, 0x401, ((char *)slide,
++                      "error:  must give extensions list"));
++                    return(PK_PARAM);  /* don't extract here by accident */
++                }
++                exts2swap = value; /* override Unzip$Exts */
++                break;
++#endif
++            case ('a'):
++                if (negative) {
++                    uO.aflag = MAX(uO.aflag-negative,0);
++                    negative = 0;
++                } else
++                    ++uO.aflag;
++                break;
+ #if (defined(DLL) && defined(API_DOC))
+-                case ('A'):    /* extended help for API */
+-                    APIhelp(__G__ argc, argv);
+-                    *pargc = -1;  /* signal to exit successfully */
+-                    return 0;
++            case ('A'):    /* extended help for API */
++                APIhelp(__G__ argc, args);
++                *pargc = -1;  /* signal to exit successfully */
++                return 0;
+ #endif
+-                case ('b'):
+-                    if (negative) {
++            case ('b'):
++                if (negative) {
+ #if (defined(TANDEM) || defined(VMS))
+-                        uO.bflag = MAX(uO.bflag-negative,0);
++                    uO.bflag = MAX(uO.bflag-negative,0);
+ #endif
+-                        negative = 0;   /* do nothing:  "-b" is default */
+-                    } else {
++                    negative = 0;   /* do nothing:  "-b" is default */
++                } else {
+ #ifdef VMS
+-                        if (uO.aflag == 0)
+-                           ++uO.bflag;
++                    if (uO.aflag == 0)
++                       ++uO.bflag;
+ #endif
+ #ifdef TANDEM
+-                        ++uO.bflag;
++                    ++uO.bflag;
+ #endif
+-                        uO.aflag = 0;
+-                    }
+-                    break;
++                    uO.aflag = 0;
++                }
++                break;
+ #ifdef UNIXBACKUP
+-                case ('B'): /* -B: back up existing files */
+-                    if (negative)
+-                        uO.B_flag = FALSE, negative = 0;
+-                    else
+-                        uO.B_flag = TRUE;
+-                    break;
+-#endif
+-                case ('c'):
+-                    if (negative) {
+-                        uO.cflag = FALSE, negative = 0;
++            case ('B'): /* -B: back up existing files */
++                if (negative)
++                    uO.B_flag = FALSE, negative = 0;
++                else
++                    uO.B_flag = TRUE;
++                break;
++#endif
++            case ('c'):
++                if (negative) {
++                    uO.cflag = FALSE, negative = 0;
+ #ifdef NATIVE
+-                        uO.aflag = 0;
++                    uO.aflag = 0;
+ #endif
+-                    } else {
+-                        uO.cflag = TRUE;
++                } else {
++                    uO.cflag = TRUE;
+ #ifdef NATIVE
+-                        uO.aflag = 2;   /* so you can read it on the screen */
++                    uO.aflag = 2;   /* so you can read it on the screen */
+ #endif
+ #ifdef DLL
+-                        if (G.redirect_text)
+-                            G.redirect_data = 2;
++                    if (G.redirect_text)
++                        G.redirect_data = 2;
+ #endif
+-                    }
+-                    break;
++                }
++                break;
+ #ifndef CMS_MVS
+-                case ('C'):    /* -C:  match filenames case-insensitively */
+-                    if (negative)
+-                        uO.C_flag = FALSE, negative = 0;
+-                    else
+-                        uO.C_flag = TRUE;
+-                    break;
++            case ('C'):    /* -C:  match filenames case-insensitively */
++                if (negative)
++                    uO.C_flag = FALSE, negative = 0;
++                else
++                    uO.C_flag = TRUE;
++                break;
+ #endif /* !CMS_MVS */
+ #if (!defined(SFX) || defined(SFX_EXDIR))
+-                case ('d'):
+-                    if (negative) {   /* negative not allowed with -d exdir */
++            case ('d'):
++                if (negative) {   /* negative not allowed with -d exdir */
++                    Info(slide, 0x401, ((char *)slide,
++                      LoadFarString(MustGiveExdir)));
++                    return(PK_PARAM);  /* don't extract here by accident */
++                }
++                if (uO.exdir != (char *)NULL) {
++                    Info(slide, 0x401, ((char *)slide,
++                      LoadFarString(OnlyOneExdir)));
++                    return(PK_PARAM);    /* GRR:  stupid restriction? */
++                } else {
++                    /* first check for "-dexdir", then for "-d exdir" */
++                    uO.exdir = value;
++                    if (uO.exdir == NULL || *uO.exdir == '\0') {
+                         Info(slide, 0x401, ((char *)slide,
+                           LoadFarString(MustGiveExdir)));
+-                        return(PK_PARAM);  /* don't extract here by accident */
+-                    }
+-                    if (uO.exdir != (char *)NULL) {
+-                        Info(slide, 0x401, ((char *)slide,
+-                          LoadFarString(OnlyOneExdir)));
+-                        return(PK_PARAM);    /* GRR:  stupid restriction? */
+-                    } else {
+-                        /* first check for "-dexdir", then for "-d exdir" */
+-                        uO.exdir = s;
+-                        if (*uO.exdir == '\0') {
+-                            if (argc > 1) {
+-                                --argc;
+-                                uO.exdir = *++argv;
+-                                if (*uO.exdir == '-') {
+-                                    Info(slide, 0x401, ((char *)slide,
+-                                      LoadFarString(MustGiveExdir)));
+-                                    return(PK_PARAM);
+-                                }
+-                                /* else uO.exdir points at extraction dir */
+-                            } else {
+-                                Info(slide, 0x401, ((char *)slide,
+-                                  LoadFarString(MustGiveExdir)));
+-                                return(PK_PARAM);
+-                            }
+-                        }
+-                        /* uO.exdir now points at extraction dir (-dexdir or
+-                         *  -d exdir); point s at end of exdir to avoid mis-
+-                         *  interpretation of exdir characters as more options
+-                         */
+-                        if (*s != 0)
+-                            while (*++s != 0)
+-                                ;
++                        return(PK_PARAM);
+                     }
+-                    break;
++                    /* else uO.exdir points at extraction dir */
++                }
++                break;
+ #endif /* !SFX || SFX_EXDIR */
+ #if (!defined(NO_TIMESTAMPS))
+-                case ('D'):    /* -D: Skip restoring dir (or any) timestamp. */
+-                    if (negative) {
+-                        uO.D_flag = MAX(uO.D_flag-negative,0);
+-                        negative = 0;
+-                    } else
+-                        uO.D_flag++;
+-                    break;
++            case ('D'):    /* -D: Skip restoring dir (or any) timestamp. */
++                if (negative) {
++                    uO.D_flag = MAX(uO.D_flag-negative,0);
++                    negative = 0;
++                } else
++                    uO.D_flag++;
++                break;
+ #endif /* (!NO_TIMESTAMPS) */
+-                case ('e'):    /* just ignore -e, -x options (extract) */
+-                    break;
++            case ('e'):    /* just ignore -e, -x options (extract) */
++                break;
+ #ifdef MACOS
+-                case ('E'): /* -E [MacOS] display Mac e.f. when restoring */
+-                    if( negative ) {
+-                        uO.E_flag = FALSE, negative = 0;
+-                    } else {
+-                        uO.E_flag = TRUE;
+-                    }
+-                    break;
++            case ('E'): /* -E [MacOS] display Mac e.f. when restoring */
++                if( negative ) {
++                    uO.E_flag = FALSE, negative = 0;
++                } else {
++                    uO.E_flag = TRUE;
++                }
++                break;
+ #endif /* MACOS */
+-                case ('f'):    /* "freshen" (extract only newer files) */
+-                    if (negative)
+-                        uO.fflag = uO.uflag = FALSE, negative = 0;
+-                    else
+-                        uO.fflag = uO.uflag = TRUE;
+-                    break;
++            case ('f'):    /* "freshen" (extract only newer files) */
++                if (negative)
++                    uO.fflag = uO.uflag = FALSE, negative = 0;
++                else
++                    uO.fflag = uO.uflag = TRUE;
++                break;
+ #if (defined(RISCOS) || defined(ACORN_FTYPE_NFS))
+-                case ('F'):    /* Acorn filetype & NFS extension handling */
+-                    if (negative)
+-                        uO.acorn_nfs_ext = FALSE, negative = 0;
+-                    else
+-                        uO.acorn_nfs_ext = TRUE;
+-                    break;
++            case ('F'):    /* Acorn filetype & NFS extension handling */
++                if (negative)
++                    uO.acorn_nfs_ext = FALSE, negative = 0;
++                else
++                    uO.acorn_nfs_ext = TRUE;
++                break;
+ #endif /* RISCOS || ACORN_FTYPE_NFS */
+-                case ('h'):    /* just print help message and quit */
+-                    *pargc = -1;
+-                    return USAGE(PK_OK);
++            case ('h'):    /* just print help message and quit */
++                *pargc = -1;
++                return USAGE(PK_OK);
+ #ifdef MACOS
+-                case ('i'): /* -i [MacOS] ignore filenames stored in Mac ef */
+-                    if( negative ) {
+-                        uO.i_flag = FALSE, negative = 0;
+-                    } else {
+-                        uO.i_flag = TRUE;
+-                    }
+-                    break;
++            case ('i'): /* -i [MacOS] ignore filenames stored in Mac ef */
++                if( negative ) {
++                    uO.i_flag = FALSE, negative = 0;
++                } else {
++                    uO.i_flag = TRUE;
++                }
++                break;
+ #endif  /* MACOS */
+-                case ('j'):    /* junk pathnames/directory structure */
+-                    if (negative)
+-                        uO.jflag = FALSE, negative = 0;
+-                    else
+-                        uO.jflag = TRUE;
+-                    break;
++            case ('j'):    /* junk pathnames/directory structure */
++                if (negative)
++                    uO.jflag = FALSE, negative = 0;
++                else
++                    uO.jflag = TRUE;
++                break;
+ #if (defined(ATH_BEO) || defined(MACOS))
+-                case ('J'):    /* Junk AtheOS, BeOS or MacOS file attributes */
+-                    if( negative ) {
+-                        uO.J_flag = FALSE, negative = 0;
+-                    } else {
+-                        uO.J_flag = TRUE;
+-                    }
+-                    break;
++            case ('J'):    /* Junk AtheOS, BeOS or MacOS file attributes */
++                if( negative ) {
++                    uO.J_flag = FALSE, negative = 0;
++                } else {
++                    uO.J_flag = TRUE;
++                }
++                break;
+ #endif /* ATH_BEO || MACOS */
+ #ifdef ATH_BEO_UNX
+-                case ('K'):
+-                    if (negative) {
+-                        uO.K_flag = FALSE, negative = 0;
+-                    } else {
+-                        uO.K_flag = TRUE;
+-                    }
+-                    break;
++            case ('K'):
++                if (negative) {
++                    uO.K_flag = FALSE, negative = 0;
++                } else {
++                    uO.K_flag = TRUE;
++                }
++                break;
+ #endif /* ATH_BEO_UNX */
+ #ifndef SFX
+-                case ('l'):
+-                    if (negative) {
+-                        uO.vflag = MAX(uO.vflag-negative,0);
+-                        negative = 0;
+-                    } else
+-                        ++uO.vflag;
+-                    break;
++            case ('l'):
++                if (negative) {
++                    uO.vflag = MAX(uO.vflag-negative,0);
++                    negative = 0;
++                } else
++                    ++uO.vflag;
++                break;
+ #endif /* !SFX */
+ #ifndef CMS_MVS
+-                case ('L'):    /* convert (some) filenames to lowercase */
+-                    if (negative) {
+-                        uO.L_flag = MAX(uO.L_flag-negative,0);
+-                        negative = 0;
+-                    } else
+-                        ++uO.L_flag;
+-                    break;
++            case ('L'):    /* convert (some) filenames to lowercase */
++                if (negative) {
++                    uO.L_flag = MAX(uO.L_flag-negative,0);
++                    negative = 0;
++                } else
++                    ++uO.L_flag;
++                break;
+ #endif /* !CMS_MVS */
+ #ifdef MORE
+ #ifdef CMS_MVS
+-                case ('m'):
++            case ('m'):
+ #endif
+-                case ('M'):    /* send all screen output through "more" fn. */
++            case ('M'):    /* send all screen output through "more" fn. */
+ /* GRR:  eventually check for numerical argument => height */
+-                    if (negative)
+-                        G.M_flag = FALSE, negative = 0;
+-                    else
+-                        G.M_flag = TRUE;
+-                    break;
++                if (negative)
++                    G.M_flag = FALSE, negative = 0;
++                else
++                    G.M_flag = TRUE;
++                break;
+ #endif /* MORE */
+-                case ('n'):    /* don't overwrite any files */
+-                    if (negative)
+-                        uO.overwrite_none = FALSE, negative = 0;
+-                    else
+-                        uO.overwrite_none = TRUE;
+-                    break;
++            case ('n'):    /* don't overwrite any files */
++                if (negative)
++                    uO.overwrite_none = FALSE, negative = 0;
++                else
++                    uO.overwrite_none = TRUE;
++                break;
+ #ifdef AMIGA
+-                case ('N'):    /* restore comments as filenotes */
+-                    if (negative)
+-                        uO.N_flag = FALSE, negative = 0;
+-                    else
+-                        uO.N_flag = TRUE;
+-                    break;
++            case ('N'):    /* restore comments as filenotes */
++                if (negative)
++                    uO.N_flag = FALSE, negative = 0;
++                else
++                    uO.N_flag = TRUE;
++                break;
+ #endif /* AMIGA */
+-                case ('o'):    /* OK to overwrite files without prompting */
+-                    if (negative) {
+-                        uO.overwrite_all = MAX(uO.overwrite_all-negative,0);
+-                        negative = 0;
+-                    } else
+-                        ++uO.overwrite_all;
+-                    break;
+-                case ('p'):    /* pipes:  extract to stdout, no messages */
+-                    if (negative) {
+-                        uO.cflag = FALSE;
+-                        uO.qflag = MAX(uO.qflag-999,0);
+-                        negative = 0;
+-                    } else {
+-                        uO.cflag = TRUE;
+-                        uO.qflag += 999;
+-                    }
+-                    break;
++            case ('o'):    /* OK to overwrite files without prompting */
++                if (negative) {
++                    uO.overwrite_all = MAX(uO.overwrite_all-negative,0);
++                    negative = 0;
++                } else
++                    ++uO.overwrite_all;
++                break;
++            case ('p'):    /* pipes:  extract to stdout, no messages */
++                if (negative) {
++                    uO.cflag = FALSE;
++                    uO.qflag = MAX(uO.qflag-999,0);
++                    negative = 0;
++                } else {
++                    uO.cflag = TRUE;
++                    uO.qflag += 999;
++                }
++                break;
+ #if CRYPT
+-                /* GRR:  yes, this is highly insecure, but dozens of people
+-                 * have pestered us for this, so here we go... */
+-                case ('P'):
+-                    if (negative) {   /* negative not allowed with -P passwd */
+-                        Info(slide, 0x401, ((char *)slide,
+-                          LoadFarString(MustGivePasswd)));
+-                        return(PK_PARAM);  /* don't extract here by accident */
+-                    }
+-                    if (uO.pwdarg != (char *)NULL) {
++            /* GRR:  yes, this is highly insecure, but dozens of people
++             * have pestered us for this, so here we go... */
++            case ('P'):
++                if (negative) {   /* negative not allowed with -P passwd */
++                    Info(slide, 0x401, ((char *)slide,
++                      LoadFarString(MustGivePasswd)));
++                    return(PK_PARAM);  /* don't extract here by accident */
++                }
++                if (uO.pwdarg != (char *)NULL) {
+ /*
+-                        GRR:  eventually support multiple passwords?
++                    GRR:  eventually support multiple passwords?
++                    Info(slide, 0x401, ((char *)slide,
++                      LoadFarString(OnlyOnePasswd)));
++                    return(PK_PARAM);
++*/
++                } else {
++                    /* first check for "-Ppasswd", then for "-P passwd" */
++                    uO.pwdarg = value;
++                    if (uO.pwdarg == NULL || *uO.pwdarg == '\0') {
+                         Info(slide, 0x401, ((char *)slide,
+-                          LoadFarString(OnlyOnePasswd)));
++                          LoadFarString(MustGivePasswd)));
+                         return(PK_PARAM);
+- */
+-                    } else {
+-                        /* first check for "-Ppasswd", then for "-P passwd" */
+-                        uO.pwdarg = s;
+-                        if (*uO.pwdarg == '\0') {
+-                            if (argc > 1) {
+-                                --argc;
+-                                uO.pwdarg = *++argv;
+-                                if (*uO.pwdarg == '-') {
+-                                    Info(slide, 0x401, ((char *)slide,
+-                                      LoadFarString(MustGivePasswd)));
+-                                    return(PK_PARAM);
+-                                }
+-                                /* else pwdarg points at decryption password */
+-                            } else {
+-                                Info(slide, 0x401, ((char *)slide,
+-                                  LoadFarString(MustGivePasswd)));
+-                                return(PK_PARAM);
+-                            }
+-                        }
+-                        /* pwdarg now points at decryption password (-Ppasswd or
+-                         *  -P passwd); point s at end of passwd to avoid mis-
+-                         *  interpretation of passwd characters as more options
+-                         */
+-                        if (*s != 0)
+-                            while (*++s != 0)
+-                                ;
++                        /* else pwdarg points at decryption password */
+                     }
+-                    break;
++                }
++                break;
+ #endif /* CRYPT */
+-                case ('q'):    /* quiet:  fewer comments/messages */
+-                    if (negative) {
+-                        uO.qflag = MAX(uO.qflag-negative,0);
+-                        negative = 0;
+-                    } else
+-                        ++uO.qflag;
+-                    break;
++            case ('q'):    /* quiet:  fewer comments/messages */
++                if (negative) {
++                    uO.qflag = MAX(uO.qflag-negative,0);
++                    negative = 0;
++                } else
++                    ++uO.qflag;
++                break;
+ #ifdef QDOS
+-                case ('Q'):   /* QDOS flags */
+-                    qlflag ^= strtol(s, &s, 10);
+-                    break;    /* we XOR this as we can config qlflags */
++            case ('Q'):   /* QDOS flags */
++                qlflag ^= strtol(value, &value, 10);
++                break;    /* we XOR this as we can config qlflags */
+ #endif
+ #ifdef TANDEM
+-                case ('r'):    /* remove file extensions */
+-                    if (negative)
+-                        uO.rflag = FALSE, negative = 0;
+-                    else
+-                        uO.rflag = TRUE;
+-                    break;
++            case ('r'):    /* remove file extensions */
++                if (negative)
++                    uO.rflag = FALSE, negative = 0;
++                else
++                    uO.rflag = TRUE;
++                break;
+ #endif /* TANDEM */
+ #ifdef DOS_FLX_NLM_OS2_W32
+-                case ('s'):    /* spaces in filenames:  allow by default */
+-                    if (negative)
+-                        uO.sflag = FALSE, negative = 0;
+-                    else
+-                        uO.sflag = TRUE;
+-                    break;
++            case ('s'):    /* spaces in filenames:  allow by default */
++                if (negative)
++                    uO.sflag = FALSE, negative = 0;
++                else
++                    uO.sflag = TRUE;
++                break;
+ #endif /* DOS_FLX_NLM_OS2_W32 */
+ #ifdef VMS
+-                /* VMS:  extract "text" files in Stream_LF format (-a[a]) */
+-                case ('S'):
+-                    if (negative)
+-                        uO.S_flag = FALSE, negative = 0;
+-                    else
+-                        uO.S_flag = TRUE;
+-                    break;
++            /* VMS:  extract "text" files in Stream_LF format (-a[a]) */
++            case ('S'):
++                if (negative)
++                    uO.S_flag = FALSE, negative = 0;
++                else
++                    uO.S_flag = TRUE;
++                break;
+ #endif /* VMS */
+-                case ('t'):
+-                    if (negative)
+-                        uO.tflag = FALSE, negative = 0;
+-                    else
+-                        uO.tflag = TRUE;
+-                    break;
++            case ('t'):
++                if (negative)
++                    uO.tflag = FALSE, negative = 0;
++                else
++                    uO.tflag = TRUE;
++                break;
+ #ifdef TIMESTAMP
+-                case ('T'):
+-                    if (negative)
+-                        uO.T_flag = FALSE, negative = 0;
+-                    else
+-                        uO.T_flag = TRUE;
+-                    break;
+-#endif
+-                case ('u'):    /* update (extract only new and newer files) */
+-                    if (negative)
+-                        uO.uflag = FALSE, negative = 0;
+-                    else
+-                        uO.uflag = TRUE;
+-                    break;
++            case ('T'):
++                if (negative)
++                    uO.T_flag = FALSE, negative = 0;
++                else
++                    uO.T_flag = TRUE;
++                break;
++#endif
++            case ('u'):    /* update (extract only new and newer files) */
++                if (negative)
++                    uO.uflag = FALSE, negative = 0;
++                else
++                    uO.uflag = TRUE;
++                break;
+ #ifdef UNICODE_SUPPORT
+-                case ('U'):    /* escape UTF-8, or disable UTF-8 support */
+-                    if (negative) {
+-                        uO.U_flag = MAX(uO.U_flag-negative,0);
+-                        negative = 0;
+-                    } else
+-                        uO.U_flag++;
+-                    break;
++            case ('U'):    /* escape UTF-8, or disable UTF-8 support */
++                if (negative)
++                    uO.U_flag = MAX(uO.U_flag - 1, 0);
++                else
++                    uO.U_flag++;
++                break;
+ #else /* !UNICODE_SUPPORT */
+ #ifndef CMS_MVS
+-                case ('U'):    /* obsolete; to be removed in version 6.0 */
+-                    if (negative)
+-                        uO.L_flag = TRUE, negative = 0;
+-                    else
+-                        uO.L_flag = FALSE;
+-                    break;
++            case ('U'):    /* obsolete; to be removed in version 6.0 */
++                if (negative)
++                    uO.L_flag = TRUE, negative = 0;
++                else
++                    uO.L_flag = FALSE;
++                break;
+ #endif /* !CMS_MVS */
+ #endif /* ?UNICODE_SUPPORT */
+ #ifndef SFX
+-                case ('v'):    /* verbose */
+-                    if (negative) {
+-                        uO.vflag = MAX(uO.vflag-negative,0);
+-                        negative = 0;
+-                    } else if (uO.vflag)
+-                        ++uO.vflag;
+-                    else
+-                        uO.vflag = 2;
+-                    break;
++            case ('v'):    /* verbose */
++                if (negative) {
++                    uO.vflag = MAX(uO.vflag-negative,0);
++                    negative = 0;
++                } else if (uO.vflag)
++                    ++uO.vflag;
++                else
++                    uO.vflag = 2;
++                break;
+ #endif /* !SFX */
+ #ifndef CMS_MVS
+-                case ('V'):    /* Version (retain VMS/DEC-20 file versions) */
+-                    if (negative)
+-                        uO.V_flag = FALSE, negative = 0;
+-                    else
+-                        uO.V_flag = TRUE;
+-                    break;
++            case ('V'):    /* Version (retain VMS/DEC-20 file versions) */
++                if (negative)
++                    uO.V_flag = FALSE, negative = 0;
++                else
++                    uO.V_flag = TRUE;
++                break;
+ #endif /* !CMS_MVS */
+ #ifdef WILD_STOP_AT_DIR
+-                case ('W'):    /* Wildcard interpretation (stop at '/'?) */
+-                    if (negative)
+-                        uO.W_flag = FALSE, negative = 0;
+-                    else
+-                        uO.W_flag = TRUE;
+-                    break;
++            case ('W'):    /* Wildcard interpretation (stop at '/'?) */
++                if (negative)
++                    uO.W_flag = FALSE, negative = 0;
++                else
++                    uO.W_flag = TRUE;
++                break;
+ #endif /* WILD_STOP_AT_DIR */
+-                case ('x'):    /* extract:  default */
+-#ifdef SFX
+-                    /* when 'x' is the only option in this argument, and the
+-                     * next arg is not an option, assume this initiates an
+-                     * exclusion list (-x xlist):  terminate option-scanning
+-                     * and leave uz_opts with argv still pointing to "-x";
+-                     * the xlist is processed later
+-                     */
+-                    if (s - argv[0] == 2 && *s == '\0' &&
+-                        argc > 1 && argv[1][0] != '-') {
+-                        /* break out of nested loops without "++argv;--argc" */
+-                        goto opts_done;
++            case ('x'):    /* extract:  default */
++                /* add -x file to linked list */
++
++                if (in_xfiles_count == 0) {
++                    /* first entry */
++                    if ((in_xfiles = (struct file_list *)
++                                     malloc(sizeof(struct file_list))
++                        ) == NULL) {
++                        Info(slide, 0x401, ((char *)slide,
++                          LoadFarString(NoMemArgsList)));
++                        return PK_MEM;
++                    }
++                    in_xfiles->name = value;
++                    in_xfiles->next = NULL;
++                    next_in_xfiles = in_xfiles;
++                } else {
++                    /* add next entry */
++                    if ((next_file = (struct file_list *)
++                                     malloc(sizeof(struct file_list))
++                        ) == NULL) {
++                        Info(slide, 0x401, ((char *)slide,
++                          LoadFarString(NoMemArgsList)));
++                        return PK_MEM;
+                     }
++                    next_in_xfiles->next = next_file;
++                    next_file->name = value;
++                    next_file->next = NULL;
++                    next_in_xfiles = next_file;
++                }
++                in_xfiles_count++;
++
++#if 0
++#ifdef SFX
++                /* now get -x list one entry at a time */
++
++
++
++                /* when 'x' is the only option in this argument, and the
++                 * next arg is not an option, assume this initiates an
++                 * exclusion list (-x xlist):  terminate option-scanning
++                 * and leave uz_opts with argv still pointing to "-x";
++                 * the xlist is processed later
++                 */
++                if (s - argv[0] == 2 && *s == '\0' &&
++                    argc > 1 && argv[1][0] != '-') {
++                    /* break out of nested loops without "++argv;--argc" */
++                    goto opts_done;
++                }
+ #endif /* SFX */
+-                    break;
++#endif
++                break;
+ #if (defined(RESTORE_UIDGID) || defined(RESTORE_ACL))
+-                case ('X'):   /* restore owner/protection info (need privs?) */
+-                    if (negative) {
+-                        uO.X_flag = MAX(uO.X_flag-negative,0);
+-                        negative = 0;
+-                    } else
+-                        ++uO.X_flag;
+-                    break;
++            case ('X'):   /* restore owner/protection info (need privs?) */
++                if (negative) {
++                    uO.X_flag = MAX(uO.X_flag-negative,0);
++                    negative = 0;
++                } else
++                    ++uO.X_flag;
++                break;
+ #endif /* RESTORE_UIDGID || RESTORE_ACL */
+ #ifdef VMS
+-                case ('Y'):    /* Treat ".nnn" as ";nnn" version. */
+-                    if (negative)
+-                        uO.Y_flag = FALSE, negative = 0;
+-                    else
+-                        uO.Y_flag = TRUE;
+-                    break;
++            case ('Y'):    /* Treat ".nnn" as ";nnn" version. */
++                if (negative)
++                    uO.Y_flag = FALSE, negative = 0;
++                else
++                    uO.Y_flag = TRUE;
++                break;
+ #endif /* VMS */
+-                case ('z'):    /* display only the archive comment */
+-                    if (negative) {
+-                        uO.zflag = MAX(uO.zflag-negative,0);
+-                        negative = 0;
+-                    } else
+-                        ++uO.zflag;
+-                    break;
++            case ('z'):    /* display only the archive comment */
++                if (negative) {
++                    uO.zflag = MAX(uO.zflag-negative,0);
++                    negative = 0;
++                } else
++                    ++uO.zflag;
++                break;
+ #ifndef SFX
+-                case ('Z'):    /* should have been first option (ZipInfo) */
+-                    Info(slide, 0x401, ((char *)slide, LoadFarString(Zfirst)));
+-                    error = TRUE;
+-                    break;
++            case ('Z'):    /* should have been first option (ZipInfo) */
++                Info(slide, 0x401, ((char *)slide, LoadFarString(Zfirst)));
++                error = TRUE;
++                break;
+ #endif /* !SFX */
+ #ifdef VMS
+-                case ('2'):    /* Force ODS2-compliant names. */
+-                    if (negative)
+-                        uO.ods2_flag = FALSE, negative = 0;
+-                    else
+-                        uO.ods2_flag = TRUE;
+-                    break;
++            case ('2'):    /* Force ODS2-compliant names. */
++                if (negative)
++                    uO.ods2_flag = FALSE, negative = 0;
++                else
++                    uO.ods2_flag = TRUE;
++                break;
+ #endif /* VMS */
+ #ifdef DOS_H68_OS2_W32
+-                case ('$'):
+-                    if (negative) {
+-                        uO.volflag = MAX(uO.volflag-negative,0);
+-                        negative = 0;
+-                    } else
+-                        ++uO.volflag;
+-                    break;
++            case ('$'):
++                if (negative) {
++                    uO.volflag = MAX(uO.volflag-negative,0);
++                    negative = 0;
++                } else
++                    ++uO.volflag;
++                break;
+ #endif /* DOS_H68_OS2_W32 */
+ #if (!defined(RISCOS) && !defined(CMS_MVS) && !defined(TANDEM))
+-                case (':'):    /* allow "parent dir" path components */
+-                    if (negative) {
+-                        uO.ddotflag = MAX(uO.ddotflag-negative,0);
+-                        negative = 0;
+-                    } else
+-                        ++uO.ddotflag;
+-                    break;
++            case (':'):    /* allow "parent dir" path components */
++                if (negative) {
++                    uO.ddotflag = MAX(uO.ddotflag-negative,0);
++                    negative = 0;
++                } else
++                    ++uO.ddotflag;
++                break;
+ #endif /* !RISCOS && !CMS_MVS && !TANDEM */
+ #ifdef UNIX
+-                case ('^'):    /* allow control chars in filenames */
+-                    if (negative) {
+-                        uO.cflxflag = MAX(uO.cflxflag-negative,0);
+-                        negative = 0;
+-                    } else
+-                        ++uO.cflxflag;
+-                    break;
++            case ('^'):    /* allow control chars in filenames */
++                if (negative) {
++                    uO.cflxflag = MAX(uO.cflxflag-negative,0);
++                    negative = 0;
++                } else
++                    ++uO.cflxflag;
++                break;
+ #endif /* UNIX */
+-                default:
+-                    error = TRUE;
+-                    break;
+-
+-            } /* end switch */
+-        } /* end while (not end of argument string) */
+-    } /* end while (not done with switches) */
++            case o_NON_OPTION_ARG:
++                /* not an option */
++                /* no more options as permuting */
++
++
++                if (G.wildzipfn == NULL) {
++                    /* first non-option argument is zip file */
++                    G.wildzipfn = value;
++
++                } else {
++                    /* add include file to list */
++                    if (in_files_count == 0) {
++                        /* first entry */
++                        if ((next_file = (struct file_list *)
++                                         malloc(sizeof(struct file_list))
++                            ) == NULL) {
++                            Info(slide, 0x401, ((char *)slide,
++                              LoadFarString(NoMemArgsList)));
++                            return PK_MEM;
++                        }
++                        next_file->name = value;
++                        next_file->next = NULL;
++                        in_files = next_file;
++                        next_in_files = next_file;
++                    } else {
++                        /* add next entry */
++                        if ((next_file = (struct file_list *)
++                                         malloc(sizeof(struct file_list))
++                            ) == NULL) {
++                            Info(slide, 0x401, ((char *)slide,
++                              LoadFarString(NoMemArgsList)));
++                            return PK_MEM;
++                        }
++                        next_in_files->next = next_file;
++                        next_file->name = value;
++                        next_file->next = NULL;
++                        next_in_files = next_file;
++                    }
++                    in_files_count++;
++                }
++                break;
++            default:
++                error = TRUE;
++                break;
++
++        } /* end switch */
++    } /* get_option() */
++
++
++    /* convert files and xfiles lists to arrays */
++
++    /* convert files list to array */
++    if (in_files_count) {
++      if ((G.pfnames = (char **) malloc((in_files_count + 1) * sizeof(char *))
++          ) == NULL) {
++          Info(slide, 0x401, ((char *)slide, LoadFarString(NoMemArgsList)));
++          return PK_MEM;
++      }
++      file_count = 0;
++      for (next_file = in_files; next_file;) {
++          G.pfnames[file_count] = next_file->name;
++          in_files = next_file;
++          next_file = next_file->next;
++          free(in_files);
++          file_count++;
++      }
++      G.pfnames[file_count] = NULL;
++      G.filespecs = in_files_count;
++    }
++
++    /* convert xfiles list to array */
++    if (in_xfiles_count) {
++      if ((G.pxnames = (char **) malloc((in_xfiles_count + 1) * sizeof(char *))
++          ) == NULL) {
++          Info(slide, 0x401, ((char *)slide, LoadFarString(NoMemArgsList)));
++          return PK_MEM;
++      }
++      file_count = 0;
++      for (next_file = in_xfiles; next_file;) {
++          G.pxnames[file_count] = next_file->name;
++          in_xfiles = next_file;
++          next_file = next_file->next;
++          free(in_xfiles);
++          file_count++;
++      }
++      G.pxnames[file_count] = NULL;
++      G.xfilespecs = in_xfiles_count;
++    }
++
++    if (in_files_count || in_xfiles_count) {
++        G.process_all_files = FALSE;
++    } else {
++        G.process_all_files = TRUE;      /* for speed */
++    }
++
++
++    /* it's possible the arg count could have been changed by get_option() */
++    argc = arg_count(args);
++
++
+ 
+ /*---------------------------------------------------------------------------
+@@ -1774,7 +2240,77 @@
+   ---------------------------------------------------------------------------*/
+ 
++    if ((uO.cflag && (uO.tflag || uO.uflag)) ||
++        (uO.tflag && uO.uflag) || (uO.fflag && uO.overwrite_none))
++    {
++        Info(slide, 0x401, ((char *)slide, LoadFarString(InvalidOptionsMsg)));
++        error = TRUE;
++    }
++    if (uO.aflag > 2)
++        uO.aflag = 2;
++#ifdef VMS
++    if (uO.bflag > 2)
++        uO.bflag = 2;
++    /* Clear -s flag when converting text files. */
++    if (uO.aflag <= 0)
++        uO.S_flag = 0;
++#endif /* VMS */
++    if (uO.overwrite_all && uO.overwrite_none) {
++        Info(slide, 0x401, ((char *)slide, LoadFarString(IgnoreOOptionMsg)));
++        uO.overwrite_all = FALSE;
++    }
++#ifdef MORE
++    if (G.M_flag && !isatty(1))  /* stdout redirected: "more" func. useless */
++        G.M_flag = 0;
++#endif
++
++#ifdef SFX
++    if (error)
++#else
++    if ((G.wildzipfn == NULL) || error)
++#endif
++    {
++        /* tell caller to exit */
++        if (argc <= 2)
++            argc = -1;
++
++        *pargc = argc;
++        *pargv = args;
++#ifndef SFX
++        if (uO.vflag >= 2 && argc == -1) {              /* "unzip -v" */
++            show_version_info(__G);
++            return PK_OK;
++        }
++        if (!G.noargs && !error)
++            error = TRUE;       /* had options (not -h or -v) but no zipfile */
++#endif /* !SFX */
++        return USAGE(error);
++    }
++
+ #ifdef SFX
+-opts_done:  /* yes, very ugly...but only used by UnZipSFX with -x xlist */
++    /* print our banner unless we're being fairly quiet */
++    if (uO.qflag < 2)
++        Info(slide, error? 1 : 0, ((char *)slide, LoadFarString(UnzipSFXBanner),
++          UZ_MAJORVER, UZ_MINORVER, UZ_PATCHLEVEL, UZ_BETALEVEL,
++          LoadFarStringSmall(VersionDate)));
++#ifdef BETA
++    /* always print the beta warning:  no unauthorized distribution!! */
++    Info(slide, error? 1 : 0, ((char *)slide, LoadFarString(BetaVersion), "\n",
++      "SFX"));
++#endif
++#endif /* SFX */
++
++    if (uO.cflag || uO.tflag || uO.vflag || uO.zflag
++#ifdef TIMESTAMP
++                                                     || uO.T_flag
+ #endif
++                                                                 )
++        G.extract_flag = FALSE;
++    else
++        G.extract_flag = TRUE;
++
++#if 0
++# ifdef SFX
++opts_done:  /* yes, very ugly...but only used by UnZipSFX with -x xlist */
++# endif
+ 
+     if ((uO.cflag && (uO.tflag || uO.uflag)) ||
+@@ -1786,5 +2322,5 @@
+     if (uO.aflag > 2)
+         uO.aflag = 2;
+-#ifdef VMS
++# ifdef VMS
+     if (uO.bflag > 2)
+         uO.bflag = 2;
+@@ -1792,23 +2328,23 @@
+     if (uO.aflag <= 0)
+         uO.S_flag = 0;
+-#endif /* VMS */
++# endif /* VMS */
+     if (uO.overwrite_all && uO.overwrite_none) {
+         Info(slide, 0x401, ((char *)slide, LoadFarString(IgnoreOOptionMsg)));
+         uO.overwrite_all = FALSE;
+     }
+-#ifdef MORE
++# ifdef MORE
+     if (G.M_flag && !isatty(1))  /* stdout redirected: "more" func. useless */
+         G.M_flag = 0;
+-#endif
++# endif
+ 
+-#ifdef SFX
++# ifdef SFX
+     if (error)
+-#else
++# else
+     if ((argc-- == 0) || error)
+-#endif
++# endif
+     {
+         *pargc = argc;
+-        *pargv = argv;
+-#ifndef SFX
++        *pargv = args;
++# ifndef SFX
+         if (uO.vflag >= 2 && argc == -1) {              /* "unzip -v" */
+             show_version_info(__G);
+@@ -1817,9 +2353,9 @@
+         if (!G.noargs && !error)
+             error = TRUE;       /* had options (not -h or -v) but no zipfile */
+-#endif /* !SFX */
++# endif /* !SFX */
+         return USAGE(error);
+     }
+ 
+-#ifdef SFX
++# ifdef SFX
+     /* print our banner unless we're being fairly quiet */
+     if (uO.qflag < 2)
+@@ -1827,22 +2363,23 @@
+           UZ_MAJORVER, UZ_MINORVER, UZ_PATCHLEVEL, UZ_BETALEVEL,
+           LoadFarStringSmall(VersionDate)));
+-#ifdef BETA
++# ifdef BETA
+     /* always print the beta warning:  no unauthorized distribution!! */
+     Info(slide, error? 1 : 0, ((char *)slide, LoadFarString(BetaVersion), "\n",
+       "SFX"));
+-#endif
+-#endif /* SFX */
++# endif
++# endif /* SFX */
+ 
+     if (uO.cflag || uO.tflag || uO.vflag || uO.zflag
+-#ifdef TIMESTAMP
++# ifdef TIMESTAMP
+                                                      || uO.T_flag
+-#endif
++# endif
+                                                                  )
+         G.extract_flag = FALSE;
+     else
+         G.extract_flag = TRUE;
++#endif
+ 
+     *pargc = argc;
+-    *pargv = argv;
++    *pargv = args;
+     return PK_OK;
+ 
+@@ -2314,2 +2851,1366 @@
+ #endif /* !SFX */
+ #endif /* !WINDLL */
++
++
++
++
++
++
++/*---------------------------------------------------------------
++ *  Long option support
++ *  8/23/2003
++ *  Updated 3/1/2008 to support UnZip
++ *
++ *  Defines function get_option() to get and process the command
++ *  line options and arguments from argv[].  The caller calls
++ *  get_option() in a loop to get either one option and possible
++ *  value or a non-option argument each loop.
++ *
++ *  This version has been modified to work with UnZip and ZipInfo.
++ *  the major changes are removing the error returns, instead
++ *  passing back error codes for errors, and supporting separate
++ *  groups of options for UnZip and ZipInfo and selecting the option
++ *  group by an argument.
++ *
++ *  This version does not include argument file support and can
++ *  work directly on argv.  The argument file code complicates things and
++ *  it seemed best to leave it out for now.  If argument file support
++ *  (reading in command line arguments stored in a file and inserting into
++ *  command line where @filename is found) is added later the arguments
++ *  can change and a freeable copy of argv will be needed and can be
++ *  created using copy_args in the left out code.
++ *
++ *  Supports short and long options as defined in the array options[]
++ *  in zip.c, multiple short options in an argument (like -jlv), long
++ *  option abbreviation (like --te for --temp-file if --te unique),
++ *  short and long option values (like -b filename or --temp-file filename
++ *  or --temp-file=filename), optional and required values, option negation
++ *  by trailing - (like -S- to not include hidden and system files in MSDOS),
++ *  value lists (like -x a b c), argument permuting (returning all options
++ *  and values before any non-option arguments), and argument files (where
++ *  any non-option non-value argument in form @path gets substituted with
++ *  the white space separated arguments in the text file at path).  In this
++ *  version argument file support has been removed to simplify development
++ *  but may be added later.
++ *
++ *  E. Gordon
++ */
++
++
++/* message output - char casts are needed to handle constants */
++#define oWARN(message) Info(slide, 0x401, ((char *)slide, (char *)message))
++
++
++
++/* Although the below provides some support for multibyte characters
++   the proper thing to do may be to use wide characters and support
++   Unicode.  May get to it soon.  Wide support would likely require
++   the ability to convert the command line to wide strings, which most
++   modern OS should support now.  EG
++ */
++
++/* For now stay with multi-byte characters.  May support wide characters
++   in Zip 3.1 and UnZip 6.1.
++ */
++
++/* multibyte character set support
++   Multibyte characters use typically two or more sequential bytes
++   to represent additional characters than can fit in a single byte
++   character set.  The code used here is based on the ANSI mblen function. */
++#define MB_CLEN(ptr) CLEN(ptr)
++#define MB_NEXTCHAR(ptr) PREINCSTR(ptr)
++
++
++/* constants */
++
++/* function get_args_from_arg_file() can return this in depth parameter */
++#define ARG_FILE_ERR -1
++
++/* internal settings for optchar */
++#define SKIP_VALUE_ARG   -1
++#define THIS_ARG_DONE    -2
++#define START_VALUE_LIST -3
++#define IN_VALUE_LIST    -4
++#define NON_OPTION_ARG   -5
++#define STOP_VALUE_LIST  -6
++/* 7/25/04 EG */
++#define READ_REST_ARGS_VERBATIM -7
++
++
++/* global veriables */
++
++int enable_permute = 1;                     /* yes - return options first */
++/* 7/25/04 EG */
++int doubledash_ends_options = 1;            /* when -- what follows are not options */
++
++/* buffer for error messages (this sizing is a guess but must hold 2 paths) */
++#define OPTIONERR_BUF_SIZE (80+ 2*FILENAME_MAX)
++char optionerrbuf[OPTIONERR_BUF_SIZE + 1];
++
++/* error messages */
++static ZCONST char Far op_not_neg_err[] =
++   "option %s not negatable";
++static ZCONST char Far op_req_val_err[] =
++   "option %s requires a value";
++static ZCONST char Far op_no_allow_val_err[] =
++   "option %s does not allow a value";
++static ZCONST char Far sh_op_not_sup_err[] =
++   "short option '%c' not supported";
++static ZCONST char Far oco_req_val_err[] =
++   "option %s requires one character value";
++static ZCONST char Far oco_no_mbc_err[] =
++   "option %s does not support multibyte values";
++static ZCONST char Far num_req_val_err[] =
++   "option %s requires number value";
++static ZCONST char Far long_op_ambig_err[] =
++   "long option '%s' ambiguous";
++static ZCONST char Far long_op_not_sup_err[] =
++   "long option '%s' not supported";
++
++static ZCONST char Far no_arg_files_err[] = "argument files not enabled\n";
++
++
++/* below removed as only used for processing argument files */
++
++/* get_nextarg */
++/* get_args_from_string */
++/* get_args_from_arg_file */
++
++
++/* copy error, option name, and option description if any to buf */
++static int optionerr(options, buf, err, optind, islong)
++  struct option_struct *options;
++  char *buf;
++  ZCONST char Far *err;
++  int optind;
++  int islong;
++{
++  char optname[50];
++
++  if (options[optind].name && options[optind].name[0] != '\0') {
++    sprintf(optname, "'%s' (%s)",
++            LoadFarStringSmall2(islong ? options[optind].longopt
++                                       : options[optind].shortopt),
++            LoadFarStringSmall(options[optind].name));
++  } else {
++    sprintf(optname, "'%s'",
++            LoadFarStringSmall2(islong ? options[optind].longopt
++                                       : options[optind].shortopt));
++  }
++  sprintf(buf, LoadFarStringSmall(err), optname);
++  return 0;
++}
++
++
++/* copy_args
++ *
++ * Copy arguments in args, allocating storage with malloc.
++ * Copies until a NULL argument is found or until max_args args
++ * including args[0] are copied.  Set max_args to 0 to copy
++ * until NULL.  Always terminates returned args[] with NULL arg.
++ *
++ * Any argument in the returned args can be freed with free().  Any
++ * freed argument should be replaced with either another string
++ * allocated with malloc or by NULL if last argument so that free_args
++ * will properly work.
++ */
++char **copy_args(args, max_args)
++  char **args;
++  int max_args;
++{
++  int j;
++  char **new_args;
++
++  if (args == NULL) {
++    return NULL;
++  }
++
++  /* count args */
++  for (j = 0; args[j] && (max_args == 0 || j < max_args); j++) ;
++
++  if ((new_args = (char **) malloc((j + 1) * sizeof(char *))) == NULL) {
++    oWARN("memory - ca");
++    return NULL;
++  }
++
++  for (j = 0; args[j] && (max_args == 0 || j < max_args); j++) {
++    if (args[j] == NULL) {
++      /* null argument is end of args */
++      new_args[j] = NULL;
++      break;
++    }
++    if ((new_args[j] = malloc(strlen(args[j]) + 1)) == NULL) {
++      free_args(new_args);
++      oWARN("memory - ca");
++      return NULL;
++    }
++    strcpy(new_args[j], args[j]);
++  }
++  new_args[j] = NULL;
++
++  return new_args;
++}
++
++
++/* count args - count args in argv like array */
++int arg_count(args)
++  char **args;
++{
++  int i;
++
++  if (args == NULL) {
++    return 0;
++  }
++
++  for (i = 0; args[i]; i++) {
++  }
++  return i;
++}
++
++
++/* free args - free args created with one of these functions */
++int free_args(args)
++  char **args;
++{
++  int i;
++
++  if (args == NULL) {
++    return 0;
++  }
++
++  for (i = 0; args[i]; i++) {
++    free(args[i]);
++  }
++  free(args);
++  return i;
++}
++
++
++/* insert_arg
++ *
++ * Insert the argument arg into the array args before argument at_arg.
++ * If at_arg = -1 then append to end.
++ * Return the new count of arguments (argc).
++ *
++ * If free_args is true, this function frees the old args array
++ * (but not the component strings).  DO NOT set free_args on original
++ * argv but only on args allocated with malloc.
++ */
++
++int insert_arg(pargs, arg, at_arg, free_args)
++   char ***pargs;
++   ZCONST char *arg;
++   int at_arg;
++   int free_args;
++{
++   char *newarg = NULL;
++   char **args;
++   char **newargs = NULL;
++   int argnum;
++   int newargnum;
++   int argcnt;
++   int newargcnt;
++
++   if (pargs == NULL) {
++     return 0;
++   }
++   args = *pargs;
++
++   /* count args */
++   if (args == NULL) {
++     argcnt = 0;
++   } else {
++     for (argcnt = 0; args[argcnt]; argcnt++) ;
++   }
++   if (arg == NULL) {
++     /* done */
++     return argcnt;
++   }
++   if (at_arg == -1) {
++     at_arg = argcnt;
++   }
++   newargcnt = argcnt + 1;
++
++   /* get storage for new args */
++   if ((newargs = (char **) malloc((newargcnt + 1) * sizeof(char *))) == NULL)
++   {
++     oWARN("memory - ia");
++     return 0;
++   }
++
++   /* copy argument pointers from args to position at_arg, copy the new arg,
++      then copy the rest of the args */
++   argnum = 0;
++   newargnum = 0;
++   if (args) {
++     for (; args[argnum] && argnum < at_arg; argnum++) {
++       newargs[newargnum++] = args[argnum];
++     }
++   }
++   /* copy new arg */
++   if ((newarg = (char *) malloc(strlen(arg) + 1)) == NULL) {
++     oWARN("memory - ia");
++     return 0;
++   }
++   strcpy(newarg, arg);
++
++   newargs[newargnum++] = newarg;
++   if (args) {
++     for ( ; args[argnum]; argnum++) {
++       newargs[newargnum++] = args[argnum];
++     }
++   }
++   newargs[newargnum] = NULL;
++
++   /* free old args array but not component strings - this assumes that
++      args was allocated with malloc as copy_args does.  DO NOT DO THIS
++      on the original argv.
++    */
++   if (free_args)
++     free(args);
++
++   *pargs = newargs;
++
++   return newargnum;
++}
++
++/* ------------------------------------- */
++
++/* get_shortopt
++ *
++ * Get next short option from arg.  The state is stored in argnum, optchar, and
++ * option_num so no static storage is used.  Returns the option_ID.
++ *
++ * parameters:
++ *    option_group - either UZO for UnZip options or ZIO for ZipInfo options
++ *    args         - argv array of arguments
++ *    argnum       - index of current arg in args
++ *    optchar      - pointer to index of next char to process.  Can be 0 or
++ *                   const defined at top of this file like THIS_ARG_DONE
++ *    negated      - on return pointer to int set to 1 if option negated
++ *                   or 0 otherwise
++ *    value        - on return pointer to string set to value of option if any
++ *                   or NULL if none.  If value is returned then the caller
++ *                   should free() it when not needed anymore.
++ *    option_num   - pointer to index in options[] of returned option or
++ *                   o_NO_OPTION_MATCH if none.  Do not change as used by
++ *                   value lists.
++ *    depth        - recursion depth (0 at top level, 1 or more in arg files)
++ */
++static unsigned long get_shortopt(option_group, args, argnum, optchar, negated,
++                                  value, option_num, depth)
++  int option_group;
++  ZCONST char **args;
++  int argnum;
++  int *optchar;
++  int *negated;
++  char **value;
++  int *option_num;
++  int depth;
++{
++  ZCONST char *shortopt;
++  int clen;
++  ZCONST char *nextchar;
++  ZCONST char *s;
++  ZCONST char *start;
++  int op;
++  ZCONST char *arg;
++  int match = -1;
++
++
++  /* get arg */
++  arg = args[argnum];
++  /* current char in arg */
++  nextchar = arg + (*optchar);
++  clen = MB_CLEN(nextchar);
++  /* next char in arg */
++  (*optchar) +=  clen;
++  /* get first char of short option */
++  shortopt = arg + (*optchar);
++  /* no value */
++  *value = NULL;
++
++  if (*shortopt == '\0') {
++    /* no more options in arg */
++    *optchar = 0;
++    *option_num = o_NO_OPTION_MATCH;
++    return 0;
++  }
++
++  /* look for match in options */
++  clen = MB_CLEN(shortopt);
++  for (op = 0; options[op].option_ID; op++) {
++    /* Only look at options in this option group */
++    if (options[op].option_group == option_group) {
++      s = options[op].shortopt;
++      if (s && s[0] == shortopt[0]) {
++        if (s[1] == '\0' && clen == 1) {
++          /* single char match */
++          match = op;
++        } else {
++          /* 2 wide short opt.  Could support more chars but should use long opts instead */
++          if (s[1] == shortopt[1]) {
++            /* match 2 char short opt or 2 byte char */
++            match = op;
++            if (clen == 1) (*optchar)++;
++            break;
++          }
++        }
++      }
++    }
++  }
++
++  if (match > -1) {
++    /* match */
++    clen = MB_CLEN(shortopt);
++    nextchar = arg + (*optchar) + clen;
++    /* check for trailing dash negating option */
++    if (*nextchar == '-') {
++      /* negated */
++      if (options[match].negatable == o_NOT_NEGATABLE) {
++        if (options[match].value_type == o_NO_VALUE) {
++          optionerr(options, optionerrbuf, op_not_neg_err, match, 0);
++          if (depth > 0) {
++            /* unwind */
++            oWARN(optionerrbuf);
++            return o_ARG_FILE_ERR;
++          } else {
++            oWARN(optionerrbuf);
++            return o_BAD_ERR;
++          }
++        }
++      } else {
++        *negated = 1;
++        /* set up to skip negating dash */
++        (*optchar) += clen;
++        clen = 1;
++      }
++    }
++
++    /* value */
++    clen = MB_CLEN(arg + (*optchar));
++    /* optional value, one char value, and number value must follow option */
++    if (options[match].value_type == o_ONE_CHAR_VALUE) {
++      /* one char value */
++      if (arg[(*optchar) + clen]) {
++        /* has value */
++        if (MB_CLEN(arg + (*optchar) + clen) > 1) {
++          /* multibyte value not allowed for now */
++          optionerr(options, optionerrbuf, oco_no_mbc_err, match, 0);
++          if (depth > 0) {
++            /* unwind */
++            oWARN(optionerrbuf);
++            return o_ARG_FILE_ERR;
++          } else {
++            oWARN(optionerrbuf);
++            return o_BAD_ERR;
++          }
++        }
++        if ((*value = (char *) malloc(2)) == NULL) {
++          oWARN("memory - gso");
++          return o_BAD_ERR;
++        }
++        (*value)[0] = *(arg + (*optchar) + clen);
++        (*value)[1] = '\0';
++        *optchar += clen;
++        clen = 1;
++      } else {
++        /* one char values require a value */
++        optionerr(options, optionerrbuf, oco_req_val_err, match, 0);
++        if (depth > 0) {
++          oWARN(optionerrbuf);
++          return o_ARG_FILE_ERR;
++        } else {
++          oWARN(optionerrbuf);
++          return o_BAD_ERR;
++        }
++      }
++    } else if (options[match].value_type == o_NUMBER_VALUE) {
++      /* read chars until end of number */
++      start = arg + (*optchar) + clen;
++      if (*start == '+' || *start == '-') {
++        start++;
++      }
++      s = start;
++      for (; isdigit(*s); MB_NEXTCHAR(s)) ;
++      if (s == start) {
++        /* no digits */
++        optionerr(options, optionerrbuf, num_req_val_err, match, 0);
++        if (depth > 0) {
++          oWARN(optionerrbuf);
++          return o_ARG_FILE_ERR;
++        } else {
++          oWARN(optionerrbuf);
++          return o_BAD_ERR;
++        }
++      }
++      start = arg + (*optchar) + clen;
++      if ((*value = (char *) malloc((int)(s - start) + 1)) == NULL) {
++        oWARN("memory - gso");
++        return o_BAD_ERR;
++      }
++      *optchar += (int)(s - start);
++      strncpy(*value, start, (int)(s - start));
++      (*value)[(int)(s - start)] = '\0';
++      clen = MB_CLEN(s);
++    } else if (options[match].value_type == o_OPTIONAL_VALUE) {
++      /* optional value */
++      /* This seemed inconsistent so now if no value attached to argument look
++         to the next argument if that argument is not an option for option
++         value - 11/12/04 EG */
++      if (arg[(*optchar) + clen]) {
++        /* has value */
++        /* add support for optional = - 2/6/05 EG */
++        if (arg[(*optchar) + clen] == '=') {
++          /* skip = */
++          clen++;
++        }
++        if (arg[(*optchar) + clen]) {
++          if ((*value = (char *)malloc(strlen(arg + (*optchar) + clen) + 1))
++              == NULL) {
++            oWARN("memory - gso");
++            return o_BAD_ERR;
++          }
++          strcpy(*value, arg + (*optchar) + clen);
++        }
++        *optchar = THIS_ARG_DONE;
++      } else if (args[argnum + 1] && args[argnum + 1][0] != '-') {
++        /* use next arg for value */
++        if ((*value = (char *)malloc(strlen(args[argnum + 1]) + 1)) == NULL) {
++          oWARN("memory - gso");
++          return o_BAD_ERR;
++        }
++        /* using next arg as value */
++        strcpy(*value, args[argnum + 1]);
++        *optchar = SKIP_VALUE_ARG;
++      }
++    } else if (options[match].value_type == o_REQUIRED_VALUE ||
++               options[match].value_type == o_VALUE_LIST) {
++      /* see if follows option */
++      if (arg[(*optchar) + clen]) {
++        /* has value following option as -ovalue */
++        /* add support for optional = - 6/5/05 EG */
++        if (arg[(*optchar) + clen] == '=') {
++          /* skip = */
++          clen++;
++        }
++        if ((*value = (char *)malloc(strlen(arg + (*optchar) + clen) + 1))
++            == NULL) {
++          oWARN("memory - gso");
++          return o_BAD_ERR;
++        }
++        strcpy(*value, arg + (*optchar) + clen);
++        *optchar = THIS_ARG_DONE;
++      } else {
++        /* use next arg for value */
++        if (args[argnum + 1]) {
++          if ((*value = (char *)malloc(strlen(args[argnum + 1]) + 1))
++              == NULL) {
++            oWARN("memory - gso");
++            return o_BAD_ERR;
++          }
++          strcpy(*value, args[argnum + 1]);
++          if (options[match].value_type == o_VALUE_LIST) {
++            *optchar = START_VALUE_LIST;
++          } else {
++            *optchar = SKIP_VALUE_ARG;
++          }
++        } else {
++          /* no value found */
++          optionerr(options, optionerrbuf, op_req_val_err, match, 0);
++          if (depth > 0) {
++            oWARN(optionerrbuf);
++            return o_ARG_FILE_ERR;
++          } else {
++            oWARN(optionerrbuf);
++            return o_BAD_ERR;
++          }
++        }
++      }
++    }
++
++    *option_num = match;
++    return options[match].option_ID;
++  }
++  sprintf(optionerrbuf, LoadFarStringSmall(sh_op_not_sup_err), *shortopt);
++  if (depth > 0) {
++    /* unwind */
++    oWARN(optionerrbuf);
++    return o_ARG_FILE_ERR;
++  } else {
++    oWARN(optionerrbuf);
++    return o_BAD_ERR;
++  }
++  return 0;
++}
++
++
++/* get_longopt
++ *
++ * Get the long option in args array at argnum.
++ * Parameters same as for get_shortopt.
++ */
++
++static unsigned long get_longopt(option_group, args, argnum, optchar, negated,
++                                 value, option_num, depth)
++  int option_group;
++  ZCONST char **args;
++  int argnum;
++  int *optchar;
++  int *negated;
++  char **value;
++  int *option_num;
++  int depth;
++{
++  char *longopt;
++  char *lastchr;
++  char *valuestart;
++  int op;
++  char *arg;
++  int match = -1;
++  *value = NULL;
++
++  if (args == NULL) {
++    *option_num = o_NO_OPTION_MATCH;
++    return 0;
++  }
++  if (args[argnum] == NULL) {
++    *option_num = o_NO_OPTION_MATCH;
++    return 0;
++  }
++  /* copy arg so can chop end if value */
++  if ((arg = (char *)malloc(strlen(args[argnum]) + 1)) == NULL) {
++    oWARN("memory - glo");
++    return o_BAD_ERR;
++  }
++  strcpy(arg, args[argnum]);
++
++  /* get option */
++  longopt = arg + 2;
++  /* no value */
++  *value = NULL;
++
++  /* find = */
++  for (lastchr = longopt, valuestart = longopt;
++       *valuestart && *valuestart != '=';
++       lastchr = valuestart, MB_NEXTCHAR(valuestart)) ;
++  if (*valuestart) {
++    /* found =value */
++    *valuestart = '\0';
++    valuestart++;
++  } else {
++    valuestart = NULL;
++  }
++
++  if (*lastchr == '-') {
++    /* option negated */
++    *negated = 1;
++    *lastchr = '\0';
++  } else {
++    *negated = 0;
++  }
++
++  /* look for long option match */
++  for (op = 0; options[op].option_ID; op++) {
++    /* Only look at options in the option group */
++    if (options[op].option_group == option_group) {
++      if (options[op].longopt &&
++          strcmp(LoadFarStringSmall(options[op].longopt), longopt) == 0) {
++        /* exact match */
++        match = op;
++        break;
++      }
++      if (options[op].longopt &&
++          strncmp(LoadFarStringSmall(options[op].longopt),
++                  longopt, strlen(longopt)) == 0) {
++        if (match > -1) {
++          sprintf(optionerrbuf, LoadFarStringSmall(long_op_ambig_err),
++                  longopt);
++          free(arg);
++          if (depth > 0) {
++            /* unwind */
++            oWARN(optionerrbuf);
++            return o_ARG_FILE_ERR;
++          } else {
++            oWARN(optionerrbuf);
++            return o_BAD_ERR;
++          }
++        }
++        match = op;
++      }
++    }
++  }
++
++  if (match == -1) {
++    sprintf(optionerrbuf, LoadFarStringSmall(long_op_not_sup_err), longopt);
++    free(arg);
++    if (depth > 0) {
++      oWARN(optionerrbuf);
++      return o_ARG_FILE_ERR;
++    } else {
++      oWARN(optionerrbuf);
++      return o_BAD_ERR;
++    }
++  }
++
++  /* one long option an arg */
++  *optchar = THIS_ARG_DONE;
++
++  /* if negated then see if allowed */
++  if (*negated && options[match].negatable == o_NOT_NEGATABLE) {
++    optionerr(options, optionerrbuf, op_not_neg_err, match, 1);
++    free(arg);
++    if (depth > 0) {
++      /* unwind */
++      oWARN(optionerrbuf);
++      return o_ARG_FILE_ERR;
++    } else {
++      oWARN(optionerrbuf);
++      return o_BAD_ERR;
++    }
++  }
++  /* get value */
++  if (options[match].value_type == o_OPTIONAL_VALUE) {
++    /* optional value in form option=value */
++    if (valuestart) {
++      /* option=value */
++      if ((*value = (char *)malloc(strlen(valuestart) + 1)) == NULL) {
++        free(arg);
++        oWARN("memory - glo");
++        return o_BAD_ERR;
++      }
++      strcpy(*value, valuestart);
++    }
++  } else if (options[match].value_type == o_REQUIRED_VALUE ||
++             options[match].value_type == o_NUMBER_VALUE ||
++             options[match].value_type == o_ONE_CHAR_VALUE ||
++             options[match].value_type == o_VALUE_LIST) {
++    /* handle long option one char and number value as required value */
++    if (valuestart) {
++      /* option=value */
++      if ((*value = (char *)malloc(strlen(valuestart) + 1)) == NULL) {
++        free(arg);
++        oWARN("memory - glo");
++        return o_BAD_ERR;
++      }
++      strcpy(*value, valuestart);
++    } else {
++      /* use next arg */
++      if (args[argnum + 1]) {
++        if ((*value = (char *)malloc(strlen(args[argnum + 1]) + 1)) == NULL) {
++          free(arg);
++          oWARN("memory - glo");
++          return o_BAD_ERR;
++        }
++        /* using next arg as value */
++        strcpy(*value, args[argnum + 1]);
++        if (options[match].value_type == o_VALUE_LIST) {
++          *optchar = START_VALUE_LIST;
++        } else {
++          *optchar = SKIP_VALUE_ARG;
++        }
++      } else {
++        /* no value found */
++        optionerr(options, optionerrbuf, op_req_val_err, match, 1);
++        free(arg);
++        if (depth > 0) {
++          /* unwind */
++          oWARN(optionerrbuf);
++          return o_ARG_FILE_ERR;
++        } else {
++          oWARN(optionerrbuf);
++          return o_BAD_ERR;
++        }
++      }
++    }
++  } else if (options[match].value_type == o_NO_VALUE) {
++    /* this option does not accept a value */
++    if (valuestart) {
++      /* --option=value */
++      optionerr(options, optionerrbuf, op_no_allow_val_err, match, 1);
++      free(arg);
++      if (depth > 0) {
++        oWARN(optionerrbuf);
++        return o_ARG_FILE_ERR;
++      } else {
++        oWARN(optionerrbuf);
++        return o_BAD_ERR;
++      }
++    }
++  }
++  free(arg);
++
++  *option_num = match;
++  return options[match].option_ID;
++}
++
++
++
++/* get_option
++ *
++ * Main interface for user.  Use this function to get options, values and
++ * non-option arguments from a command line provided in argv form.
++ *
++ * To use get_option() first define valid options by setting
++ * the global variable options[] to an array of option_struct.  Also
++ * either change defaults below or make variables global and set elsewhere.
++ * Zip uses below defaults.
++ *
++ * Call get_option() to get an option (like -b or --temp-file) and any
++ * value for that option (like filename for -b) or a non-option argument
++ * (like archive name) each call.  If *value* is not NULL after calling
++ * get_option() it is a returned value and the caller should either store
++ * the char pointer or free() it before calling get_option() again to avoid
++ * leaking memory.  If a non-option non-value argument is returned get_option()
++ * returns o_NON_OPTION_ARG and value is set to the entire argument.
++ * When there are no more arguments get_option() returns 0.
++ *
++ * The parameters argnum (after set to 0 on initial call),
++ * optchar, first_nonopt_arg, option_num, and depth (after initial
++ * call) are set and maintained by get_option() and should not be
++ * changed.  The parameters argc, negated, and value are outputs and
++ * can be used by the calling program.  get_option() returns either the
++ * option_ID for the current option, a special value defined in
++ * zip.h, or 0 when no more arguments.
++ *
++ * The value returned by get_option() is the ID value in the options
++ * table.  This value can be duplicated in the table if different
++ * options are really the same option.  The index into the options[]
++ * table is given by option_num, though the ID should be used as
++ * option numbers change when the table is changed.  The ID must
++ * not be 0 for any option as this ends the table.  If get_option()
++ * finds an option not in the table it calls oERR to post an
++ * error and exit.  Errors also result if the option requires a
++ * value that is missing, a value is present but the option does
++ * not take one, and an option is negated but is not
++ * negatable.  Non-option arguments return o_NON_OPTION_ARG
++ * with the entire argument in value.
++ *
++ * For Zip and UnZip, permuting is on and all options and their values
++ * are returned before any non-option arguments like archive name.
++ *
++ * The arguments "-" alone and "--" alone return as non-option arguments.
++ * Note that "-" should not be used as part of a short option
++ * entry in the table but can be used in the middle of long
++ * options such as in the long option "a-long-option".  Now "--" alone
++ * stops option processing, returning any arguments following "--" as
++ * non-option arguments instead of options.
++ *
++ * Argument file support is removed from this version. It may be added later.
++ *
++ * After each call:
++ *   argc       is set to the current size of args[] but should not change
++ *                with argument file support removed,
++ *   argnum     is the index of the current arg,
++ *   value      is either the value of the returned option or non-option
++ *                argument or NULL if option with no value,
++ *   negated    is set if the option was negated by a trailing dash (-)
++ *   option_num is set to either the index in options[] for the option or
++ *                o_NO_OPTION_MATCH if no match.
++ * Negation is checked before the value is read if the option is negatable so
++ * that the - is not included in the value.  If the option is not negatable
++ * but takes a value then the - will start the value.  If permuting then
++ * argnum and first_nonopt_arg are unreliable and should not be used.
++ *
++ * Command line is read from left to right.  As get_option() finds non-option
++ * arguments (arguments not starting with - and that are not values to options)
++ * it moves later options and values in front of the non-option arguments.
++ * This permuting is turned off by setting enable_permute to 0.  Then
++ * get_option() will return options and non-option arguments in the order
++ * found.  Currently permuting is only done after an argument is completely
++ * processed so that any value can be moved with options they go with.  All
++ * state information is stored in the parameters argnum, optchar,
++ * first_nonopt_arg and option_num.  You should not change these after the
++ * first call to get_option().  If you need to back up to a previous arg then
++ * set argnum to that arg (remembering that args may have been permuted) and
++ * set optchar = 0 and first_nonopt_arg to the first non-option argument if
++ * permuting.  After all arguments are returned the next call to get_option()
++ * returns 0.  The caller can then call free_args(args) if appropriate.
++ *
++ * get_option() accepts arguments in the following forms:
++ *  short options
++ *       of 1 and 2 characters, e.g. a, b, cc, d, and ba, after a single
++ *       leading -, as in -abccdba.  In this example if 'b' is followed by 'a'
++ *       it matches short option 'ba' else it is interpreted as short option
++ *       b followed by another option.  The character - is not legal as a
++ *       short option or as part of a 2 character short option.
++ *
++ *       If a short option has a value it immediately follows the option or
++ *       if that option is the end of the arg then the next arg is used as
++ *       the value.  So if short option e has a value, it can be given as
++ *             -evalue
++ *       or
++ *             -e value
++ *       and now
++ *             -e=value
++ *       but now that = is optional a leading = is stripped for the first.
++ *       This change allows optional short option values to be defaulted as
++ *             -e=
++ *       Either optional or required values can be specified.  Optional values
++ *       now use both forms as ignoring the later got confusing.  Any
++ *       non-value short options can preceed a valued short option as in
++ *             -abevalue
++ *       Some value types (one_char and number) allow options after the value
++ *       so if oc is an option that takes a character and n takes a number
++ *       then
++ *             -abocVccn42evalue
++ *       returns value V for oc and value 42 for n.  All values are strings
++ *       so programs may have to convert the "42" to a number.  See long
++ *       options below for how value lists are handled.
++ *
++ *       Any short option can be negated by following it with -.  Any - is
++ *       handled and skipped over before any value is read unless the option
++ *       is not negatable but takes a value and then - starts the value.
++ *
++ *       If the value for an optional value is just =, then treated as no
++ *       value.
++ *
++ *  long options
++ *       of arbitrary length are assumed if an arg starts with -- but is not
++ *       exactly --.  Long options are given one per arg and can be abbreviated
++ *       if the abbreviation uniquely matches one of the long options.
++ *       Exact matches always match before partial matches.  If ambiguous an
++ *       error is generated.
++ *
++ *       Values are specified either in the form
++ *             --longoption=value
++ *       or can be the following arg if the value is required as in
++ *             --longoption value
++ *       Optional values to long options must be in the first form.
++ *
++ *       Value lists are specified by o_VALUE_LIST and consist of an option
++ *       that takes a value followed by one or more value arguments.
++ *       The two forms are
++ *             --option=value
++ *       or
++ *             -ovalue
++ *       for a single value or
++ *             --option value1 value2 value3 ... --option2
++ *       or
++ *             -o value1 value2 value3 ...
++ *       for a list of values.  The list ends at the next option, the
++ *       end of the command line, or at a single "@" argument.
++ *       Each value is treated as if it was preceeded by the option, so
++ *             --option1 val1 val2
++ *       with option1 value_type set to o_VALUE_LIST is the same as
++ *             --option1=val1 --option1=val2
++ *
++ *       Long options can be negated by following the option with - as in
++ *             --longoption-
++ *       Long options with values can also be negated if this makes sense for
++ *       the caller as:
++ *             --longoption-=value
++ *       If = is not followed by anything it is treated as no value.
++ *
++ *  @path
++ *       Argument files support removed from this version.  It may be added
++ *       back later.
++ *
++ *  non-option argument
++ *       is any argument not given above.  If enable_permute is 1 then
++ *       these are returned after all options, otherwise all options and
++ *       args are returned in order.  Returns option ID o_NON_OPTION_ARG
++ *       and sets value to the argument.
++ *
++ *
++ * Arguments to get_option:
++ *  int option_group       - either UZO for UnZip or ZIO for ZipInfo
++ *  char ***pargs          - pointer to arg array in the argv form
++ *  int *argc              - returns the current argc for args incl. args[0]
++ *  int *argnum            - the index of the current argument (caller
++ *                            should set = 0 on first call and not change
++ *                            after that)
++ *  int *optchar           - index of next short opt in arg or special
++ *  int *first_nonopt_arg  - used by get_option to permute args
++ *  int *negated           - option was negated (had trailing -)
++ *  char *value            - value of option if any (free when done with it)
++ *                            or NULL
++ *  int *option_num        - the index in options of the last option returned
++ *                            (can be o_NO_OPTION_MATCH)
++ *  int recursion_depth    - current depth of recursion
++ *                            (always set to 0 by caller)
++ *                            (always 0 with argument files support removed)
++ *
++ *  Caller should only read the returned option ID and the value, negated,
++ *  and option_num (if required) parameters after each call.
++ *
++ *  Ed Gordon
++ *  8/24/2003 (last updated 3/1/2008 EG)
++ *
++ */
++
++unsigned long get_option(option_group, pargs, argc, argnum, optchar, value,
++                         negated, first_nonopt_arg, option_num, recursion_depth)
++  int option_group;
++  char ***pargs;
++  int *argc;
++  int *argnum;
++  int *optchar;
++  char **value;
++  int *negated;
++  int *first_nonopt_arg;
++  int *option_num;
++  int recursion_depth;
++{
++  char **args;
++  unsigned long option_ID;
++
++  int argcnt;
++  int first_nonoption_arg;
++  char *arg = NULL;
++  int h;
++  int optc;
++  int argn;
++  int j;
++  int v;
++  int read_rest_args_verbatim = 0;  /* 7/25/04 - ignore options and arg files for rest args */
++
++  /* caller should free value or assign it to another
++     variable before calling get_option again. */
++  *value = NULL;
++
++  /* if args is NULL then done */
++  if (pargs == NULL) {
++    *argc = 0;
++    return 0;
++  }
++  args = *pargs;
++  if (args == NULL) {
++    *argc = 0;
++    return 0;
++  }
++
++  /* count args */
++  for (argcnt = 0; args[argcnt]; argcnt++) ;
++
++  /* if no provided args then nothing to do */
++  if (argcnt < 1 || (recursion_depth == 0 && argcnt < 2)) {
++    *argc = argcnt;
++    /* return 0 to note that no args are left */
++    return 0;
++  }
++
++  *negated = 0;
++  first_nonoption_arg = *first_nonopt_arg;
++  argn = *argnum;
++  optc = *optchar;
++
++  if (optc == READ_REST_ARGS_VERBATIM) {
++    read_rest_args_verbatim = 1;
++  }
++
++  if (argn == -1 || (recursion_depth == 0 && argn == 0)) {
++    /* first call */
++    /* if depth = 0 then args[0] is argv[0] so skip */
++    *option_num = o_NO_OPTION_MATCH;
++    optc = THIS_ARG_DONE;
++    first_nonoption_arg = -1;
++  }
++
++  /* if option_num is set then restore last option_ID in case continuing
++     value list */
++  option_ID = 0;
++  if (*option_num != o_NO_OPTION_MATCH) {
++    option_ID = options[*option_num].option_ID;
++  }
++
++  /* get next option if any */
++  for (;;)  {
++    if (read_rest_args_verbatim) {
++      /* rest of args after "--" are non-option args if doubledash_ends_options
++         set */
++      argn++;
++      if (argn > argcnt || args[argn] == NULL) {
++        /* done */
++        option_ID = 0;
++        break;
++      }
++      arg = args[argn];
++      if ((*value = (char *)malloc(strlen(arg) + 1)) == NULL) {
++        oWARN("memory - go");
++        return o_BAD_ERR;
++      }
++      strcpy(*value, arg);
++      *option_num = o_NO_OPTION_MATCH;
++      option_ID = o_NON_OPTION_ARG;
++      break;
++
++    /* permute non-option args after option args so options are returned
++       first */
++    } else if (enable_permute) {
++      if (optc == SKIP_VALUE_ARG || optc == THIS_ARG_DONE ||
++          optc == START_VALUE_LIST || optc == IN_VALUE_LIST ||
++          optc == STOP_VALUE_LIST) {
++        /* moved to new arg */
++        if (first_nonoption_arg > -1 && args[first_nonoption_arg]) {
++          /* do the permuting - move non-options after this option */
++          /* if option and value separate args or starting list skip option */
++          if (optc == SKIP_VALUE_ARG || optc == START_VALUE_LIST) {
++            v = 1;
++          } else {
++            v = 0;
++          }
++          for (h = first_nonoption_arg; h < argn; h++) {
++            arg = args[first_nonoption_arg];
++            for (j = first_nonoption_arg; j < argn + v; j++) {
++              args[j] = args[j + 1];
++            }
++            args[j] = arg;
++          }
++          first_nonoption_arg += 1 + v;
++        }
++      }
++    } else if (optc == NON_OPTION_ARG) {
++      /* if not permuting then already returned arg */
++      optc = THIS_ARG_DONE;
++    }
++
++    /* value lists */
++    if (optc == STOP_VALUE_LIST) {
++      optc = THIS_ARG_DONE;
++    }
++
++    if (optc == START_VALUE_LIST || optc == IN_VALUE_LIST) {
++      if (optc == START_VALUE_LIST) {
++        /* already returned first value */
++        argn++;
++        optc = IN_VALUE_LIST;
++      }
++      argn++;
++      arg = args[argn];
++      /* if end of args and still in list and there are non-option args then
++         terminate list */
++      if (arg == NULL && (optc == START_VALUE_LIST || optc == IN_VALUE_LIST)
++          && first_nonoption_arg > -1) {
++        /* terminate value list with @ */
++        /* this is only needed for argument files */
++        /* but is also good for show command line so command lines with lists
++           can always be read back in */
++        argcnt = insert_arg(&args, "@", first_nonoption_arg, 1);
++        argn++;
++        if (first_nonoption_arg > -1) {
++          first_nonoption_arg++;
++        }
++      }
++
++      arg = args[argn];
++      if (arg && arg[0] == '@' && arg[1] == '\0') {
++          /* inserted arguments terminator */
++          optc = STOP_VALUE_LIST;
++          continue;
++      } else if (arg && arg[0] != '-') {  /* not option */
++        /* - and -- are not allowed in value lists unless escaped */
++        /* another value in value list */
++        if ((*value = (char *)malloc(strlen(args[argn]) + 1)) == NULL) {
++          oWARN("memory - go");
++          return o_BAD_ERR;
++        }
++        strcpy(*value, args[argn]);
++        break;
++
++      } else {
++        argn--;
++        optc = THIS_ARG_DONE;
++      }
++    }
++
++    /* move to next arg */
++    if (optc == SKIP_VALUE_ARG) {
++      argn += 2;
++      optc = 0;
++    } else if (optc == THIS_ARG_DONE) {
++      argn++;
++      optc = 0;
++    }
++    if (argn > argcnt) {
++      break;
++    }
++    if (args[argn] == NULL) {
++      /* done unless permuting and non-option args */
++      if (first_nonoption_arg > -1 && args[first_nonoption_arg]) {
++        /* return non-option arguments at end */
++        if (optc == NON_OPTION_ARG) {
++          first_nonoption_arg++;
++        }
++        /* after first pass args are permuted but skipped over non-option
++           args */
++        /* swap so argn points to first non-option arg */
++        j = argn;
++        argn = first_nonoption_arg;
++        first_nonoption_arg = j;
++      }
++      if (argn > argcnt || args[argn] == NULL) {
++        /* done */
++        option_ID = 0;
++        break;
++      }
++    }
++
++    /* after swap first_nonoption_arg points to end which is NULL */
++    if (first_nonoption_arg > -1 && (args[first_nonoption_arg] == NULL)) {
++      /* only non-option args left */
++      if (optc == NON_OPTION_ARG) {
++        argn++;
++      }
++      if (argn > argcnt || args[argn] == NULL) {
++        /* done */
++        option_ID = 0;
++        break;
++      }
++      if ((*value = (char *)malloc(strlen(args[argn]) + 1)) == NULL) {
++        oWARN("memory - go");
++        return o_BAD_ERR;
++      }
++      strcpy(*value, args[argn]);
++      optc = NON_OPTION_ARG;
++      option_ID = o_NON_OPTION_ARG;
++      break;
++    }
++
++    arg = args[argn];
++
++    /* is it an option */
++    if (arg[0] == '-') {
++      /* option */
++      if (arg[1] == '\0') {
++        /* arg = - */
++        /* treat like non-option arg */
++        *option_num = o_NO_OPTION_MATCH;
++        if (enable_permute) {
++          /* permute args to move all non-option args to end */
++          if (first_nonoption_arg < 0) {
++            first_nonoption_arg = argn;
++          }
++          argn++;
++        } else {
++          /* not permute args so return non-option args when found */
++          if ((*value = (char *)malloc(strlen(arg) + 1)) == NULL) {
++            oWARN("memory - go");
++            return o_BAD_ERR;
++          }
++          strcpy(*value, arg);
++          optc = NON_OPTION_ARG;
++          option_ID = o_NON_OPTION_ARG;
++          break;
++        }
++
++      } else if (arg[1] == '-') {
++        /* long option */
++        if (arg[2] == '\0') {
++          /* arg = -- */
++          if (doubledash_ends_options) {
++            /* Now -- stops permuting and forces the rest of
++               the command line to be read verbatim - 7/25/04 EG */
++
++            /* never permute args after -- and return as non-option args */
++            if (first_nonoption_arg < 1) {
++              /* -- is first non-option argument - 8/7/04 EG */
++              argn--;
++            } else {
++              /* go back to start of non-option args - 8/7/04 EG */
++              argn = first_nonoption_arg - 1;
++            }
++
++            /* disable permuting and treat remaining arguments as not
++               options */
++            read_rest_args_verbatim = 1;
++            optc = READ_REST_ARGS_VERBATIM;
++
++          } else {
++            /* treat like non-option arg */
++            *option_num = o_NO_OPTION_MATCH;
++            if (enable_permute) {
++              /* permute args to move all non-option args to end */
++              if (first_nonoption_arg < 0) {
++                first_nonoption_arg = argn;
++              }
++              argn++;
++            } else {
++              /* not permute args so return non-option args when found */
++              if ((*value = (char *)malloc(strlen(arg) + 1)) == NULL) {
++                oWARN("memory - go");
++                return o_BAD_ERR;
++              }
++              strcpy(*value, arg);
++              optc = NON_OPTION_ARG;
++              option_ID = o_NON_OPTION_ARG;
++              break;
++            }
++          }
++
++        } else {
++          option_ID = get_longopt(option_group, (ZCONST char **)args, argn,
++                                  &optc, negated,
++                                  value, option_num, recursion_depth);
++          if (option_ID == o_BAD_ERR) {
++            return o_BAD_ERR;
++          } else if (option_ID == o_ARG_FILE_ERR) {
++            /* unwind as only get this if recursion_depth > 0 */
++            return option_ID;
++          }
++          break;
++        }
++
++      } else {
++        /* short option */
++        option_ID = get_shortopt(option_group, (ZCONST char **)args, argn,
++                                 &optc, negated,
++                                 value, option_num, recursion_depth);
++
++        if (option_ID == o_BAD_ERR) {
++          return o_BAD_ERR;
++        } else if (option_ID == o_ARG_FILE_ERR) {
++          /* unwind as only get this if recursion_depth > 0 */
++          return option_ID;
++        }
++
++        if (optc == 0) {
++          /* if optc = 0 then ran out of short opts this arg */
++          optc = THIS_ARG_DONE;
++        } else {
++          break;
++        }
++      }
++
++#if 0
++    /* argument file code left out
++       so for now let filenames start with @
++    */
++
++    } else if (allow_arg_files && arg[0] == '@') {
++      /* arg file */
++      oERR(PK_PARMS, no_arg_files_err);
++#endif
++
++    } else {
++      /* non-option */
++      if (enable_permute) {
++        /* permute args to move all non-option args to end */
++        if (first_nonoption_arg < 0) {
++          first_nonoption_arg = argn;
++        }
++        argn++;
++      } else {
++        /* no permute args so return non-option args when found */
++        if ((*value = (char *)malloc(strlen(arg) + 1)) == NULL) {
++          oWARN("memory - go");
++          return o_BAD_ERR;
++        }
++        strcpy(*value, arg);
++        *option_num = o_NO_OPTION_MATCH;
++        optc = NON_OPTION_ARG;
++        option_ID = o_NON_OPTION_ARG;
++        break;
++      }
++
++    }
++  }
++
++  *pargs = args;
++  *argc = argcnt;
++  *first_nonopt_arg = first_nonoption_arg;
++  *argnum = argn;
++  *optchar = optc;
++
++  return option_ID;
++}
+diff -ru2 unz60e03/unzpriv.h u6e3_np/unzpriv.h
+--- unz60e03/unzpriv.h	Mon Mar 24 11:53:24 2008
++++ u6e3_np/unzpriv.h	Mon Mar 24 14:13:02 2008
+@@ -1271,4 +1271,89 @@
+ #endif
+ 
++
++/*--------------------------------------------------------------------
++    Long option support
++    23 August 2003
++    Updated for UnZip 1 March 2008
++    See unzip.c
++  --------------------------------------------------------------------*/
++
++/* The below is for use in the caller-provided options table */
++
++/* option groups */
++#define UZO 1   /* UnZip option */
++#define ZIO 2   /* ZipInfo option */
++
++
++/* value_type - value is always returned as a string. */
++#define o_NO_VALUE        0   /* this option does not take a value */
++#define o_REQUIRED_VALUE  1   /* this option requires a value */
++#define o_OPTIONAL_VALUE  2   /* value is optional (see get_option() for details) */
++#define o_VALUE_LIST      3   /* this option takes a list of values */
++#define o_ONE_CHAR_VALUE  4   /* next char is value (does not end short opt string) */
++#define o_NUMBER_VALUE    5   /* value is integer (does not end short opt string) */
++
++
++/* negatable - a dash following the option (but before any value) sets negated. */
++#define o_NOT_NEGATABLE   0   /* trailing '-' to negate either starts value or generates error */
++#define o_NEGATABLE       1   /* trailing '-' sets negated to TRUE */
++
++
++/* option_num can be this when option not in options table */
++#define o_NO_OPTION_MATCH     -1
++
++/* special values returned by get_option - do not use these as option IDs */
++#define o_NON_OPTION_ARG      ((unsigned long) 0xFFFF)    /* returned for non-option
++                                                             args */
++#define o_ARG_FILE_ERR        ((unsigned long) 0xFFFE)    /* internal recursion
++                                                             return (user never sees) */
++#define o_BAD_ERR             ((unsigned long) 0xFFFD)    /* bad error */
++
++/* options array is set in unzip.c */
++struct option_struct {
++  int option_group;         /* either UZO for UnZip or ZIO for ZipInfo syntax */
++  char Far *shortopt;       /* pointer to short option string */
++  char Far *longopt;        /* pointer to long option string */
++  int  value_type;          /* from above */
++  int  negatable;           /* from above */
++  unsigned long option_ID;  /* value returned by get_option when this option
++                               is found */
++  char Far *name;           /* optional string for option returned on some
++                               errors */
++};
++
++/* structure used to create -x and include file lists */
++struct file_list {
++  char *name;
++  struct file_list *next;
++};
++
++
++/* function prototypes */
++
++/* get the next option from args */
++unsigned long get_option OF((int option_group,
++                             char ***pargs, int *argc, int *argnum,
++                             int *optchar,
++                             char **value, int *negated, int *first_nonopt_arg,
++                             int *option_num, int recursion_depth));
++
++/* copy args - copy an args array, allocating space as needed */
++char **copy_args OF((char **args, int max_args));
++
++/* arg count - count args in argv like array */
++int arg_count OF((char **args));
++
++/* free args - free args created with one of these functions */
++int free_args OF((char **args));
++
++/* insert arg - copy an arg into args */
++int insert_arg OF((char ***args, ZCONST char *arg, int insert_at,
++                   int free_args));
++
++/*--------------------------------------------------------------------
++    End of Long option support
++  --------------------------------------------------------------------*/
++
+ /***********************************/
+ /*  LARGE_FILE_SUPPORT             */
+diff -ru2 unz60e03/vms/cmdline.c u6e3_np/vms/cmdline.c
+--- unz60e03/vms/cmdline.c	Tue Feb 12 01:37:42 2008
++++ u6e3_np/vms/cmdline.c	Mon Mar 24 14:13:10 2008
+@@ -34,4 +34,6 @@
+ **  Modified by:
+ **
++**      02-014          E. Gordon               10-Mar-2008 03:12
++**              Modified to work with get_options().
+ **      02-013          S. Schweda, C. Spieler  29-Dec-2007 03:34
+ **              Extended /RESTORE qualifier to support timestamp restoration
+@@ -172,10 +174,10 @@
+ $DESCRIPTOR(cli_text_auto,      "TEXT.AUTO");           /* -a */
+ $DESCRIPTOR(cli_text_all,       "TEXT.ALL");            /* -aa */
+-$DESCRIPTOR(cli_text_none,      "TEXT.NONE");           /* ---a */
++$DESCRIPTOR(cli_text_none,      "TEXT.NONE");           /* -a- */
+ $DESCRIPTOR(cli_text_stmlf,     "TEXT.STMLF");          /* -S */
+ $DESCRIPTOR(cli_binary,         "BINARY");              /* -b[b] */
+ $DESCRIPTOR(cli_binary_auto,    "BINARY.AUTO");         /* -b */
+ $DESCRIPTOR(cli_binary_all,     "BINARY.ALL");          /* -bb */
+-$DESCRIPTOR(cli_binary_none,    "BINARY.NONE");         /* ---b */
++$DESCRIPTOR(cli_binary_none,    "BINARY.NONE");         /* -b- */
+ $DESCRIPTOR(cli_case_insensitive,"CASE_INSENSITIVE");   /* -C */
+ $DESCRIPTOR(cli_screen,         "SCREEN");              /* -c */
+@@ -202,5 +204,5 @@
+ $DESCRIPTOR(cli_restore_own,    "RESTORE.OWNER_PROT");  /* -X */
+ $DESCRIPTOR(cli_restore_date,   "RESTORE.DATE");        /* -DD */
+-$DESCRIPTOR(cli_restore_date_all, "RESTORE.DATE.ALL");  /* --D */
++$DESCRIPTOR(cli_restore_date_all, "RESTORE.DATE.ALL");  /* -D- */
+ $DESCRIPTOR(cli_restore_date_files, "RESTORE.DATE.FILES"); /* -D */
+ $DESCRIPTOR(cli_dot_version,    "DOT_VERSION");         /* -Y */
+@@ -299,4 +301,6 @@
+ **      SS$_ABORT       - Bad time value
+ **
++**  Modified to work with the get_option() command line parser.  10 March 2008
++**
+ */
+     register unsigned long status;
+@@ -419,5 +423,4 @@
+         if (status != CLI$_ABSENT) {
+             *ptr++ = '-';
+-            *ptr++ = '-';
+             *ptr++ = 'b';
+             if ((status & 1) &&
+@@ -427,4 +430,5 @@
+                     *ptr++ = 'b';
+             }
++            *ptr++ = '-';
+         }
+ 
+@@ -436,5 +440,4 @@
+         if (status != CLI$_ABSENT) {
+             *ptr++ = '-';
+-            *ptr++ = '-';
+             *ptr++ = 'a';
+             if ((status & 1) &&
+@@ -446,4 +449,5 @@
+                     *ptr++ = 'S';
+             }
++            *ptr++ = '-';
+         }
+ 
+diff -ru2 unz60e03/zipinfo.c u6e3_np/zipinfo.c
+--- unz60e03/zipinfo.c	Mon Mar 24 14:23:54 2008
++++ u6e3_np/zipinfo.c	Mon Mar 24 14:25:24 2008
+@@ -171,4 +171,6 @@
+ static ZCONST char Far ZipfileCommTruncMsg[] =
+   "\ncaution:  zipfile comment truncated\n";
++static ZCONST char Far NoMemArguments[] =
++  "envargs:  cannot get memory for arguments";
+ 
+ static ZCONST char Far CentralDirEntry[] =
+@@ -459,10 +461,48 @@
+     __GDEF
+ {
+-    char   **argv, *s;
+-    int    argc, c, error=FALSE, negative=0;
++    int    argc, error=FALSE;
+     int    hflag_slmv=TRUE, hflag_2=FALSE;  /* diff options => diff defaults */
+     int    tflag_slm=TRUE, tflag_2v=FALSE;
+     int    explicit_h=FALSE, explicit_t=FALSE;
+ 
++    char **args;
++
++
++    /* used by get_option */
++    unsigned long option; /* option ID returned by get_option */
++    int argcnt = 0;       /* current argcnt in args */
++    int argnum = 0;       /* arg number */
++    int optchar = 0;      /* option state */
++    char *value = NULL;   /* non-option arg, option value or NULL */
++    int negative = 0;     /* 1 = option negated */
++    int fna = 0;          /* current first non-opt arg */
++    int optnum = 0;       /* index in table */
++
++
++    /* since get_option() returns xfiles and files one at a time, store them in
++       linked lists until have them all */
++
++    int file_count;
++    struct file_list *next_file;
++
++    /* files to extract */
++    int in_files_count = 0;
++    struct file_list *in_files = NULL;
++    struct file_list *next_in_files = NULL;
++
++    /* files to exclude in -x list */
++    int in_xfiles_count = 0;
++    struct file_list *in_xfiles = NULL;
++    struct file_list *next_in_xfiles = NULL;
++
++    G.wildzipfn = NULL;
++
++    /* make copy of args that can use with insert_arg() used by get_option() */
++    args = copy_args(*pargv, 0);
++
++
++    /* Initialize lists */
++    G.filespecs = 0;
++    G.xfilespecs = 0;
+ 
+ #ifdef MACOS
+@@ -470,17 +510,41 @@
+ #endif
+     G.extract_flag = FALSE;   /* zipinfo does not extract to disk */
+-    argc = *pargc;
+-    argv = *pargv;
+ 
+-    while (--argc > 0 && (*++argv)[0] == '-') {
+-        s = argv[0] + 1;
+-        while ((c = *s++) != 0) {    /* "!= 0":  prevent Turbo C warning */
+-            switch (c) {
+-                case '-':
+-                    ++negative;
+-                    break;
++
++    /*
++    -------------------------------------------
++    Process command line using get_option
++    -------------------------------------------
++
++    Each call to get_option() returns either a command
++    line option and possible value or a non-option argument.
++    Arguments are permuted so that all options (-r, -b temp)
++    are returned before non-option arguments (zipfile).
++    Returns 0 when nothing left to read.
++    */
++
++    /* set argnum = 0 on first call to init get_option */
++    argnum = 0;
++
++    /* get_option returns the option ID and updates parameters:
++           args    - usually same as argv if no argument file support
++           argcnt  - current argc for args
++           value   - char* to value (free() when done with it) or NULL if no value
++           negated - option was negated with trailing -
++    */
++
++    while ((option = get_option(ZIO, &args, &argcnt, &argnum,
++                                &optchar, &value, &negative,
++                                &fna, &optnum, 0)))
++    {
++        if(option == o_BAD_ERR) {
++          return(PK_PARAM);
++        }
++
++        switch (option)
++        {
+                 case '1':      /* shortest listing:  JUST filenames */
+                     if (negative)
+-                        uO.lflag = -2, negative = 0;
++                        uO.lflag = -2;
+                     else
+                         uO.lflag = 1;
+@@ -488,5 +552,5 @@
+                 case '2':      /* just filenames, plus headers if specified */
+                     if (negative)
+-                        uO.lflag = -2, negative = 0;
++                        uO.lflag = -2;
+                     else
+                         uO.lflag = 2;
+@@ -495,5 +559,5 @@
+                 case ('C'):    /* -C:  match filenames case-insensitively */
+                     if (negative)
+-                        uO.C_flag = FALSE, negative = 0;
++                        uO.C_flag = FALSE;
+                     else
+                         uO.C_flag = TRUE;
+@@ -502,5 +566,5 @@
+                 case 'h':      /* header line */
+                     if (negative)
+-                        hflag_2 = hflag_slmv = FALSE, negative = 0;
++                        hflag_2 = hflag_slmv = FALSE;
+                     else {
+                         hflag_2 = hflag_slmv = explicit_h = TRUE;
+@@ -511,5 +575,5 @@
+                 case 'l':      /* longer form of "ls -l" type listing */
+                     if (negative)
+-                        uO.lflag = -2, negative = 0;
++                        uO.lflag = -2;
+                     else
+                         uO.lflag = 5;
+@@ -517,5 +581,5 @@
+                 case 'm':      /* medium form of "ls -l" type listing */
+                     if (negative)
+-                        uO.lflag = -2, negative = 0;
++                        uO.lflag = -2;
+                     else
+                         uO.lflag = 4;
+@@ -524,5 +588,5 @@
+                 case 'M':      /* send output through built-in "more" */
+                     if (negative)
+-                        G.M_flag = FALSE, negative = 0;
++                        G.M_flag = FALSE;
+                     else
+                         G.M_flag = TRUE;
+@@ -531,5 +595,5 @@
+                 case 's':      /* default:  shorter "ls -l" type listing */
+                     if (negative)
+-                        uO.lflag = -2, negative = 0;
++                        uO.lflag = -2;
+                     else
+                         uO.lflag = 3;
+@@ -537,5 +601,5 @@
+                 case 't':      /* totals line */
+                     if (negative)
+-                        tflag_2v = tflag_slm = FALSE, negative = 0;
++                        tflag_2v = tflag_slm = FALSE;
+                     else {
+                         tflag_2v = tflag_slm = explicit_t = TRUE;
+@@ -546,5 +610,5 @@
+                 case ('T'):    /* use (sortable) decimal time format */
+                     if (negative)
+-                        uO.T_flag = FALSE, negative = 0;
++                        uO.T_flag = FALSE;
+                     else
+                         uO.T_flag = TRUE;
+@@ -552,8 +616,7 @@
+ #ifdef UNICODE_SUPPORT
+                 case ('U'):    /* escape UTF-8, or disable UTF-8 support */
+-                    if (negative) {
+-                        uO.U_flag = MAX(uO.U_flag-negative,0);
+-                        negative = 0;
+-                    } else
++                    if (negative)
++                        uO.U_flag = MAX(uO.U_flag - 1, 0);
++                    else
+                         uO.U_flag++;
+                     break;
+@@ -561,5 +624,5 @@
+                 case 'v':      /* turbo-verbose listing */
+                     if (negative)
+-                        uO.lflag = -2, negative = 0;
++                        uO.lflag = -2;
+                     else
+                         uO.lflag = 10;
+@@ -568,12 +631,36 @@
+                 case ('W'):    /* Wildcard interpretation (stop at '/'?) */
+                     if (negative)
+-                        uO.W_flag = FALSE, negative = 0;
++                        uO.W_flag = FALSE;
+                     else
+                         uO.W_flag = TRUE;
+                     break;
+ #endif /* WILD_STOP_AT_DIR */
++                case ('x'):    /* extract:  default */
++                    /* add -x file to linked list */
++
++                    if (in_xfiles_count == 0) {
++                        /* first entry */
++                        if ((in_xfiles = (struct file_list *) malloc(sizeof(struct file_list))) == NULL) {
++                            Info(slide, 0x401, ((char *)slide, LoadFarString(NoMemArguments)));
++                            return PK_MEM;
++                        }
++                        in_xfiles->name = value;
++                        in_xfiles->next = NULL;
++                        next_in_xfiles = in_xfiles;
++                    } else {
++                        /* add next entry */
++                        if ((next_file = (struct file_list *) malloc(sizeof(struct file_list))) == NULL) {
++                            Info(slide, 0x401, ((char *)slide, LoadFarString(NoMemArguments)));
++                            return PK_MEM;
++                        }
++                        next_in_xfiles->next = next_file;
++                        next_file->name = value;
++                        next_file->next = NULL;
++                        next_in_xfiles = next_file;
++                    }
++                    in_xfiles_count++;
+                 case 'z':      /* print zipfile comment */
+                     if (negative)
+-                        uO.zflag = negative = 0;
++                        uO.zflag = 0;
+                     else
+                         uO.zflag = 1;
+@@ -581,13 +668,96 @@
+                 case 'Z':      /* ZipInfo mode:  ignore */
+                     break;
++                case o_NON_OPTION_ARG:
++                    /* not an option */
++                    /* no more options as permuting */
++
++
++                    if (G.wildzipfn == NULL) {
++                        /* first non-option argument is zip file */
++                        G.wildzipfn = value;
++
++                    } else {
++                        /* add include file to list */
++                        if (in_files_count == 0) {
++                            /* first entry */
++                            if ((next_file = (struct file_list *) malloc(sizeof(struct file_list))) == NULL) {
++                                Info(slide, 0x401, ((char *)slide, LoadFarString(NoMemArguments)));
++                                return PK_MEM;
++                            }
++                            next_file->name = value;
++                            next_file->next = NULL;
++                            in_files = next_file;
++                            next_in_files = next_file;
++                        } else {
++                            /* add next entry */
++                            if ((next_file = (struct file_list *) malloc(sizeof(struct file_list))) == NULL) {
++                                Info(slide, 0x401, ((char *)slide, LoadFarString(NoMemArguments)));
++                                return PK_MEM;
++                            }
++                            next_in_files->next = next_file;
++                            next_file->name = value;
++                            next_file->next = NULL;
++                            next_in_files = next_file;
++                        }
++                        in_files_count++;
++                    }
++                    break;
+                 default:
+                     error = TRUE;
+                     break;
+-            }
+-        }
++        } /* switch */
++    } /* get_option() */
++
++    /* convert files and xfiles lists to arrays */
++
++    /* convert files list to array */
++    if (in_files_count) {
++      if ((G.pfnames = (char **) malloc((in_files_count + 1) * sizeof(char *))) == NULL) {
++          Info(slide, 0x401, ((char *)slide, LoadFarString(NoMemArguments)));
++          return PK_MEM;
++      }
++      file_count = 0;
++      for (next_file = in_files; next_file;) {
++          G.pfnames[file_count] = next_file->name;
++          in_files = next_file;
++          next_file = next_file->next;
++          free(in_files);
++          file_count++;
++      }
++      G.pfnames[file_count] = NULL;
++      G.filespecs = in_files_count;
++    }
++
++    /* convert xfiles list to array */
++    if (in_xfiles_count) {
++      if ((G.pxnames = (char **) malloc((in_xfiles_count + 1) * sizeof(char *))) == NULL) {
++          Info(slide, 0x401, ((char *)slide, LoadFarString(NoMemArguments)));
++          return PK_MEM;
++      }
++      file_count = 0;
++      for (next_file = in_xfiles; next_file;) {
++          G.pxnames[file_count] = next_file->name;
++          in_xfiles = next_file;
++          next_file = next_file->next;
++          free(in_xfiles);
++          file_count++;
++      }
++      G.pxnames[file_count] = NULL;
++      G.xfilespecs = in_xfiles_count;
+     }
+-    if ((argc-- == 0) || error) {
++
++    if (in_files_count || in_xfiles_count) {
++        G.process_all_files = FALSE;
++    } else {
++        G.process_all_files = TRUE;      /* for speed */
++    }
++
++    /* it's possible the arg count could have been changed by get_option() */
++    argc = arg_count(args);
++
++    if ((G.wildzipfn == NULL) || error) {
++        argc = -1;      /* tell the caller to stop processing */
+         *pargc = argc;
+-        *pargv = argv;
++        *pargv = args;
+         return USAGE(error);
+     }
+@@ -628,5 +798,5 @@
+ 
+     *pargc = argc;
+-    *pargv = argv;
++    *pargv = args;
+     return 0;
+ 

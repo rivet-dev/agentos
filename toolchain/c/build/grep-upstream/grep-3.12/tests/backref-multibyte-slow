@@ -1,0 +1,33 @@
+#!/bin/sh
+# This was approximately quadratic up to grep-2.6.3
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+require_timeout_
+
+fail=0
+
+# Create a 13000-line input
+$AWK 'BEGIN {for (i=0; i<13000; i++) print "aba"}' /dev/null > in || fail=1
+
+# Use 10 times the duration of running grep in the C locale as the timeout
+# when running in en_US.UTF-8.  Round up to whole seconds, since timeout
+# can't deal with fractional seconds.
+max_seconds=$(LC_ALL=C perl -le 'use Time::HiRes qw(time); my $s = time();
+              system q,grep -E '\''^([a-z]).\1$'\'' in > junk,;
+              my $elapsed = time() - $s; print int (1 + 10 * $elapsed)') \
+  || { max_seconds=5;
+       warn_ "$ME_: warning: no perl? using default of 5s timeout"; }
+
+# If the above finished so quickly that we'd have a 1-second timeout,
+# increase it to a duration less likely to arise in a parallel test run.
+test $max_seconds = 1 && max_seconds=5
+
+for LOC in en_US.UTF-8; do
+  out=out-$LOC
+  LC_ALL=$LOC timeout ${max_seconds}s grep -aE '^([a-z]).\1$' in > $out 2>&1 \
+    || fail=1
+  compare $out in || fail=1
+done
+
+Exit $fail

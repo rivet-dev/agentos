@@ -1,0 +1,18 @@
+#! /bin/sh
+# Test the /proc file system if available.
+
+# Copyright 2016-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+test -r /proc/self/status || skip_ 'No /proc/self/status on this platform.'
+
+grep '^' </proc/self/status >/dev/null || fail=1
+
+Exit $fail

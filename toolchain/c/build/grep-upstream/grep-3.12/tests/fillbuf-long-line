@@ -1,0 +1,11 @@
+#!/bin/sh
+# This would fail for v3.7-15-ge3694e9 .. grep-v3.7-48-g5c3c427
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+printf %0104681d 0 > in || framework_failure_
+
+fail=0
+
+returns_ 1 grep xx in || fail=1
+
+Exit $fail

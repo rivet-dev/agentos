@@ -1,0 +1,912 @@
+# translation of grep-2.5.4-pre3 to Lithuanian
+# Copyright (C) 2008 Free Software Foundation, Inc.
+# This file is distributed under the same license as the grep package.
+#
+# Gintautas Miliauskas <gintas@akl.lt>, 2008.
+msgid ""
+msgstr ""
+"Project-Id-Version: grep-2.5.4-pre3\n"
+"Report-Msgid-Bugs-To: bug-grep@gnu.org\n"
+"POT-Creation-Date: 2025-04-10 09:02-0700\n"
+"PO-Revision-Date: 2008-07-09 13:28+0300\n"
+"Last-Translator: Gintautas Miliauskas <gintas@akl.lt>\n"
+"Language-Team: Lithuanian <komp_lt@konferencijos.lt>\n"
+"Language: lt\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Bugs: Report translation errors to the Language-Team address.\n"
+"X-Generator: KBabel 1.11.4\n"
+"Plural-Forms:  nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
+"(n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+#: lib/argmatch.c:145
+#, c-format
+msgid "invalid argument %s for %s"
+msgstr ""
+
+#: lib/argmatch.c:146
+#, c-format
+msgid "ambiguous argument %s for %s"
+msgstr ""
+
+#: lib/argmatch.c:165 lib/argmatch.h:242
+msgid "Valid arguments are:"
+msgstr ""
+
+#: lib/c-stack.c:190
+msgid "program error"
+msgstr ""
+
+#: lib/c-stack.c:191
+msgid "stack overflow"
+msgstr ""
+
+#: lib/closeout.c:121 src/grep.c:1352
+msgid "write error"
+msgstr ""
+
+#: lib/dfa.c:910
+#, fuzzy
+msgid "unbalanced ["
+msgstr "Nesubalansuotas ["
+
+#: lib/dfa.c:1031
+msgid "invalid character class"
+msgstr ""
+
+#: lib/dfa.c:1159
+msgid "character class syntax is [[:space:]], not [:space:]"
+msgstr ""
+
+#: lib/dfa.c:1234
+#, fuzzy
+msgid "unfinished \\ escape"
+msgstr "Nebaigta \\ kaitos seka"
+
+#: lib/dfa.c:1344
+msgid "? at start of expression"
+msgstr ""
+
+#: lib/dfa.c:1356
+msgid "* at start of expression"
+msgstr ""
+
+#: lib/dfa.c:1370
+msgid "+ at start of expression"
+msgstr ""
+
+#: lib/dfa.c:1425
+msgid "{...} at start of expression"
+msgstr ""
+
+#: lib/dfa.c:1428
+#, fuzzy
+msgid "invalid content of \\{\\}"
+msgstr "netaisyklingas maksimalus skaičius"
+
+#: lib/dfa.c:1430
+msgid "regular expression too big"
+msgstr ""
+
+#: lib/dfa.c:1580
+msgid "stray \\ before unprintable character"
+msgstr ""
+
+#: lib/dfa.c:1582
+msgid "stray \\ before white space"
+msgstr ""
+
+#: lib/dfa.c:1593
+#, c-format
+msgid "stray \\ before %s"
+msgstr ""
+
+#: lib/dfa.c:1594 lib/dfa.c:1597
+msgid "stray \\"
+msgstr ""
+
+#: lib/dfa.c:1948
+#, fuzzy
+msgid "unbalanced ("
+msgstr "Nesubalansuotas ("
+
+#: lib/dfa.c:2065
+#, fuzzy
+msgid "no syntax specified"
+msgstr "Nenurodyta sintaksė"
+
+#: lib/dfa.c:2076
+#, fuzzy
+msgid "unbalanced )"
+msgstr "Nesubalansuotas )"
+
+#: lib/error.c:208
+msgid "Unknown system error"
+msgstr "Nežinoma sistemos klaida"
+
+#: lib/getopt.c:282
+#, fuzzy, c-format
+msgid "%s: option '%s%s' is ambiguous\n"
+msgstr "%s: parametras `%s' dviprasmis\n"
+
+#: lib/getopt.c:288
+#, fuzzy, c-format
+msgid "%s: option '%s%s' is ambiguous; possibilities:"
+msgstr "%s: parametras `%s' dviprasmis\n"
+
+#: lib/getopt.c:322
+#, fuzzy, c-format
+msgid "%s: unrecognized option '%s%s'\n"
+msgstr "%s: neatpažintas argumentas „%c%s“\n"
+
+#: lib/getopt.c:348
+#, fuzzy, c-format
+msgid "%s: option '%s%s' doesn't allow an argument\n"
+msgstr "%s: argumentas „%c%s“ neleidžia parametro\n"
+
+#: lib/getopt.c:363
+#, fuzzy, c-format
+msgid "%s: option '%s%s' requires an argument\n"
+msgstr "%s: parametrui „%s“ reikia argumento\n"
+
+#: lib/getopt.c:624
+#, fuzzy, c-format
+msgid "%s: invalid option -- '%c'\n"
+msgstr "%s: netaisyklingas argumentas -- %c\n"
+
+#: lib/getopt.c:639 lib/getopt.c:685
+#, fuzzy, c-format
+msgid "%s: option requires an argument -- '%c'\n"
+msgstr "%s: parametrui reikia argumento -- %c\n"
+
+#: lib/obstack.c:320 lib/obstack.c:322 lib/xalloc-die.c:34
+msgid "memory exhausted"
+msgstr "baigėsi atmintis"
+
+#: lib/openat-die.c:38
+msgid "unable to record current working directory"
+msgstr ""
+
+#: lib/openat-die.c:57
+msgid "failed to return to initial working directory"
+msgstr ""
+
+#: lib/xbinary-io.c:36
+#, c-format
+msgid "failed to set file descriptor text/binary mode"
+msgstr ""
+
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  For example, a French Unicode local should translate
+#. these to U+00AB (LEFT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), and U+00BB (RIGHT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), respectively.
+#.
+#. If the catalog has no translation, we will try to
+#. use Unicode U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. Unicode U+2019 (RIGHT SINGLE QUOTATION MARK).  If the
+#. current locale is not Unicode, locale_quoting_style
+#. will quote 'like this', and clocale_quoting_style will
+#. quote "like this".  You should always include translations
+#. for "`" and "'" even if U+2018 and U+2019 are appropriate
+#. for your locale.
+#.
+#. If you don't know what to put here, please see
+#. <https://en.wikipedia.org/wiki/Quotation_marks_in_other_languages>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:354
+msgid "`"
+msgstr "„"
+
+#: lib/quotearg.c:355
+msgid "'"
+msgstr "“"
+
+#: lib/regcomp.c:122
+msgid "Success"
+msgstr ""
+
+#: lib/regcomp.c:125
+msgid "No match"
+msgstr ""
+
+#: lib/regcomp.c:128
+msgid "Invalid regular expression"
+msgstr ""
+
+#: lib/regcomp.c:131
+msgid "Invalid collation character"
+msgstr ""
+
+#: lib/regcomp.c:134
+msgid "Invalid character class name"
+msgstr ""
+
+#: lib/regcomp.c:137
+msgid "Trailing backslash"
+msgstr ""
+
+#: lib/regcomp.c:140
+msgid "Invalid back reference"
+msgstr ""
+
+#: lib/regcomp.c:143
+msgid "Unmatched [, [^, [:, [., or [="
+msgstr ""
+
+#: lib/regcomp.c:146
+msgid "Unmatched ( or \\("
+msgstr ""
+
+#: lib/regcomp.c:149
+msgid "Unmatched \\{"
+msgstr ""
+
+#: lib/regcomp.c:152
+msgid "Invalid content of \\{\\}"
+msgstr ""
+
+#: lib/regcomp.c:155
+msgid "Invalid range end"
+msgstr ""
+
+#: lib/regcomp.c:158
+msgid "Memory exhausted"
+msgstr "Baigėsi atmintis"
+
+#: lib/regcomp.c:161
+msgid "Invalid preceding regular expression"
+msgstr ""
+
+#: lib/regcomp.c:164
+msgid "Premature end of regular expression"
+msgstr ""
+
+#: lib/regcomp.c:167
+msgid "Regular expression too big"
+msgstr ""
+
+#: lib/regcomp.c:170
+msgid "Unmatched ) or \\)"
+msgstr ""
+
+#: lib/regcomp.c:650
+msgid "No previous regular expression"
+msgstr ""
+
+#: lib/version-etc.c:73
+#, c-format
+msgid "Packaged by %s (%s)\n"
+msgstr ""
+
+#: lib/version-etc.c:76
+#, c-format
+msgid "Packaged by %s\n"
+msgstr ""
+
+#. TRANSLATORS: Translate "(C)" to the copyright symbol
+#. (C-in-a-circle), if this symbol is available in the user's
+#. locale.  Otherwise, do not translate "(C)"; leave it as-is.
+#: lib/version-etc.c:83
+msgid "(C)"
+msgstr ""
+
+#. TRANSLATORS: The %s placeholder is the web address of the GPL license.
+#: lib/version-etc.c:88
+#, fuzzy, c-format
+msgid ""
+"License GPLv3+: GNU GPL version 3 or later <%s>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+msgstr ""
+"Licencija GPLv3+: GNU GPL versija 3 arba vėlesnė <http://gnu.org/licenses/"
+"gpl.html>\n"
+"Ši programa laisva: galite ją keisti ir platinti.\n"
+"Nėra JOKIOS GARANTIJOS, kiek leidžia įstatymai.\n"
+
+#. TRANSLATORS: %s denotes an author name.
+#: lib/version-etc.c:105
+#, c-format
+msgid "Written by %s.\n"
+msgstr ""
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:109
+#, c-format
+msgid "Written by %s and %s.\n"
+msgstr ""
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:113
+#, c-format
+msgid "Written by %s, %s, and %s.\n"
+msgstr ""
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:120
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:127
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:134
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, and %s.\n"
+msgstr ""
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:142
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, and %s.\n"
+msgstr ""
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:150
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:159
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:170
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, and others.\n"
+msgstr ""
+
+#. TRANSLATORS: The placeholder indicates the bug-reporting address
+#. for this package.  Please add _another line_ saying
+#. "Report translation bugs to <...>\n" with the address for translation
+#. bugs (typically your translation team's web or email address).
+#: lib/version-etc.c:249
+#, fuzzy, c-format
+msgid "Report bugs to: %s\n"
+msgstr ""
+"\n"
+"Apie klaidas praneškite adresu <%s>.\n"
+
+#: lib/version-etc.c:251
+#, fuzzy, c-format
+msgid "Report %s bugs to: %s\n"
+msgstr ""
+"\n"
+"Apie klaidas praneškite adresu <%s>.\n"
+
+#: lib/version-etc.c:255 lib/version-etc.c:257
+#, c-format
+msgid "%s home page: <%s>\n"
+msgstr ""
+
+#: lib/version-etc.c:260
+#, c-format
+msgid "General help using GNU software: <%s>\n"
+msgstr ""
+
+#: src/dfasearch.c:57
+#, fuzzy, c-format
+msgid "warning: %s"
+msgstr "įspėjimas: %s: %s\n"
+
+#: src/grep.c:657
+msgid "(standard input)"
+msgstr "(standartinis įvedimas)"
+
+#: src/grep.c:838
+msgid "invalid context length argument"
+msgstr "netaisyklingas konteksto ilgio argumentas"
+
+#: src/grep.c:911
+msgid "input is too large to count"
+msgstr "įvedimas per didelis skaičiavimui"
+
+#: src/grep.c:1656
+#, fuzzy, c-format
+msgid "%s: binary file matches"
+msgstr "Dvejetainis failas %s atitinka\n"
+
+#: src/grep.c:1694
+#, fuzzy, c-format
+msgid "%s: warning: recursive directory loop"
+msgstr "rekursyvus aplankų ciklas"
+
+#: src/grep.c:1914
+#, c-format
+msgid "%s: input file is also the output"
+msgstr ""
+
+#: src/grep.c:1976 src/grep.c:1983
+#, fuzzy, c-format
+msgid "Usage: %s [OPTION]... PATTERNS [FILE]...\n"
+msgstr "Naudojimas: %s [ARGUMENTAS]... ŠABLONAS [FAILAS]...\n"
+
+#: src/grep.c:1978
+#, fuzzy, c-format
+msgid "Try '%s --help' for more information.\n"
+msgstr "Pabandykite „%s --help“, jei norite gauti daugiau informacijos.\n"
+
+#: src/grep.c:1984
+#, fuzzy, c-format
+msgid "Search for PATTERNS in each FILE.\n"
+msgstr "Ieškoti ŠABLONO kiekviename faile arba standartiniame įėjime.\n"
+
+#: src/grep.c:1985
+#, fuzzy, c-format
+msgid ""
+"Example: %s -i 'hello world' menu.h main.c\n"
+"PATTERNS can contain multiple patterns separated by newlines.\n"
+"\n"
+"Pattern selection and interpretation:\n"
+msgstr ""
+"Pavyzdys: %s -i 'labas pasauli' menu.h main.c\n"
+"\n"
+"Reguliariųjų išraiškų parinkimas ir interpretacija:\n"
+
+#: src/grep.c:1990
+#, fuzzy, c-format
+msgid ""
+"  -E, --extended-regexp     PATTERNS are extended regular expressions\n"
+"  -F, --fixed-strings       PATTERNS are strings\n"
+"  -G, --basic-regexp        PATTERNS are basic regular expressions\n"
+"  -P, --perl-regexp         PATTERNS are Perl regular expressions\n"
+msgstr ""
+"  -E, --extended-regexp     ŠABLONAS yra išplėstinė reguliarioji išr. (ERE)\n"
+"  -F, --fixed-strings       ŠABLONAS yra aibė fiksuotų sekų atskirose "
+"eilutėse\n"
+"  -G, --basic-regexp        ŠABLONAS yra įprasta reguliarioji išraiška "
+"(BRE)\n"
+"  -P, --perl-regexp         ŠABLONAS yra Perl reguliarioji išraiška\n"
+
+#: src/grep.c:1996
+#, fuzzy, c-format
+msgid ""
+"  -e, --regexp=PATTERNS     use PATTERNS for matching\n"
+"  -f, --file=FILE           take PATTERNS from FILE\n"
+"  -i, --ignore-case         ignore case distinctions in patterns and data\n"
+"      --no-ignore-case      do not ignore case distinctions (default)\n"
+"  -w, --word-regexp         match only whole words\n"
+"  -x, --line-regexp         match only whole lines\n"
+"  -z, --null-data           a data line ends in 0 byte, not newline\n"
+msgstr ""
+"  -e, --regexp=ŠABLONAS     naudoti ŠABLONĄ paieškai\n"
+"  -f, --file=FAILAS         gauti ŠABLONĄ iš FAILO\n"
+"  -i, --ignore-case         ignoruoti raidžių registrą\n"
+"  -w, --word-regexp         ŠABLONAS turi atitikti tik pilnus žodžius\n"
+"  -x, --line-regexp         ŠABLONAS turi atitikti tik pilnas eilutes\n"
+"  -z, --null-data           duomenų eilutė baigiasi 0 baitu, o ne nauja "
+"eil.\n"
+
+#: src/grep.c:2004
+#, fuzzy, c-format
+msgid ""
+"\n"
+"Miscellaneous:\n"
+"  -s, --no-messages         suppress error messages\n"
+"  -v, --invert-match        select non-matching lines\n"
+"  -V, --version             display version information and exit\n"
+"      --help                display this help text and exit\n"
+msgstr ""
+"\n"
+"Kita:\n"
+"  -s, --no-messages         nerodyti klaidų\n"
+"  -v, --invert-match        išrinkti neatitinkančias eilutes\n"
+"  -V, --version             spausdinti versijos informaciją ir išeiti\n"
+"      --help                parodyti šią informaciją ir išeiti\n"
+"      --mmap                naudoti mmap įvedimą, jei tai įmanoma\n"
+
+#: src/grep.c:2011
+#, c-format
+msgid ""
+"\n"
+"Output control:\n"
+"  -m, --max-count=NUM       stop after NUM selected lines\n"
+"  -b, --byte-offset         print the byte offset with output lines\n"
+"  -n, --line-number         print line number with output lines\n"
+"      --line-buffered       flush output on every line\n"
+"  -H, --with-filename       print file name with output lines\n"
+"  -h, --no-filename         suppress the file name prefix on output\n"
+"      --label=LABEL         use LABEL as the standard input file name "
+"prefix\n"
+msgstr ""
+
+#: src/grep.c:2022
+#, c-format
+msgid ""
+"  -o, --only-matching       show only nonempty parts of lines that match\n"
+"  -q, --quiet, --silent     suppress all normal output\n"
+"      --binary-files=TYPE   assume that binary files are TYPE;\n"
+"                            TYPE is 'binary', 'text', or 'without-match'\n"
+"  -a, --text                equivalent to --binary-files=text\n"
+msgstr ""
+
+#: src/grep.c:2029
+#, c-format
+msgid ""
+"  -I                        equivalent to --binary-files=without-match\n"
+"  -d, --directories=ACTION  how to handle directories;\n"
+"                            ACTION is 'read', 'recurse', or 'skip'\n"
+"  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n"
+"                            ACTION is 'read' or 'skip'\n"
+"  -r, --recursive           like --directories=recurse\n"
+"  -R, --dereference-recursive  likewise, but follow all symlinks\n"
+msgstr ""
+
+#: src/grep.c:2038
+#, c-format
+msgid ""
+"      --include=GLOB        search only files that match GLOB (a file "
+"pattern)\n"
+"      --exclude=GLOB        skip files that match GLOB\n"
+"      --exclude-from=FILE   skip files that match any file pattern from "
+"FILE\n"
+"      --exclude-dir=GLOB    skip directories that match GLOB\n"
+msgstr ""
+
+#: src/grep.c:2045
+#, c-format
+msgid ""
+"  -L, --files-without-match  print only names of FILEs with no selected "
+"lines\n"
+"  -l, --files-with-matches  print only names of FILEs with selected lines\n"
+"  -c, --count               print only a count of selected lines per FILE\n"
+"  -T, --initial-tab         make tabs line up (if needed)\n"
+"  -Z, --null                print 0 byte after FILE name\n"
+msgstr ""
+
+#: src/grep.c:2051
+#, c-format
+msgid ""
+"\n"
+"Context control:\n"
+"  -B, --before-context=NUM  print NUM lines of leading context\n"
+"  -A, --after-context=NUM   print NUM lines of trailing context\n"
+"  -C, --context=NUM         print NUM lines of output context\n"
+msgstr ""
+
+#: src/grep.c:2058
+#, fuzzy, c-format
+msgid ""
+"  -NUM                      same as --context=NUM\n"
+"      --group-separator=SEP  print SEP on line between matches with context\n"
+"      --no-group-separator  do not print separator for matches with context\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       use markers to highlight the matching strings;\n"
+"                            WHEN is 'always', 'never', or 'auto'\n"
+"  -U, --binary              do not strip CR characters at EOL (MSDOS/"
+"Windows)\n"
+"\n"
+msgstr ""
+"\n"
+"Konteksto valdymas:\n"
+"  -B, --before-context=NUM  spausdinti NUM eilučių prieš atitikimą\n"
+"  -A, --after-context=NUM   spausdinti NUM eilučių po atitikimo\n"
+"  -C, --context=NUM         spausdinti NUM eilučių konteksto\n"
+"  -NUM                      tas pats, kaip --context=NUM\n"
+"      --color[=KADA],\n"
+"      --colour[=KADA]       naudoti markerius atitikimams pažymėti;\n"
+"                            KADA yra „always“, „never“ arba „auto“\n"
+"  -U, --binary              nešalinti CR simbolių eilutės pabaigoje (MSDOS)\n"
+"  -u, --unix-byte-offsets   pranešti baitų pozicijas, tarsi nebūtų CRų "
+"(MSDOS)\n"
+"\n"
+
+#: src/grep.c:2067
+#, fuzzy, c-format
+msgid ""
+"When FILE is '-', read standard input.  If no FILE is given, read standard\n"
+"input, but with -r, recursively search the working directory instead.  With\n"
+"fewer than two FILEs, assume -h.  Exit status is 0 if any line is selected,\n"
+"1 otherwise; if any error occurs and -q is not given, the exit status is 2.\n"
+msgstr ""
+"Jei FAILAS nenurodytas arba yra -, skaityti standartinį įvedimą.  Jei\n"
+"pateikti mažiau negu du failai, naudoti -h.  Grąžinamas klaidos kodas\n"
+"0, jei rasta bent viena eilutė, 1 kitais atvejais;\n"
+"jei įvyksta klaida ir nenurodytas -q, klaidos kodas yra 2.\n"
+
+#: src/grep.c:2110
+msgid "conflicting matchers specified"
+msgstr "nurodyti nesuderinami atitikimo mechanizmai"
+
+#: src/grep.c:2117
+#, fuzzy
+msgid "Perl matching not supported in a --disable-perl-regexp build"
+msgstr ""
+"Parametro -P palaikymas neįkompiliuotas į šią --disable-perl-regexp programą"
+
+#: src/grep.c:2119
+#, fuzzy, c-format
+msgid "invalid matcher %s"
+msgstr "netaisyklingas maksimalus skaičius"
+
+#: src/grep.c:2541
+msgid "unknown devices method"
+msgstr "nežinomas įrenginių metodas"
+
+#: src/grep.c:2690
+msgid "invalid max count"
+msgstr "netaisyklingas maksimalus skaičius"
+
+#: src/grep.c:2747
+msgid "unknown binary-files type"
+msgstr "nežinomas dvejetainių failų tipas"
+
+#: src/grep.c:2832
+msgid ""
+"Written by Mike Haertel and others; see\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+msgstr ""
+
+#: src/grep.c:2939
+#, c-format
+msgid "warning: GREP_COLOR='%s' is deprecated; use GREP_COLORS='mt=%s'"
+msgstr ""
+
+#: src/pcresearch.c:89
+#, c-format
+msgid ""
+"\n"
+"grep -P uses PCRE2 %s\n"
+msgstr ""
+
+#: src/pcresearch.c:167
+msgid "-P supports only unibyte locales on this platform"
+msgstr ""
+
+#: src/pcresearch.c:169
+msgid "-P supports only unibyte and UTF-8 locales"
+msgstr ""
+
+#: src/pcresearch.c:192
+#, fuzzy
+msgid "the -P option only supports a single pattern"
+msgstr "Parametras -P leidžia tik vieną šabloną"
+
+#: src/pcresearch.c:288
+msgid "exceeded PCRE's line length limit"
+msgstr ""
+
+#: src/pcresearch.c:366
+#, fuzzy, c-format
+msgid "%s: memory exhausted"
+msgstr "baigėsi atmintis"
+
+#: src/pcresearch.c:369
+#, c-format
+msgid "%s: exhausted PCRE JIT stack"
+msgstr ""
+
+#: src/pcresearch.c:373
+#, c-format
+msgid "%s: exceeded PCRE's backtracking limit"
+msgstr ""
+
+#: src/pcresearch.c:378
+#, c-format
+msgid "%s: exceeded PCRE's nested backtracking limit"
+msgstr ""
+
+#: src/pcresearch.c:382
+#, c-format
+msgid "%s: PCRE detected recurse loop"
+msgstr ""
+
+#: src/pcresearch.c:387
+#, c-format
+msgid "%s: exceeded PCRE's heap limit"
+msgstr ""
+
+#: src/pcresearch.c:396
+#, c-format
+msgid "%s: internal PCRE error: %d"
+msgstr ""
+
+#, fuzzy
+#~ msgid "%s: option '--%s' doesn't allow an argument\n"
+#~ msgstr "%s: argumentas „--%s“ neleidžia parametro\n"
+
+#, fuzzy
+#~ msgid "%s: unrecognized option '--%s'\n"
+#~ msgstr "%s: neatpažintas argumentas „--%s“\n"
+
+#, fuzzy
+#~ msgid "%s: option '-W %s' is ambiguous\n"
+#~ msgstr "%s: parametras „-W %s“ dviprasmis\n"
+
+#, fuzzy
+#~ msgid "%s: option '-W %s' doesn't allow an argument\n"
+#~ msgstr "%s: parametras „-W %s“ nepriima argumento\n"
+
+#, fuzzy
+#~ msgid "%s: option '-W %s' requires an argument\n"
+#~ msgstr "%s: parametrui „%s“ reikia argumento\n"
+
+#~ msgid "PATTERN is, by default, a basic regular expression (BRE).\n"
+#~ msgstr ""
+#~ "ŠABLONAS numatytuoju atveju yra paprasta reguliarioji išraiška (BRE).\n"
+
+#, fuzzy
+#~ msgid ""
+#~ "'egrep' means 'grep -E'.  'fgrep' means 'grep -F'.\n"
+#~ "Direct invocation as either 'egrep' or 'fgrep' is deprecated.\n"
+#~ msgstr ""
+#~ "„egrep“ reiškia „grep -E“. „fgrep“ reiškia „grep -F“.\n"
+#~ "Tiesioginiai kvietimai vardais „egrep“ arba „fgrep“ nebenaudotini.\n"
+
+#~ msgid "unfinished repeat count"
+#~ msgstr "nebaigtas pakartojimų skaičius"
+
+#~ msgid "malformed repeat count"
+#~ msgstr "netaisyklingas pakartojimų skaičius"
+
+#~ msgid "writing output"
+#~ msgstr "rašomas išvedimas"
+
+#~ msgid "PATTERN is an extended regular expression (ERE).\n"
+#~ msgstr "ŠABLONAS yra išplėstinė reguliarioji išraiška (ERE).\n"
+
+#~ msgid "PATTERN is a set of newline-separated fixed strings.\n"
+#~ msgstr "ŠABLONAS yra aibė simbolių sekų atskirose eilutėse.\n"
+
+#~ msgid ""
+#~ "\n"
+#~ "Output control:\n"
+#~ "  -m, --max-count=NUM       stop after NUM matches\n"
+#~ "  -b, --byte-offset         print the byte offset with output lines\n"
+#~ "  -n, --line-number         print line number with output lines\n"
+#~ "      --line-buffered       flush output on every line\n"
+#~ "  -H, --with-filename       print the filename for each match\n"
+#~ "  -h, --no-filename         suppress the prefixing filename on output\n"
+#~ "      --label=LABEL         print LABEL as filename for standard input\n"
+#~ "  -o, --only-matching       show only the part of a line matching "
+#~ "PATTERN\n"
+#~ "  -q, --quiet, --silent     suppress all normal output\n"
+#~ "      --binary-files=TYPE   assume that binary files are TYPE;\n"
+#~ "                            TYPE is `binary', `text', or `without-match'\n"
+#~ "  -a, --text                equivalent to --binary-files=text\n"
+#~ "  -I                        equivalent to --binary-files=without-match\n"
+#~ "  -d, --directories=ACTION  how to handle directories;\n"
+#~ "                            ACTION is `read', `recurse', or `skip'\n"
+#~ "  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n"
+#~ "                            ACTION is `read' or `skip'\n"
+#~ "  -R, -r, --recursive       equivalent to --directories=recurse\n"
+#~ "      --include=FILE_PATTERN  search only files that match FILE_PATTERN\n"
+#~ "      --exclude=FILE_PATTERN  skip files and directories matching "
+#~ "FILE_PATTERN\n"
+#~ "      --exclude-from=FILE   skip files matching any file pattern from "
+#~ "FILE\n"
+#~ "      --exclude-dir=PATTERN directories that match PATTERN will be "
+#~ "skipped.\n"
+#~ "  -L, --files-without-match print only names of FILEs containing no "
+#~ "match\n"
+#~ "  -l, --files-with-matches  print only names of FILEs containing matches\n"
+#~ "  -c, --count               print only a count of matching lines per "
+#~ "FILE\n"
+#~ "  -T, --initial-tab         make tabs line up (if needed)\n"
+#~ "  -Z, --null                print 0 byte after FILE name\n"
+#~ msgstr ""
+#~ "\n"
+#~ "Išvedimo valdymas:\n"
+#~ "  -m, --max-count=NUM       sustoti po NUM atitikimų\n"
+#~ "  -b, --byte-offset         išvesti baito numerį išvedant eilutes\n"
+#~ "  -n, --line-number         išvesti eilutės numerį išvedant eilutes\n"
+#~ "      --line-buffered       išleisti (flush) išvedimą po kiekvienos "
+#~ "eilutės\n"
+#~ "  -H, --with-filename       išspausdinti failo vardą kiekvienam "
+#~ "atitikimui\n"
+#~ "  -h, --no-filename         nespausdinti failo vardo\n"
+#~ "      --label=ŽYMĖ          spausdinti ŽYMĘ kaip failo vardą stand. "
+#~ "įvedimui\n"
+#~ "  -o, --only-matching       rodyti tik tą eilutės dalį, kuri atitinka "
+#~ "ŠABLONĄ\n"
+#~ "  -q, --quiet, --silent     išjunti normalų išvedimą\n"
+#~ "      --binary-files=TIPAS   tarti, kad dvejetainiai failai yra šio "
+#~ "TIPO;\n"
+#~ "                            TIPAS yra „binary“, „text“ arba „without-"
+#~ "match“\n"
+#~ "  -a, --text                tapatu --binary-files=text\n"
+#~ "  -I                        tapatu --binary-files=without-match\n"
+#~ "  -d, --directories=VEIKSMAS kaip ieškoti aplankuose;\n"
+#~ "                            VEIKSMAS yra „read“, „recurse“ arba „skip“\n"
+#~ "  -D, --devices=VEIKSMAS    kaip ieškoti įrenginiuose, FIFO ir lizduose;\n"
+#~ "                            VEIKSMAS yra „read“ arba „skip“\n"
+#~ "  -R, -r, --recursive       tapatu --directories=recurse\n"
+#~ "      --include=FAILŲ_ŠABLONAS ieškoti failuose, kurių vardai atitinka "
+#~ "šabl.\n"
+#~ "      --exclude=FAILŲ_ŠABLONAS praleisti failus, kurių vardai atitinka "
+#~ "šabl.\n"
+#~ "      --exclude-from=FAILAS praleisti failus, kurių v. atitinka šabl. iš "
+#~ "FAILO\n"
+#~ "      --exclude-dir=ŠABLONAS aplankai, atitinkantys ŠABLONĄ, bus "
+#~ "praleisti.\n"
+#~ "  -L, --files-without-match spausdinti tik neatitinkančių failų vardus\n"
+#~ "  -l, --files-with-matches  spausdinti tik atitinkančių šabloną failų "
+#~ "vardus\n"
+#~ "  -c, --count               spausdinti tik atitinkančių eilučių faile "
+#~ "skaičių\n"
+#~ "  -T, --initial-tab         lygiuoti tabuliatorius (jei reikia)\n"
+#~ "  -Z, --null                spausdinti 0 baitą po FAILO vardo\n"
+
+#~ msgid "Invocation as `egrep' is deprecated; use `grep -E' instead.\n"
+#~ msgstr "Kvietimas pavadinimu „egrep“ nebenaudotinas, naudokite „grep -E“.\n"
+
+#~ msgid "Invocation as `fgrep' is deprecated; use `grep -F' instead.\n"
+#~ msgstr "Kvietimas pavadinimu „fgrep“ nebenaudotinas, naudokite „grep -F“.\n"
+
+#~ msgid ""
+#~ "In GREP_COLORS=\"%s\", the \"%s\" capacity needs a value (\"=...\"); "
+#~ "skipped."
+#~ msgstr ""
+#~ "Kintamajame GREP_COLORS=„%s“, „%s“ reikia reikšmės („=...“); praleista."
+
+#~ msgid ""
+#~ "In GREP_COLORS=\"%s\", the \"%s\" capacity is boolean and cannot take a "
+#~ "value (\"=%s\"); skipped."
+#~ msgstr ""
+#~ "Kintamajame GREP_COLORS=„%s“, „%s“ dvejetainis, todėl reikšmė („=%s“) "
+#~ "netinkama; praleista."
+
+#~ msgid "In GREP_COLORS=\"%s\", the \"%s\" capacity %s."
+#~ msgstr "Kintamajame GREP_COLORS=„%s“, „%s“ talpumas %s."
+
+#~ msgid ""
+#~ "Stopped processing of ill-formed GREP_COLORS=\"%s\" at remaining "
+#~ "substring \"%s\"."
+#~ msgstr ""
+#~ "Sustabdytas netaisyklingo GREP_COLORS=„%s“ apdorojimas ties likusiu "
+#~ "posekiu „%s“."
+
+#~ msgid "unknown directories method"
+#~ msgstr "nežinomas aplankų metodas"
+
+#~ msgid "Copyright (C) 2008 Free Software Foundation, Inc.\n"
+#~ msgstr "Autorinės teisės (C) 2008 Free Software Foundation, Inc.\n"
+
+#~ msgid "The -P and -z options cannot be combined"
+#~ msgstr "Parametrai -P ir -z negali būti sujungti"
+
+#~ msgid "%s: illegal option -- %c\n"
+#~ msgstr "%s: neleistinas argumentas -- %c\n"

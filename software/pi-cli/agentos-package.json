@@ -1,0 +1,10 @@
+{
+  "name": "pi-cli",
+  "agent": {
+    "acpEntrypoint": "pi-acp",
+    "env": {
+      "PI_ACP_PI_COMMAND": "pi"
+    }
+  },
+  "kind": "agent"
+}

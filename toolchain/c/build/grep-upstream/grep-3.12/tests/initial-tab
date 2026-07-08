@@ -1,0 +1,37 @@
+#!/bin/sh
+# Exercise -T.
+
+# Copyright 2016-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+printf 'x\n\n' > in || framework_failure_
+
+grep -T '^' in > out || fail=1
+compare in out || fail=1
+
+printf 'in:\tx\nin:\n' > exp || framework_failure_
+grep -T '^' in /dev/null > out || fail=1
+compare exp out || fail=1
+
+printf '%s\n' a b c d e f g h i j > in1 || framework_failure_
+printf 'in1: 1:\ta\n' > exp1 || framework_failure_
+grep -Tn 'a' in1 /dev/null > out1 || fail=1
+compare exp1 out1 || fail=1
+
+Exit $fail

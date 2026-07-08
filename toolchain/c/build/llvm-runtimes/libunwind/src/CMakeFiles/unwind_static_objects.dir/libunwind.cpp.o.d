@@ -1,0 +1,32 @@
+libunwind/src/CMakeFiles/unwind_static_objects.dir/libunwind.cpp.o: \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/llvm-project/libunwind/src/libunwind.cpp \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/llvm-project/libunwind/include/libunwind.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/llvm-project/libunwind/include/__libunwind_config.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/llvm-project/libunwind/src/config.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/assert.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/features.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/stdio.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/bits/alltypes.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/__struct_timeval.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/__typedef_time_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/__typedef_suseconds_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/__struct_timespec.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/__struct_iovec.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stddef.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_size_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_null.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/__seek.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/wasi/api.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_header_macro.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_ptrdiff_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_wchar_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_nullptr_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_max_align_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_offsetof.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stdint.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/stdint.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/bits/stdint.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/stdlib.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/__functions_malloc.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/__header_stdlib.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/alloca.h

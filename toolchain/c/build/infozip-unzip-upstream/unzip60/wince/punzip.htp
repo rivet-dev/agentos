@@ -1,0 +1,412 @@
+<html>
+<head>
+<title>Pocket UnZip</title>
+</head>
+<body>
+
+<h2>Pocket UnZip</h2>
+
+<hr>
+<h3>Table of Contents</h3>
+
+<ul>
+    <li>Why use Pocket UnZip for Windows CE?</li>
+    <li>Key Features of Pocket UnZip</li>
+    <li>Installing Pocket UnZip</li>
+    <li>Opening a Zip File</li>
+    <li>Zip File Listing</li>
+    <li>Properties Dialog</li>
+    <li>File Comments</li>
+    <li>Extracting Files</li>
+    <li>Testing Files</li>
+    <li>Viewing Files</li>
+    <li>Encrypted Files</li>
+    <li>About Pocket UnZip</li>
+</ul>
+
+<hr>
+<h3>Why use Pocket UnZip for Windows CE?</h3>
+
+<ul>
+    <li>Your H/PC can now read the number one file format used
+        for Internet downloads.</li>
+    <li>Software venders can now distribute their Windows CE
+        applications in a single compressed Zip file. </li>
+    <li>Maximize your PCMCIA flash card ram storage by zipping up
+        files to take with you on the road.</li>
+</ul>
+
+<hr>
+<h3>Key Features of Pocket UnZip</h3>
+
+<ul>
+    <li>Handles all files created with a Zip compatible
+        compression utility. This includes utilities from PKWARE,
+        Info-ZIP, and many others. </li>
+    <li>Easy to use graphical interface that closely resembles
+        the Windows CE Explorer. </li>
+    <li>Displays a detailed list of Zip file contents, including
+        name, date, size, attributes, and compression statistics
+        of each file. </li>
+    <li>Displays comments for the each file within the Zip file,
+        as well as the main comment for the Zip file itself. </li>
+    <li>Supports the ability to test files, extract files, and
+        view files directly from the Zip file. </li>
+    <li>Supports decryption of password encrypted Zip files. </li>
+    <li>It's free!</li>
+</ul>
+
+<hr>
+<h3>Installing Pocket UnZip</h3>
+
+<p>Place <strong>PUNZIP.EXE</strong> and <strong>PUNZIP.HTP </strong>(optional
+help file) into your <strong>\Windows</strong> directory on your
+H/PC.</p>
+
+<p>From your H/PC's <strong>Start Menu</strong>, choose <strong>Run...</strong>,
+enter &quot;<strong>punzip</strong>&quot;, and tap <strong>OK</strong>.</p>
+
+<p>The first time you run Pocket UnZip, it will register itself
+as the application for handling Zip files. From then on, you can
+just double-tap on Zip files in Explorer or from your Desktop to
+open them in Pocket UnZip.</p>
+
+<hr>
+<h3>Opening a Zip File</h3>
+
+<p>There are several ways to open a Zip file.</p>
+
+<ul>
+    <li>Double-tap on a Zip file in Windows CE Explorer or from
+        your Windows CE desktop. </li>
+    <li>From within Pocket UnZip, choose the <strong>Open...</strong>
+        command from the <strong>File</strong> menu. You may also
+        tap the <strong>Open</strong> toolbar button or press <strong>Ctrl+O</strong>.
+    </li>
+    <li>Pocket UnZip keeps track of the four most recently opened
+        Zip files. You may quickly open one of these recent files
+        by selecting the Zip file directly from Pocket UnZip's <strong>File</strong>
+        menu.</li>
+</ul>
+
+<hr>
+<h3>Zip File Listing</h3>
+
+<p>Pocket UnZip's main view displays a list of files,
+directories, and volume labels that are stored within the
+currently loaded Zip file. This list can be displayed in two
+modes, normal and expanded. The normal mode is sufficient for
+most users. It contains the following information for every item
+in the Zip file:</p>
+
+<ul>
+    <li><strong>Name</strong>: Name and path of the compressed
+        file, directory, or volume label.</li>
+    <li><strong>Size</strong>: Size, in bytes, that the item
+        requires when uncompressed.</li>
+    <li><strong>Type</strong>: Type of item.</li>
+    <li><strong>Modified</strong>: Date and time that the item
+        was last modified.</li>
+</ul>
+
+<p>Expanded mode contains all the above information, plus the
+following additional information:</p>
+
+<ul>
+    <li><strong>Attributes</strong>: Attributes of the item.
+        <ul>
+            <li><font face="Courier New"><strong>V</strong></font>:
+                Volume label</li>
+            <li><font face="Courier New"><strong>D</strong></font>:
+                Directory</li>
+            <li><font face="Courier New"><strong>R</strong></font>:
+                Read-only file</li>
+            <li><font face="Courier New"><strong>A</strong></font>:
+                Archive file</li>
+            <li><font face="Courier New"><strong>H</strong></font>:
+                Hidden file</li>
+            <li><font face="Courier New"><strong>S</strong></font>:
+                System file</li>
+            <li><font face="Courier New"><strong>E</strong></font>:
+                Encrypted (this file will require a password)</li>
+            <li><font face="Courier New"><strong>C</strong></font>:
+                Comment (this item has a comment)</li>
+        </ul>
+    </li>
+    <li><strong>Compressed</strong>: Compressed size, in bytes,
+        of the item.</li>
+    <li><strong>Ratio</strong>: Compression ratio of the item.</li>
+    <li><strong>Method</strong>: Compression method used to
+        compress the item.</li>
+    <li><strong>CRC</strong>: 32 bit Cyclic Redundancy Check
+        signature of the item.</li>
+    <li><strong>Comment</strong>: Optional comment string that
+        was associated with the item when compressed.</li>
+</ul>
+
+<p>You may toggle between the normal view and the expanded view
+by selecting the <strong>Extended View</strong> option from the <strong>View</strong>
+menu, or by tapping the associated toolbar button.</p>
+
+<hr>
+<h3>Properties Dialog</h3>
+
+<p>The properties dialog is useful for viewing detailed
+information for one or more files. It is invoked by selecting one
+or more files in the file list and then choosing <strong>Properties</strong>
+from the <strong>File</strong> menu. For convenience, you can
+also tap the toolbar button or press <strong>Alt+Enter</strong>.</p>
+
+<p>If one file is selected, the properties dialog will show you
+detailed information about that one file and its comment.</p>
+
+<p>If multiple files are selected, the dialog will show you
+combined results for all the files selected. Cumulative results
+will be given for the file count, byte counts, and compression
+ratio. Merged results will be given for the compression method,
+date, CRC, attributes, and comment. For the date, all values that
+are common between the selected files (such as year), will be
+shown with their common value. All values that differ between the
+selected files will be shown as question marks. For attributes, a
+black check means that all selected files have that particular
+attribute, a gray check mark means that some of the selected
+files have that attribute, and no check mark means that none of
+the selected files have that attribute.</p>
+
+<p>By using the properties dialog with multiple files, you can
+determine things like... What is the total number of files or
+bytes in the Zip file? What is the total compression ratio for
+all selected files. Are all the selected files from the same
+year? Same month? How many files have comments?</p>
+
+<hr>
+<h3>File Comments</h3>
+
+<p>Zip files provide two levels of commenting. At compression
+time, users can add per-file comments, as well as one main
+comment for the entire Zip file. The per-file comments are
+usually used to give a short description of each file. The main
+comment is usually used for credits, copyright information,
+installation instructions, version numbers, etc. Pocket UnZip
+can display both types of comments. </p>
+
+<p>Per-file comments can be viewed in Comments column of the main
+file list while in expanded mode (see the <strong>Zip File Listing</strong>
+section) and also in the properties dialog (see the <strong>Properties
+Dialog</strong> section).</p>
+
+<p>The main Zip file comment can be viewed by selecting <strong>Zip
+File Comment</strong> from the <strong>View</strong> menu or by
+pressing the associated toolbar button. This option will be
+disabled if the Zip file does not contain a main comment.</p>
+
+<hr>
+<h3>Extracting Files</h3>
+
+<p>Once you have opened a Zip file into Pocket UnZip, you should
+see a list of the Zip file's contents. Select one or more files
+from the file list and then choose <strong>Extract Selected Files</strong>
+(<strong>Ctrl+E</strong>) or <strong>Extract All Files</strong> (<strong>Ctrl+A</strong>,
+<strong>Ctrl+E</strong>) from the <strong>Action</strong> menu. You may
+also use the noted shortcut keys or the associated toolbar
+buttons.</p>
+
+<p>An extract options dialog will appear showing you some
+statistics about the files you are about to extract and prompting
+you for some information. There are three options available to
+you.</p>
+
+<p>The <strong>Restore file paths</strong> option allows you to
+control whether the directory structure of the files you have
+selected to extract will be preserved. When this option is
+checked, any directory paths associated with the compressed files
+will be created, and the file will be extracted to the newly
+created directory. If this option is not checked, all files will
+be extracted to a single directory, regardless of any path
+information associated with the compressed files.</p>
+
+<p>The <strong>Overwrite Options</strong> allow you to tell
+Pocket UnZip what to do if a file already exists on your file
+system with the same name of a file that is about to be
+extracted. The choices are:</p>
+
+<ul>
+    <li><strong>Prompt to overwrite</strong>: Causes a dialog to
+        appear for every situation that involves possibly
+        overwriting a file. This allows you to decide what files
+        get overwritten on a file-by-file basis. </li>
+    <li><strong>Overwrite if newer</strong>: Causes Pocket UnZip
+        to automatically overwrite any files that have a date and
+        time that is earlier then the date and time of the file
+        being extracted. This option can be useful for updating
+        files. </li>
+    <li><strong>Always overwrite</strong>: Causes Pocket UnZip to
+        always automatically overwrite any files without
+        prompting or warning. Use with caution. </li>
+    <li><strong>Never overwrite</strong>: Causes Pocket UnZip to
+        automatically skip all files that already exist on the
+        file system.</li>
+</ul>
+
+<p>The <strong>Extract To</strong> field specifies the root
+directory that should be used to extract files to. If you checked
+the <strong>Restore file paths</strong> option, then any
+directories associated with the files being extracted will be
+created under the directory specified in this field. The
+directory you enter must already exist. To create directories and
+browse for directories, use the <strong>Browse...</strong>
+button.</p>
+
+<p>Once you have chosen the options you wish to use, press the <strong>Extract</strong>
+button. A progress dialog will appear and the extraction will
+begin. At any time during the extraction, you may tap the <strong>Abort</strong>
+button to abort the extraction operation.</p>
+
+<p><strong>Note: Aborting the
+extraction operation while processing a file will likely cause a
+partial file to get extracted and saved.</strong></p>
+
+<p>During the extraction, you may get interrupted for one of
+three reasons. First, if an error occurs, you will be notified
+with a message box. Second, if you have chosen the <strong>Prompt
+to overwrite</strong> option and you are trying to extract a file
+that already exists, you will be prompted on how to handle the
+situation. Third, if a file being extracted is encrypted, then
+you will be prompted for that file's password (see the <strong>Encrypted
+Files</strong> section).</p>
+
+<p>Once the extraction is complete, the <strong>Abort</strong>
+button will change to a <strong>Close</strong> button and any
+errors or warnings will be displayed. Tap the <strong>Close</strong>
+button to return to Pocket UnZip's main screen.</p>
+
+<hr>
+<h3>Testing Files</h3>
+
+<p>Testing files is essentially the same as extracting files,
+except for that the actual extracted data is never written to
+your file system. Testing files is useful when you wish to verify
+the integrity of a Zip file without actually extracting the files
+within it.</p>
+
+<p>Once you have opened a Zip file into Pocket UnZip, you should
+see a list of the Zip file's contents. Select one or more files
+from the file list and then choose <strong>Test Selected Files</strong>
+(<strong>Ctrl+T</strong>) or <strong>Test All Files</strong> (<strong>Ctrl+A</strong>,
+<strong>Ctrl+T</strong>) from the <strong>Action</strong> menu. You may
+also use the noted shortcut keys or the associated toolbar
+buttons.</p>
+
+<p>A progress dialog will appear and the testing will begin. At
+any time during the testing, you may tap the <strong>Abort</strong>
+button to abort the testing operation.</p>
+
+<p>During the testing, you may get interrupted for one of two
+reasons. First, if an error occurs, you will be notified with a
+message box. Second, if a file being tested is encrypted, then
+you will be prompted for that file's password (see the <strong>Encrypted
+Files</strong> section).</p>
+
+<p>Once the testing is complete, the <strong>Abort</strong>
+button will change to a <strong>Close</strong> button and any
+errors or warnings will be displayed. Tap the <strong>Close</strong>
+button to return to Pocket UnZip's main screen.</p>
+
+<hr>
+<h3>Viewing Files</h3>
+
+<p>Pocket UnZip provides the ability to view, or even execute,
+files directly from a Zip file. This feature is a major
+convenience over having to extract and then manually open each
+file you wish to view. Internally, this is what Pocket UnZip is
+doing for you, but it takes care of all the work of extracting
+the file to a temporary directory, launching the associated
+viewer for that file type, and cleaning up when done.</p>
+
+<p>To view a file, simply select a single file from Pocket
+UnZip's main file list and press <strong>Enter</strong>. You may also
+choose <strong>View Selected File</strong> from the <strong>Action</strong>
+menu, press the associated toolbar button, or just double-tap on
+the file you wish to view.</p>
+
+<p>The file will be extracted to a directory called<strong>
+Temporary Pocket UnZip Files</strong> in the root of your file
+system. If the file you wish to view is encrypted, you will be
+prompted for a password. If the file has an associated viewer
+application installed (such as Pocket Word for .PWD files), then
+that viewer will automatically be launched with the newly
+extracted file as its command line. If there is no associated
+viewer application, then you will be prompted for the application
+you wish to use to view the file.</p>
+
+<p>Pocket UnZip also provides minimal support for allowing you to
+use the view file action to run executable programs directly from
+the Zip file. If the file you choose to view is an executable
+(file extension is EXE), then the file will be executed after it
+is extracted. Pocket UnZip will only extract the file you select
+and none of its dependent files (like DLLs). If the executable
+you extract depends on other files in the Zip file, it will most
+likely fail to execute.</p>
+
+<p>When Pocket UnZip exits, it will delete the <strong>Temporary
+Pocket UnZip Files</strong> directory and all the files in it. If
+you are running more than one instance of Pocket UnZip, then only
+the last instance of Pocket UnZip that you exit will perform this
+delete. Most applications, such as Pocket Word, lock files when
+viewing them. Any files being viewed by such an application when
+you exit Pocket UnZip will not be deleted.</p>
+
+<hr>
+<h3>Encrypted Files</h3>
+
+<p>If an encrypted file is encountered during an extract, test,
+or view operation, you will be prompted for a password. You can
+choose to skip the file, skip all encrypted files, or enter a
+password. You will be given three attempts at entering the
+correct password before the file will be skipped automatically.
+Once you have entered the correct password for a given file, that
+password will be remembered and automatically used for all other
+encrypted files that are encountered during that single extract,
+test, or view operation. If another encrypted file is found that
+uses a different password than the remembered password, then you
+will be prompted again for a new password.</p>
+
+<p>This technique provides support for multi-password Zip files,
+while still providing users with single password Zip files the
+convenience of only having to enter their password once during
+the operation for all encrypted files. For security reasons,
+passwords are not remembered after the operation completes.</p>
+
+<hr>
+<h3>About Pocket UnZip</h3>
+
+<p>Thank you for using Version 2.0 of Pocket UnZip for Windows
+CE.</p>
+
+<p>Pocket UnZip was developed by Steve P. Miller. Although I'd
+like to take full credit, I could not have done it without the
+public decompression source code provided by the Info-ZIP group.
+Pocket UnZip uses version 6.0 of Info-ZIP's core decompression
+code. Many thanks go to Greg Roelofs and all the fine folks at
+Info-ZIP.</p>
+
+<p>Please send all comments, suggestions, and bug reports
+to <strong>stevemil@pobox.com</strong>.</p>
+
+<p>Pocket UnZip is freeware - no shareware fees, no purchase
+fees. You can still send me an email or a box of cookies if you
+like it. If you would like to distribute Pocket UnZip, please
+look at the terms and conditions listed in the accompaning
+Info-ZIP LICENSE file.</p>
+
+<p>For the latest news, binaries, source code, and more
+information about the Info-ZIP group, visit
+<strong>ftp://ftp.info-zip.org/pub/infozip/</strong>.</p>
+
+<p>For more information about me, or to check out some of my
+other applications (mostly Windows 95 / NT / CE), stop by my
+personal web page at <strong>http://pobox.com/~stevemil/</strong>.</p>
+
+<p>Copyright © 1997-2009 Info-Zip. All Rights Reserved.</p>
+</body>
+</html>

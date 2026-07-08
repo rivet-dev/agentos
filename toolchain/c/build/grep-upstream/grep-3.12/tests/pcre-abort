@@ -1,0 +1,20 @@
+#! /bin/sh
+# Show that grep handles PCRE2_ERROR_MATCHLIMIT.
+# In grep-2.8, it would abort.
+#
+# Copyright (C) 2011-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_pcre_
+
+fail=0
+
+echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab > in || framework_failure_
+returns_ 2 grep -P '((a+)*)+$' in > out || fail=1
+compare /dev/null out || fail=1
+
+Exit $fail

@@ -1,0 +1,845 @@
+# Translation of grep messages to Thai.
+# Copyright (C) 2024 Free Software Foundation, Inc.
+# This file is distributed under the same license as the grep package.
+# Seksan Poltree <seksan.poltree@gmail.com>, 2009-2024.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: grep-3.10.12\n"
+"Report-Msgid-Bugs-To: bug-grep@gnu.org\n"
+"POT-Creation-Date: 2025-04-10 09:02-0700\n"
+"PO-Revision-Date: 2024-05-18 14:38+0700\n"
+"Last-Translator: Seksan Poltree <seksan.poltree@gmail.com>\n"
+"Language-Team: Thai <(nothing)>\n"
+"Language: th\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Bugs: Report translation errors to the Language-Team address.\n"
+"X-Generator: Poedit 3.0.1\n"
+
+#: lib/argmatch.c:145
+#, c-format
+msgid "invalid argument %s for %s"
+msgstr "อาร์กิวเมนต์ %s ไม่ถูกต้องสำหรับ %s"
+
+#: lib/argmatch.c:146
+#, c-format
+msgid "ambiguous argument %s for %s"
+msgstr "อาร์กิวเมนต์ %s กำกวมไม่ชัดเจน สำหรับ %s"
+
+#: lib/argmatch.c:165 lib/argmatch.h:242
+msgid "Valid arguments are:"
+msgstr "อาร์กิวเมนต์ที่ใช้ได้ ได้แก่:"
+
+#: lib/c-stack.c:190
+msgid "program error"
+msgstr "โปรแกรมผิดพลาด"
+
+#: lib/c-stack.c:191
+msgid "stack overflow"
+msgstr "stack overflow"
+
+#: lib/closeout.c:121 src/grep.c:1352
+msgid "write error"
+msgstr "การเขียนผิดพลาด"
+
+#: lib/dfa.c:910
+msgid "unbalanced ["
+msgstr "[ ไม่สมดุลกัน"
+
+#: lib/dfa.c:1031
+msgid "invalid character class"
+msgstr "ชื่อกลุ่มชุดอักขระไม่ถูกต้อง"
+
+#: lib/dfa.c:1159
+msgid "character class syntax is [[:space:]], not [:space:]"
+msgstr "วากยสัมพันธ์ของกลุ่มชุดอักขระ คือ [[:space:]], ไม่ใช่ [:space:]"
+
+#: lib/dfa.c:1234
+msgid "unfinished \\ escape"
+msgstr "เครื่องหมายหลีก \\ ไม่จบ"
+
+#: lib/dfa.c:1344
+msgid "? at start of expression"
+msgstr "มี ? ที่เริ่มต้นของนิพจน์"
+
+#: lib/dfa.c:1356
+msgid "* at start of expression"
+msgstr "มี * ที่เริ่มต้นของนิพจน์"
+
+#: lib/dfa.c:1370
+msgid "+ at start of expression"
+msgstr "มี + ที่เริ่มต้นของนิพจน์"
+
+#: lib/dfa.c:1425
+msgid "{...} at start of expression"
+msgstr "มี {...}  ที่เริ่มต้นของนิพจน์"
+
+#: lib/dfa.c:1428
+msgid "invalid content of \\{\\}"
+msgstr "เนื้อหาของ \\{\\} ไม่ถูกต้อง"
+
+#: lib/dfa.c:1430
+msgid "regular expression too big"
+msgstr "นิพจน์ปกติใหญ่เกินไป"
+
+#: lib/dfa.c:1580
+msgid "stray \\ before unprintable character"
+msgstr "ปิด \\ ก่อนอักขระที่พิมพ์ไม่ได้"
+
+#: lib/dfa.c:1582
+msgid "stray \\ before white space"
+msgstr "ปิด \\ ก่อนช่องว่าง"
+
+#: lib/dfa.c:1593
+#, fuzzy, c-format
+msgid "stray \\ before %s"
+msgstr "ปิด \\ ก่อน  %lc"
+
+#: lib/dfa.c:1594 lib/dfa.c:1597
+msgid "stray \\"
+msgstr "ปิด \\"
+
+#: lib/dfa.c:1948
+msgid "unbalanced ("
+msgstr "( ไม่สมดุลกัน"
+
+#: lib/dfa.c:2065
+msgid "no syntax specified"
+msgstr "ไม่ระบุวากยสัมพันธ์"
+
+#: lib/dfa.c:2076
+msgid "unbalanced )"
+msgstr ") ไม่สมดุลกัน"
+
+#: lib/error.c:208
+msgid "Unknown system error"
+msgstr "ข้อผิดพลาดของระบบที่ไม่รู้จัก"
+
+#: lib/getopt.c:282
+#, c-format
+msgid "%s: option '%s%s' is ambiguous\n"
+msgstr "%s: ตัวเลือก '%s%s' คลุมเครือไม่ชัดเจน\n"
+
+#: lib/getopt.c:288
+#, c-format
+msgid "%s: option '%s%s' is ambiguous; possibilities:"
+msgstr "%s: ตัวเลือก '%s%s' คลุมเครือไม่ชัดเจน; เป็นไปได้ที่จะเป็น:"
+
+#: lib/getopt.c:322
+#, c-format
+msgid "%s: unrecognized option '%s%s'\n"
+msgstr "%s: ตัวเลือกที่ไม่รู้จัก '%s%s'\n"
+
+#: lib/getopt.c:348
+#, c-format
+msgid "%s: option '%s%s' doesn't allow an argument\n"
+msgstr "%s: ตัวเลือก '%s%s' ไม่อนุญาตให้มีอาร์กิวเมนต์\n"
+
+#: lib/getopt.c:363
+#, c-format
+msgid "%s: option '%s%s' requires an argument\n"
+msgstr "%s: ตัวเลือก '%s%s' ต้องการอาร์กิวเมนต์\n"
+
+#: lib/getopt.c:624
+#, c-format
+msgid "%s: invalid option -- '%c'\n"
+msgstr "%s: ตัวเลือกไม่ถูกต้อง -- '%c'\n"
+
+#: lib/getopt.c:639 lib/getopt.c:685
+#, c-format
+msgid "%s: option requires an argument -- '%c'\n"
+msgstr "%s: ตัวเลือกต้องการอาร์กิวเมนต์ -- '%c'\n"
+
+#: lib/obstack.c:320 lib/obstack.c:322 lib/xalloc-die.c:34
+msgid "memory exhausted"
+msgstr "หน่วยความจำถูกใช้จนหมด"
+
+#: lib/openat-die.c:38
+msgid "unable to record current working directory"
+msgstr "ไม่สามารถบันทีกไดเรกทอรีที่ทำงานปัจจุบัน"
+
+#: lib/openat-die.c:57
+msgid "failed to return to initial working directory"
+msgstr "ล้มเหลวในการกลับไปยังไดเรกทอรีทำงานเริ่มต้น"
+
+#: lib/xbinary-io.c:36
+#, c-format
+msgid "failed to set file descriptor text/binary mode"
+msgstr "ล้มเหลวในการตั้งค่าตัวอธิบายไฟล์ในโหมดข้อความ/ไบนารี"
+
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  For example, a French Unicode local should translate
+#. these to U+00AB (LEFT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), and U+00BB (RIGHT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), respectively.
+#.
+#. If the catalog has no translation, we will try to
+#. use Unicode U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. Unicode U+2019 (RIGHT SINGLE QUOTATION MARK).  If the
+#. current locale is not Unicode, locale_quoting_style
+#. will quote 'like this', and clocale_quoting_style will
+#. quote "like this".  You should always include translations
+#. for "`" and "'" even if U+2018 and U+2019 are appropriate
+#. for your locale.
+#.
+#. If you don't know what to put here, please see
+#. <https://en.wikipedia.org/wiki/Quotation_marks_in_other_languages>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:354
+msgid "`"
+msgstr "`"
+
+#: lib/quotearg.c:355
+msgid "'"
+msgstr "'"
+
+#: lib/regcomp.c:122
+msgid "Success"
+msgstr "สำเร็จ"
+
+#: lib/regcomp.c:125
+msgid "No match"
+msgstr "ไม่ตรงกัน"
+
+#: lib/regcomp.c:128
+msgid "Invalid regular expression"
+msgstr "นิพจน์ปกติไม่ถูกต้อง"
+
+#: lib/regcomp.c:131
+msgid "Invalid collation character"
+msgstr "ผลการเทียบกันของอักขระผิดพลาด"
+
+#: lib/regcomp.c:134
+msgid "Invalid character class name"
+msgstr "ชื่อกลุ่มชุดอักขระไม่ถูกต้อง"
+
+#: lib/regcomp.c:137
+msgid "Trailing backslash"
+msgstr "เครื่องหมายแบ็คสแลชตามท้าย"
+
+#: lib/regcomp.c:140
+msgid "Invalid back reference"
+msgstr "การอ้างอิงกลับไม่ถูกต้อง"
+
+#: lib/regcomp.c:143
+msgid "Unmatched [, [^, [:, [., or [="
+msgstr "ไม่ตรงกันกับ [, [^, [:, [., หรือ [="
+
+#: lib/regcomp.c:146
+msgid "Unmatched ( or \\("
+msgstr "ไม่ตรงกันกับ ( หรือ \\("
+
+#: lib/regcomp.c:149
+msgid "Unmatched \\{"
+msgstr "ไม่ตรงกันกับ \\{"
+
+#: lib/regcomp.c:152
+msgid "Invalid content of \\{\\}"
+msgstr "เนื้อหาของ \\{\\} ไม่ถูกต้อง"
+
+#: lib/regcomp.c:155
+msgid "Invalid range end"
+msgstr "ช่วงจบไม่ถูกต้อง"
+
+#: lib/regcomp.c:158
+msgid "Memory exhausted"
+msgstr "หน่วยความจำถูกใช้จนหมด"
+
+#: lib/regcomp.c:161
+msgid "Invalid preceding regular expression"
+msgstr "นิพจน์ปกติก่อนหน้าไม่ถูกต้อง"
+
+#: lib/regcomp.c:164
+msgid "Premature end of regular expression"
+msgstr "นิพจน์ปกติจบโดยยังไม่สมบูรณ์"
+
+#: lib/regcomp.c:167
+msgid "Regular expression too big"
+msgstr "นิพจน์ปกติใหญ่เกินไป"
+
+#: lib/regcomp.c:170
+msgid "Unmatched ) or \\)"
+msgstr "ไม่ตรงกันกับ ) หรือ \\)"
+
+#: lib/regcomp.c:650
+msgid "No previous regular expression"
+msgstr "ไม่มีนิพจน์ปกติก่อนหน้า"
+
+#: lib/version-etc.c:73
+#, c-format
+msgid "Packaged by %s (%s)\n"
+msgstr "สร้างแพกเกจโดย %s (%s)\n"
+
+#: lib/version-etc.c:76
+#, c-format
+msgid "Packaged by %s\n"
+msgstr "สร้างแพกเกจโดย %s\n"
+
+#. TRANSLATORS: Translate "(C)" to the copyright symbol
+#. (C-in-a-circle), if this symbol is available in the user's
+#. locale.  Otherwise, do not translate "(C)"; leave it as-is.
+#: lib/version-etc.c:83
+msgid "(C)"
+msgstr "(C)"
+
+#. TRANSLATORS: The %s placeholder is the web address of the GPL license.
+#: lib/version-etc.c:88
+#, c-format
+msgid ""
+"License GPLv3+: GNU GPL version 3 or later <%s>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+msgstr ""
+"สัญญาอนุญาต GPLv3+: GNU GPL รุ่น 3 หรือใหม่กว่า <%s>.\n"
+"นี่เป็นซอฟต์แวร์เสรี: คุณมีเสรีในการปรับเปลี่ยนและการส่งต่อมัน\n"
+"มีการไม่รับประกัน, จากขอบเขตที่อนุญาตโดยกฎหมาย\n"
+"\n"
+
+#. TRANSLATORS: %s denotes an author name.
+#: lib/version-etc.c:105
+#, c-format
+msgid "Written by %s.\n"
+msgstr "เขียนโดย %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:109
+#, c-format
+msgid "Written by %s and %s.\n"
+msgstr "เขียนโดย  %s และ %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:113
+#, c-format
+msgid "Written by %s, %s, and %s.\n"
+msgstr "เขียนโดย  %s, %s, และ %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:120
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"เขียนโดย  %s, %s, %s,\n"
+"และ %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:127
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"เขียนโดย  %s, %s, %s,\n"
+"%s, และ %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:134
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, and %s.\n"
+msgstr ""
+"เขียนโดย  %s, %s, %s,\n"
+"%s, %s, และ %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:142
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, and %s.\n"
+msgstr ""
+"เขียนโดย  %s, %s, %s,\n"
+"%s, %s, %s, และ %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:150
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"เขียนโดย  %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"และ %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:159
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"เขียนโดย  %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, และ %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:170
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, and others.\n"
+msgstr ""
+"เขียนโดย  %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, และคณะ.\n"
+
+#. TRANSLATORS: The placeholder indicates the bug-reporting address
+#. for this package.  Please add _another line_ saying
+#. "Report translation bugs to <...>\n" with the address for translation
+#. bugs (typically your translation team's web or email address).
+#: lib/version-etc.c:249
+#, c-format
+msgid "Report bugs to: %s\n"
+msgstr "รายงานข้อผิดพลาดไปยัง: %s\n"
+
+#: lib/version-etc.c:251
+#, c-format
+msgid "Report %s bugs to: %s\n"
+msgstr "รายงานข้อผิดพลาดของ %s ไปยัง: %s\n"
+
+#: lib/version-etc.c:255 lib/version-etc.c:257
+#, c-format
+msgid "%s home page: <%s>\n"
+msgstr "โฮมเพจของ %s : <%s>\n"
+
+#: lib/version-etc.c:260
+#, c-format
+msgid "General help using GNU software: <%s>\n"
+msgstr ""
+"ความช่วยเหลือทั่วไปในการใช้ซอฟต์แวร์ GNU:  <%s>\n"
+"\n"
+
+#: src/dfasearch.c:57
+#, c-format
+msgid "warning: %s"
+msgstr "คำเตือน: %s"
+
+#: src/grep.c:657
+msgid "(standard input)"
+msgstr "(นำเข้ามาตรฐาน)"
+
+#: src/grep.c:838
+msgid "invalid context length argument"
+msgstr "ความยาวบริบทอาร์กิวเมนต์ไม่ถูกต้อง"
+
+#: src/grep.c:911
+msgid "input is too large to count"
+msgstr "ข้อมูลเข้ายาวเกินกว่าจะนับได้"
+
+#: src/grep.c:1656
+#, c-format
+msgid "%s: binary file matches"
+msgstr "%s: ตรงกันกันกับแฟ้มฐานสอง"
+
+#: src/grep.c:1694
+#, c-format
+msgid "%s: warning: recursive directory loop"
+msgstr "%s: คำเตือน: เรียกซ้ำไดเรกทอรีเป็นวงวน"
+
+#: src/grep.c:1914
+#, c-format
+msgid "%s: input file is also the output"
+msgstr "%s: แฟ้มนำเข้าเป็นแฟ้มส่งออกด้วยเหมือนกัน"
+
+#: src/grep.c:1976 src/grep.c:1983
+#, c-format
+msgid "Usage: %s [OPTION]... PATTERNS [FILE]...\n"
+msgstr "วิธีใช้: %s [OPTION]… PATTERNS [FILE]…\n"
+
+#: src/grep.c:1978
+#, c-format
+msgid "Try '%s --help' for more information.\n"
+msgstr "ลองใช้ '%s --help' เพื่อข้อมูลเพิ่มเติม.\n"
+
+#: src/grep.c:1984
+#, c-format
+msgid "Search for PATTERNS in each FILE.\n"
+msgstr "ค้นหาสำหรับ PATTERNS ในแต่ละ FILE.\n"
+
+#: src/grep.c:1985
+#, c-format
+msgid ""
+"Example: %s -i 'hello world' menu.h main.c\n"
+"PATTERNS can contain multiple patterns separated by newlines.\n"
+"\n"
+"Pattern selection and interpretation:\n"
+msgstr ""
+"ตัวอย่าง: %s -i 'hello world' menu.h main.c\n"
+"PATTERNS สามารถประกอบด้วยหลายรูปแบบโดยแยกด้วยตัวขึ้นบรรทัดใหม่\n"
+"\n"
+"การเลือกนิพจน์ปกติและการแปลความหมาย:\n"
+
+#: src/grep.c:1990
+#, c-format
+msgid ""
+"  -E, --extended-regexp     PATTERNS are extended regular expressions\n"
+"  -F, --fixed-strings       PATTERNS are strings\n"
+"  -G, --basic-regexp        PATTERNS are basic regular expressions\n"
+"  -P, --perl-regexp         PATTERNS are Perl regular expressions\n"
+msgstr ""
+"  -E, --extended-regexp     PATTERNS เป็นส่วนขยายนิพจน์ปกติ\n"
+"  -F, --fixed-strings       PATTERNS เป็นชุดสายอักขระ\n"
+"  -G, --basic-regexp        PATTERNS เป็นนิพจน์ปกติพื้นฐาน (BRE)\n"
+"  -P, --perl-regexp         PATTERNS เป็นนิพจน์ปกติภาษา Perl\n"
+
+#: src/grep.c:1996
+#, c-format
+msgid ""
+"  -e, --regexp=PATTERNS     use PATTERNS for matching\n"
+"  -f, --file=FILE           take PATTERNS from FILE\n"
+"  -i, --ignore-case         ignore case distinctions in patterns and data\n"
+"      --no-ignore-case      do not ignore case distinctions (default)\n"
+"  -w, --word-regexp         match only whole words\n"
+"  -x, --line-regexp         match only whole lines\n"
+"  -z, --null-data           a data line ends in 0 byte, not newline\n"
+msgstr ""
+"  -e, --regexp=PATTERN      ใช้ PATTERNS สำหรับการจับคู่กัน\n"
+"  -f, --file=FILE           รับ PATTERNS มาจาก FILE\n"
+"  -i, --ignore-case         เพิกเฉยต่อความแตกต่างอักษรใหญ่เล็ก\n"
+"  -w, --word-regexp         จับคู่เฉพาะที่ตรงกันทั้งคำเท่านั้น\n"
+"  -x, --line-regexp         จับคู่เฉพาะที่ตรงกันทั้งบรรทัดเท่าทั้น\n"
+"  -z, --null-data           ข้อมูลบรรทัดจบด้วยขนาด 0 ไบต์, ไม่มีตัวขึ้นบรรทัดใหม่\n"
+
+#: src/grep.c:2004
+#, c-format
+msgid ""
+"\n"
+"Miscellaneous:\n"
+"  -s, --no-messages         suppress error messages\n"
+"  -v, --invert-match        select non-matching lines\n"
+"  -V, --version             display version information and exit\n"
+"      --help                display this help text and exit\n"
+msgstr ""
+"\n"
+"เบ็ดเตล็ด:\n"
+"  -s, --no-messages         ระงับข้อความแสดงข้อผิดพลาด\n"
+"  -v, --invert-match        เลือกบรรทัดที่ไม่ตรงกัน\n"
+"  -V, --version             พิมพ์ข้อมูลรุ่นแล้วออก\n"
+"      --help                แสดงความช่วยเหลือนี้แล้วออก\n"
+
+#: src/grep.c:2011
+#, c-format
+msgid ""
+"\n"
+"Output control:\n"
+"  -m, --max-count=NUM       stop after NUM selected lines\n"
+"  -b, --byte-offset         print the byte offset with output lines\n"
+"  -n, --line-number         print line number with output lines\n"
+"      --line-buffered       flush output on every line\n"
+"  -H, --with-filename       print file name with output lines\n"
+"  -h, --no-filename         suppress the file name prefix on output\n"
+"      --label=LABEL         use LABEL as the standard input file name "
+"prefix\n"
+msgstr ""
+"\n"
+"ควบคุมการนำออก:\n"
+"  -m, --max-count=NUM       หยุดหลังจากมี NUM บรรทัดที่ถูกเลือก\n"
+"  -b, --byte-offset         พิมพ์การชดเชยไบต์กับบรรทัดนำออก\n"
+"  -n, --line-number         พิมพ์หมายเลขบรรทัดกับบรรทัดนำออก\n"
+"      --line-buffered       ล้างนำออกบนทุก ๆ บรรทัด\n"
+"  -H, --with-filename       พิมพ์ชื่อแฟ้มกับบรรทัดนำออก\n"
+"  -h, --no-filename         ระงับคำนำหน้าชื่อแฟ้มในการนำออก\n"
+"      --label=LABEL         ใช้ LABEL เป็นชื่อคำนำหน้าแฟ้มสำหรับนำเข้ามาตรฐาน\n"
+
+#: src/grep.c:2022
+#, c-format
+msgid ""
+"  -o, --only-matching       show only nonempty parts of lines that match\n"
+"  -q, --quiet, --silent     suppress all normal output\n"
+"      --binary-files=TYPE   assume that binary files are TYPE;\n"
+"                            TYPE is 'binary', 'text', or 'without-match'\n"
+"  -a, --text                equivalent to --binary-files=text\n"
+msgstr ""
+"  -o, --only-matching       แสดงเพียงแต่ส่วนของบรรทัดที่ไม่ว่างเปล่าของบรรทัดที่ตรงกัน\n"
+"  -q, --quiet, --silent     ระงับนำออกปกติทั้งหมด\n"
+"      --binary-files=TYPE   ทึกทักเอาว่าแฟ้มฐานสองเป็น TYPE;\n"
+"                            TYPE เป็น 'binary', 'text', หรือ 'without-match'\n"
+"  -a, --text                มีค่าเท่ากันกับ --binary-files=text\n"
+
+#: src/grep.c:2029
+#, c-format
+msgid ""
+"  -I                        equivalent to --binary-files=without-match\n"
+"  -d, --directories=ACTION  how to handle directories;\n"
+"                            ACTION is 'read', 'recurse', or 'skip'\n"
+"  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n"
+"                            ACTION is 'read' or 'skip'\n"
+"  -r, --recursive           like --directories=recurse\n"
+"  -R, --dereference-recursive  likewise, but follow all symlinks\n"
+msgstr ""
+"  -I                        มีค่าเท่ากันกับ --binary-files=without-match\n"
+"  -d, --directories=ACTION  จะทำการจัดการไดเรกทอรีอย่างไร;\n"
+"                            ACTION เป็น 'read', 'recurse', หรือ 'skip'\n"
+"  -D, --devices=ACTION      จะทำการจัดการอุปกรณ์อย่างไร, FIFOs and sockets;\n"
+"                            ACTION is 'read' or 'skip'\n"
+"  -r, --recursive           เหมือนกับ --directories=recurse\n"
+"  -R, --dereference-recursive  เช่นกัน, แต่ตาม symlink ทั้งหมด\n"
+
+#: src/grep.c:2038
+#, c-format
+msgid ""
+"      --include=GLOB        search only files that match GLOB (a file "
+"pattern)\n"
+"      --exclude=GLOB        skip files that match GLOB\n"
+"      --exclude-from=FILE   skip files that match any file pattern from "
+"FILE\n"
+"      --exclude-dir=GLOB    skip directories that match GLOB\n"
+msgstr ""
+"      --include=GLOB        ค้นหาเพียงแต่แฟ้มที่ตรงกันกับ GLOB(รูปแบบชื่อไฟล์)\n"
+"      --exclude=GLOB        ข้ามแฟ้มและไดเร็กทอรีที่ตรงกันกับ GLOB\n"
+"      --exclude-from=FILE   ข้ามแฟ้มที่ตรงกันกับแบบแผนแฟ้มจาก FILE\n"
+"      --exclude-dir=GLOB    ข้ามไดเร็กทอรีที่ตรงกันกับ GLOB\n"
+
+#: src/grep.c:2045
+#, c-format
+msgid ""
+"  -L, --files-without-match  print only names of FILEs with no selected "
+"lines\n"
+"  -l, --files-with-matches  print only names of FILEs with selected lines\n"
+"  -c, --count               print only a count of selected lines per FILE\n"
+"  -T, --initial-tab         make tabs line up (if needed)\n"
+"  -Z, --null                print 0 byte after FILE name\n"
+msgstr ""
+"  -L, --files-without-match  พิมพ์เพียงแค่ชื่อของ FILEs ที่ไม่ตรงกันกับบรรทัดที่ถูกเลือก\n"
+"  -l, --files-with-matches  พิมพ์เพียงแค่ชื่อของ FILEs กับบรรทัดที่ถูกเลือก\n"
+"  -c, --count               พิมพ์เพียงแต่จำนวนบรรทัดที่ตรงกันที่นับได้ในแต่ละ FILE\n"
+"  -T, --initial-tab         ทำการจัดเตรียมแท็บ (ถ้าจำเป็น)\n"
+"  -Z, --null                พิมพ์ 0 ไบต์หลังชื่อ FILE\n"
+
+#: src/grep.c:2051
+#, c-format
+msgid ""
+"\n"
+"Context control:\n"
+"  -B, --before-context=NUM  print NUM lines of leading context\n"
+"  -A, --after-context=NUM   print NUM lines of trailing context\n"
+"  -C, --context=NUM         print NUM lines of output context\n"
+msgstr ""
+"\n"
+"ควบคุมบริบท:\n"
+"  -B, --before-context=NUM  พิมพ์ NUM บรรทัดของบริบทส่วนนำ\n"
+"  -A, --after-context=NUM   พิมพ์ NUM บรรทัดของบริบทส่วนตาม\n"
+"  -C, --context=NUM         พิมพ์ NUM บรรทัดของบริบทส่งออก\n"
+
+#: src/grep.c:2058
+#, c-format
+msgid ""
+"  -NUM                      same as --context=NUM\n"
+"      --group-separator=SEP  print SEP on line between matches with context\n"
+"      --no-group-separator  do not print separator for matches with context\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       use markers to highlight the matching strings;\n"
+"                            WHEN is 'always', 'never', or 'auto'\n"
+"  -U, --binary              do not strip CR characters at EOL (MSDOS/"
+"Windows)\n"
+"\n"
+msgstr ""
+"  -NUM                      เหมือนกับ --context=NUM\n"
+"      --group-separator=SEP  พิมพ์ SEP ระหว่างบรรทัดที่รายการตรงกับบริบท\n"
+"      --no-group-separator  ไม่ต้องพิมพ์ตัวแบ่งสำหรับรายการที่ตรงกับบริบท\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       ใช้เครื่องหมายกำกับเพื่อเน้นสายอักขระที่ตรงกัน;\n"
+"                            เมื่อ WHEN ได้แก่ 'always', 'never', หรือ 'auto'\n"
+"  -U, --binary              ไม่ต้องถอดอักขระ CR ที่ EOL (MSDOS/Windows)\n"
+"\n"
+
+#: src/grep.c:2067
+#, fuzzy, c-format
+msgid ""
+"When FILE is '-', read standard input.  If no FILE is given, read standard\n"
+"input, but with -r, recursively search the working directory instead.  With\n"
+"fewer than two FILEs, assume -h.  Exit status is 0 if any line is selected,\n"
+"1 otherwise; if any error occurs and -q is not given, the exit status is 2.\n"
+msgstr ""
+"เมื่อ FILE เป็น '-', อ่านจากนำเข้ามาตรฐาน. กับไม่มี FILE อ่าน '.' ถ้าเรียกซ้ำ\n"
+",  '-' แทน. ถ้าให้ FILE มาน้อยกว่าสอง. ทึกทักเอาว่าเป็น -h\n"
+"สถานะการออกเป็น 0 เมื่อบรรทัดใด ๆ (หรือ ไฟล์ถ้า -L)ถูกเลือก, 1แทน ;\n"
+"ถ้าเกิดข้อผิดพลาดขึ้นและ -q ไม่ได้ถูกให้มา, สถานะการออกเป็น 2\n"
+
+#: src/grep.c:2110
+msgid "conflicting matchers specified"
+msgstr "การขัดแย้งของการตรงกันได้รับการระบุ"
+
+#: src/grep.c:2117
+msgid "Perl matching not supported in a --disable-perl-regexp build"
+msgstr "การจับคู่แบบ Perl  ไม่สนับสนุนเพราะ --disable-perl-regexp ตอน build"
+
+#: src/grep.c:2119
+#, c-format
+msgid "invalid matcher %s"
+msgstr "ตัวจับคู่ไม่ถูกต้อง %s"
+
+#: src/grep.c:2541
+msgid "unknown devices method"
+msgstr "ไม่รู้จักกระบวนการอุปกรณ์"
+
+#: src/grep.c:2690
+msgid "invalid max count"
+msgstr "ตัวนับสูงสุดไม่ถูกต้อง"
+
+#: src/grep.c:2747
+msgid "unknown binary-files type"
+msgstr "ชนิดแฟ้มไบนารีที่ไม่รู้จัก"
+
+#: src/grep.c:2832
+msgid ""
+"Written by Mike Haertel and others; see\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+msgstr ""
+"เขียนขึ้นโดย ไมค์ ฮาเออร์เทลและคณะ; ดูที่\n"
+"<https://git.sv.gnu.org/cgit/grep.git/tree/AUTHORS>"
+
+#: src/grep.c:2939
+#, c-format
+msgid "warning: GREP_COLOR='%s' is deprecated; use GREP_COLORS='mt=%s'"
+msgstr "คำเตือน: GREP_COLOR='%s' เลิกใช้แล้ว; ใช้ GREP_COLORS='mt=%s'"
+
+#: src/pcresearch.c:89
+#, c-format
+msgid ""
+"\n"
+"grep -P uses PCRE2 %s\n"
+msgstr ""
+"\n"
+"grep -P ใช้ PCRE2 %s\n"
+
+#: src/pcresearch.c:167
+msgid "-P supports only unibyte locales on this platform"
+msgstr "-P สนับสนุนเฉพาะโลแคล unibyte บนแพลตฟอร์มนี้"
+
+#: src/pcresearch.c:169
+msgid "-P supports only unibyte and UTF-8 locales"
+msgstr "-P สนับสนุนเฉพาะโลแคล unibyte และ UTF-8"
+
+#: src/pcresearch.c:192
+msgid "the -P option only supports a single pattern"
+msgstr "ตัวเลือก -P สนับสนุนรูปแบบเดียวเท่านั้น"
+
+#: src/pcresearch.c:288
+msgid "exceeded PCRE's line length limit"
+msgstr "ขอบเขตความยาวบรรทัด PCRE เกินจากข้อจำกัด"
+
+#: src/pcresearch.c:366
+#, c-format
+msgid "%s: memory exhausted"
+msgstr "%s: หน่วยความจำถูกใช้จนหมด"
+
+#: src/pcresearch.c:369
+#, c-format
+msgid "%s: exhausted PCRE JIT stack"
+msgstr "%s: แสต็ก PCRE JIT ถูกใช้จนหมดแล้ว"
+
+#: src/pcresearch.c:373
+#, c-format
+msgid "%s: exceeded PCRE's backtracking limit"
+msgstr "%s: ขอบเขตการ backtrack ของ PCRE เกินจากข้อจำกัด"
+
+#: src/pcresearch.c:378
+#, c-format
+msgid "%s: exceeded PCRE's nested backtracking limit"
+msgstr "%s: ขอบเขตการ backtrack ของ PCRE เกินจากข้อจำกัด"
+
+#: src/pcresearch.c:382
+#, c-format
+msgid "%s: PCRE detected recurse loop"
+msgstr "%s: PCRE พบการวนซ้ำไม่รู้จบ"
+
+#: src/pcresearch.c:387
+#, c-format
+msgid "%s: exceeded PCRE's heap limit"
+msgstr "%s: ขอบเขตความยาวบรรทัด PCRE เกินจากข้อจำกัด"
+
+#: src/pcresearch.c:396
+#, c-format
+msgid "%s: internal PCRE error: %d"
+msgstr "%s: ข้อผิดพลาด PCRE ภายใน: %d"
+
+#, c-format
+#~ msgid "warning: --unix-byte-offsets (-u) is obsolete"
+#~ msgstr "คำเตือน: --unix-byte-offsets (-u) ล้าสมัยแล้ว"
+
+#~ msgid "%s home page: <https://www.gnu.org/software/%s/>\n"
+#~ msgstr "โฮมเพจของ %s : <http://www.gnu.org/software/%s/>\n"
+
+#~ msgid "invalid %s%s argument '%s'"
+#~ msgstr "%s%s รับอาร์กิวเมนต์ที่ไม่ถูกต้อง '%s'"
+
+#~ msgid "invalid suffix in %s%s argument '%s'"
+#~ msgstr "คำเสริมท้ายไม่ถูกต้องใน %s%s อาร์กิวเมนต์ '%s'"
+
+#~ msgid "%s%s argument '%s' too large"
+#~ msgstr "%s%s อาร์กิวเมนต์ '%s' ใหญ่มากเกินไป"
+
+#~ msgid "Mike Haertel"
+#~ msgstr "ไมค์ ฮาเออร์เทล"
+
+#~ msgid "warning: GREP_OPTIONS is deprecated; please use an alias or script"
+#~ msgstr "คำเตือน: GREP_OPTIONS ไม่สนับสนุนให้ใช้ ; กรุณาใช้นามแฝงหรือสคริปต์"
+
+#~ msgid "failed to allocate memory for the PCRE JIT stack"
+#~ msgstr "ล้มเหลวที่จะจัดสรรหน่วยความจำสำหรับสแต็ก PCRE JIT"
+
+#~ msgid "internal error (should never happen)"
+#~ msgstr "ข้อผิดพลาดภายใน (ไม่ควรเกิดขึ้นมาก่อน)"
+
+#~ msgid "internal error"
+#~ msgstr "ข้อผิดพลาดภายใน"
+
+#~ msgid "%s: option '--%s' doesn't allow an argument\n"
+#~ msgstr "%s: ตัวเลือก '--%s' ไม่อนุญาตให้มีอาร์กิวเมนต์\n"
+
+#~ msgid "%s: unrecognized option '--%s'\n"
+#~ msgstr "%s: ตัวเลือกที่ไม่รู้จัก '--%s'\n"
+
+#~ msgid "%s: option '-W %s' is ambiguous\n"
+#~ msgstr "%s: ตัวเลือก '-W %s' คลุมเครือไม่ชัดเจน\n"
+
+#~ msgid "%s: option '-W %s' doesn't allow an argument\n"
+#~ msgstr "%s: ตัวเลือก '-W %s' ไม่อนุญาตให้มีอาร์กิวเมนต์\n"
+
+#~ msgid "%s: option '-W %s' requires an argument\n"
+#~ msgstr "%s: ตัวเลือก '-W %s' ต้องการอาร์กิวเมนต์\n"
+
+#~ msgid "PATTERN is, by default, a basic regular expression (BRE).\n"
+#~ msgstr "PATTERN โดยมาตรฐานเป็นนิพจน์ปกติพื้นฐาน (BRE).\n"
+
+#~ msgid ""
+#~ "'egrep' means 'grep -E'.  'fgrep' means 'grep -F'.\n"
+#~ "Direct invocation as either 'egrep' or 'fgrep' is deprecated.\n"
+#~ msgstr ""
+#~ "'egrep'  หมายถึง 'grep -E'. 'fgrep' หมายถึง 'grep -F'.\n"
+#~ "การร้องขอโดยตรงทั้ง 'egrep' หรือ 'fgrep' ไม่แนะนำให้ใช้.\n"
+
+#~ msgid "lseek failed"
+#~ msgstr "lseek ล้มเหลว"
+
+#~ msgid "GNU Grep home page: <%s>\n"
+#~ msgstr "โฮมเพจ GNU Grep : <%s>\n"
+
+#~ msgid "invalid UTF-8 byte sequence in input"
+#~ msgstr "ลำดับไบต์ UTF-8 ที่นำเข้าไม่ถูกต้อง"

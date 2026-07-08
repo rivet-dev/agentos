@@ -1,0 +1,20 @@
+@te no pau e
+@cc -c -q unzip
+@cc -c -q crc32
+@cc -c -q crypt
+@cc -c -q envarg
+@cc -c -q explod
+@cc -c -q extrac
+@cc -c -q fileio
+@cc -c -q global
+@cc -c -q inflat
+@cc -c -q list
+@cc -c -q match
+@cc -c -q proces
+@cc -c -q ttyio
+@cc -c -q unredu
+@cc -c -q unshri
+@cc -c -q zipinf
+@cc -c -q tops20
+@cc -o unzip unzip.rel crc32.rel crypt.rel envarg.rel explod.rel extrac.rel fileio.rel global.rel inflat.rel match.rel proces.rel ttyio.rel unredu.rel unshri.rel zipinf.rel tops20.rel -ltmx
+@kmic

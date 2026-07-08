@@ -1,0 +1,169 @@
+Thank you for trying this port of UNZIP for VM/CMS and MVS!
+
+                        Using under MVS:
+                    -------------------------
+
+1. To use the Info-ZIP's UNZIP under MVS you need:
+
+   - C/370 ver 2.1 compiler or another compatible compiler supporting
+     long names for function/variable names.
+
+2. To compile the program under MVS do :
+
+   - unzip all the files from unz54vm.zip file. They are stored as
+     ASCII format so you have to unzip them first on PC or other
+     system that already have UNZIP, and then upload them to the
+     mainframe with ASCII to EBCDIC conversion.
+
+   - Copy all the .C files in the PDS called USERID.UNZIP.C
+
+   - Copy all the .H files in the PDS called USERID.UNZIP.H
+
+   - adjust the job UNZMVSC.JOB to work on your site. Change USERID
+     to your userid.  You might need to change the CEE dataset names
+     to match your OS/390 system.
+
+   - Preallocate PDS datasets named: USERID.UNZIP.OBJ and
+     USERID.UNZIP.LOAD
+
+   - execute the job UNZMVSC to compile and link all the sources.
+
+   - if everything is ok you will get an UNZIP MODULE
+
+3. Using UNZIP
+
+   - Just read the UNZIP.TXT
+
+   - A few exceptions concerning MVS
+
+     3.0. There are different ways to invoke UNZIP.
+
+        - allocating UNZIP.LOAD dataset to your ISPLLIB if you
+          want to invoke UNZIP under ISPF.
+          Then just type UNZIP ...parms... to get it work
+
+        - You can also call it directly with :
+             TSO CALL 'userid.UNZIP.LOAD(UNZIP)' '...parms...'
+             (notice to quotes!)
+
+        - You can even call it from a batch job like:
+
+          //MYZIP    JOB  (account)
+          //STEP1    EXEC PGM=UNZIP,PARM='-l mytestz.zip *.c'
+          //STEPLIB  DD DSN=userid.UNZIP.LOAD,DISP=SHR
+          //SYSPRINT DD SYSOUT=*
+
+          This will list all the .c files from the zip file mytestz.zip
+
+     3.1. If the ZIP file has been zipped on an ASCII based system
+          it will be automatically translated to EBCDIC
+          ( I hope I got all those translation tables OK :-).
+          You can force ASCII to EBCDIC conversion with the -a flag.
+
+     3.2. The date/time of the output files is set to the
+          current system date/time - not according the date/time in
+          the zip file.
+
+     3.3. You can even unzip using TSO/E PIPELINES
+          so unzip can be used as pipeline filter:
+
+          'pipe cms unzip -p test.zip george.test | count lines | cons'
+          ( we do also a lot of pipethinking here ;-)
+
+     3.4. If you got also the ZIP program (see ZIP21VM.ZIP) you can
+          do zipping and unzipping without translating to ASCII
+          the ZIP also preserves the file informations (LRECL,BLKSIZE..)
+          So when you UNZIP a file zipped with ZIP under MVS it
+          restores the file info.
+
+          There currently some problems with file with RECFM=V*
+          I don't save the length of each record yet :-)
+
+     3.5. No wildcards are supported in the input zip name you have
+          to give the real name (.zip is not necessary)
+
+          So you CAN'T use things like: unzip -t *.zip
+
+     3.6. But you CAN use wildcards as filename selection like:
+          unzip -t myzip *.c  - OK or even
+          unzip -t myzip *.c -x z*.c  - to exclude all files matching
+                                        z*.c
+
+     3.7. You can unzip to a PDS using the -d parameter,
+          for example:
+
+           unzip -dmyzip myzip *.c
+
+          This will unzip all .c files that are in the zip file in a
+          PDS directory called MYZIP.C
+
+          BE AWARE that the extension of every files is being placed as
+          last identifier on the PDS name, so if you have a file in the
+          zipfile called 'testp.doc' and you use '-d mypds' the PDS
+          name will become 'mypds.doc(testp)'
+
+          Depending on which options IBM chose for C this week, unzip
+          may or may not prefix output files with your userid and/or
+          TSO prefix.  To prevent this, quote the filename to -d, for
+          example
+
+                //UNZIP   EXEC PGM=UNZIP,
+                // PARM='/-a -o ''userid.zip'' -d ''hlq.test'' *'
+                //STEPLIB  DD  DSN=USERID.UNZIP.LOAD,DISP=SHR
+                //SYSPRINT DD  SYSOUT=*
+                //SYSOUT   DD  SYSOUT=*
+
+          The above JCL converts from ASCII to EBCDIC (-a), always
+          overwrites existing members (-o), extracts from 'userid.zip',
+          writes to files starting with 'hlq.test', all members (*).
+          Note the double quotes because PARM= requires single quotes.
+
+     3.8. The rules for output DCBs are a little messy.  If the output
+          file already exists (remember the -d option) then unzip uses
+          the existing DCB and space values.
+
+          If the output file does not exist and the input zip came from
+          MVS then unzip makes its best attempt at preserving the
+          original DCB.  However there is not enough information stored
+          in the zip file to do this correctly for all file types, some
+          file types may be corrupted.
+
+          If the output file does not exist and the input zip does not
+          contain MVS DCB information then unzip uses RECFM=U,
+          LRECL=32760 for binary data, RECFM=V, LRECL=133 for text.
+          Text includes ASCII to EBCDIC conversion.  As soon as the
+          output file is created, unzip uses the same output DCB for
+          all following members, even if the input is a mixture of text
+          and binary.
+
+          In all cases, unzip has no built in parameters for space.
+          For a preallocated file this is not a problem.  If unzip
+          creates an output file you get a default space allocation
+          which is site dependent.
+
+          It is far better to preallocate the output files with the
+          correct space and DCB values then use the -d option to point
+          to those files.
+
+     3.9. All '+','_' or '-' signs are skipped from the filenames
+
+
+Please repport all bugs and problems to :
+     Zip-Bugs@lists.wku.edu
+
+That's all for now.
+
+Have fun!
+
+
+George Petrov
+e-mail: c888090@nlevdpsb.snads.philips.nl
+tel: +31-40-781155
+
+Philips C&P
+Eindhoven
+The Netherlands
+
+Updated by:
+
+Keith Owens <kaos@ocs.com.au>

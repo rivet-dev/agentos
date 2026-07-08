@@ -1,0 +1,28 @@
+#!/bin/sh
+# Test Perl regex with NUL-separated input
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_pcre_
+require_en_utf8_locale_
+
+REGEX=a
+
+printf '%s\n\0' abc def ghi aaa gah > in || framework_failure_
+
+grep -z "$REGEX" in > exp 2>err || fail_ 'Cannot do BRE (grep -z) match.'
+compare /dev/null err || fail_ 'stderr not empty on grep -z.'
+
+# Sanity check the output
+test "$(grep -cz $REGEX in 2>err)" = 3 \
+    || fail_ 'Incorrect BRE (grep -cz) match.'
+compare /dev/null err || fail_ 'stderr not empty on grep -cz.'
+
+fail=0
+grep -Pz "$REGEX" in > out 2>err || fail=1
+compare exp out || fail=1
+compare /dev/null err || fail=1
+
+printf '\303\200\0' >in0 # "À" followed by a NUL.
+LC_ALL=en_US.UTF-8 grep -z . in0 >out || fail=1
+cmp in0 out || fail=1
+
+Exit $fail

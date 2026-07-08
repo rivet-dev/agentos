@@ -1,0 +1,103 @@
+#!/bin/sh
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+# GREP Regression test suite for Fedora bugs and fixes
+# (c) 2008 Lubomir Rintel
+# Licensed under the same terms as GNU Grep itself
+
+if [ -t 1 ]
+then
+        # Colored output on terminal
+        G='\033[32m'
+        R='\033[31m'
+        D='\033[0m'
+fi
+
+ok ()	{ printf "${G}OK${D}"; }
+fail () { printf "${R}FAIL${D} (See ${U})"; failures=1; }
+
+U=https://bugzilla.redhat.com/show_bug.cgi?id=116909
+printf "grep -F false negatives: "
+cat > 116909.list <<EOF
+a
+b
+c
+EOF
+cat > 116909.in <<EOF
+a
+barn
+c
+EOF
+cat > 116909.out <<EOF
+a
+c
+EOF
+grep -F -w -f 116909.list 116909.in > actual || fail
+compare 116909.out actual && ok || fail
+
+U=https://bugzilla.redhat.com/show_bug.cgi?id=123362
+printf 'bad handling of brackets in UTF-8: '
+echo Y > 123362.out
+echo Y | LC_ALL=de_DE.UTF-8 grep -i '[y,Y]' > actual || fail
+compare 123362.out actual && ok || fail
+
+U=https://bugzilla.redhat.com/show_bug.cgi?id=112869
+printf 'crash with \\W: '
+echo '<form>' > 112869.out
+LANG=it_IT grep -iE '\Wform\W' 112869.out > actual || fail
+compare 112869.out actual && ok || fail
+
+if ( timeout --version ) > /dev/null 2>&1; then
+
+  U=https://bugzilla.redhat.com/show_bug.cgi?id=189580
+  printf 'grep -D skip opening a special file: '
+  returns_ 124 timeout 10 grep -D skip foo /dev/zero && fail || ok
+
+  U=https://bugzilla.redhat.com/show_bug.cgi?id=169524
+  printf 'grep -Fw looping infinitely: '
+  echo foobar | returns_ 124 timeout 10 grep -Fw "" && fail || ok
+
+  U=https://bugzilla.redhat.com/show_bug.cgi?id=140781
+  printf 'grep -F hangs on binary files: '
+  returns_ 124 timeout 10 grep -F grep "$abs_top_builddir/src/grep" \
+    > /dev/null && fail || ok
+
+fi
+
+U=https://bugzilla.redhat.com/show_bug.cgi?id=161700
+printf 'grep -Fw fails to match anything: '
+echo test > 161700.out
+grep -Fw test 161700.out > actual || fail
+compare 161700.out actual && ok || fail
+
+U=https://bugzilla.redhat.com/show_bug.cgi?id=179698
+printf 'grep -w broken in non-utf8 multibyte locales: '
+echo za a > 179698.out
+LANG=ja_JP.eucjp grep -w a 179698.out > actual || fail
+compare 179698.out actual && ok || fail
+
+# Skip the rest of tests in compiled without PCRE
+echo a |grep -P a >/dev/null || Exit $failures
+
+U=https://bugzilla.redhat.com/show_bug.cgi?id=171379
+printf 'grep -P crashes on whitespace lines: '
+echo '   ' > 171379.out
+grep -P '^\s+$' 171379.out > actual || fail
+compare 171379.out actual && ok || fail
+
+U=https://bugzilla.redhat.com/show_bug.cgi?id=204255
+printf '%s' "-e '' does not work if not a first parameter: "
+echo test | grep -e 'HighlightThis' -e '' > 204255.first
+echo test | grep -e '' -e 'HighlightThis' > 204255.second
+diff 204255.first 204255.second && ok || fail
+
+U=https://bugzilla.redhat.com/show_bug.cgi?id=324781
+printf 'bad handling of line breaks with grep -P #1: '
+printf 'a\na' | grep -P '[^a]' >/dev/null && fail || ok
+
+# This is mostly a check that fix for above doesn't break -P further
+printf '%s' "bad handling of line breaks with grep -P #2: "
+printf 'a\na' | grep -P '[^b].[^b]' >/dev/null && fail || ok
+
+Exit $failures

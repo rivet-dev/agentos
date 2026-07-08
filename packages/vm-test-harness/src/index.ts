@@ -11,7 +11,7 @@ export const COMMANDS_DIR = resolve(
 /** Directory containing C-compiled WASM binaries. */
 export const C_BUILD_DIR = resolve(
 	process.env.AGENTOS_C_WASM_COMMANDS_DIR ??
-		resolve(import.meta.dirname, "../../../registry/native/c/build"),
+		resolve(import.meta.dirname, "../../../toolchain/c/build"),
 );
 
 /** Whether the main WASM command binaries are available (includes 'sh'). */
@@ -34,7 +34,7 @@ export function hasCWasmBinaries(...names: string[]): boolean {
  */
 export function skipReason(): string | false {
 	if (!hasWasmBinaries) {
-		return `WASM binaries not found at ${COMMANDS_DIR} - build registry/native first`;
+		return `WASM binaries not found at ${COMMANDS_DIR} - build toolchain first`;
 	}
 	return false;
 }

@@ -1,0 +1,37 @@
+{
+	"name": "@agentos-software/build-essential",
+	"version": "0.3.0-rc.2",
+	"type": "module",
+	"license": "Apache-2.0",
+	"description": "Build-essential WASM command set for secure-exec VMs (common + git + curl)",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist",
+		"!dist/package",
+		"!dist/package.tar"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc",
+		"check-types": "tsc --noEmit",
+		"test": "vitest run test/ --passWithNoTests"
+	},
+	"dependencies": {
+		"@agentos-software/common": "workspace:*",
+		"@agentos-software/curl": "workspace:*",
+		"@agentos-software/git": "workspace:*"
+	},
+	"devDependencies": {
+		"@agentos-software/manifest": "workspace:*",
+		"@types/node": "^22.10.2",
+		"typescript": "^5.9.2",
+		"@agentos/test-harness": "workspace:*",
+		"vitest": "^2.1.9"
+	}
+}

@@ -1,0 +1,60 @@
+#!/bin/sh
+# Ensure that output errors are reported with errno information.
+
+# Copyright 2016-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+test -e /dev/full || skip_ your system lacks /dev/full
+
+export LC_ALL=C
+
+# generate large input, filling the libc stdio buffers
+# and triggering a write(2) even without line buffering.
+yes 12345 | head -n 50000 > in || framework_failure_
+
+fail=0
+
+# disk-full error, line buffered
+# (note: GNU grep returns 2 on error)
+returns_ 2 grep --line-buffered -v '^$' <in >/dev/full 2>err1 \
+    || framework_failure_
+
+# disk-full error, unbuffered
+# (note: GNU grep returns 2 on error)
+returns_ 2 grep -v '^$' <in >/dev/full 2>err2 \
+    || framework_failure_
+
+# disk-full error with -q and --help
+returns_ 2 grep -q --help >/dev/full 2>err3 || fail=1
+
+# ensure each error message file contains a 'write error' with additional text
+for f in err1 err2 err3 ;
+do
+    grep -Eiq '^[^:]*: write error: [a-z]+' $f \
+        || {
+             warn_ "incorrect/missing error message in file $f"
+             compare /dev/null $f   # print the content in the logs
+             fail=1
+           }
+done
+
+# These messages should be identical
+for f in err2 err3; do
+  compare err1 $f \
+    || { warn_ "err1,$f contain different error messages" ; fail=1 ; }
+done
+
+Exit $fail

@@ -1,0 +1,35 @@
+format novell NLM 'unzip utility'
+name unzip
+option caseexact
+option copyright 'Copyright 1990-2005 Info-ZIP (www.info-zip.org).'
+option map = unzip.map
+option nodefaultlibs
+option quiet
+option screenname 'none'
+option stack = 32k
+option symfile = unzip.sym
+option threadname 'unzip'
+option version = 5.5.1
+module clib
+import @c:/novell/ndk/nwsdk/imports/clib.imp
+import @c:/novell/ndk/nwsdk/imports/nlmlib.imp
+import @c:/novell/ndk/nwsdk/imports/threads.imp
+import @c:/novell/ndk/nwsdk/imports/nit.imp
+file crc32.obj
+file crypt.obj
+file envargs.obj
+file explode.obj
+file extract.obj
+file fileio.obj
+file globals.obj
+file inflate.obj
+file list.obj
+file match.obj
+file netware.obj
+file process.obj
+file ttyio.obj
+file unreduce.obj
+file unshrink.obj
+file unzip.obj
+file zipinfo.obj
+file c:/novell/ndk/nwsdk/imports/nwpre.obj

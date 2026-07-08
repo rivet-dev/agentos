@@ -1,0 +1,38 @@
+#! /bin/sh
+# Test for false matches in grep 2.19..2.26 in multibyte, non-UTF8 locales
+#
+# Copyright (C) 2016-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+# Add "." to PATH for the use of get-mb-cur-max.
+path_prepend_ .
+
+fail=0
+
+loc=zh_CN.gb18030
+test "$(get-mb-cur-max $loc)" = 4 || skip_ "no support for the $loc locale"
+
+# This must not match: the input is a single character, \uC9 followed
+# by a newline.  But it just so happens that that character is made up
+# of four bytes, the last of which is the digit, 7, and grep's DFA
+# matcher would mistakenly report that ".*7" matches that input line.
+printf '\2010\2077\n' > in || framework_failure_
+returns_ 1 env LC_ALL=$loc grep -E '.*7' in || fail=1
+
+returns_ 1 env LC_ALL=$loc grep -E '.{0,1}7' in || fail=1
+
+returns_ 1 env LC_ALL=$loc grep -E '.?7' in || fail=1
+
+# Similar for the \ue9 code point, which ends in an "m" byte.
+loc=zh_HK.big5hkscs
+test "$(get-mb-cur-max $loc)" = 2 || skip_ "no support for the $loc locale"
+
+printf '\210m\n' > in || framework_failure_
+returns_ 1 env LC_ALL=$loc grep '.*m' in || fail=1
+
+Exit $fail

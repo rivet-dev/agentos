@@ -1,0 +1,62 @@
+Contents of the "macos" sub-archive for UnZip 5.42 and later:
+
+  Contents          this file
+  README.TXT        Dirk Haase's infos on updated Macintosh ports of Zip/UnZip
+  HISTORY.TXT       Dirk Haase's MacOS specific ChangeLog
+
+  UnZp.h            config header used to build standalone app with GUI
+  UnZpLib.h         config header used to build a static library
+  UnZpSFX.h         config header used to build the SFX stub
+  UnZpSx.h          config header for building a standalone app. with MW Sioux
+  UnZpPrj.xml       Metrowerks CodeWarrior pro5 project file (xml export file)
+
+  source/        subdirectory containing all sources:
+                  a) UnZip specific code
+    macbin3.c       macbinary III code, used for extraction of ZipIt archives
+    macbin3.h       macbinary III header, macbinary docu + public prototyping
+    macos.c         Mac-specific filesystem code
+    maccfg.h        Mac-specific configuration and global declarations
+    macdir.c        Macintosh Posix-style directory emulation ("dirent")
+    macdir.h        header file for directory emulation
+    macscreen.c     screen functions to be used in standalone UnZip application
+    macstat.c       Macintosh stat() emulation
+    macstat.h       header file for stat() emulation
+    macunzip.c      Macintosh standalone version main function
+    sxunzip.c       main function for use with static library (SIOUX)
+    unzip_rc.hqx    UnZip resource file for standalone application (BinHex)
+
+                  b) general utilities shared between Zip and UnZip
+    charmap.h       character mapping tables ISO 8859-1 <--> MacRoman
+    getenv.c        simulation of unix compatible getenv() on MacOS
+    helpers.c       some helper functions
+    helpers.h
+    macstuff.h      wrapper to pull in some "MoreFiles" filemanager stuff
+    mactime.c       replacement for broken Metrowerks RTL time functions
+    mactime.h
+    pathname.c      functions for handling MacOS HFS path- /filenames
+    pathname.h
+
+The new UnZpPrj.hqx project file should be "un-BinHex'ed" into UnZpPrj,
+which builds the following targets:
+        Unzip (68k)       -> standalone unzip for 68k
+        Unzip (PPC)       -> standalone unzip for PPC
+        Unzip Lib (68k)   -> static library 68k
+        Unzip Lib (PPC)   -> static library PPC
+        Unzip Sioux (68k) -> MW Sioux standoalone App, good for debugging
+        Unzip Sioux (PPC) -> MW Sioux standoalone App, good for debugging
+
+
+Before you start a build on your Macintosh:
+
+Extract "*.hqx" and "source:*.hqx" first!
+And PLEASE, read the MacOS specific documentation in README.TXT!
+
+
+The resource files and the compiler project files are in BinHex form because
+they contain Macintosh resource forks.  The resource info cannot be
+maintained when handling (e.g. repacking) the master source collection on
+non-Macintosh systems.  The BinHex form is the traditional way for
+transferring such files via non-Macintosh systems.
+It's also the safest since it uses only printable characters.  The ".hqx"
+files must be converted with StuffitExpander or BinHex 4.0 (or equivalent)
+on a Macintosh system before using them.

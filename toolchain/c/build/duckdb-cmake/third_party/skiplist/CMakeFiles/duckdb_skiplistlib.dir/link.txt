@@ -1,0 +1,2 @@
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ar qc libduckdb_skiplistlib.a CMakeFiles/duckdb_skiplistlib.dir/SkipList.cpp.obj
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ranlib libduckdb_skiplistlib.a

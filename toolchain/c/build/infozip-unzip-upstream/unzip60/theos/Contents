@@ -1,0 +1,20 @@
+Contents of the "theos" subdirectory for UnZip 5.41 and later:
+
+  Contents      this file
+  makefile      makefile for UnZip for THEOS architectures
+  theos.c       Theos-specific support routines
+  thscfg.h
+  charconv.h
+  oldstat.h
+  stat.h
+  _fprintf.c
+  _isatty.c
+  _opendir.c
+  _setargv.c
+  _sprintf.c
+  _stat.c
+
+Type "make" or "make help" to get general compile instructions (beyond
+those in the INSTALL file), or "make list" for a list of makefile targets.
+Note that there are some MS-DOS and cross-compilation targets thrown in
+just to make things more exciting.

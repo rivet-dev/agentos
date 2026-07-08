@@ -1,0 +1,216 @@
+_______________________________________________________________________________
+
+   This is the Windows CE Info-ZIP port README, last updated 17 September 2003.
+_______________________________________________________________________________
+
+   Copyright and Disclaimer
+_______________________________________________________________________________
+
+Copyright
+
+     All the source files for Pocket UnZip are copyrighted by Info-ZIP.
+     For details on terms and conditions look into the LICENSE file
+     that should be part of the source distribution.
+     The original author Steve P. Miller has gracefully allowed to
+     put his own source contributions for "Pocket UnZip" under the
+     Info-ZIP license.
+
+Disclaimer
+
+     All project files are provided "as is" with no guarantee of
+     their correctness.  The authors are not liable for any outcome
+     that is the result of using this source.  The source for Pocket
+     UnZip has been placed in the public domain to help provide an
+     understanding of its implementation.  You are hereby granted
+     full permission to use this source in any way you wish, except
+     to alter Pocket UnZip itself.  For comments, suggestions, and
+     bug reports, please write to stevemil@pobox.com or to the
+     generic Info-ZIP e-mail address Zip-Bugs@lists.wku.edu.
+
+_______________________________________________________________________________
+
+   About the Windows CE Port (known as "Pocket UnZip")
+_______________________________________________________________________________
+
+The Windows CE port, known as Pocket UnZip, is designed to run on Microsoft's
+Windows CE operating system.  The port is completely contained in the files
+listed above.  There were very few minor modifications made to the Info-ZIP
+code in order for this port to work.  This was possible because the Info-ZIP
+code is fairly generic and also because several hooks have already been placed
+in the code from past Windows ports.  The Windows CE port leverages off of
+these efforts for two reasons.  Mainly, I wanted to avoid modifying the
+Info-ZIP core code since people don't like it when your changes break other
+ports.  Second, this makes the Windows CE port easy to upgrade when fixes and
+features are released by the Info-ZIP group.
+
+The port is made up of the project file (punzip.dsp), one global header
+(punzip.h), three main source modules (winmain.cpp/h, intrface.cpp/h,
+and wince.cpp/h), the resource script files (punzip.rc, punzip.rcv, and
+resource.h), several resources (punzip.ic2, zipfile.ic2, imglist.2bp,
+ilmask.bmp, toolbar.2bp, punzip.ico, zipfile.ico, imglist.bmp, and
+toolbar.bmp), and the help file (punzip.htp).
+
+The application's entry point is WinMain(), which is located in winmain.cpp
+(what a surprise).  winmain.cpp basically contains all the Windows code and
+the user interface.  It knows nothing about the Info-ZIP code or things like
+the Globals struct.  That stuff is the job of the intrface module.
+intrface.cpp implements an easy (or at least easier) to understand interface
+to the Info-ZIP routines.  It also handles all the callbacks from Info-ZIP
+and relays the appropriate information back to the code in winmain.cpp.
+The final module is wince.cpp.  This module implements all the Win32 APIs
+and C runtime functions that are called by the rest of the code, but are
+not natively implemented on Windows CE.  Most all of this module is excluded
+for NT native builds.
+
+Two preprocessor defines are used in conjunction with several defines from
+the Info-ZIP code and from other ports.  The two that are specific to the
+Windows CE port are:
+
+     POCKET_UNZIP   Always set for the Windows CE port (CE and NT).
+     _WIN32_WCE     Set for Windows CE native; not set for Windows NT native.
+
+These three defines are the minimum defines that must be addressed by the
+project file in order to build this port.  This port's main header, punzip.h,
+gets included by all the Info-ZIP source files when POCKET_UNZIP is defined.
+punzip.h in turn ensures that all the other relevant Info-ZIP defines are set
+to correctly build the port.  If you wish to alter the Info-ZIP defines used
+to build this port, you can do so by altering punzip.h.
+
+There are quite a few _WIN32_WCE checks throughout the source files for this
+port.  These checks allow the application to build natively for Windows NT for
+debugging purposes, and just because it can with little effort due to the
+similarities between the Windows CE API and the Windows NT API. Any non-Windows
+CE code is assumed to be for Windows NT only.  This project currently will not
+work on Windows 95 because Windows CE is mostly UNICODE, and this port assumes
+that all Win32 calls to the operating system take UNICODE parameters.  I could
+scatter a few dozen "#ifdef UNICODE" checks around and make it work on Windows
+95, but I see no reason to complicate this port's code for that reason since
+there is already a Windows 95 port of the Info-ZIP code.
+
+_______________________________________________________________________________
+
+   Building the Windows CE Port (known as "Pocket UnZip")
+_______________________________________________________________________________
+
+At the time this README was written, Microsoft just released Visual C++ for
+Windows CE version 1.0.  This development kit uses the the standard Microsoft
+Visual C++ version 5.0 or 6.0 development environment and project files
+(DSP files). To build Windows CE binaries of Pocket UnZip, you will need
+version 1.0 or later of Visual C++ for Windows CE.
+
+This port's project file, punzip.dsp, contains the information for building all
+the various binaries.  These include Windows NT native, Windows CE native for
+Hitachi SH-3 processors, and Windows CE native for MIPS processors.  All
+projects have Debug and Retail flavors as well.  The following table lists the
+Windows CE devices and which binary they run:
+
+     Manufacturer             CPU             Binary
+     ---------------------    ------------    ------
+     Philips Electronics      MIPS R3910      MIPS
+     NEC Corp.                NEC VR4101      MIPS
+     Casio Computer Co.       Hitachi SH-3    SH-3
+     Compaq Computer Corp.    Hitachi SH-3    SH-3
+     Hewlett-Packard Co.      Hitachi SH-3    SH-3
+     Hitachi Ltd.             Hitachi SH-3    SH-3
+     LG Electronics Inc.      Hitachi SH-3    SH-3
+
+The revision of this port made for UnZip 5.51 does now also provide a project
+file for use with Microsoft's free "Visual C++ embedded 3.0" development system
+for Windows CE.
+
+Pocket UnZip should build out of the box.  If you have just unzipped the
+Info-ZIP's UnZip sources, you should have a root directory with the core
+Info-ZIP files in it and several subdirectories under it for the various
+ports, one of which is the WinCE directory.  The project files punzip.dsp
+are located in the subdirectory vc5 resp. vc6 below the wince directory.
+Open the punzip.dsp file from the subdirectory matching your Visual C++
+base version.  The project file uses all the files in the WinCE
+subdirectory as well as the following files in the Info-ZIP root:
+
+     api.c        crypt.h      globals.c    process.c    unzip.h
+     consts.h     ebcdic.h     globals.h    ttyio.c      unzpriv.h
+     crc32.c      explode.c    inflate.c    ttyio.h      unzvers.h
+     crc32.h      extract.c    inflate.h    unreduce.c   zip.h
+     crypt.c      fileio.c     list.c       unshrink.c
+
+_______________________________________________________________________________
+
+   Contacting the Authors
+_______________________________________________________________________________
+
+The Info-ZIP group is made up of dozens of people, past and present, who
+have devoted countless hours to providing the public with free and portable
+compression software.  The author of the Windows CE port, Pocket UnZip, is
+Steve P. Miller.
+
+If you have questions, comments, suggestions, or bug reports concerning Pocket
+UnZip itself, you can write Steve Miller at:
+
+     stevemil@pobox.com
+
+If you find a bug that appears to be more Info-ZIP related (i.e. the actual
+decompression part of Pocket UnZip), you can send mail to:
+
+     Zip-Bugs@lists.wku.edu
+
+For all other general discussion type questions or comments, you can send mail
+to (as well as join) the following mailing list:
+
+     Info-Zip@lists.wku.edu
+
+See the main UnZip README file for info on how to join the latter list.
+
+_______________________________________________________________________________
+
+Beginning with UnZip 5.51, the source distribution contains a second port for
+WinCE, providing a "command line UnZip tool" for batch processing on Windows CE
+systems.
+This port was contributed in September 2002 by:
+    Simon Roberts
+    IBM Global Services, EMEA
+    Phone: (INT 44- 2392 )(UK  02392 ) 563937: Tie-line(UK): 25-3937
+    Notes: Simon Roberts/UK/IBM@IBMGB
+    Internet: Simon_Roberts@uk.ibm.com
+
+The tight integration of this contribution into the main UnZip distribution
+code required some reorganization and was carried out by the UnZip maintenance
+coordinator Christian Spieler.
+
+The build of the Win CE command line program requires compiling
+and linking together the following source modules:
+
+    wince/wcemain.c             main entry point
+    unzip.c                     unzip command line interface
+    crc32.c                     CRC-32 calculation
+    crypt.c                     decryption support
+    extract.c                   general archive extraction handling
+    fileio.c                    internal I/O helper routines
+    globals.c                   global communication resources setup
+    list.c                      archive listing
+    match.c                     wildcard pattern matching
+    process.c                   general archives processing code
+    ttyio.c                     interactive console I/O
+    explode.c                   decompression for "Imploded" data (LZ77)
+    inflate.c                   decompression for "Deflate" methods
+    unreduce.c                  decompression for "Reduced" data
+    unshrink.c                  decompression for "Shrunk" data (LZW)
+    wince/intrface.cpp          WinCE specific UnZip code
+    wince/wince.cpp             WinCE specific C RTL lib replacements
+
+These source modules depend on the following header files:
+
+    zip.h                       wrapper for unzip.h used by some modules
+    unzip.h                     main UnZip project header
+    unzpriv.h                   extended defines for project internals
+    globals.h                   global resource structures
+    wince/wcecfg.h              Windows CE specific configuration
+    wince/wince.h               WinCE C(++) library roundups
+
+    consts.h                    global constant data
+    crc32.h                     CRC-32 calculation interface
+    crypt.h                     decryption interface
+    ebcdic.h                    ASCII <--> EBCDIC translation
+    ttyio.h                     console I/O interface
+    unzvers.h                   version/release information
+    wince/intrface.h            public entities in wince/intrface.cpp
+

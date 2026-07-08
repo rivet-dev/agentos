@@ -1,0 +1,17 @@
+export WATCOM='\\prv-dev2\dev\tool\wcc\1100'
+CC='\\prv-dev2\dev\tool\wcc\1100\binnt\wcc386'
+LINK='\\prv-dev2\dev\tool\wcc\1100\binnt\wlink'
+
+CFLAGS="-olax -5s -zq -zp1 -ei -ez -ri -w4"
+DEFS="-DNLM -DN_PLAT_NLM -U_WIN32"
+INCS='-I. -Inetware -Ic:\novell\ndk\nwsdk\include\nlm -Ic:\novell\ndk\nwsdk\include\nlm\sys -Ic:\novell\ndk\nwsdk\include -Ic:\novell\ndk\nwsdk\include\nlm\nit'
+
+cd ..
+for i in crc32.c crypt.c envargs.c explode.c extract.c fileio.c \
+		globals.c inflate.c list.c match.c netware\\netware.c process.c \
+		ttyio.c unreduce.c unshrink.c unzip.c zipinfo.c
+do
+	$CC $CFLAGS $DEFS $INCS $i
+done
+
+$LINK @netware/unzip.link

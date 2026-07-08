@@ -1,0 +1,29 @@
+#!/bin/sh
+# Check that a write failure with errno == EPIPE
+# doesn't cause grep to issue multiple "write error" diagnostics.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+if
+   # Use awk to output a bounded amount of data to the grep in question,
+   # so that the test doesn't loop forever if grep is buggy.
+   # Use an explicit /dev/null for the benefit of older (pre-POSIX) awks.
+   #
+   # Carefully close fd 3 when not needed, as a sanity check.
+   #
+   # Do not use "trap - PIPE" or "trap 'something' PIPE" here, since we may
+   # be running in an environment where SIGPIPE is ignored, and in such an
+   # environment POSIX says that "trap '' PIPE" is all we can do portably.
+   (
+     ${AWK-awk} 'BEGIN { for (i=0; i<1000000; i++) print i; }' /dev/null 3>&- |
+     (trap '' PIPE; exec grep . 2>&3 3>&-) |
+     :
+   ) 3>&1 | (
+     read line1 && echo >&2 "$line1" &&
+     read line2 && echo >&2 "$line2"
+   )
+then fail=1
+else fail=0
+fi
+
+Exit $fail

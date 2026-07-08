@@ -1,0 +1,229 @@
+# Makefile for UnZip, fUnZip and UnZipSFX
+# for emx 0.9d + rsxnt 1.42 / gcc under WIN32. Derived from makefile.os2
+# By E-Yen Tan and Christian Spieler. Last updated 25 December 2006.
+#
+# This makefile should work fine with GNU make and hopefully some others.
+# Tested with Spieler's special GNU make 3.74 gnuish 16-bit version.
+#
+# If make does not support long command-line passing to gcc, the link step
+# will fail. In this case, you have to edit the link commands to use the
+# commented-out alternative that creates a link response file "by hand".
+
+#ifdef NOASM
+#AS_FLAGS =
+#else
+AS_FLAGS = -DASM_CRC
+#endif
+
+CP=copy
+RM=del
+
+CC=gcc -Zwin32 -I.
+CC_OSIZ=-O1
+CC_OTIM=-O2 -mpentium
+CC_OPTS=-Wall -DWIN32 $(AS_FLAGS) $(LOCAL_UNZIP)
+CFLAGS=$(CC_OTIM) $(CC_OPTS)
+CFLAGSX=$(CC_OSIZ) $(CC_OPTS) -DSFX
+CFLAGSF=$(CC_OTIM) $(CC_OPTS) -DFUNZIP
+DLLFLAG=
+AS=gcc
+ASFLAGS=-Di386
+LDFLAGS=-Zsys -o ./
+LDFLAGS2=-ladvapi32 -Zsmall-conv -s
+OUT=-o
+OBJ=.o
+
+#ifdef NOASM
+#CRCA_O=
+#else
+CRCA_O=crc_gcc
+#endif
+OBJUS=win32$(OBJ) nt$(OBJ)
+OBJXS=win32_$(OBJ) nt_$(OBJ)
+OBJFS=win32f$(OBJ)
+OSDEP_H=win32/w32cfg.h
+
+
+# default settings for target dependent macros:
+DIRSEP = /
+AS_DIRSEP = /
+
+OBJU1 = unzip$(OBJ) crc32$(OBJ) $(CRCA_O) crypt$(OBJ) envargs$(OBJ)
+OBJU2 = explode$(OBJ) extract$(OBJ) fileio$(OBJ) globals$(OBJ)
+OBJU3 = inflate$(OBJ) list$(OBJ) match$(OBJ) process$(OBJ) ttyio$(OBJ)
+OBJU4 = ubz2err$(OBJ) unreduce$(OBJ) unshrink$(OBJ) zipinfo$(OBJ)
+OBJU  = $(OBJU1) $(OBJU2) $(OBJU3) $(OBJU4) $(OBJUS)
+OBJX1 = unzipsf_$(OBJ) crc32_$(OBJ) $(CRCA_O) crypt_$(OBJ)
+OBJX2 = extract_$(OBJ) fileio_$(OBJ) globals_$(OBJ) inflate_$(OBJ)
+OBJX3 = match_$(OBJ) process_$(OBJ) ttyio_$(OBJ) ubz2err_$(OBJ)
+OBJX  = $(OBJX1) $(OBJX2) $(OBJX3) $(OBJXS)
+OBJF  = funzip$(OBJ) crc32f$(OBJ) $(CRCA_O) cryptf$(OBJ) inflatef$(OBJ) \
+	globalsf$(OBJ) ttyiof$(OBJ) $(OBJFS)
+
+UNZIP_H = unzip.h unzpriv.h globals.h $(OSDEP_H)
+
+# rules
+
+.SUFFIXES:	.c $(OBJ)
+
+.c$(OBJ):
+	$(CC) -c $(CFLAGS) $(DLLFLAG) $(OUT)$@ $<
+
+# targets
+
+all:	unzip.exe funzip.exe unzipsfx.exe
+
+# This next bit is nasty, but is needed to overcome the MS-DOS command
+# line limit as response files for emx's gcc seem to only work if each
+# file is on a different line. DJGPP doesn't do this (if you are at all
+# interested).
+
+unzip.exe: $(OBJU)
+#	@ echo off
+#	-@ $(RM) unzip.rsp
+#	@ for %f in ($(OBJU1)) do echo %f >> unzip.rsp
+#	@ for %f in ($(OBJU2)) do echo %f >> unzip.rsp
+#	@ for %f in ($(OBJU3)) do echo %f >> unzip.rsp
+#	@ for %f in ($(OBJU4) $(OBJUS)) do echo %f >> unzip.rsp
+#	$(CC) $(LDFLAGS)$@ $(DEF) @unzip.rsp $(LDFLAGS2)
+	$(CC) $(LDFLAGS)$@ $(DEF) $(OBJU) $(LDFLAGS2)
+#	@ $(RM) unzip.rsp
+
+funzip.exe: $(OBJF)
+	$(CC) $(LDFLAGS)$@ $(DEF) $(OBJF) $(LDFLAGS2)
+
+unzipsfx.exe:	$(OBJX)
+#	@ echo off
+#	-@ $(RM) unzipsfx.rsp
+#	@ for %f in ($(OBJX1)) do echo %f >> unzipsfx.rsp
+#	@ for %f in ($(OBJX2)) do echo %f >> unzipsfx.rsp
+#	@ for %f in ($(OBJX3)) do echo %f >> unzipsfx.rsp
+#	@ for %f in ($(OBJXS)) do echo %f >> unzipsfx.rsp
+#	$(CC) $(LDFLAGS)$@ $(DEF) @unzipsfx.rsp $(LDFLAGS2)
+	$(CC) $(LDFLAGS)$@ $(DEF) $(OBJX) $(LDFLAGS2)
+#	@ $(RM) unzipsfx.rsp
+
+uzexampl.exe:	uzexampl$(OBJ)
+	$(CC) $(LDFLAGS)$@ $(DEF) uzexampl$(OBJ) -lversion $(LDFLAGS2)
+
+# dependencies
+
+apihelp$(OBJ):	apihelp.c $(UNZIP_H) unzvers.h
+crc32$(OBJ):	crc32.c $(UNZIP_H) zip.h crc32.h
+envargs$(OBJ):	envargs.c $(UNZIP_H)
+explode$(OBJ):	explode.c $(UNZIP_H)
+extract$(OBJ):	extract.c $(UNZIP_H) crc32.h crypt.h
+fileio$(OBJ):	fileio.c $(UNZIP_H) crc32.h crypt.h ttyio.h ebcdic.h
+globals$(OBJ):	globals.c $(UNZIP_H)
+inflate$(OBJ):	inflate.c $(UNZIP_H)
+list$(OBJ):	list.c $(UNZIP_H)
+match$(OBJ):	match.c $(UNZIP_H)
+process$(OBJ):	process.c $(UNZIP_H) crc32.h
+ttyio$(OBJ):	ttyio.c $(UNZIP_H) zip.h crypt.h ttyio.h
+ubz2err$(OBJ):	ubz2err.c $(UNZIP_H)
+unreduce$(OBJ):	unreduce.c $(UNZIP_H)
+unshrink$(OBJ):	unshrink.c $(UNZIP_H)
+unzip$(OBJ):	unzip.c $(UNZIP_H) crypt.h unzvers.h consts.h
+api$(OBJ):	api.c $(UNZIP_H) unzvers.h
+zipinfo$(OBJ):	zipinfo.c $(UNZIP_H)
+
+funzip$(OBJ):	funzip.c $(UNZIP_H) crc32.h crypt.h ttyio.h	# funzip only
+	$(CC) -c $(CFLAGS) $(OUT)$@ funzip.c
+
+unzipstb$(OBJ):	unzipstb.c					# DLL version
+	$(CC) -c $(CFLAGS) $(OUT)$@ unzipstb.c
+
+uzexampl$(OBJ):	windll/uzexampl.c windll/uzexampl.h		# WINDLL example
+	$(CC) -c $(CFLAGS) $(OUT)$@ windll/uzexampl.c
+
+win32$(OBJ):	win32/win32.c $(UNZIP_H) win32/nt.h unzvers.h	# win32 only
+	$(CC) -c $(CFLAGS) $(OUT)$@ win32$(DIRSEP)win32.c
+
+win32f$(OBJ):	win32/win32.c $(UNZIP_H) win32/nt.h		# win32 funzip
+	$(CC) -c $(CFLAGSF) $(OUT)$@ win32$(DIRSEP)win32.c
+
+win32_$(OBJ):	win32/win32.c $(UNZIP_H) win32/nt.h		# win32 unzipsfx
+	$(CC) -c $(CFLAGSX) $(OUT)$@ win32$(DIRSEP)win32.c
+
+nt$(OBJ):	win32/nt.c $(UNZIP_H) win32/nt.h		# win32 only
+	$(CC) -c $(CFLAGS) $(OUT)$@ win32$(DIRSEP)nt.c
+
+nt_$(OBJ):	win32/nt.c $(UNZIP_H) win32/nt.h		# win32 only
+	$(CC) -c $(CFLAGSX) $(OUT)$@ win32$(DIRSEP)nt.c
+
+os2$(OBJ):	os2/os2.c $(UNZIP_H) unzvers.h			# OS/2 only
+	$(CC) -c $(CFLAGS) $(DLLFLAG) $(OUT)$@ os2$(DIRSEP)os2.c
+
+os2_$(OBJ):	os2/os2.c $(UNZIP_H)				# OS/2 unzipsfx
+	$(CC) -c $(CFLAGSX) $(OUT)$@ os2$(DIRSEP)os2.c
+
+os2acl$(OBJ):	os2/os2acl.c $(UNZIP_H) unzvers.h		# OS/2 only
+	$(CC) -c $(CFLAGS) $(DLLFLAG) $(OUT)$@ os2$(DIRSEP)os2acl.c
+
+rexxhelp$(OBJ):	os2/rexxhelp.c					# OS/2 DLL only
+	$(CC) -c $(CFLAGS) $(DLLFLAG) $(OUT)$@ os2$(DIRSEP)rexxhelp.c
+
+rexxapi$(OBJ):	os2/rexxapi.c					# OS/2 DLL only
+	$(CC) -c $(CFLAGS) $(DLLFLAG) $(OUT)$@ os2$(DIRSEP)rexxapi.c
+
+crc_i86$(OBJ):	msdos/crc_i86.asm				# 16bit only
+	$(AS) $(ASFLAGS) msdos$(AS_DIRSEP)crc_i86.asm $(ASEOL)
+
+crc_i386$(OBJ):	win32/crc_i386.asm				# 32bit, MASM
+	$(AS) $(ASFLAGS) win32$(AS_DIRSEP)crc_i386.asm $(ASEOL)
+
+crc_gcc$(OBJ):	crc_i386.S					# 32bit, GNU AS
+	$(AS) $(ASFLAGS) -x assembler-with-cpp -c -o $@ crc_i386.S
+
+crypt$(OBJ):	crypt.c $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+	$(CC) -c $(CFLAGS) $(DLLFLAG) $(OUT)$@ crypt.c
+
+# funzip compilation section
+cryptf$(OBJ):	crypt.c $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+	$(CC) -c $(CFLAGSF) $(OUT)$@ crypt.c
+
+crc32f$(OBJ):	crc32.c $(UNZIP_H) zip.h crc32.h
+	$(CC) -c $(CFLAGSF) $(OUT)$@ crc32.c
+
+globalsf$(OBJ):	globals.c $(UNZIP_H)
+	$(CC) -c $(CFLAGSF) $(OUT)$@ globals.c
+
+inflatef$(OBJ):	inflate.c inflate.h $(UNZIP_H) crypt.h
+	$(CC) -c $(CFLAGSF) $(OUT)$@ inflate.c
+
+ttyiof$(OBJ):	ttyio.c $(UNZIP_H) zip.h crypt.h ttyio.h
+	$(CC) -c $(CFLAGSF) $(OUT)$@ ttyio.c
+
+# unzipsfx compilation section
+crc32_$(OBJ):	crc32.c $(UNZIP_H) zip.h crc32.h
+	$(CC) -c $(CFLAGSX) $(OUT)$@ crc32.c
+
+crypt_$(OBJ):	crypt.c $(UNZIP_H) zip.h crypt.h crc32.h ttyio.h
+	$(CC) -c $(CFLAGSX) $(OUT)$@ crypt.c
+
+extract_$(OBJ):	extract.c $(UNZIP_H) crc32.h crypt.h
+	$(CC) -c $(CFLAGSX) $(OUT)$@ extract.c
+
+fileio_$(OBJ):	fileio.c $(UNZIP_H) crc32.h crypt.h ttyio.h ebcdic.h
+	$(CC) -c $(CFLAGSX) $(OUT)$@ fileio.c
+
+globals_$(OBJ):	globals.c $(UNZIP_H)
+	$(CC) -c $(CFLAGSX) $(OUT)$@ globals.c
+
+inflate_$(OBJ):	inflate.c inflate.h $(UNZIP_H) crypt.h
+	$(CC) -c $(CFLAGSX) $(OUT)$@ inflate.c
+
+match_$(OBJ):	match.c $(UNZIP_H)
+	$(CC) -c $(CFLAGSX) $(OUT)$@ match.c
+
+process_$(OBJ):	process.c $(UNZIP_H) crc32.h
+	$(CC) -c $(CFLAGSX) $(OUT)$@ process.c
+
+ttyio_$(OBJ):	ttyio.c $(UNZIP_H) zip.h crypt.h ttyio.h
+	$(CC) -c $(CFLAGSX) $(OUT)$@ ttyio.c
+
+ubz2err_$(OBJ):	ubz2err.c $(UNZIP_H)
+	$(CC) -c $(CFLAGSX) $(OUT)$@ ubz2err.c
+
+unzipsf_$(OBJ):	unzip.c $(UNZIP_H) crypt.h unzvers.h consts.h
+	$(CC) -c $(CFLAGSX) $(OUT)$@ unzip.c

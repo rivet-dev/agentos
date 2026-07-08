@@ -1,0 +1,5 @@
+push
+prompt pop
+searchlist :c_4.10 :c_4.10:lang_rt [!searchlist]
+cc/link/NOUNX/NOSEA SYSV/DEFINE TERMIO/DEFINE AOS_VS/DEFINE=1 PROTO/DEFINE S_IFLNK/DEFINE=0120000 TIME.H/INCLUDE <unzip crc32 crypt envargs explode extract fileio globals inflate list match process ttyio ubz2err unreduce unshrink zipinfo aosvs>.c
+pop

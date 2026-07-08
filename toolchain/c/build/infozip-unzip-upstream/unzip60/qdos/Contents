@@ -1,0 +1,20 @@
+Contents of the "qdos" subdirectory for UnZip 5.4 and later:
+
+  Contents      this file
+  IZREADME.SMS  release notes from Jonathan Hudson (author of port)
+  Makefile      makefile for xtc68 cross-compiler on Linux (native QDOS exes)
+  callstub.c    user interface stub for SMS/QDOS specific SFX archives
+  config.S      assembler routine for ...?
+  crc68.s       68000 version of CRC code
+  izqdos.h      SMS/QDOS-specific header file
+  makesfx.c     source for MakeSFX utility (simple concatenation does not work)
+  qdos.c        SMS/QDOS-specific functions
+
+Notes:
+
+  "Makefile" is for the xtc68 cross compiler on Linux, but conversion to a
+  native c68 makefile should be trivial.  To build a Linux (or other Unix)
+  UnZip that understands QDOS extra fields, add "-DQLZIP" to the LOCAL_UNZIP
+  environment variable and compile with the normal Unix makefile (for example,
+  linux_asm target).  The "QLZIP" flag enables the Qdos "cross-UnZip" support
+  in unix/unix.c.

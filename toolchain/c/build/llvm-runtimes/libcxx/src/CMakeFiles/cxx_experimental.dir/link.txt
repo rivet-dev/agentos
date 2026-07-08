@@ -1,0 +1,2 @@
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ar qc ../../lib/libc++experimental.a CMakeFiles/cxx_experimental.dir/experimental/keep.cpp.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ranlib ../../lib/libc++experimental.a

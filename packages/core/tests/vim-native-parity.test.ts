@@ -10,7 +10,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "../../..");
 const VIM_PACKAGE_BIN = resolve(
 	REPO_ROOT,
-	"../secure-exec/registry/software/vim/dist/package/bin/vim",
+	"../secure-exec/software/vim/dist/package/bin/vim",
 );
 const NATIVE_VIM = "/usr/bin/vim";
 const REF_SCRIPT = join(HERE, "helpers", "native-vim-ref.py");

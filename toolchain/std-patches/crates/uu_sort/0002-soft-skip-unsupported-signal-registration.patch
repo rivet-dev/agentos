@@ -1,0 +1,28 @@
+--- a/src/tmp_dir.rs
++++ b/src/tmp_dir.rs
+@@ -5,6 +5,7 @@
+ use std::sync::atomic::{AtomicBool, Ordering};
+ use std::{
+     fs::File,
++    io::ErrorKind,
+     path::{Path, PathBuf},
+     sync::{Arc, LazyLock, Mutex},
+ };
+@@ -91,6 +92,17 @@
+ 
+         std::process::exit(2)
+     }) {
++        // Platforms without signal delivery report ErrorKind::Unsupported from the
++        // ctrlc backend. The handler only provides best-effort temp directory cleanup
++        // on SIGINT, which can never be delivered on such platforms, so skip
++        // installation instead of failing the sort. TempDir's Drop still removes the
++        // directory on normal exit. HANDLER_INSTALLED stays true so later spills do
++        // not retry a registration that cannot succeed.
++        if let ctrlc::Error::System(error) = &e {
++            if error.kind() == ErrorKind::Unsupported {
++                return Ok(());
++            }
++        }
+         HANDLER_INSTALLED.store(false, Ordering::Release);
+         return Err(USimpleError::new(
+             2,

@@ -17,7 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "../../..");
 const SECURE_EXEC_C_ROOT = resolve(
 	REPO_ROOT,
-	"registry/native/c",
+	"toolchain/c",
 );
 const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
 const PTY_PROBE_COMMAND_DIR = resolve(SECURE_EXEC_C_ROOT, "build");

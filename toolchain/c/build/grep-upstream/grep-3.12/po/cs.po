@@ -1,0 +1,1061 @@
+# Czech message catalog for grep.
+# Copyright (C) 1998 Free Software Foundation, Inc.
+# This file is distributed under the same license as the grep package.
+# Vladimir Michl <Vladimir.Michl@seznam.cz>, 1998.
+# Petr Pisar <petr.pisar@atlas.cz>, 2008, 2009, 2010, 2011, 2012, 2013.
+# Petr Pisar <petr.pisar@atlas.cz>, 2014, 2015, 2016, 2018, 2020, 2021.
+# Petr Pisar <petr.pisar@atlas.cz>, 2022, 2023, 2025.
+#
+# Thanks to Stanislav Brabec <utx@k332.feld.cvut.cz>.
+msgid ""
+msgstr ""
+"Project-Id-Version: grep 3.11.68\n"
+"Report-Msgid-Bugs-To: bug-grep@gnu.org\n"
+"POT-Creation-Date: 2025-04-10 09:02-0700\n"
+"PO-Revision-Date: 2025-04-07 20:46+02:00\n"
+"Last-Translator: Petr Pisar <petr.pisar@atlas.cz>\n"
+"Language-Team: Czech <translation-team-cs@lists.sourceforge.net>\n"
+"Language: cs\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Bugs: Report translation errors to the Language-Team address.\n"
+
+#: lib/argmatch.c:145
+#, c-format
+msgid "invalid argument %s for %s"
+msgstr "neplatný argument %s u %s"
+
+#: lib/argmatch.c:146
+#, c-format
+msgid "ambiguous argument %s for %s"
+msgstr "nejednoznačný argument %s u %s"
+
+#: lib/argmatch.c:165 lib/argmatch.h:242
+msgid "Valid arguments are:"
+msgstr "Platné argumenty jsou:"
+
+#: lib/c-stack.c:190
+msgid "program error"
+msgstr "chyba programu"
+
+#: lib/c-stack.c:191
+msgid "stack overflow"
+msgstr "přetečení zásobníku"
+
+#: lib/closeout.c:121 src/grep.c:1352
+msgid "write error"
+msgstr "chyba při zápisu"
+
+#: lib/dfa.c:910
+msgid "unbalanced ["
+msgstr "nevyvážená ["
+
+#: lib/dfa.c:1031
+msgid "invalid character class"
+msgstr "neplatný třída znaků"
+
+#: lib/dfa.c:1159
+msgid "character class syntax is [[:space:]], not [:space:]"
+msgstr "zápis třídy znaků je [[:space:]], ne [:space:]"
+
+#: lib/dfa.c:1234
+msgid "unfinished \\ escape"
+msgstr "neukončená escape sekvence \\"
+
+#: lib/dfa.c:1344
+msgid "? at start of expression"
+msgstr "? na začátku výrazu"
+
+#: lib/dfa.c:1356
+msgid "* at start of expression"
+msgstr "* na začátku výrazu"
+
+#: lib/dfa.c:1370
+msgid "+ at start of expression"
+msgstr "+ na začátku výrazu"
+
+#: lib/dfa.c:1425
+msgid "{...} at start of expression"
+msgstr "{…} na začátku výrazu"
+
+#: lib/dfa.c:1428
+msgid "invalid content of \\{\\}"
+msgstr "neplatný obsah \\{\\}"
+
+#: lib/dfa.c:1430
+msgid "regular expression too big"
+msgstr "regulární výraz je příliš velký"
+
+#: lib/dfa.c:1580
+msgid "stray \\ before unprintable character"
+msgstr "přebývající \\ před netisknutelným znakem"
+
+#: lib/dfa.c:1582
+msgid "stray \\ before white space"
+msgstr "přebývající \\ před bílým místem"
+
+#: lib/dfa.c:1593
+#, c-format
+msgid "stray \\ before %s"
+msgstr "přebývající \\ před %s"
+
+#: lib/dfa.c:1594 lib/dfa.c:1597
+msgid "stray \\"
+msgstr "přebývající \\"
+
+#: lib/dfa.c:1948
+msgid "unbalanced ("
+msgstr "nevyvážená ("
+
+# ? Není zadaná syntaxe
+#: lib/dfa.c:2065
+msgid "no syntax specified"
+msgstr "syntaxe není určena"
+
+#: lib/dfa.c:2076
+msgid "unbalanced )"
+msgstr "nevyvážená )"
+
+#: lib/error.c:208
+msgid "Unknown system error"
+msgstr "Neznámá systémová chyba"
+
+#: lib/getopt.c:282
+#, c-format
+msgid "%s: option '%s%s' is ambiguous\n"
+msgstr "%s: přepínač „%s%s“ není jednoznačný\n"
+
+#: lib/getopt.c:288
+#, c-format
+msgid "%s: option '%s%s' is ambiguous; possibilities:"
+msgstr "%s: přepínač „%s%s“ není jednoznačný: možnosti:"
+
+#: lib/getopt.c:322
+#, c-format
+msgid "%s: unrecognized option '%s%s'\n"
+msgstr "%s: nerozpoznaný přepínač „%s%s“\n"
+
+#: lib/getopt.c:348
+#, c-format
+msgid "%s: option '%s%s' doesn't allow an argument\n"
+msgstr "%s: přepínač „%s%s“ musí být zadán bez argumentu\n"
+
+#: lib/getopt.c:363
+#, c-format
+msgid "%s: option '%s%s' requires an argument\n"
+msgstr "%s: přepínač „%s%s“ vyžaduje argument\n"
+
+#: lib/getopt.c:624
+#, c-format
+msgid "%s: invalid option -- '%c'\n"
+msgstr "%s: neznámý přepínač – „%c“\n"
+
+#: lib/getopt.c:639 lib/getopt.c:685
+#, c-format
+msgid "%s: option requires an argument -- '%c'\n"
+msgstr "%s: přepínač vyžaduje argument – „%c“\n"
+
+#: lib/obstack.c:320 lib/obstack.c:322 lib/xalloc-die.c:34
+msgid "memory exhausted"
+msgstr "paměť vyčerpána"
+
+#: lib/openat-die.c:38
+msgid "unable to record current working directory"
+msgstr "nelze zaznamenat aktuální pracovní adresář"
+
+#: lib/openat-die.c:57
+msgid "failed to return to initial working directory"
+msgstr "návrat do prvotního pracovního adresáře se nezdařil"
+
+#: lib/xbinary-io.c:36
+#, c-format
+msgid "failed to set file descriptor text/binary mode"
+msgstr "nastavení textového/binárního režimu deskriptoru souboru selhalo"
+
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  For example, a French Unicode local should translate
+#. these to U+00AB (LEFT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), and U+00BB (RIGHT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), respectively.
+#.
+#. If the catalog has no translation, we will try to
+#. use Unicode U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. Unicode U+2019 (RIGHT SINGLE QUOTATION MARK).  If the
+#. current locale is not Unicode, locale_quoting_style
+#. will quote 'like this', and clocale_quoting_style will
+#. quote "like this".  You should always include translations
+#. for "`" and "'" even if U+2018 and U+2019 are appropriate
+#. for your locale.
+#.
+#. If you don't know what to put here, please see
+#. <https://en.wikipedia.org/wiki/Quotation_marks_in_other_languages>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:354
+msgid "`"
+msgstr "„"
+
+#: lib/quotearg.c:355
+msgid "'"
+msgstr "“"
+
+#: lib/regcomp.c:122
+msgid "Success"
+msgstr "Úspěch"
+
+#: lib/regcomp.c:125
+msgid "No match"
+msgstr "Žádná shoda"
+
+#: lib/regcomp.c:128
+msgid "Invalid regular expression"
+msgstr "Neplatný regulární výraz"
+
+#: lib/regcomp.c:131
+msgid "Invalid collation character"
+msgstr "Neplatný řadicí znak"
+
+#: lib/regcomp.c:134
+msgid "Invalid character class name"
+msgstr "Neplatný název třídy znaků"
+
+#: lib/regcomp.c:137
+msgid "Trailing backslash"
+msgstr "Závěrečné koncové lomítko"
+
+#: lib/regcomp.c:140
+msgid "Invalid back reference"
+msgstr "Neplatný zpětný odkaz"
+
+#: lib/regcomp.c:143
+msgid "Unmatched [, [^, [:, [., or [="
+msgstr "Nepárový [, [^, [:, [. nebo [="
+
+#: lib/regcomp.c:146
+msgid "Unmatched ( or \\("
+msgstr "Nepárový ( nebo \\("
+
+#: lib/regcomp.c:149
+msgid "Unmatched \\{"
+msgstr "Nepárový \\{"
+
+#: lib/regcomp.c:152
+msgid "Invalid content of \\{\\}"
+msgstr "Neplatný obsah \\{\\}"
+
+#: lib/regcomp.c:155
+msgid "Invalid range end"
+msgstr "Neplatný konec rozsahu"
+
+#: lib/regcomp.c:158
+msgid "Memory exhausted"
+msgstr "Paměť vyčerpána"
+
+#: lib/regcomp.c:161
+msgid "Invalid preceding regular expression"
+msgstr "Neplatný předchozí regulární výraz"
+
+#: lib/regcomp.c:164
+msgid "Premature end of regular expression"
+msgstr "Předčasný konec regulárního výrazu"
+
+#: lib/regcomp.c:167
+msgid "Regular expression too big"
+msgstr "Regulární výraz je příliš velký"
+
+#: lib/regcomp.c:170
+msgid "Unmatched ) or \\)"
+msgstr "Nepárový ) nebo \\)"
+
+#: lib/regcomp.c:650
+msgid "No previous regular expression"
+msgstr "Žádný předchozí regulární výraz"
+
+#: lib/version-etc.c:73
+#, c-format
+msgid "Packaged by %s (%s)\n"
+msgstr "Zabaleno kým: %s (%s)\n"
+
+#: lib/version-etc.c:76
+#, c-format
+msgid "Packaged by %s\n"
+msgstr "Zabaleno kým: %s\n"
+
+#. TRANSLATORS: Translate "(C)" to the copyright symbol
+#. (C-in-a-circle), if this symbol is available in the user's
+#. locale.  Otherwise, do not translate "(C)"; leave it as-is.
+#: lib/version-etc.c:83
+msgid "(C)"
+msgstr "©"
+
+#. TRANSLATORS: The %s placeholder is the web address of the GPL license.
+#: lib/version-etc.c:88
+#, c-format
+msgid ""
+"License GPLv3+: GNU GPL version 3 or later <%s>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+msgstr ""
+"Licence GPLv3+: GNU GPL verze 3 nebo novější\n"
+"<%s>.\n"
+"Toto je volné programové vybavení: máte právo jej měnit a dále šířit.\n"
+"Není zde ŽÁDNÁ ZÁRUKA, jak jen zákon dovoluje.\n"
+
+#. TRANSLATORS: %s denotes an author name.
+#: lib/version-etc.c:105
+#, c-format
+msgid "Written by %s.\n"
+msgstr "Napsal(a) %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:109
+#, c-format
+msgid "Written by %s and %s.\n"
+msgstr "Napsali(y) %s a %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:113
+#, c-format
+msgid "Written by %s, %s, and %s.\n"
+msgstr "Napsali(y) %s, %s a %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:120
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"Napsali(y) %s, %s, %s\n"
+"a %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:127
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"Napsali(y) %s, %s, %s,\n"
+"%s a %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:134
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, and %s.\n"
+msgstr ""
+"Napsali(y) %s, %s, %s,\n"
+"%s, %s a %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:142
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, and %s.\n"
+msgstr ""
+"Napsali(y) %s, %s, %s,\n"
+"%s, %s, %s a %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:150
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"Napsali(y) %s, %s, %s,\n"
+"%s, %s, %s, %s\n"
+"a %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:159
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"Napsali(y) %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s a %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:170
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, and others.\n"
+msgstr ""
+"Napsali(y) %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s a další.\n"
+
+#. TRANSLATORS: The placeholder indicates the bug-reporting address
+#. for this package.  Please add _another line_ saying
+#. "Report translation bugs to <...>\n" with the address for translation
+#. bugs (typically your translation team's web or email address).
+#: lib/version-etc.c:249
+#, c-format
+msgid "Report bugs to: %s\n"
+msgstr ""
+"Chyby v programu oznamujte (anglicky) na adresu: <%s>\n"
+"Připomínky k překladu na adresu: <translation-team-cs@lists.sourceforge."
+"net>\n"
+
+#: lib/version-etc.c:251
+#, c-format
+msgid "Report %s bugs to: %s\n"
+msgstr "Chyby distributora %s oznamujte (anglicky) na adresu: <%s>\n"
+
+#: lib/version-etc.c:255 lib/version-etc.c:257
+#, c-format
+msgid "%s home page: <%s>\n"
+msgstr "Domovská stránka programu %s: <%s>\n"
+
+#: lib/version-etc.c:260
+#, c-format
+msgid "General help using GNU software: <%s>\n"
+msgstr "Obecná pomoc s používáním GNU softwaru: <%s>\n"
+
+#: src/dfasearch.c:57
+#, c-format
+msgid "warning: %s"
+msgstr "pozor: %s"
+
+#: src/grep.c:657
+msgid "(standard input)"
+msgstr "(standardní vstup)"
+
+#: src/grep.c:838
+msgid "invalid context length argument"
+msgstr "neplatný argument délky kontextu"
+
+#: src/grep.c:911
+msgid "input is too large to count"
+msgstr "počet vstupních řádků nelze spočítat (je jich hodně)"
+
+#: src/grep.c:1656
+#, c-format
+msgid "%s: binary file matches"
+msgstr "%s: binární soubor odpovídá"
+
+#: src/grep.c:1694
+#, c-format
+msgid "%s: warning: recursive directory loop"
+msgstr "%s: pozor: smyčka rekurzivních adresářů"
+
+#: src/grep.c:1914
+#, c-format
+msgid "%s: input file is also the output"
+msgstr "%s: vstupní soubor je rovněž výstupem"
+
+#: src/grep.c:1976 src/grep.c:1983
+#, c-format
+msgid "Usage: %s [OPTION]... PATTERNS [FILE]...\n"
+msgstr "Použití: %s [PŘEPÍNAČ]… VZORKY [SOUBOR]…\n"
+
+#: src/grep.c:1978
+#, c-format
+msgid "Try '%s --help' for more information.\n"
+msgstr "Více informací získáte příkazem „%s --help“.\n"
+
+#: src/grep.c:1984
+#, c-format
+msgid "Search for PATTERNS in each FILE.\n"
+msgstr "Každý SOUBOR prohledá na VZORKY.\n"
+
+#: src/grep.c:1985
+#, c-format
+msgid ""
+"Example: %s -i 'hello world' menu.h main.c\n"
+"PATTERNS can contain multiple patterns separated by newlines.\n"
+"\n"
+"Pattern selection and interpretation:\n"
+msgstr ""
+"Příklad: %s -i 'hello world' menu.h main.c\n"
+"VZORKY smí obsahovat více vzorků oddělených novým řádkem.\n"
+"\n"
+"Výběr a interpretace vzorku:\n"
+
+#: src/grep.c:1990
+#, c-format
+msgid ""
+"  -E, --extended-regexp     PATTERNS are extended regular expressions\n"
+"  -F, --fixed-strings       PATTERNS are strings\n"
+"  -G, --basic-regexp        PATTERNS are basic regular expressions\n"
+"  -P, --perl-regexp         PATTERNS are Perl regular expressions\n"
+msgstr ""
+"  -E, --extended-regexp     VZORKY jsou rozšířené regulární výrazy\n"
+"  -F, --fixed-strings       VZORKY jsou řetězce\n"
+"  -G, --basic-regexp        VZORKY jsou základní regulární výrazy\n"
+"  -P, --perl-regexp         VZORKY jsou regulární výrazy jazyka Perl\n"
+
+#: src/grep.c:1996
+#, c-format
+msgid ""
+"  -e, --regexp=PATTERNS     use PATTERNS for matching\n"
+"  -f, --file=FILE           take PATTERNS from FILE\n"
+"  -i, --ignore-case         ignore case distinctions in patterns and data\n"
+"      --no-ignore-case      do not ignore case distinctions (default)\n"
+"  -w, --word-regexp         match only whole words\n"
+"  -x, --line-regexp         match only whole lines\n"
+"  -z, --null-data           a data line ends in 0 byte, not newline\n"
+msgstr ""
+"  -e, --regexp=VZORKY       použije VZORKY jako regulární výraz\n"
+"  -f, --file=SOUBOR         načte VZORKY ze SOUBORU\n"
+"  -i, --ignore-case         ignoruje rozdíly ve velikosti písmen ve "
+"vzorcích\n"
+"                            a datech\n"
+"      --no-ignore-case      neignoruje rozdíly ve velikosti písmen "
+"(výchozí)\n"
+"  -w, --word-regexp         hledá pouze na celá slova\n"
+"  -x, --line-regexp         hledá pouze celé řádky\n"
+"  -z, --null-data           řádek končí nulovým bajtem místo znaku nového "
+"řádku\n"
+
+#: src/grep.c:2004
+#, c-format
+msgid ""
+"\n"
+"Miscellaneous:\n"
+"  -s, --no-messages         suppress error messages\n"
+"  -v, --invert-match        select non-matching lines\n"
+"  -V, --version             display version information and exit\n"
+"      --help                display this help text and exit\n"
+msgstr ""
+"\n"
+"Různé:\n"
+"  -s, --no-messages         potlačí chybové zprávy\n"
+"  -v, --invert-match        vybere neodpovídající řádky\n"
+"  -V, --version             vypíše označení verze a skončí\n"
+"      --help                vypíše tuto nápovědu a skončí\n"
+
+#: src/grep.c:2011
+#, c-format
+msgid ""
+"\n"
+"Output control:\n"
+"  -m, --max-count=NUM       stop after NUM selected lines\n"
+"  -b, --byte-offset         print the byte offset with output lines\n"
+"  -n, --line-number         print line number with output lines\n"
+"      --line-buffered       flush output on every line\n"
+"  -H, --with-filename       print file name with output lines\n"
+"  -h, --no-filename         suppress the file name prefix on output\n"
+"      --label=LABEL         use LABEL as the standard input file name "
+"prefix\n"
+msgstr ""
+"\n"
+"Řízení výstupu:\n"
+"  -m, --max-count=POČET     skončí po vybrání POČTU řádků\n"
+"  -b, --byte-offset         s každým výstupním řádkem vypíše jeho pozici\n"
+"                            v souboru\n"
+"  -n, --line-number         s každým výstupním řádkem vypíše jeho číslo "
+"řádku\n"
+"      --line-buffered       vyprázdní výstup po každém řádku\n"
+"  -H, --with-filename       u výstupních řádků vypisuje název souboru\n"
+"  -h, --no-filename         potlačí předřazování jména souboru na výstupu\n"
+"      --label=NÁZEV         použije NÁZEV jako označení standardního\n"
+"                            vstupu na výstupu\n"
+
+#: src/grep.c:2022
+#, c-format
+msgid ""
+"  -o, --only-matching       show only nonempty parts of lines that match\n"
+"  -q, --quiet, --silent     suppress all normal output\n"
+"      --binary-files=TYPE   assume that binary files are TYPE;\n"
+"                            TYPE is 'binary', 'text', or 'without-match'\n"
+"  -a, --text                equivalent to --binary-files=text\n"
+msgstr ""
+"  -o, --only-matching       zobrazí pouze neprázdné části odpovídajících "
+"řádků\n"
+"  -q, --quiet, --silent     potlačí obvyklý výstup\n"
+"      --binary-files=TYP    definuje typ binárních souborů\n"
+"                            TYP může být: „binary“ (binární), „text“ "
+"(textový)\n"
+"                            nebo „without-match“ (bez vyhovění vzorku)\n"
+"  -a, --text                jako --binary-files=text\n"
+
+#: src/grep.c:2029
+#, c-format
+msgid ""
+"  -I                        equivalent to --binary-files=without-match\n"
+"  -d, --directories=ACTION  how to handle directories;\n"
+"                            ACTION is 'read', 'recurse', or 'skip'\n"
+"  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n"
+"                            ACTION is 'read' or 'skip'\n"
+"  -r, --recursive           like --directories=recurse\n"
+"  -R, --dereference-recursive  likewise, but follow all symlinks\n"
+msgstr ""
+"  -I                        jako --binary-files=without-match\n"
+"  -d, --directories=AKCE    jak zpracovávat adresáře. AKCE může být:\n"
+"                            „read“ (číst), „recurse“ (rekurze),\n"
+"                            „skip“ (přeskočit)\n"
+"  -D, --devices=AKCE        jak zpracovávat zařízení, FIFO (roury) a "
+"sockety,\n"
+"                            AKCE může být: „read“ (číst) nebo „skip“ "
+"(přeskočit)\n"
+"  -r, --recursive           jako --directories=recurse\n"
+"  -R, --dereference-recursive\n"
+"                            obdobně, jen následuje všechny symbolické "
+"odkazy\n"
+
+#: src/grep.c:2038
+#, c-format
+msgid ""
+"      --include=GLOB        search only files that match GLOB (a file "
+"pattern)\n"
+"      --exclude=GLOB        skip files that match GLOB\n"
+"      --exclude-from=FILE   skip files that match any file pattern from "
+"FILE\n"
+"      --exclude-dir=GLOB    skip directories that match GLOB\n"
+msgstr ""
+"      --include=GLOB        prohledá pouze soubory, které vyhovují GLOBU\n"
+"      --exclude=GLOB        přeskočí soubory, které vyhovují GLOBU\n"
+"      --exclude-from=SOUBOR přeskočí soubory, které vyhovují jakémukoliv "
+"vzorku\n"
+"                            ze SOUBORU\n"
+"      --exclude-dir=GLOB    přeskočí adresáře, které vyhovují GLOBU\n"
+
+#: src/grep.c:2045
+#, c-format
+msgid ""
+"  -L, --files-without-match  print only names of FILEs with no selected "
+"lines\n"
+"  -l, --files-with-matches  print only names of FILEs with selected lines\n"
+"  -c, --count               print only a count of selected lines per FILE\n"
+"  -T, --initial-tab         make tabs line up (if needed)\n"
+"  -Z, --null                print 0 byte after FILE name\n"
+msgstr ""
+"  -L, --files-without-match vypíše pouze názvy souborů, ze kterých nebyly\n"
+"                            vybrány žádné řádky\n"
+"  -l, --files-with-matches  vypíše pouze názvy souborů, ze kterých byly "
+"vybrány\n"
+"                            řádky\n"
+"  -c, --count               vypíše pouze počet vyhovujících řádků na SOUBOR\n"
+"  -T, --initial-tab         zarovná začátky řádků tabulátory (je-li třeba)\n"
+"  -Z, --null                vypíše nulový bajt za jménem SOUBORU\n"
+
+#: src/grep.c:2051
+#, c-format
+msgid ""
+"\n"
+"Context control:\n"
+"  -B, --before-context=NUM  print NUM lines of leading context\n"
+"  -A, --after-context=NUM   print NUM lines of trailing context\n"
+"  -C, --context=NUM         print NUM lines of output context\n"
+msgstr ""
+"\n"
+"Řízení kontextu:\n"
+"  -B, --before-context=POČET vypíše POČET řádků před shodou\n"
+"  -A, --after-context=POČET  vypíše POČET řádků za shodou\n"
+"  -C, --context=POČET        vypíše POČET řádků kontextu (před i za shodou)\n"
+
+#: src/grep.c:2058
+#, c-format
+msgid ""
+"  -NUM                      same as --context=NUM\n"
+"      --group-separator=SEP  print SEP on line between matches with context\n"
+"      --no-group-separator  do not print separator for matches with context\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       use markers to highlight the matching strings;\n"
+"                            WHEN is 'always', 'never', or 'auto'\n"
+"  -U, --binary              do not strip CR characters at EOL (MSDOS/"
+"Windows)\n"
+"\n"
+msgstr ""
+"  -POČET                     stejné jako --context=POČET\n"
+"      --group-separator=ODDĚLOVAČ\n"
+"                             vypisuje ODDĚLOVAČ na řádku mezi shodami\n"
+"                             s kontextem\n"
+"      --no-group-separator   nevypisuje oddělovač shod s kontextem\n"
+"      --color[=KDY],\n"
+"      --colour[=KDY]         použije barev k rozlišení vyhovujících "
+"řetězců,\n"
+"                             KDY může být „always“ (vždy), „never“ (nikdy)\n"
+"                             nebo „auto“ (automaticky)\n"
+"  -U, --binary               neodstraňuje znak CR na konci řádku (MSDOS/"
+"Windows)\n"
+
+#: src/grep.c:2067
+#, c-format
+msgid ""
+"When FILE is '-', read standard input.  If no FILE is given, read standard\n"
+"input, but with -r, recursively search the working directory instead.  With\n"
+"fewer than two FILEs, assume -h.  Exit status is 0 if any line is selected,\n"
+"1 otherwise; if any error occurs and -q is not given, the exit status is 2.\n"
+msgstr ""
+"Je-li SOUBOR „-“, čte standardní vstup. Ne-li SOUBOR zadán, čte standardní\n"
+"vstup, avšak je-li přítomen přepínač -r, rekurzivně prohledá pracovní "
+"adresář.\n"
+"Jestliže jsou zadány méně než dva SOUBORY, pak je výchozí přepínač -h.\n"
+"Návratový kód je 0 při nalezení vyhovujícího řádku, jinak 1.\n"
+"Vyskytne-li se chyba a není-li zadán přepínač -q, bude vrácen kód 2.\n"
+
+#: src/grep.c:2110
+msgid "conflicting matchers specified"
+msgstr "zadány kolidující vzorky"
+
+#: src/grep.c:2117
+msgid "Perl matching not supported in a --disable-perl-regexp build"
+msgstr ""
+"V programu přeloženém s přepínačem --disable-perl-regexp nejsou perlové "
+"výrazy podporovány"
+
+#: src/grep.c:2119
+#, c-format
+msgid "invalid matcher %s"
+msgstr "neplatný syntaxe vzorku %s"
+
+#: src/grep.c:2541
+msgid "unknown devices method"
+msgstr "neznámá metoda obsluhy zařízení"
+
+#: src/grep.c:2690
+msgid "invalid max count"
+msgstr "neplatný maximální počet"
+
+#: src/grep.c:2747
+msgid "unknown binary-files type"
+msgstr "neznámý typ binárního souboru"
+
+#: src/grep.c:2832
+msgid ""
+"Written by Mike Haertel and others; see\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+msgstr ""
+"Napsal Mike Haertel a další, vizte\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+
+#: src/grep.c:2939
+#, c-format
+msgid "warning: GREP_COLOR='%s' is deprecated; use GREP_COLORS='mt=%s'"
+msgstr "pozor: GREP_COLOR='%s' je zastaralé, použijte GREP_COLORS='mt=%s'"
+
+#: src/pcresearch.c:89
+#, c-format
+msgid ""
+"\n"
+"grep -P uses PCRE2 %s\n"
+msgstr ""
+"\n"
+"grep -P používá PCRE2 %s\n"
+
+#: src/pcresearch.c:167
+msgid "-P supports only unibyte locales on this platform"
+msgstr "-P podporuje na této platformě pouze jednobajtová národní prostředí"
+
+#: src/pcresearch.c:169
+msgid "-P supports only unibyte and UTF-8 locales"
+msgstr "-P podporuje pouze jednobajtová a UTF-8 národní prostředí"
+
+#: src/pcresearch.c:192
+msgid "the -P option only supports a single pattern"
+msgstr "přepínač -P lze být použít pouze s jedním vzorkem"
+
+#: src/pcresearch.c:288
+msgid "exceeded PCRE's line length limit"
+msgstr "překročeno omezení PCRE na délku řádku"
+
+#: src/pcresearch.c:366
+#, c-format
+msgid "%s: memory exhausted"
+msgstr "%s: paměť vyčerpána"
+
+# It corresponds to PCRE2_ERROR_JIT_STACKLIMIT error.
+#: src/pcresearch.c:369
+#, c-format
+msgid "%s: exhausted PCRE JIT stack"
+msgstr "%s: JIT zásobník knihovny PCRE vyčerpán"
+
+# It corresponds to PCRE2_ERROR_MATCHLIMIT error.
+#: src/pcresearch.c:373
+#, c-format
+msgid "%s: exceeded PCRE's backtracking limit"
+msgstr "%s: překročeno omezení PCRE na délku návratu"
+
+# It corresponds to PCRE2_ERROR_DEPTHLIMIT error.
+#: src/pcresearch.c:378
+#, c-format
+msgid "%s: exceeded PCRE's nested backtracking limit"
+msgstr "%s: překročeno omezení PCRE na hloubku návratu ze zanoření"
+
+# It corresponds to PCRE2_ERROR_RECURSELOOP error.
+#: src/pcresearch.c:382
+#, c-format
+msgid "%s: PCRE detected recurse loop"
+msgstr "%s: PCRE objevilo smyčku v zanoření"
+
+# It corresponds to PCRE2_ERROR_HEAPLIMIT error.
+#: src/pcresearch.c:387
+#, c-format
+msgid "%s: exceeded PCRE's heap limit"
+msgstr "%s: překročeno omezení PCRE na velikost haldy"
+
+#: src/pcresearch.c:396
+#, c-format
+msgid "%s: internal PCRE error: %d"
+msgstr "%s: vnitřní chyba PCRE: %d"
+
+#, c-format
+#~ msgid "warning: --unix-byte-offsets (-u) is obsolete"
+#~ msgstr "pozor: přepínač --unix-byte-offsets (-u) je zastaralý"
+
+#~ msgid ""
+#~ "\n"
+#~ "Built with PCRE "
+#~ msgstr ""
+#~ "\n"
+#~ "Sestaveno s PCRE "
+
+#~ msgid "JIT internal error: %d"
+#~ msgstr "vnitřní chyba JIT: %d"
+
+#~ msgid "failed to allocate memory for the PCRE JIT stack"
+#~ msgstr "alokace paměti pro JIT zásobník PCRE selhala"
+
+#~ msgid "internal error (should never happen)"
+#~ msgstr "vnitřní chyba (to by se nikdy nemělo stát)"
+
+#~ msgid "warning: GREP_OPTIONS is deprecated; please use an alias or script"
+#~ msgstr ""
+#~ "pozor: proměnná GREP_OPTIONS je zastaralá, prosím, použijte alias nebo "
+#~ "skript"
+
+#~ msgid "%s home page: <https://www.gnu.org/software/%s/>\n"
+#~ msgstr "Domovská stránka programu %s: <https://www.gnu.org/software/%s/>\n"
+
+#~ msgid "invalid %s%s argument '%s'"
+#~ msgstr "neplatný argument „%3$s“ u %1$s%2$s"
+
+#~ msgid "invalid suffix in %s%s argument '%s'"
+#~ msgstr "neplatná přípona argumentu „%3$s“ u %1$s%2$s"
+
+#~ msgid "%s%s argument '%s' too large"
+#~ msgstr "argument „%3$s“ u %1$s%2$s je příliš dlouhý"
+
+#~ msgid "Mike Haertel"
+#~ msgstr "Mike Haertel"
+
+#~ msgid "%s: option '--%s' doesn't allow an argument\n"
+#~ msgstr "%s: přepínač „--%s“ musí být zadán bez argumentu\n"
+
+#~ msgid "%s: unrecognized option '--%s'\n"
+#~ msgstr "%s: neznámý přepínač „--%s“\n"
+
+#~ msgid "%s: option '-W %s' is ambiguous\n"
+#~ msgstr "%s: přepínač „-W %s“ není jednoznačný\n"
+
+#~ msgid "%s: option '-W %s' doesn't allow an argument\n"
+#~ msgstr "%s: přepínač „-W %s“ musí být zadán bez argumentu\n"
+
+#~ msgid "%s: option '-W %s' requires an argument\n"
+#~ msgstr "%s: přepínač „-W %s“ vyžaduje argument\n"
+
+#~ msgid "lseek failed"
+#~ msgstr "posun v souboru (lseek) se nezdařil"
+
+#~ msgid "PATTERN is, by default, a basic regular expression (BRE).\n"
+#~ msgstr ""
+#~ "VZOREK představuje základní regulární výraz (BRE), pokud není řečeno "
+#~ "jinak.\n"
+
+#~ msgid ""
+#~ "'egrep' means 'grep -E'.  'fgrep' means 'grep -F'.\n"
+#~ "Direct invocation as either 'egrep' or 'fgrep' is deprecated.\n"
+#~ msgstr ""
+#~ "„egrep“ znamená „grep -E“. „fgrep“ znamená „grep -F“.\n"
+#~ "Přímé spouštění příkazem „egrep“ nebo „fgrep“ je zastaralé.\n"
+
+#~ msgid "unescaped ^ or $ not supported with -Pz"
+#~ msgstr "s přepínači -Pz nejsou podporovány neescapované znaky ^ a $"
+
+#~ msgid "GNU Grep home page: <%s>\n"
+#~ msgstr "Domovská stránka GNU Grepu: <%s>\n"
+
+#~ msgid "invalid UTF-8 byte sequence in input"
+#~ msgstr "neplatná posloupnost UTF-8 bajtů ve vstupu"
+
+#~ msgid "PATTERN is an extended regular expression (ERE).\n"
+#~ msgstr "VZOREK představuje rozšířený regulární výraz (ERE).\n"
+
+#~ msgid "Invocation as 'egrep' is deprecated; use 'grep -E' instead.\n"
+#~ msgstr "Spouštění programu jako „egrep“ je zastaralé; použijte „grep -E“.\n"
+
+#~ msgid "PATTERN is a set of newline-separated fixed strings.\n"
+#~ msgstr "VZOREK představuje množinu řetězců, každý na novém řádku.\n"
+
+#~ msgid "Invocation as 'fgrep' is deprecated; use 'grep -F' instead.\n"
+#~ msgstr "Spouštění programu jako „fgrep“ je zastaralé; použijte „grep -F“.\n"
+
+#~ msgid "%s can only use the %s pattern syntax"
+#~ msgstr "%s umí pouze syntaxi vzorků %s"
+
+#~ msgid "the --mmap option has been a no-op since 2010"
+#~ msgstr "přepínač --map nic nedělá již od roku 2010"
+
+#~ msgid "unfinished repeat count"
+#~ msgstr "neukončený zápis počtu opakování"
+
+#~ msgid "malformed repeat count"
+#~ msgstr "deformovaný zápis počtu opakování"
+
+#~ msgid "writing output"
+#~ msgstr "zapisuje se výstup"
+
+#~ msgid ""
+#~ "in GREP_COLORS=\"%s\", the \"%s\" capacity needs a value (\"=...\"); "
+#~ "skipped"
+#~ msgstr ""
+#~ "Schopnost „%2$s“ v GREP_COLORS=\"%1$s\" potřebuje hodnotu („=…“); "
+#~ "přeskočena"
+
+#~ msgid ""
+#~ "in GREP_COLORS=\"%s\", the \"%s\" capacity is boolean and cannot take a "
+#~ "value (\"=%s\"); skipped"
+#~ msgstr ""
+#~ "Schopnost „%2$s“ v GREP_COLORS=\"%1$s\" je pravdivostního typu a nemůže "
+#~ "nést hodnotu („=%3$s“); přeskočena"
+
+#~ msgid "in GREP_COLORS=\"%s\", the \"%s\" capacity %s"
+#~ msgstr "V GREP_COLORS=\"%s\" schopnost „%s“ %s"
+
+#~ msgid ""
+#~ "stopped processing of ill-formed GREP_COLORS=\"%s\" at remaining "
+#~ "substring \"%s\""
+#~ msgstr ""
+#~ "Zpracování chybně utvořeného GREP_COLORS=\"%s\" zastaveno na zbývajícím "
+#~ "podřetězci „%s“"
+
+#~ msgid "unknown directories method"
+#~ msgstr "neznámá metoda obsluhy adresářů"
+
+#~ msgid ""
+#~ "\n"
+#~ "Output control:\n"
+#~ "  -m, --max-count=NUM       stop after NUM matches\n"
+#~ "  -b, --byte-offset         print the byte offset with output lines\n"
+#~ "  -n, --line-number         print line number with output lines\n"
+#~ "      --line-buffered       flush output on every line\n"
+#~ "  -H, --with-filename       print the filename for each match\n"
+#~ "  -h, --no-filename         suppress the prefixing filename on output\n"
+#~ "      --label=LABEL         print LABEL as filename for standard input\n"
+#~ "  -o, --only-matching       show only the part of a line matching "
+#~ "PATTERN\n"
+#~ "  -q, --quiet, --silent     suppress all normal output\n"
+#~ "      --binary-files=TYPE   assume that binary files are TYPE;\n"
+#~ "                            TYPE is `binary', `text', or `without-match'\n"
+#~ "  -a, --text                equivalent to --binary-files=text\n"
+#~ "  -I                        equivalent to --binary-files=without-match\n"
+#~ "  -d, --directories=ACTION  how to handle directories;\n"
+#~ "                            ACTION is `read', `recurse', or `skip'\n"
+#~ "  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n"
+#~ "                            ACTION is `read' or `skip'\n"
+#~ "  -R, -r, --recursive       equivalent to --directories=recurse\n"
+#~ "      --include=FILE_PATTERN  search only files that match FILE_PATTERN\n"
+#~ "      --exclude=FILE_PATTERN  skip files and directories matching "
+#~ "FILE_PATTERN\n"
+#~ "      --exclude-from=FILE   skip files matching any file pattern from "
+#~ "FILE\n"
+#~ "      --exclude-dir=PATTERN directories that match PATTERN will be "
+#~ "skipped.\n"
+#~ "  -L, --files-without-match print only names of FILEs containing no "
+#~ "match\n"
+#~ "  -l, --files-with-matches  print only names of FILEs containing matches\n"
+#~ "  -c, --count               print only a count of matching lines per "
+#~ "FILE\n"
+#~ "  -T, --initial-tab         make tabs line up (if needed)\n"
+#~ "  -Z, --null                print 0 byte after FILE name\n"
+#~ msgstr ""
+#~ "\n"
+#~ "Řízení výstupu:\n"
+#~ "  -m, --max-count=ČÍSLO     skončí, pokud najde ČÍSLO výrazů\n"
+#~ "  -b, --byte-offset         s každým výstupním řádkem vypíše jeho pozici\n"
+#~ "                            v souboru\n"
+#~ "  -n, --line-number         s každým výstupním řádkem vypíše jeho číslo "
+#~ "řádku\n"
+#~ "      --line-buffered       vyprázdní výstup po každém řádku\n"
+#~ "  -H, --with-filename       s každým výstupním řádkem vypíše jméno "
+#~ "souboru\n"
+#~ "  -h, --no-filename         potlačí vypisování jména souboru s výst. "
+#~ "řádkem\n"
+#~ "      --label=NÁZEV         zobrazí NÁZEV jako název souboru na "
+#~ "standardním\n"
+#~ "                            vstupu\n"
+#~ "  -o, --only-matching       zobrazí pouze tu část řádku odpovídající "
+#~ "VZORKU\n"
+#~ "  -q, --quiet, --silent     potlačí obvyklý výstup\n"
+#~ "      --binary-files=TYP    definuje typ binárních souborů\n"
+#~ "                            TYP může být: „binary“ (binární), „text“ "
+#~ "(textový)\n"
+#~ "                            nebo „without-match“ (bez vyhovění vzorku)\n"
+#~ "  -a, --text                jako --binary-files=text\n"
+#~ "  -I                        jako --binary-files=without-match\n"
+#~ "  -d, --directories=AKCE    jak zpracovávat adresáře. AKCE může být:\n"
+#~ "                            „read“ (číst), „recurse“ (rekurze),\n"
+#~ "                            „skip“ (přeskočit)\n"
+#~ "  -D, --devices=AKCE        jak zpracovávat zařízení, FIFO (roury) a "
+#~ "sockety,\n"
+#~ "                            AKCE může být: „read“ (číst) nebo „skip“ "
+#~ "(přeskočit)\n"
+#~ "  -R, -r, --recursive       jako --directories=recurse\n"
+#~ "      --include=VZOREK      soubory, které vyhovují vzorku, budou "
+#~ "zpracovány\n"
+#~ "      --exclude=VZOREK      soubory, které vyhovují vzorku, budou "
+#~ "přeskočeny\n"
+#~ "      --exclude-from=SOUBOR soubory, které vyhovují vzorkům ze SOUBORu, "
+#~ "budou\n"
+#~ "                            přeskočeny\n"
+#~ "      --exclude-dir=VZOREK  adresáře, které vyhovují vzorku, budou "
+#~ "přeskočeny\n"
+#~ "  -L, --files-without-match vypíše pouze jména souborů, ve kterých nebyl\n"
+#~ "                            VZOREK nalezen\n"
+#~ "  -l, --files-with-matches  vypíše pouze jména souborů, ve kterých byl "
+#~ "VZOREK\n"
+#~ "                            nalezen\n"
+#~ "  -c, --count               vypíše pouze počet vyhovujících řádků na "
+#~ "SOUBOR\n"
+#~ "  -T, --initial-tab         zarovnání začátků řádků tabulátory (je-li "
+#~ "třeba)\n"
+#~ "  -Z, --null                vypíše nulový bajt za jménem SOUBORu\n"
+
+#~ msgid "The -P and -z options cannot be combined"
+#~ msgstr "Přepínače -P a -z nemohou být kombinovány"
+
+#~ msgid "%s: illegal option -- %c\n"
+#~ msgstr "%s: neznámý přepínač -- %c\n"
+
+#~ msgid "Copyright (C) 2008 Free Software Foundation, Inc.\n"
+#~ msgstr "Copyright © 2008 Free Software Foundation, Inc.\n"
+
+#~ msgid ""
+#~ "This is free software; see the source for copying conditions.  There is "
+#~ "NO\n"
+#~ "warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR "
+#~ "PURPOSE.\n"
+#~ msgstr ""
+#~ "Toto je volné programové vybavení; podmínky pro kopírování a rozšiřování\n"
+#~ "naleznete ve zdrojových textech. Toto programové vybavení je zcela BEZ "
+#~ "ZÁRUKY,\n"
+#~ "a to i bez záruky PRODEJNOSTI nebo VHODNOSTI PRO NĚJAKÝ KONKRÉTNÍ ÚČEL.\n"

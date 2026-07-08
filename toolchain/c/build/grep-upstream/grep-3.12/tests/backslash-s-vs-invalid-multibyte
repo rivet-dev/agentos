@@ -1,0 +1,26 @@
+#! /bin/sh
+# Ensure that neither \s nor \S matches an invalid multibyte character.
+#
+# Copyright (C) 2013-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+
+printf '\202\n' > in || framework_failure_
+
+LC_ALL=en_US.UTF-8
+export LC_ALL
+
+fail=0
+grep '^\S$' in > out-S && fail=1
+compare /dev/null out-S || fail=1
+
+grep '^\s$' in > out-s && fail=1
+compare /dev/null out-s || fail=1
+
+Exit $fail

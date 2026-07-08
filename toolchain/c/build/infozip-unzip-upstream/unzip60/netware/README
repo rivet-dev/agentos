@@ -1,0 +1,66 @@
+1) I used the Watcom version 11 compiler and the Novell NetWare SDK
+   from October 1998.  You can get the latest NetWare SDK (free).  Go to
+   http://developer.novell.com/ndk/netware.htm#C/C++ and look for "NLM and
+   NetWare Libraries for C (including CLIB and XPlat)"
+
+2) The unzip.nlm runs in the same address space as the NetWare OS.
+   In other words, if unzip.nlm crashes, the server will most likely crash.
+   Therefore, I recommend you do not load unzip.nlm on a server that your
+   company depends on for business until it's been thoroughly tested on a
+   test server.
+
+3) I've designed this unzip.nlm port to load on any version of NetWare
+   starting with NetWare 3.12.  However, I've tested it only on NetWare 5.0.
+   If unzip.nlm does not load or run correctly, try the following in
+   this order:
+
+        a) Load clibaux.nlm version 1.21a or later before loading
+           unzip.nlm.  The clibaux.nlm is part of the NetWare SDK package
+           mentioned above.  It's also part of the 3.x C library package
+           mentioned below.
+
+        b) On NetWare 3.x, install the latest 3.x C library modules.
+           Go to http://support.novell.com/misc/patlst.htm#nw and look for
+           "NetWare 3.12/3.2 CLIB".
+
+        c) On NetWare 4.10, install the latest 4.10 C library modules.
+           Go to http://support.novell.com/misc/patlst.htm#nw and look for
+           "Updated modular CLIB and DSAPI".
+
+        d) On NetWare 4.11 and 4.2, install the latest support pack.
+           Go to http://support.novell.com/misc/patlst.htm#nw and look for
+           "NetWare 4 Support Pack".
+
+4) This unzip.nlm assumes that support for the long name space (also
+   known as the OS/2 name space) has already been added to the current
+   working volume.  If it has not, and the zip archive contains files with
+   long names, then the fopen() for such files will just fail.  The code
+   does not attempt to rename the file to fit in a DOS-style name.  The same
+   problem would occur with long directory names.
+
+5) If unzip.nlm works correctly on NetWare 3.x (which it should,
+   but I've not tried it), it will create all files and directories with
+   all-uppercase names. The reason is that the NetWare 3.x C library does
+   not support creating mixed-case or lowercase file names, even in the long
+   (OS/2) name space.
+
+6) To change the current working volume and current working directory
+   in which unzip.nlm loads and runs, load unzip.nlm like this:
+
+        load unzip <unzip options> (CLIB_OPT)/P<volume>:<directory>
+
+   For example:
+
+        load unzip archive.zip (CLIB_OPT)/Pvol1:\usr\home
+
+   For more information on CLIB_OPT, go to http://developer.novell.com/search/
+   and enter "CLIB_OPT" in the "Novell Developer Kit Search" box.
+
+7) To find out more about clibaux.nlm, go to
+   http://developer.novell.com/search/ and enter "clibaux" in the "Novell
+   Developer Kit Search" box.
+
+
+Vance Baarda
+NetWare Server Install
+Novell, Inc.

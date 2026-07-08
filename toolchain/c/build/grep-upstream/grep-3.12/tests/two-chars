@@ -1,0 +1,24 @@
+#! /bin/sh
+# Check for grep -F with two patterns consisting of the same char.
+#
+# Copyright 2016-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+
+fail=0
+
+for LOC in en_US.UTF-8 $zh $LOCALE_FR_UTF8; do
+  printf '0\n0\n' >pat
+  printf '0\n' >in
+  out=out-$LOC
+  LC_ALL=$LOC grep -Ff pat in >$out || fail=1
+  compare in $out || fail=1
+done
+
+Exit $fail

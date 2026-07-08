@@ -1,0 +1,13 @@
+Contents of the "proginfo" subdirectory for UnZip 5.42 and later:
+
+  Contents      this file
+  CONTRIBS      list of contributors to UnZip
+  ZipPorts      Info-ZIP rules and guidelines on contributions to the cause
+  3rdparty.bug  known bugs in PK[UN]ZIP, WinZip, etc.
+  defer.in      info about the NEXTBYTE macro and defer/undefer_input functions
+  extrafld.txt  info about all known "extra field" types
+  fileinfo.cms  info about the VM/CMS file system, including record formats
+  nt.sd         info about support for Windows NT's Security Descriptors (ACLs)
+  perform.dos   relative performance of Zip and UnZip with various DOS compilers
+  timezone.txt  explanation of the TZ environment variable for timezones
+  ziplimit.txt  limits of the Zip archive format and InfoZip's implementation

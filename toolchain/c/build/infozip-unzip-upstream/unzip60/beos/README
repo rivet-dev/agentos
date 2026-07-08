@@ -1,0 +1,77 @@
+UnZip 5.4 for BeOS
+
+NOTE:
+
+If you want to build UnZip 5.4 or later from the source, you'll need to
+have the "xres" tool installed (unless you remove the "xres" lines in the
+beos/Makefile).  This will cease to be a problem when BeOS R4 ships this
+fall.  Until then, you can get xres from
+ftp://ftp.be.com/pub/experimental/tools/xres-102.zip.
+
+HISTORY
+
+UnZip 5.30 was the first official release of Info-ZIP's UnZip to support
+the filesystem in BeOS.
+
+UnZip 5.31 added support for the new filesystem that appeared in the
+Advanced Access Preview (aka DR9) Release of BeOS.
+
+UnZip 5.32 added several important bug fixes.
+
+UnZip 5.4:
+
+- supports BeOS on x86 hardware (and cross-compiling, if a compiler is
+  present)
+
+- ask the Registrar to assign a file type to files that don't have one
+
+- adds a new -J option on BeOS; this lets you extract the data for a file
+  without restoring its file attributes (handy if you stumble on really
+  old BeOS ZIP archives... from before BeOS Preview Release)
+
+- will restore attributes properly on symbolic links (you'll need
+  zip 2.21 or later to create ZIP files that store attributes for
+  symbolic links)
+
+*** WARNING ***
+You may find some extremely old BeOS zip archives that store their
+file attributes differently; these will be from DR8 and earlier (when
+BeOS copied the MacOS type/creator fields instead of using the current
+extremely flexible scheme).
+
+You can still unpack the _data_ in older zip files, but you won't be
+able to recover the file attributes in those archives.  Use the -J option
+with these files or you'll get "compressed EA data missing" and "zipfile
+probably corrupt" errors, even though the data is intact!
+
+The new scheme makes handling BeOS file attributes much more robust, and
+allows for possible future expansion without another round of
+incompatibilities.
+
+That's life on the edge!
+*** WARNING ***
+
+The new filesystem allows for huge files (up to several terabytes!) with
+huge amounts of meta-data (up to several terabytes!).  The existing ZIP
+format was designed when this much data on a personal computer was
+science fiction; as a result, it's quite possible that large amounts of file
+attributes (more than maybe 100+K bytes) could be truncated.  Zip and UnZip
+try to deal with this in a fairly sensible way, working on the assumption
+that the data in the file is more important than the data in the file
+attributes.
+
+One way to run into this problem is to mount an HFS volume and zip
+some Mac files that have large resources attached to them.  This
+happens more often than you'd expect; I've seen several 0-byte files that
+had over four megabytes of resources.  Even more stupid, these resources
+were _data_ (sound for a game), and could have been easily stored as
+data...
+
+KNOWN BUGS
+
+None! Yahoo!
+
+Please report any bugs to Zip-Bugs@lists.wku.edu.
+
+- Chris Herborth (chrish@qnx.com)
+  November 2/1998

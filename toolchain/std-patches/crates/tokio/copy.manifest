@@ -1,0 +1,7 @@
+# Companion source files installed into vendored tokio after the .patch applies.
+# Format: <src (relative to this patch dir)> <dest (relative to vendor/tokio-*)>
+# The 0001-tokio-wasi-process.patch wires `#[path = "wasi.rs"] mod imp;` for
+# target_os = "wasi"; this installs that module (the cooperative single-thread
+# process impl: Child::poll does WNOHANG try_wait + yield, never blocking the
+# executor). Without it the patched tokio fails to compile (missing wasi.rs).
+wasi-process-imp.rs src/process/wasi.rs

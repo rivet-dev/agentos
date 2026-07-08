@@ -1,0 +1,36 @@
+#! /bin/sh
+# Ensure that \s and \S work with repetition operators.
+#
+# Copyright (C) 2013-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+
+fail=0
+
+for loc in en_US.UTF-8 C; do
+  echo locale=$loc
+  LC_ALL=$loc
+  export LC_ALL
+
+  printf ' \n' > in || framework_failure_
+
+  for re in '\s\+' '\s*' '\s\?' '\s\{1\}'; do
+    grep "^$re\$" in > out || fail=1
+    compare in out || fail=1
+  done
+
+  printf 'X\n' > in || framework_failure_
+
+  for re in '\S\+' '\S*' '\S\?' '\S\{1\}'; do
+    grep "^$re\$" in > out || fail=1
+    compare in out || fail=1
+  done
+done
+
+Exit $fail

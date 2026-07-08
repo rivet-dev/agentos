@@ -1,0 +1,8 @@
+Contents of the "flexos" subdirectory for UnZip 5.32 and later:
+
+  Contents       this file
+  README         notes about limitations and assumptions of the FlexOS port
+  flexos.c       OS-dependent UnZip routines for FlexOS
+  flxcfg.h       OS-dependent configuration, included by unzpriv.h
+  hc.pro         profile for MetaWare High C
+  makefile       makefile for MetaWare High C, PAMAKE

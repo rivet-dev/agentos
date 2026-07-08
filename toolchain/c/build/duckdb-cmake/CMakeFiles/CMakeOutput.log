@@ -1,0 +1,248 @@
+The target system is: WASI - 1 - wasm32
+The host system is: Linux - 6.1.0-41-amd64 - x86_64
+Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
+Compiler: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang 
+Build flags: -I/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include;-D_WASI_EMULATED_PTHREAD;-D_WASI_EMULATED_MMAN;-D_WASI_EMULATED_SIGNAL;-D_WASI_EMULATED_PROCESS_CLOCKS
+Id flags: -c;--target=wasm32-wasi 
+
+The output was:
+0
+
+
+Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "CMakeCCompilerId.o"
+
+The C compiler identification is Clang, found in "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/3.25.1/CompilerIdC/CMakeCCompilerId.o"
+
+Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" succeeded.
+Compiler: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ 
+Build flags: -I/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include;-D_WASI_EMULATED_PTHREAD;-D_WASI_EMULATED_MMAN;-D_WASI_EMULATED_SIGNAL;-D_WASI_EMULATED_PROCESS_CLOCKS;-DDUCKDB_DISABLE_EXTENSION_LOAD;-DSQLITE_NOHAVE_SYSTEM;-DSQLITE_OMIT_POPEN;-fwasm-exceptions;-DWEBDB_FAST_EXCEPTIONS=1;-isystem;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1
+Id flags: -c;--target=wasm32-wasi 
+
+The output was:
+0
+
+
+Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "CMakeCXXCompilerId.o"
+
+The CXX compiler identification is Clang, found in "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/3.25.1/CompilerIdCXX/CMakeCXXCompilerId.o"
+
+Detecting C compiler ABI info compiled with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_3e18a/fast && gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI'
+/usr/bin/gmake  -f CMakeFiles/cmTC_3e18a.dir/build.make CMakeFiles/cmTC_3e18a.dir/build
+gmake[3]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI'
+Building C object CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -I/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS    -v -MD -MT CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -MF CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj.d -o CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -c /usr/share/cmake-3.25/Modules/CMakeCCompilerABI.c
+clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)
+Target: wasm32-unknown-wasi
+Thread model: posix
+InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin
+ (in-process)
+ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang-19" -cc1 -triple wasm32-unknown-wasi -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCCompilerABI.c -mrelocation-model static -mframe-pointer=none -ffp-contract=on -fno-rounding-math -mconstructor-aliases -target-cpu generic -fvisibility=hidden -debugger-tuning=gdb -fdebug-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI -v -fcoverage-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI -resource-dir /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19 -dependency-file CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj.d -MT CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -sys-header-deps -I /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D _WASI_EMULATED_PTHREAD -D _WASI_EMULATED_MMAN -D _WASI_EMULATED_SIGNAL -D _WASI_EMULATED_PROCESS_CLOCKS -isysroot /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include -ferror-limit 19 -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -o CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -x c /usr/share/cmake-3.25/Modules/CMakeCCompilerABI.c
+clang -cc1 version 19.1.5-wasi-sdk based upon LLVM 19.1.5-wasi-sdk default target wasm32-wasi
+#include "..." search starts here:
+#include <...> search starts here:
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include
+End of search list.
+Linking C executable cmTC_3e18a
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_3e18a.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -I/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib -fwasm-exceptions -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks -v CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -o cmTC_3e18a 
+clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)
+Target: wasm32-unknown-wasi
+Thread model: posix
+InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin
+ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld" -m wasm32 -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -lc /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a -o cmTC_3e18a
+gmake[3]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI'
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI'
+
+
+
+Parsed C implicit include dir info from above output: rv=done
+  found start of include info
+  found start of implicit include info
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include]
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  end of search list found
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include]
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  implicit include dirs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+
+
+Parsed C implicit link information from above output:
+  link line regex: [^( *|.*[/\])(ld\.lld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\]+-)?ld|collect2)[^/\]*( |$)]
+  ignore line: [Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI]
+  ignore line: []
+  ignore line: [Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_3e18a/fast && gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI']
+  ignore line: [/usr/bin/gmake  -f CMakeFiles/cmTC_3e18a.dir/build.make CMakeFiles/cmTC_3e18a.dir/build]
+  ignore line: [gmake[3]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI']
+  ignore line: [Building C object CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj]
+  ignore line: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -I/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS    -v -MD -MT CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -MF CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj.d -o CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -c /usr/share/cmake-3.25/Modules/CMakeCCompilerABI.c]
+  ignore line: [clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)]
+  ignore line: [Target: wasm32-unknown-wasi]
+  ignore line: [Thread model: posix]
+  ignore line: [InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin]
+  ignore line: [ (in-process)]
+  ignore line: [ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang-19" -cc1 -triple wasm32-unknown-wasi -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCCompilerABI.c -mrelocation-model static -mframe-pointer=none -ffp-contract=on -fno-rounding-math -mconstructor-aliases -target-cpu generic -fvisibility=hidden -debugger-tuning=gdb -fdebug-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI -v -fcoverage-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-vCS4dI -resource-dir /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19 -dependency-file CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj.d -MT CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -sys-header-deps -I /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D _WASI_EMULATED_PTHREAD -D _WASI_EMULATED_MMAN -D _WASI_EMULATED_SIGNAL -D _WASI_EMULATED_PROCESS_CLOCKS -isysroot /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include -ferror-limit 19 -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -o CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -x c /usr/share/cmake-3.25/Modules/CMakeCCompilerABI.c]
+  ignore line: [clang -cc1 version 19.1.5-wasi-sdk based upon LLVM 19.1.5-wasi-sdk default target wasm32-wasi]
+  ignore line: [#include "..." search starts here:]
+  ignore line: [#include <...> search starts here:]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  ignore line: [End of search list.]
+  ignore line: [Linking C executable cmTC_3e18a]
+  ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_3e18a.dir/link.txt --verbose=1]
+  ignore line: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -I/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib -fwasm-exceptions -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks -v CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -o cmTC_3e18a ]
+  ignore line: [clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)]
+  ignore line: [Target: wasm32-unknown-wasi]
+  ignore line: [Thread model: posix]
+  ignore line: [InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin]
+  link line: [ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld" -m wasm32 -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj -lc /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a -o cmTC_3e18a]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld] ==> ignore
+    arg [-m] ==> ignore
+    arg [wasm32] ==> ignore
+    arg [-L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib] ==> dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib]
+    arg [-L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi] ==> dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o] ==> obj [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o] ==> obj [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o] ==> obj [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o] ==> obj [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o]
+    arg [-lwasi-emulated-mman] ==> lib [wasi-emulated-mman]
+    arg [-lwasi-emulated-signal] ==> lib [wasi-emulated-signal]
+    arg [-lwasi-emulated-process-clocks] ==> lib [wasi-emulated-process-clocks]
+    arg [CMakeFiles/cmTC_3e18a.dir/CMakeCCompilerABI.c.obj] ==> ignore
+    arg [-lc] ==> lib [c]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a] ==> lib [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a]
+    arg [-o] ==> ignore
+    arg [cmTC_3e18a] ==> ignore
+  remove lib [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a]
+  collapse library dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib]
+  collapse library dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+  implicit libs: [wasi-emulated-mman;wasi-emulated-signal;wasi-emulated-process-clocks;c]
+  implicit objs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o]
+  implicit dirs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+  implicit fwks: []
+
+
+Detecting CXX compiler ABI info compiled with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_6b6fc/fast && gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z'
+/usr/bin/gmake  -f CMakeFiles/cmTC_6b6fc.dir/build.make CMakeFiles/cmTC_6b6fc.dir/build
+gmake[3]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z'
+Building CXX object CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -I/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS -DDUCKDB_DISABLE_EXTENSION_LOAD -DSQLITE_NOHAVE_SYSTEM -DSQLITE_OMIT_POPEN -fwasm-exceptions -DWEBDB_FAST_EXCEPTIONS=1 -isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1    -v -MD -MT CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -MF CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj.d -o CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -c /usr/share/cmake-3.25/Modules/CMakeCXXCompilerABI.cpp
+clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)
+Target: wasm32-unknown-wasi
+Thread model: posix
+InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin
+ (in-process)
+ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang-19" -cc1 -triple wasm32-unknown-wasi -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCXXCompilerABI.cpp -mrelocation-model static -mframe-pointer=none -ffp-contract=on -fno-rounding-math -mconstructor-aliases -target-feature +exception-handling -mllvm -wasm-enable-eh -target-feature +multivalue -target-feature +reference-types -target-cpu generic -fvisibility=hidden -debugger-tuning=gdb -fdebug-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z -v -fcoverage-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z -resource-dir /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19 -dependency-file CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj.d -MT CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -sys-header-deps -isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1 -I /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D _WASI_EMULATED_PTHREAD -D _WASI_EMULATED_MMAN -D _WASI_EMULATED_SIGNAL -D _WASI_EMULATED_PROCESS_CLOCKS -D DUCKDB_DISABLE_EXTENSION_LOAD -D SQLITE_NOHAVE_SYSTEM -D SQLITE_OMIT_POPEN -D WEBDB_FAST_EXCEPTIONS=1 -isysroot /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include -fdeprecated-macro -ferror-limit 19 -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -fcxx-exceptions -fexceptions -exception-model=wasm -o CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -x c++ /usr/share/cmake-3.25/Modules/CMakeCXXCompilerABI.cpp
+clang -cc1 version 19.1.5-wasi-sdk based upon LLVM 19.1.5-wasi-sdk default target wasm32-wasi
+#include "..." search starts here:
+#include <...> search starts here:
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include
+End of search list.
+Linking CXX executable cmTC_6b6fc
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_6b6fc.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -I/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS -DDUCKDB_DISABLE_EXTENSION_LOAD -DSQLITE_NOHAVE_SYSTEM -DSQLITE_OMIT_POPEN -fwasm-exceptions -DWEBDB_FAST_EXCEPTIONS=1 -isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib -fwasm-exceptions -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks -v CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -o cmTC_6b6fc 
+clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)
+Target: wasm32-unknown-wasi
+Thread model: posix
+InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin
+ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld" -m wasm32 -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -lc++ -lc++abi -lc /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a -o cmTC_6b6fc
+gmake[3]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z'
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z'
+
+
+
+Parsed CXX implicit include dir info from above output: rv=done
+  found start of include info
+  found start of implicit include info
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include]
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1]
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  end of search list found
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include]
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1]
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  implicit include dirs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+
+
+Parsed CXX implicit link information from above output:
+  link line regex: [^( *|.*[/\])(ld\.lld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\]+-)?ld|collect2)[^/\]*( |$)]
+  ignore line: [Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z]
+  ignore line: []
+  ignore line: [Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_6b6fc/fast && gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z']
+  ignore line: [/usr/bin/gmake  -f CMakeFiles/cmTC_6b6fc.dir/build.make CMakeFiles/cmTC_6b6fc.dir/build]
+  ignore line: [gmake[3]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z']
+  ignore line: [Building CXX object CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj]
+  ignore line: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -I/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS -DDUCKDB_DISABLE_EXTENSION_LOAD -DSQLITE_NOHAVE_SYSTEM -DSQLITE_OMIT_POPEN -fwasm-exceptions -DWEBDB_FAST_EXCEPTIONS=1 -isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1    -v -MD -MT CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -MF CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj.d -o CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -c /usr/share/cmake-3.25/Modules/CMakeCXXCompilerABI.cpp]
+  ignore line: [clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)]
+  ignore line: [Target: wasm32-unknown-wasi]
+  ignore line: [Thread model: posix]
+  ignore line: [InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin]
+  ignore line: [ (in-process)]
+  ignore line: [ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang-19" -cc1 -triple wasm32-unknown-wasi -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCXXCompilerABI.cpp -mrelocation-model static -mframe-pointer=none -ffp-contract=on -fno-rounding-math -mconstructor-aliases -target-feature +exception-handling -mllvm -wasm-enable-eh -target-feature +multivalue -target-feature +reference-types -target-cpu generic -fvisibility=hidden -debugger-tuning=gdb -fdebug-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z -v -fcoverage-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/CMakeFiles/CMakeScratch/TryCompile-dgp42z -resource-dir /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19 -dependency-file CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj.d -MT CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -sys-header-deps -isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1 -I /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D _WASI_EMULATED_PTHREAD -D _WASI_EMULATED_MMAN -D _WASI_EMULATED_SIGNAL -D _WASI_EMULATED_PROCESS_CLOCKS -D DUCKDB_DISABLE_EXTENSION_LOAD -D SQLITE_NOHAVE_SYSTEM -D SQLITE_OMIT_POPEN -D WEBDB_FAST_EXCEPTIONS=1 -isysroot /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include -fdeprecated-macro -ferror-limit 19 -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -fcxx-exceptions -fexceptions -exception-model=wasm -o CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -x c++ /usr/share/cmake-3.25/Modules/CMakeCXXCompilerABI.cpp]
+  ignore line: [clang -cc1 version 19.1.5-wasi-sdk based upon LLVM 19.1.5-wasi-sdk default target wasm32-wasi]
+  ignore line: [#include "..." search starts here:]
+  ignore line: [#include <...> search starts here:]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  ignore line: [End of search list.]
+  ignore line: [Linking CXX executable cmTC_6b6fc]
+  ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_6b6fc.dir/link.txt --verbose=1]
+  ignore line: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -I/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/include -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS -DDUCKDB_DISABLE_EXTENSION_LOAD -DSQLITE_NOHAVE_SYSTEM -DSQLITE_OMIT_POPEN -fwasm-exceptions -DWEBDB_FAST_EXCEPTIONS=1 -isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi/c++/v1  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib -fwasm-exceptions -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks -v CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -o cmTC_6b6fc ]
+  ignore line: [clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)]
+  ignore line: [Target: wasm32-unknown-wasi]
+  ignore line: [Thread model: posix]
+  ignore line: [InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin]
+  link line: [ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld" -m wasm32 -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-process-clocks CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj -lc++ -lc++abi -lc /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a -o cmTC_6b6fc]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld] ==> ignore
+    arg [-m] ==> ignore
+    arg [wasm32] ==> ignore
+    arg [-L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib] ==> dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib]
+    arg [-L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi] ==> dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o] ==> obj [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o] ==> obj [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o] ==> obj [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o] ==> obj [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o]
+    arg [-lwasi-emulated-mman] ==> lib [wasi-emulated-mman]
+    arg [-lwasi-emulated-signal] ==> lib [wasi-emulated-signal]
+    arg [-lwasi-emulated-process-clocks] ==> lib [wasi-emulated-process-clocks]
+    arg [CMakeFiles/cmTC_6b6fc.dir/CMakeCXXCompilerABI.cpp.obj] ==> ignore
+    arg [-lc++] ==> lib [c++]
+    arg [-lc++abi] ==> lib [c++abi]
+    arg [-lc] ==> lib [c]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a] ==> lib [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a]
+    arg [-o] ==> ignore
+    arg [cmTC_6b6fc] ==> ignore
+  remove lib [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a]
+  collapse library dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib]
+  collapse library dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+  implicit libs: [wasi-emulated-mman;wasi-emulated-signal;wasi-emulated-process-clocks;c++;c++abi;c]
+  implicit objs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/fcntl.o;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/mlock.o;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/duckdb-cmake/agentos-shims/sched.o]
+  implicit dirs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes-install/lib;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+  implicit fwks: []
+
+

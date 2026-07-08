@@ -1,0 +1,26 @@
+#! /bin/sh
+# Regression test for GNU grep.
+#
+# Copyright 2016-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+c=1
+while test $c -lt 256; do
+  tr2=$(printf '\\%o\n' $c)
+  echo X | tr X "$tr2" >in
+  if test $(wc -l <in) -eq 1; then
+    grep . in >out || fail=1
+    compare in out || fail=1
+  fi
+  test $fail -ne 0 && Exit $fail
+  c=$(expr $c + 1)
+done
+
+Exit $fail

@@ -1,0 +1,69 @@
+Acorn-specific usage instructions
+---------------------------------
+
+As zipfiles can come from a variety of sources apart from Acorn machines,
+consideration had to be given to the handling of dot-extensions, e.g.
+"DOSFILE.TXT", "unix-filename.tar.gz". These are extracted as "DOSFILE/TXT"
+and "unix-filename/tar/gz"; their names may or may not be truncated,
+depending on where the files are being created: what filing system and, for
+Filecore-based filing systems such as ADFS or an IDEFS or SCSIFS, which
+disk/partition format (names will not be truncated if you're using E+ or F+).
+
+Where truncation occurs, you must be REALLY careful about extracting files
+from archives. The files
+
+    dummy_source.c and dummy_source.h
+
+will both be extracted as
+
+    dummy_sour
+
+UnZip will prompt you for confirmation of the over-writing of these files,
+but you must be really careful unless you wish to lose files! Also, because
+UnZip is a unix-ported program, the filenames are CASE SENSITIVE.
+
+    *unzip new/zip newfile
+
+will extract 'newfile', but not 'NewFile', 'NEWFILE' or any other
+combinations. However, you can use the -C option to force operations to
+disregard the case of filenames.
+
+The Acorn UnZip port has an additional feature to cope with the extraction of
+files containing 'c' code. As you may be aware, Acorn Desktop C requires all
+files called "foo.c" to be renamed to "c.foo", ie "foo" in a directory called
+"c".
+
+There are two ways of using this feature.
+
+- The old way: use a colon-separated environment variable named "Unzip$Exts".
+
+  Any extensions found in this variable will be extracted to directories
+  named after the extension, with the extension stripped. For example:
+
+    *Set Unzip$Exts "c:h:o:s"
+    *unzip foo/zip
+
+- The new way: use the -/ option. For example:
+
+  Any extensions found in the parameter for this option will be extracted to
+  directories named after the extension, with the extension stripped. For
+  example:
+
+    *unzip -/c:h:o:s foo/zip
+
+If foo/zip contains a file named "foo.c", this file will be written as "foo"
+in directory "c". This can be used to include "c:h:o:s:txt" to pull all the
+text files out to a separate directory.
+
+UnZip fully supports SparkFS Extra Field. This means that zipfiles created
+with SparkFS or Zip (on RISC OS) will be correctly unzipped, including
+filetypes.
+
+UnZipSFX can be used to create self-extracting archives. To use it, just
+create a common zipfile using Zip (or SparkFS), then load the UnZipSFX
+executable into an editor (eg. Edit, Zap), go with the caret the end of the
+file (using CTRL-CursorDown) and drag the zipfile to the editor window (in
+other words, append the zipfile to the UnZipSFX executable). Now, saving the
+resulting file (with filetype Absolute (&FF8)), you have a self-extracting
+archive (ie. double-clicking on it will unzip the contents of the original
+zipfile to the currently selected directory).

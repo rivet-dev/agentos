@@ -1,0 +1,57 @@
+#!/bin/sh
+# grep-2.21 would incur a 100x penalty for 10x increase in regexp length
+
+# Copyright 2015-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+# This test is susceptible to failure due to differences in
+# system load during the two test runs, so we'll mark it as
+# "expensive", making it less likely to be run by regular users.
+expensive_
+require_perl_
+
+echo x > in || framework_failure_
+# Note that we want 10x the byte count (not line count) in the larger file.
+seq 10000 50000 | tr -d '\012' > r || framework_failure_
+cat r r r r r r r r r r > re-10x || framework_failure_
+mv r re || framework_failure_
+
+returns_ 0 user_time_ 1 grep -f re in > base-ms \
+    || framework_failure_ 'failed to compute baseline timing'
+base_ms=$(cat base-ms)
+
+# This test caused trouble on at least two types of fringe hosts: those
+# with very little memory (a 1.5GB RAM Solaris host) and a Linux/s390x
+# (emulated with qemu-system-s390x). The former became unusable due to
+# mem requirements of the 2nd test, and the latter ended up taking >35x
+# more time than the base case. Skipping this test for any system using
+# more than this many milliseconds for the first case should avoid those
+# false-positive failures while skipping the test on few other systems.
+test 800 -lt "$base_ms" && skip_ "this base-case test took too long"
+
+returns_ 0 user_time_ 1 grep -f re-10x in > b10x-ms \
+    || framework_failure_ 'failed to compute 10x timing'
+b10x_ms=$(cat b10x-ms)
+
+# Increasing the length of the regular expression by a factor
+# of 10 should cause no more than a 10x increase in duration.
+# However, we'll draw the line at 20x to avoid false-positives.
+returns_ 1 expr $base_ms '<' $b10x_ms / 20 || fail=1
+
+Exit $fail

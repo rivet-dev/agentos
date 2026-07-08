@@ -1,0 +1,31 @@
+#!/bin/sh
+# Ensure negated Perl classes match multibyte characters in UTF mode.
+#
+# Copyright (C) 2023-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_en_utf8_locale_
+LC_ALL=en_US.UTF-8
+export LC_ALL
+require_pcre_
+
+echo . | grep -qP '(*UTF).' 2>/dev/null \
+  || skip_ 'PCRE unicode support is compiled out'
+
+fail=0
+
+# 'ñ' - U+00F1 LATIN SMALL LETTER N WITH TILDE
+printf '\302\221\n' > in || framework_failure_
+grep -P '\D' in > out || fail=1
+compare in out || fail=1
+
+# '𝄞' - U+1D11E MUSICAL SYMBOL G CLEF
+printf '\360\235\204\236\n' > in || framework_failure_
+grep -P '\W' in > out || fail=1
+compare in out || fail=1
+
+Exit $fail

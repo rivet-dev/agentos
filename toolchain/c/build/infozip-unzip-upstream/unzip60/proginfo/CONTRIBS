@@ -1,0 +1,262 @@
+This is a partial list of contributors to Info-ZIP's UnZip and the code upon
+which it is based.  Others have also contributed, and if you are among them,
+please let us know (don't be shy!).  Everyone who contributed via the Info-
+ZIP digest *should* now be listed here, but oversights are entirely possible.
+
+  Mark Adler             decryption, inflate, explode, funzip code; misc. casts
+  Steve Alpert           VMS rms.h bugfix
+  Jeffrey Altman         inflate.c huft_build() bugfix
+  Glenn Andrews          MS-DOS makefiles; prototyping bugfix; bogus main() fix
+  Andrei Arkhipov        Solaris 2.x package files
+  Joel Aycock            descrip.mms bugfix
+  Vance Baarda           Novell Netware 4.x NLM port
+  Eric Baatz             Borland version() info; Solaris zipgrep packaging fix
+  Bob Babcock            DOS volume-label code (FCBs)
+  Charles Bailey         VMS_SEVERITY fix; VMSWILD () extension
+  Audrey Beck            "WHERE" file info for AOL OS/2 forum
+  Myles Bennet           Initial start of Zip64 and Large-File handling
+  Mike Bernardi          Unix makefile entry; CIX uploads
+  James Birdsall         extract.c/makefile/NT stuff, etc.; awesome beta tester
+  Allan Bjorklund        in misc.c
+  Denise Blakeley        Unix makefile entry
+  Wim Bonner             original OS/2 port; Unix makefile entry
+  Paul Borman            BSD/386 (BSDI) fixes; Unix makefile entry
+  Carlton Brewster       mapname bugfix
+  Marcus Brinkmann       Unix configuration fix for GNU/Hurd
+  Rodney Brown           stdin-/dev/null bugfix; VMS error levels; CRC optimiz.
+  Stan Brown             "zipinfo -M"/isatty(1) bugfix
+  Jens von Buelow        port to MPE/iX, a Unix variant running on HP 3000
+  John Bush              first full Amiga port; FileDate; Amiga fixes; etc.
+  Christian Carey        Unix makefile bugfix for install target (create dirs)
+  Valter Cavecchia       Unix makefile entry
+  Rudolf Cejka           Unix UID/GID extraction bugfix
+  Peter Chang            optional UNIXBACKUP option (-B)
+  Kevin Cheng            windll MBCS fix (setlocale initialization)
+  Andrey Chernov         BSD 4.4 utime fix
+  Brad Clarke            Win32 XX_flag bugfix; Borland debug code removal
+  Mark Clayton           LynxOS (unix/Makefile update)
+  John Cowan             mods to original match.c; other stuff?
+  Frank da Cruz          xxu.c, on which original mapname.c was based
+  Bill Davidsen          -q(q); mapname stuff; envargs; Xenix stuff; opts; etc.
+  Karl Davis             Acorn RISC OS port
+  Jim Delahanty          NTSD fixes
+  Harald Denker          major Atari update/fixes
+  Matt "Doc" D'Errico    AIX stuff, Unix makefile entry
+  Kim DeVaughn           Unix makefile entry
+  Arjan de Vet           various things, but I don't remember exactly what...
+  Frank Donahoe          djgpp v2.x makefile; documentation updates
+  Jean-Michel Dubois     THEOS port
+  James Dugal            ZMEM stuff; unshrink bugfix; file perms stuff; etc.
+  Jim Dumser             -z stuff; umask, opendir/Borland, UID fixes; etc.
+  Peter Eckel            DOS buffer-overrun fix
+  Mark Edwards           mapname.c, misc.c fixes; Unix makefile entry
+  Paul Eggert            man pages update for POSIX compatibility
+  Gershon Elber          Unix makefile entry
+  Patrick Ellis          VMS usage fix (`-' vs. `/' options)
+  Shane Erstad           Borland makefile bugfix
+  Thomas Esken           Acorn typo fix
+  Bruce Evans            Unix makefile entry
+  Derek Fawcus           FlexOS port
+  David Feinleib         Windows NT port
+  David Fenyes           Unix makefile entry
+  Scott Field            Windows NT security-descriptor support; CRC opts
+  Greg Flint             Unix makefile entry
+  Carl Forde             VM/CMS port debugging (with Christian Spieler)
+  Craig Forbes           "UnZipToMem with no ucsize in local header" bugfix
+  Joe Foster             Unix makefile bugfix
+  Gordon Fox             Unix makefile bugfix for apollo target
+  Jeffrey Foy            OS/2 stuff(?); [CP/M]
+  Mike Freeman           VMS gcc makefiles; VMS bugfixes; etc.
+  Kevin Fritz            Borland bugfixes; MS-DOS makefile fixes; etc.
+  Aaron Gaalswyk         OS/2 checkdir() fix
+  Jean-loup Gailly       decryption code; ReadByte replacement; much nagging :-)
+  Forrest Gehrke         Unix makefile entry
+  Tim Geibelhaus         Unix makefile entry
+  Henry Gessau           flush/Fwrite/outcnt fixes; new NT port
+  Christian Ghisler      inflate tweaks
+  Filip Gieszczykiewicz  Unix makefile entry
+  Paul Gilmartin         work-around for systems with broken catman/makewhatis
+  Hunter Goatley         VMSCLI interface; VMS help/RUNOFF; list maintainer
+  Ian E. Gorman          VM/CMS & MVS support
+  Bill Gould             MVS file-format fixes
+  Michael Graff          Unix makefile entry
+  Juan Manuel Guerrero   DOS/WIN32 filename mapping fixes, device name handling
+  Giuseppe Guerrini      LynxOS variant of Unix port
+  Richard H. Gumpertz    Unix makefile entry
+  Walter Haidinger       Amiga SAS/C fixes
+  Steve Hanna            Macintosh stuff
+  Mark Hanning-Lee       docs corrections, Unix Makefile fixes, "check" target
+  Guy Harris             ZipInfo man-page typo fix
+  Greg Hartwig           finished VM/CMS port
+  Robert Heath           Windows GUI port (WizUnZip)
+  Dave Heiland           new usage screen
+  Ron Henderson          -a bugfix
+  Chris Herborth         new Atari port; Atari fixes
+  Greg Hill              docs update
+  Lon Hohberger          security fix; security advice in man-page
+  John Hollow            "WHERE" file path corrections
+  Jason Hood             DOS screen-width support
+  Phil Howard            Unix makefile entry
+  Jonathan Hudson        SMS/QDOS port
+  Joe Isuzu              Unix makefile entry
+  Kimio Itoh             ZipInfo DIR_END bugfix for MSVC 4.0
+  Aubrey Jaffer          pixel, v7 targets
+  "jelmer"               directory traversal security fix
+  Graham Jenkins         Sequent Dynix/ptx bugfix
+  Peter Jones            Unix makefile entry
+  Larry Jones            ZMEM stuff; unimplod fix; crc_i386.S improvements; etc.
+  Warren Jones           MKS bugfix
+  Kjetil J{\o}rgenson    Makefile, OSF/1, NetBSD fixes; djgpp v2 mods; USE_VFAT
+  Bruce Kahn             DOS floppy detection?; Unix makefile entry
+  Bob Kemp               NOTINT16 rewrite; Unix makefile entry
+  J. Kercheval           filmatch.c, on which second match.c was based
+  Paul Kienitz           continuing general Amiga porting; Aztec C support; ASM
+  Raymond L. King        WINDLL VB example maintenance
+  Mike Kincer            AIX "ps2" bugfix
+  David Kirschbaum       mapname port; general-purpose meddling; Python jokes
+  Paul Klahr             Regulus port
+  Jim Knoble             Turbo C++ makefile fix
+  Alvin Koh              Borland C++ bugfixes
+  D. Krumbholz           Acorn filetime conversion bug
+  Karel Kubat            Linux strncasecmp bugfix
+  Bo Kullmar             -z code; umask, do_string, BSD time, echo fixes; etc.
+  Peter Kunath           DLL bugfixes, MSVC __asm support
+  Russell Lang           OS/2 DLL calling-convention bugfix
+  Michael Lawler         Borland version() info; process.c string fix; DOS fixes
+  Rudolf Lechleitner     inflate memory leak fix
+  Johnny Lee             Macintosh port; Win3.1 port; far strings; fixes; etc.
+  Alexander Lehmann      makefile.tc bugfix; MS-DOS mapname() bugfix
+  Marty Leisner          Unix perms fix for non-Unix dirs; man pages fonts; etc.
+  Fred Lenk              docs e-mail bugfix
+  Daniel Lewart          AIX stuff; compiler warnings
+  Jim Lill               SCO Unix SYSNDIR bugfix
+  John Limpert           Unix makefile entry
+  Hogan Long             Borland preprocessor bugfix
+  Mike Long              Unix Makefile installation bugfix
+  Warner Losh            in misc.c
+  Dave Lovelace          Data General AOS/VS port
+  Stew Loving-Gibbard    original Windows 16-bit DLL port (non-WizUnZip version)
+  Dale Lutz              \-to-/ conversion argv/argc bugfix
+  Tony Luu               NT timezone bugfix
+  Igor Mandrichenko      vms.c; many improvements and VMS modifications
+  Javier Manero          fileio.c bugfix; MS-DOS version() bugfix; Watcom fix
+  Paul Manno             makefile.tc fixes
+  Claude Marinier        Unix makefile recursive fix
+  Fulvio Marino          revised UnZip and ZipInfo man pages; Makefile entry
+  Carl Mascott           original Unix port
+  Rafal Maszkowski       Convex unzip.h fixes; Unix makefile entry
+  Jim Mathies            signal handler installing bugfix
+  Eberhard Mattes        handler() bugfix; docs update
+  Adrian Maull           .NET C# example projects for Zip and UnZip dll
+  Peter Mauzey           Unix makefile entry
+  Scott Maxwell          version.h; massive reentrancy fixes; OS/2 DLL port
+  Bob Maynard            16-bit OS/2 pathname bugfix
+  Randy McCaskile        Unix makefile entry
+  John McDonald          OS/2 zip2exe script
+  Gene McManus           -o code
+  Joe Meadows            file.c, on which VMSmunch.c (timestamps) was based
+  Jason Merrill          Sequent patches
+  Tom Metro              corrupted-zipfile handler bugfix
+  Ian Miller             VMS makefile portability bugfix (non-standard "edit")
+  Steve Miller           Windows CE GUI port; memory leak bugfix; etc.
+  Ricky Mobley           Unix makefile entry
+  Navin Modi             Unix makefile entry
+  Sergio Monesi          Acorn RISC OS port
+  Paul Motsuk            Borland _rtl_chmod() fix
+  Anthony Naggs          MS-DOS error handling stuff
+  Jim Neeland            unused-variables fix; Unix makefile entry
+  Harry Nyberg           Macintosh INSTALL info
+  Mauricio Ponzo         UNIXBACKUP fix
+  NIIMI Satoshi          Human68k port
+  Mike O'Carroll         early OS/2 stuff
+  Michael D. O'Connor    DOS ifdef/elif mismatch fix; makefile.tc fixes
+  "Moby" Dick O'Connor   Unix makefile entry
+  Thomas Opheys          Watcom C stat() bugfix
+  Humberto Ortiz-Zuazaga Linux port; permissions bugfix; missing declarations
+  Keith Owens            MVS support and extensions
+  Fernando Papa          inflate memory leaks
+  Rafael Pappalardo      Convex CRYPT bugfix; Convex Makefile entry, useful info
+  Trevor Paquette        Unix makefile entry
+  Keith Petersen         Pyramid fixes; former Info-ZIP list maintainer
+  George Petrov          initial MVS, VM/CMS ports (!)
+  Alan Phillips          Unix makefile entry
+  Art Pina               C Set/2 crypt.c optimization bug
+  Piet W. Plomp          Unix chmod()/chown() fix; msc_dos fixes; much testing
+  Norbert Pueschel       Amiga timelib
+  Clint Pulley           Unix makefile entry
+  Antonio Querubin, Jr.  descrip.mms (VMS makefile)
+  Alistair Rae           Encore preprocessor bugfix
+  Eric S. Raymond        manpage tweaks for DocBook compatibility
+  Wally Reiher           timezone bugfix
+  Stephen Ritcey         vms/README installation correction
+  Phil Ritzenthaler      ANSIfication bugfix
+  Simon Roberts          Windows CE 2.1x/3.0 cmdline port
+  David Robinson         MSC 6.0 stat() bugfix
+  Jochen Roderburg       floating-point BSD4_4 fix, Borland _timezone fix; etc.
+  Greg Roelofs           maintainer/principal author; ZipInfo; unshrink; etc.
+  Kai Uwe Rommel         "real" OS/2 port; many new compilers; bugfixes; etc.
+  Paul Roub              first self-extracting code
+  Shimazaki Ryo          human68k port updates
+  Steve Salisbury        Win32 fixes; dual-mode SFX instruct.; variable INBUFSIZ
+  Darren Salt            Acorn filetype <-> "Acorn NFS filetype" translation
+  Georg Sassen           Amiga DICE compiler support
+  Jon Saxton             date formats, OS/2 fixes
+  Tom Schmidt            Unix makefile entry; Xenix and SunOS 3 target bugfixes
+  Hugh Schmidt           VMS stuff
+  Doug Schuessler        Tandem/NSK port fixes
+  Steven M. Schweda      VMS: adapt new 7+ features, I/O performance enhanced
+  Martin Schulz          original Atari port, symlinks bugfix
+  Charles Scripter       various bug reports and bugfixes
+  Chris Seaman           Unix time stuff
+  Richard Seay           MS-DOS Quick C makefile
+  Peter Seebach          fUnZip int main() bugfix
+  Matthew Seitz          keep inherited SGID attrib for created dirs on Unix
+  Gisbert Selke          Unix makefile entry
+  Alex Sergejew          fileio.c, stat(), Makefile fixes; Down Under jokes :-)
+  Jim Seymour            Borland OS/2 fixes
+  Mark Shadley           Unix -X, FGETCH, DESTROYGLOBALS & Unix makefile fixes
+  Miki Shapiro           DLL: zipfilehandle leak (unhandled lseek errors)
+  Timur Shaporev         inflate optimizations
+  Eric Siegerman         bugfix for Unix' port attribute mapper
+  Paul Slootman          partial fix >2G handling on 64bit file offset systems
+  Dave Smith             Tandem/NSK port
+  Fred Smith             Coherent 4.0 fixes
+  Nick Smith             return code for user abort (control-C)
+  Samuel H. Smith        original unzip code (Pascal and C) for MS-DOS
+  Tuomo Soini            file-not-matched bugfix
+  Jim Spath              zipinfo -T century bugfix
+  Christian Spieler      VMS, DOS, WIN32, VM/CMS, portability & performance
+  Cliff Stanford         fileio.c umask bug
+  Jack Stansbury         DEC Alpha NT makefile fix
+  Dan Statkus            OS/2, MS-DOS mapname() ASCII 255 bugfix
+  Jochen Stein           Unix makefile entry
+  Jim Steiner            Unix makefile entry
+  Richard Stephen        Unix makefile entry
+  Wayne Stewart          "WHERE" file MS-DOS correction
+  Mike Strock            Win32 MSVC 5.0 "build file"; typo fixes
+  E-Yen Tan              djgpp1/GNUmake 3.71 bug work-around; DOS makefile.emx
+  Brian Tillman          "WHERE" file VMS fix; make_unz.com portability bugfix
+  Cosmin Truta           Cygwin support; various C & ASM fixes
+  Onno van der Linden    many fixes, esp. Intel Unix and 386 DOS
+  Jim Van Zandt          one of original man pages
+  Geraldo Veiga          Pyramid strrchr/rindex
+  Erik-Jan Vens          Unix makefile entry
+  Antoine Verheijen      new Mac port; Mac bugfixes; MTS/EBCDIC stuff; etc.
+  Santiago Vila          -t stderr/stdout fix
+  Rich Wales             former Info-ZIP moderator and zip guy; MKS stuff
+  Frank Wancho           original TOPS-20 port
+  Douglas Wegscheid      djgpp 2.x USE_LFN compatibility fix
+  Yohanan Weininger      docs update
+  Paul Weiss             unzipsfx bugfix
+  Paul Wells             original Amiga port for SAS/C and Lattice C (?)
+  Mike White             Windows GUI port version 3; 16- and 32-bit Windows DLLs
+  Rainer Wilcke          HP/UX termios bugfix; man-page fixes
+  Charles Wilson         Cygwin support
+  Greg Woods             man-pages bugfixes
+  Mark Wright            original Netware 3.11 NLM port
+  Randy Wright           Unix makefile entry
+  Meiwei Wu              open() return bugfix
+  Steve Youngs           win32 timestamp conversion bugfix
+  Clay Zahrobsky         .zip/wildcard bugfix
+  Eli Zaretskii          improvements to DOS-mode VFAT support; djgpp 2.x fixes
+  Martin P.J. Zinser     VMS .hlp file for unzipsfx; MAKESFX.COM command file

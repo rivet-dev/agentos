@@ -1,0 +1,84 @@
+Contents of the UnZip 6.00 source archive.  The OS-specific subdirectories
+at the end contain their own Contents listings:
+
+  Contents      this file
+  README        what UnZip is; general information
+  LICENSE       Info-ZIP license; terms for using and distributing UnZip
+  COPYING.OLD   historic copyrights and distribution policy (obsolete)
+  INSTALL       how to compile and install UnZip and related utilities
+  WHERE         where Zip/UnZip and encryption/decryption support can be found
+  History.600   new features and fixes of the last major release
+  ToDo          rough priority list of new features to be added in next release
+  BUGS          known bugs, problems, and (possible) other features to be added
+  unzip.txt     UnZip manual page, human-readable format
+  unzipsfx.txt  UnZipSFX manual page, human-readable format
+  zipinfo.txt   ZipInfo manual page, human-readable format
+  zipgrep.txt   ZipGrep manual page, human-readable format
+  funzip.txt    fUnZip manual page, human-readable format
+  file_id.diz   BBS-oriented file describing this archive
+  testmake.zip  test archive for checking whether newly compiled UnZip works
+  api.c         generic DLL entry points, support functions (required for DLLs)
+  apihelp.c     API help text for DLL versions (currently OS/2 only)
+  consts.h      global, initialized variables that never change (required)
+  crc32.c       code for calculation 32bit CRC of a string buffer (required*)
+  crc32.h       declarations for the crc-32 code (required*)
+  crc_i386.S    fast assembler replacement for crc32() (Intel 386 and newer)
+  crypt.c       de-/encryption routines (required*)
+  crypt.h       de-/encryption header file (required*)
+  ebcdic.h      static lookup table for ASCII <-> EBCDIC translation (required)
+  envargs.c     code to read options from environment variables (required)
+  explode.c     code for exploding (required)
+  extract.c     high-level extraction and decryption code (required)
+  fileio.c      file manipulation and password code (required)
+  funzip.c      filter unzip:  extracts in a pipe from stdin to stdout
+  gbloffs.c     helper program to retrieve offsets of globals struct members
+  globals.c     code to support global variables with reentrancy (required)
+  globals.h     definition of global structure G (required)
+  inflate.c     code for inflating (required*)
+  inflate.h     header file for inflating (required*)
+  list.c        UnZip listing routines, non-ZipInfo mode (required)
+  match.c       pattern-matching code for filename wildcards (required)
+  process.c     zipfile headers code (required)
+  timezone.c    timezone and timestamp functions (required)
+  timezone.h    header file for interface to "internal" tz functions (required)
+  ttyio.c       code for handling nonecho tty input: password, pager (required)
+  ttyio.h       header file for nonecho tty input: password, pager (required)
+  ubz2err.c     callback handler for fatal bzip2 errors (bzip2 support only)
+  unreduce.c    code for unreducing (required)
+  unshrink.c    code for unshrinking (required)
+  unzip.c       UnZip main(), usage and options code (required)
+  unzip.h       public half of main UnZip header file (required*)
+  unzipstb.c    minimal UnZip "stub" file demonstrating use of DLL versions
+  unzpriv.h     private (internal) half of main UnZip header file (required*)
+  unzvers.h     header with UnZip/UnZipSFX and ZipInfo version info (required)
+  zip.h         dummy header for use with crypt.c (required*)
+  zipinfo.c     UnZip listing routines, ZipInfo mode (required)
+  acorn/        support files for compiling under Acorn RISC OS
+  amiga/        support files for compiling under AmigaDOS
+  aosvs/        support files for compiling under Data General AOS/VS
+  atari/        support files for compiling under Atari TOS
+  atheos/       support files for compiling under AtheOS/Syllable
+  beos/         support files for compiling under BeOS
+  cmsmvs/       support files for compiling under VM/CMS and MVS
+  flexos/       support files for compiling under FlexOS
+  human68k/     support files for compiling under X68000/Human68K
+  macos/        support files for compiling under Macintosh OS
+  msdos/        support files for compiling under MS-DOS
+  netware/      support files for compiling for Novell Netware NLM
+  os2/          support files for compiling under OS/2 (includes DLL stuff)
+  qdos/         support files for compiling under SMS/QDOS
+  tandem/       support files for compiling under Tandem NSK
+  theos/        support files for compiling under Theos
+  tops20/       support files for compiling under TOPS-20
+  unix/         support files for compiling under Unix
+  vms/          support files for compiling under VMS
+  win32/        support files for compiling under Windows 9x and Windows NT
+  wince/        support files for compiling under Windows CE (GUI version)
+  windll/       support files for compiling Windows 3.x/9x/NT DLLs
+  bzip2/        subfolder for source of externally supplied bzip2 extension
+  man/          nroff man-page sources for the main user documentation
+  proginfo/     programming docs, additional technical info, contributor list
+
+Files marked "required*" are also needed to compile fUnZip.  The normal
+UnZip makefile targets now make both UnZipSFX and fUnZip, except in a few
+cases; ZipInfo is now incorporated into UnZip (see zipinfo.txt for usage).

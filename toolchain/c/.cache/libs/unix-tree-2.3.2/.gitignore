@@ -1,0 +1,5 @@
+# Ignore the things we would normally "clean":
+*.o
+tree
+*~
+/work

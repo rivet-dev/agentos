@@ -62,7 +62,7 @@ const NODE_PROBE_GUEST_PATH = "/pty_probe.mjs";
 
 const WASI_SDK = resolve(
 	REPO_ROOT,
-	"registry/native/c/vendor/wasi-sdk",
+	"toolchain/c/vendor/wasi-sdk",
 );
 const SIDECAR_BINARY = resolve(REPO_ROOT, "target/debug/agentos-sidecar");
 

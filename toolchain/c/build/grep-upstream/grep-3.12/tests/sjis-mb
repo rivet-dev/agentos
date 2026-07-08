@@ -1,0 +1,62 @@
+#!/bin/sh
+# similar to euc-mb and fgrep-infloop, but tests SJIS encoding.
+# in this encoding, an ASCII character is both a valid single-byte
+# character, and a suffix of a valid double-byte character
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+# Add "." to PATH for the use of get-mb-cur-max.
+path_prepend_ .
+
+require_compiled_in_MB_support
+require_timeout_
+
+# Sequences used in this test ("%" and "@" become 8-bit characters, while "A"
+# is the real ASCII character for "A"):
+# - "%" becomes an half-width katakana in SJIS, but it is an invalid sequence
+#   in UTF-8.
+# - "@@" and "@A" are both valid sequences in SJIS.  We try to fool grep into
+#   matching "A" against "@A", or mistaking a valid "A" match for the second
+#   byte of a multi-byte character.
+
+encode() { echo "$1" | tr @% '\203\301'; }
+
+for locale in ja_JP.SHIFT_JIS ja_JP.SJIS ja_JP.PCK ''; do
+  test "$(get-mb-cur-max $locale)" = 2 && break
+done
+test -n "$locale" || skip_ 'SJIS locale not found'
+
+k=0
+test_grep_reject() {
+  k=$(expr $k + 1)
+  encode "$2" > in || return 1
+  returns_ 1 env LC_ALL=$locale timeout 10s \
+    grep $1 $(encode "$3") in >out$k 2>&1 \
+      && compare /dev/null out$k
+}
+
+test_grep() {
+  k=$(expr $k + 1)
+  encode "$2" > exp$k
+  LC_ALL=$locale \
+    timeout 10s grep $1 $(encode "$3") exp$k > out$k 2>&1
+  test $? = 0 && compare exp$k out$k
+}
+
+failure_tests=@A
+successful_tests='%%AA @AA @A@@A'
+
+fail=0
+for i in $successful_tests; do
+  test_grep -F $i A || fail=1
+  test_grep -E $i A || fail=1
+done
+
+for i in $failure_tests; do
+  test_grep_reject -F $i A || fail=1
+  test_grep_reject -E $i A || fail=1
+done
+
+test_grep_reject -E @A '^$|A' || fail=1
+
+Exit $fail

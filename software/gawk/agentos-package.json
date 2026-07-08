@@ -1,0 +1,12 @@
+{
+	"commands": [
+		"awk"
+	],
+	"registry": {
+		"title": "gawk",
+		"description": "GNU awk text processing and data extraction.",
+		"priority": 20,
+		"image": "/images/registry/gawk.svg",
+		"category": "core"
+	}
+}

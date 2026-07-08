@@ -63,13 +63,13 @@ const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
 /**
  * In-repo build output for the WASM coreutils/shell command binaries, produced
- * by the Rust command build (`make -C registry/native wasm`). Only present in a
+ * by the Rust command build (`make -C toolchain wasm`). Only present in a
  * developer checkout; preferred when it exists so local edits are picked up
  * without re-vendoring.
  */
 const REPO_COMMANDS_DIR = path.join(
 	REPO_ROOT,
-	"registry/native/target/wasm32-wasip1/release/commands",
+	"toolchain/target/wasm32-wasip1/release/commands",
 );
 
 /**

@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wasi-ext",
+    "crates/libs/*",
+    "crates/commands/*",
+    "stubs/codex-otel",
+    "stubs/ctrlc",
+    "stubs/hostname",
+    "../software/*/native/crates/*",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+# WASM-compatible stubs for crates that don't support wasm32-wasip1
+[patch.crates-io]
+ctrlc = { path = "stubs/ctrlc" }
+hostname = { path = "stubs/hostname" }
+uucore = { path = "stubs/uucore" }
+codex-network-proxy = { path = "stubs/codex-network-proxy" }
+codex-otel = { path = "stubs/codex-otel" }

@@ -1,0 +1,26 @@
+Contents of the "acorn" subdirectory for UnZip 5.4 and later:
+
+  acorn.c.acorn     Acorn-specific resources
+  acorn.c.riscos    mainly file-handling routines for FileCore-based filesystems
+  acorn.Contents    this file
+  acorn.GMakeFile   Makefile for gcc
+  acorn.h.riscos
+  acorn.h.swiven
+  acorn.makefile    Makefile script for default Acorn C compiler
+  acorn.README      notes about Acorn-specific features
+  acorn.RunMe1st    Obey file to move files into suitable place for compilation
+                    on RISC OS machines
+  acorn.s.swiven    SWI veneers
+  acorn.srcrename   small executable that converts files from Unix style to
+                    RISC OS style, used by RunMe1st
+
+Notes:
+
+  Use the "RunMe1st" file (it is an Obey file) to convert all the files from
+  "filename/[chs]" to "[chs].filename" (so that UnZip could be easily compiled
+  under RISC OS). It will also set the correct makefile.
+
+  To compile just set the CSD to the main UnZip directory and run 'amu'.
+
+  Currently only the Acorn C V5 compiler has been tested but probably also
+  Acorn C V4 and the Acorn Assembler V2 will be able to compile UnZip.

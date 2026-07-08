@@ -1,0 +1,16 @@
+UnZip 5.51 for AtheOS/Syllable
+
+This port is based on both BeOS and UNIX versions.
+As BeOS version it can extract specific file attributes.
+
+TODO
+----
+There is only one thing to be fixed:
+ write_attr() should return count of bytes written. However that's a bug
+ related with AFS only.
+
+Please report any bugs to Zip-Bugs@lists.wku.edu.
+If this bug related with AtheOS/Syllable only, you can mail me directly:
+ nruslan@hotbox.ru.
+- Ruslan Nickolaev (nruslan@hotbox.ru)
+  Sep 06/2004

@@ -1,0 +1,135 @@
+#! /bin/sh
+# Test feature interaction of -C, -v, -o, and -m.
+#
+# Copyright (C) 2001, 2006, 2009-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+#
+# This set of tests was started by Charles Levert.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+: ${VERBOSE=}  # empty or "1"
+failures=0
+
+# Lines, including terminating LF, contain 10 octets.
+# The words "yes" and "no" are at zero-based octet offsets of 5, 15, ...
+yn='yesno.txt'
+cat > "$yn" <<EOF
+[A01 no ]
+[B02 no ]
+[C03 yes]
+[D04 yes]
+[E05 yes]
+[F06 no ]
+[G07 no ]
+[H08 yes]
+[I09 yes]
+[J10 no ]
+[K11 no ]
+[L12 no ]
+[M13 yes]
+[N14 yes]
+EOF
+# Noticed the symmetry?
+
+# All possible output substrings (lines):
+#      selected whole,         rejected whole, never-read whole,   selected part,   rejected part.
+   A='1:0:[A01 no ]/';    rA='1-0-[A01 no ]/'; XA='X[A01 no ]/';
+  B='2:10:[B02 no ]/';   rB='2-10-[B02 no ]/'; XB='X[B02 no ]/';
+  C='3:20:[C03 yes]/';   rC='3-20-[C03 yes]/'; XC='X[C03 yes]/';   c='3:25:yes/';   rc='3-25-yes/'
+  D='4:30:[D04 yes]/';   rD='4-30-[D04 yes]/'; XD='X[D04 yes]/';   d='4:35:yes/';   rd='4-35-yes/'
+  E='5:40:[E05 yes]/';   rE='5-40-[E05 yes]/'; XE='X[E05 yes]/';   e='5:45:yes/';   re='5-45-yes/'
+  F='6:50:[F06 no ]/';   rF='6-50-[F06 no ]/'; XF='X[F06 no ]/';
+  G='7:60:[G07 no ]/';   rG='7-60-[G07 no ]/'; XG='X[G07 no ]/';
+  H='8:70:[H08 yes]/';   rH='8-70-[H08 yes]/'; XH='X[H08 yes]/';   h='8:75:yes/';   rh='8-75-yes/'
+  I='9:80:[I09 yes]/';   rI='9-80-[I09 yes]/'; XI='X[I09 yes]/';   i='9:85:yes/';   ri='9-85-yes/'
+ J='10:90:[J10 no ]/';  rJ='10-90-[J10 no ]/'; XJ='X[J10 no ]/';
+K='11:100:[K11 no ]/'; rK='11-100-[K11 no ]/'; XK='X[K11 no ]/';
+L='12:110:[L12 no ]/'; rL='12-110-[L12 no ]/'; XL='X[L12 no ]/';
+M='13:120:[M13 yes]/'; rM='13-120-[M13 yes]/'; XM='X[M13 yes]/'; m='13:125:yes/'; rm='13-125-yes/'
+N='14:130:[N14 yes]/'; rN='14-130-[N14 yes]/'; XN='X[N14 yes]/'; n='14:135:yes/'; rn='14-135-yes/'
+# Group separators.
+s='--/'
+S='XYZ/'
+# Exit statuses.
+z0='?0/'
+z1='?1/'
+z2='?2/'
+
+# What needs fixing?  Specification, documentation, implementation, or this?
+# The individual tests.
+set x \
+  ''                "$C$D$E$H$I$M$N$z0" \
+  '-o'              "$c$d$e$h$i$m$n$z0" \
+  '-C,1'            "$rB$C$D$E$rF$rG$H$I$rJ$s$rL$M$N$z0" \
+  '-C,1,-o'         "$c$d$e$h$i$s$m$n$z0" \
+  '-C,1,-o,--group=XYZ' "$c$d$e$h$i$S$m$n$z0" \
+  '-C,1,-o,--no-gr' "$c$d$e$h$i$m$n$z0" \
+  '-C,4,-1'         "$rB$C$D$E$rF$rG$H$I$rJ$s$rL$M$N$z0" \
+  '-C,1,--group=XYZ' "$rB$C$D$E$rF$rG$H$I$rJ$S$rL$M$N$z0" \
+  '-C,1,--no-gr'    "$rB$C$D$E$rF$rG$H$I$rJ$rL$M$N$z0" \
+  '-m,4'            "$C$D$E$H$z0$XI$XJ$XK$XL$XM$XN" \
+  '-m,4,-o'         "$c$d$e$h$z0$XI$XJ$XK$XL$XM$XN" \
+  '-m,4,-C,1'       "$rB$C$D$E$rF$rG$H$rI$z0$XI$XJ$XK$XL$XM$XN" \
+  '-m,4,-C,1,-o'    "$c$d$e$h$z0$XI$XJ$XK$XL$XM$XN" \
+  '-m,5'            "$C$D$E$H$I$z0$XJ$XK$XL$XM$XN" \
+  '-m,5,-o'         "$c$d$e$h$i$z0$XJ$XK$XL$XM$XN" \
+  '-m,5,-C,1,-o'    "$c$d$e$h$i$z0$XJ$XK$XL$XM$XN" \
+  '-m,6'            "$C$D$E$H$I$M$z0$XN" \
+  '-m,6,-o'         "$c$d$e$h$i$m$z0$XN" \
+  '-m,6,-C,1'       "$rB$C$D$E$rF$rG$H$I$rJ$s$rL$M$rN$z0$XN" \
+  '-m,6,-C,1,-o'    "$c$d$e$h$i$s$m$z0$XN" \
+  '-v'              "$A$B$F$G$J$K$L$z0" \
+  '-v,-o'           "$z0" \
+  '-v,-C,1'         "$A$B$rC$s$rE$F$G$rH$rI$J$K$L$rM$z0" \
+  '-v,-C,1,-o'      "$rc$s$re$rh$ri$rm$z0" \
+  '-v,-C,1,--group=XYZ' "$A$B$rC$S$rE$F$G$rH$rI$J$K$L$rM$z0" \
+  '-v,-C,1,--no-gr' "$A$B$rC$rE$F$G$rH$rI$J$K$L$rM$z0" \
+  '-4,-1'           "$rB$C$D$E$rF$rG$H$I$rJ$s$rL$M$N$z0" \
+  '-4,-v,-1'        "$A$B$rC$s$rE$F$G$rH$rI$J$K$L$rM$z0" \
+  '-m,1,-v'         "$A$z0$XB$XC$XD$XE$XF$XG$XH$XI$XJ$XK$XL$XM$XN" \
+  '-m,1,-v,-o'      "$z0$XB$XC$XD$XE$XF$XG$XH$XI$XJ$XK$XL$XM$XN" \
+  '-m,1,-v,-C,1'    "$A$rB$z0$XB$XC$XD$XE$XF$XG$XH$XI$XJ$XK$XL$XM$XN" \
+  '-m,1,-v,-C,1,-o' "$z0$XB$XC$XD$XE$XF$XG$XH$XI$XJ$XK$XL$XM$XN" \
+  '-m,2,-v'         "$A$B$z0$XC$XD$XE$XF$XG$XH$XI$XJ$XK$XL$XM$XN" \
+  '-m,2,-v,-o'      "$z0$XC$XD$XE$XF$XG$XH$XI$XJ$XK$XL$XM$XN" \
+  '-m,3,-v'         "$A$B$F$z0$XG$XH$XI$XJ$XK$XL$XM$XN" \
+  '-m,3,-v,-o'      "$z0$XG$XH$XI$XJ$XK$XL$XM$XN" \
+  '-m,3,-v,-C,1'    "$A$B$rC$s$rE$F$rG$z0$XG$XH$XI$XJ$XK$XL$XM$XN" \
+  '-m,3,-v,-C,1,-o' "$rc$s$re$z0$XG$XH$XI$XJ$XK$XL$XM$XN" \
+  x
+shift
+# Comment out cases that are known to fail. These should be uncommented after the 2.5.4 release. TAA.
+# These should be added back in above and fixed in the code. TAA.
+#  '-m,5,-C,1'       "$rB$C$D$E$rF$rG$H$I$z0$XJ$XK$XL$XM$XN" \
+#  '-m,2,-v,-C,1'    "$A$B$z0$XC$XD$XE$XF$XG$XH$XI$XJ$XK$XL$XM$XN" \
+#  '-m,2,-v,-C,1,-o' "$z0$XC$XD$XE$XF$XG$XH$XI$XJ$XK$XL$XM$XN" \
+
+# Test execution and reporting.
+t=1
+while test xx != "x$1"; do
+  opts=$(echo "$1" | sed 's/,/ /g')
+  expect="$2"
+  shift 2
+
+  output=$({ grep -F -n -b $opts yes 2>/dev/null; echo "?$?"; sed 's!^!X!'; } < "$yn" | tr '\n' '/')
+
+  if test "$output" != "$expect" || test "$VERBOSE" = "1"; then
+    echo " Test #$t:  { grep -F -n -b $opts yes; echo \"?\$?\"; sed 's!^!X!'; }"
+    echo "  output:  \"$output\""
+  fi
+  if test "$output" != "$expect"; then
+    echo "  expect:  \"$expect\""
+    echo '    FAIL'
+    failures=1
+  elif test "$VERBOSE" = "1"; then
+    echo '    PASS'
+  fi
+
+  t=$(expr $t + 1)
+done
+
+Exit $failures

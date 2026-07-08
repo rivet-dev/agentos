@@ -1,0 +1,184 @@
+#!/bin/sh
+# grep 3.4 through 3.7 mishandled matching '.' against the valid UTF-8
+# sequences (ED)(90-9F)(80-BF) corresponding to U+D400 through U+D7FF,
+# which are some Hangul Syllables and Hangul Jamo Extended-B.  They
+# also mishandled (F4)(88-8F)(80-BF)(80-BF) which correspond to
+# U+108000 through U+10FFFF (Supplemental Private Use Area plane B).
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+
+LC_ALL=en_US.UTF-8
+export LC_ALL
+
+# Check that '.' completely matches $1, i.e., that $1 is a single UTF-8 char.
+check_char ()
+{
+  printf "$1\\n" >in || framework_failure_
+
+  grep $2 '^.$' in >out || fail=1
+  cmp in out || fail=1
+}
+
+# Check that '.*' does not completely match $1, i.e., that
+# $1 contains an encoding error.
+check_nonchar ()
+{
+  printf "$1\\n" >in || framework_failure_
+
+  grep -a -v '^.*$' in >out || fail=1
+  cmp in out || fail=1
+}
+
+fail=0
+
+# "." should match U+D45C HANGUL SYLLABLE PYO.
+check_char '\355\221\234'
+
+# Check boundary-condition characters, and non-characters,
+# while we are at it.
+
+check_char '\0' -a
+check_char '\177'
+check_nonchar '\200'
+check_nonchar '\277'
+check_nonchar '\300\200'
+check_nonchar '\301\277'
+
+for i in 302 337; do
+  for j in 200 277; do
+    check_char "\\$i\\$j"
+  done
+  for j in 177 300; do
+    check_nonchar "\\$i\\$j"
+  done
+done
+for i in 340; do
+  for j in 240 277; do
+    for k in 200 277; do
+      check_char "\\$i\\$j\\$k"
+    done
+    for k in 177 300; do
+      check_nonchar "\\$i\\$j\\$k"
+    done
+  done
+  for j in 239 300; do
+    for k in 177 200 277 300; do
+      check_nonchar "\\$i\\$j\\$k"
+    done
+  done
+done
+for i in 341 354 356 357; do
+  for j in 200 277; do
+    for k in 200 277; do
+      check_char "\\$i\\$j\\$k"
+    done
+    for k in 177 300; do
+      check_nonchar "\\$i\\$j\\$k"
+    done
+  done
+  for j in 177 300; do
+    for k in 177 200 277 300; do
+      check_nonchar "\\$i\\$j\\$k"
+    done
+  done
+done
+for i in 355; do
+  for j in 200 237; do
+    for k in 200 277; do
+      check_char "\\$i\\$j\\$k"
+    done
+    for k in 177 300; do
+      check_nonchar "\\$i\\$j\\$k"
+    done
+  done
+  for j in 177 240; do
+    for k in 177 200 277 300; do
+      check_nonchar "\\$i\\$j\\$k"
+    done
+  done
+done
+
+# On platforms like 32-bit AIX where WCHAR_MAX == 0xFFFF, skip checks
+# where the corresponding Unicode characters are not supported.
+if test $fail -eq 0; then
+  printf '\360\220\200\200\n' >in || framework_failure_
+  grep '^.$' in >out 2>&1 || fail=1
+  cmp in out || skip_ 'platform does not support U+10000'
+fi
+
+for i in 360; do
+  for j in 220 277; do
+    for k in 200 277; do
+      for l in 200 277; do
+        check_char "\\$i\\$j\\$k\\$l"
+      done
+      for l in 177 300; do
+        check_nonchar "\\$i\\$j\\$k\\$l"
+      done
+    done
+    for k in 177 300; do
+      for l in 177 200 277 300; do
+        check_nonchar "\\$i\\$j\\$k\\$l"
+      done
+    done
+  done
+  for j in 217 300; do
+    for k in 177 200 277 300; do
+      for l in 177 200 277 300; do
+        check_nonchar "\\$i\\$j\\$k\\$l"
+      done
+    done
+  done
+done
+for i in 361 363; do
+  for j in 200 277; do
+    for k in 200 277; do
+      for l in 200 277; do
+        check_char "\\$i\\$j\\$k\\$l"
+      done
+      for l in 177 300; do
+        check_nonchar "\\$i\\$j\\$k\\$l"
+      done
+    done
+    for k in 177 300; do
+      for l in 177 200 277 300; do
+        check_nonchar "\\$i\\$j\\$k\\$l"
+      done
+    done
+  done
+  for j in 177 300; do
+    for k in 177 200 277 300; do
+      for l in 177 200 277 300; do
+        check_nonchar "\\$i\\$j\\$k\\$l"
+      done
+    done
+  done
+done
+for i in 364; do
+  for j in 200 217; do
+    for k in 200 277; do
+      for l in 200 277; do
+        check_char "\\$i\\$j\\$k\\$l"
+      done
+      for l in 177 300; do
+        check_nonchar "\\$i\\$j\\$k\\$l"
+      done
+    done
+    for k in 177 300; do
+      for l in 177 200 277 300; do
+        check_nonchar "\\$i\\$j\\$k\\$l"
+      done
+    done
+  done
+  for j in 177 220; do
+    for k in 177 200 277 300; do
+      for l in 177 200 277 300; do
+        check_nonchar "\\$i\\$j\\$k\\$l"
+      done
+    done
+  done
+done
+
+Exit $fail

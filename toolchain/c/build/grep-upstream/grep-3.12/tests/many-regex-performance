@@ -1,0 +1,80 @@
+#!/bin/sh
+# Test for this performance regression:
+# grep-3.4 would require O(N^2) RSS for N regexps
+# grep-3.5 requires O(N) in the most common cases.
+
+# Copyright 2020-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+# This test is susceptible to failure due to differences in
+# system load during the two test runs, so we'll mark it as
+# "expensive", making it less likely to be run by regular users.
+expensive_
+require_perl_
+
+# Make the quick/small input large enough so that even on high-end
+# systems this first invocation takes at least 10ms of user time.
+word_list=/usr/share/dict/linux.words
+
+# If $word_list does not exist, generate an input that exhibits
+# similar performance characteristics.
+if ! test -f $word_list; then
+  # Generate data comparable to that word list.
+  # Note how all "words" start with "a", and that there is
+  # a small percentage of lines with at least one "." metachar.
+  # This requires /dev/urandom, so if it's not present, skip
+  # this test. If desperate, we could fall back to using
+  # tar+compressed lib/*.c as the data source.
+  test -r /dev/urandom \
+    || skip_ 'this system has neither word list nor working /dev/urandom'
+  word_list=word_list
+  ( echo a; cat /dev/urandom		\
+    | LC_ALL=C tr -dc 'a-zA-Z0-9_'	\
+    | head -c500000			\
+    | sed 's/\(........\)/\1\n/g'	\
+    | sed s/rs/./			\
+    | sed s/./a/			\
+    | sort				\
+  ) > $word_list
+fi
+
+n_lines=2000
+while :; do
+  sed ${n_lines}q < $word_list > in || framework_failure_
+  small_ms=$(LC_ALL=C user_time_ 1 grep --file=in -v in) || fail=1
+  test $small_ms -ge 10 && break
+  n_lines=$(expr $n_lines + 2000)
+done
+
+# Now, run it again, but with 20 times as many lines.
+n_lines=$(expr $n_lines \* 20)
+sed ${n_lines}q < $word_list > in || framework_failure_
+large_ms=$(LC_ALL=C user_time_ 1 grep --file=in -v in) || fail=1
+
+# Deliberately recording in an unused variable so it
+# shows up in set -x output, in case this test fails.
+ratio=$(expr "$large_ms" / "$small_ms")
+
+# The duration of the larger run must be no more than 60 times
+# that of the small one.  Using recent versions prior to this fix,
+# this test would fail due to ratios larger than 300.  Using the
+# fixed version, it's common to see a ratio of 20-30.
+returns_ 1 expr $small_ms '<' $large_ms / 60 || fail=1
+
+Exit $fail

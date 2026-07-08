@@ -1,0 +1,36 @@
+#!/bin/sh
+# Trigger a bug in the DFA matcher that would make
+# grep -F -x -o PAT print an extra newline for each match.
+# This would fail for grep-2.19 and grep-2.20.
+
+# Copyright 2014-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+printf 'a\n' > in || framework_failure_
+
+fail=0
+
+for locale in C en_US.UTF-8; do
+  for options in -x '-E -x' '-F -x'; do
+    for o in '' -o; do
+      LC_ALL=$locale grep $o $options a in > out || fail=1
+      compare out in || fail=1
+    done
+  done
+done
+
+Exit $fail

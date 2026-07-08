@@ -1,0 +1,68 @@
+  Copyright (C) 1992, 1997-2002, 2004-2025 Free Software Foundation, Inc.
+
+  Copying and distribution of this file, with or without modification,
+  are permitted in any medium without royalty provided the copyright
+  notice and this notice are preserved.
+
+Mike Haertel wrote the main program and the dfa and kwset matchers.
+
+Isamu Hasegawa wrote the POSIX regular expression matcher, which is
+part of the GNU C Library and is distributed as part of GNU grep for
+use on non-GNU systems.  Ulrich Drepper, Paul Eggert, Paolo Bonzini,
+Stanislav Brabec, Assaf Gordon, Jakub Jelinek, Jim Meyering, Arnold
+Robbins, Andreas Schwab and Florian Weimer also contributed to this
+matcher.
+
+Arthur David Olson contributed the heuristics for finding fixed substrings
+at the end of dfa.c.
+
+Henry Spencer wrote the original test suite from which grep's was derived.
+Scott Anderson invented the Khadafy test.
+
+David MacKenzie wrote the automatic configuration software used to
+produce the configure script.
+
+Authors of the replacements for standard library routines are identified
+in the corresponding source files.
+
+The idea of using Boyer-Moore type algorithms to quickly filter out
+non-matching text before calling the regexp matcher was originally due
+to James Woods.  He also contributed some code to early versions of
+GNU grep.
+
+Mike Haertel would like to thank Andrew Hume for many fascinating
+discussions of string searching issues over the years.  Hume and
+Sunday's excellent paper on fast string searching describes some of
+the history of the subject, as well as providing exhaustive
+performance analysis of various implementation alternatives.
+The inner loop of GNU grep is similar to Hume & Sunday's recommended
+"Tuned Boyer Moore" inner loop (see the Hume & Sunday citation in
+the grep manual's "Performance" chapter).
+
+Arnold Robbins contributed to improve dfa.[ch]. In fact
+it came straight from gawk-3.0.3 with small editing and fixes.
+
+Norihiro Tanaka contributed many performance improvements and other
+fixes, particularly to multi-byte matchers.
+
+Paul Eggert contributed support for recursive grep, as well as several
+performance improvements such as searching file holes efficiently.
+
+Many other folks contributed.  See THANKS; if someone is omitted
+please file a bug report.
+
+Alain Magloire maintained GNU grep until version 2.5e.
+
+Bernhard "Bero" Rosenkränzer <bero@arklinux.org> maintained GNU grep until
+version 2.5.1, ie. from Sep 2001 till 2003.
+
+Stepan Kasal <kasal@ucw.cz> maintained GNU grep since Feb 2004.
+
+Tony Abou-Assaleh <taa@acm.org> maintains GNU grep since Oct 2007.
+
+Jim Meyering <jim@meyering.net> and Paolo Bonzini <bonzini@gnu.org>
+began maintaining GNU grep in Nov 2009.  Paolo bowed out in 2012.
+
+;; Local Variables:
+;; coding: utf-8
+;; End:

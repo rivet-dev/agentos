@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-comm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "comm standalone binary for secure-exec VM"
+
+[[bin]]
+name = "comm"
+path = "src/main.rs"
+
+[dependencies]
+uu_comm = "0.7.0"

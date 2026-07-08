@@ -1,0 +1,57 @@
+#!/bin/sh
+# Test for this performance regression:
+# grep-3.5 and 3.6 would take O(N^2) time for some sets of input regexps.
+
+# Copyright 2020-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+require_perl_
+
+: > empty || framework_failure_
+
+# Construct a test case that consumes enough CPU time that we don't
+# have to worry about measurement noise. This first case is searching
+# for digits, which never exhibited a problem with hash collisions.
+n_pat=40000
+while :; do
+  seq $n_pat > in || framework_failure_
+  small_ms=$(LC_ALL=C user_time_ 1 grep --file=in empty) || fail=1
+  test $small_ms -ge 200 && break
+  n_pat=$(expr $n_pat '*' 2)
+  case $n_pat:$small_ms in
+    640000:0) skip_ 'user_time_ appears always to report 0 elapsed ms';;
+  esac
+done
+
+# Now, search for those same digits mapped to A-J.
+# With the PJW-based hash function, this became O(N^2).
+seq $n_pat | tr 0-9 A-J > in || framework_failure_
+large_ms=$(LC_ALL=C user_time_ 1 grep --file=in empty) || fail=1
+
+# Deliberately recording in an unused variable so it
+# shows up in set -x output, in case this test fails.
+ratio=$(expr "$large_ms" / "$small_ms")
+
+# The duration of the latter run must be no more than 10 times
+# that of the former.  Using recent versions prior to this fix,
+# this test would fail due to ratios > 800.  Using the fixed version,
+# it's common to see a ratio less than 1.
+returns_ 1 expr $small_ms '<' $large_ms / 10 || fail=1
+
+Exit $fail

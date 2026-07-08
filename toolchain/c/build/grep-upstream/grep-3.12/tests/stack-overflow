@@ -1,0 +1,53 @@
+#!/bin/sh
+# Ensure a stack overflow no longer segfaults
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+case $host_triplet in
+  *-midnightbsd*)
+    skip_ 'our stack-overflow detection does not work on this system';;
+esac
+
+# When compiled with ASAN, skip this test, because (on Fedora 32) it
+# would fail due to output like this on stderr:
+# +==2176827==WARNING: ASan is ignoring requested __asan_handle_no_return:
+#   stack top: 0x7ffc48f20000; bottom 0x000000e25000; size: 0x7ffc480fb000 (140721517473792)
+# +False positive error reports may follow
+# +For details see https://github.com/google/sanitizers/issues/189
+ASAN_OPTIONS=help=true grep --version 2>&1 | grep -q AddressSanitizer \
+  && skip_ 'avoid false failure when built with ASAN'
+
+echo grep: stack overflow > exp || framework_failure_
+
+# Limit stack size.  Otherwise, it appears to be too hard to overflow the
+# stack on some systems like gcc113, aarch64/linux-3.13.0 with 32GB of RAM
+# and 20GB of swap.
+ulimit -s 8192 2>/dev/null
+
+# grep attempts to detect overflow via gnulib's c-stack module.
+# Trigger that with an input regex composed solely of open parentheses,
+# increasing the size of that input until grep emits the expected diagnostic.
+fail=0
+for i in 1 3 5 10 20 30 40 50 100 200 400 1000; do
+  # Create a file containing $i * 10000 open parentheses:
+  printf %0${i}0000d 0|tr 0 '(' > in || framework_failure_
+  grep -E -f in >out 2>err; st=$?
+  if grep -q 'stack overflow' err; then
+    test $st = 2 || fail=1
+    compare /dev/null out || fail=1
+    compare exp err || fail=1
+    test $fail = 0 && Exit 0
+    fail_ 'printed "stack overflow", but something else was wrong'
+  fi
+done
+
+# If there was no stack overflow message and the final run exited with
+# status 1 and both stdout and stderr were empty, then assume it's a working
+# regex that avoids the internal stack overflow problem like glibc's regexp
+# used to.
+test $st = 1 \
+  && ! test -s out \
+  && ! test -s err \
+  && Exit 0
+
+fail_ 'grep never printed "stack overflow"'

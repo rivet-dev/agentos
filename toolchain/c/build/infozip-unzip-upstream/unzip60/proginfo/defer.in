@@ -1,0 +1,45 @@
+[Regarding an optimization to the bounds-checking code in the core
+ NEXTBYTE macro, which code is absolutely vital to the proper processing
+ of corrupt zipfiles (lack of checking can result in an infinite loop)
+ but which also slows processing.]
+
+
+The key to the solution is a pair of small functions called
+defer_leftover_input() and undefer_input().  The idea is, whenever
+you are going to be processing input using NEXTBYTE, you call
+defer_leftover_input(), and whenever you are going to process input by
+any other means, such as readbuf(), ZLSEEK, or directly reading stuff
+into G.inbuf, you call undefer_input().  What defer_leftover_input()
+does is adjust G.incnt so that any data beyond the current end of file
+is not visible.  undefer_input() restores it to visibility.  So when
+you're calling NEXTBYTE (or NEEDBITS or READBITS), an end-of-data
+condition only occurs at the same time as an end-of-buffer condition,
+and can be handled inside readbyte() instead of needing a check in the
+NEXTBYTE macro.  Note: none of this applies to fUnZip.
+
+In order for this to work, certain conditions have to be met:
+
+  1) NEXTBYTE input must not be mixed with other forms of input involving
+     G.inptr and G.incnt.  They must be separated by defer/undefer.
+
+  I believe this condition is fully met by simply bracketing the central
+  part of extract_or_test_member with defer/undefer, around the part
+  where the actual decompression is done, and another defer/undefer pair
+  in decrypt() around the reading of the RAND_HEADER_LEN password bytes.
+
+  When USE_ZLIB is defined, I think that calls of fillinbuf() must be
+  bracketed by defer/undefer.
+
+  2) G.csize must not be assumed to contain the number of bytes left to
+     process, when decompressing with NEXTBYTE.  Instead, it contains
+     the number of bytes left after the current buffer is exausted.  To
+     check the number of bytes remaining, use (G.csize + G.incnt).
+
+  I believe the only places this change was needed were in explode.c,
+  mostly in the check at the end of each explode function that tests
+  whether the correct number of bytes has been read.  G.incnt will
+  normally be zero at that time anyway.  The other place is the line
+  that says "bd = G.csize > 200000L ? 8 : 7;" but that's just a rough
+  heuristic anyway.
+
+[Paul Kienitz]

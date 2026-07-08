@@ -1,0 +1,59 @@
+  Copyright (C) 1992, 1997-2002, 2004-2025 Free Software Foundation, Inc.
+
+  Copying and distribution of this file, with or without modification,
+  are permitted in any medium without royalty provided the copyright
+  notice and this notice are preserved.
+
+This is GNU grep, the "fastest grep in the west" (we hope).  All
+bugs reported in previous releases have been fixed.  Many exciting new
+bugs have probably been introduced in this revision.
+
+GNU grep is provided "as is" with no warranty.  The exact terms
+under which you may use and (re)distribute this program are detailed
+in the GNU General Public License, in the file COPYING.
+
+GNU grep is based on a fast lazy-state deterministic matcher
+hybridized with Boyer-Moore and Aho-Corasick searches for fixed
+strings that eliminate impossible text from being considered by the
+full regexp matcher without necessarily having to look at every
+character.  The result is typically many times faster than traditional
+implementations.  (Regular expressions containing back-references will
+run more slowly, however.)
+
+See the files AUTHORS and THANKS for a list of authors and other contributors.
+
+See the file INSTALL for compilation and installation instructions.
+If there is no INSTALL file, this copy of the source code is intended
+for expert hackers; please see the file README-hacking.
+
+See the file NEWS for a description of major changes in this release.
+
+See the file TODO for ideas on how you could help us improve grep.
+
+See the file README-alpha for information on grep development and the CVS
+  repository.
+
+Send bug reports to bug-grep@gnu.org.
+
+KNOWN BUGS:
+
+Several tests in fmbtest.sh and foad1.sh fail under the cs_CZ.UTF-8 locale
+and have been disabled.
+
+The combination of -o and -i options is broken and the known failing cases
+are disabled in foad1.sh
+
+The option -i does not work properly in some multibyte locales such as
+tr_TR.UTF-8 where the upper case and lower case forms of a character are not
+necessarily of the same byte length.
+
+A list of outstanding and resolved bugs can be found at:
+
+        https://debbugs.gnu.org/cgi/pkgreport.cgi?package=grep
+
+You can also browse the bug-grep mailing list archive at:
+
+        https://lists.gnu.org/r/bug-grep/
+
+For any copyright year range specified as YYYY-ZZZZ in this package
+note that the range specifies every single year in that closed interval.

@@ -1,0 +1,63 @@
+#! /bin/sh
+# Grep 2.21 would report "grep: internal PCRE error: -27"
+#
+# Copyright 2015-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_pcre_
+
+for p in 'base64 -d' 'base64 -D' 'openssl base64 -d' \
+      "perl -MMIME::Base64 -0777ne 'print decode_base64(\$_)'" FAIL; do
+    test "$p" = FAIL && skip_ "your system lacks a base64 decoder"
+    x=$(echo eA==| ( eval "$p" ) 2>/dev/null) && test "X$x" = Xx &&
+      {
+        eval "b64_decode() { $p; }"
+        break
+      }
+done
+
+foo=$( (echo foo | gzip | gzip -d) 2>/dev/null) && test "X$foo" = Xfoo \
+  || skip_ "your system lacks the gzip program"
+
+fail=0
+
+b64_decode >pcrejit.txt.gz <<'EOF' || framework_failure_
+H4sIAAAAAAACA+2bUU4DMQxE/7mMz5T7XwKE+IBKVLue58yk0B9EtX6xJxN7t4VaH69a6+tHrW+/
+r4e3n75KARWShSOFTtiumE3FPVyo79ATIJ0Ry0No/yXe99UIUqTGKKUzYHFJHJoaCONQDCnDSCDS
+IPAvGCVeXNsZ7lpbWFfdaZtgPos5LeK2C1TBKzD09V3HFlCOsbFT/hNbz4HzJaRjnjdam9FXw/o6
+VyPozhMmiaRYAMeNSJR1iMjBEFLMtsH7lptartfxkzPQgFVofwRlxKsMYn2KNDnU9fsOQCkRIYVT
+G80ZRqBpSQjRYPX7s9gvtqknyNE2f8V09sxHM7YPmMMJgrmVna2AT717n5fUAIDkiBCqFgWUUgKD
+8jOc0Rgj5JS6vZnQI14wkaTDAkD266p/iVHs8gjCrMFARVM0iEVgFAa9YRAQT4tkgsmloTJLmyCm
+uSHRnTkzIdZMmZ5kYX/iJFtTwu9cFvr3aDWcUx4pUW/cVQwPoQSlwguNd4M0vTpAauKodmLFXv1P
+dkcKkYUglER2Q4L4gnmOiNGzSBATwGQgwihs5/QffIhyfg4hJvM2r4Rp6L+1ibCCd4jYZ6jCiBlc
+2+y4fl4yTGIwcWXNAUEeXmu8iCMV96DNTnmRNICDk2N5qaXGbsF91OX/0hlcYTjrMfy02p9Xv70D
+mv3RZCFOAAA=
+EOF
+
+gzip -d pcrejit.txt || framework_failure_
+
+LC_ALL=C grep -P -n '^([/](?!/)|[^/])*~/.*' pcrejit.txt
+if test $? != 1; then
+    # The above often makes grep attempt to use an inordinate amount
+    # of stack space.  If grep fails with $? != 1, try again, but this
+    # time with no soft limit:
+
+    # Use ulimit to remove that limit, if possible.
+    # If ulimit is not usable, just skip this test.
+    (ulimit -s unlimited) || skip_ this shell lacks ulimit support
+
+    # Rerun that same test, but now with no limit on stack size:
+    (ulimit -s unlimited;
+     returns_ 1 env LC_ALL=C grep -P -n '^([/](?!/)|[^/])*~/.*' pcrejit.txt 2> err) \
+       || fail=1
+
+    # If that failed due to stack overflow, don't cry foul.
+    overflow_pat="stack overflow|exceeded PCRE's recursion limit"
+    test $fail = 1 && { grep -Eq "$overflow_pat" err && fail=0 || cat err; }
+fi
+
+Exit $fail

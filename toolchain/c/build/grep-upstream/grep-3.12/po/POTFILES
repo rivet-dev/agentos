@@ -1,0 +1,17 @@
+     ../lib/argmatch.c \
+     ../lib/argmatch.h \
+     ../lib/c-stack.c \
+     ../lib/closeout.c \
+     ../lib/dfa.c \
+     ../lib/error.c \
+     ../lib/getopt.c \
+     ../lib/obstack.c \
+     ../lib/openat-die.c \
+     ../lib/xbinary-io.c \
+     ../lib/quotearg.c \
+     ../lib/regcomp.c \
+     ../lib/version-etc.c \
+     ../lib/xalloc-die.c \
+     ../src/dfasearch.c \
+     ../src/grep.c \
+     ../src/pcresearch.c

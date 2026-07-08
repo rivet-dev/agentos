@@ -1,0 +1,14 @@
+libgnu_a-sockets.o: sockets.c ../src/config.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stdbool.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdbool.h \
+  assert.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/assert.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/features.h \
+  sockets.h
+../src/config.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stdbool.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdbool.h:
+assert.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/assert.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/features.h:
+sockets.h:

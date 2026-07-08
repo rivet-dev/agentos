@@ -8,31 +8,31 @@ release *args:
 release-preview REF:
 	gh workflow run .github/workflows/publish.yaml --ref "{{ REF }}"
 
-# --- @agentos-software/* registry packages (independent, PER-PACKAGE versions) ---
-registry-native:
-	make -C registry/native commands
+# --- @agentos-software/* software packages (independent, PER-PACKAGE versions) ---
+toolchain-build:
+	make -C toolchain commands
 
-registry-native-cmd name:
-	make -C registry/native cmd/{{ name }}
+toolchain-cmd name:
+	make -C toolchain cmd/{{ name }}
 
 # Pre-flight for the publish "WASM Commands" job's fragile state: build the C
 # programs against the VANILLA wasi-sdk sysroot exactly like a fresh CI runner
 # (a locally-built patched sysroot is moved aside for the run). Catches
 # socket/netdb programs missing from PATCHED_PROGRAMS before CI does.
-registry-native-preflight:
+toolchain-preflight:
 	#!/usr/bin/env bash
 	set -euo pipefail
-	cd registry/native/c
+	cd toolchain/c
 	if [ -e sysroot ]; then mv sysroot sysroot.preflight-stash; fi
 	restore() { if [ -e sysroot.preflight-stash ]; then rm -rf sysroot; mv sysroot.preflight-stash sysroot; fi; }
 	trap restore EXIT
 	make wasi-sdk
 	make programs
 
-registry-copy-commands:
+toolchain-copy-commands:
 	node packages/runtime-core/scripts/copy-wasm-commands.mjs
 
-registry-build:
+software-build:
 	pnpm --filter '@agentos-software/*' build
 
 install-shell:

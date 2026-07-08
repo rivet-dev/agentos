@@ -1,0 +1,22 @@
+#! /bin/sh
+# Read two files, of increasing size.
+# With ASAN, this would have triggered a false-positive read of poisoned memory.
+#
+# Copyright 2015-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+fail=0
+
+printf a > 1 || framework_failure_
+printf ab > 2 || framework_failure_
+
+grep x 1 2 > out 2>&1
+test $? -eq 1 || fail=1
+compare /dev/null out || fail=1
+
+Exit $fail

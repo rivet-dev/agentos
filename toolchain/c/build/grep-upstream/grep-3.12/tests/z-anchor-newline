@@ -1,0 +1,42 @@
+#!/bin/sh
+# grep -z with an anchor in the regex could mistakenly match text
+# including a newline.
+
+# Copyright 2016-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+require_compiled_in_MB_support
+LC_ALL=en_US.UTF-8
+
+printf 'a\nb\0' > in || framework_failure_
+
+fail=0
+
+# These three would all mistakenly match, because the [a-b] range
+# forced the non-DFA (regexp-using) code path.
+returns_ 1 grep -z '^[a-b]*$' in || fail=1
+returns_ 1 grep -z 'a[a-b]*$' in || fail=1
+returns_ 1 grep -z '^[a-b]*b' in || fail=1
+
+# Test these for good measure; they exercise the DFA code path
+# and always worked
+returns_ 1 grep -z '^[ab]*$' in || fail=1
+returns_ 1 grep -z 'a[ab]*$' in || fail=1
+returns_ 1 grep -z '^[ab]*b' in || fail=1
+
+Exit $fail

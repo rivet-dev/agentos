@@ -1,0 +1,45 @@
+#!/bin/sh
+# exercise \< and \> with multibyte data.
+# Derived from https://savannah.gnu.org/bugs/?29537
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+
+e_acute=$(printf '\303\251')
+echo "$e_acute" > in || framework_failure_
+LC_ALL=en_US.UTF-8
+export LC_ALL
+
+fail=0
+
+grep "\\<$e_acute" in > out 2>err || fail=1
+compare out in || fail=1
+compare /dev/null err || fail=1
+
+grep "$e_acute\\>" in > out 2>err || fail=1
+compare out in || fail=1
+compare /dev/null err || fail=1
+
+grep -w "$e_acute" in > out 2>err || fail=1
+compare out in || fail=1
+compare /dev/null err || fail=1
+
+# Also ensure that this works in both the C locale and that multibyte one.
+# In the C locale, it failed due to a dfa.c regression in grep-3.2.
+echo 123-x > in || framework_failure_
+
+for locale in C en_US.UTF-8; do
+  LC_ALL=$locale grep '.\bx' in > out 2>err || fail=1
+  compare out in || fail=1
+  compare /dev/null err || fail=1
+done
+
+# Bug#43255
+printf 'a \303\255cone b\n' >in
+for flag in '' -i; do
+  returns_ 1 env LC_ALL=en_US.UTF-8 grep -w $flag cone in >out 2>err || fail=1
+  compare /dev/null out || fail=1
+  compare /dev/null err || fail=1
+done
+
+Exit $fail

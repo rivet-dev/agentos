@@ -1,0 +1,29 @@
+#!/bin/sh
+# exercise the -w option on multiple files
+# Derived from https://bugzilla.redhat.com/570500
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+mkdir a || framework_failure_
+( cd a \
+    && echo aa bb cc > 1 \
+    && echo bb dd ff > 2 \
+    && echo ff gg hh > 3 \
+    && echo bb xx zz > 4 \
+) || framework_failure_
+
+cat << \EOF > exp1 || framework_failure_
+a/1:aa bb cc
+a/2:bb dd ff
+a/4:bb xx zz
+EOF
+sed s/..// exp1 > exp2 || framework_failure_
+
+fail=0
+grep -rw bb a > out || fail=1
+sort < out > k; mv k out
+compare exp1 out || fail=1
+
+(cd a && grep -w bb [1-4]) > out || fail=1
+compare exp2 out || fail=1
+
+Exit $fail

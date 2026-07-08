@@ -1,0 +1,25 @@
+#!/bin/sh
+# This would fail for grep-2.5.3
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+printf 'aa\nab\nba\nbb\n' > exp1 || framework_failure_
+printf '1 2 3\n' > exp2 || framework_failure_
+
+fail=0
+
+for LOC in en_US.UTF-8 zh_CN $LOCALE_FR_UTF8; do
+  out=out1-ab-$LOC
+  LC_ALL=$LOC grep -E '([a]|[b]){2}' < exp1 > $out || fail=1
+  compare exp1 $out || fail=1
+
+  out=out1-ba-$LOC
+  LC_ALL=$LOC grep -E '([b]|[a]){2}' < exp1 > $out || fail=1
+  compare exp1 $out || fail=1
+
+  out=out2-$LOC
+  LC_ALL=$LOC grep -E '^([[:digit:]]+[[:space:]]+){2}' < exp2 > $out || fail=1
+  compare exp2 $out || fail=1
+
+done
+
+Exit $fail

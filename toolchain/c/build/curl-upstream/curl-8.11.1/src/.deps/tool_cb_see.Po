@@ -1,0 +1,219 @@
+tool_cb_see.o: tool_cb_see.c tool_setup.h ../lib/curl_setup.h \
+  ../lib/curl_config.h ../include/curl/system.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/sys/types.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/features.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/alltypes.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_time_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_suseconds_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_clockid_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_clock_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_timeval.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_timespec.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_iovec.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stddef.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_size_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/endian.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/sys/select.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_sigset_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__fd_set.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_fd_set.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__macro_FD_SETSIZE.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/sys/socket.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__wasi_snapshot.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_sys_socket.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_msghdr.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_socklen_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_sockaddr.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_sa_family_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_sockaddr_storage.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/wasi/api.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_header_macro.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_ptrdiff_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_wchar_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_null.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_max_align_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_offsetof.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stdint.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdint.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/stdint.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/socket.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdio.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__seek.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/assert.h \
+  ../lib/curl_setup_once.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdlib.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__functions_malloc.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_stdlib.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/alloca.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/string.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_string.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__functions_memcpy.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/strings.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stdarg.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg_header_macro.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg___gnuc_va_list.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg_va_list.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg_va_arg.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg___va_copy.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg_va_copy.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/time.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_time.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_tm.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/errno.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__errno.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__errno_values.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/sys/stat.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/stat.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_stat.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_dev_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_ino_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_nlink_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_mode_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_uid_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_gid_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_off_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_blksize_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_blkcnt_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_sys_stat.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__mode_t.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/sys/time.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stdbool.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdbool.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/unistd.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_unistd.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/posix.h \
+  ../lib/functypes.h ../lib/curl_ctype.h ../include/curl/curl.h \
+  ../include/curl/curlver.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/limits.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/limits.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/limits.h \
+  /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__macro_PAGESIZE.h \
+  ../include/curl/easy.h ../include/curl/multi.h \
+  ../include/curl/urlapi.h ../include/curl/options.h \
+  ../include/curl/header.h ../include/curl/websockets.h ../lib/curlx.h \
+  ../lib/curl_printf.h ../include/curl/mprintf.h ../lib/strcase.h \
+  ../lib/strtoofft.h ../lib/nonblock.h ../lib/warnless.h \
+  ../lib/curl_multibyte.h ../lib/version_win32.h tool_cfgable.h \
+  tool_sdecls.h tool_urlglob.h var.h tool_getparam.h ../lib/dynbuf.h \
+  tool_operate.h tool_cb_hdr.h tool_cb_prg.h tool_cb_see.h \
+  ../lib/memdebug.h
+tool_setup.h:
+../lib/curl_setup.h:
+../lib/curl_config.h:
+../include/curl/system.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/sys/types.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/features.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/alltypes.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_time_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_suseconds_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_clockid_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_clock_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_timeval.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_timespec.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_iovec.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stddef.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_size_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/endian.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/sys/select.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_sigset_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__fd_set.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_fd_set.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__macro_FD_SETSIZE.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/sys/socket.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__wasi_snapshot.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_sys_socket.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_msghdr.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_socklen_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_sockaddr.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_sa_family_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_sockaddr_storage.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/wasi/api.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_header_macro.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_ptrdiff_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_wchar_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_null.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_max_align_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stddef_offsetof.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stdint.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdint.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/stdint.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/socket.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdio.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__seek.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/assert.h:
+../lib/curl_setup_once.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdlib.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__functions_malloc.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_stdlib.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/alloca.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/string.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_string.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__functions_memcpy.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/strings.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stdarg.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg_header_macro.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg___gnuc_va_list.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg_va_list.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg_va_arg.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg___va_copy.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/__stdarg_va_copy.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/time.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_time.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_tm.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/errno.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__errno.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__errno_values.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/sys/stat.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/stat.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__struct_stat.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_dev_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_ino_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_nlink_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_mode_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_uid_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_gid_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_off_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_blksize_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__typedef_blkcnt_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_sys_stat.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__mode_t.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/sys/time.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/stdbool.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/stdbool.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/unistd.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__header_unistd.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/posix.h:
+../lib/functypes.h:
+../lib/curl_ctype.h:
+../include/curl/curl.h:
+../include/curl/curlver.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include/limits.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/limits.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/bits/limits.h:
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasip1/__macro_PAGESIZE.h:
+../include/curl/easy.h:
+../include/curl/multi.h:
+../include/curl/urlapi.h:
+../include/curl/options.h:
+../include/curl/header.h:
+../include/curl/websockets.h:
+../lib/curlx.h:
+../lib/curl_printf.h:
+../include/curl/mprintf.h:
+../lib/strcase.h:
+../lib/strtoofft.h:
+../lib/nonblock.h:
+../lib/warnless.h:
+../lib/curl_multibyte.h:
+../lib/version_win32.h:
+tool_cfgable.h:
+tool_sdecls.h:
+tool_urlglob.h:
+var.h:
+tool_getparam.h:
+../lib/dynbuf.h:
+tool_operate.h:
+tool_cb_hdr.h:
+tool_cb_prg.h:
+tool_cb_see.h:
+../lib/memdebug.h:

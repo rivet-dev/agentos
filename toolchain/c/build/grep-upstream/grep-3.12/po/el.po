@@ -1,0 +1,915 @@
+# Greek messages for GNU grep
+# This file is distributed under the same license as the grep package.
+# Copyright (C) 1998, 2002 Free Software Foundation, Inc.
+# Simos Xenitellis <simos@hellug.gr>, 1998, 2002.
+# Savvas Radevic <vicedar@gmail.com>, 2012.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: grep 2.11.11-pre1\n"
+"Report-Msgid-Bugs-To: bug-grep@gnu.org\n"
+"POT-Creation-Date: 2025-04-10 09:02-0700\n"
+"PO-Revision-Date: 2012-05-05 23:23+0100\n"
+"Last-Translator: Savvas Radevic <vicedar@gmail.com>\n"
+"Language-Team: Greek <team@lists.gnome.gr>\n"
+"Language: el\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Bugs: Report translation errors to the Language-Team address.\n"
+"X-Poedit-Language: Greek\n"
+"X-Poedit-Country: GREECE\n"
+
+#: lib/argmatch.c:145
+#, c-format
+msgid "invalid argument %s for %s"
+msgstr "άκυρη επιλογή %s για %s"
+
+#: lib/argmatch.c:146
+#, c-format
+msgid "ambiguous argument %s for %s"
+msgstr "διφορούμενη επιλογή %s για %s"
+
+#: lib/argmatch.c:165 lib/argmatch.h:242
+msgid "Valid arguments are:"
+msgstr "Έγκυρες επιλογές είναι οι εξής:"
+
+#: lib/c-stack.c:190
+msgid "program error"
+msgstr ""
+
+#: lib/c-stack.c:191
+msgid "stack overflow"
+msgstr ""
+
+#: lib/closeout.c:121 src/grep.c:1352
+msgid "write error"
+msgstr "σφάλμα εγγραφής"
+
+# src/dfa.c:652 src/dfa.c:655 src/dfa.c:682 src/dfa.c:686 src/dfa.c:687
+# src/dfa.c:690 src/dfa.c:703 src/dfa.c:704
+# src/dfa.c:660 src/dfa.c:663 src/dfa.c:690 src/dfa.c:694 src/dfa.c:695
+# src/dfa.c:698 src/dfa.c:711 src/dfa.c:712
+#: lib/dfa.c:910
+#, fuzzy
+msgid "unbalanced ["
+msgstr "Μη ισορροπημένο ["
+
+#: lib/dfa.c:1031
+msgid "invalid character class"
+msgstr "άκυρη κατηγορία χαρακτήρων"
+
+#: lib/dfa.c:1159
+msgid "character class syntax is [[:space:]], not [:space:]"
+msgstr "η σύνταξη κατηγορίας χαρακτήρων είναι [[:space:]], όχι [:space:]"
+
+# src/dfa.c:444
+# src/dfa.c:452
+#: lib/dfa.c:1234
+#, fuzzy
+msgid "unfinished \\ escape"
+msgstr "Μη τερματισμένος χαρακτήρας διαφυγής \\"
+
+#: lib/dfa.c:1344
+#, fuzzy
+msgid "? at start of expression"
+msgstr "Άκυρη κανονική έκφραση"
+
+#: lib/dfa.c:1356
+#, fuzzy
+msgid "* at start of expression"
+msgstr "Άκυρη κανονική έκφραση"
+
+#: lib/dfa.c:1370
+#, fuzzy
+msgid "+ at start of expression"
+msgstr "Άκυρη κανονική έκφραση"
+
+#: lib/dfa.c:1425
+msgid "{...} at start of expression"
+msgstr ""
+
+# src/dfa.c:556 src/dfa.c:562 src/dfa.c:573 src/dfa.c:584
+# src/dfa.c:564 src/dfa.c:570 src/dfa.c:581 src/dfa.c:592
+#: lib/dfa.c:1428
+#, fuzzy
+msgid "invalid content of \\{\\}"
+msgstr "μη έγκυρος μέγιστος μετρητής"
+
+#: lib/dfa.c:1430
+#, fuzzy
+msgid "regular expression too big"
+msgstr "Υπερβολικά μεγάλη η κανονική έκφραση"
+
+#: lib/dfa.c:1580
+msgid "stray \\ before unprintable character"
+msgstr ""
+
+#: lib/dfa.c:1582
+msgid "stray \\ before white space"
+msgstr ""
+
+#: lib/dfa.c:1593
+#, c-format
+msgid "stray \\ before %s"
+msgstr ""
+
+#: lib/dfa.c:1594 lib/dfa.c:1597
+msgid "stray \\"
+msgstr ""
+
+# src/dfa.c:841
+# src/dfa.c:849
+#: lib/dfa.c:1948
+#, fuzzy
+msgid "unbalanced ("
+msgstr "Μη ισορροπημένο ("
+
+# src/dfa.c:962
+# src/dfa.c:970
+#: lib/dfa.c:2065
+#, fuzzy
+msgid "no syntax specified"
+msgstr "Δεν ορίστηκε συντακτικό"
+
+# src/dfa.c:970
+# src/dfa.c:978
+#: lib/dfa.c:2076
+#, fuzzy
+msgid "unbalanced )"
+msgstr "Μη ισορροπημένο )"
+
+#: lib/error.c:208
+msgid "Unknown system error"
+msgstr "Άγνωστο λάθος συστήματος"
+
+# src/getopt.c:813
+# src/getopt.c:813
+#: lib/getopt.c:282
+#, fuzzy, c-format
+msgid "%s: option '%s%s' is ambiguous\n"
+msgstr "%s: η επιλογή «-W %s» είναι διφορούμενη\n"
+
+# src/getopt.c:628
+# src/getopt.c:628
+#: lib/getopt.c:288
+#, fuzzy, c-format
+msgid "%s: option '%s%s' is ambiguous; possibilities:"
+msgstr "%s: η επιλογή «%s» είναι διφορούμενη\n"
+
+# src/getopt.c:707
+# src/getopt.c:707
+#: lib/getopt.c:322
+#, fuzzy, c-format
+msgid "%s: unrecognized option '%s%s'\n"
+msgstr "%s: μη αναγνωρίσιμη επιλογή «%c%s»\n"
+
+# src/getopt.c:657
+# src/getopt.c:657
+#: lib/getopt.c:348
+#, fuzzy, c-format
+msgid "%s: option '%s%s' doesn't allow an argument\n"
+msgstr "%s: η επιλογή «%c%s» δεν επιτρέπει ορίσματα\n"
+
+# src/getopt.c:674 src/getopt.c:847
+# src/getopt.c:674 src/getopt.c:847
+#: lib/getopt.c:363
+#, fuzzy, c-format
+msgid "%s: option '%s%s' requires an argument\n"
+msgstr "%s: η επιλογή «%s» απαιτεί όρισμα\n"
+
+# src/getopt.c:736
+# src/getopt.c:736
+#: lib/getopt.c:624
+#, fuzzy, c-format
+msgid "%s: invalid option -- '%c'\n"
+msgstr "%s: μη έγκυρη επιλογή -- %c\n"
+
+# src/getopt.c:766 src/getopt.c:896
+# src/getopt.c:766 src/getopt.c:896
+#: lib/getopt.c:639 lib/getopt.c:685
+#, fuzzy, c-format
+msgid "%s: option requires an argument -- '%c'\n"
+msgstr "%s: η επιλογή απαιτεί ένα όρισμα -- %c\n"
+
+# src/grep.c:144 src/grep.c:161 src/grep.c:222 src/grep.c:263 src/kwset.c:184
+# src/kwset.c:190
+# src/grep.c:164 src/grep.c:181 src/grep.c:283 src/grep.c:338 src/kwset.c:184
+# src/kwset.c:190
+#: lib/obstack.c:320 lib/obstack.c:322 lib/xalloc-die.c:34
+msgid "memory exhausted"
+msgstr "η μνήμη εξαντλήθηκε"
+
+#: lib/openat-die.c:38
+msgid "unable to record current working directory"
+msgstr "δεν είναι δυνατή η καταγραφή του τρέχοντος φακέλου εργασίας"
+
+#: lib/openat-die.c:57
+msgid "failed to return to initial working directory"
+msgstr "αποτυχία επιστροφής στον αρχικό φάκελο εργασίας"
+
+#: lib/xbinary-io.c:36
+#, c-format
+msgid "failed to set file descriptor text/binary mode"
+msgstr ""
+
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  For example, a French Unicode local should translate
+#. these to U+00AB (LEFT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), and U+00BB (RIGHT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), respectively.
+#.
+#. If the catalog has no translation, we will try to
+#. use Unicode U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. Unicode U+2019 (RIGHT SINGLE QUOTATION MARK).  If the
+#. current locale is not Unicode, locale_quoting_style
+#. will quote 'like this', and clocale_quoting_style will
+#. quote "like this".  You should always include translations
+#. for "`" and "'" even if U+2018 and U+2019 are appropriate
+#. for your locale.
+#.
+#. If you don't know what to put here, please see
+#. <https://en.wikipedia.org/wiki/Quotation_marks_in_other_languages>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:354
+msgid "`"
+msgstr "«"
+
+#: lib/quotearg.c:355
+msgid "'"
+msgstr "»"
+
+#: lib/regcomp.c:122
+msgid "Success"
+msgstr "Επιτυχία"
+
+#: lib/regcomp.c:125
+msgid "No match"
+msgstr "Καμία αντιστοιχία"
+
+#: lib/regcomp.c:128
+msgid "Invalid regular expression"
+msgstr "Άκυρη κανονική έκφραση"
+
+#: lib/regcomp.c:131
+msgid "Invalid collation character"
+msgstr ""
+
+#: lib/regcomp.c:134
+msgid "Invalid character class name"
+msgstr ""
+
+#: lib/regcomp.c:137
+msgid "Trailing backslash"
+msgstr ""
+
+#: lib/regcomp.c:140
+msgid "Invalid back reference"
+msgstr ""
+
+#: lib/regcomp.c:143
+msgid "Unmatched [, [^, [:, [., or [="
+msgstr ""
+
+#: lib/regcomp.c:146
+msgid "Unmatched ( or \\("
+msgstr ""
+
+#: lib/regcomp.c:149
+msgid "Unmatched \\{"
+msgstr ""
+
+#: lib/regcomp.c:152
+msgid "Invalid content of \\{\\}"
+msgstr ""
+
+#: lib/regcomp.c:155
+msgid "Invalid range end"
+msgstr "Άκυρο τέλος σειράς"
+
+# src/dfa.c:147 src/dfa.c:159 src/dfa.c:172
+# src/dfa.c:155 src/dfa.c:167 src/dfa.c:180 src/grep.c:827
+#: lib/regcomp.c:158
+msgid "Memory exhausted"
+msgstr "Η μνήμη εξαντλήθηκε"
+
+#: lib/regcomp.c:161
+msgid "Invalid preceding regular expression"
+msgstr "Άκυρη προηγούμενης κανονικής έκφρασης"
+
+#: lib/regcomp.c:164
+msgid "Premature end of regular expression"
+msgstr "Πρόωρο τέλος της κανονικής έκφρασης"
+
+#: lib/regcomp.c:167
+msgid "Regular expression too big"
+msgstr "Υπερβολικά μεγάλη η κανονική έκφραση"
+
+#: lib/regcomp.c:170
+msgid "Unmatched ) or \\)"
+msgstr ""
+
+#: lib/regcomp.c:650
+msgid "No previous regular expression"
+msgstr "Καμία προηγούμενη κανονική έκφραση"
+
+#: lib/version-etc.c:73
+#, fuzzy, c-format
+msgid "Packaged by %s (%s)\n"
+msgstr "Συσκευάστηκε από %s (%s)\n"
+
+#: lib/version-etc.c:76
+#, fuzzy, c-format
+msgid "Packaged by %s\n"
+msgstr "Συσκευάστηκε από %s\n"
+
+#. TRANSLATORS: Translate "(C)" to the copyright symbol
+#. (C-in-a-circle), if this symbol is available in the user's
+#. locale.  Otherwise, do not translate "(C)"; leave it as-is.
+#: lib/version-etc.c:83
+msgid "(C)"
+msgstr "(C)"
+
+#. TRANSLATORS: The %s placeholder is the web address of the GPL license.
+#: lib/version-etc.c:88
+#, fuzzy, c-format
+msgid ""
+"License GPLv3+: GNU GPL version 3 or later <%s>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+msgstr ""
+"\n"
+"Άδεια χρήσης GPLv3+: GNU GPL έκδοση 3 ή μεταγενέστερη <http://gnu.org/"
+"licenses/gpl.html>\n"
+"Αυτό είναι ελεύθερο λογισμικό: Είστε ελεύθεροι να το αλλάξετε και να το "
+"αναδιανέμετε.\n"
+"Δεν υπάρχει ΚΑΜΙΑ ΕΓΓΥΗΣΗ στην έκταση που επιτρέπεται από το νόμο.\n"
+"\n"
+
+#. TRANSLATORS: %s denotes an author name.
+#: lib/version-etc.c:105
+#, fuzzy, c-format
+msgid "Written by %s.\n"
+msgstr "Συντάχθηκε από τον %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:109
+#, fuzzy, c-format
+msgid "Written by %s and %s.\n"
+msgstr "Συντάχθηκε από τους %s και %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:113
+#, fuzzy, c-format
+msgid "Written by %s, %s, and %s.\n"
+msgstr "Συντάχθηκε από τους %s, %s, και %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:120
+#, fuzzy, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"Συντάχθηκε από τους %s, %s, %s,\n"
+"και %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:127
+#, fuzzy, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"Συντάχθηκε από τους %s, %s, %s,\n"
+"%s, και %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:134
+#, fuzzy, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, and %s.\n"
+msgstr ""
+"Συντάχθηκε από τον %s, %s, %s,\n"
+"%s, %s, and %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:142
+#, fuzzy, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, and %s.\n"
+msgstr ""
+"Συντάχθηκε από τους %s, %s, %s,\n"
+"%s, %s, %s, και %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:150
+#, fuzzy, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"Συντάχθηκε από τους %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"και %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:159
+#, fuzzy, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"Συντάχθηκε από τους %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, και %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:170
+#, fuzzy, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, and others.\n"
+msgstr ""
+"Συντάχθηκε από τους %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, και άλλους.\n"
+
+#. TRANSLATORS: The placeholder indicates the bug-reporting address
+#. for this package.  Please add _another line_ saying
+#. "Report translation bugs to <...>\n" with the address for translation
+#. bugs (typically your translation team's web or email address).
+#: lib/version-etc.c:249
+#, fuzzy, c-format
+msgid "Report bugs to: %s\n"
+msgstr ""
+"\n"
+"Αναφορά σφαλμάτων: %s\n"
+
+#: lib/version-etc.c:251
+#, c-format
+msgid "Report %s bugs to: %s\n"
+msgstr "Αναφορά %s σφαλμάτων: %s\n"
+
+#: lib/version-etc.c:255 lib/version-etc.c:257
+#, c-format
+msgid "%s home page: <%s>\n"
+msgstr "%s κεντρική σελίδα: <%s>\n"
+
+#: lib/version-etc.c:260
+#, fuzzy, c-format
+msgid "General help using GNU software: <%s>\n"
+msgstr "Γενική βοήθεια χρήσης λογισμικού GNU: <http://www.gnu.org/gethelp/>\n"
+
+# src/grep.c:293
+# src/grep.c:366
+#: src/dfasearch.c:57
+#, fuzzy, c-format
+msgid "warning: %s"
+msgstr "προειδοποίηση: %s: %s\n"
+
+# src/grep.c:964 src/grep.c:1015
+# src/grep.c:730
+#: src/grep.c:657
+msgid "(standard input)"
+msgstr "(κανονική είσοδος)"
+
+# src/grep.c:785 src/grep.c:792
+# src/grep.c:1060 src/grep.c:1067 src/grep.c:1076
+#: src/grep.c:838
+msgid "invalid context length argument"
+msgstr "μη έγκυρο όρισμα μήκους περιεχομένου"
+
+#: src/grep.c:911
+msgid "input is too large to count"
+msgstr "η είσοδος είναι πολύ μεγάλη για να μετρηθεί"
+
+# src/grep.c:715
+#: src/grep.c:1656
+#, fuzzy, c-format
+msgid "%s: binary file matches"
+msgstr "Το δυαδικό αρχείο %s ταιριάζει\n"
+
+# src/grep.c:844
+#: src/grep.c:1694
+#, fuzzy, c-format
+msgid "%s: warning: recursive directory loop"
+msgstr "αναδρομική αλληλοδιαδοχή καταλόγων"
+
+#: src/grep.c:1914
+#, fuzzy, c-format
+msgid "%s: input file is also the output"
+msgstr "το αρχείο εισαγωγής %s είναι επίσης το αρχείο εξόδου"
+
+# src/grep.c:597
+# src/grep.c:862
+#: src/grep.c:1976 src/grep.c:1983
+#, fuzzy, c-format
+msgid "Usage: %s [OPTION]... PATTERNS [FILE]...\n"
+msgstr "Χρήση: %s [ΕΠΙΛΟΓΗ]... ΥΠΟΔΕΙΓΜΑ [ΑΡΧΕΙΟ]...\n"
+
+# src/grep.c:598
+# src/grep.c:863
+#: src/grep.c:1978
+#, c-format
+msgid "Try '%s --help' for more information.\n"
+msgstr "Δοκιμάστε «%s --help» για περισσότερες πληροφορίες.\n"
+
+#: src/grep.c:1984
+#, c-format
+msgid "Search for PATTERNS in each FILE.\n"
+msgstr ""
+
+#: src/grep.c:1985
+#, fuzzy, c-format
+msgid ""
+"Example: %s -i 'hello world' menu.h main.c\n"
+"PATTERNS can contain multiple patterns separated by newlines.\n"
+"\n"
+"Pattern selection and interpretation:\n"
+msgstr ""
+"Εύρεση του ΥΠΟΔΕΙΓΜΑτος σε κάθε ΑΡΧΕΙΟ ή την κανονική είσοδο.\n"
+"Παράδειγμα: %s -i 'hello world' menu.h main.c\n"
+"\n"
+"Επιλογή κανονικής έκφρασης και ερμηνεία:\n"
+
+#: src/grep.c:1990
+#, fuzzy, c-format
+msgid ""
+"  -E, --extended-regexp     PATTERNS are extended regular expressions\n"
+"  -F, --fixed-strings       PATTERNS are strings\n"
+"  -G, --basic-regexp        PATTERNS are basic regular expressions\n"
+"  -P, --perl-regexp         PATTERNS are Perl regular expressions\n"
+msgstr ""
+"  -E, --extended-regexp     ΥΠΟΔΕΙΓΜΑ είναι μια εκτεταμένη κανονική έκφραση\n"
+"  -F, --fixed-regexp        ΥΠΟΔΕΙΓΜΑ είναι στατικό αλφαριθμητικό διαχωρι-\n"
+"                              ζόμενο με χαρακτήρες αλλαγής γραμμής\n"
+"  -G, --basic-regexp        ΥΠΟΔΕΙΓΜΑ είναι απλή κανονική έκφραση\n"
+"  -P, --perl-regexp         ΥΠΟΔΕΙΓΜΑ είναι κανονική έκφραση Perl\n"
+
+# src/grep.c:603
+# src/grep.c:868
+#: src/grep.c:1996
+#, fuzzy, c-format
+msgid ""
+"  -e, --regexp=PATTERNS     use PATTERNS for matching\n"
+"  -f, --file=FILE           take PATTERNS from FILE\n"
+"  -i, --ignore-case         ignore case distinctions in patterns and data\n"
+"      --no-ignore-case      do not ignore case distinctions (default)\n"
+"  -w, --word-regexp         match only whole words\n"
+"  -x, --line-regexp         match only whole lines\n"
+"  -z, --null-data           a data line ends in 0 byte, not newline\n"
+msgstr ""
+"  -e, --regexp=ΥΠΟΔΕΙΓΜΑ    χρήση ΥΠΟΔΕΙΓΜΑτος για κανονική έκφραση\n"
+"  -f, --file=ΑΡΧΕΙΟ         λήψη ΥΠΟΔΕΙΓΜΑτος από το αρχείο ΑΡΧΕΙΟ\n"
+"  -i, --ignore-case         αγνόησε διαφορές πεζών/κεφαλαίων\n"
+"  -w, --word-regexp         επιβολή του ΥΠΟΔΕΙΓΜΑτος να ταιριάζει μόνο\n"
+"                              ολόκληρες λέξεις\n"
+"  -x, --line-regexp         επιβολή του ΥΠΟΔΕΙΓΜΑτος να ταιριάζει μόνο\n"
+"                              ολόκληρες γραμμές\n"
+"  -z, --null-data           η γραμμή δεδομένων τερματίζεται με byte 0\n"
+"                              και όχι με χαρακτήρα αλλαγής γραμμής\n"
+
+# src/grep.c:615
+# src/grep.c:880
+#: src/grep.c:2004
+#, fuzzy, c-format
+msgid ""
+"\n"
+"Miscellaneous:\n"
+"  -s, --no-messages         suppress error messages\n"
+"  -v, --invert-match        select non-matching lines\n"
+"  -V, --version             display version information and exit\n"
+"      --help                display this help text and exit\n"
+msgstr ""
+"\n"
+"Λοιπά:\n"
+"  -s, --no-messages         αποφυγή εμφάνισης μηνυμάτων σφαλμάτων\n"
+"  -v, --revert-match        επιλογή γραμμών που δεν ταιριάζουν\n"
+"  -V, --version             εμφάνισης πληροφοριών έκδοσης και έξοδος\n"
+"      --help                εμφάνισης αυτής της βοήθειας και έξοδος\n"
+"      --mmap                χρήση εισόδου απεικονισμένη-στη-μνήμη αν\n"
+"                              υπάρχει τέτοια δυνατότητα\n"
+
+#: src/grep.c:2011
+#, c-format
+msgid ""
+"\n"
+"Output control:\n"
+"  -m, --max-count=NUM       stop after NUM selected lines\n"
+"  -b, --byte-offset         print the byte offset with output lines\n"
+"  -n, --line-number         print line number with output lines\n"
+"      --line-buffered       flush output on every line\n"
+"  -H, --with-filename       print file name with output lines\n"
+"  -h, --no-filename         suppress the file name prefix on output\n"
+"      --label=LABEL         use LABEL as the standard input file name "
+"prefix\n"
+msgstr ""
+
+#: src/grep.c:2022
+#, c-format
+msgid ""
+"  -o, --only-matching       show only nonempty parts of lines that match\n"
+"  -q, --quiet, --silent     suppress all normal output\n"
+"      --binary-files=TYPE   assume that binary files are TYPE;\n"
+"                            TYPE is 'binary', 'text', or 'without-match'\n"
+"  -a, --text                equivalent to --binary-files=text\n"
+msgstr ""
+
+#: src/grep.c:2029
+#, c-format
+msgid ""
+"  -I                        equivalent to --binary-files=without-match\n"
+"  -d, --directories=ACTION  how to handle directories;\n"
+"                            ACTION is 'read', 'recurse', or 'skip'\n"
+"  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n"
+"                            ACTION is 'read' or 'skip'\n"
+"  -r, --recursive           like --directories=recurse\n"
+"  -R, --dereference-recursive  likewise, but follow all symlinks\n"
+msgstr ""
+
+#: src/grep.c:2038
+#, c-format
+msgid ""
+"      --include=GLOB        search only files that match GLOB (a file "
+"pattern)\n"
+"      --exclude=GLOB        skip files that match GLOB\n"
+"      --exclude-from=FILE   skip files that match any file pattern from "
+"FILE\n"
+"      --exclude-dir=GLOB    skip directories that match GLOB\n"
+msgstr ""
+
+#: src/grep.c:2045
+#, c-format
+msgid ""
+"  -L, --files-without-match  print only names of FILEs with no selected "
+"lines\n"
+"  -l, --files-with-matches  print only names of FILEs with selected lines\n"
+"  -c, --count               print only a count of selected lines per FILE\n"
+"  -T, --initial-tab         make tabs line up (if needed)\n"
+"  -Z, --null                print 0 byte after FILE name\n"
+msgstr ""
+
+#: src/grep.c:2051
+#, fuzzy, c-format
+msgid ""
+"\n"
+"Context control:\n"
+"  -B, --before-context=NUM  print NUM lines of leading context\n"
+"  -A, --after-context=NUM   print NUM lines of trailing context\n"
+"  -C, --context=NUM         print NUM lines of output context\n"
+msgstr ""
+"\n"
+"Έλεγχος βάσει του περιεχομένου:\n"
+"  -B, --before-context=ΑΡΙΘΜΟΣ εμφάνιση ΑΡΙΘΜΟΣ γραμμών με ακολουθούμενο\n"
+"                              περιεχόμενο\n"
+"  -A, --after-context=ΑΡΙΘΜΟΣ  εμφάνιση ΑΡΙΘΜΟΣ γραμμών με προπορευόμενο\n"
+"                              περιεχόμενο\n"
+"  -C, --context=ΑΡΙΘΜΟΣ     εμφάνιση ΑΡΙΘΜΟΣ (εξ ορισμού 2) γραμμών με\n"
+"                              περιεχόμενο εξόδου\n"
+
+# src/grep.c:633
+# src/grep.c:902
+#: src/grep.c:2058
+#, fuzzy, c-format
+msgid ""
+"  -NUM                      same as --context=NUM\n"
+"      --group-separator=SEP  print SEP on line between matches with context\n"
+"      --no-group-separator  do not print separator for matches with context\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       use markers to highlight the matching strings;\n"
+"                            WHEN is 'always', 'never', or 'auto'\n"
+"  -U, --binary              do not strip CR characters at EOL (MSDOS/"
+"Windows)\n"
+"\n"
+msgstr ""
+"  -NUM                      το ίδιο με --context=ΑΡΙΘΜΟΣ\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       use markers to distinguish the matching string\n"
+"                            WHEN may be `always', `never' or `auto'.\n"
+"  -U, --binary              να μην απαλείφονται χαρακτήρες CR στο EOL "
+"(MSDOS)\n"
+"  -u, --unix-byte-offsets   αναφορά σχετικών θέσεων σα να μην υπήρχαν\n"
+"                              χαρακτήρες CR (MSDOS)\n"
+"\n"
+
+#: src/grep.c:2067
+#, fuzzy, c-format
+msgid ""
+"When FILE is '-', read standard input.  If no FILE is given, read standard\n"
+"input, but with -r, recursively search the working directory instead.  With\n"
+"fewer than two FILEs, assume -h.  Exit status is 0 if any line is selected,\n"
+"1 otherwise; if any error occurs and -q is not given, the exit status is 2.\n"
+msgstr ""
+"Χωρία ΑΡΧΕΙΟ, ή όταν το ΑΡΧΕΙΟ είναι -, διαβάζεται η κανονική είσοδος.\n"
+"Αν στα ορίσματα υπάρχουν λιγότερα από δύο ΑΡΧΕΙΑ, τότε υποτίθεται ότι έχει\n"
+"δοθεί η επιλογή -h.  Η κατάσταση εξόδου του προγράμματος είναι 0 αν βρέθηκε\n"
+"το ΥΠΟΔΕΙΓΜΑ, 1 αν δεν βρέθηκε και 2 αν προέκυψε κάποιο πρόβλημα.\n"
+
+# src/grep.c:829
+# src/grep.c:1112
+#: src/grep.c:2110
+msgid "conflicting matchers specified"
+msgstr "ορίστηκαν αντικρουόμενα στοιχεία αναζήτησης"
+
+#: src/grep.c:2117
+#, fuzzy
+msgid "Perl matching not supported in a --disable-perl-regexp build"
+msgstr ""
+"η υποστήριξη για την επιλογή -P δεν είναι μεταγλωττισμένη σε αυτό το --"
+"disable-perl-regexp δυαδικό [αρχείο]"
+
+# src/dfa.c:556 src/dfa.c:562 src/dfa.c:573 src/dfa.c:584
+# src/dfa.c:564 src/dfa.c:570 src/dfa.c:581 src/dfa.c:592
+#: src/grep.c:2119
+#, fuzzy, c-format
+msgid "invalid matcher %s"
+msgstr "μη έγκυρος μέγιστος μετρητής"
+
+# src/grep.c:1133
+#: src/grep.c:2541
+msgid "unknown devices method"
+msgstr "άγνωστη μέθοδος συσκευών"
+
+# src/dfa.c:556 src/dfa.c:562 src/dfa.c:573 src/dfa.c:584
+# src/dfa.c:564 src/dfa.c:570 src/dfa.c:581 src/dfa.c:592
+#: src/grep.c:2690
+msgid "invalid max count"
+msgstr "μη έγκυρος μέγιστος μετρητής"
+
+#: src/grep.c:2747
+msgid "unknown binary-files type"
+msgstr "άγνωστο είδος δυαδικών αρχείων"
+
+#: src/grep.c:2832
+#, fuzzy
+msgid ""
+"Written by Mike Haertel and others; see\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+msgstr ""
+"άλλοι, κοιτάξτε τον σύνδεσμο <http://git.sv.gnu.org/cgit/grep.git/tree/"
+"AUTHORS>"
+
+#: src/grep.c:2939
+#, c-format
+msgid "warning: GREP_COLOR='%s' is deprecated; use GREP_COLORS='mt=%s'"
+msgstr ""
+
+#: src/pcresearch.c:89
+#, c-format
+msgid ""
+"\n"
+"grep -P uses PCRE2 %s\n"
+msgstr ""
+
+#: src/pcresearch.c:167
+msgid "-P supports only unibyte locales on this platform"
+msgstr ""
+
+#: src/pcresearch.c:169
+msgid "-P supports only unibyte and UTF-8 locales"
+msgstr ""
+
+#: src/pcresearch.c:192
+msgid "the -P option only supports a single pattern"
+msgstr "Η επιλογή -P υποστηρίζει μόνο ένα υπόδειγμα"
+
+#: src/pcresearch.c:288
+msgid "exceeded PCRE's line length limit"
+msgstr ""
+
+# src/grep.c:144 src/grep.c:161 src/grep.c:222 src/grep.c:263 src/kwset.c:184
+# src/kwset.c:190
+# src/grep.c:164 src/grep.c:181 src/grep.c:283 src/grep.c:338 src/kwset.c:184
+# src/kwset.c:190
+#: src/pcresearch.c:366
+#, fuzzy, c-format
+msgid "%s: memory exhausted"
+msgstr "η μνήμη εξαντλήθηκε"
+
+#: src/pcresearch.c:369
+#, c-format
+msgid "%s: exhausted PCRE JIT stack"
+msgstr ""
+
+#: src/pcresearch.c:373
+#, c-format
+msgid "%s: exceeded PCRE's backtracking limit"
+msgstr ""
+
+#: src/pcresearch.c:378
+#, c-format
+msgid "%s: exceeded PCRE's nested backtracking limit"
+msgstr ""
+
+#: src/pcresearch.c:382
+#, c-format
+msgid "%s: PCRE detected recurse loop"
+msgstr ""
+
+#: src/pcresearch.c:387
+#, c-format
+msgid "%s: exceeded PCRE's heap limit"
+msgstr ""
+
+#: src/pcresearch.c:396
+#, fuzzy, c-format
+msgid "%s: internal PCRE error: %d"
+msgstr "εσωτερικό σφάλμα"
+
+#, fuzzy, c-format
+#~ msgid "JIT internal error: %d"
+#~ msgstr "εσωτερικό σφάλμα"
+
+#~ msgid "invalid %s%s argument '%s'"
+#~ msgstr "άκυρη %s%s επιλογή «%s»"
+
+#~ msgid "invalid suffix in %s%s argument '%s'"
+#~ msgstr "άκυρη κατάληξη στην %s%s επιλογή «%s»"
+
+#~ msgid "%s%s argument '%s' too large"
+#~ msgstr "η %s%s επιλογή «%s» είναι υπερβολικά μεγάλη"
+
+#, fuzzy
+#~ msgid "%s home page: <https://www.gnu.org/software/%s/>\n"
+#~ msgstr "%s κεντρική σελίδα: <http://www.gnu.org/software/%s/>\n"
+
+#~ msgid "Mike Haertel"
+#~ msgstr "Mike Haertel"
+
+# src/getopt.c:652
+# src/getopt.c:652
+#, fuzzy
+#~ msgid "%s: option '--%s' doesn't allow an argument\n"
+#~ msgstr "%s: η επιλογή «--%s» δεν επιτρέπει ορίσματα\n"
+
+# src/getopt.c:703
+# src/getopt.c:703
+#, fuzzy
+#~ msgid "%s: unrecognized option '--%s'\n"
+#~ msgstr "%s: μη αναγνωρίσιμη επιλογή «--%s»\n"
+
+# src/getopt.c:813
+# src/getopt.c:813
+#, fuzzy
+#~ msgid "%s: option '-W %s' is ambiguous\n"
+#~ msgstr "%s: η επιλογή «-W %s» είναι διφορούμενη\n"
+
+# src/getopt.c:831
+# src/getopt.c:831
+#, fuzzy
+#~ msgid "%s: option '-W %s' doesn't allow an argument\n"
+#~ msgstr "%s: η επιλογή «-W %s» δεν δέχεται ορίσματα\n"
+
+# src/getopt.c:674 src/getopt.c:847
+# src/getopt.c:674 src/getopt.c:847
+#, fuzzy
+#~ msgid "%s: option '-W %s' requires an argument\n"
+#~ msgstr "%s: η επιλογή «%s» απαιτεί όρισμα\n"
+
+#~ msgid ""
+#~ "'egrep' means 'grep -E'.  'fgrep' means 'grep -F'.\n"
+#~ "Direct invocation as either 'egrep' or 'fgrep' is deprecated.\n"
+#~ msgstr ""
+#~ "To «egrep» είναι ισοδύναμο του «grep -E». Το «fgrep» είναι ισοδύναμο του\n"
+#~ "«grep -F».\n"
+#~ "Η άμεση επίκληση ως «egrep» ή «fgrep» έχει καταργηθεί.\n"
+
+#~ msgid "lseek failed"
+#~ msgstr "αποτυχία του lseek"
+
+#~ msgid "PATTERN is an extended regular expression (ERE).\n"
+#~ msgstr "Το ΠΡΟΤΥΠΟ είναι μια εκτεταμένη κανονική έκφραση (ΕΚΕ).\n"
+
+#~ msgid "Invocation as 'egrep' is deprecated; use 'grep -E' instead.\n"
+#~ msgstr ""
+#~ "Η επίκληση ως «egrep» έχει καταργηθεί· χρησιμοποιήστε το «grep -E».\n"
+
+#~ msgid "Invocation as 'fgrep' is deprecated; use 'grep -F' instead.\n"
+#~ msgstr ""
+#~ "Η επίκληση ως «fgrep» έχει καταργηθεί· χρησιμοποιήστε το «grep -F».\n"
+
+#~ msgid "the --mmap option has been a no-op since 2010"
+#~ msgstr "η επιλογή --mmap δεν λειτουργεί από το 2010"

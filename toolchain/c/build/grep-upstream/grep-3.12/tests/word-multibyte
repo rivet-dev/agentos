@@ -1,0 +1,30 @@
+#!/bin/sh
+# This would fail for grep-2.20
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+
+e_acute=$(printf '\303\251')
+printf "$e_acute\n" > in || framework_failure_
+
+# Use this locale only if it is installed.
+zh=zh_CN.UTF-8
+path_prepend_ .
+case $(get-mb-cur-max $zh) in
+  [456]) ;;
+  *) zh=;;
+esac
+
+fail=0
+
+for LOC in en_US.UTF-8 $zh $LOCALE_FR_UTF8; do
+  out=out1-$LOC
+  LC_ALL=$LOC grep '\w' in >$out || fail=1
+  compare in $out || fail=1
+
+  out=out2-$LOC
+  LC_ALL=$LOC grep '\W' in >$out && fail=1
+  compare /dev/null $out || fail=1
+done
+
+Exit $fail

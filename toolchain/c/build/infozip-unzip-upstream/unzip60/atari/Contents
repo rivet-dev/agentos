@@ -1,0 +1,12 @@
+Contents of the "atari" sub-archive for UnZip 5.3 and later:
+
+  Contents      this file
+  README.old    old notes on compiling UnZip, from author of Atari port
+  Makefile.old  makefile for GNU C compiler and MiNT libraries
+  Makefile      newer, Unix-based makefile (lots of unnecessary baggage :-( )
+  make_unz.mup  script file for invoking makefile(s)?
+  atari.c       Atari-specific routines
+
+The maintainers of the Atari port have fallen behind in their duties; the
+code *probably* compiles, but it has not been tested recently.  Feel free
+to send zip-bugs e-mail about this sorry state of affairs.

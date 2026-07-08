@@ -1339,12 +1339,12 @@ ykAheWCsAteSEWVc0w==\n\
                 .join("../..")
                 .canonicalize()
                 .expect("canonicalize repo root");
-            let copied = repo_root.join("registry/software/coreutils/wasm");
+            let copied = repo_root.join("software/coreutils/wasm");
             if copied.exists() {
                 return copied;
             }
 
-            let fallback = repo_root.join("registry/native/target/wasm32-wasip1/release/commands");
+            let fallback = repo_root.join("toolchain/target/wasm32-wasip1/release/commands");
             if fallback.exists() {
                 return fallback;
             }

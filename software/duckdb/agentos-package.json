@@ -1,0 +1,12 @@
+{
+	"commands": [
+		"duckdb"
+	],
+	"registry": {
+		"title": "DuckDB",
+		"description": "In-process analytics database CLI.",
+		"priority": 70,
+		"image": "/images/registry/duckdb.svg",
+		"category": "data"
+	}
+}

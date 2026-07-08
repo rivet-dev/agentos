@@ -1,0 +1,1015 @@
+The target system is: WASI - 1 - wasm32
+The host system is: Linux - 6.1.0-41-amd64 - x86_64
+Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
+Compiler: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang 
+Build flags: -fwasm-exceptions;-D_WASI_EMULATED_PTHREAD
+Id flags: -c;--target=wasm32-wasi 
+
+The output was:
+0
+
+
+Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "CMakeCCompilerId.o"
+
+The C compiler identification is Clang, found in "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/3.25.1/CompilerIdC/CMakeCCompilerId.o"
+
+Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" succeeded.
+Compiler: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ 
+Build flags: -fwasm-exceptions;-D_WASI_EMULATED_PTHREAD
+Id flags: -c;--target=wasm32-wasi 
+
+The output was:
+0
+
+
+Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "CMakeCXXCompilerId.o"
+
+The CXX compiler identification is Clang, found in "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/3.25.1/CompilerIdCXX/CMakeCXXCompilerId.o"
+
+Checking whether the ASM compiler is Clang using "--version" matched "(clang version)":
+clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)
+Target: wasm32-unknown-wasi
+Thread model: posix
+InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin
+Detecting C compiler ABI info compiled with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_ae433/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0'
+/usr/bin/gmake  -f CMakeFiles/cmTC_ae433.dir/build.make CMakeFiles/cmTC_ae433.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0'
+Building C object CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD    -v -MD -MT CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -MF CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o.d -o CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake-3.25/Modules/CMakeCCompilerABI.c
+clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)
+Target: wasm32-unknown-wasi
+Thread model: posix
+InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin
+ (in-process)
+ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang-19" -cc1 -triple wasm32-unknown-wasi -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCCompilerABI.c -mrelocation-model static -mframe-pointer=none -ffp-contract=on -fno-rounding-math -mconstructor-aliases -target-feature +exception-handling -mllvm -wasm-enable-eh -target-feature +multivalue -target-feature +reference-types -target-cpu generic -fvisibility=hidden -debugger-tuning=gdb -fdebug-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0 -v -fcoverage-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0 -resource-dir /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19 -dependency-file CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o.d -MT CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -sys-header-deps -D _WASI_EMULATED_PTHREAD -isysroot /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include -ferror-limit 19 -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -exception-model=wasm -o CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -x c /usr/share/cmake-3.25/Modules/CMakeCCompilerABI.c
+clang -cc1 version 19.1.5-wasi-sdk based upon LLVM 19.1.5-wasi-sdk default target wasm32-wasi
+#include "..." search starts here:
+#include <...> search starts here:
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include
+End of search list.
+Linking C executable cmTC_ae433
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_ae433.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD  -lwasi-emulated-pthread -v CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -o cmTC_ae433 
+clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)
+Target: wasm32-unknown-wasi
+Thread model: posix
+InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin
+ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld" -m wasm32 -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o -lwasi-emulated-pthread CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -lc /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a -o cmTC_ae433
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0'
+
+
+
+Parsed C implicit include dir info from above output: rv=done
+  found start of include info
+  found start of implicit include info
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  end of search list found
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  implicit include dirs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+
+
+Parsed C implicit link information from above output:
+  link line regex: [^( *|.*[/\])(ld\.lld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\]+-)?ld|collect2)[^/\]*( |$)]
+  ignore line: [Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0]
+  ignore line: []
+  ignore line: [Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_ae433/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0']
+  ignore line: [/usr/bin/gmake  -f CMakeFiles/cmTC_ae433.dir/build.make CMakeFiles/cmTC_ae433.dir/build]
+  ignore line: [gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0']
+  ignore line: [Building C object CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o]
+  ignore line: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD    -v -MD -MT CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -MF CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o.d -o CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake-3.25/Modules/CMakeCCompilerABI.c]
+  ignore line: [clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)]
+  ignore line: [Target: wasm32-unknown-wasi]
+  ignore line: [Thread model: posix]
+  ignore line: [InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin]
+  ignore line: [ (in-process)]
+  ignore line: [ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang-19" -cc1 -triple wasm32-unknown-wasi -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCCompilerABI.c -mrelocation-model static -mframe-pointer=none -ffp-contract=on -fno-rounding-math -mconstructor-aliases -target-feature +exception-handling -mllvm -wasm-enable-eh -target-feature +multivalue -target-feature +reference-types -target-cpu generic -fvisibility=hidden -debugger-tuning=gdb -fdebug-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0 -v -fcoverage-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-9QU7n0 -resource-dir /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19 -dependency-file CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o.d -MT CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -sys-header-deps -D _WASI_EMULATED_PTHREAD -isysroot /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include -ferror-limit 19 -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -exception-model=wasm -o CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -x c /usr/share/cmake-3.25/Modules/CMakeCCompilerABI.c]
+  ignore line: [clang -cc1 version 19.1.5-wasi-sdk based upon LLVM 19.1.5-wasi-sdk default target wasm32-wasi]
+  ignore line: [#include "..." search starts here:]
+  ignore line: [#include <...> search starts here:]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  ignore line: [End of search list.]
+  ignore line: [Linking C executable cmTC_ae433]
+  ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_ae433.dir/link.txt --verbose=1]
+  ignore line: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD  -lwasi-emulated-pthread -v CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -o cmTC_ae433 ]
+  ignore line: [clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)]
+  ignore line: [Target: wasm32-unknown-wasi]
+  ignore line: [Thread model: posix]
+  ignore line: [InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin]
+  link line: [ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld" -m wasm32 -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o -lwasi-emulated-pthread CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o -lc /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a -o cmTC_ae433]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld] ==> ignore
+    arg [-m] ==> ignore
+    arg [wasm32] ==> ignore
+    arg [-L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi] ==> dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o] ==> obj [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o]
+    arg [-lwasi-emulated-pthread] ==> lib [wasi-emulated-pthread]
+    arg [CMakeFiles/cmTC_ae433.dir/CMakeCCompilerABI.c.o] ==> ignore
+    arg [-lc] ==> lib [c]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a] ==> lib [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a]
+    arg [-o] ==> ignore
+    arg [cmTC_ae433] ==> ignore
+  remove lib [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a]
+  collapse library dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+  implicit libs: [wasi-emulated-pthread;c]
+  implicit objs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o]
+  implicit dirs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+  implicit fwks: []
+
+
+Detecting CXX compiler ABI info compiled with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_e118b/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D'
+/usr/bin/gmake  -f CMakeFiles/cmTC_e118b.dir/build.make CMakeFiles/cmTC_e118b.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D'
+Building CXX object CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD    -v -MD -MT CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -MF CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o.d -o CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake-3.25/Modules/CMakeCXXCompilerABI.cpp
+clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)
+Target: wasm32-unknown-wasi
+Thread model: posix
+InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin
+ (in-process)
+ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang-19" -cc1 -triple wasm32-unknown-wasi -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCXXCompilerABI.cpp -mrelocation-model static -mframe-pointer=none -ffp-contract=on -fno-rounding-math -mconstructor-aliases -target-feature +exception-handling -mllvm -wasm-enable-eh -target-feature +multivalue -target-feature +reference-types -target-cpu generic -fvisibility=hidden -debugger-tuning=gdb -fdebug-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D -v -fcoverage-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D -resource-dir /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19 -dependency-file CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o.d -MT CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -sys-header-deps -D _WASI_EMULATED_PTHREAD -isysroot /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include -fdeprecated-macro -ferror-limit 19 -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -fcxx-exceptions -fexceptions -exception-model=wasm -o CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -x c++ /usr/share/cmake-3.25/Modules/CMakeCXXCompilerABI.cpp
+clang -cc1 version 19.1.5-wasi-sdk based upon LLVM 19.1.5-wasi-sdk default target wasm32-wasi
+#include "..." search starts here:
+#include <...> search starts here:
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi
+ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include
+End of search list.
+Linking CXX executable cmTC_e118b
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_e118b.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD  -lwasi-emulated-pthread -v CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_e118b 
+clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)
+Target: wasm32-unknown-wasi
+Thread model: posix
+InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin
+ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld" -m wasm32 -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o -lwasi-emulated-pthread CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -lc++ -lc++abi -lc /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a -o cmTC_e118b
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D'
+
+
+
+Parsed CXX implicit include dir info from above output: rv=done
+  found start of include info
+  found start of implicit include info
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+    add: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  end of search list found
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+  collapse include dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  implicit include dirs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi;/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+
+
+Parsed CXX implicit link information from above output:
+  link line regex: [^( *|.*[/\])(ld\.lld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\]+-)?ld|collect2)[^/\]*( |$)]
+  ignore line: [Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D]
+  ignore line: []
+  ignore line: [Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_e118b/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D']
+  ignore line: [/usr/bin/gmake  -f CMakeFiles/cmTC_e118b.dir/build.make CMakeFiles/cmTC_e118b.dir/build]
+  ignore line: [gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D']
+  ignore line: [Building CXX object CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o]
+  ignore line: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD    -v -MD -MT CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -MF CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o.d -o CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake-3.25/Modules/CMakeCXXCompilerABI.cpp]
+  ignore line: [clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)]
+  ignore line: [Target: wasm32-unknown-wasi]
+  ignore line: [Thread model: posix]
+  ignore line: [InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin]
+  ignore line: [ (in-process)]
+  ignore line: [ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang-19" -cc1 -triple wasm32-unknown-wasi -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCXXCompilerABI.cpp -mrelocation-model static -mframe-pointer=none -ffp-contract=on -fno-rounding-math -mconstructor-aliases -target-feature +exception-handling -mllvm -wasm-enable-eh -target-feature +multivalue -target-feature +reference-types -target-cpu generic -fvisibility=hidden -debugger-tuning=gdb -fdebug-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D -v -fcoverage-compilation-dir=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-eYY63D -resource-dir /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19 -dependency-file CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o.d -MT CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -sys-header-deps -D _WASI_EMULATED_PTHREAD -isysroot /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi -internal-isystem /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include -fdeprecated-macro -ferror-limit 19 -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -fcxx-exceptions -fexceptions -exception-model=wasm -o CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -x c++ /usr/share/cmake-3.25/Modules/CMakeCXXCompilerABI.cpp]
+  ignore line: [clang -cc1 version 19.1.5-wasi-sdk based upon LLVM 19.1.5-wasi-sdk default target wasm32-wasi]
+  ignore line: [#include "..." search starts here:]
+  ignore line: [#include <...> search starts here:]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/include]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include/wasm32-wasi]
+  ignore line: [ /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/include]
+  ignore line: [End of search list.]
+  ignore line: [Linking CXX executable cmTC_e118b]
+  ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_e118b.dir/link.txt --verbose=1]
+  ignore line: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD  -lwasi-emulated-pthread -v CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_e118b ]
+  ignore line: [clang version 19.1.5-wasi-sdk (https://github.com/llvm/llvm-project ab4b5a2db582958af1ee308a790cfdb42bd24720)]
+  ignore line: [Target: wasm32-unknown-wasi]
+  ignore line: [Thread model: posix]
+  ignore line: [InstalledDir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin]
+  link line: [ "/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld" -m wasm32 -L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o -lwasi-emulated-pthread CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o -lc++ -lc++abi -lc /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a -o cmTC_e118b]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/wasm-ld] ==> ignore
+    arg [-m] ==> ignore
+    arg [wasm32] ==> ignore
+    arg [-L/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi] ==> dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o] ==> obj [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o]
+    arg [-lwasi-emulated-pthread] ==> lib [wasi-emulated-pthread]
+    arg [CMakeFiles/cmTC_e118b.dir/CMakeCXXCompilerABI.cpp.o] ==> ignore
+    arg [-lc++] ==> lib [c++]
+    arg [-lc++abi] ==> lib [c++abi]
+    arg [-lc] ==> lib [c]
+    arg [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a] ==> lib [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a]
+    arg [-o] ==> ignore
+    arg [cmTC_e118b] ==> ignore
+  remove lib [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/lib/clang/19/lib/wasi/libclang_rt.builtins-wasm32.a]
+  collapse library dir [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi] ==> [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+  implicit libs: [wasi-emulated-pthread;c++;c++abi;c]
+  implicit objs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/crt1-command.o]
+  implicit dirs: [/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi]
+  implicit fwks: []
+
+
+Performing C SOURCE FILE Test CXX_SUPPORTS_UNWINDLIB_EQ_NONE_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-hMKD05
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_938d0/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-hMKD05'
+/usr/bin/gmake  -f CMakeFiles/cmTC_938d0.dir/build.make CMakeFiles/cmTC_938d0.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-hMKD05'
+Building C object CMakeFiles/cmTC_938d0.dir/src.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_UNWINDLIB_EQ_NONE_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_PTHREAD --unwindlib=none -MD -MT CMakeFiles/cmTC_938d0.dir/src.c.o -MF CMakeFiles/cmTC_938d0.dir/src.c.o.d -o CMakeFiles/cmTC_938d0.dir/src.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-hMKD05/src.c
+clang: warning: argument unused during compilation: '--unwindlib=none' [-Wunused-command-line-argument]
+Linking C executable cmTC_938d0
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_938d0.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_PTHREAD --unwindlib=none -lwasi-emulated-pthread  CMakeFiles/cmTC_938d0.dir/src.c.o -o cmTC_938d0  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-hMKD05'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-hMKD05'
+
+
+Source file was:
+int main(void) { return 0; }
+
+Performing C SOURCE FILE Test C_SUPPORTS_START_NO_UNUSED_ARGUMENTS succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-uYI5Ak
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_708a8/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-uYI5Ak'
+/usr/bin/gmake  -f CMakeFiles/cmTC_708a8.dir/build.make CMakeFiles/cmTC_708a8.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-uYI5Ak'
+Building C object CMakeFiles/cmTC_708a8.dir/src.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DC_SUPPORTS_START_NO_UNUSED_ARGUMENTS  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_PTHREAD --unwindlib=none   --start-no-unused-arguments -MD -MT CMakeFiles/cmTC_708a8.dir/src.c.o -MF CMakeFiles/cmTC_708a8.dir/src.c.o.d -o CMakeFiles/cmTC_708a8.dir/src.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-uYI5Ak/src.c
+clang: warning: argument unused during compilation: '--unwindlib=none' [-Wunused-command-line-argument]
+Linking C executable cmTC_708a8
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_708a8.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_PTHREAD --unwindlib=none -lwasi-emulated-pthread  CMakeFiles/cmTC_708a8.dir/src.c.o -o cmTC_708a8  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-uYI5Ak'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-uYI5Ak'
+
+
+Source file was:
+int main(void) { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_NOSTDLIBXX_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-4MAnFB
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_cc21e/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-4MAnFB'
+/usr/bin/gmake  -f CMakeFiles/cmTC_cc21e.dir/build.make CMakeFiles/cmTC_cc21e.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-4MAnFB'
+Building CXX object CMakeFiles/cmTC_cc21e.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_NOSTDLIBXX_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -MD -MT CMakeFiles/cmTC_cc21e.dir/src.cxx.o -MF CMakeFiles/cmTC_cc21e.dir/src.cxx.o.d -o CMakeFiles/cmTC_cc21e.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-4MAnFB/src.cxx
+Linking CXX executable cmTC_cc21e
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_cc21e.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_cc21e.dir/src.cxx.o -o cmTC_cc21e  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-4MAnFB'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-4MAnFB'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_NOSTDINCXX_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FsmnZ4
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_5d2c7/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FsmnZ4'
+/usr/bin/gmake  -f CMakeFiles/cmTC_5d2c7.dir/build.make CMakeFiles/cmTC_5d2c7.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FsmnZ4'
+Building CXX object CMakeFiles/cmTC_5d2c7.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_NOSTDINCXX_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++   -nostdinc++ -MD -MT CMakeFiles/cmTC_5d2c7.dir/src.cxx.o -MF CMakeFiles/cmTC_5d2c7.dir/src.cxx.o.d -o CMakeFiles/cmTC_5d2c7.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FsmnZ4/src.cxx
+Linking CXX executable cmTC_5d2c7
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_5d2c7.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_5d2c7.dir/src.cxx.o -o cmTC_5d2c7  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FsmnZ4'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FsmnZ4'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test SUPPORTS_FVISIBILITY_INLINES_HIDDEN_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-h6VU5j
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_57ee5/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-h6VU5j'
+/usr/bin/gmake  -f CMakeFiles/cmTC_57ee5.dir/build.make CMakeFiles/cmTC_57ee5.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-h6VU5j'
+Building CXX object CMakeFiles/cmTC_57ee5.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DSUPPORTS_FVISIBILITY_INLINES_HIDDEN_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++   -fvisibility-inlines-hidden -MD -MT CMakeFiles/cmTC_57ee5.dir/src.cxx.o -MF CMakeFiles/cmTC_57ee5.dir/src.cxx.o.d -o CMakeFiles/cmTC_57ee5.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-h6VU5j/src.cxx
+Linking CXX executable cmTC_57ee5
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_57ee5.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_57ee5.dir/src.cxx.o -o cmTC_57ee5  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-h6VU5j'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-h6VU5j'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_SUGGEST_OVERRIDE_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-WoUGKD
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_e6152/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-WoUGKD'
+/usr/bin/gmake  -f CMakeFiles/cmTC_e6152.dir/build.make CMakeFiles/cmTC_e6152.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-WoUGKD'
+Building CXX object CMakeFiles/cmTC_e6152.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_SUGGEST_OVERRIDE_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++   -Wsuggest-override -MD -MT CMakeFiles/cmTC_e6152.dir/src.cxx.o -MF CMakeFiles/cmTC_e6152.dir/src.cxx.o.d -o CMakeFiles/cmTC_e6152.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-WoUGKD/src.cxx
+Linking CXX executable cmTC_e6152
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_e6152.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_e6152.dir/src.cxx.o -o cmTC_e6152  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-WoUGKD'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-WoUGKD'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_WSUGGEST_OVERRIDE_ALLOWS_ONLY_FINAL succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-knP4hM
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_c128b/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-knP4hM'
+/usr/bin/gmake  -f CMakeFiles/cmTC_c128b.dir/build.make CMakeFiles/cmTC_c128b.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-knP4hM'
+Building CXX object CMakeFiles/cmTC_c128b.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_WSUGGEST_OVERRIDE_ALLOWS_ONLY_FINAL  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -Werror=suggest-override -MD -MT CMakeFiles/cmTC_c128b.dir/src.cxx.o -MF CMakeFiles/cmTC_c128b.dir/src.cxx.o.d -o CMakeFiles/cmTC_c128b.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-knP4hM/src.cxx
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-knP4hM/src.cxx:1:7: warning: 'base' has virtual functions but non-virtual destructor [-Wnon-virtual-dtor]
+    1 | class base {public: virtual void anchor();};
+      |       ^
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-knP4hM/src.cxx:2:38: warning: 'derived' has virtual functions but non-virtual destructor [-Wnon-virtual-dtor]
+    2 |                                class derived : base {public: void anchor() final;};
+      |                                      ^
+2 warnings generated.
+Linking CXX executable cmTC_c128b
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_c128b.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -Werror=suggest-override -lwasi-emulated-pthread  CMakeFiles/cmTC_c128b.dir/src.cxx.o -o cmTC_c128b  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-knP4hM'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-knP4hM'
+
+
+Source file was:
+class base {public: virtual void anchor();};
+                               class derived : base {public: void anchor() final;};
+                               int main() { return 0; }
+
+Performing C SOURCE FILE Test C_WCOMMENT_ALLOWS_LINE_WRAP succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-i2HEv1
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_45358/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-i2HEv1'
+/usr/bin/gmake  -f CMakeFiles/cmTC_45358.dir/build.make CMakeFiles/cmTC_45358.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-i2HEv1'
+Building C object CMakeFiles/cmTC_45358.dir/src.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DC_WCOMMENT_ALLOWS_LINE_WRAP  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -Werror -Wcomment -MD -MT CMakeFiles/cmTC_45358.dir/src.c.o -MF CMakeFiles/cmTC_45358.dir/src.c.o.d -o CMakeFiles/cmTC_45358.dir/src.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-i2HEv1/src.c
+Linking C executable cmTC_45358
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_45358.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -Werror -Wcomment -lwasi-emulated-pthread  CMakeFiles/cmTC_45358.dir/src.c.o -o cmTC_45358  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-i2HEv1'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-i2HEv1'
+
+
+Source file was:
+// \
+//
+int main(void) {return 0;}
+
+Performing C SOURCE FILE Test C_SUPPORTS_MISLEADING_INDENTATION_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bhDXw5
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_11b65/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bhDXw5'
+/usr/bin/gmake  -f CMakeFiles/cmTC_11b65.dir/build.make CMakeFiles/cmTC_11b65.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bhDXw5'
+Building C object CMakeFiles/cmTC_11b65.dir/src.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DC_SUPPORTS_MISLEADING_INDENTATION_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++   -Werror -Wmisleading-indentation -MD -MT CMakeFiles/cmTC_11b65.dir/src.c.o -MF CMakeFiles/cmTC_11b65.dir/src.c.o.d -o CMakeFiles/cmTC_11b65.dir/src.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bhDXw5/src.c
+Linking C executable cmTC_11b65
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_11b65.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_11b65.dir/src.c.o -o cmTC_11b65  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bhDXw5'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bhDXw5'
+
+
+Source file was:
+int main(void) { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_MISLEADING_INDENTATION_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-f6Q7En
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_d1eda/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-f6Q7En'
+/usr/bin/gmake  -f CMakeFiles/cmTC_d1eda.dir/build.make CMakeFiles/cmTC_d1eda.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-f6Q7En'
+Building CXX object CMakeFiles/cmTC_d1eda.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_MISLEADING_INDENTATION_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++   -Werror -Wmisleading-indentation -MD -MT CMakeFiles/cmTC_d1eda.dir/src.cxx.o -MF CMakeFiles/cmTC_d1eda.dir/src.cxx.o.d -o CMakeFiles/cmTC_d1eda.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-f6Q7En/src.cxx
+Linking CXX executable cmTC_d1eda
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_d1eda.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_d1eda.dir/src.cxx.o -o cmTC_d1eda  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-f6Q7En'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-f6Q7En'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C SOURCE FILE Test C_SUPPORTS_CTAD_MAYBE_UNSPPORTED_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-irNMOF
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_dc9be/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-irNMOF'
+/usr/bin/gmake  -f CMakeFiles/cmTC_dc9be.dir/build.make CMakeFiles/cmTC_dc9be.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-irNMOF'
+Building C object CMakeFiles/cmTC_dc9be.dir/src.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DC_SUPPORTS_CTAD_MAYBE_UNSPPORTED_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++   -Werror -Wctad-maybe-unsupported -MD -MT CMakeFiles/cmTC_dc9be.dir/src.c.o -MF CMakeFiles/cmTC_dc9be.dir/src.c.o.d -o CMakeFiles/cmTC_dc9be.dir/src.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-irNMOF/src.c
+Linking C executable cmTC_dc9be
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_dc9be.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_dc9be.dir/src.c.o -o cmTC_dc9be  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-irNMOF'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-irNMOF'
+
+
+Source file was:
+int main(void) { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_CTAD_MAYBE_UNSPPORTED_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-c6rklg
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_d1065/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-c6rklg'
+/usr/bin/gmake  -f CMakeFiles/cmTC_d1065.dir/build.make CMakeFiles/cmTC_d1065.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-c6rklg'
+Building CXX object CMakeFiles/cmTC_d1065.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_CTAD_MAYBE_UNSPPORTED_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++   -Werror -Wctad-maybe-unsupported -MD -MT CMakeFiles/cmTC_d1065.dir/src.cxx.o -MF CMakeFiles/cmTC_d1065.dir/src.cxx.o.d -o CMakeFiles/cmTC_d1065.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-c6rklg/src.cxx
+Linking CXX executable cmTC_d1065
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_d1065.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_d1065.dir/src.cxx.o -o cmTC_d1065  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-c6rklg'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-c6rklg'
+
+
+Source file was:
+int main() { return 0; }
+
+Determining if the function fopen exists in the c passed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-J3dbgJ
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_c7ac1/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-J3dbgJ'
+/usr/bin/gmake  -f CMakeFiles/cmTC_c7ac1.dir/build.make CMakeFiles/cmTC_c7ac1.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-J3dbgJ'
+Building C object CMakeFiles/cmTC_c7ac1.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=fopen -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -MD -MT CMakeFiles/cmTC_c7ac1.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_c7ac1.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_c7ac1.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-J3dbgJ/CheckFunctionExists.c
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-J3dbgJ/CheckFunctionExists.c:7:3: warning: declaration of built-in function 'fopen' requires inclusion of the header <stdio.h> [-Wbuiltin-requires-header]
+    7 |   CHECK_FUNCTION_EXISTS(void);
+      |   ^
+<command line>:2:31: note: expanded from macro 'CHECK_FUNCTION_EXISTS'
+    2 | #define CHECK_FUNCTION_EXISTS fopen
+      |                               ^
+1 warning generated.
+Linking C executable cmTC_c7ac1
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_c7ac1.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=fopen -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_c7ac1.dir/CheckFunctionExists.c.o -o cmTC_c7ac1  -lc -lwasi-emulated-pthread 
+wasm-ld: warning: function signature mismatch: fopen
+>>> defined as () -> i32 in CMakeFiles/cmTC_c7ac1.dir/CheckFunctionExists.c.o
+>>> defined as (i32, i32) -> i32 in /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/libc.a(fopen.o)
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-J3dbgJ'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-J3dbgJ'
+
+
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WERROR_EQ_RETURN_TYPE_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vKxFKD
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_aaa7d/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vKxFKD'
+/usr/bin/gmake  -f CMakeFiles/cmTC_aaa7d.dir/build.make CMakeFiles/cmTC_aaa7d.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vKxFKD'
+Building CXX object CMakeFiles/cmTC_aaa7d.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WERROR_EQ_RETURN_TYPE_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Werror=return-type -MD -MT CMakeFiles/cmTC_aaa7d.dir/src.cxx.o -MF CMakeFiles/cmTC_aaa7d.dir/src.cxx.o.d -o CMakeFiles/cmTC_aaa7d.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vKxFKD/src.cxx
+Linking CXX executable cmTC_aaa7d
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_aaa7d.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_aaa7d.dir/src.cxx.o -o cmTC_aaa7d  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vKxFKD'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vKxFKD'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_FSTRICT_ALIASING_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Q2S1nU
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_6f13f/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Q2S1nU'
+/usr/bin/gmake  -f CMakeFiles/cmTC_6f13f.dir/build.make CMakeFiles/cmTC_6f13f.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Q2S1nU'
+Building CXX object CMakeFiles/cmTC_6f13f.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_FSTRICT_ALIASING_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -fstrict-aliasing -MD -MT CMakeFiles/cmTC_6f13f.dir/src.cxx.o -MF CMakeFiles/cmTC_6f13f.dir/src.cxx.o.d -o CMakeFiles/cmTC_6f13f.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Q2S1nU/src.cxx
+Linking CXX executable cmTC_6f13f
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_6f13f.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_6f13f.dir/src.cxx.o -o cmTC_6f13f  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Q2S1nU'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Q2S1nU'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_FUNWIND_TABLES_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KQ6G6z
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_1dd8c/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KQ6G6z'
+/usr/bin/gmake  -f CMakeFiles/cmTC_1dd8c.dir/build.make CMakeFiles/cmTC_1dd8c.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KQ6G6z'
+Building CXX object CMakeFiles/cmTC_1dd8c.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_FUNWIND_TABLES_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -funwind-tables -MD -MT CMakeFiles/cmTC_1dd8c.dir/src.cxx.o -MF CMakeFiles/cmTC_1dd8c.dir/src.cxx.o.d -o CMakeFiles/cmTC_1dd8c.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KQ6G6z/src.cxx
+Linking CXX static library libcmTC_1dd8c.a
+/usr/bin/cmake -P CMakeFiles/cmTC_1dd8c.dir/cmake_clean_target.cmake
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_1dd8c.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ar qc libcmTC_1dd8c.a CMakeFiles/cmTC_1dd8c.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/llvm-ranlib libcmTC_1dd8c.a
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KQ6G6z'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-KQ6G6z'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_FNO_EXCEPTIONS_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-n2DeVG
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_8c7d5/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-n2DeVG'
+/usr/bin/gmake  -f CMakeFiles/cmTC_8c7d5.dir/build.make CMakeFiles/cmTC_8c7d5.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-n2DeVG'
+Building CXX object CMakeFiles/cmTC_8c7d5.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_FNO_EXCEPTIONS_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -fno-exceptions -MD -MT CMakeFiles/cmTC_8c7d5.dir/src.cxx.o -MF CMakeFiles/cmTC_8c7d5.dir/src.cxx.o.d -o CMakeFiles/cmTC_8c7d5.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-n2DeVG/src.cxx
+Linking CXX executable cmTC_8c7d5
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_8c7d5.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_8c7d5.dir/src.cxx.o -o cmTC_8c7d5  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-n2DeVG'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-n2DeVG'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_FNO_RTTI_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FE2rSm
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_dd3df/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FE2rSm'
+/usr/bin/gmake  -f CMakeFiles/cmTC_dd3df.dir/build.make CMakeFiles/cmTC_dd3df.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FE2rSm'
+Building CXX object CMakeFiles/cmTC_dd3df.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_FNO_RTTI_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -fno-rtti -MD -MT CMakeFiles/cmTC_dd3df.dir/src.cxx.o -MF CMakeFiles/cmTC_dd3df.dir/src.cxx.o.d -o CMakeFiles/cmTC_dd3df.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FE2rSm/src.cxx
+Linking CXX executable cmTC_dd3df
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_dd3df.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_dd3df.dir/src.cxx.o -o cmTC_dd3df  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FE2rSm'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-FE2rSm'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WALL_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-1wmaJq
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_afdce/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-1wmaJq'
+/usr/bin/gmake  -f CMakeFiles/cmTC_afdce.dir/build.make CMakeFiles/cmTC_afdce.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-1wmaJq'
+Building CXX object CMakeFiles/cmTC_afdce.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WALL_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wall -MD -MT CMakeFiles/cmTC_afdce.dir/src.cxx.o -MF CMakeFiles/cmTC_afdce.dir/src.cxx.o.d -o CMakeFiles/cmTC_afdce.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-1wmaJq/src.cxx
+Linking CXX executable cmTC_afdce
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_afdce.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_afdce.dir/src.cxx.o -o cmTC_afdce  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-1wmaJq'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-1wmaJq'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WEXTRA_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Ga167u
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_cf226/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Ga167u'
+/usr/bin/gmake  -f CMakeFiles/cmTC_cf226.dir/build.make CMakeFiles/cmTC_cf226.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Ga167u'
+Building CXX object CMakeFiles/cmTC_cf226.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WEXTRA_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wextra -MD -MT CMakeFiles/cmTC_cf226.dir/src.cxx.o -MF CMakeFiles/cmTC_cf226.dir/src.cxx.o.d -o CMakeFiles/cmTC_cf226.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Ga167u/src.cxx
+Linking CXX executable cmTC_cf226
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_cf226.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_cf226.dir/src.cxx.o -o cmTC_cf226  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Ga167u'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Ga167u'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WNEWLINE_EOF_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-u0lqMh
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_eb341/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-u0lqMh'
+/usr/bin/gmake  -f CMakeFiles/cmTC_eb341.dir/build.make CMakeFiles/cmTC_eb341.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-u0lqMh'
+Building CXX object CMakeFiles/cmTC_eb341.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WNEWLINE_EOF_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wnewline-eof -MD -MT CMakeFiles/cmTC_eb341.dir/src.cxx.o -MF CMakeFiles/cmTC_eb341.dir/src.cxx.o.d -o CMakeFiles/cmTC_eb341.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-u0lqMh/src.cxx
+Linking CXX executable cmTC_eb341
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_eb341.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_eb341.dir/src.cxx.o -o cmTC_eb341  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-u0lqMh'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-u0lqMh'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WSHADOW_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sswQA3
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_59d5b/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sswQA3'
+/usr/bin/gmake  -f CMakeFiles/cmTC_59d5b.dir/build.make CMakeFiles/cmTC_59d5b.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sswQA3'
+Building CXX object CMakeFiles/cmTC_59d5b.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WSHADOW_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wshadow -MD -MT CMakeFiles/cmTC_59d5b.dir/src.cxx.o -MF CMakeFiles/cmTC_59d5b.dir/src.cxx.o.d -o CMakeFiles/cmTC_59d5b.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sswQA3/src.cxx
+Linking CXX executable cmTC_59d5b
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_59d5b.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_59d5b.dir/src.cxx.o -o cmTC_59d5b  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sswQA3'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sswQA3'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WWRITE_STRINGS_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-od1fuB
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_a2b9b/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-od1fuB'
+/usr/bin/gmake  -f CMakeFiles/cmTC_a2b9b.dir/build.make CMakeFiles/cmTC_a2b9b.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-od1fuB'
+Building CXX object CMakeFiles/cmTC_a2b9b.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WWRITE_STRINGS_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wwrite-strings -MD -MT CMakeFiles/cmTC_a2b9b.dir/src.cxx.o -MF CMakeFiles/cmTC_a2b9b.dir/src.cxx.o.d -o CMakeFiles/cmTC_a2b9b.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-od1fuB/src.cxx
+Linking CXX executable cmTC_a2b9b
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_a2b9b.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_a2b9b.dir/src.cxx.o -o cmTC_a2b9b  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-od1fuB'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-od1fuB'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WNO_UNUSED_PARAMETER_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-kDo9P8
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_4b004/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-kDo9P8'
+/usr/bin/gmake  -f CMakeFiles/cmTC_4b004.dir/build.make CMakeFiles/cmTC_4b004.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-kDo9P8'
+Building CXX object CMakeFiles/cmTC_4b004.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WNO_UNUSED_PARAMETER_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wno-unused-parameter -MD -MT CMakeFiles/cmTC_4b004.dir/src.cxx.o -MF CMakeFiles/cmTC_4b004.dir/src.cxx.o.d -o CMakeFiles/cmTC_4b004.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-kDo9P8/src.cxx
+Linking CXX executable cmTC_4b004
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_4b004.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_4b004.dir/src.cxx.o -o cmTC_4b004  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-kDo9P8'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-kDo9P8'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WNO_LONG_LONG_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bZa5hs
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_b58fe/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bZa5hs'
+/usr/bin/gmake  -f CMakeFiles/cmTC_b58fe.dir/build.make CMakeFiles/cmTC_b58fe.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bZa5hs'
+Building CXX object CMakeFiles/cmTC_b58fe.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WNO_LONG_LONG_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wno-long-long -MD -MT CMakeFiles/cmTC_b58fe.dir/src.cxx.o -MF CMakeFiles/cmTC_b58fe.dir/src.cxx.o.d -o CMakeFiles/cmTC_b58fe.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bZa5hs/src.cxx
+Linking CXX executable cmTC_b58fe
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_b58fe.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_b58fe.dir/src.cxx.o -o cmTC_b58fe  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bZa5hs'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-bZa5hs'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WEXTRA_SEMI_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-qPrB1Y
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_c024d/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-qPrB1Y'
+/usr/bin/gmake  -f CMakeFiles/cmTC_c024d.dir/build.make CMakeFiles/cmTC_c024d.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-qPrB1Y'
+Building CXX object CMakeFiles/cmTC_c024d.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WEXTRA_SEMI_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wextra-semi -MD -MT CMakeFiles/cmTC_c024d.dir/src.cxx.o -MF CMakeFiles/cmTC_c024d.dir/src.cxx.o.d -o CMakeFiles/cmTC_c024d.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-qPrB1Y/src.cxx
+Linking CXX executable cmTC_c024d
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_c024d.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_c024d.dir/src.cxx.o -o cmTC_c024d  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-qPrB1Y'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-qPrB1Y'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WUNDEF_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zPmMK3
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_9ef0d/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zPmMK3'
+/usr/bin/gmake  -f CMakeFiles/cmTC_9ef0d.dir/build.make CMakeFiles/cmTC_9ef0d.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zPmMK3'
+Building CXX object CMakeFiles/cmTC_9ef0d.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WUNDEF_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wundef -MD -MT CMakeFiles/cmTC_9ef0d.dir/src.cxx.o -MF CMakeFiles/cmTC_9ef0d.dir/src.cxx.o.d -o CMakeFiles/cmTC_9ef0d.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zPmMK3/src.cxx
+Linking CXX executable cmTC_9ef0d
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_9ef0d.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_9ef0d.dir/src.cxx.o -o cmTC_9ef0d  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zPmMK3'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-zPmMK3'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WUNUSED_TEMPLATE_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-2mxtYm
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_7d534/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-2mxtYm'
+/usr/bin/gmake  -f CMakeFiles/cmTC_7d534.dir/build.make CMakeFiles/cmTC_7d534.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-2mxtYm'
+Building CXX object CMakeFiles/cmTC_7d534.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WUNUSED_TEMPLATE_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wunused-template -MD -MT CMakeFiles/cmTC_7d534.dir/src.cxx.o -MF CMakeFiles/cmTC_7d534.dir/src.cxx.o.d -o CMakeFiles/cmTC_7d534.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-2mxtYm/src.cxx
+Linking CXX executable cmTC_7d534
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_7d534.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_7d534.dir/src.cxx.o -o cmTC_7d534  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-2mxtYm'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-2mxtYm'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WFORMAT_NONLITERAL_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vs8sbn
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_e7de9/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vs8sbn'
+/usr/bin/gmake  -f CMakeFiles/cmTC_e7de9.dir/build.make CMakeFiles/cmTC_e7de9.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vs8sbn'
+Building CXX object CMakeFiles/cmTC_e7de9.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WFORMAT_NONLITERAL_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wformat-nonliteral -MD -MT CMakeFiles/cmTC_e7de9.dir/src.cxx.o -MF CMakeFiles/cmTC_e7de9.dir/src.cxx.o.d -o CMakeFiles/cmTC_e7de9.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vs8sbn/src.cxx
+Linking CXX executable cmTC_e7de9
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_e7de9.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_e7de9.dir/src.cxx.o -o cmTC_e7de9  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vs8sbn'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-vs8sbn'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WNO_USER_DEFINED_LITERALS_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V9jDof
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_9b851/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V9jDof'
+/usr/bin/gmake  -f CMakeFiles/cmTC_9b851.dir/build.make CMakeFiles/cmTC_9b851.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V9jDof'
+Building CXX object CMakeFiles/cmTC_9b851.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WNO_USER_DEFINED_LITERALS_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wno-user-defined-literals -MD -MT CMakeFiles/cmTC_9b851.dir/src.cxx.o -MF CMakeFiles/cmTC_9b851.dir/src.cxx.o.d -o CMakeFiles/cmTC_9b851.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V9jDof/src.cxx
+Linking CXX executable cmTC_9b851
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_9b851.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_9b851.dir/src.cxx.o -o cmTC_9b851  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V9jDof'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-V9jDof'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WNO_COVERED_SWITCH_DEFAULT_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Vsbyeb
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_3dbbe/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Vsbyeb'
+/usr/bin/gmake  -f CMakeFiles/cmTC_3dbbe.dir/build.make CMakeFiles/cmTC_3dbbe.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Vsbyeb'
+Building CXX object CMakeFiles/cmTC_3dbbe.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WNO_COVERED_SWITCH_DEFAULT_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wno-covered-switch-default -MD -MT CMakeFiles/cmTC_3dbbe.dir/src.cxx.o -MF CMakeFiles/cmTC_3dbbe.dir/src.cxx.o.d -o CMakeFiles/cmTC_3dbbe.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Vsbyeb/src.cxx
+Linking CXX executable cmTC_3dbbe
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_3dbbe.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_3dbbe.dir/src.cxx.o -o cmTC_3dbbe  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Vsbyeb'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-Vsbyeb'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WNO_SUGGEST_OVERRIDE_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-6UFFEl
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_fef9e/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-6UFFEl'
+/usr/bin/gmake  -f CMakeFiles/cmTC_fef9e.dir/build.make CMakeFiles/cmTC_fef9e.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-6UFFEl'
+Building CXX object CMakeFiles/cmTC_fef9e.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WNO_SUGGEST_OVERRIDE_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wno-suggest-override -MD -MT CMakeFiles/cmTC_fef9e.dir/src.cxx.o -MF CMakeFiles/cmTC_fef9e.dir/src.cxx.o.d -o CMakeFiles/cmTC_fef9e.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-6UFFEl/src.cxx
+Linking CXX executable cmTC_fef9e
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_fef9e.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_fef9e.dir/src.cxx.o -o cmTC_fef9e  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-6UFFEl'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-6UFFEl'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_WNO_ERROR_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UKt5Mm
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_1469e/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UKt5Mm'
+/usr/bin/gmake  -f CMakeFiles/cmTC_1469e.dir/build.make CMakeFiles/cmTC_1469e.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UKt5Mm'
+Building CXX object CMakeFiles/cmTC_1469e.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_WNO_ERROR_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -Wno-error -MD -MT CMakeFiles/cmTC_1469e.dir/src.cxx.o -MF CMakeFiles/cmTC_1469e.dir/src.cxx.o.d -o CMakeFiles/cmTC_1469e.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UKt5Mm/src.cxx
+Linking CXX executable cmTC_1469e
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_1469e.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_1469e.dir/src.cxx.o -o cmTC_1469e  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UKt5Mm'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UKt5Mm'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_PEDANTIC_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-mIxqId
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_329b6/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-mIxqId'
+/usr/bin/gmake  -f CMakeFiles/cmTC_329b6.dir/build.make CMakeFiles/cmTC_329b6.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-mIxqId'
+Building CXX object CMakeFiles/cmTC_329b6.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_PEDANTIC_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -pedantic -MD -MT CMakeFiles/cmTC_329b6.dir/src.cxx.o -MF CMakeFiles/cmTC_329b6.dir/src.cxx.o.d -o CMakeFiles/cmTC_329b6.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-mIxqId/src.cxx
+Linking CXX executable cmTC_329b6
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_329b6.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_329b6.dir/src.cxx.o -o cmTC_329b6  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-mIxqId'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-mIxqId'
+
+
+Source file was:
+int main() { return 0; }
+
+Determining if the function fopen exists in the c passed with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UaWL0O
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_ff9fd/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UaWL0O'
+/usr/bin/gmake  -f CMakeFiles/cmTC_ff9fd.dir/build.make CMakeFiles/cmTC_ff9fd.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UaWL0O'
+Building C object CMakeFiles/cmTC_ff9fd.dir/CheckFunctionExists.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot   -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=fopen -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -MD -MT CMakeFiles/cmTC_ff9fd.dir/CheckFunctionExists.c.o -MF CMakeFiles/cmTC_ff9fd.dir/CheckFunctionExists.c.o.d -o CMakeFiles/cmTC_ff9fd.dir/CheckFunctionExists.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UaWL0O/CheckFunctionExists.c
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UaWL0O/CheckFunctionExists.c:7:3: warning: declaration of built-in function 'fopen' requires inclusion of the header <stdio.h> [-Wbuiltin-requires-header]
+    7 |   CHECK_FUNCTION_EXISTS(void);
+      |   ^
+<command line>:2:31: note: expanded from macro 'CHECK_FUNCTION_EXISTS'
+    2 | #define CHECK_FUNCTION_EXISTS fopen
+      |                               ^
+1 warning generated.
+Linking C executable cmTC_ff9fd
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_ff9fd.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -DCHECK_FUNCTION_EXISTS=fopen -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_ff9fd.dir/CheckFunctionExists.c.o -o cmTC_ff9fd  -lc -lwasi-emulated-pthread 
+wasm-ld: warning: function signature mismatch: fopen
+>>> defined as () -> i32 in CMakeFiles/cmTC_ff9fd.dir/CheckFunctionExists.c.o
+>>> defined as (i32, i32) -> i32 in /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot/lib/wasm32-wasi/libc.a(fopen.o)
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UaWL0O'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-UaWL0O'
+
+
+
+Performing C SOURCE FILE Test C_SUPPORTS_FUNWIND_TABLES_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-LwObxB
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_853f7/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-LwObxB'
+/usr/bin/gmake  -f CMakeFiles/cmTC_853f7.dir/build.make CMakeFiles/cmTC_853f7.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-LwObxB'
+Building C object CMakeFiles/cmTC_853f7.dir/src.c.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DC_SUPPORTS_FUNWIND_TABLES_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -funwind-tables -MD -MT CMakeFiles/cmTC_853f7.dir/src.c.o -MF CMakeFiles/cmTC_853f7.dir/src.c.o.d -o CMakeFiles/cmTC_853f7.dir/src.c.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-LwObxB/src.c
+Linking C executable cmTC_853f7
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_853f7.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_853f7.dir/src.c.o -o cmTC_853f7  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-LwObxB'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-LwObxB'
+
+
+Source file was:
+int main(void) { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_NOSTDLIBINC_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YSPgek
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_ee2f5/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YSPgek'
+/usr/bin/gmake  -f CMakeFiles/cmTC_ee2f5.dir/build.make CMakeFiles/cmTC_ee2f5.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YSPgek'
+Building CXX object CMakeFiles/cmTC_ee2f5.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_NOSTDLIBINC_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++   -nostdlibinc -MD -MT CMakeFiles/cmTC_ee2f5.dir/src.cxx.o -MF CMakeFiles/cmTC_ee2f5.dir/src.cxx.o.d -o CMakeFiles/cmTC_ee2f5.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YSPgek/src.cxx
+Linking CXX executable cmTC_ee2f5
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_ee2f5.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_ee2f5.dir/src.cxx.o -o cmTC_ee2f5  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YSPgek'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YSPgek'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_NOLIBC_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-OPAybS
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_dc9d2/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-OPAybS'
+/usr/bin/gmake  -f CMakeFiles/cmTC_dc9d2.dir/build.make CMakeFiles/cmTC_dc9d2.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-OPAybS'
+Building CXX object CMakeFiles/cmTC_dc9d2.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_NOLIBC_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++   -nolibc -MD -MT CMakeFiles/cmTC_dc9d2.dir/src.cxx.o -MF CMakeFiles/cmTC_dc9d2.dir/src.cxx.o.d -o CMakeFiles/cmTC_dc9d2.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-OPAybS/src.cxx
+clang++: warning: argument unused during compilation: '-nolibc' [-Wunused-command-line-argument]
+Linking CXX executable cmTC_dc9d2
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_dc9d2.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -lwasi-emulated-pthread  CMakeFiles/cmTC_dc9d2.dir/src.cxx.o -o cmTC_dc9d2  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-OPAybS'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-OPAybS'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_FALIGNED_ALLOCATION_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sRcRRF
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_cb8e6/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sRcRRF'
+/usr/bin/gmake  -f CMakeFiles/cmTC_cb8e6.dir/build.make CMakeFiles/cmTC_cb8e6.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sRcRRF'
+Building CXX object CMakeFiles/cmTC_cb8e6.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_FALIGNED_ALLOCATION_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -faligned-allocation -MD -MT CMakeFiles/cmTC_cb8e6.dir/src.cxx.o -MF CMakeFiles/cmTC_cb8e6.dir/src.cxx.o.d -o CMakeFiles/cmTC_cb8e6.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sRcRRF/src.cxx
+Linking CXX executable cmTC_cb8e6
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_cb8e6.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_cb8e6.dir/src.cxx.o -o cmTC_cb8e6  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sRcRRF'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-sRcRRF'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_FVISIBILITY_INLINES_HIDDEN_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-gMgs9f
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_f0b05/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-gMgs9f'
+/usr/bin/gmake  -f CMakeFiles/cmTC_f0b05.dir/build.make CMakeFiles/cmTC_f0b05.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-gMgs9f'
+Building CXX object CMakeFiles/cmTC_f0b05.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_FVISIBILITY_INLINES_HIDDEN_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -fvisibility-inlines-hidden -MD -MT CMakeFiles/cmTC_f0b05.dir/src.cxx.o -MF CMakeFiles/cmTC_f0b05.dir/src.cxx.o.d -o CMakeFiles/cmTC_f0b05.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-gMgs9f/src.cxx
+Linking CXX executable cmTC_f0b05
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_f0b05.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_f0b05.dir/src.cxx.o -o cmTC_f0b05  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-gMgs9f'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-gMgs9f'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_FVISIBILITY_EQ_HIDDEN_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HqUZpF
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_9c202/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HqUZpF'
+/usr/bin/gmake  -f CMakeFiles/cmTC_9c202.dir/build.make CMakeFiles/cmTC_9c202.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HqUZpF'
+Building CXX object CMakeFiles/cmTC_9c202.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_FVISIBILITY_EQ_HIDDEN_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -fvisibility=hidden -MD -MT CMakeFiles/cmTC_9c202.dir/src.cxx.o -MF CMakeFiles/cmTC_9c202.dir/src.cxx.o.d -o CMakeFiles/cmTC_9c202.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HqUZpF/src.cxx
+Linking CXX executable cmTC_9c202
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_9c202.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_9c202.dir/src.cxx.o -o cmTC_9c202  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HqUZpF'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-HqUZpF'
+
+
+Source file was:
+int main() { return 0; }
+
+Performing C++ SOURCE FILE Test CXX_SUPPORTS_FSIZED_DEALLOCATION_FLAG succeeded with the following output:
+Change Dir: /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YsEw81
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_b3abd/fast && gmake[1]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YsEw81'
+/usr/bin/gmake  -f CMakeFiles/cmTC_b3abd.dir/build.make CMakeFiles/cmTC_b3abd.dir/build
+gmake[2]: Entering directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YsEw81'
+Building CXX object CMakeFiles/cmTC_b3abd.dir/src.cxx.o
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -DCXX_SUPPORTS_FSIZED_DEALLOCATION_FLAG  -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++   -fsized-deallocation -MD -MT CMakeFiles/cmTC_b3abd.dir/src.cxx.o -MF CMakeFiles/cmTC_b3abd.dir/src.cxx.o.d -o CMakeFiles/cmTC_b3abd.dir/src.cxx.o -c /home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YsEw81/src.cxx
+Linking CXX executable cmTC_b3abd
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_b3abd.dir/link.txt --verbose=1
+/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/vendor/wasi-sdk/bin/clang++ --target=wasm32-wasi --sysroot=/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/sysroot -fwasm-exceptions -D_WASI_EMULATED_PTHREAD -fvisibility-inlines-hidden -Werror=date-time -Werror=unguarded-availability-new -Wall -Wextra -Wno-unused-parameter -Wwrite-strings -Wcast-qual -Wmissing-field-initializers -Wimplicit-fallthrough -Wcovered-switch-default -Wno-noexcept-type -Wnon-virtual-dtor -Wdelete-non-virtual-dtor -Wsuggest-override -Wstring-conversion -Wmisleading-indentation -Wctad-maybe-unsupported -ffunction-sections -fdata-sections -D_WASI_EMULATED_PTHREAD --start-no-unused-arguments --unwindlib=none --end-no-unused-arguments -nostdlib++ -nostdinc++ -nostdlib++ -lwasi-emulated-pthread  CMakeFiles/cmTC_b3abd.dir/src.cxx.o -o cmTC_b3abd  -lwasi-emulated-pthread 
+gmake[2]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YsEw81'
+gmake[1]: Leaving directory '/home/nathan/.herdr/workspaces/agent-os/reg-tests/toolchain/c/build/llvm-runtimes/CMakeFiles/CMakeScratch/TryCompile-YsEw81'
+
+
+Source file was:
+int main() { return 0; }
+

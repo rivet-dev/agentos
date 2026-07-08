@@ -1,0 +1,23 @@
+#!/bin/sh
+# Show how -m1 works with -A N when a 2nd match is < N lines after the first
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+cat <<EOF > in || framework_failure_
+needle
+1st line of context
+2nd line of context
+3rd line of context
+another needle
+5th line of context relative to first match
+6th line...
+EOF
+
+sed 6q in > exp || framework_failure_
+
+fail=0
+grep -m1 -A5 needle in > out 2>err || fail=1
+
+compare exp out || fail=1
+compare /dev/null err || fail=1
+
+Exit $fail

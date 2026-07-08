@@ -1,0 +1,37 @@
+#!/bin/sh
+# Ensure that we don't trigger a grep -F infloop.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+require_compiled_in_MB_support
+require_timeout_
+
+encode() { echo "$1" | tr A '\202'; }
+
+encode AA > input
+
+fail=0
+
+# Before 2.15, this would infloop.
+LC_ALL=en_US.UTF-8 timeout 10 grep -aF $(encode A) input > out
+status=$?
+if test $status -eq 0; then
+  compare input out
+elif test $status -eq 1; then
+  compare_dev_null_ /dev/null out
+else
+  test $status -eq 2
+fi || fail=1
+
+LC_ALL=en_US.UTF-8 timeout 10 grep -F $(encode A) input > out
+status=$?
+if test $status -eq 0; then
+  compare /dev/null out
+elif test $status -eq 1; then
+  compare_dev_null_ /dev/null out
+else
+  test $status -eq 2
+fi || fail=1
+
+Exit $fail

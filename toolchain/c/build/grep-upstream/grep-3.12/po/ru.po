@@ -1,0 +1,936 @@
+# translation of grep-2.6.ru.po to Russian
+# Локализация для grep.
+# Copyright (C) 1997, 1998, 1999, 2000, 2009, 2010 Free Software Foundation, Inc.
+# This file is distributed under the same license as the grep package.
+#
+# Denis Perchine <dyp@perchine.com>, 1998-2000.
+# Yuri Kozlov <yuray@komyakino.ru>, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023.
+msgid ""
+msgstr ""
+"Project-Id-Version: grep 3.10.12\n"
+"Report-Msgid-Bugs-To: bug-grep@gnu.org\n"
+"POT-Creation-Date: 2025-04-10 09:02-0700\n"
+"PO-Revision-Date: 2023-05-05 05:06+0300\n"
+"Last-Translator: Yuri Kozlov <yuray@komyakino.ru>\n"
+"Language-Team: Russian <gnu@d07.ru>\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Bugs: Report translation errors to the Language-Team address.\n"
+"X-Generator: Lokalize 22.12.3\n"
+"Plural-Forms:  nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
+"n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+#: lib/argmatch.c:145
+#, c-format
+msgid "invalid argument %s for %s"
+msgstr "неверный аргумент %s для %s"
+
+#: lib/argmatch.c:146
+#, c-format
+msgid "ambiguous argument %s for %s"
+msgstr "двусмысленный аргумент %s для %s"
+
+#: lib/argmatch.c:165 lib/argmatch.h:242
+msgid "Valid arguments are:"
+msgstr "Допустимые аргументы:"
+
+#: lib/c-stack.c:190
+msgid "program error"
+msgstr "ошибка программы"
+
+#: lib/c-stack.c:191
+msgid "stack overflow"
+msgstr "переполнение стека"
+
+#: lib/closeout.c:121 src/grep.c:1352
+msgid "write error"
+msgstr "ошибка записи"
+
+#: lib/dfa.c:910
+msgid "unbalanced ["
+msgstr "несбалансированная ["
+
+#: lib/dfa.c:1031
+msgid "invalid character class"
+msgstr "неправильный класс символов"
+
+#: lib/dfa.c:1159
+msgid "character class syntax is [[:space:]], not [:space:]"
+msgstr "синтаксис класса символов: [[:space:]], а не [:space:]"
+
+#: lib/dfa.c:1234
+msgid "unfinished \\ escape"
+msgstr "незавершённая \\ экранирующая последовательность"
+
+#: lib/dfa.c:1344
+msgid "? at start of expression"
+msgstr "? в начале выражения"
+
+#: lib/dfa.c:1356
+msgid "* at start of expression"
+msgstr "* в начале выражения"
+
+#: lib/dfa.c:1370
+msgid "+ at start of expression"
+msgstr "+ в начале выражения"
+
+#: lib/dfa.c:1425
+msgid "{...} at start of expression"
+msgstr "{...} в начале выражения"
+
+#: lib/dfa.c:1428
+msgid "invalid content of \\{\\}"
+msgstr "неправильное содержимое в \\{\\}"
+
+#: lib/dfa.c:1430
+msgid "regular expression too big"
+msgstr "регулярное выражение слишком большое"
+
+#: lib/dfa.c:1580
+msgid "stray \\ before unprintable character"
+msgstr "лишняя \\ перед непечатным символом"
+
+#: lib/dfa.c:1582
+msgid "stray \\ before white space"
+msgstr "лишняя \\ перед пустым местом"
+
+#: lib/dfa.c:1593
+#, fuzzy, c-format
+msgid "stray \\ before %s"
+msgstr "лишняя \\ перед %lc"
+
+#: lib/dfa.c:1594 lib/dfa.c:1597
+msgid "stray \\"
+msgstr "лишняя \\"
+
+#: lib/dfa.c:1948
+msgid "unbalanced ("
+msgstr "несбалансированная ("
+
+#: lib/dfa.c:2065
+msgid "no syntax specified"
+msgstr "не указан синтаксис"
+
+#: lib/dfa.c:2076
+msgid "unbalanced )"
+msgstr "несбалансированная )"
+
+#: lib/error.c:208
+msgid "Unknown system error"
+msgstr "Неизвестная системная ошибка"
+
+#: lib/getopt.c:282
+#, c-format
+msgid "%s: option '%s%s' is ambiguous\n"
+msgstr "%s: двусмысленный параметр «%s%s»\n"
+
+#: lib/getopt.c:288
+#, c-format
+msgid "%s: option '%s%s' is ambiguous; possibilities:"
+msgstr "%s: двусмысленный параметр «%s%s»; возможные варианты:"
+
+#: lib/getopt.c:322
+#, c-format
+msgid "%s: unrecognized option '%s%s'\n"
+msgstr "%s: нераспознанный параметр «%s%s»\n"
+
+#: lib/getopt.c:348
+#, c-format
+msgid "%s: option '%s%s' doesn't allow an argument\n"
+msgstr "%s: для параметра «%s%s» нельзя использовать аргумент\n"
+
+#: lib/getopt.c:363
+#, c-format
+msgid "%s: option '%s%s' requires an argument\n"
+msgstr "%s: для параметра «%s%s» требуется аргумент\n"
+
+#: lib/getopt.c:624
+#, c-format
+msgid "%s: invalid option -- '%c'\n"
+msgstr "%s: неверный параметр «%c»\n"
+
+#: lib/getopt.c:639 lib/getopt.c:685
+#, c-format
+msgid "%s: option requires an argument -- '%c'\n"
+msgstr "%s: параметру требуется аргумент «%c»\n"
+
+#: lib/obstack.c:320 lib/obstack.c:322 lib/xalloc-die.c:34
+msgid "memory exhausted"
+msgstr "память исчерпана"
+
+#: lib/openat-die.c:38
+msgid "unable to record current working directory"
+msgstr "не удалось запомнить текущий рабочий каталог"
+
+#: lib/openat-die.c:57
+msgid "failed to return to initial working directory"
+msgstr "не удалось вернуться в начальный рабочий каталог"
+
+#: lib/xbinary-io.c:36
+#, c-format
+msgid "failed to set file descriptor text/binary mode"
+msgstr "не удалось изменить текстовый/двоичный режим у файлового дескриптора"
+
+#. TRANSLATORS:
+#. Get translations for open and closing quotation marks.
+#. The message catalog should translate "`" to a left
+#. quotation mark suitable for the locale, and similarly for
+#. "'".  For example, a French Unicode local should translate
+#. these to U+00AB (LEFT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), and U+00BB (RIGHT-POINTING DOUBLE ANGLE
+#. QUOTATION MARK), respectively.
+#.
+#. If the catalog has no translation, we will try to
+#. use Unicode U+2018 (LEFT SINGLE QUOTATION MARK) and
+#. Unicode U+2019 (RIGHT SINGLE QUOTATION MARK).  If the
+#. current locale is not Unicode, locale_quoting_style
+#. will quote 'like this', and clocale_quoting_style will
+#. quote "like this".  You should always include translations
+#. for "`" and "'" even if U+2018 and U+2019 are appropriate
+#. for your locale.
+#.
+#. If you don't know what to put here, please see
+#. <https://en.wikipedia.org/wiki/Quotation_marks_in_other_languages>
+#. and use glyphs suitable for your language.
+#: lib/quotearg.c:354
+msgid "`"
+msgstr "«"
+
+#: lib/quotearg.c:355
+msgid "'"
+msgstr "»"
+
+#: lib/regcomp.c:122
+msgid "Success"
+msgstr "Выполнено успешно"
+
+#: lib/regcomp.c:125
+msgid "No match"
+msgstr "Нет совпадений"
+
+#: lib/regcomp.c:128
+msgid "Invalid regular expression"
+msgstr "Неправильное регулярное выражение"
+
+#: lib/regcomp.c:131
+msgid "Invalid collation character"
+msgstr "Неправильный символ сравнения"
+
+#: lib/regcomp.c:134
+msgid "Invalid character class name"
+msgstr "Неправильное имя класса символов"
+
+#: lib/regcomp.c:137
+msgid "Trailing backslash"
+msgstr "Завершающий символ обратной косой черты"
+
+#: lib/regcomp.c:140
+msgid "Invalid back reference"
+msgstr "Неправильная обратная ссылка"
+
+#: lib/regcomp.c:143
+msgid "Unmatched [, [^, [:, [., or [="
+msgstr "Непарная [, [^, [:, [. или [="
+
+#: lib/regcomp.c:146
+msgid "Unmatched ( or \\("
+msgstr "Непарная ( или \\("
+
+#: lib/regcomp.c:149
+msgid "Unmatched \\{"
+msgstr "Непарная \\{"
+
+#: lib/regcomp.c:152
+msgid "Invalid content of \\{\\}"
+msgstr "Неправильное содержимое в \\{\\}"
+
+#: lib/regcomp.c:155
+msgid "Invalid range end"
+msgstr "Неправильный конец диапазона"
+
+#: lib/regcomp.c:158
+msgid "Memory exhausted"
+msgstr "Память исчерпана"
+
+#: lib/regcomp.c:161
+msgid "Invalid preceding regular expression"
+msgstr "Неправильное предшествующее регулярное выражение"
+
+#: lib/regcomp.c:164
+msgid "Premature end of regular expression"
+msgstr "Преждевременное завершение регулярного выражения"
+
+#: lib/regcomp.c:167
+msgid "Regular expression too big"
+msgstr "Регулярное выражение слишком большое"
+
+#: lib/regcomp.c:170
+msgid "Unmatched ) or \\)"
+msgstr "Непарная ) или \\)"
+
+#: lib/regcomp.c:650
+msgid "No previous regular expression"
+msgstr "Нет предыдущего регулярного выражения"
+
+#: lib/version-etc.c:73
+#, c-format
+msgid "Packaged by %s (%s)\n"
+msgstr "Упакован %s (%s)\n"
+
+#: lib/version-etc.c:76
+#, c-format
+msgid "Packaged by %s\n"
+msgstr "Упакован %s\n"
+
+#. TRANSLATORS: Translate "(C)" to the copyright symbol
+#. (C-in-a-circle), if this symbol is available in the user's
+#. locale.  Otherwise, do not translate "(C)"; leave it as-is.
+#: lib/version-etc.c:83
+msgid "(C)"
+msgstr "(C)"
+
+#. TRANSLATORS: The %s placeholder is the web address of the GPL license.
+#: lib/version-etc.c:88
+#, c-format
+msgid ""
+"License GPLv3+: GNU GPL version 3 or later <%s>.\n"
+"This is free software: you are free to change and redistribute it.\n"
+"There is NO WARRANTY, to the extent permitted by law.\n"
+msgstr ""
+"Лицензия GPLv3+: GNU GPL версии 3 или новее <%s>.\n"
+"Это свободное ПО: вы можете изменять и распространять его.\n"
+"Нет НИКАКИХ ГАРАНТИЙ в пределах действующего законодательства.\n"
+
+#. TRANSLATORS: %s denotes an author name.
+#: lib/version-etc.c:105
+#, c-format
+msgid "Written by %s.\n"
+msgstr "Автор программы — %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:109
+#, c-format
+msgid "Written by %s and %s.\n"
+msgstr "Авторы программы — %s и %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#: lib/version-etc.c:113
+#, c-format
+msgid "Written by %s, %s, and %s.\n"
+msgstr "Авторы программы — %s, %s и %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:120
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"Авторы программы — %s, %s, %s\n"
+"и %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:127
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"Авторы программы — %s, %s, %s,\n"
+"%s и %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:134
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, and %s.\n"
+msgstr ""
+"Авторы программы — %s, %s, %s,\n"
+"%s, %s и %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:142
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, and %s.\n"
+msgstr ""
+"Авторы программы — %s, %s, %s,\n"
+"%s, %s, %s и %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:150
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"and %s.\n"
+msgstr ""
+"Авторы программы — %s, %s, %s,\n"
+"%s, %s, %s, %s\n"
+"и %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:159
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, and %s.\n"
+msgstr ""
+"Авторы программы — %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s и %s.\n"
+
+#. TRANSLATORS: Each %s denotes an author name.
+#. You can use line breaks, estimating that each author name occupies
+#. ca. 16 screen columns and that a screen line has ca. 80 columns.
+#: lib/version-etc.c:170
+#, c-format
+msgid ""
+"Written by %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s, and others.\n"
+msgstr ""
+"Авторы программы — %s, %s, %s,\n"
+"%s, %s, %s, %s,\n"
+"%s, %s и другие.\n"
+
+#. TRANSLATORS: The placeholder indicates the bug-reporting address
+#. for this package.  Please add _another line_ saying
+#. "Report translation bugs to <...>\n" with the address for translation
+#. bugs (typically your translation team's web or email address).
+#: lib/version-etc.c:249
+#, c-format
+msgid "Report bugs to: %s\n"
+msgstr "Об ошибках сообщайте по адресу: %s\n"
+
+#: lib/version-etc.c:251
+#, c-format
+msgid "Report %s bugs to: %s\n"
+msgstr "Об ошибках в %s сообщайте по адресу %s\n"
+
+#: lib/version-etc.c:255 lib/version-etc.c:257
+#, c-format
+msgid "%s home page: <%s>\n"
+msgstr "Домашняя страница %s: <%s>\n"
+
+#: lib/version-etc.c:260
+#, c-format
+msgid "General help using GNU software: <%s>\n"
+msgstr "Справка по работе с программами GNU: <%s>\n"
+
+#: src/dfasearch.c:57
+#, c-format
+msgid "warning: %s"
+msgstr "предупреждение: %s"
+
+#: src/grep.c:657
+msgid "(standard input)"
+msgstr "(стандартный ввод)"
+
+#: src/grep.c:838
+msgid "invalid context length argument"
+msgstr "неверный аргумент длины контекста"
+
+#: src/grep.c:911
+msgid "input is too large to count"
+msgstr "входные данные слишком велики, чтобы сосчитать"
+
+#: src/grep.c:1656
+#, c-format
+msgid "%s: binary file matches"
+msgstr "%s: двоичный файл совпадает"
+
+#: src/grep.c:1694
+#, c-format
+msgid "%s: warning: recursive directory loop"
+msgstr "%s: предупреждение: каталоги зациклены"
+
+#: src/grep.c:1914
+#, c-format
+msgid "%s: input file is also the output"
+msgstr "%s: файл ввода также используется и для вывода"
+
+#: src/grep.c:1976 src/grep.c:1983
+#, c-format
+msgid "Usage: %s [OPTION]... PATTERNS [FILE]...\n"
+msgstr "Использование: %s [ПАРАМЕТР]… ШАБЛОНЫ [ФАЙЛ]…\n"
+
+#: src/grep.c:1978
+#, c-format
+msgid "Try '%s --help' for more information.\n"
+msgstr "Запустите «%s --help» для получения более подробного описания.\n"
+
+#: src/grep.c:1984
+#, c-format
+msgid "Search for PATTERNS in each FILE.\n"
+msgstr "Поиск ШАБЛОНОВ в каждом ФАЙЛЕ.\n"
+
+#: src/grep.c:1985
+#, c-format
+msgid ""
+"Example: %s -i 'hello world' menu.h main.c\n"
+"PATTERNS can contain multiple patterns separated by newlines.\n"
+"\n"
+"Pattern selection and interpretation:\n"
+msgstr ""
+"Пример: %s -i 'hello world' menu.h main.c\n"
+"ШАБЛОНОВ можно указать несколько, разделяя их символом новой строки.\n"
+"\n"
+"Шаблон выбора и его интерпретация:\n"
+
+#: src/grep.c:1990
+#, c-format
+msgid ""
+"  -E, --extended-regexp     PATTERNS are extended regular expressions\n"
+"  -F, --fixed-strings       PATTERNS are strings\n"
+"  -G, --basic-regexp        PATTERNS are basic regular expressions\n"
+"  -P, --perl-regexp         PATTERNS are Perl regular expressions\n"
+msgstr ""
+"  -E, --extended-regexp  ШАБЛОНЫ — расширенные регулярные выражения\n"
+"  -F, --fixed-regexp     ШАБЛОНЫ — строки\n"
+"  -G, --basic-regexp     ШАБЛОНЫ — простые регулярные выражения\n"
+"  -P, --perl-regexp      ШАБЛОНЫ — регулярные выражения языка Perl\n"
+
+#: src/grep.c:1996
+#, c-format
+msgid ""
+"  -e, --regexp=PATTERNS     use PATTERNS for matching\n"
+"  -f, --file=FILE           take PATTERNS from FILE\n"
+"  -i, --ignore-case         ignore case distinctions in patterns and data\n"
+"      --no-ignore-case      do not ignore case distinctions (default)\n"
+"  -w, --word-regexp         match only whole words\n"
+"  -x, --line-regexp         match only whole lines\n"
+"  -z, --null-data           a data line ends in 0 byte, not newline\n"
+msgstr ""
+"  -e, --regexp=ШАБЛОНЫ   использовать ШАБЛОНЫ для поиска\n"
+"  -f, --file=ФАЙЛ        брать ШАБЛОНЫ из ФАЙЛа\n"
+"  -i, --ignore-case      игнорировать различие регистра\n"
+"      --no-ignore-case   учитывать регистр (по умолчанию)\n"
+"  -w, --word-regexp      совпадение обязательно с целым словом\n"
+"  -x, --line-regexp      совпадение обязательно с целой строкой\n"
+"  -z, --null-data        строки разделяются байтом с нулевым значением, а "
+"не\n"
+"                         символом конца строки\n"
+
+#: src/grep.c:2004
+#, c-format
+msgid ""
+"\n"
+"Miscellaneous:\n"
+"  -s, --no-messages         suppress error messages\n"
+"  -v, --invert-match        select non-matching lines\n"
+"  -V, --version             display version information and exit\n"
+"      --help                display this help text and exit\n"
+msgstr ""
+"\n"
+"Разное:\n"
+"  -s, --no-messages         не показывать сообщения об ошибках\n"
+"  -v, --invert-match        выбирать не подходящие строки\n"
+"  -V, --version             показать информацию о версии и закончить работу\n"
+"      --help                показать эту справку и закончить работу\n"
+
+#: src/grep.c:2011
+#, c-format
+msgid ""
+"\n"
+"Output control:\n"
+"  -m, --max-count=NUM       stop after NUM selected lines\n"
+"  -b, --byte-offset         print the byte offset with output lines\n"
+"  -n, --line-number         print line number with output lines\n"
+"      --line-buffered       flush output on every line\n"
+"  -H, --with-filename       print file name with output lines\n"
+"  -h, --no-filename         suppress the file name prefix on output\n"
+"      --label=LABEL         use LABEL as the standard input file name "
+"prefix\n"
+msgstr ""
+"\n"
+"Управление выводом:\n"
+"  -m, --max-count=ЧИСЛО     остановиться после указанного\n"
+"                            ЧИСЛА совпавших строк\n"
+"  -b, --byte-offset         печатать вместе с выходными строками смещение в\n"
+"                            байтах\n"
+"  -n, --line-number         печатать номер строки вместе с выходными "
+"строками\n"
+"      --line-buffered       сбрасывать буфер после каждой строки\n"
+"  -H, --with-filename       печатать имя файла для каждой выводимой строки\n"
+"  -h, --no-filename         не начинать вывод с имени файла\n"
+"      --label=МЕТКА         использовать МЕТКУ в качестве имени файла для\n"
+"                            стандартного ввода\n"
+
+#: src/grep.c:2022
+#, c-format
+msgid ""
+"  -o, --only-matching       show only nonempty parts of lines that match\n"
+"  -q, --quiet, --silent     suppress all normal output\n"
+"      --binary-files=TYPE   assume that binary files are TYPE;\n"
+"                            TYPE is 'binary', 'text', or 'without-match'\n"
+"  -a, --text                equivalent to --binary-files=text\n"
+msgstr ""
+"  -o, --only-matching       показывать только совпавшие непустые части "
+"строк\n"
+"  -q, --quiet, --silent     подавлять весь обычный вывод\n"
+"      --binary-files=ТИП    считать, что двоичный файл имеет ТИП:\n"
+"                            «binary», «text» или «without-match».\n"
+"  -a, --text                тоже, что и --binary-files=text\n"
+
+#: src/grep.c:2029
+#, c-format
+msgid ""
+"  -I                        equivalent to --binary-files=without-match\n"
+"  -d, --directories=ACTION  how to handle directories;\n"
+"                            ACTION is 'read', 'recurse', or 'skip'\n"
+"  -D, --devices=ACTION      how to handle devices, FIFOs and sockets;\n"
+"                            ACTION is 'read' or 'skip'\n"
+"  -r, --recursive           like --directories=recurse\n"
+"  -R, --dereference-recursive  likewise, but follow all symlinks\n"
+msgstr ""
+"  -I                        то же, что и --binary-files=without-match\n"
+"  -d, --directories=ДЕЙСТВ  как обрабатывать каталоги\n"
+"                            ДЕЙСТВИЕ может быть «read» (читать),\n"
+"                            «recurse» (рекурсивно) или «skip» (пропускать).\n"
+"  -D, --devices=ДЕЙСТВ      как обрабатывать устройства, FIFO и сокеты\n"
+"                            ДЕЙСТВИЕ может быть «read» или «skip»\n"
+"  -r, --recursive           то же, что и --directories=recurse\n"
+"  -R, --dereference-recursive                             тоже, но с "
+"переходом\n"
+"                            по всем символьным ссылкам\n"
+
+#: src/grep.c:2038
+#, c-format
+msgid ""
+"      --include=GLOB        search only files that match GLOB (a file "
+"pattern)\n"
+"      --exclude=GLOB        skip files that match GLOB\n"
+"      --exclude-from=FILE   skip files that match any file pattern from "
+"FILE\n"
+"      --exclude-dir=GLOB    skip directories that match GLOB\n"
+msgstr ""
+"      --include=МАСКА       обработать только файлы, подпадающие под\n"
+"                            МАСКУ (файловый шаблон)\n"
+"      --exclude=МАСКА       пропустить файлы, подпадающие под МАСКУ\n"
+"      --exclude-from=ФАЙЛ   пропустить файлы, подпадающие под маску\n"
+"                            файлов из ФАЙЛА\n"
+"      --exclude-dir=МАСКА   пропустить каталоги, подпадающие под МАСКУ\n"
+
+#: src/grep.c:2045
+#, c-format
+msgid ""
+"  -L, --files-without-match  print only names of FILEs with no selected "
+"lines\n"
+"  -l, --files-with-matches  print only names of FILEs with selected lines\n"
+"  -c, --count               print only a count of selected lines per FILE\n"
+"  -T, --initial-tab         make tabs line up (if needed)\n"
+"  -Z, --null                print 0 byte after FILE name\n"
+msgstr ""
+"  -L, --files-without-match печатать только имена ФАЙЛОВ без выбранных "
+"строк\n"
+"  -l, --files-with-matches  печатать только имена ФАЙЛОВ с выбранными "
+"строками\n"
+"  -c, --count               печатать только количество выбранных\n"
+"                            строк на ФАЙЛ\n"
+"  -T, --initial-tab         выравнивать табуляцией (если нужно)\n"
+"  -Z, --null                печатать байт 0 после имени ФАЙЛА\n"
+
+#: src/grep.c:2051
+#, c-format
+msgid ""
+"\n"
+"Context control:\n"
+"  -B, --before-context=NUM  print NUM lines of leading context\n"
+"  -A, --after-context=NUM   print NUM lines of trailing context\n"
+"  -C, --context=NUM         print NUM lines of output context\n"
+msgstr ""
+"\n"
+"Управление контекстом:\n"
+"  -B, --before-context=ЧИС  печатать ЧИСЛО строк предшествующего контекста\n"
+"  -A, --after-context=ЧИС   печатать ЧИСЛО строк последующего контекста\n"
+"  -C, --context[=ЧИС]       печатать ЧИСЛО строк контекста\n"
+
+#: src/grep.c:2058
+#, c-format
+msgid ""
+"  -NUM                      same as --context=NUM\n"
+"      --group-separator=SEP  print SEP on line between matches with context\n"
+"      --no-group-separator  do not print separator for matches with context\n"
+"      --color[=WHEN],\n"
+"      --colour[=WHEN]       use markers to highlight the matching strings;\n"
+"                            WHEN is 'always', 'never', or 'auto'\n"
+"  -U, --binary              do not strip CR characters at EOL (MSDOS/"
+"Windows)\n"
+"\n"
+msgstr ""
+"  -ЧИСЛО                    то же, что и --context=ЧИСЛО\n"
+"      --group-separator=SEP печатать SEP в строке между совпадениями\n"
+"                            с контекстом\n"
+"      --no-group-separator  не печатать разделитель между совпадениями\n"
+"                            с контекстом\n"
+"      --color[=КОГДА],\n"
+"      --colour[=КОГДА]      использовать маркеры для различия совпадающих\n"
+"                            строк; КОГДА может быть «always» (всегда),\n"
+"                            «never» (никогда) или «auto» (автоматически)\n"
+"  -U, --binary              не удалять символы CR в конце строки\n"
+"                            (MSDOS/Windows)\n"
+"\n"
+
+#: src/grep.c:2067
+#, fuzzy, c-format
+msgid ""
+"When FILE is '-', read standard input.  If no FILE is given, read standard\n"
+"input, but with -r, recursively search the working directory instead.  With\n"
+"fewer than two FILEs, assume -h.  Exit status is 0 if any line is selected,\n"
+"1 otherwise; if any error occurs and -q is not given, the exit status is 2.\n"
+msgstr ""
+"Если в качестве ФАЙЛА указан символ «-», то читается стандартный ввод.\n"
+"Если ФАЙЛ не указан, то читается текущий каталог «.»  и «-» в противном\n"
+"случае. Если указано менее двух ФАЙЛОВ, то предполагается -h.\n"
+"При нахождении совпадений любой строки кодом завершения будет 0\n"
+"и 1, если ничего не совпало. При возникновении ошибок и если не указан\n"
+"параметр -q, кодом завершения будет 2.\n"
+
+#: src/grep.c:2110
+msgid "conflicting matchers specified"
+msgstr "заданы конфликтующие образцы"
+
+#: src/grep.c:2117
+msgid "Perl matching not supported in a --disable-perl-regexp build"
+msgstr "Шаблоны Perl не поддерживаются при сборке с --disable-perl-regexp"
+
+#: src/grep.c:2119
+#, c-format
+msgid "invalid matcher %s"
+msgstr "неверный образец %s"
+
+#: src/grep.c:2541
+msgid "unknown devices method"
+msgstr "неизвестный метод для устройств"
+
+#: src/grep.c:2690
+msgid "invalid max count"
+msgstr "неверно задано число максимального количества совпадений"
+
+#: src/grep.c:2747
+msgid "unknown binary-files type"
+msgstr "неизвестный тип двоичных файлов"
+
+#: src/grep.c:2832
+msgid ""
+"Written by Mike Haertel and others; see\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+msgstr ""
+"Авторы программы: Mike Haertel и другие; смотрите\n"
+"<https://git.savannah.gnu.org/cgit/grep.git/tree/AUTHORS>."
+
+#: src/grep.c:2939
+#, c-format
+msgid "warning: GREP_COLOR='%s' is deprecated; use GREP_COLORS='mt=%s'"
+msgstr ""
+"предупреждение: GREP_COLOR='%s' считается устаревшей; используйте "
+"GREP_COLORS='mt=%s'"
+
+#: src/pcresearch.c:89
+#, c-format
+msgid ""
+"\n"
+"grep -P uses PCRE2 %s\n"
+msgstr ""
+"\n"
+"grep -P использует PCRE2 %s\n"
+
+#: src/pcresearch.c:167
+msgid "-P supports only unibyte locales on this platform"
+msgstr "параметр -P поддерживает только однобайтовые локали на этой платформе"
+
+#: src/pcresearch.c:169
+msgid "-P supports only unibyte and UTF-8 locales"
+msgstr "параметр -P поддерживает только однобайтовые локали и UTF-8"
+
+#: src/pcresearch.c:192
+msgid "the -P option only supports a single pattern"
+msgstr "параметр -P поддерживает только одиночный шаблон"
+
+#: src/pcresearch.c:288
+msgid "exceeded PCRE's line length limit"
+msgstr "превышено ограничение длины строки PCRE"
+
+#: src/pcresearch.c:366
+#, c-format
+msgid "%s: memory exhausted"
+msgstr "%s: память исчерпана"
+
+#: src/pcresearch.c:369
+#, c-format
+msgid "%s: exhausted PCRE JIT stack"
+msgstr "%s: исчерпан стек PCRE JIT"
+
+#: src/pcresearch.c:373
+#, c-format
+msgid "%s: exceeded PCRE's backtracking limit"
+msgstr "%s: исчерпан лимит возвратов в PCRE"
+
+#: src/pcresearch.c:378
+#, c-format
+msgid "%s: exceeded PCRE's nested backtracking limit"
+msgstr "%s: исчерпан лимит вложенных возвратов в PCRE"
+
+#: src/pcresearch.c:382
+#, c-format
+msgid "%s: PCRE detected recurse loop"
+msgstr "%s: в PCRE обнаружена рекурсивный цикл"
+
+#: src/pcresearch.c:387
+#, c-format
+msgid "%s: exceeded PCRE's heap limit"
+msgstr "%s: исчерпан лимит кучи в PCRE"
+
+#: src/pcresearch.c:396
+#, c-format
+msgid "%s: internal PCRE error: %d"
+msgstr "%s: внутренняя ошибка PCRE: %d"
+
+#, c-format
+#~ msgid "warning: --unix-byte-offsets (-u) is obsolete"
+#~ msgstr "предупреждение: параметр --unix-byte-offsets (-u) устарел"
+
+#~ msgid "JIT internal error: %d"
+#~ msgstr "внутренняя ошибка JIT: %d"
+
+#~ msgid "failed to allocate memory for the PCRE JIT stack"
+#~ msgstr "ошибка выделения памяти для стека PCRE JIT"
+
+#~ msgid "internal error (should never happen)"
+#~ msgstr "внутренняя ошибка (не должна возникать)"
+
+#~ msgid "warning: GREP_OPTIONS is deprecated; please use an alias or script"
+#~ msgstr ""
+#~ "предупреждение: GREP_OPTIONS устарел; используйте псевдоним или сценарий"
+
+#~ msgid "%s home page: <https://www.gnu.org/software/%s/>\n"
+#~ msgstr "Домашняя страница %s: <https://www.gnu.org/software/%s/>\n"
+
+#~ msgid "invalid %s%s argument '%s'"
+#~ msgstr "неверный аргумент %s%s в «%s»"
+
+#~ msgid "invalid suffix in %s%s argument '%s'"
+#~ msgstr "недопустимый суффикс в аргументе %s%s для «%s»"
+
+#~ msgid "%s%s argument '%s' too large"
+#~ msgstr "аргумент %s%s слишком велик для «%s»"
+
+#~ msgid "Mike Haertel"
+#~ msgstr "Майк Гертель (Mike Haertel)"
+
+#~ msgid "%s: option '--%s' doesn't allow an argument\n"
+#~ msgstr "%s: у параметра «--%s» не может быть аргумента\n"
+
+#~ msgid "%s: unrecognized option '--%s'\n"
+#~ msgstr "%s: неизвестный параметр «--%s»\n"
+
+#~ msgid "%s: option '-W %s' is ambiguous\n"
+#~ msgstr "%s: двусмысленный параметр «-W %s»\n"
+
+#~ msgid "%s: option '-W %s' doesn't allow an argument\n"
+#~ msgstr "%s: у параметра «-W %s» не может быть аргумента\n"
+
+#~ msgid "%s: option '-W %s' requires an argument\n"
+#~ msgstr "%s: для параметра «-W %s» требуется аргумент\n"
+
+#~ msgid "lseek failed"
+#~ msgstr "Вызов lseek завершился неудачно"
+
+#~ msgid "PATTERN is, by default, a basic regular expression (BRE).\n"
+#~ msgstr ""
+#~ "По умолчанию, ШАБЛОН представляет собой простое регулярное выражение "
+#~ "(BRE).\n"
+
+#~ msgid ""
+#~ "'egrep' means 'grep -E'.  'fgrep' means 'grep -F'.\n"
+#~ "Direct invocation as either 'egrep' or 'fgrep' is deprecated.\n"
+#~ msgstr ""
+#~ "Вместо «egrep» предполагается запуск «grep -E». Вместо «fgrep» "
+#~ "предполагается\n"
+#~ "«grep -F». Запуск под именами «egrep» или «fgrep» лучше не выполнять.\n"
+
+#~ msgid "unescaped ^ or $ not supported with -Pz"
+#~ msgstr "неэкранированный символ ^ или $ не поддерживается при указании -Pz"
+
+#~ msgid "GNU Grep home page: <%s>\n"
+#~ msgstr "Домашняя страница GNU Grep: <%s>\n"
+
+#~ msgid "invalid UTF-8 byte sequence in input"
+#~ msgstr "недопустимая последовательность байтов UTF-8 во входных данных"
+
+#~ msgid "PATTERN is an extended regular expression (ERE).\n"
+#~ msgstr "ШАБЛОН представляет собой расширенное регулярное выражение (ERE).\n"
+
+#~ msgid "Invocation as 'egrep' is deprecated; use 'grep -E' instead.\n"
+#~ msgstr ""
+#~ "Запуск под именем «egrep» устарел; вместо этого используйте «grep -E».\n"
+
+#~ msgid "PATTERN is a set of newline-separated fixed strings.\n"
+#~ msgstr ""
+#~ "ШАБЛОН представляет строки фиксированной длины, разделённые символом "
+#~ "новой строки.\n"
+
+#~ msgid "Invocation as 'fgrep' is deprecated; use 'grep -F' instead.\n"
+#~ msgstr ""
+#~ "Запуск под именем «fgrep» устарел; вместо этого используйте «grep -F».\n"
+
+#~ msgid "%s can only use the %s pattern syntax"
+#~ msgstr "В %s можно использовать только шаблонный синтаксис %s"
+
+#~ msgid "the --mmap option has been a no-op since 2010"
+#~ msgstr ""
+#~ "начиная с 2010 года при указании параметра --mmap ничего не выполняется"
+
+#~ msgid "unfinished repeat count"
+#~ msgstr "незавершённое количество повторений"
+
+#~ msgid "malformed repeat count"
+#~ msgstr "некорректно указано количество повторений"
+
+#~ msgid "writing output"
+#~ msgstr "запись выходных данных"
+
+#~ msgid ""
+#~ "in GREP_COLORS=\"%s\", the \"%s\" capacity needs a value (\"=...\"); "
+#~ "skipped"
+#~ msgstr ""
+#~ "в GREP_COLORS=\"%s\" для свойства «%s» требуется указать значение («=…»); "
+#~ "пропускается"
+
+#~ msgid ""
+#~ "in GREP_COLORS=\"%s\", the \"%s\" capacity is boolean and cannot take a "
+#~ "value (\"=%s\"); skipped"
+#~ msgstr ""
+#~ "в GREP_COLORS=\"%s\" свойство «%s» является логическим и не требует "
+#~ "значения («=%s»); пропускается"
+
+#~ msgid "in GREP_COLORS=\"%s\", the \"%s\" capacity %s"
+#~ msgstr "в GREP_COLORS=\"%s\" значение «%s» присвоено свойству %s"
+
+#~ msgid ""
+#~ "stopped processing of ill-formed GREP_COLORS=\"%s\" at remaining "
+#~ "substring \"%s\""
+#~ msgstr ""
+#~ "прекращение обработки неправильной GREP_COLORS=\"%s\", начиная с "
+#~ "оставшейся подстроки «%s»"
+
+#~ msgid "unknown directories method"
+#~ msgstr "неизвестный метод для каталогов"

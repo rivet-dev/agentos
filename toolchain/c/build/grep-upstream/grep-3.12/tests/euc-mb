@@ -1,0 +1,47 @@
+#!/bin/sh
+# test that matches starting in the middle of a multibyte char aren't rejected
+# too greedily.
+# Derived from https://savannah.gnu.org/bugs/?23814
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+# Add "." to PATH for the use of get-mb-cur-max.
+path_prepend_ .
+
+require_compiled_in_MB_support
+
+locale=ja_JP.EUC-JP
+
+make_input () {
+  echo "$1" | tr AB '\244\263'
+}
+
+euc_grep () {
+  pat=$(make_input "$1")
+  LC_ALL=$locale grep "$pat"
+}
+
+case $(get-mb-cur-max $locale) in
+  2|3) ;;
+  *) skip_ 'EUC-JP locale not found' ;;
+esac
+
+fail=0
+
+# Does EUC-JP work at all?
+make_input BABA |euc_grep AB && fail=1
+
+# Here are two cases in which a KWSet search matches in the middle
+# of a multibyte character.  The first ensures that the DFA matcher
+# finds the real match at the end of line.  The second ensures that
+# while the KWSet match found a false positive, the DFA matcher
+# determines there is no match after all.
+make_input BABAAB |euc_grep AB > out || fail=1
+make_input BABAAB > exp || framework_failure_
+compare exp out || fail=1
+make_input BABABA |returns_ 1 euc_grep AB || fail=1
+make_input BABABA |returns_ 1 euc_grep '^x\|AB' || fail=1
+
+# -P supports only unibyte and UTF-8 locales.
+returns_ 2 env LC_ALL=$locale grep -P x /dev/null || fail=1
+
+Exit $fail

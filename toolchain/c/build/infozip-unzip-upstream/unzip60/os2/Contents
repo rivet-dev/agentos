@@ -1,0 +1,22 @@
+Contents of the "os2" subdirectory for UnZip 5.3 and later:
+
+  Contents      this file
+  makefile.os2  makefile for almost every compiler available under OS/2
+  os2.c         OS/2-specific support routines
+  os2data.h     OS/2-specific data declarations
+  os2cfg.h      OS/2-specific configuration, included in unzpriv.h
+  os2acl.c      OS/2-specific routines for access-control-list support
+  os2acl.h      OS/2-specific header file for access-control-list support
+  rexxapi.c     interface to integrate UnZip DLL in REXX API
+  rexxapi.def   OS/2 linker definition file for REXX API DLL
+  rexxhelp.c    help function for UnZip's REXX API DLL
+  rexxtest.cmd  REXX script for testing UnZip's REXX API DLL
+  stub.def      OS/2 linker definition file (generic UnZip DLL API)
+  unzip.def     OS/2 linker definition file
+  zip2exe.cmd   REXX script for creating self-extracting archives
+  zipgrep.cmd   really cool REXX script to search for strings in a zipfile
+  zgrepapi.cmd  new version of zipgrep.cmd; takes advantage of REXX API DLL
+
+There is no support for the ancient Zortech and GCC/2 (Michael Johnson/Colin
+Jensen) compilers.  The free emx+gcc is supported, as are roughly half a dozen
+commercial compilers.

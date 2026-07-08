@@ -1,0 +1,12 @@
+{
+	"commands": [
+		"sed"
+	],
+	"registry": {
+		"title": "sed",
+		"description": "GNU stream editor for text transformation.",
+		"priority": 35,
+		"image": "/images/registry/sed.svg",
+		"category": "core"
+	}
+}

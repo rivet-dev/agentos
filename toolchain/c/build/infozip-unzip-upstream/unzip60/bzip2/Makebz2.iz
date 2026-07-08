@@ -1,0 +1,54 @@
+# Makefile for UnZip's bzip2 support library
+# Unix, and other ports using sufficiently unix-compatible
+# library naming conventions (e.g. misc. GCC ports)
+#
+# (c) 2006-2007 Info-ZIP
+# Last revision: Christian Spieler, 2007-Mar-31
+#
+# This Makefile is intended to be called from UnZip's main make procedure.
+
+SHELL=/bin/sh
+
+# To assist in cross-compiling
+CC=gcc
+AR=ar
+RANLIB=ranlib
+RM=rm -f
+LDFLAGS=
+O=.o
+
+CFLAGS=-Wall -Winline -O2 -g
+CCBZ2DEFS=-DBZ_NO_STDIO
+
+
+OBJS= blocksort$(O)  \
+      huffman$(O)    \
+      crctable$(O)   \
+      randtable$(O)  \
+      compress$(O)   \
+      decompress$(O) \
+      bzlib$(O)
+
+# How to compile sources
+.c$(O):
+	$(CC) $(CFLAGS) $(CCBZ2DEFS) -o $@ -c $<
+
+all: libbz2.a
+
+libbz2.a: $(OBJS)
+	-@$(RM) libbz2.a
+	$(AR) cq libbz2.a $(OBJS)
+	-$(RANLIB) libbz2.a
+
+clean:
+	$(RM) $(OBJS) libbz2.a
+
+$(OBJS): bzlib.h bzlib_private.h
+
+blocksort$(O): blocksort.c
+huffman$(O): huffman.c
+crctable$(O): crctable.c
+randtable$(O): randtable.c
+compress$(O): compress.c
+decompress$(O): decompress.c
+bzlib$(O): bzlib.c

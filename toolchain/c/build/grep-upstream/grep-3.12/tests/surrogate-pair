@@ -1,0 +1,54 @@
+#!/bin/sh
+# Check the handling of characters outside the Unicode BMP.
+
+# Copyright (C) 2013-2025 Free Software Foundation, Inc.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+require_compiled_in_MB_support
+
+fail=0
+
+s_pair=$(printf '\360\220\220\205')
+printf '%s\n' "$s_pair" > in || framework_failure_
+
+LC_ALL=en_US.UTF-8
+export LC_ALL
+
+# On Cygwin, before grep-2.15, this would segfault.
+# Require not just non-zero exit status, but exactly 1.
+returns_ 1 grep -i anything-else in > out 2>&1 || fail=1
+# Expect no output.
+compare /dev/null out || fail=1
+
+# This must always match, even on a 16-bit-wchar_t system.
+grep . in > out 2> err || fail=1
+
+# On platforms where wchar_t is only 16 bits, wchar_t cannot represent
+# the character encoded in 'in'.
+
+# On such old systems the above prints nothing on stdout and a diagnostic
+# on stderr.  In that case, return early; otherwise, the following tests
+# would all fail.
+io_pair=$(cat out):$(cat err)
+case $io_pair in
+  :'grep: in: binary file matches') Exit $fail;;
+  $s_pair:) ;;
+  *) fail_ "unexpected output: $io_pair"; fail=1;;
+esac
+
+Exit $fail

@@ -1,0 +1,30 @@
+#!/bin/sh
+# This would infloop when using glibc's regex at least until glibc-2.36.
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_timeout_
+require_en_utf8_locale_
+
+fail=0
+
+cat <<\EOF > glibc-check.c
+#include <features.h>
+#ifdef __GLIBC__
+int ok;
+#else
+# error "not glibc"
+#endif
+EOF
+$CC -c glibc-check.c && glibc=1 || glibc=0
+
+grep '^#define USE_INCLUDED_REGEX 1' "$CONFIG_HEADER" \
+  && included_regex=1 || included_regex=0
+
+case $glibc:$included_regex in
+  0:0) skip_ 'runs only with glibc or when built with the included regex'
+esac
+
+echo a > in || framework_failure_
+timeout 2 env LC_ALL=en_US.UTF-8 grep -E -w '((()|a)|())*' in || fail=1
+
+Exit $fail

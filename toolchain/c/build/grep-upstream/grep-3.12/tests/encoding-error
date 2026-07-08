@@ -1,0 +1,52 @@
+#! /bin/sh
+# Test grep's behavior on encoding errors.
+#
+# Copyright 2015-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+
+require_en_utf8_locale_
+
+printf 'Alfred Jones\n' > a || framework_failure_
+printf 'John Smith\n' >j || framework_failure_
+printf 'Pedro P\351rez\n' >p || framework_failure_
+cat a p j >in || framework_failure_
+
+LC_ALL=en_US.UTF-8
+export LC_ALL
+
+fail=0
+
+grep '^A' in >out || fail=1
+compare a out || fail=1
+
+grep '^P' in >out || fail=1
+compare /dev/null out || fail=1
+
+grep -I '^P' in >out 2>err || fail=1
+compare /dev/null out || fail=1
+compare /dev/null err || fail=1
+
+grep '^J' in >out || fail=1
+compare j out || fail=1
+
+returns_ 1 grep '^X' in >out || fail=1
+compare /dev/null out || fail=1
+
+grep . in >out || fail=1
+cat a j >exp || framework_failure_
+compare exp out || fail=1
+
+grep -I . in >out 2>err || fail=1
+cat a j >exp || framework_failure_
+compare exp out || fail=1
+compare /dev/null err || fail=1
+
+grep -a . in >out || fail=1
+compare in out
+
+Exit $fail

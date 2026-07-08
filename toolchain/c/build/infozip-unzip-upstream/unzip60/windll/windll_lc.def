@@ -1,0 +1,16 @@
+LIBRARY UNZIP32
+
+
+EXPORTS
+     Wiz_SingleEntryUnzip=Wiz_SingleEntryUnzip
+     Wiz_SingleEntryUnzpList=Wiz_SingleEntryUnzpList
+     UzpVersion=UzpVersion
+     Wiz_Init=Wiz_Init
+     Wiz_SetOpts=Wiz_SetOpts
+     Wiz_Unzip=Wiz_Unzip
+     Wiz_Validate=Wiz_Validate
+     Wiz_NoPrinting=Wiz_NoPrinting
+     UzpVersion2=UzpVersion2
+     Wiz_UnzipToMemory=Wiz_UnzipToMemory
+     Wiz_Grep=Wiz_Grep
+     UzpFreeMemBuffer=UzpFreeMemBuffer

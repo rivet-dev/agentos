@@ -1,0 +1,34 @@
+#!/bin/sh
+# Ensure non-ASCII UTF-8 characters are correctly identified as
+# word-constituents
+#
+# Copyright (C) 2023-2025 Free Software Foundation, Inc.
+#
+# Copying and distribution of this file, with or without modification,
+# are permitted in any medium without royalty provided the copyright
+# notice and this notice are preserved.
+
+. "${srcdir=.}/init.sh"; path_prepend_ ../src
+require_en_utf8_locale_
+LC_ALL=en_US.UTF-8
+export LC_ALL
+require_pcre_
+
+echo . | grep -qP '(*UTF).' 2>/dev/null \
+  || skip_ 'PCRE unicode support is compiled out'
+echo 0 | grep -qP '(?aD)\d' \
+  || skip_ 'PCRE 10.42 and older lack PCRE2_EXTRA_ASCII_BSD'
+
+fail=0
+
+echo 'Perú' > in || framework_failure_
+
+echo 'ú' > exp || framework_failure_
+grep -Po '.\b' in > out || fail=1
+compare exp out || fail=1
+
+echo 'rú' > exp || framework_failure_
+grep -Po 'r\w' in > out || fail=1
+compare exp out || fail=1
+
+Exit $fail

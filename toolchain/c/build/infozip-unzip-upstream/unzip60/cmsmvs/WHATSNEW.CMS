@@ -1,0 +1,27 @@
+Important Changes made for ZIP 2.3b and UNZIP 5.33c executables:
+
+1. WARNING:  These executables have been compiled for the
+   Language Environment (LE).  You must now have access to the file
+   SCEERUN LOADLIB in order to run ZIP and UNZIP on CMS.  You no longer
+   need access to EDCLINK LOADLIB.  The provided ZIP and UNZIP EXECs
+   have been changed to issue a new GLOBAL LOADLIB command.  You may
+   need to modify these EXECs for your installation.  You may want to
+   change any GLOBAL LOADLIB command you may have in your PROFILE EXEC.
+
+   Versions could be made available for the older EDCLINK LOADLIB
+   runtimes upon request.
+
+2. ZIP files will now be variable length files rather than fixed
+   length files.
+
+3. Help information for ZIP and UNZIP has been changed to show
+   "fm" rather than "path" on CMS with certain options.
+
+4. README CMS has been entirely rewritten.  It now contains all
+   information for ZIP and UNZIP.
+
+-----------------------------------------------------------------------
+Greg Hartwig, April 1998.
+e-mail:  ghartwig@ix.netcom.com
+         ghartwig@vnet.ibm.com
+
