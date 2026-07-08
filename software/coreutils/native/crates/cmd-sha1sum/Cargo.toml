@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-sha1sum"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "sha1sum standalone binary for secure-exec VM"
+
+[[bin]]
+name = "sha1sum"
+path = "src/main.rs"
+
+[dependencies]
+uu_sha1sum = "0.7.0"

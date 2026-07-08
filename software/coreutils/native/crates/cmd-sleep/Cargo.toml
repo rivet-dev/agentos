@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-sleep"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "sleep standalone binary for secure-exec VM"
+
+[[bin]]
+name = "sleep"
+path = "src/main.rs"
+
+[dependencies]
+secureexec-builtins = { path = "../../../../../toolchain/crates/libs/builtins" }

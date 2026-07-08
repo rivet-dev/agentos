@@ -468,7 +468,7 @@ export default function RegistryPageClient({
 				</p>
 				<div className="flex items-center justify-center gap-3">
 					<a
-						href="https://github.com/rivet-dev/agentos/blob/main/registry/CONTRIBUTING.md"
+						href="https://github.com/rivet-dev/agentos/blob/main/software/CONTRIBUTING.md"
 						target="_blank"
 						rel="noopener noreferrer"
 						className={

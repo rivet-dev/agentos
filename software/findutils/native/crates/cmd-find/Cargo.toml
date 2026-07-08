@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-find"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "find standalone binary for secure-exec VM"
+
+[[bin]]
+name = "find"
+path = "src/main.rs"
+
+[dependencies]
+secureexec-find = { path = "../find" }

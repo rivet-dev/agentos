@@ -57,7 +57,7 @@ registry.start();
 
 See [Sessions](/docs/sessions) for creating and driving sessions. Package your adapter with `agentos-toolchain pack --agent my-agent-acp` so its dependencies are bundled into the self-contained package directory and the `agent` block (naming the `bin/` ACP entrypoint) is written into the package's `agentos-package.json`, rather than shipping it as a loose file.
 
-All built-in agents are defined exactly this way. Browse them for reference on [GitHub](https://github.com/rivet-dev/agentos/tree/main/registry/agent).
+All built-in agents are defined exactly this way. Browse them for reference on [GitHub](https://github.com/rivet-dev/agentos/tree/main/software).
 
 ## Read more
 

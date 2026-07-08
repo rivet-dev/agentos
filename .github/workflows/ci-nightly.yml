@@ -23,7 +23,7 @@ jobs:
         with:
           targets: wasm32-wasip1
       - run: pnpm install --frozen-lockfile
-      - run: make -C registry/native commands
+      - run: make -C toolchain commands
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - run: cargo check --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings

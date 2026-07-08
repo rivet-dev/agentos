@@ -150,7 +150,7 @@ fn wasm_command_mounts() -> Vec<MountConfig> {
 /// Locate the materialized coreutils package under the in-repo registry build.
 pub fn coreutils_package_dir() -> Option<PathBuf> {
     let registry_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../registry/software/coreutils/dist/package");
+        .join("../../software/coreutils/dist/package");
     if registry_dir.join("agentos-package.json").is_file() {
         return std::fs::canonicalize(registry_dir).ok();
     }
@@ -175,7 +175,7 @@ pub fn coreutils_wasm_dir() -> Option<PathBuf> {
     }
 
     let legacy_registry_dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../registry/software/coreutils/wasm");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../software/coreutils/wasm");
     if legacy_registry_dir.is_dir() {
         return std::fs::canonicalize(legacy_registry_dir).ok();
     }
@@ -244,6 +244,6 @@ pub async fn require_wasm_commands(os: &AgentOs, test_name: &str) -> bool {
         eprintln!("skipping {message}");
         false
     } else {
-        panic!("{message}; run the registry/native command build or set AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1 for local skip-only runs");
+        panic!("{message}; run the toolchain command build or set AGENT_OS_CLIENT_ALLOW_E2E_SKIPS=1 for local skip-only runs");
     }
 }

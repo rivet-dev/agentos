@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-yq"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "yq standalone binary for secure-exec VM"
+
+[[bin]]
+name = "yq"
+path = "src/main.rs"
+
+[dependencies]
+secureexec-yq = { path = "../yq" }

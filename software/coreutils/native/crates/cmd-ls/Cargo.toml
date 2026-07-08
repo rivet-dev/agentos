@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-ls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ls standalone binary for secure-exec VM"
+
+[[bin]]
+name = "ls"
+path = "src/main.rs"
+
+[dependencies]
+uu_ls = "0.7.0"

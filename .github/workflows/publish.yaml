@@ -66,10 +66,10 @@ jobs:
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: registry/native -> registry/native/target
-          key: wasm-commands-${{ hashFiles('registry/native/Cargo.lock') }}
+          workspaces: toolchain -> toolchain/target
+          key: wasm-commands-${{ hashFiles('toolchain/Cargo.lock') }}
       - run: pnpm install --frozen-lockfile --filter '@rivet-dev/agentos-runtime-core...'
-      - run: make -C registry/native commands
+      - run: make -C toolchain commands
       - run: node packages/runtime-core/scripts/copy-wasm-commands.mjs --require
       - uses: actions/upload-artifact@v4
         with:

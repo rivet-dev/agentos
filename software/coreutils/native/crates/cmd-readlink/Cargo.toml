@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-readlink"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "readlink standalone binary for secure-exec VM"
+
+[[bin]]
+name = "readlink"
+path = "src/main.rs"
+
+[dependencies]
+uu_readlink = "0.7.0"

@@ -247,7 +247,7 @@
     {
       "packageGlob": "@agentos-software/*",
       "sourcePathGlob": "secure-exec/registry/{agent,software}/*",
-      "targetPathGlob": "agentos/registry/{agent,software}/*"
+      "targetPathGlob": "agentos/software/*"
     }
   ],
   "scriptedReplacementOrder": [

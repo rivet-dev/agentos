@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-printenv"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "printenv standalone binary for secure-exec VM"
+
+[[bin]]
+name = "printenv"
+path = "src/main.rs"
+
+[dependencies]
+uu_printenv = "0.7.0"

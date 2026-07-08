@@ -58,7 +58,7 @@ const workspaceRoot = resolve(__dirname, "../../..");
 const fallbackCommandDirs = [
 	resolve(
 		workspaceRoot,
-		"registry/native/target/wasm32-wasip1/release/commands",
+		"toolchain/target/wasm32-wasip1/release/commands",
 	),
 ];
 const BRUSH_SHELL_COMMANDS = new Set(["bash", "sh"]);
@@ -159,11 +159,11 @@ const software: SoftwareInput[] = [
 	.map(withLocalCommandFallback)
 	.filter((input): input is SoftwareInput => input !== null);
 
-// The vi-like editors ship as registry packages: vix, and vim (which carries
+// The vi-like editors ship as software packages: vix, and vim (which carries
 // its runtime tree + VIMRUNTIME via the manifest `provides`). An unbuilt
 // package is a valid empty placeholder — skip it rather than projecting a
 // command-less package (build them locally: drop the wasm binaries into
-// registry/native/target/.../commands and run `just registry-build`).
+// toolchain/target/.../commands and run `just software-build`).
 for (const editor of [vix, vim] as RegistryPackage[]) {
 	if (isUsablePackageFile(editor.packagePath)) {
 		software.push({ packagePath: editor.packagePath });

@@ -35,7 +35,6 @@ function isExcluded(relPath) {
 	if (relPath === "node_modules" || relPath.startsWith("node_modules/")) return true;
 	if (relPath === ".claude" || relPath.startsWith(".claude/")) return true;
 	if (relPath === "scripts/publish" || relPath.startsWith("scripts/publish/")) return true;
-	if (relPath === "registry/tests" || relPath.startsWith("registry/tests/")) return true;
 	return relPath
 		.split("/")
 		.some((part) => part === "fixtures" || part === "vendor" || part === "tests");

@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-unlink"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "unlink standalone binary for secure-exec VM"
+
+[[bin]]
+name = "unlink"
+path = "src/main.rs"
+
+[dependencies]
+uu_unlink = "0.7.0"

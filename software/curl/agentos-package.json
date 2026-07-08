@@ -1,0 +1,12 @@
+{
+	"commands": [
+		"curl"
+	],
+	"registry": {
+		"title": "curl",
+		"description": "HTTP(S) client for fetching URLs and APIs.",
+		"priority": 50,
+		"image": "/images/registry/curl.svg",
+		"category": "networking"
+	}
+}

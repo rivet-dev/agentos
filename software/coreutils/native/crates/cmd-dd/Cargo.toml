@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-dd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "dd standalone binary for secure-exec VM"
+
+[[bin]]
+name = "dd"
+path = "src/main.rs"
+
+[dependencies]
+uu_dd = "0.7.0"

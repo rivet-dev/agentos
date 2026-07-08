@@ -55,68 +55,68 @@ importers:
         specifier: ^0.60.0
         version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@agentos-software/claude-code':
-        specifier: link:../../../secure-exec/registry/agent/claude
-        version: link:../../../secure-exec/registry/agent/claude
+        specifier: link:../../../secure-exec/software/claude
+        version: link:../../../secure-exec/software/claude
       '@secure-exec/codex':
-        specifier: link:../../registry/software/codex
-        version: link:../../registry/software/codex
+        specifier: link:../../software/codex
+        version: link:../../software/codex
       '@agentos-software/codex':
-        specifier: link:../../../secure-exec/registry/agent/codex
-        version: link:../../../secure-exec/registry/agent/codex
+        specifier: link:../../../secure-exec/software/codex
+        version: link:../../../secure-exec/software/codex
       '@rivet-dev/agentos-runtime-coreutils':
-        specifier: link:../../registry/software/coreutils
-        version: link:../../registry/software/coreutils
+        specifier: link:../../software/coreutils
+        version: link:../../software/coreutils
       '@secure-exec/curl':
-        specifier: link:../../registry/software/curl
-        version: link:../../registry/software/curl
+        specifier: link:../../software/curl
+        version: link:../../software/curl
       '@secure-exec/diffutils':
-        specifier: link:../../registry/software/diffutils
-        version: link:../../registry/software/diffutils
+        specifier: link:../../software/diffutils
+        version: link:../../software/diffutils
       '@secure-exec/fd':
-        specifier: link:../../registry/software/fd
-        version: link:../../registry/software/fd
+        specifier: link:../../software/fd
+        version: link:../../software/fd
       '@secure-exec/file':
-        specifier: link:../../registry/software/file
-        version: link:../../registry/software/file
+        specifier: link:../../software/file
+        version: link:../../software/file
       '@secure-exec/findutils':
-        specifier: link:../../registry/software/findutils
-        version: link:../../registry/software/findutils
+        specifier: link:../../software/findutils
+        version: link:../../software/findutils
       '@secure-exec/gawk':
-        specifier: link:../../registry/software/gawk
-        version: link:../../registry/software/gawk
+        specifier: link:../../software/gawk
+        version: link:../../software/gawk
       '@secure-exec/grep':
-        specifier: link:../../registry/software/grep
-        version: link:../../registry/software/grep
+        specifier: link:../../software/grep
+        version: link:../../software/grep
       '@secure-exec/gzip':
-        specifier: link:../../registry/software/gzip
-        version: link:../../registry/software/gzip
+        specifier: link:../../software/gzip
+        version: link:../../software/gzip
       '@secure-exec/jq':
-        specifier: link:../../registry/software/jq
-        version: link:../../registry/software/jq
+        specifier: link:../../software/jq
+        version: link:../../software/jq
       '@agentos-software/opencode':
-        specifier: link:../../../secure-exec/registry/agent/opencode
-        version: link:../../../secure-exec/registry/agent/opencode
+        specifier: link:../../../secure-exec/software/opencode
+        version: link:../../../secure-exec/software/opencode
       '@agentos-software/pi':
-        specifier: link:../../../secure-exec/registry/agent/pi
-        version: link:../../../secure-exec/registry/agent/pi
+        specifier: link:../../../secure-exec/software/pi
+        version: link:../../../secure-exec/software/pi
       '@agentos-software/pi-cli':
-        specifier: link:../../../secure-exec/registry/agent/pi-cli
-        version: link:../../../secure-exec/registry/agent/pi-cli
+        specifier: link:../../../secure-exec/software/pi-cli
+        version: link:../../../secure-exec/software/pi-cli
       '@secure-exec/ripgrep':
-        specifier: link:../../registry/software/ripgrep
-        version: link:../../registry/software/ripgrep
+        specifier: link:../../software/ripgrep
+        version: link:../../software/ripgrep
       '@secure-exec/sed':
-        specifier: link:../../registry/software/sed
-        version: link:../../registry/software/sed
+        specifier: link:../../software/sed
+        version: link:../../software/sed
       '@secure-exec/tar':
-        specifier: link:../../registry/software/tar
-        version: link:../../registry/software/tar
+        specifier: link:../../software/tar
+        version: link:../../software/tar
       '@secure-exec/tree':
-        specifier: link:../../registry/software/tree
-        version: link:../../registry/software/tree
+        specifier: link:../../software/tree
+        version: link:../../software/tree
       '@secure-exec/yq':
-        specifier: link:../../registry/software/yq
-        version: link:../../registry/software/yq
+        specifier: link:../../software/yq
+        version: link:../../software/yq
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.17

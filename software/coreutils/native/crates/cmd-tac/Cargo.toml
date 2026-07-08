@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-tac"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "tac standalone binary for secure-exec VM"
+
+[[bin]]
+name = "tac"
+path = "src/main.rs"
+
+[dependencies]
+uu_tac = "0.7.0"

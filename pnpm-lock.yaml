@@ -25,16 +25,19 @@ importers:
     devDependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:registry/agent/claude
+        version: link:software/claude
       '@agentos-software/codex':
         specifier: workspace:*
-        version: link:registry/agent/codex
+        version: link:software/codex
       '@agentos-software/common':
         specifier: workspace:*
-        version: link:registry/software/common
+        version: link:software/common
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:registry/agent/pi
+        version: link:software/pi
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:test-harness
       '@biomejs/biome':
         specifier: ^2.3
         version: 2.4.10
@@ -59,6 +62,9 @@ importers:
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
+      npm:
+        specifier: ^11.18.0
+        version: 11.18.0
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
@@ -73,16 +79,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -138,16 +144,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -187,16 +193,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -236,16 +242,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -285,22 +291,22 @@ importers:
     dependencies:
       '@agentos-software/common':
         specifier: workspace:*
-        version: link:../../registry/software/common
+        version: link:../../software/common
       '@agentos-software/curl':
         specifier: workspace:*
-        version: link:../../registry/software/curl
+        version: link:../../software/curl
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/jq':
         specifier: workspace:*
-        version: link:../../registry/software/jq
+        version: link:../../software/jq
       '@agentos-software/ripgrep':
         specifier: workspace:*
-        version: link:../../registry/software/ripgrep
+        version: link:../../software/ripgrep
       '@agentos-software/sqlite3':
         specifier: workspace:*
-        version: link:../../registry/software/sqlite3
+        version: link:../../software/sqlite3
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -349,13 +355,13 @@ importers:
     dependencies:
       '@agentos-software/browserbase':
         specifier: workspace:*
-        version: link:../../registry/software/browserbase
+        version: link:../../software/browserbase
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -377,16 +383,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -426,16 +432,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -475,16 +481,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -524,16 +530,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -573,16 +579,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -622,16 +628,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -671,16 +677,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -720,16 +726,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -769,16 +775,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -818,16 +824,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -867,16 +873,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -916,16 +922,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -965,16 +971,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1014,16 +1020,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1063,16 +1069,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1112,16 +1118,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1161,16 +1167,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1210,16 +1216,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1259,16 +1265,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -1317,16 +1323,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1366,16 +1372,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1415,16 +1421,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1464,16 +1470,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1513,16 +1519,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1562,16 +1568,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1611,16 +1617,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1660,16 +1666,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1709,16 +1715,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1758,16 +1764,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1807,16 +1813,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1856,16 +1862,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1905,16 +1911,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../../registry/agent/claude
+        version: link:../../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../../registry/software/git
+        version: link:../../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../../registry/agent/opencode
+        version: link:../../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../../registry/agent/pi
+        version: link:../../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../../packages/agentos
@@ -1954,16 +1960,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2003,16 +2009,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2052,16 +2058,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2101,25 +2107,25 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/coreutils':
         specifier: workspace:*
-        version: link:../../registry/software/coreutils
+        version: link:../../software/coreutils
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/jq':
         specifier: workspace:*
-        version: link:../../registry/software/jq
+        version: link:../../software/jq
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@agentos-software/ripgrep':
         specifier: workspace:*
-        version: link:../../registry/software/ripgrep
+        version: link:../../software/ripgrep
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2159,16 +2165,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2211,16 +2217,16 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../../packages/agentos
@@ -2260,7 +2266,7 @@ importers:
     dependencies:
       '@agentos-software/common':
         specifier: workspace:*
-        version: link:../../registry/software/common
+        version: link:../../software/common
       '@rivet-dev/agentos-core':
         specifier: workspace:*
         version: link:../core
@@ -2357,7 +2363,7 @@ importers:
     devDependencies:
       '@agentos-software/common':
         specifier: workspace:*
-        version: link:../../registry/software/common
+        version: link:../../software/common
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
@@ -2443,25 +2449,25 @@ importers:
     dependencies:
       '@agentos-software/claude-code':
         specifier: workspace:*
-        version: link:../../registry/agent/claude
+        version: link:../../software/claude
       '@agentos-software/codex-cli':
         specifier: workspace:*
-        version: link:../../registry/software/codex-cli
+        version: link:../../software/codex-cli
       '@agentos-software/common':
         specifier: workspace:*
-        version: link:../../registry/software/common
+        version: link:../../software/common
       '@agentos-software/manifest':
         specifier: workspace:*
         version: link:../manifest
       '@agentos-software/opencode':
         specifier: workspace:*
-        version: link:../../registry/agent/opencode
+        version: link:../../software/opencode
       '@agentos-software/pi':
         specifier: workspace:*
-        version: link:../../registry/agent/pi
+        version: link:../../software/pi
       '@agentos-software/pi-cli':
         specifier: workspace:*
-        version: link:../../registry/agent/pi-cli
+        version: link:../../software/pi-cli
       '@aws-sdk/client-s3':
         specifier: ^3.1019.0
         version: 3.1020.0
@@ -2504,64 +2510,64 @@ importers:
     devDependencies:
       '@agentos-software/codex':
         specifier: workspace:*
-        version: link:../../registry/agent/codex
+        version: link:../../software/codex
       '@agentos-software/coreutils':
         specifier: workspace:*
-        version: link:../../registry/software/coreutils
+        version: link:../../software/coreutils
       '@agentos-software/curl':
         specifier: workspace:*
-        version: link:../../registry/software/curl
+        version: link:../../software/curl
       '@agentos-software/diffutils':
         specifier: workspace:*
-        version: link:../../registry/software/diffutils
+        version: link:../../software/diffutils
       '@agentos-software/duckdb':
         specifier: workspace:*
-        version: link:../../registry/software/duckdb
+        version: link:../../software/duckdb
       '@agentos-software/fd':
         specifier: workspace:*
-        version: link:../../registry/software/fd
+        version: link:../../software/fd
       '@agentos-software/file':
         specifier: workspace:*
-        version: link:../../registry/software/file
+        version: link:../../software/file
       '@agentos-software/findutils':
         specifier: workspace:*
-        version: link:../../registry/software/findutils
+        version: link:../../software/findutils
       '@agentos-software/gawk':
         specifier: workspace:*
-        version: link:../../registry/software/gawk
+        version: link:../../software/gawk
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/grep':
         specifier: workspace:*
-        version: link:../../registry/software/grep
+        version: link:../../software/grep
       '@agentos-software/gzip':
         specifier: workspace:*
-        version: link:../../registry/software/gzip
+        version: link:../../software/gzip
       '@agentos-software/http-get':
         specifier: workspace:*
-        version: link:../../registry/software/http-get
+        version: link:../../software/http-get
       '@agentos-software/jq':
         specifier: workspace:*
-        version: link:../../registry/software/jq
+        version: link:../../software/jq
       '@agentos-software/ripgrep':
         specifier: workspace:*
-        version: link:../../registry/software/ripgrep
+        version: link:../../software/ripgrep
       '@agentos-software/sed':
         specifier: workspace:*
-        version: link:../../registry/software/sed
+        version: link:../../software/sed
       '@agentos-software/tar':
         specifier: workspace:*
-        version: link:../../registry/software/tar
+        version: link:../../software/tar
       '@agentos-software/tree':
         specifier: workspace:*
-        version: link:../../registry/software/tree
+        version: link:../../software/tree
       '@agentos-software/vim':
         specifier: workspace:*
-        version: link:../../registry/software/vim
+        version: link:../../software/vim
       '@agentos-software/yq':
         specifier: workspace:*
-        version: link:../../registry/software/yq
+        version: link:../../software/yq
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.87
         version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
@@ -2810,79 +2816,79 @@ importers:
     dependencies:
       '@agentos-software/codex-cli':
         specifier: workspace:*
-        version: link:../../registry/software/codex-cli
+        version: link:../../software/codex-cli
       '@agentos-software/coreutils':
         specifier: workspace:*
-        version: link:../../registry/software/coreutils
+        version: link:../../software/coreutils
       '@agentos-software/curl':
         specifier: workspace:*
-        version: link:../../registry/software/curl
+        version: link:../../software/curl
       '@agentos-software/diffutils':
         specifier: workspace:*
-        version: link:../../registry/software/diffutils
+        version: link:../../software/diffutils
       '@agentos-software/duckdb':
         specifier: workspace:*
-        version: link:../../registry/software/duckdb
+        version: link:../../software/duckdb
       '@agentos-software/fd':
         specifier: workspace:*
-        version: link:../../registry/software/fd
+        version: link:../../software/fd
       '@agentos-software/file':
         specifier: workspace:*
-        version: link:../../registry/software/file
+        version: link:../../software/file
       '@agentos-software/findutils':
         specifier: workspace:*
-        version: link:../../registry/software/findutils
+        version: link:../../software/findutils
       '@agentos-software/gawk':
         specifier: workspace:*
-        version: link:../../registry/software/gawk
+        version: link:../../software/gawk
       '@agentos-software/git':
         specifier: workspace:*
-        version: link:../../registry/software/git
+        version: link:../../software/git
       '@agentos-software/grep':
         specifier: workspace:*
-        version: link:../../registry/software/grep
+        version: link:../../software/grep
       '@agentos-software/gzip':
         specifier: workspace:*
-        version: link:../../registry/software/gzip
+        version: link:../../software/gzip
       '@agentos-software/http-get':
         specifier: workspace:*
-        version: link:../../registry/software/http-get
+        version: link:../../software/http-get
       '@agentos-software/jq':
         specifier: workspace:*
-        version: link:../../registry/software/jq
+        version: link:../../software/jq
       '@agentos-software/ripgrep':
         specifier: workspace:*
-        version: link:../../registry/software/ripgrep
+        version: link:../../software/ripgrep
       '@agentos-software/sed':
         specifier: workspace:*
-        version: link:../../registry/software/sed
+        version: link:../../software/sed
       '@agentos-software/sqlite3':
         specifier: workspace:*
-        version: link:../../registry/software/sqlite3
+        version: link:../../software/sqlite3
       '@agentos-software/tar':
         specifier: workspace:*
-        version: link:../../registry/software/tar
+        version: link:../../software/tar
       '@agentos-software/tree':
         specifier: workspace:*
-        version: link:../../registry/software/tree
+        version: link:../../software/tree
       '@agentos-software/unzip':
         specifier: workspace:*
-        version: link:../../registry/software/unzip
+        version: link:../../software/unzip
       '@agentos-software/vim':
         specifier: workspace:*
-        version: link:../../registry/software/vim
+        version: link:../../software/vim
       '@agentos-software/vix':
         specifier: workspace:*
-        version: link:../../registry/software/vix
+        version: link:../../software/vix
       '@agentos-software/wget':
         specifier: workspace:*
-        version: link:../../registry/software/wget
+        version: link:../../software/wget
       '@agentos-software/yq':
         specifier: workspace:*
-        version: link:../../registry/software/yq
+        version: link:../../software/yq
       '@agentos-software/zip':
         specifier: workspace:*
-        version: link:../../registry/software/zip
+        version: link:../../software/zip
       '@rivet-dev/agentos':
         specifier: workspace:*
         version: link:../agentos
@@ -2946,137 +2952,35 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.15)
 
-  registry:
-    devDependencies:
-      '@agentos-software/common':
-        specifier: workspace:*
-        version: link:software/common
-      '@agentos-software/curl':
-        specifier: workspace:*
-        version: link:software/curl
-      '@rivet-dev/agentos-runtime-core':
-        specifier: workspace:*
-        version: link:../packages/runtime-core
-      '@rivet-dev/agentos-vm-test-harness':
-        specifier: workspace:*
-        version: link:../packages/vm-test-harness
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.9
-        version: 2.1.9(@types/node@22.19.15)
-
-  registry/agent/claude:
+  scripts/publish:
     dependencies:
-      '@agentclientprotocol/sdk':
-        specifier: ^0.16.1
-        version: 0.16.1(zod@4.3.6)
-      '@anthropic-ai/claude-agent-sdk':
-        specifier: 0.2.87
-        version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
-      zod:
-        specifier: ^4.1.11
-        version: 4.3.6
+      commander:
+        specifier: ^12.1.0
+        version: 12.1.0
+      execa:
+        specifier: ^8.0.1
+        version: 8.0.1
+      glob:
+        specifier: ^10.3.10
+        version: 10.5.0
+      semver:
+        specifier: ^7.6.0
+        version: 7.7.4
     devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
       '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
+        specifier: ^24.3.0
+        version: 24.13.2
+      '@types/semver':
+        specifier: ^7.5.8
+        version: 7.7.1
+      tsx:
+        specifier: ^4.0.0
+        version: 4.21.0
       typescript:
-        specifier: ^5.7.2
+        specifier: ^5.5.2
         version: 5.9.3
 
-  registry/agent/codex:
-    dependencies:
-      '@agentos-software/codex-cli':
-        specifier: workspace:*
-        version: link:../../software/codex-cli
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  registry/agent/opencode:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      bun:
-        specifier: 1.3.11
-        version: 1.3.11
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  registry/agent/pi:
-    dependencies:
-      '@agentclientprotocol/sdk':
-        specifier: ^0.16.1
-        version: 0.16.1(zod@4.3.6)
-      '@mariozechner/pi-ai':
-        specifier: 0.60.0
-        version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6)
-      '@mariozechner/pi-coding-agent':
-        specifier: 0.60.0
-        version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6)
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  registry/agent/pi-cli:
-    dependencies:
-      '@mariozechner/pi-coding-agent':
-        specifier: ^0.60.0
-        version: 0.60.0
-      pi-acp:
-        specifier: ^0.0.23
-        version: 0.0.23
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.2
-        version: 5.9.3
-
-  registry/software/browserbase:
+  software/browserbase:
     dependencies:
       browse:
         specifier: ^0.9.3
@@ -3084,18 +2988,24 @@ importers:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/build-essential:
+  software/build-essential:
     dependencies:
       '@agentos-software/common':
         specifier: workspace:*
@@ -3109,30 +3019,89 @@ importers:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/codex-cli:
+  software/claude:
+    dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^0.16.1
+        version: 0.16.1(zod@4.3.6)
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: 0.2.87
+        version: 0.2.87(@cfworker/json-schema@4.1.1)(zod@4.3.6)
+      zod:
+        specifier: ^4.1.11
+        version: 4.3.6
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  software/codex:
+    dependencies:
+      '@agentos-software/codex-cli':
+        specifier: workspace:*
+        version: link:../codex-cli
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  software/codex-cli:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/common:
+  software/common:
     dependencies:
       '@agentos-software/coreutils':
         specifier: workspace:*
@@ -3161,75 +3130,126 @@ importers:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/coreutils:
+  software/coreutils:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/curl:
+  software/curl:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/diffutils:
+  software/diffutils:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/duckdb:
+  software/duckdb:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/everything:
+  software/envsubst:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/everything:
     dependencies:
       '@agentos-software/codex-cli':
         specifier: workspace:*
@@ -3288,340 +3308,531 @@ importers:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/fd:
+  software/fd:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/file:
+  software/file:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/findutils:
+  software/findutils:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/gawk:
+  software/gawk:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/git:
+  software/git:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/grep:
+  software/grep:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/gzip:
+  software/gzip:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/http-get:
+  software/http-get:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/jq:
+  software/jq:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/ripgrep:
+  software/opencode:
     devDependencies:
       '@agentos-software/manifest':
         specifier: workspace:*
-        version: link:../../../packages/manifest
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
       '@rivet-dev/agentos-toolchain':
         specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
+        version: link:../../packages/agentos-toolchain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.15
+      bun:
+        specifier: 1.3.11
+        version: 1.3.11
       typescript:
-        specifier: ^5.9.2
+        specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
 
-  registry/software/sed:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-
-  registry/software/sqlite3:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-
-  registry/software/tar:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-
-  registry/software/tree:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-
-  registry/software/unzip:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-
-  registry/software/vim:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-
-  registry/software/vix:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-
-  registry/software/wget:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-
-  registry/software/yq:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-
-  registry/software/zip:
-    devDependencies:
-      '@agentos-software/manifest':
-        specifier: workspace:*
-        version: link:../../../packages/manifest
-      '@rivet-dev/agentos-toolchain':
-        specifier: workspace:*
-        version: link:../../../packages/agentos-toolchain
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.15
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-
-  scripts/publish:
+  software/pi:
     dependencies:
-      commander:
-        specifier: ^12.1.0
-        version: 12.1.0
-      execa:
-        specifier: ^8.0.1
-        version: 8.0.1
-      glob:
-        specifier: ^10.3.10
-        version: 10.5.0
-      semver:
-        specifier: ^7.6.0
-        version: 7.7.4
+      '@agentclientprotocol/sdk':
+        specifier: ^0.16.1
+        version: 0.16.1(zod@4.3.6)
+      '@mariozechner/pi-ai':
+        specifier: 0.60.0
+        version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6)
+      '@mariozechner/pi-coding-agent':
+        specifier: 0.60.0
+        version: 0.60.0(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(bufferutil@4.1.0)(ws@8.21.0(bufferutil@4.1.0))(zod@4.3.6)
     devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
       '@types/node':
-        specifier: ^24.3.0
-        version: 24.13.2
-      '@types/semver':
-        specifier: ^7.5.8
-        version: 7.7.1
-      tsx:
-        specifier: ^4.0.0
-        version: 4.21.0
+        specifier: ^22.10.2
+        version: 22.19.15
+      esbuild:
+        specifier: ^0.27.4
+        version: 0.27.4
       typescript:
-        specifier: ^5.5.2
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  software/pi-cli:
+    dependencies:
+      '@mariozechner/pi-coding-agent':
+        specifier: ^0.60.0
+        version: 0.60.0
+      pi-acp:
+        specifier: ^0.0.23
+        version: 0.0.23
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/ripgrep:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/sed:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/sqlite3:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/tar:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/tree:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/unzip:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/vim:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/vix:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/wget:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/yq:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  software/zip:
+    devDependencies:
+      '@agentos-software/manifest':
+        specifier: workspace:*
+        version: link:../../packages/manifest
+      '@agentos/test-harness':
+        specifier: workspace:*
+        version: link:../../test-harness
+      '@rivet-dev/agentos-toolchain':
+        specifier: workspace:*
+        version: link:../../packages/agentos-toolchain
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.15)
+
+  test-harness:
+    dependencies:
+      '@rivet-dev/agentos-vm-test-harness':
+        specifier: workspace:*
+        version: link:../packages/vm-test-harness
+    devDependencies:
+      typescript:
+        specifier: ^5.9.2
         version: 5.9.3
 
 packages:
@@ -7615,6 +7826,77 @@ packages:
   npm-run-path@5.3.0:
     resolution: {integrity: sha512-ppwTtiJZq0O/ai0z7yfudtBpWIoxM8yE6nHi1X47eFR2EWORqfbu6CnPlNsjeN683eT0qG6H/Pyf9fCcvjnnnQ==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
+
+  npm@11.18.0:
+    resolution: {integrity: sha512-T67M4L5wNm0cZ7EBLErcEkY1SmzEW/WJ+SADBzsFUY1UdAPfFHXFQtZ6SEXiK0+vzXysCvAsepbMaBTwnrAD+w==}
+    engines: {node: ^20.17.0 || >=22.9.0}
+    hasBin: true
+    bundledDependencies:
+      - '@isaacs/string-locale-compare'
+      - '@npmcli/arborist'
+      - '@npmcli/config'
+      - '@npmcli/fs'
+      - '@npmcli/map-workspaces'
+      - '@npmcli/metavuln-calculator'
+      - '@npmcli/package-json'
+      - '@npmcli/promise-spawn'
+      - '@npmcli/redact'
+      - '@npmcli/run-script'
+      - '@sigstore/tuf'
+      - abbrev
+      - archy
+      - cacache
+      - chalk
+      - ci-info
+      - fastest-levenshtein
+      - fs-minipass
+      - glob
+      - graceful-fs
+      - hosted-git-info
+      - ini
+      - init-package-json
+      - is-cidr
+      - json-parse-even-better-errors
+      - libnpmaccess
+      - libnpmdiff
+      - libnpmexec
+      - libnpmfund
+      - libnpmorg
+      - libnpmpack
+      - libnpmpublish
+      - libnpmsearch
+      - libnpmteam
+      - libnpmversion
+      - make-fetch-happen
+      - minimatch
+      - minipass
+      - minipass-pipeline
+      - ms
+      - node-gyp
+      - nopt
+      - npm-audit-report
+      - npm-install-checks
+      - npm-package-arg
+      - npm-pick-manifest
+      - npm-profile
+      - npm-registry-fetch
+      - npm-user-validate
+      - p-map
+      - pacote
+      - parse-conflict-json
+      - proc-log
+      - qrcode-terminal
+      - read
+      - semver
+      - spdx-expression-parse
+      - ssri
+      - supports-color
+      - tar
+      - text-table
+      - tiny-relative-date
+      - treeverse
+      - validate-npm-package-name
+      - which
 
   nth-check@2.1.1:
     resolution: {integrity: sha512-lqjrjmaOoAnWfMmBPL+XNnynZh2+swxiX3WUE0s4yEHI6m+AwrK2UZOimIRl3X/4QctVqS8AiZjFqyOGrMXb/w==}
@@ -13583,6 +13865,8 @@ snapshots:
   npm-run-path@5.3.0:
     dependencies:
       path-key: 4.0.0
+
+  npm@11.18.0: {}
 
   nth-check@2.1.1:
     dependencies:

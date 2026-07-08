@@ -58,9 +58,9 @@
 //!
 //! Then runs the repo's built registry tars (skipped with a note if a tar is
 //! absent, e.g. in a clean checkout that has not built `dist/`):
-//!   - coreutils: `registry/software/coreutils/dist/package.tar` (large, many commands)
-//!   - tar:       `registry/software/tar/dist/package.tar`       (single wasm binary)
-//!   - git:       `registry/software/git/dist/package.tar`       (the package
+//!   - coreutils: `software/coreutils/dist/package.tar` (large, many commands)
+//!   - tar:       `software/tar/dist/package.tar`       (single wasm binary)
+//!   - git:       `software/git/dist/package.tar`       (the package
 //!     the marketing install comparison talks about)
 //!
 //! Override the source tars via env:
@@ -73,9 +73,9 @@
 //! ```text
 //! cargo test -p agentos-native-sidecar --release --test projection_bench -- --ignored --nocapture
 //! # or, pointing at built tars elsewhere:
-//! PROJ_BENCH_COREUTILS_TAR=/abs/registry/software/coreutils/dist/package.tar \
-//! PROJ_BENCH_TAR_TAR=/abs/registry/software/tar/dist/package.tar \
-//! PROJ_BENCH_GIT_TAR=/abs/registry/software/git/dist/package.tar \
+//! PROJ_BENCH_COREUTILS_TAR=/abs/software/coreutils/dist/package.tar \
+//! PROJ_BENCH_TAR_TAR=/abs/software/tar/dist/package.tar \
+//! PROJ_BENCH_GIT_TAR=/abs/software/git/dist/package.tar \
 //!   cargo test -p agentos-native-sidecar --release --test projection_bench -- --ignored --nocapture
 //! ```
 
@@ -612,15 +612,15 @@ fn projection_bench() {
 
     let coreutils_tar = source_tar_path(
         "PROJ_BENCH_COREUTILS_TAR",
-        "registry/software/coreutils/dist/package.tar",
+        "software/coreutils/dist/package.tar",
     );
     let tar_tar = source_tar_path(
         "PROJ_BENCH_TAR_TAR",
-        "registry/software/tar/dist/package.tar",
+        "software/tar/dist/package.tar",
     );
     let git_tar = source_tar_path(
         "PROJ_BENCH_GIT_TAR",
-        "registry/software/git/dist/package.tar",
+        "software/git/dist/package.tar",
     );
 
     println!("\n# agentOS package load benchmark (.aospkg)");
@@ -688,7 +688,7 @@ fn projection_bench() {
 fn coreutils_load_budget() {
     let coreutils_tar = source_tar_path(
         "PROJ_BENCH_COREUTILS_TAR",
-        "registry/software/coreutils/dist/package.tar",
+        "software/coreutils/dist/package.tar",
     );
     if !coreutils_tar.is_file() {
         eprintln!(

@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-false"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "false standalone binary for secure-exec VM"
+
+[[bin]]
+name = "false"
+path = "src/main.rs"
+
+[dependencies]
+uu_false = "0.7.0"

@@ -1,0 +1,14 @@
+[package]
+workspace = "../../../../../toolchain"
+name = "cmd-pathchk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "pathchk standalone binary for secure-exec VM"
+
+[[bin]]
+name = "pathchk"
+path = "src/main.rs"
+
+[dependencies]
+uu_pathchk = "0.7.0"

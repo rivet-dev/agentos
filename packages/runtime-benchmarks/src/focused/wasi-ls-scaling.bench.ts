@@ -273,7 +273,7 @@ function resolveAgentosRoot(): string | null {
 		join(process.cwd(), "../agentos"),
 	].filter((path): path is string => Boolean(path));
 	for (const candidate of candidates) {
-		if (existsSync(join(candidate, "registry/software/coreutils/wasm/ls"))) {
+		if (existsSync(join(candidate, "software/coreutils/wasm/ls"))) {
 			return candidate;
 		}
 	}
@@ -282,7 +282,7 @@ function resolveAgentosRoot(): string | null {
 
 function lsModuleBytes(agentosRoot: string | null): number | null {
 	if (!agentosRoot) return null;
-	const modulePath = join(agentosRoot, "registry/software/coreutils/wasm/ls");
+	const modulePath = join(agentosRoot, "software/coreutils/wasm/ls");
 	return existsSync(modulePath) ? statSync(modulePath).size : null;
 }
 

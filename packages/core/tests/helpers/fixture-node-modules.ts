@@ -93,7 +93,7 @@ function stripEscapingSymlinks(root: string): string[] {
 					// A hoisted deploy has no `.pnpm` store-escape symlinks, so an
 					// escaping link here is a workspace `link:` dep pnpm didn't copy
 					// — e.g. an agent package that now lives in the sibling
-					// secure-exec repo (registry/agent/*). Materialize a dereferenced
+					// secure-exec repo (software/*). Materialize a dereferenced
 					// copy so it's still present in the flat tree the VM mounts; a
 					// published install would have it as a real dir. Dangling or
 					// non-package escapes are dropped as before.
