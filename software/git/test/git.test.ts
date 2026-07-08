@@ -27,6 +27,19 @@ vi.setConfig({ testTimeout: 30_000 });
 /** Check git binary exists in addition to base WASM binaries */
 const hasGit = hasWasmBinaries && existsSync(resolve(COMMANDS_DIR, 'git'));
 const hasHostGit = spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0;
+// Smart HTTP needs Git's libcurl-backed remote helpers; this WASM build is NO_CURL.
+const hasGitHttpHelper = false;
+
+const gitConfig = [
+  '-c safe.directory=*',
+  '-c init.defaultBranch=main',
+  '-c user.name=agentos',
+  '-c user.email=agentos@example.invalid',
+].join(' ');
+
+function git(args: string) {
+  return `git ${gitConfig} ${args}`;
+}
 
 /** Create a kernel with a world-writable in-memory filesystem */
 async function createGitKernel() {
@@ -76,6 +89,11 @@ async function run(kernel: Kernel, cmd: string): Promise<{ stdout: string; stder
   return r;
 }
 
+async function expectGitRef(kernel: Kernel, repo: string, ref: string) {
+  const result = await run(kernel, git(`-C ${repo} rev-parse --verify ${ref}`));
+  expect(result.stdout.trim()).toMatch(/^[0-9a-f]{40,64}$/);
+}
+
 // TODO(P6): requires git WASM artifact, intentionally excluded from the fast software-build gate.
 describeIf(hasGit, 'git command', () => {
   let kernel: Kernel;
@@ -89,7 +107,7 @@ describeIf(hasGit, 'git command', () => {
   it('init creates .git directory structure', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    const result = await run(kernel, 'git init /repo');
+    const result = await run(kernel, git('init /repo'));
     expect(result.stdout).toContain('Initialized empty Git repository');
 
     expect(await vfs.exists('/repo/.git/HEAD')).toBe(true);
@@ -103,10 +121,10 @@ describeIf(hasGit, 'git command', () => {
   it('add + commit creates objects and updates ref', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /repo');
+    await run(kernel, git('init /repo'));
     await kernel.writeFile('/repo/hello.txt', 'hello world\n');
-    await run(kernel, 'git -C /repo add hello.txt');
-    await run(kernel, "git -C /repo commit -m 'first commit'");
+    await run(kernel, git('-C /repo add hello.txt'));
+    await run(kernel, git("-C /repo commit -m 'first commit'"));
 
     expect(await vfs.exists('/repo/.git/refs/heads/main')).toBe(true);
   });
@@ -114,26 +132,26 @@ describeIf(hasGit, 'git command', () => {
   it('branch lists branches with current marked', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /repo');
+    await run(kernel, git('init /repo'));
     await kernel.writeFile('/repo/file.txt', 'content\n');
-    await run(kernel, 'git -C /repo add file.txt');
-    await run(kernel, "git -C /repo commit -m 'init'");
+    await run(kernel, git('-C /repo add file.txt'));
+    await run(kernel, git("-C /repo commit -m 'init'"));
 
-    const result = await run(kernel, 'git -C /repo branch');
+    const result = await run(kernel, git('-C /repo branch'));
     expect(result.stdout.trim()).toBe('* main');
   });
 
   it('checkout -b creates a new branch', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /repo');
+    await run(kernel, git('init /repo'));
     await kernel.writeFile('/repo/file.txt', 'content\n');
-    await run(kernel, 'git -C /repo add file.txt');
-    await run(kernel, "git -C /repo commit -m 'init'");
+    await run(kernel, git('-C /repo add file.txt'));
+    await run(kernel, git("-C /repo commit -m 'init'"));
 
-    await run(kernel, 'git -C /repo checkout -b feature');
+    await run(kernel, git('-C /repo checkout -b feature'));
 
-    const result = await run(kernel, 'git -C /repo branch');
+    const result = await run(kernel, git('-C /repo branch'));
     const lines = result.stdout.trim().split('\n').map((l: string) => l.trim());
     expect(lines).toContain('* feature');
     expect(lines).toContain('main');
@@ -143,36 +161,36 @@ describeIf(hasGit, 'git command', () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
     // Create origin repo
-    await run(kernel, 'git init /tmp/origin');
+    await run(kernel, git('init /tmp/origin'));
     await kernel.writeFile('/tmp/origin/README.md', '# demo repo\n');
-    await run(kernel, 'git -C /tmp/origin add README.md');
-    await run(kernel, "git -C /tmp/origin commit -m 'initial commit'");
+    await run(kernel, git('-C /tmp/origin add README.md'));
+    await run(kernel, git("-C /tmp/origin commit -m 'initial commit'"));
 
     // Check default branch
-    let r = await run(kernel, 'git -C /tmp/origin branch');
+    let r = await run(kernel, git('-C /tmp/origin branch'));
     expect(r.stdout.trim()).toBe('* main');
 
     // Create feature branch with a new file
-    await run(kernel, 'git -C /tmp/origin checkout -b feature');
+    await run(kernel, git('-C /tmp/origin checkout -b feature'));
     await kernel.writeFile('/tmp/origin/feature.txt', 'checked out from feature\n');
-    await run(kernel, 'git -C /tmp/origin add feature.txt');
-    await run(kernel, "git -C /tmp/origin commit -m 'add feature file'");
+    await run(kernel, git('-C /tmp/origin add feature.txt'));
+    await run(kernel, git("-C /tmp/origin commit -m 'add feature file'"));
 
     // Switch back to main
-    await run(kernel, 'git -C /tmp/origin checkout main');
+    await run(kernel, git('-C /tmp/origin checkout main'));
 
     // Clone
-    await run(kernel, 'git clone /tmp/origin /tmp/clone');
+    await run(kernel, git('clone /tmp/origin /tmp/clone'));
 
     // Clone should only show main branch initially
-    r = await run(kernel, 'git -C /tmp/clone branch');
+    r = await run(kernel, git('-C /tmp/clone branch'));
     expect(r.stdout.trim()).toBe('* main');
 
     // Checkout feature (DWIM from remote tracking)
-    await run(kernel, 'git -C /tmp/clone checkout feature');
+    await run(kernel, git('-C /tmp/clone checkout feature'));
 
     // Now both branches should be listed
-    r = await run(kernel, 'git -C /tmp/clone branch');
+    r = await run(kernel, git('-C /tmp/clone branch'));
     const branches = r.stdout.trim().split('\n').map((l: string) => l.trim());
     expect(branches).toContain('* feature');
     expect(branches).toContain('main');
@@ -189,13 +207,13 @@ describeIf(hasGit, 'git command', () => {
   it('clone without an explicit destination uses the source basename', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /tmp/origin');
+    await run(kernel, git('init /tmp/origin'));
     await kernel.writeFile('/tmp/origin/README.md', 'default destination\n');
-    await run(kernel, 'git -C /tmp/origin add README.md');
-    await run(kernel, "git -C /tmp/origin commit -m 'seed'");
+    await run(kernel, git('-C /tmp/origin add README.md'));
+    await run(kernel, git("-C /tmp/origin commit -m 'seed'"));
 
     await run(kernel, 'mkdir -p /work');
-    await run(kernel, 'git -C /work clone /tmp/origin');
+    await run(kernel, git('-C /work clone /tmp/origin'));
 
     expect(await vfs.exists('/work/origin/.git/HEAD')).toBe(true);
     const readmeContent = new TextDecoder().decode(await vfs.readFile('/work/origin/README.md'));
@@ -205,13 +223,13 @@ describeIf(hasGit, 'git command', () => {
   it('clone without an explicit destination strips a trailing .git suffix', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /tmp/origin.git');
+    await run(kernel, git('init /tmp/origin.git'));
     await kernel.writeFile('/tmp/origin.git/README.md', 'suffix destination\n');
-    await run(kernel, 'git -C /tmp/origin.git add README.md');
-    await run(kernel, "git -C /tmp/origin.git commit -m 'seed'");
+    await run(kernel, git('-C /tmp/origin.git add README.md'));
+    await run(kernel, git("-C /tmp/origin.git commit -m 'seed'"));
 
     await run(kernel, 'mkdir -p /work');
-    await run(kernel, 'git -C /work clone /tmp/origin.git');
+    await run(kernel, git('-C /work clone /tmp/origin.git'));
 
     expect(await vfs.exists('/work/origin/.git/HEAD')).toBe(true);
     const readmeContent = new TextDecoder().decode(await vfs.readFile('/work/origin/README.md'));
@@ -221,13 +239,13 @@ describeIf(hasGit, 'git command', () => {
   it('clone into an existing empty destination directory succeeds', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /tmp/origin');
+    await run(kernel, git('init /tmp/origin'));
     await kernel.writeFile('/tmp/origin/README.md', 'empty destination\n');
-    await run(kernel, 'git -C /tmp/origin add README.md');
-    await run(kernel, "git -C /tmp/origin commit -m 'seed'");
+    await run(kernel, git('-C /tmp/origin add README.md'));
+    await run(kernel, git("-C /tmp/origin commit -m 'seed'"));
 
     await run(kernel, 'mkdir -p /tmp/clone');
-    await run(kernel, 'git clone /tmp/origin /tmp/clone');
+    await run(kernel, git('clone /tmp/origin /tmp/clone'));
 
     expect(await vfs.exists('/tmp/clone/.git/HEAD')).toBe(true);
     const readmeContent = new TextDecoder().decode(await vfs.readFile('/tmp/clone/README.md'));
@@ -237,15 +255,15 @@ describeIf(hasGit, 'git command', () => {
   it('clone rejects a non-empty destination directory', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /tmp/origin');
+    await run(kernel, git('init /tmp/origin'));
     await kernel.writeFile('/tmp/origin/README.md', 'origin\n');
-    await run(kernel, 'git -C /tmp/origin add README.md');
-    await run(kernel, "git -C /tmp/origin commit -m 'seed'");
+    await run(kernel, git('-C /tmp/origin add README.md'));
+    await run(kernel, git("-C /tmp/origin commit -m 'seed'"));
 
     await run(kernel, 'mkdir -p /tmp/clone');
     await kernel.writeFile('/tmp/clone/existing.txt', 'keep me\n');
 
-    const result = await kernel.exec('git clone /tmp/origin /tmp/clone');
+    const result = await kernel.exec(git('clone /tmp/origin /tmp/clone'));
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toMatch(/already exists|not an empty directory|destination/i);
 
@@ -257,7 +275,7 @@ describeIf(hasGit, 'git command', () => {
   it('clone of a missing repository fails without leaving a partial destination', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    const result = await kernel.exec('git clone /tmp/missing /tmp/clone');
+    const result = await kernel.exec(git('clone /tmp/missing /tmp/clone'));
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toMatch(/not a git repository|missing|no such file|fatal/i);
     expect(await vfs.exists('/tmp/clone')).toBe(false);
@@ -266,8 +284,8 @@ describeIf(hasGit, 'git command', () => {
   it('clone of an empty repository succeeds and leaves an empty worktree', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /tmp/origin');
-    await run(kernel, 'git clone /tmp/origin /tmp/clone');
+    await run(kernel, git('init /tmp/origin'));
+    await run(kernel, git('clone /tmp/origin /tmp/clone'));
 
     const head = new TextDecoder().decode(await vfs.readFile('/tmp/clone/.git/HEAD'));
     expect(head.trim()).toBe('ref: refs/heads/main');
@@ -279,14 +297,14 @@ describeIf(hasGit, 'git command', () => {
   it('clone preserves nested directory trees', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /tmp/origin');
+    await run(kernel, git('init /tmp/origin'));
     await run(kernel, 'mkdir -p /tmp/origin/src/nested');
     await kernel.writeFile('/tmp/origin/src/nested/file.txt', 'nested payload\n');
     await kernel.writeFile('/tmp/origin/src/root.txt', 'root payload\n');
-    await run(kernel, 'git -C /tmp/origin add src/nested/file.txt src/root.txt');
-    await run(kernel, "git -C /tmp/origin commit -m 'nested tree'");
+    await run(kernel, git('-C /tmp/origin add src/nested/file.txt src/root.txt'));
+    await run(kernel, git("-C /tmp/origin commit -m 'nested tree'"));
 
-    await run(kernel, 'git clone /tmp/origin /tmp/clone');
+    await run(kernel, git('clone /tmp/origin /tmp/clone'));
 
     const nested = new TextDecoder().decode(await vfs.readFile('/tmp/clone/src/nested/file.txt'));
     const root = new TextDecoder().decode(await vfs.readFile('/tmp/clone/src/root.txt'));
@@ -297,17 +315,17 @@ describeIf(hasGit, 'git command', () => {
   it('clone honors the source default branch when HEAD is not main', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /tmp/origin');
+    await run(kernel, git('init /tmp/origin'));
     await kernel.writeFile('/tmp/origin/README.md', 'main branch\n');
-    await run(kernel, 'git -C /tmp/origin add README.md');
-    await run(kernel, "git -C /tmp/origin commit -m 'main'");
+    await run(kernel, git('-C /tmp/origin add README.md'));
+    await run(kernel, git("-C /tmp/origin commit -m 'main'"));
 
-    await run(kernel, 'git -C /tmp/origin checkout -b trunk');
+    await run(kernel, git('-C /tmp/origin checkout -b trunk'));
     await kernel.writeFile('/tmp/origin/trunk.txt', 'trunk branch\n');
-    await run(kernel, 'git -C /tmp/origin add trunk.txt');
-    await run(kernel, "git -C /tmp/origin commit -m 'trunk'");
+    await run(kernel, git('-C /tmp/origin add trunk.txt'));
+    await run(kernel, git("-C /tmp/origin commit -m 'trunk'"));
 
-    await run(kernel, 'git clone /tmp/origin /tmp/clone');
+    await run(kernel, git('clone /tmp/origin /tmp/clone'));
 
     const head = new TextDecoder().decode(await vfs.readFile('/tmp/clone/.git/HEAD'));
     expect(head.trim()).toBe('ref: refs/heads/trunk');
@@ -319,22 +337,22 @@ describeIf(hasGit, 'git command', () => {
   it('clone copies nested branch refs and checkout DWIM works for branch names with slashes', async () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /tmp/origin');
+    await run(kernel, git('init /tmp/origin'));
     await kernel.writeFile('/tmp/origin/README.md', '# demo repo\n');
-    await run(kernel, 'git -C /tmp/origin add README.md');
-    await run(kernel, "git -C /tmp/origin commit -m 'initial commit'");
+    await run(kernel, git('-C /tmp/origin add README.md'));
+    await run(kernel, git("-C /tmp/origin commit -m 'initial commit'"));
 
-    await run(kernel, 'git -C /tmp/origin checkout -b feature/deep');
+    await run(kernel, git('-C /tmp/origin checkout -b feature/deep'));
     await kernel.writeFile('/tmp/origin/feature.txt', 'nested branch payload\n');
-    await run(kernel, 'git -C /tmp/origin add feature.txt');
-    await run(kernel, "git -C /tmp/origin commit -m 'nested branch'");
-    await run(kernel, 'git -C /tmp/origin checkout main');
+    await run(kernel, git('-C /tmp/origin add feature.txt'));
+    await run(kernel, git("-C /tmp/origin commit -m 'nested branch'"));
+    await run(kernel, git('-C /tmp/origin checkout main'));
 
-    await run(kernel, 'git clone /tmp/origin /tmp/clone');
+    await run(kernel, git('clone /tmp/origin /tmp/clone'));
 
-    expect(await vfs.exists('/tmp/clone/.git/refs/remotes/origin/feature/deep')).toBe(true);
+    await expectGitRef(kernel, '/tmp/clone', 'refs/remotes/origin/feature/deep');
 
-    await run(kernel, 'git -C /tmp/clone checkout feature/deep');
+    await run(kernel, git('-C /tmp/clone checkout feature/deep'));
     const featureContent = new TextDecoder().decode(await vfs.readFile('/tmp/clone/feature.txt'));
     expect(featureContent).toBe('nested branch payload\n');
     const head = new TextDecoder().decode(await vfs.readFile('/tmp/clone/.git/HEAD'));
@@ -345,56 +363,51 @@ describeIf(hasGit, 'git command', () => {
     ({ kernel, vfs, dispose } = await createGitKernel());
 
     await run(kernel, 'mkdir -p /tmp/work');
-    await run(kernel, 'git init /tmp/work/origin');
+    await run(kernel, git('init /tmp/work/origin'));
     await kernel.writeFile('/tmp/work/origin/README.md', 'relative clone\n');
-    await run(kernel, 'git -C /tmp/work/origin add README.md');
-    await run(kernel, "git -C /tmp/work/origin commit -m 'seed'");
+    await run(kernel, git('-C /tmp/work/origin add README.md'));
+    await run(kernel, git("-C /tmp/work/origin commit -m 'seed'"));
 
-    await run(kernel, 'git -C /tmp/work clone ./origin ./clone');
+    await run(kernel, git('-C /tmp/work clone ./origin ./clone'));
 
     expect(await vfs.exists('/tmp/work/clone/.git/HEAD')).toBe(true);
     const readmeContent = new TextDecoder().decode(await vfs.readFile('/tmp/work/clone/README.md'));
     expect(readmeContent).toBe('relative clone\n');
   });
 
-  it('push fails with a typed unsupported-subcommand error', async () => {
+  it('push fails with a real Git remote/ref error', async () => {
     ({ kernel, dispose } = await createGitKernel());
 
-    await run(kernel, 'git init /tmp/repo');
+    await run(kernel, git('init /tmp/repo'));
 
-    const result = await kernel.exec('git -C /tmp/repo push origin main');
+    const result = await kernel.exec(git('-C /tmp/repo push origin main'));
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain('GitSubcommandUnsupported');
-    expect(result.stderr).toContain('git push');
-    expect(result.stderr).toContain('README.md');
+    expect(result.stderr).toMatch(/fatal|error|origin|refspec|repository/i);
+    expect(result.stderr).not.toContain('GitSubcommandUnsupported');
   });
 
-  it('clone rejects SSH-style remotes with a typed unsupported-subcommand error', async () => {
+  it('clone rejects SSH-style remotes with a real Git spawn failure', async () => {
     ({ kernel, dispose } = await createGitKernel());
 
-    const result = await kernel.exec('git clone git@github.com:rivet-dev/agentos.git /tmp/clone');
+    const result = await kernel.exec(git('clone git@github.com:rivet-dev/agentos.git /tmp/clone'));
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain('GitSubcommandUnsupported');
-    expect(result.stderr).toContain('git clone');
-    expect(result.stderr).toContain('SSH');
-    expect(result.stderr).toContain('README.md');
+    expect(result.stderr).toMatch(/cannot run ssh|unable to fork|ssh|fatal/i);
+    expect(result.stderr).not.toContain('GitSubcommandUnsupported');
   });
 
-  it('clone rejects authenticated HTTPS remotes loudly instead of attempting a broken auth flow', async () => {
+  it('clone rejects HTTPS remotes until Git is linked with libcurl remote helpers', async () => {
     ({ kernel, dispose } = await createGitKernel());
 
     const result = await kernel.exec(
-      'git clone https://private@example.com/owner/repo.git /tmp/clone',
+      git('clone https://private@example.com/owner/repo.git /tmp/clone'),
       { env: { GIT_AUTH_TOKEN: 'test-token' } },
     );
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain('GitSubcommandUnsupported');
-    expect(result.stderr).toContain('git clone');
-    expect(result.stderr).toContain('authenticated HTTP(S) remotes');
-    expect(result.stderr).toContain('README.md');
+    expect(result.stderr).toMatch(/remote-https|remote helper|fatal|unable/i);
+    expect(result.stderr).not.toContain('GitSubcommandUnsupported');
   });
 
-  describeIf(hasHostGit, 'remote clone over smart HTTP', () => {
+  describeIf(hasHostGit && hasGitHttpHelper, 'remote clone over smart HTTP', () => {
     let repoRoot: string;
     let httpServer: HttpServer;
     let httpPort: number;
@@ -530,16 +543,16 @@ describeIf(hasGit, 'git command', () => {
     it('clone fetches refs and worktree contents from a smart HTTP remote', async () => {
       ({ kernel, vfs, dispose } = await createGitKernelWithNet([httpPort]));
 
-      await run(kernel, `git clone http://127.0.0.1:${httpPort}/origin.git /tmp/clone`);
+      await run(kernel, git(`clone http://127.0.0.1:${httpPort}/origin.git /tmp/clone`));
 
       const head = new TextDecoder().decode(await kernel.readFile('/tmp/clone/.git/HEAD'));
       expect(head.trim()).toBe('ref: refs/heads/main');
 
       const readme = new TextDecoder().decode(await kernel.readFile('/tmp/clone/README.md'));
       expect(readme).toBe('remote smart clone\n');
-      expect(await kernel.exists('/tmp/clone/.git/refs/remotes/origin/feature/deep')).toBe(true);
+      await expectGitRef(kernel, '/tmp/clone', 'refs/remotes/origin/feature/deep');
 
-      await run(kernel, 'git -C /tmp/clone checkout feature/deep');
+      await run(kernel, git('-C /tmp/clone checkout feature/deep'));
       const feature = new TextDecoder().decode(await kernel.readFile('/tmp/clone/feature.txt'));
       expect(feature).toBe('remote branch payload\n');
     });

@@ -614,14 +614,8 @@ fn projection_bench() {
         "PROJ_BENCH_COREUTILS_TAR",
         "software/coreutils/dist/package.tar",
     );
-    let tar_tar = source_tar_path(
-        "PROJ_BENCH_TAR_TAR",
-        "software/tar/dist/package.tar",
-    );
-    let git_tar = source_tar_path(
-        "PROJ_BENCH_GIT_TAR",
-        "software/git/dist/package.tar",
-    );
+    let tar_tar = source_tar_path("PROJ_BENCH_TAR_TAR", "software/tar/dist/package.tar");
+    let git_tar = source_tar_path("PROJ_BENCH_GIT_TAR", "software/git/dist/package.tar");
 
     println!("\n# agentOS package load benchmark (.aospkg)");
     println!(

@@ -68,7 +68,7 @@ COMMANDS_DIR ?= ../target/wasm32-wasip1/release/commands
 
 # Fast real commands installed by the default software gate. Slow/heavy commands
 # (duckdb, vim) remain available through explicit parent `make cmd/<name>`.
-COMMANDS := zip unzip envsubst sqlite3 curl wget grep tree
+COMMANDS := zip unzip envsubst sqlite3 curl wget grep git tree
 
 # Programs requiring patched sysroot (Tier 2+ custom host imports)
 PATCHED_PROGRAMS := http_get_test isatty_test getpid_test getppid_test getppid_verify userinfo pipe_test dup_test spawn_child spawn_exit_code pipeline kill_child waitpid_return waitpid_edge syscall_coverage getpwuid_test signal_tests sigaction_self sigaction_behavior delayed_tcp_echo delayed_kill pipe_edge tcp_accept_spawn tcp_echo tcp_server http_server udp_echo unix_socket signal_handler dns_lookup sqlite3 curl wget grep tree zip unzip fs_probe
@@ -150,11 +150,18 @@ CURL_RELEASE_URL := https://github.com/curl/curl/releases/download/curl-$(CURL_R
 CURL_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/curl-upstream
 CURL_UPSTREAM_OVERLAY_DIR := ../../software/curl/native/c/overlay
 CURL_UPSTREAM_OVERLAY_FILES := $(wildcard $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/*.h $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.c $(CURL_UPSTREAM_OVERLAY_DIR)/lib/vtls/*.h)
+ZLIB_VERSION := 1.3.1
+ZLIB_URL := https://zlib.net/zlib-$(ZLIB_VERSION).tar.gz
+ZLIB_BUILD_DIR := $(BUILD_DIR)/zlib
 WGET_VERSION := 1.24.5
 WGET_URL := https://ftp.gnu.org/gnu/wget/wget-$(WGET_VERSION).tar.gz
 WGET_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/wget-upstream
 WGET_UPSTREAM_OVERLAY_INCLUDE_DIR := overlays/wget/include
 WGET_UPSTREAM_OVERLAY_FILES := $(wildcard $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR)/*.h)
+GIT_VERSION := 2.55.0
+GIT_URL := https://www.kernel.org/pub/software/scm/git/git-$(GIT_VERSION).tar.xz
+GIT_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/git-upstream
+GIT_PATCH_DIR := patches/git
 GREP_VERSION := 3.12
 GREP_URL := https://ftp.gnu.org/gnu/grep/grep-$(GREP_VERSION).tar.xz
 GREP_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/grep-upstream
@@ -521,6 +528,23 @@ $(NATIVE_DIR)/sqlite3: libs/sqlite3/shell.c libs/sqlite3/sqlite3.c
 	$(NATIVE_CC) $(NATIVE_CFLAGS) $(SQLITE_SHELL_NATIVE) -Ilibs/sqlite3 -o $@ \
 	    libs/sqlite3/shell.c libs/sqlite3/sqlite3.c -lm -lpthread
 
+$(LIBS_CACHE)/zlib-$(ZLIB_VERSION)/zlib.h:
+	@echo "Fetching zlib $(ZLIB_VERSION)..."
+	@mkdir -p $(LIBS_CACHE)
+	@curl -fSL "$(ZLIB_URL)" -o "$(LIBS_CACHE)/zlib-$(ZLIB_VERSION).tar.gz"
+	@rm -rf "$(LIBS_CACHE)/zlib-$(ZLIB_VERSION)"
+	@tar -xzf "$(LIBS_CACHE)/zlib-$(ZLIB_VERSION).tar.gz" -C "$(LIBS_CACHE)"
+
+$(ZLIB_BUILD_DIR)/libz.a: $(LIBS_CACHE)/zlib-$(ZLIB_VERSION)/zlib.h $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(ZLIB_BUILD_DIR)
+	@for src in adler32.c crc32.c deflate.c infback.c inffast.c inflate.c inftrees.c trees.c zutil.c compress.c uncompr.c gzclose.c gzlib.c gzread.c gzwrite.c; do \
+		$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -O2 -DHAVE_UNISTD_H \
+			-I$(LIBS_CACHE)/zlib-$(ZLIB_VERSION) \
+			-c "$(LIBS_CACHE)/zlib-$(ZLIB_VERSION)/$$src" \
+			-o "$(ZLIB_BUILD_DIR)/$${src%.c}.o"; \
+	done
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $@ $(ZLIB_BUILD_DIR)/*.o
+
 $(NATIVE_DIR)/sqlite3_cli: $(NATIVE_DIR)/sqlite3
 	cp $< $@
 
@@ -557,6 +581,22 @@ $(BUILD_DIR)/unzip: scripts/build-infozip-upstream.sh $(PATCHED_SYSROOT)/lib/was
 		--cache-dir "$(abspath $(LIBS_CACHE))" \
 		--build-dir "$(abspath $(INFOZIP_UNZIP_BUILD_DIR))" \
 		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
+		--output "$(abspath $@)"
+
+$(BUILD_DIR)/git: scripts/build-git-upstream.sh $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+	@mkdir -p $(BUILD_DIR)
+	bash scripts/build-git-upstream.sh \
+		--version "$(GIT_VERSION)" \
+		--url "$(GIT_URL)" \
+		--cache-dir "$(abspath $(LIBS_CACHE))" \
+		--build-dir "$(abspath $(GIT_UPSTREAM_BUILD_DIR))" \
+		--patch-dir "$(abspath $(GIT_PATCH_DIR))" \
+		--zlib-dir "$(abspath $(LIBS_CACHE)/zlib-$(ZLIB_VERSION))" \
+		--zlib-build-dir "$(abspath $(ZLIB_BUILD_DIR))" \
+		--cc "$(abspath $(CC))" \
+		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
+		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--sysroot "$(abspath $(SYSROOT))" \
 		--output "$(abspath $@)"
 
 # curl_test: links libcurl (HTTP/HTTPS build for WASM via host_net + host_tls)
@@ -655,10 +695,11 @@ install:
 		fi; \
 	done; \
 	echo "Installed $$INSTALLED C command(s) to $(COMMANDS_DIR)"
-	@# Create symlinks for git remote helpers
+	@# Create symlinks for Git helper entry points used by upstream Git.
 	@if [ -f "$(COMMANDS_DIR)/git" ]; then \
-		ln -sf git "$(COMMANDS_DIR)/git-remote-http"; \
-		ln -sf git "$(COMMANDS_DIR)/git-remote-https"; \
+		for alias in git-remote-http git-remote-https git-upload-pack git-receive-pack git-upload-archive; do \
+			ln -sf git "$(COMMANDS_DIR)/$$alias"; \
+		done; \
 	fi
 
 # --- Clean ---

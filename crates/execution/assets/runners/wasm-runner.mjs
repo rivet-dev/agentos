@@ -30,6 +30,7 @@ const WASI_ERRNO_FAULT = 21;
 const WASI_RIGHT_FD_WRITE = 64n;
 const WASI_FILETYPE_UNKNOWN = 0;
 const WASI_FILETYPE_CHARACTER_DEVICE = 2;
+const WASI_FILETYPE_DIRECTORY = 3;
 const WASI_FILETYPE_REGULAR_FILE = 4;
 const WASI_OFLAGS_CREAT = 1;
 const WASI_OFLAGS_DIRECTORY = 2;
@@ -428,7 +429,8 @@ const passthroughHandles = new Map([
 ]);
 const retainedSyntheticHandlesByDisplayFd = new Map();
 const retainedSpawnOutputHandlesByFd = new Map();
-let nextSyntheticFd = 64;
+const FIRST_SYNTHETIC_FD = 1 << 20;
+let nextSyntheticFd = FIRST_SYNTHETIC_FD;
 let nextSyntheticPipeId = 1;
 const syntheticWaitArray = new Int32Array(new SharedArrayBuffer(4));
 let delegateWriteScratch = { base: 0, capacity: 0 };
@@ -1160,13 +1162,19 @@ function fsOpenFlagForPathOpen(oflags, rightsBase, fdflags) {
   return 'r+';
 }
 
-function allocateSyntheticFd() {
-  let fd = nextSyntheticFd;
-  while (
+function syntheticFdInUse(fd) {
+  return (
     syntheticFdEntries.has(fd) ||
     passthroughHandles.has(fd) ||
+    retainedSpawnOutputHandlesByFd.has(fd) ||
+    retainedSyntheticHandlesByDisplayFd.has(fd) ||
     delegateManagedFdRefCounts.has(fd)
-  ) {
+  );
+}
+
+function allocateSyntheticFd(minFd = nextSyntheticFd) {
+  let fd = Math.max(FIRST_SYNTHETIC_FD, Number(minFd) >>> 0);
+  while (syntheticFdInUse(fd)) {
     fd += 1;
   }
   nextSyntheticFd = fd + 1;
@@ -1226,8 +1234,9 @@ function openManagedPathIoFd(guestPath, rightsBase, fdflags) {
     return null;
   }
   try {
+    const hostPath = resolveHostFsPath(guestPath) ?? guestPath;
     return fsModule.openSync(
-      guestPath,
+      hostPath,
       fsOpenNumericFlagsForManagedPath(rightsBase, fdflags),
       0o666,
     );
@@ -1243,16 +1252,35 @@ function retainPathOpenDelegateFd(openedFdPtr, guestPath, fdflags, rightsBase) {
 
   try {
     const openedFd = new DataView(instanceMemory.buffer).getUint32(Number(openedFdPtr), true);
+    let retainedFd = openedFd;
+    if (openedFd > 2 && syntheticFdInUse(openedFd)) {
+      if (typeof delegateManagedFdRenumber !== 'function') {
+        return WASI_ERRNO_FAULT;
+      }
+      retainedFd = allocateSyntheticFd(openedFd + 1);
+      const renumberResult = delegateManagedFdRenumber(openedFd, retainedFd);
+      if (renumberResult !== WASI_ERRNO_SUCCESS) {
+        return renumberResult;
+      }
+      const writeResult = writeGuestUint32(openedFdPtr, retainedFd);
+      if (writeResult !== WASI_ERRNO_SUCCESS) {
+        return writeResult;
+      }
+      traceHostProcess('path-open-delegate-renumber', {
+        openedFd,
+        retainedFd,
+      });
+    }
     const append = (Number(fdflags) & WASI_FDFLAGS_APPEND) !== 0;
-    retainDelegateFd(openedFd);
-    if (openedFd > 2 && !passthroughHandles.has(openedFd)) {
+    retainDelegateFd(retainedFd);
+    if (retainedFd > 2 && !passthroughHandles.has(retainedFd)) {
       const ioFd = openManagedPathIoFd(guestPath, rightsBase, fdflags);
-      closedPassthroughFds.delete(openedFd);
-      passthroughHandles.set(openedFd, {
+      closedPassthroughFds.delete(retainedFd);
+      passthroughHandles.set(retainedFd, {
         kind: 'passthrough',
-        targetFd: openedFd,
+        targetFd: retainedFd,
         ioFd,
-        displayFd: openedFd,
+        displayFd: retainedFd,
         refCount: 0,
         open: true,
         readOnly:
@@ -1329,6 +1357,19 @@ function writeGuestFilestat(ptr, stats, filetype = WASI_FILETYPE_REGULAR_FILE) {
   } catch {
     return WASI_ERRNO_FAULT;
   }
+}
+
+function wasiFiletypeFromStats(stats) {
+  if (typeof stats?.isDirectory === 'function' && stats.isDirectory()) {
+    return WASI_FILETYPE_DIRECTORY;
+  }
+  if (typeof stats?.isCharacterDevice === 'function' && stats.isCharacterDevice()) {
+    return WASI_FILETYPE_CHARACTER_DEVICE;
+  }
+  if (typeof stats?.isFile === 'function' && stats.isFile()) {
+    return WASI_FILETYPE_REGULAR_FILE;
+  }
+  return WASI_FILETYPE_UNKNOWN;
 }
 
 function writeGuestFdstat(ptr, filetype, flags, rightsBase, rightsInheriting) {
@@ -4226,8 +4267,8 @@ const hostProcessImport = {
               readHandleCount: 0,
               writeHandleCount: 0,
             };
-            const readFd = nextSyntheticFd++;
-            const writeFd = nextSyntheticFd++;
+            const readFd = allocateSyntheticFd();
+            const writeFd = allocateSyntheticFd();
             syntheticFdEntries.set(readFd, createPipeHandle('pipe-read', pipe, readFd));
             syntheticFdEntries.set(writeFd, createPipeHandle('pipe-write', pipe, writeFd));
             if (writeGuestUint32(retReadFdPtr, readFd) !== WASI_ERRNO_SUCCESS) {
@@ -4244,20 +4285,7 @@ const hostProcessImport = {
             if (!handle) {
               return WASI_ERRNO_BADF;
             }
-            let duplicatedFd = 0;
-            while (
-              duplicatedFd <= 2 &&
-              (
-                syntheticFdEntries.has(duplicatedFd) ||
-                passthroughHandles.has(duplicatedFd) ||
-                delegateManagedFdRefCounts.has(duplicatedFd)
-              )
-            ) {
-              duplicatedFd += 1;
-            }
-            if (duplicatedFd > 2) {
-              duplicatedFd = nextSyntheticFd++;
-            }
+            const duplicatedFd = allocateSyntheticFd(0);
             syntheticFdEntries.set(duplicatedFd, handle);
             traceHostProcess('fd-dup', {
               fd: Number(fd) >>> 0,
@@ -4329,15 +4357,7 @@ const hostProcessImport = {
               return WASI_ERRNO_BADF;
             }
 
-            let duplicatedFd = minimumFdNumber >>> 0;
-            while (
-              syntheticFdEntries.has(duplicatedFd) ||
-              passthroughHandles.has(duplicatedFd) ||
-              delegateManagedFdRefCounts.has(duplicatedFd)
-            ) {
-              duplicatedFd += 1;
-            }
-            nextSyntheticFd = Math.max(nextSyntheticFd, duplicatedFd + 1);
+            const duplicatedFd = allocateSyntheticFd(minimumFdNumber);
 
             syntheticFdEntries.set(duplicatedFd, handle);
             traceHostProcess('fd-dup-min', {
@@ -5213,11 +5233,13 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
   }
 
   if (handle?.kind === 'passthrough') {
-    return delegateManagedFdRead
-      ? __agentOSWasiMeasurePhase('fd_read', 'delegate_call', () =>
-          delegateManagedFdRead(handle.targetFd, iovs, iovsLen, nreadPtr)
-        )
-      : WASI_ERRNO_BADF;
+    if (!delegateManagedFdRead) {
+      return WASI_ERRNO_BADF;
+    }
+    const result = __agentOSWasiMeasurePhase('fd_read', 'delegate_call', () =>
+      delegateManagedFdRead(handle.targetFd, iovs, iovsLen, nreadPtr)
+    );
+    return result;
   }
 
   if (rejectClosedPassthroughFd(numericFd)) {
@@ -5291,9 +5313,10 @@ wasiImport.fd_pread = (fd, iovs, iovsLen, offset, nreadPtr) => {
         return mapSyntheticFsError(error);
       }
     }
-    return delegateFdPread
-      ? delegateFdPread(handle.targetFd, iovs, iovsLen, offset, nreadPtr)
-      : WASI_ERRNO_BADF;
+    if (!delegateFdPread) {
+      return WASI_ERRNO_BADF;
+    }
+    return delegateFdPread(handle.targetFd, iovs, iovsLen, offset, nreadPtr);
   }
 
   if (rejectClosedPassthroughFd(fd)) {
@@ -5308,6 +5331,9 @@ wasiImport.fd_pread = (fd, iovs, iovsLen, offset, nreadPtr) => {
 wasiImport.fd_pwrite = (fd, iovs, iovsLen, offset, nwrittenPtr) => {
   const handle = lookupFdHandle(fd);
   if (handle?.kind === 'guest-file') {
+    if (handle.readOnly === true) {
+      return WASI_ERRNO_ROFS;
+    }
     try {
       const bytes = collectGuestIovBytes(iovs, iovsLen);
       const written = fsModule.writeSync(
@@ -5512,11 +5538,50 @@ wasiImport.fd_fdstat_get = (fd, statPtr) => {
     );
   }
 
+  if (handle?.kind === 'guest-file') {
+    try {
+      const stat = fsModule.fstatSync(handle.targetFd);
+      return writeGuestFdstat(
+        statPtr,
+        wasiFiletypeFromStats(stat),
+        0,
+        WASI_RIGHT_FD_READ |
+          WASI_RIGHT_FD_SEEK |
+          WASI_RIGHT_FD_TELL |
+          WASI_RIGHT_FD_FILESTAT_GET |
+          WASI_RIGHT_FD_WRITE |
+          WASI_RIGHT_FD_SYNC,
+        0n,
+      );
+    } catch (error) {
+      return mapSyntheticFsError(error);
+    }
+  }
+
   if (handle && handle.kind !== 'passthrough') {
     return WASI_ERRNO_BADF;
   }
 
   if (handle?.kind === 'passthrough') {
+    if (typeof handle.ioFd === 'number') {
+      try {
+        const stat = fsModule.fstatSync(handle.ioFd);
+        return writeGuestFdstat(
+          statPtr,
+          wasiFiletypeFromStats(stat),
+          0,
+          WASI_RIGHT_FD_READ |
+            WASI_RIGHT_FD_SEEK |
+            WASI_RIGHT_FD_TELL |
+            WASI_RIGHT_FD_FILESTAT_GET |
+            WASI_RIGHT_FD_WRITE |
+            WASI_RIGHT_FD_SYNC,
+          0n,
+        );
+      } catch (error) {
+        return mapSyntheticFsError(error);
+      }
+    }
     return delegateManagedFdFdstatGet
       ? __agentOSWasiMeasurePhase('fd_fdstat_get', 'delegate_call', () =>
           delegateManagedFdFdstatGet(handle.targetFd, statPtr)
@@ -5574,9 +5639,10 @@ wasiImport.fd_filestat_get = (fd, statPtr) => {
         return mapSyntheticFsError(error);
       }
     }
-    return delegateManagedFdFilestatGet
-      ? delegateManagedFdFilestatGet(handle.targetFd, statPtr)
-      : WASI_ERRNO_BADF;
+    if (!delegateManagedFdFilestatGet) {
+      return WASI_ERRNO_BADF;
+    }
+    return delegateManagedFdFilestatGet(handle.targetFd, statPtr);
   }
 
   if (rejectClosedPassthroughFd(fd)) {
@@ -5726,6 +5792,9 @@ wasiImport.fd_write = (fd, iovs, iovsLen, nwrittenPtr) => {
   }
 
   if (handle?.kind === 'guest-file') {
+    if (handle.readOnly === true) {
+      return WASI_ERRNO_ROFS;
+    }
     try {
       const bytes = __agentOSWasiMeasurePhase('fd_write', 'guest_iov_collect', () =>
         collectGuestIovBytes(iovs, iovsLen)

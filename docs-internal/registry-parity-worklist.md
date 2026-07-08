@@ -102,7 +102,7 @@ actual backing:
 | **curl** | DONE | our custom driver over a libcurl fork | real `curl` CLI (upstream `src/tool_*.c`) |
 | **wget** | DONE | our 174-line `wget.c` (dropped) | real GNU Wget vs our sysroot — stub `getrlimit`/`getgroups`, then build |
 | **http-get** | DONE | our 95-line `http_get.c` | dropped; real curl covers HTTP fetches |
-| **git** | TODO | our hand-rolled git from `sha1`+`flate2` | **real git** (upstream C), patched for WASI — **NOT gitoxide** |
+| **git** | DONE | our hand-rolled git from `sha1`+`flate2` | **real git** (upstream C), patched for WASI — **NOT gitoxide** |
 | **fd** | DONE | our `secureexec-fd` on raw `regex` (not sharkdp/fd) | real **fd** (sharkdp) |
 | **findutils** (`find`,`xargs`) | TODO | our hand-rolled on `regex`/shims | real GNU findutils, or `uutils/findutils` |
 | **tree** | DONE | our hand-rolled, zero deps | real `tree`, or an established one |
@@ -165,6 +165,23 @@ ripgrep crates); **(b) gnulib `getrlimit`/`getgroups`** → sysroot stubs, alrea
 documented for wget (item #8) (hits GNU grep/findutils). Subprocess spawn already
 works (`wasi-spawn` broker), so `xargs` is not a blocker.
 
+- **git — DONE.** Replaced the custom Rust `sha1`+`flate2` implementation with real
+  upstream Git 2.55.0 built by the C toolchain and staged as `git` plus helper
+  command aliases. The WASI changes stayed below Git's behavior surface:
+  `run-command.c` uses `posix_spawn` so helper subprocesses go through the existing
+  wasi-spawn broker, the sysroot exposes Git's missing C compatibility surface, and
+  the runner now allocates synthetic fds in a high range so managed pipe/file fds
+  cannot collide with delegate-opened WASI fds. Smart HTTP remains intentionally
+  disabled in this build (`NO_CURL`), so HTTPS clone fails with the real Git helper
+  error instead of a custom transport. Proof: clean upstream Git rebuild passes in
+  `2026-07-08T11-28-00-0700-git-clean-rebuild-after-high-synthetic-fd.log`;
+  package build stages 6 commands in
+  `2026-07-08T11-33-00-0700-git-package-build-clean-binary-after-install.log`;
+  native sidecar rebuild passes in
+  `2026-07-08T11-34-00-0700-sidecar-rebuild-after-git-clean-package.log`;
+  full Git e2e passes 18/18 in
+  `2026-07-08T11-51-00-0700-git-full-e2e-high-synthetic-fd-clean-binary-after-test-fix.log`.
+  Rev: `tmvlxlvk` — `fix(git): build upstream git`.
 - **sqlite3 CLI — DONE.** Engine was already the real amalgamation
   (`libs/sqlite3/sqlite3.c`); the command now builds the official upstream
   `shell.c` from the same fetched zip as `sqlite3`. The local 558-line

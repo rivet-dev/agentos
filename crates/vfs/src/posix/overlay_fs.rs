@@ -2005,7 +2005,9 @@ mod tests {
             .expect("rename replacement over whiteout");
 
         assert_eq!(
-            overlay.read_file("/archive.zip").expect("read renamed file"),
+            overlay
+                .read_file("/archive.zip")
+                .expect("read renamed file"),
             b"new"
         );
         assert!(!overlay.exists("/workspace-temp"));
