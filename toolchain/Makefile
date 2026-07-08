@@ -56,21 +56,24 @@ commands: wasm
 	$(MAKE) -C c programs install
 
 # Build the real wasm32-wasip1 `codex-exec` agent engine from the codex fork
-# (branch wasi-port-codex-core). The fork ships a committed, idempotent, self-prepping build script
-# (it prepares the rustup sysroot for -Z build-std and restores it on exit — no manual stash), so
-# this folds codex into the toolchain: `make -C toolchain codex` produces and installs
-# software/codex/wasm/{codex-exec,codex}. Override CODEX_REPO if the fork is not at the
-# default sibling path. See the fork's docs/wasi-build.md for the toolchain constraints, and the
-# remaining work to source the CRT from wasi-sdk so the prebuilt rust target need not be installed.
+# (branch wasi-port-codex-core) and install it where @agentos-software/codex-cli
+# stages commands from. The fork remains external; CODEX_REPO documents the
+# required checkout instead of silently falling back to the old stub crates.
 AGENTOS_ROOT := $(abspath $(CURDIR)/..)
 CODEX_REPO ?= $(abspath $(AGENTOS_ROOT)/../codex-rs/codex-rs)
-codex:
+CODEX_WASI_SDK_DIR := $(abspath $(CURDIR)/c/vendor/wasi-sdk)
+codex: c/vendor/wasi-sdk/bin/clang
 	@if [ -x "$(CODEX_REPO)/scripts/build-wasi-codex-exec.sh" ]; then \
-		AGENTOS_DIR="$(AGENTOS_ROOT)" "$(CODEX_REPO)/scripts/build-wasi-codex-exec.sh"; \
+		CODEX_REPO="$(CODEX_REPO)" \
+		WASI_SDK_DIR="$(CODEX_WASI_SDK_DIR)" \
+		"$(CURDIR)/scripts/build-codex-wasi.sh"; \
 	else \
 		echo "codex: fork build script not found at $(CODEX_REPO)/scripts/build-wasi-codex-exec.sh — skipping."; \
 		echo "       Set CODEX_REPO=/path/to/codex-rs/codex-rs (the wasi-port-codex-core checkout) to build it."; \
 	fi
+
+c/vendor/wasi-sdk/bin/clang:
+	$(MAKE) -C c wasi-sdk
 
 # Strict variant (fails if the fork is absent) for environments that require the codex artifact.
 .PHONY: codex-required

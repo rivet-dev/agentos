@@ -272,14 +272,26 @@ so a reader sees the whole board at a glance.
 - **Note:** real upstream `curl` (#6) already covers downloads, so wget is not
   urgent — but it should be retried as the real tool, not left dropped.
 
-### 9. codex-cli — not buildable in-checkout (needs external fork)
-- **Broken:** requires the external `codex-rs` fork (`CODEX_REPO` absent); tests
-  `describe.skip`.
-- **Objective:** decide the build story — vendor/pin the fork or document the
-  required checkout — so `codex`/`codex-exec` build reproducibly here, then real
-  e2e tests run (real upstream SDK per CLAUDE.md, not an API stub).
-- **Proof:** codex builds in CI/dev; `software/codex-cli/test/` runs un-skipped.
-- **rev:** `build(codex-cli): make the codex-rs fork build reproducible`
+### 9. codex-cli — DONE
+- **Resolved:** the `codex`/`codex-exec` package now has an AgentOS-owned wrapper
+  for the external `codex-rs` fork build. `make -C toolchain codex-required`
+  requires `CODEX_REPO=/path/to/codex-rs/codex-rs`, uses this checkout's
+  `toolchain/c/vendor/wasi-sdk`, and installs the fork-built optimized wasm into
+  generated `software/codex/wasm/{codex-exec,codex}` for the package build. The
+  generated toolchain and wasm command directories are ignored and not committed.
+- **Test fix:** the real `codex-exec --session-turn` e2e now uses a streaming
+  Responses mock (SSE) and disables Codex shell snapshots inside the VM config,
+  avoiding the optional pre-turn shell-snapshot subprocess deadlock while still
+  driving the real codex-core agent and shell tool path.
+- **Proof:** `CODEX_REPO=/home/nathan/agent-e2e/codex-rs/codex-rs make -C
+  toolchain codex-required` builds and installs 29,924,651-byte command artifacts
+  in `2026-07-08T01-37-05-0700-item9-codex-build-rerun.txt`; `pnpm --dir
+  software/codex-cli build` stages 2 commands and assembles `package.aospkg` in
+  `2026-07-08T01-44-50-0700-item9-codex-cli-build.txt`;
+  `AGENTOS_E2E_FULL=1 pnpm --dir packages/core exec vitest run
+  tests/codex-fullturn.test.ts --reporter=verbose` passes 2 real VM tests in
+  `2026-07-08T01-53-55-0700-item9-core-codex-fullturn-pass.txt`.
+- **rev:** `svksnzon` — `build(codex-cli): make the codex-rs fork build reproducible`
 
 ### 10. vix — DONE (deleted)
 - **Resolved:** `vix` was a from-scratch, source-less drop-zone binary — exactly

@@ -7,6 +7,13 @@ import {
 } from "./helpers/openai-responses-mock.js";
 import { REGISTRY_SOFTWARE } from "./helpers/registry-commands.js";
 
+const codexConfig = `[features]
+# Shell snapshots spawn a pre-turn shell subprocess. The real turn coverage
+# below does not need that optional context, and disabling it keeps the WASI VM
+# focused on the codex-core model/tool path under test.
+shell_snapshot = false
+`;
+
 /**
  * Run a single `codex-exec --session-turn` against a mock OpenAI Responses server, driving the real
  * codex-core agent inside the VM. `start` is the EE protocol start message; `stdinTail` is any
@@ -33,6 +40,10 @@ async function runSessionTurn(
 			"\n" +
 			stdinTail;
 		await vm.execArgv("mkdir", ["-p", "/root/.codex"]);
+		await vm.writeFile(
+			"/root/.codex/config.toml",
+			new TextEncoder().encode(codexConfig),
+		);
 		const r = await vm.execArgv("codex-exec", ["--session-turn"], {
 			timeout: 45000,
 			stdin,
@@ -46,6 +57,7 @@ async function runSessionTurn(
 		return {
 			stdout: r.stdout ?? "",
 			stderr: r.stderr ?? "",
+			exitCode: r.exitCode,
 			requests: mock.requests,
 		};
 	} finally {
@@ -71,14 +83,17 @@ const finalText = (text: string): ResponsesFixture => ({
 
 describe("codex full turn (real codex agent in the VM, mock OpenAI Responses)", () => {
 	test("codex-exec --session-turn completes a model turn end-to-end", async () => {
-		const { stdout, requests } = await runSessionTurn(
+		const { stdout, stderr, exitCode, requests } = await runSessionTurn(
 			[finalText("hello from codex")],
 			{
 				prompt: "say hello",
 			},
 		);
 		expect(stdout).toContain('"type":"start"');
-		expect(requests.length).toBeGreaterThan(0);
+		expect(
+			requests.length,
+			`codex-exec did not call mock Responses; exitCode=${exitCode}; stderr=${stderr}; stdout=${stdout}`,
+		).toBeGreaterThan(0);
 		// The engine must surface the assistant text as a text_delta — whether the
 		// model streamed deltas or returned a single final AgentMessage — not just
 		// reach `done`. (A prior `/(done|text_delta|error)/` regex passed on `done`
@@ -91,7 +106,7 @@ describe("codex full turn (real codex agent in the VM, mock OpenAI Responses)", 
 	test("runs a shell tool call with on-request approval and reports tool_call updates", async () => {
 		const sawToolOutput = (body: Record<string, unknown>) =>
 			JSON.stringify(body).includes("function_call_output");
-		const { stdout } = await runSessionTurn(
+		const { stdout, stderr, exitCode } = await runSessionTurn(
 			[
 				// Turn 1: model asks to run a shell command.
 				{
@@ -131,7 +146,10 @@ describe("codex full turn (real codex agent in the VM, mock OpenAI Responses)", 
 			// Approve the exec when the engine emits permission_request.
 			`${JSON.stringify({ decision: "allow" })}\n`,
 		);
-		expect(stdout).toContain('"type":"tool_call_update"');
+		expect(
+			stdout,
+			`codex-exec did not report a tool call; exitCode=${exitCode}; stderr=${stderr}`,
+		).toContain('"type":"tool_call_update"');
 		expect(stdout).toContain('"type":"done"');
 	}, 70000);
 
