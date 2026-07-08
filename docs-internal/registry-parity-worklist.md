@@ -600,6 +600,15 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     Biome is not applicable for this package test path; it reported the file is
     ignored by config in
     `2026-07-08T13-23-12-0700-item12-tar-biome-check.log`. Rev: `rszmulmk`.
+  - **gzip — DONE.** Added package-local VM e2e coverage for the staged
+    `gzip`/`gunzip`/`zcat` commands. The suite proves file compression with
+    `-k`, source removal without `-k`, `gunzip -fk`, `zcat` streaming, and
+    overwrite protection without `-f` through the packaged WASM commands. Proof:
+    `2026-07-08T13-25-01-0700-item12-gzip-package-e2e-initial.log`;
+    `2026-07-08T13-25-01-0700-item12-gzip-check-types-initial.log`.
+    Biome is not applicable for this package test path; it reported the file is
+    ignored by config in
+    `2026-07-08T13-25-12-0700-item12-gzip-biome-check.log`. Rev: `tlstlwvy`.
   - **jq — DONE.** Added package-local VM e2e coverage for the staged `jq`
     command and fixed the jaq-backed CLI wrapper to accept Linux-style file
     operands instead of only stdin. The suite now proves version output,
