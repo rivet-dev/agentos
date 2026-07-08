@@ -714,6 +714,16 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T15-17-00-0700-item12-claude-sidecar-build-after-cache-move.log`;
     `2026-07-08T15-19-00-0700-item12-claude-session-after-cache-move.log`.
     Rev: `rxmoulty`.
+  - **opencode — DONE.** Added default core Vitest coverage for real
+    `createSession('opencode')` initialization through the projected
+    `@agentos-software/opencode` agent package. The focused suite proves the
+    sidecar resolves the OpenCode ACP package, initializes the adapter, exposes
+    agent metadata/capabilities/modes, and registers the session through the
+    Agent OS session API. Proof:
+    `2026-07-08T15-36-00-0700-item12-opencode-cc-cache-restored-focused.log`;
+    `2026-07-08T15-36-00-0700-item12-opencode-sidecar-build-focused.log`;
+    `2026-07-08T15-37-00-0700-item12-opencode-real-session-final.log`.
+    Rev: `xtnuomsw`.
 - **Objective:** write real e2e tests proving each behaves like its Linux
  counterpart (jq processes real JSON, sed edits streams, tar round-trips archives,
   gzip round-trips, etc.); agents exercise the real ACP
