@@ -27,7 +27,6 @@ const SLOW_E2E_FILES = [
 	"tests/child-process-detached.test.ts",
 	"tests/readdir-recursive.test.ts",
 	"tests/cron-integration.test.ts",
-	"tests/pi-cli-headless.test.ts",
 ];
 
 // Pre-existing failures NOT caused by this branch (they were red before CI ever

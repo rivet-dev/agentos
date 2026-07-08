@@ -691,6 +691,16 @@ real e2e tests that prove Linux-parity behavior — not smoke tests.
     `2026-07-08T14-37-00-0700-item12-sidecar-build-after-manual-cc-restore.log`;
     `2026-07-08T14-38-00-0700-item12-pi-headless-final-after-cc-restore.log`.
     Rev: `mzuuypsm`.
+  - **pi-cli — DONE.** Enabled the existing real `createSession('pi-cli')`
+    headless suite in default core Vitest coverage and unskipped the unmodified
+    Pi CLI bash-tool flow. Pi and pi-cli now project registry command software
+    only when the local `.aospkg` artifacts are built, so write-tool coverage
+    still runs while bash-tool coverage is gated on real command availability.
+    Proof:
+    `2026-07-08T15-00-00-0700-item12-pi-cli-cc-cache-restored-target-files-final.log`;
+    `2026-07-08T15-00-00-0700-item12-pi-cli-sidecar-build-after-cc-restore-final.log`;
+    `2026-07-08T15-01-00-0700-item12-pi-cli-focused-final-after-cc-restore.log`.
+    Rev: `xqtkmsyn`.
 - **Objective:** write real e2e tests proving each behaves like its Linux
  counterpart (jq processes real JSON, sed edits streams, tar round-trips archives,
   gzip round-trips, etc.); agents exercise the real ACP
