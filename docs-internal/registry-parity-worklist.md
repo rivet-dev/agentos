@@ -527,14 +527,19 @@ For each: replace `describe.skip` with `describeIf(binaryPresent)` **and** write
 real e2e tests that prove Linux-parity behavior — not smoke tests.
 
 ### 11. Disabled suites — git, duckdb, codex
-- **Broken:** tests exist but are `describe.skip`, so nothing runs even when the
-  binary is present.
-- **Objective (per command, Linux parity):**
-  - **git** — clone/commit/log/diff/branch against a real repo & remote.
-  - **duckdb** — real analytical SQL, CSV read/write, file-backed DBs (the bar
-    example: real duckdb, not a WASI-stripped `SELECT 1`).
-  - **codex** — real run (after #9).
-- **Proof:** each un-skipped suite passes with real behavior.
+- **Broken:** tests exist but are skipped or excluded from the default run, so
+  coverage can disappear even when the binary is present.
+- **Status:**
+  - **git — DONE.** The core quickstart e2e now exercises real upstream Git in a
+    VM for local origin creation, commit, branch, clone, checkout, `log`, and a
+    working-tree `diff`. It validates only the git package it uses instead of
+    eagerly requiring every registry package to be built. Proof:
+    `2026-07-08T13-13-00-0700-item11-git-quickstart-final.log`.
+    Rev: `svltqsmx`.
+  - **duckdb — TODO.** Needs real analytical SQL, CSV read/write, and file-backed
+    DB e2e kept runnable when the DuckDB package artifacts are present.
+  - **codex — TODO.** Needs the remaining real full-turn coverage un-skipped after
+    #9.
 - **rev:** one per command, e.g. `test(duckdb): real analytical-SQL e2e; un-skip`
 
 ### 12. No tests at all — 9 software + 5 agents
