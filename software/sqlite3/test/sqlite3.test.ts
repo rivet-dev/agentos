@@ -15,15 +15,23 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createWasmVmRuntime } from '@agentos/test-harness';
 import {
   C_BUILD_DIR,
   COMMANDS_DIR,
   createKernel,
   describeIf,
-  hasCWasmBinaries,
 } from '@agentos/test-harness';
 import type { Kernel } from '@agentos/test-harness';
+
+const SQLITE3_COMMAND_DIRS = [C_BUILD_DIR, COMMANDS_DIR].filter((dir) =>
+  existsSync(dir)
+);
+const hasSqlite3Binary = SQLITE3_COMMAND_DIRS.some((dir) =>
+  existsSync(resolve(dir, 'sqlite3'))
+);
 
 // Minimal in-memory VFS for kernel tests
 class SimpleVFS {
@@ -112,9 +120,17 @@ class SimpleVFS {
     buffer.set(data.subarray(position, position + available), offset);
     return available;
   }
+  async pwrite(path: string, offset: number, data: Uint8Array): Promise<void> {
+    const current = this.files.get(path);
+    if (!current) throw new Error(`ENOENT: ${path}`);
+    const next = new Uint8Array(Math.max(current.length, offset + data.length));
+    next.set(current);
+    next.set(data, offset);
+    this.files.set(path, next);
+  }
 }
 
-describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
+describeIf(hasSqlite3Binary, 'sqlite3 command', () => {
   let kernel: Kernel;
 
   afterEach(async () => {
@@ -124,7 +140,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('executes SQL from stdin pipe on in-memory database', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     const result = await kernel.exec('sqlite3 :memory:', {
       stdin: 'SELECT 1+1 AS result;\n',
@@ -135,7 +151,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('executes multi-statement SQL as command argument', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     // Multi-statement SQL passed as command argument (more reliable than stdin in WASM)
     const sql = 'CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(10); INSERT INTO t VALUES(20); INSERT INTO t VALUES(30); SELECT * FROM t ORDER BY x;';
@@ -146,7 +162,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('supports .tables meta-command via SQL setup', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     // Create tables via SQL argument, then query sqlite_master
     const sql = "CREATE TABLE alpha(x); CREATE TABLE beta(y); SELECT name FROM sqlite_master WHERE type='table' ORDER BY 1;";
@@ -158,7 +174,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('supports .schema via sqlite_master query', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     const sql = "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT NOT NULL); SELECT sql FROM sqlite_master WHERE name='users';";
     const result = await kernel.exec(`sqlite3 :memory: "${sql}"`);
@@ -168,7 +184,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('supports .dump style output via SQL', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     const sql = "CREATE TABLE t(x INTEGER, y TEXT); INSERT INTO t VALUES(1,'hello'); SELECT sql FROM sqlite_master; SELECT * FROM t;";
     const result = await kernel.exec(`sqlite3 :memory: "${sql}"`);
@@ -180,7 +196,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('handles SELECT with multiple columns', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     const result = await kernel.exec('sqlite3 :memory:', {
       stdin: "SELECT 'hello' AS greeting, 42 AS number, 3.14 AS pi;\n",
@@ -191,7 +207,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('handles NULL values in output', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     const result = await kernel.exec('sqlite3 :memory:', {
       stdin: 'SELECT NULL;\n',
@@ -203,7 +219,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('reports SQL errors on stderr', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     const result = await kernel.exec(`sqlite3 :memory: "SELECT * FROM nonexistent_table;"`);
     expect(result.stderr).toContain('no such table');
@@ -212,7 +228,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('defaults to :memory: when no database specified', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     const result = await kernel.exec('sqlite3', {
       stdin: 'SELECT 99;\n',
@@ -223,7 +239,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('CREATE TABLE, INSERT, SELECT roundtrip via piped SQL', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     // Multi-statement SQL via command arg (stdin multi-statement has fgetc buffering issues in WASM)
     const sql = "CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT); INSERT INTO items VALUES(1,'apple'); INSERT INTO items VALUES(2,'banana'); SELECT id, name FROM items ORDER BY id;";
@@ -234,7 +250,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('.tables meta-command lists created tables', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     // Multi-statement stdin has fgetc buffering limitations in WASM,
     // use SQL command arg to verify table listing behavior
@@ -247,7 +263,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('.schema meta-command shows CREATE TABLE statements', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     // Query schema via sqlite_master (equivalent to .schema output)
     const sql = "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT NOT NULL); SELECT sql FROM sqlite_master WHERE name='users';";
@@ -259,7 +275,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('.dump meta-command outputs INSERT statements for data', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     // Verify dump-equivalent output: schema + data via SQL queries
     const sql = "CREATE TABLE t(x INTEGER, y TEXT); INSERT INTO t VALUES(1,'hello'); INSERT INTO t VALUES(2,'world'); SELECT sql FROM sqlite_master WHERE name='t'; SELECT '---'; SELECT x||','||y FROM t ORDER BY x;";
@@ -276,43 +292,26 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
     const vfs = new SimpleVFS();
     await vfs.mkdir('/tmp', { recursive: true });
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
-    // Use shell pipe to create table and insert data, then query back
-    // Note: file-based DB uses WASI VFS (open/write/fstat/ftruncate) which
-    // requires full POSIX file I/O support through the kernel
+    // File-backed SQLite must persist through the kernel VFS across exec calls.
     const createSql = "CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(42); INSERT INTO t VALUES(99);";
     const createResult = await kernel.exec(`sqlite3 /tmp/test.db "${createSql}"`);
-
-    // Check if file-based DB is supported (fstat/ftruncate may not be available)
-    const hasError = createResult.stderr.includes('disk I/O error') ||
-                     createResult.stderr.includes('unable to open database');
-    if (hasError) {
-      // Fall back: verify file-based behavior via VFS write/read simulation
-      // Write a pre-populated DB, then verify sqlite3 can read from VFS-provided data
-      // For now, verify in-memory DB persistence within single exec
-      const result = await kernel.exec(
-        'sqlite3 :memory: "CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(42); INSERT INTO t VALUES(99); SELECT * FROM t ORDER BY x;"'
-      );
-      expect(result.stdout.trim()).toBe('42\n99');
-      return;
-    }
+    expect(createResult.stderr).toBe('');
 
     // Verify file was created in VFS
     const dbData = await vfs.readFile('/tmp/test.db');
     expect(dbData.length).toBeGreaterThan(0);
 
-    // Second exec: reopen and query persisted data via stdin
-    const result = await kernel.exec('sqlite3 /tmp/test.db', {
-      stdin: 'SELECT * FROM t ORDER BY x;\n',
-    });
+    // Second exec: reopen and query persisted data.
+    const result = await kernel.exec('sqlite3 /tmp/test.db "SELECT * FROM t ORDER BY x;"');
     expect(result.stdout.trim()).toBe('42\n99');
   });
 
   it('multi-statement input separated by semicolons', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     // Multi-statement SQL via command arg (semicolons separate statements)
     const sql = "CREATE TABLE nums(v); INSERT INTO nums VALUES(10); INSERT INTO nums VALUES(20); SELECT v FROM nums ORDER BY v;";
@@ -323,7 +322,7 @@ describeIf(hasCWasmBinaries('sqlite3'), 'sqlite3 command', () => {
   it('SQL syntax error produces error on stderr with non-zero exit', async () => {
     const vfs = new SimpleVFS();
     kernel = createKernel({ filesystem: vfs as any });
-    await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+    await kernel.mount(createWasmVmRuntime({ commandDirs: SQLITE3_COMMAND_DIRS }));
 
     // Syntax error via command arg (reliable error output)
     const result = await kernel.exec('sqlite3 :memory: "SELEC INVALID SYNTAX;"');
