@@ -1,0 +1,225 @@
+Demultiplex pack-transfer sidebands synchronously on WASI.
+
+fetch-pack and send-pack normally run the sideband demultiplexer as an
+async task via start_async(). With NO_PTHREADS that falls back to
+fork(), which WASI cannot provide, so smart-HTTP clone/fetch/push died
+with "fetch-pack: unable to fork off sideband demultiplexer".
+
+Neither concurrency primitive exists on WASI, but none is required for
+correctness: by the time the demultiplexer output is consumed, the
+request is fully on the wire and the multiplexed response can be
+drained in the main flow.
+
+- fetch-pack get_pack(): drain the sideband stream synchronously with
+  recv_sideband() before spawning the pack consumer. Band#2 progress
+  and band#3 errors reach stderr inline; band#1 (the pack data) is
+  spooled to a temporary file under objects/pack/, which is then fed
+  to index-pack/unpack-objects as stdin and unlinked afterwards.
+- send-pack: after the commands + pack have been fully written (and
+  flushed for stateless RPC), drain the response sideband the same
+  way, spooling band#1 (the ref-status report) to a temporary file
+  that receive_status() then parses. On the pack_objects() failure
+  path the demultiplexer has not run and the connection is already
+  broken, so no status is collected.
+
+The pack still transfers over the exact same sideband protocol;
+the only behavioral difference is that the pack is spooled to disk
+before indexing instead of being indexed while downloading.
+
+--- a/fetch-pack.c
++++ b/fetch-pack.c
+@@ -892,6 +892,7 @@
+ 	return retval;
+ }
+ 
++#ifndef __wasi__
+ static int sideband_demux(int in UNUSED, int out, void *data)
+ {
+ 	int *xd = data;
+@@ -901,6 +902,7 @@
+ 	close(out);
+ 	return ret;
+ }
++#endif
+ 
+ static void create_promisor_file(const char *keep_name,
+ 				 struct ref **sought, int nr_sought)
+@@ -969,9 +971,13 @@
+ 	struct child_process cmd = CHILD_PROCESS_INIT;
+ 	int fsck_objects = 0;
+ 	int ret;
++#ifdef __wasi__
++	struct strbuf spool_path = STRBUF_INIT;
++#endif
+ 
+ 	memset(&demux, 0, sizeof(demux));
+ 	if (use_sideband) {
++#ifndef __wasi__
+ 		/* xd[] is talking with upload-pack; subprocess reads from
+ 		 * xd[0], spits out band#2 to stderr, and feeds us band#1
+ 		 * through demux->out.
+@@ -982,6 +988,25 @@
+ 		demux.isolate_sigpipe = 1;
+ 		if (start_async(&demux))
+ 			die(_("fetch-pack: unable to fork off sideband demultiplexer"));
++#else
++		/*
++		 * WASI has neither fork() nor threads, so the sideband
++		 * demultiplexer cannot run concurrently with the pack
++		 * indexer. Demultiplex synchronously instead: drain the
++		 * sideband stream here (band#2 progress and band#3 errors
++		 * reach stderr inline) and spool band#1 (the pack data) to
++		 * a temporary file in the object database, then feed the
++		 * spooled pack to index-pack/unpack-objects as its stdin.
++		 */
++		int spool_fd = odb_mkstemp(the_repository->objects,
++					   &spool_path,
++					   "pack/tmp_sideband_XXXXXX");
++		if (recv_sideband("fetch-pack", xd[0], spool_fd))
++			die(_("error in sideband demultiplexer"));
++		if (lseek(spool_fd, 0, SEEK_SET) == -1)
++			die_errno(_("could not rewind spooled pack"));
++		demux.out = spool_fd;
++#endif
+ 	}
+ 	else
+ 		demux.out = xd[0];
+@@ -1098,8 +1123,16 @@
+ 			ret == 0;
+ 	else
+ 		die(_("%s failed"), cmd_name);
++#ifndef __wasi__
+ 	if (use_sideband && finish_async(&demux))
+ 		die(_("error in sideband demultiplexer"));
++#else
++	if (use_sideband) {
++		/* recv_sideband() already ran to completion above. */
++		unlink(spool_path.buf);
++		strbuf_release(&spool_path);
++	}
++#endif
+ 
+ 	sigchain_pop(SIGPIPE);
+ 
+--- a/send-pack.c
++++ b/send-pack.c
+@@ -281,6 +281,7 @@
+ 	return ret;
+ }
+ 
++#ifndef __wasi__
+ static int sideband_demux(int in UNUSED, int out, void *data)
+ {
+ 	int *fd = data, ret;
+@@ -290,6 +291,7 @@
+ 	close(out);
+ 	return ret;
+ }
++#endif
+ 
+ static int advertise_shallow_grafts_cb(const struct commit_graft *graft, void *cb)
+ {
+@@ -538,6 +540,10 @@
+ 	char *push_cert_nonce = NULL;
+ 	struct packet_reader reader;
+ 	int use_bitmaps;
++#ifdef __wasi__
++	struct strbuf spool_path = STRBUF_INIT;
++	int demux_ret = 0;
++#endif
+ 
+ 	if (!remote_refs) {
+ 		fprintf(stderr, "No refs in common and none specified; doing nothing.\n"
+@@ -729,6 +735,7 @@
+ 
+ 	if (use_sideband && cmds_sent) {
+ 		memset(&demux, 0, sizeof(demux));
++#ifndef __wasi__
+ 		demux.proc = sideband_demux;
+ 		demux.data = fd;
+ 		demux.out = -1;
+@@ -736,6 +743,12 @@
+ 		if (start_async(&demux))
+ 			die("send-pack: unable to fork off sideband demultiplexer");
+ 		in = demux.out;
++#endif
++		/*
++		 * On WASI (no fork(), no threads) the demultiplexer instead
++		 * runs synchronously once the request has been fully written;
++		 * see below, right before receive_status().
++		 */
+ 	}
+ 
+ 	packet_reader_init(&reader, in, NULL, 0,
+@@ -755,6 +768,7 @@
+ 			 * as well as marking refs with their remote status (if
+ 			 * we get one).
+ 			 */
++#ifndef __wasi__
+ 			if (status_report)
+ 				receive_status(r, &reader, remote_refs);
+ 
+@@ -762,6 +776,13 @@
+ 				close(demux.out);
+ 				finish_async(&demux);
+ 			}
++#else
++			/*
++			 * The synchronous WASI demultiplexer has not run yet
++			 * and the connection is already broken; there is no
++			 * status to collect.
++			 */
++#endif
+ 			fd[1] = -1;
+ 
+ 			ret = -1;
+@@ -774,6 +795,27 @@
+ 	if (args->stateless_rpc && cmds_sent)
+ 		packet_flush(out);
+ 
++#ifdef __wasi__
++	if (use_sideband && cmds_sent) {
++		/*
++		 * The request (commands + pack) is fully on the wire, so the
++		 * response can be demultiplexed synchronously now: band#2
++		 * progress and band#3 errors reach stderr here, and band#1
++		 * (the status report) is spooled to a temporary file that
++		 * receive_status() then parses.
++		 */
++		int spool_fd = odb_mkstemp(r->objects, &spool_path,
++					   "pack/tmp_sideband_XXXXXX");
++		demux_ret = recv_sideband("send-pack", fd[0], spool_fd);
++		if (lseek(spool_fd, 0, SEEK_SET) == -1)
++			die_errno("could not rewind spooled status report");
++		in = spool_fd;
++		packet_reader_init(&reader, in, NULL, 0,
++				   PACKET_READ_CHOMP_NEWLINE |
++				   PACKET_READ_DIE_ON_ERR_PACKET);
++	}
++#endif
++
+ 	if (status_report && cmds_sent)
+ 		ret = receive_status(r, &reader, remote_refs);
+ 	else
+@@ -782,11 +824,21 @@
+ 		packet_flush(out);
+ 
+ 	if (use_sideband && cmds_sent) {
++#ifndef __wasi__
+ 		close(demux.out);
+ 		if (finish_async(&demux)) {
+ 			error("error in sideband demultiplexer");
+ 			ret = -1;
+ 		}
++#else
++		close(in);
++		unlink(spool_path.buf);
++		strbuf_release(&spool_path);
++		if (demux_ret) {
++			error("error in sideband demultiplexer");
++			ret = -1;
++		}
++#endif
+ 	}
+ 
+ 	if (ret < 0)

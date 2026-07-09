@@ -26,7 +26,7 @@
      uint32_t stdin_fd = 0, stdout_fd = 1, stderr_fd = 2;
      if (fa && fa->__actions) {
          for (struct __fdop *op = fa->__actions; op; op = op->next) {
-@@ -259,16 +271,27 @@
+@@ -259,16 +271,30 @@
                  else close(opened);
                  break;
              }
@@ -37,13 +37,16 @@
          }
      }
 
-+    // Resolve cwd: explicit chdir action > inherited PWD > getcwd() > empty
++    // Resolve cwd: explicit chdir action > current cwd > inherited PWD >
++    // empty. getcwd() lazily initializes from PWD (see getcwd.c), so it is
++    // always at least as fresh as the environment and, unlike PWD, tracks
++    // in-process chdir() calls (e.g. `git -C <dir>` spawning helpers).
 +    char cwd_buf[1024];
 +    const char *cwd_str = spawn_cwd;
-+    if (!cwd_str) cwd_str = find_pwd_in_env(env);
 +    if (!cwd_str && getcwd(cwd_buf, sizeof(cwd_buf))) {
 +        cwd_str = cwd_buf;
 +    }
++    if (!cwd_str) cwd_str = find_pwd_in_env(env);
 +
      uint32_t child_pid;
      uint32_t err = __host_proc_spawn(

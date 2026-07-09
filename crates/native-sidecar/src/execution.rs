@@ -19493,6 +19493,22 @@ fn install_kernel_stdin_pipe(kernel: &mut SidecarKernel, pid: u32) -> Result<u32
     kernel
         .fd_close(EXECUTION_DRIVER_NAME, pid, read_fd)
         .map_err(kernel_error)?;
+    // The write end is host-side plumbing that lives in the guest process's
+    // own fd table. Mark it close-on-exec so descendants spawned by this
+    // process (which fork the fd table) do not inherit a write handle to
+    // their own stdin pipe; an inherited writer would keep the pipe's writer
+    // refcount above zero forever and a descendant blocked reading inherited
+    // stdin would never observe EOF (this hung git's smart-HTTP helper chain:
+    // git -> git remote-https -> git-remote-https).
+    kernel
+        .fd_fcntl(
+            EXECUTION_DRIVER_NAME,
+            pid,
+            write_fd,
+            agentos_kernel::fd_table::F_SETFD,
+            agentos_kernel::fd_table::FD_CLOEXEC,
+        )
+        .map_err(kernel_error)?;
     Ok(write_fd)
 }
 
