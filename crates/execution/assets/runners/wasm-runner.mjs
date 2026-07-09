@@ -32,11 +32,13 @@ const WASI_FILETYPE_UNKNOWN = 0;
 const WASI_FILETYPE_CHARACTER_DEVICE = 2;
 const WASI_FILETYPE_DIRECTORY = 3;
 const WASI_FILETYPE_REGULAR_FILE = 4;
+const WASI_FILETYPE_SOCKET_STREAM = 6;
 const WASI_OFLAGS_CREAT = 1;
 const WASI_OFLAGS_DIRECTORY = 2;
 const WASI_OFLAGS_EXCL = 4;
 const WASI_OFLAGS_TRUNC = 8;
 const WASI_FDFLAGS_APPEND = 1;
+const WASI_FDFLAGS_NONBLOCK = 4;
 const WASI_WHENCE_SET = 0;
 const WASI_WHENCE_CUR = 1;
 const WASI_WHENCE_END = 2;
@@ -2831,7 +2833,14 @@ function callSyncRpc(method, args = []) {
 }
 
 const hostNetSockets = new Map();
-let nextHostNetSocketFd = 4096;
+// Host-net socket fds must stay BELOW the guests' FD_SETSIZE (1024 in the
+// wasi-libc sysroot): libcurl's select-based Curl_poll / curl_multi_fdset
+// guard every socket with `s < FD_SETSIZE` and silently drop larger fds from
+// the pollset, which stalls any transfer that has to WAIT for socket
+// readiness (non-blocking TLS handshakes, >16 KiB uploads). Real WASI fds are
+// small integers and the synthetic fd space starts at 1 << 20, so a 600+ base
+// keeps the ranges disjoint in practice while staying select()-compatible.
+let nextHostNetSocketFd = 600;
 const HOST_NET_TIMEOUT_SENTINEL = '__agentos_net_timeout__';
 const HOST_NET_MSG_PEEK = 0x0001;
 
@@ -3047,6 +3056,9 @@ const HOST_NET_AF_INET = 2;
 const HOST_NET_AF_INET6 = 10;
 const HOST_NET_SOCK_DGRAM = 5;
 const HOST_NET_SOCKET_TYPE_MASK = 0xf;
+// wasi-libc <sys/socket.h>: SOCK_NONBLOCK / SOCK_CLOEXEC bits OR'd into the
+// socket(2) type argument (Linux-style socket(..., SOCK_STREAM | SOCK_NONBLOCK)).
+const HOST_NET_SOCK_NONBLOCK = 0x4000;
 const HOST_NET_SOL_SOCKET = 1;
 const HOST_NET_WASI_SOL_SOCKET = 0x7fffffff;
 const HOST_NET_SO_ERROR = 4;
@@ -3411,6 +3423,13 @@ const hostNetImport = {
         readableEnded: false,
         closed: false,
         lastError: null,
+        // Honor Linux-style socket(..., type | SOCK_NONBLOCK): guests like
+        // libcurl rely on O_NONBLOCK semantics (EAGAIN instead of blocking
+        // reads) to interleave send/recv on one connection. Dropping this bit
+        // deadlocks any upload larger than one TLS record: curl checks for an
+        // early server response mid-upload, and a blocking recv() waits on a
+        // server that is itself waiting for the rest of the request body.
+        nonblock: (numericType & HOST_NET_SOCK_NONBLOCK) !== 0,
       });
       return writeGuestUint32(retFdPtr, fd);
     } catch {
@@ -5481,6 +5500,26 @@ wasiImport.fd_tell = (fd, offsetPtr) => {
 };
 
 wasiImport.fd_fdstat_get = (fd, statPtr) => {
+  // Host-net sockets (curl/wget/git TLS transports): report a stream-socket
+  // fdstat with the current O_NONBLOCK state so guest fcntl(F_GETFL) works.
+  // Without this, fcntl-based non-blocking setup fails with EBADF and guests
+  // that expect EAGAIN semantics (libcurl mid-upload reads) block forever.
+  {
+    const hostNetSocket = getHostNetSocket(fd);
+    if (hostNetSocket && !hostNetSocket.closed) {
+      return writeGuestFdstat(
+        statPtr,
+        WASI_FILETYPE_SOCKET_STREAM,
+        hostNetSocket.nonblock ? WASI_FDFLAGS_NONBLOCK : 0,
+        WASI_RIGHT_FD_READ |
+          WASI_RIGHT_FD_WRITE |
+          WASI_RIGHT_FD_FDSTAT_SET_FLAGS |
+          WASI_RIGHT_FD_FILESTAT_GET |
+          WASI_RIGHT_POLL_FD_READWRITE,
+        0n,
+      );
+    }
+  }
   const handle = __agentOSWasiMeasurePhase('fd_fdstat_get', 'lookup_handle', () =>
     lookupFdHandle(fd)
   );
@@ -5606,6 +5645,16 @@ wasiImport.fd_fdstat_get = (fd, statPtr) => {
 };
 
 wasiImport.fd_fdstat_set_flags = (fd, flags) => {
+  // Host-net sockets: honor O_NONBLOCK (guest fcntl F_SETFL). net_recv/net_send
+  // consult `socket.nonblock` to return EAGAIN instead of blocking, which
+  // non-blocking clients like libcurl rely on to interleave send/recv.
+  {
+    const hostNetSocket = getHostNetSocket(fd);
+    if (hostNetSocket && !hostNetSocket.closed) {
+      hostNetSocket.nonblock = (Number(flags) & WASI_FDFLAGS_NONBLOCK) !== 0;
+      return WASI_ERRNO_SUCCESS;
+    }
+  }
   const handle = lookupFdHandle(fd);
   if (handle && handle.kind !== 'passthrough') {
     return WASI_ERRNO_BADF;
