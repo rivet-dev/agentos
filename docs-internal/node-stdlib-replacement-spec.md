@@ -1,9 +1,9 @@
 # Spec: Real Node.js stdlib in agentOS (delete the reimplementation)
 
-Status: DRAFT v3 (post-review + decisions) · Owner: runtime team · Date: 2026-07-09 (PST)
+Status: READY FOR IMPLEMENTATION v4 (user decisions resolved; M0 evidence gates) · Owner: runtime team · Date: 2026-07-09 (PST)
 POC evidence: jj workspace `node-stdlib`, change `wyqxqylo` (`c5888247`);
 artifacts in `~/progress/agent-os/2026-07-09-node-stdlib-wasm-poc/`.
-Review: 4-lens review integrated (dispositions in Appendix A); v3 applies the
+Review: 4-lens review integrated (dispositions in Appendix A); v4 applies the
 2026-07-09 user decisions (§0).
 
 ---
@@ -20,22 +20,49 @@ Review: 4-lens review integrated (dispositions in Appendix A); v3 applies the
    by the same pipeline against the in-repo patched libc (§3.2, §9.4).
    sha256-pinning of all toolchain inputs stays a hard requirement; prebuilt
    sysroot artifacts survive only as a CI-cache implementation detail.
-2. **Crypto — OpenSSL-family compiled to wasm with our sysroot, in-isolate**
-   (resolves old OQ 2; deletes old OQ 8 — `process.versions.openssl`
-   becomes real). Not host-side RustCrypto. §7.4 reworked; the RustCrypto
-   `_crypto*` bridge surface moves to deletion scope. Pending material
-   sub-choice: **OpenSSL 3.x vs BoringSSL — recommendation OpenSSL 3.x**
-   (node's ncrypto wraps the OpenSSL 3.x API; BoringSSL diverges);
-   proceeding with OpenSSL 3.x absent objection.
+2. **Crypto + TLS — one real OpenSSL 3.5.x wasm build, shared in-guest**
+   (resolves old OQ 2 and old OQ 8). Build the exact OpenSSL source bundled
+   by the pinned Node 24 tag once against the in-repo sysroot, owned by
+   `toolchain/c` rather than the Node crate; Node
+   `crypto`/`tls` and the registry C tools link/use that same wasm
+   `libcrypto`/`libssl` build and the same VM CA bundle. TLS records flow over
+   kernel-owned TCP; there is no host TLS termination. The current registry
+   networking stack's mbedTLS build is proven migration input, not a second
+   final backend: mbedTLS 3.6 has no OpenSSL 3 compatibility surface capable
+   of satisfying node's ncrypto/EVP/provider contract. BoringSSL is rejected
+   for the same API/behavior divergence. §7.4 defines the shared-build and
+   cross-runtime acceptance gates; the RustCrypto `_crypto*` bridge and host
+   `rustls-native-certs` paths move to deletion scope.
 3. **execPath/self-spawn — real guest `node` command** (resolves old OQ 7).
    Governing principle, elevated to north star (§1): the guest is
    *"targeting native linux compatibility and it can't tell it's a
    different executor."* Current functionality is preserved during
    migration.
-4. **Browser runtime — committed browser profile now** (resolves old OQ 5).
-   Every HOST binding gets a browser fallback or documented typed
-   degradation; browser and native migrate together; browser stays in the
-   deletion gate (§12.3). Acknowledged scope growth (§14).
+4. **Browser runtime — disabled and out of scope** (final user decision,
+   superseding the earlier defer-and-document answer). Keep the browser
+   runtime source, but remove it from CI, release, and publish build/test
+   matrices before native cutover work begins. This program does not migrate,
+   delete, keep buildable, or produce a design doc for the browser runtime;
+   it cannot block CI or release. Re-enabling it is a separate program.
+5. **Node version — Node 24.15.0 LTS.** Pin tag `v24.15.0`, commit
+   `848430679556aed0bd073f2bc263331ad84fa119`, in the vendor manifest. The
+   v26-nightly POC is evidence for the seam, not the shipped binding
+   inventory; M0 reconciles the inventory against this v24 tag.
+6. **Workers — unsupported at cutover.** The worker binding is inert data;
+   `new Worker` throws the typed unsupported error. Workers do not gate
+   cutover.
+7. **Migration parity — measured legacy parity, including performance.** M0
+   captures the current legacy implementation with the same suite and bench
+   harnesses. The real path may be incomplete during staged implementation,
+   but the default flip and deletion gate require at least the legacy
+   supported-test set and no unapproved >10% performance regression; new
+   native-node passes ratchet upward. Guessed runnable percentages are not
+   acceptance criteria.
+8. **Sequencing — dependency-driven, not a user product choice.** Keep the
+   fs → event loop → net/http → crypto/TLS/child-process order unless measured
+   implementation evidence requires a change. HTTP depends on the net/event
+   loop substrate; moving it earlier would only trade schedule against fs
+   completion, not change the end state.
 
 ---
 
@@ -55,8 +82,9 @@ native Linux; anything the guest could observe to distinguish agentOS from
 a real Linux node process is a defect.
 
 **Non-goals (this program):**
-- `worker_threads` with real parallelism (§10.4; inert binding, `Worker`
-  constructor throws typed error — see §4 STUB policy).
+- `worker_threads` with real parallelism (§10.4; decided unsupported at
+  cutover: inert binding, `Worker` constructor throws typed error — see §4
+  STUB policy).
 - Inspector/profiler protocol support (`inspector`, `profiler` stay inert
   stubs; `config.hasInspector` pinned `false`).
 - Compiling node's C++ core or libuv to wasm. Ruled out by feasibility study:
@@ -90,13 +118,13 @@ a real Linux node process is a defect.
 │  node lib/**/*.js  (vendored verbatim, loaded by node's realm.js)          │
 │  ── internalBinding(name) + process object ── the seam ────────────────────│
 │  binding shims (JS, small, mirror node's C++ binding contract)             │
-│   ├─ pure-compute → wasm leaf libs (simdutf/ada/llhttp/zlib…) built with   │
+│   ├─ pure-compute → wasm leaf libs (simdutf/ada/llhttp/zlib/OpenSSL…)      │
 │   │                 our patched sysroot, instantiated in-isolate (V8 wasm) │
 │   └─ I/O → existing bridge globals (bridge-contract.json) ──sync-RPC──┐    │
 └───────────────────────────────────────────────────────────────────────┼────┘
                                                                         ▼
                                     sidecar (trusted): kernel, fd table, VFS,
-                                    sockets, processes, crypto, permissions
+                                    sockets, processes, CSPRNG, permissions
 ```
 
 Principles:
@@ -132,18 +160,18 @@ Principles:
 
 ## 3. Vendoring, bootstrap, and snapshot
 
-### 3.1 Node version
-- **Pin the latest v26.x stable release tag** (exact tag chosen at vendoring
-  time; the POC ran a v26 nightly, `fbf82766d62`). Rationale: the POC
-  validated v26's binding surface (which differs from v24 — e.g. static-style
-  buffer codecs, `encoding_binding`); v26 enters LTS Oct 2026; starting on
-  v24 LTS pays a major-version binding migration mid-program. **[OQ 1]**
+### 3.1 Node version (DECIDED — Decision 5)
+- **Pin Node 24.15.0 LTS:** tag `v24.15.0`, peeled commit
+  `848430679556aed0bd073f2bc263331ad84fa119`. The POC ran a v26 nightly,
+  `fbf82766d62`; it validates the architecture, not the shipped ABI. Node 24
+  is the user-selected stable LTS line. This tag bundles OpenSSL 3.5.5; the
+  vendor manifest records both source identities.
 - The internalBinding ABI is unstable across versions. Accepted by the user
   (we control deployment). Requirements: pinned tag + sha in the vendor
   manifest, surfaced in docs; upgrades are deliberate PRs gated by the full
   conformance suite (§10).
 - **M0 acceptance item:** re-run the `internalBinding(...)` grep diff between
-  the POC nightly and the pinned tag and reconcile the §4 table (the nightly
+  the v26 POC nightly and the pinned v24 tag and reconcile the §4 table (the nightly
   inventory already drifts — `permission` was missed on first pass).
 
 ### 3.2 Vendoring mechanics — how we get node's source
@@ -168,9 +196,13 @@ patch-the-layer-that-owns-it policy).
   - `vendor/native/` — **leaf-lib C/C++ sources vendored from the same
     pinned node tag** where node vendors them: `deps/llhttp` (the *generated
     C*, not upstream TS), `deps/ada` (amalgamation), `deps/nbytes`; simdutf
-    from its own pinned release (v26 no longer vendors it); zlib/brotli/zstd
+    from the dependency version selected by the pinned Node tag (or its own
+    pinned upstream release if that tag does not vendor it); zlib/brotli/zstd
     from pinned upstream releases. Version skew between leaf libs and the JS
-    that drives them is eliminated by construction.
+    that drives them is eliminated by construction. **OpenSSL is deliberately
+    not owned here** because it is shared with registry software; its source
+    identity and build live under `toolchain/c` (§9.4), and this crate records
+    that shared manifest hash.
   - `bindings/` (shim JS, one file per binding), `src/` (Rust: source map,
     snapshot creator, HOST binding functions).
 - `scripts/vendor-node.mjs` copies from a node checkout at the pinned tag,
@@ -187,6 +219,9 @@ patch-the-layer-that-owns-it policy).
   (§9.4); docker sidecar builds and darwin/linux release legs consume the
   same job's outputs, so bytes are identical everywhere (required if ever
   snapshot-adjacent).
+- **Ownership boundary:** `crates/node-stdlib/wasm/crypto/` owns only the
+  Node-facing C/C++ adapter ABI and JS shim. It must not contain a private
+  OpenSSL source copy, patch set, download, or prebuilt archive.
 - Builtin IDs mirror node's js2c mapping (`lib/foo.js` → `foo`,
   `deps/undici/undici.js` → `internal/deps/undici/undici`) so `realm.js`
   works unchanged.
@@ -216,14 +251,15 @@ Spec:
   Consequence: moving a binding between JS and HOST after M0 is a
   snapshot-format change — plan the split in M0, not opportunistically.
 - **The silent degrade path is removed** for the real stdlib: snapshot
-  creation failure either falls back to a *defined* full `realm.js`
-  in-context bootstrap (same semantics, slower, logged with reason) or fails
-  the Execute with a typed error — never a silently different environment.
+  creation failure falls back to a *defined* full `realm.js` in-context
+  bootstrap (same semantics, slower, logged with reason). Execute fails with
+  a typed error only if that fallback also fails; it never enters a silently
+  different environment.
 - Non-snapshotted builtins compile lazily from the in-snapshot source map;
   per-builtin V8 code-cache blobs are a follow-up if the coldstart bench
   (§11.2's lazy-compile metrics) shows need.
 
-## 4. Binding plan (69 bindings referenced by v26 `lib/` + process object)
+## 4. Binding plan (v26-POC inventory; exact v24 count reconciled at M0)
 
 Strategies: **JS** (pure JS shim) · **WASM** (JS shim calling in-isolate wasm
 leaf lib) · **BRIDGE** (kernel/sidecar via bridge globals) · **HOST** (Rust in
@@ -236,7 +272,7 @@ and inside `test/common`), so a throwing stub bricks bootstrap and the entire
 test plan. Pattern: plausible inert values (`isMainThread: true`,
 `threadId: 0`, `ownsProcessState: true`, …) with only the *action* entry
 points (`new Worker`, `inspector.open`, …) throwing
-`ERR_AGENTOS_UNSUPPORTED(<feature>, <docs link>)`. (Worker stance: [OQ 3].)
+`ERR_AGENTOS_UNSUPPORTED(<feature>, <docs link>)`. Workers follow Decision 6.
 
 **M0 gate: every binding below loads inert** — `require()` of every public
 module must succeed at M0 with bindings in at-least-inert form, because
@@ -269,11 +305,11 @@ Milestones then make families *behave*, not *exist*.
 | async_wrap, async_context_frame | HOST | **AsyncLocalStorage requires V8 continuation-preserved embedder data** (`async_context_frame.js:8-11`, `src/async_context_frame.cc:38`) → verify our V8 build has `v8_enable_continuation_preserved_embedder_data` (M0 task); fallback path needs `setPromiseHooks` (`v8::Context::SetPromiseHooks`) — also HOST. `bootstrap/node.js:227` calls `async_wrap.setupHooks` unconditionally. Every callback-dispatching shim follows the MakeCallback discipline (§6.4) |
 | stream_wrap, tcp_wrap, pipe_wrap, js_stream, stream_pipe | BRIDGE | §7.3 — StreamBase contract incl. sync/async duality |
 | udp_wrap, cares_wrap | BRIDGE | `_dgram*`, `_networkDns*`; `getaddrinfo(3)`; c-ares behavior as contract |
-| tls_wrap | WASM or BRIDGE | reframed by Decision 2 — in-guest OpenSSL TLS over kernel TCP (recommended) vs kernel-owned TLS upgrade; §7.4, RFC 8446 cited **[OQ 2]** |
+| tls_wrap | WASM + BRIDGE | **Decision 2:** node's TLS contract over the shared in-guest OpenSSL wasm build; encrypted records use kernel-owned TCP via the socket bridge. RFC 8446 + node `crypto_tls.*` are the implementation authorities; §7.4 |
 | http_parser | WASM | llhttp **generated C from the pinned node tag** (`deps/llhttp/src`); node `http_parser` binding contract |
-| http2 | BRIDGE (M4) | nghttp2-to-wasm vs host decided when reached; `_networkHttp2*` fallback |
+| http2 | WASM + BRIDGE (M4) | compile the pinned node tag's nghttp2 to wasm and keep socket I/O in the kernel bridge; a host implementation is allowed only after a measured, documented nghttp2-wasm blocker |
 | zlib | WASM | node needs BrotliEncoder + zstd compress (`node_zlib.cc:155,256`; `lib/zlib.js:89-92`) — **new build rules required**: toolchain currently builds brotli *decoder*-only and zstd *decompress*-only (built for curl). Add `c/enc` + `lib/compress` objects (zstd keeps `ZSTD_MULTITHREAD` undefined). Not "already built" |
-| crypto | WASM | **Decision 2:** OpenSSL-family compiled with our sysroot, in-isolate (edgejs precedent). Binding surface is ~174 properties destructured at module scope — inventory is the checklist. M4 gate: crypto suite categories green with a real denominator (`versions.openssl` is real). §7.4 |
+| crypto | WASM | **Decision 2:** the pinned Node 24 tag's real OpenSSL 3.5.x, built once with our sysroot and shared with registry C tools. Binding surface is inventoried from the pinned v24 tag (the v26 POC saw ~174 properties) and is the checklist. M4 gate: crypto suite categories green with a real denominator (`versions.openssl` is real). §7.4 |
 | sqlite | BRIDGE | existing `_sqlite*` globals |
 | spawn_sync, process_wrap, signal_wrap | BRIDGE | `_childProcessSpawn*`, `waitpid(2)`, `signal(7)`; self-spawn via the real guest `node` command (Decision 3, §10.5) |
 | tty_wrap | BRIDGE | `_kernelIsattyRaw`, pty; `tty(4)`, `termios(3)` |
@@ -283,9 +319,9 @@ Milestones then make families *behave*, not *exist*.
 | v8, heap_utils, serdes, internal_only_v8 | HOST | heap stats, Serializer/Deserializer via rusty_v8 |
 | wasi, wasm_web_api | JS/HOST | expose node's `WASI` class over our existing in-isolate runner where sensible |
 | diagnostics_channel, trace_events | JS | pure JS / validating no-op sink |
-| locks, webstorage | BRIDGE/JS | Web Locks in-JS per spec; localStorage optional |
+| locks, webstorage | JS / inert | Web Locks in-JS per spec. Web storage preserves current legacy behavior at cutover; any native-Node expansion beyond that baseline is post-cutover and cannot be advertised until its differential tests pass |
 | block_list | JS | `node_sockaddr` semantics |
-| worker | JS (inert) + STUB actions | inert data (`isMainThread:true`, `threadId:0`, `ownsProcessState:true`, …); only `new Worker` throws typed. Required for bootstrap (`is_main_thread.js:311`, `pre_execution.js:141,778`) and for `test/common` to load **[OQ 3]** |
+| worker | JS (inert) + STUB actions | **Decision 6:** inert data (`isMainThread:true`, `threadId:0`, `ownsProcessState:true`, …); only `new Worker` throws typed. Required for bootstrap (`is_main_thread.js:311`, `pre_execution.js:141,778`) and for `test/common` to load |
 | inspector, profiler, report, watchdog, sea, quic | STUB (inert per policy) | quic revisit post-M4 |
 | mksnapshot | JS | `startup_snapshot` runtime path (POC-proven); real mode used by our snapshot creator |
 
@@ -412,9 +448,12 @@ Spec:
    io-completions, watch descriptors + queued events (§7.2), contextify
    contexts, wasm module cache entries — each in `VmLimits` +
    `limits-inventory.json` with typed errors.
-7. Fidelity budget: exact phase parity required only where node's suite or
-   real packages observe it; deviations enter the parity ledger (§10.3)
-   with a linked upstream test.
+7. Fidelity budget: during migration, every known phase deviation enters the
+   parity ledger (§10.3) with a linked upstream test. At cutover, a deviation
+   may remain only when it is an explicit program non-goal (such as Workers)
+   or preserves the measured legacy baseline while a linked post-cutover
+   issue tracks the native-parity gap. The ledger cannot silently redefine
+   observable Linux behavior as conformant.
 
 ## 7. I/O surfaces
 
@@ -470,20 +509,30 @@ Spec:
   kernel pipes; stdio inheritance and exit/signal codes per `waitpid(2)`;
   self-spawn story in §10.5.
 
-### 7.4 crypto / zlib (crypto DECIDED — Decision 2)
-- **crypto: a real OpenSSL-family library compiled with our sysroot,
-  running in-isolate**, backing `internalBinding('crypto')` — the same
-  architecture as every other leaf lib, at larger scale. Build precedent
-  exists end-to-end: edgejs compiles the wasix-org OpenSSL fork with
-  documented flags (`~/misc/edgejs/wasix/build-wasix.sh`: `./Configure
-  linux-generic32`, `_WASI_EMULATED_*`, wasm exceptions); our own toolchain
-  already builds mbedTLS the same static-lib way.
-- **OpenSSL vs BoringSSL — recommendation: OpenSSL 3.x** (pending user
-  sign-off, Decision 2 note; proceeding with OpenSSL absent objection).
-  Node's `ncrypto` layer wraps the OpenSSL 3.x EVP/provider API and node's
-  error strings/`versions.openssl` are OpenSSL-shaped; BoringSSL diverges
-  (EVP subset, no provider model) and would reintroduce exactly the
-  surface-chasing this decision eliminates.
+### 7.4 crypto / TLS / zlib (DECIDED — Decision 2)
+- **One real OpenSSL 3.5.x build:** use the exact OpenSSL source bundled by
+  the pinned Node 24 tag through the shared `toolchain/c` manifest, compile it
+  once with the in-repo sysroot, and stage
+  one content-addressed set of wasm32 static archives (`libcrypto.a` and
+  `libssl.a`). Node's
+  `internalBinding('crypto')` and `tls_wrap` adapters use it in-isolate; curl,
+  wget, git/libcurl, and full-crypto ssh use the same build in their in-guest
+  wasm processes. All consumers use the VM's
+  `/etc/ssl/certs/ca-certificates.crt` trust root.
+- **Why this supersedes the WIP networking-handoff recommendation:** the
+  current registry stack proves in-guest TLS, getentropy, CA-bundle, and
+  socket plumbing with mbedTLS 3.6, but mbedTLS does not expose an OpenSSL 3
+  compatibility API. Building such a façade would be a new crypto-abstraction
+  project and still would not reproduce node's EVP/provider/error behavior.
+  BoringSSL likewise diverges. Real OpenSSL is therefore the one shared
+  backend; port gaps are fixed in the sysroot or OpenSSL build patches under
+  the repo's one-layer-down policy, not with per-tool TLS adapters.
+- **Build spike:** start in M0 and gate M1 on compiling `libcrypto` and
+  `libssl`, loading providers without `dlopen`, seeding from `getentropy`, and
+  completing an in-guest TLS handshake. If a concrete blocker remains after
+  sysroot and OpenSSL patches are exhausted, record the failed surface and
+  evidence as a refuted thesis and return for an architecture decision; do
+  not silently introduce another backend.
 - **Entropy:** OpenSSL RAND seeds via `getentropy(2)` → host import →
   kernel CSPRNG (precedent: the mbedTLS getentropy shim in `toolchain/c`).
   Seeding must never silently fall back to weak entropy: the getentropy
@@ -493,7 +542,7 @@ Spec:
   deleted — `common.hasCrypto` suite gating works naturally; the M4 crypto
   acceptance has an honest denominator by construction). The crypto shim
   marshals through the same wasm import-object contract as other leaf libs
-  (§9.4); streaming EVP contexts live in wasm memory keyed by handle,
+  (§9.4); streaming EVP/SSL contexts live in wasm memory keyed by handle,
   zeroized on free. The RustCrypto-backed `_crypto*` bridge globals + their
   sidecar handlers move to the **deletion inventory** (§12.1),
   protocol-lockstep removal at M5.
@@ -501,20 +550,19 @@ Spec:
   crypto-blob budget; instantiation is lazy on first `require('crypto')`
   (post-restore, §3.3); measured by the §11.2 wasm lifecycle bench.
 - webcrypto rides the same OpenSSL-wasm backend.
-- **TLS ([OQ 2] — reframed by Decision 2):** with OpenSSL in-guest there
-  are two shapes. (a) **In-guest TLS (recommended):** node's real
-  `tls_wrap`/`SecureContext` semantics run against real OpenSSL SSL objects
-  in wasm; TLS records flow over kernel-owned TCP. Highest fidelity —
-  node's TLS surface (SecureContext options, session reuse, ALPN,
-  renegotiation, cert chains) is OpenSSL-coupled and transfers wholesale.
-  (b) Kernel-owned TLS upgrade (today's `_netSocketUpgradeTlsRaw`): smaller
-  guest, but every TLS API knob must be re-marshalled and will leak
-  deviations. **Security model is unchanged either way**: the kernel owns
-  sockets and connect/egress policy in both shapes; in (a) it sees
-  ciphertext exactly as the Linux kernel does for a native node process,
-  and in-guest keys are the guest's own credentials (same trust position
-  as native). Client-chosen dangerous TLS config remains out of scope per
-  the trust model.
+- **TLS is in-guest:** node's `tls_wrap`/`SecureContext` contract runs against
+  real OpenSSL SSL objects in wasm; TLS records flow over kernel-owned TCP.
+  The kernel retains socket and egress policy and sees ciphertext exactly as
+  a Linux kernel does for native node. The host-owned
+  `_netSocketUpgradeTlsRaw`/`rustls-native-certs` path is deleted at cutover.
+  Client-chosen TLS credentials and options retain the same trust position as
+  native Node.
+- **Shared-backend acceptance:** build/link manifests prove every Node and C
+  consumer links the same archive/source hashes (final wasm modules may each
+  embed their linked copy); a cross-runtime e2e runs curl
+  and Node `https.get`/`tls.connect` against the same trusted and self-signed
+  servers, checks the same success/failure class, and verifies `--cacert` and
+  `NODE_EXTRA_CA_CERTS`; no host trust store or per-tool TLS adapter remains.
 - **zlib: wasm** with the §4 build-rule additions (brotli encoder, zstd
   compress). Node `node_zlib.cc` contract (streaming, flush modes,
   dictionaries). Deletes the bridge zlib payload (`v8-bridge-zlib.js`).
@@ -553,6 +601,11 @@ Numbers below are **provisional targets**; M0 replaces each with
 (`sync-bridge-floor.bench.ts` exists today; native-node codec bench added in
 M0). If a floor already exceeds a target, the budget is renegotiated in the
 regression ledger — budgets are not aspirations detached from instruments.
+- **Primary migration-parity gate (Decision 7):** at default flip and M5,
+  every applicable p50 metric is no more than 10% slower than the same-day,
+  same-machine legacy path. p99 and dispersion are published and any material
+  tail regression requires a ledger entry. Native-node comparisons remain
+  optimization targets; they do not excuse a regression from what ships now.
 - Sync binding RTT: target p50 ≤ max(10µs, 1.2× measured no-op floor);
   p99 ≤ 5× p50. Metric: **p50/p99 of ≥1000 iterations, ≥5 runs, IQR
   dispersion reported**.
@@ -616,7 +669,16 @@ and the "behave like Linux" north star. They form a **parallel workstream
 - Ground truth: today nothing on `main` builds a C sysroot — `toolchain/`
   exists only on the reg-tests branch; the publish "registry WASM commands"
   job is cargo-only (`publish.yaml:53-78`); sysroot bootstrap = wasi-sdk
-  download + wasi-libc clone/patch + LLVM-runtimes rebuild (multi-hour).
+  download + wasi-libc clone/patch + LLVM-runtimes rebuild. **MEASURED
+  (2026-07-09, 20-core linux, fresh dir, cold caches): 87s total** —
+  wasi-sdk download+extract 15s, wasi-libc clone 2s, llvm-project tarball
+  fetch 50s (network-bound), patch + libc build + libc++/libc++abi/libunwind
+  build ~20s. Leaf-lib (simdutf) build against the fresh sysroot: 2s. The
+  fresh libc.a verified to contain our host-import surface
+  (`__host_net_socket`, `__host_proc_spawn`, …). Earlier "multi-hour"
+  characterizations were wrong. Expect low single-digit minutes on 2–4 core
+  CI runners (compute step is the only part that scales with cores; the
+  ~65s of network fetches dominate and don't).
 - **Decision (user): the toolchain lives in the monorepo and the stdlib
   wasm components are built by the same pipeline against the same in-repo
   patched libc.** Landing plan (M0): move `toolchain/` (`c/`,
@@ -624,15 +686,42 @@ and the "behave like Linux" north star. They form a **parallel workstream
   `crates/node-stdlib/wasm/` build rules join `toolchain/c/Makefile`; the
   release workflow gains a leaf-lib build job ordered before the sidecar
   builds (staged like pyodide assets).
-- **CI caching strategy (the multi-hour cold path):** cache key = content
-  hash of (wasi-sdk pin, llvm-project pin, `std-patches/**`,
-  `wasi-libc-overrides/**`, build scripts). Cache hit restores the built
-  sysroot + LLVM runtimes (minutes); the cold rebuild runs only when those
-  inputs change, on a scheduled/manual job — never on the PR critical
-  path. Content-addressed, sha256-pinned prebuilt sysroot artifacts are the
-  **cache implementation detail**, not the delivery mechanism: the in-repo
-  toolchain source is the single source of truth, and a cold CI run must be
-  able to rebuild the identical sysroot from pins alone.
+- **Shared OpenSSL ownership and layout (normative):**
+  - `toolchain/c/openssl/manifest.json` pins Node `v24.15.0`, its peeled
+    commit, OpenSSL 3.5.5, the Node source archive sha256, the
+    `deps/openssl/openssl` tree hash, configure flags, and expected outputs.
+  - `toolchain/c/scripts/build-openssl-upstream.sh` is the only acquisition
+    and build entry point. It extracts the exact Node-bundled source into the
+    ignored toolchain cache and builds static, builtin providers without
+    network access after acquisition.
+  - `toolchain/c/patches/openssl/` contains numbered source patches only when
+    a sysroot fix cannot own the gap; each patch states why.
+  - `toolchain/c/build/openssl/{include,lib/libcrypto.a,lib/libssl.a,
+    manifest.json}` is ignored build output. The output manifest includes
+    source, patch-set, sysroot, compiler, flags, and archive hashes.
+  - `crates/node-stdlib/wasm/crypto/` contains the Node binding adapter and
+    links the shared archives. curl/libcurl, wget, git, and OpenSSH consume
+    the same output manifest and archives. No consumer downloads or builds
+    OpenSSL privately, and no `build.rs` performs a network fetch.
+- **CI/dev delivery** (measurement above collapses the problem — the cold
+  build is ~90s local / minutes on CI, so caching is an optimization, not
+  load-bearing infrastructure; in-repo toolchain source is the single
+  source of truth and a cold run reproduces the identical sysroot from
+  pins alone):
+  1. **Recommended: GitHub Actions cache with build fallback.** Content-hash
+     key (wasi-sdk pin, llvm-project pin, `std-patches/**`,
+     `wasi-libc-overrides/**`, build scripts); hit restores in seconds,
+     miss rebuilds in-job in minutes — cheap enough for the PR path. The
+     network fetches (wasi-sdk + llvm tarballs, ~65s of the 87s) should be
+     mirrored to R2 with sha256 verification to remove third-party
+     availability from the critical path.
+  2. Optional layer: a sha256-addressed prebuilt sysroot artifact (R2) for
+     local dev that wants `cargo build` to work without make — nice-to-have
+     given the from-source path costs ~90s; `just build-sysroot` is the
+     default local answer.
+  Local dev is never blocked on a build it didn't ask for; any artifact
+  fetch failure is a typed hard error naming the expected hash — not a
+  silent fallback.
 - **Pin everything (hard requirement, unchanged):** wasi-sdk tarball,
   llvm-project checkout, zlib/mbedtls/brotli/zstd tarballs, curl fork
   (currently tracks `main`!), os-test/libc-test — all get sha256/commit
@@ -665,13 +754,15 @@ and the "behave like Linux" north star. They form a **parallel workstream
   Harness requirements: parse `// Flags:` and emulate the relevant ones
   (`--expose-internals` → provide `internal/test/binding` per node's own
   mechanism; unsupported flags → skip(flag:<name>) with reason).
-  **Runnable-fraction trajectory (post-Decisions 2+3):** ~55–65% at M0
-  (self-spawn and crypto not yet landed), rising to **~85–90% by M4** —
-  the execPath category (~16.5%) becomes runnable via the guest `node`
-  command and the hasCrypto category (~20.7%) gates on a real
-  `versions.openssl`. Durable exclusions: workers (~8%) and unsupported
-  flags. The ledger's denominator states the current fraction explicitly
-  at every milestone **[OQ 4]**.
+  **The denominator is measured, not guessed (Decision 7):** M0 runs the same
+  harness against legacy and real paths and publishes both runnable/pass sets.
+  The real path's M0 gap is implementation work, not an accepted percentage.
+  Each milestone must preserve every legacy-passing test in the categories it
+  replaces; by default flip/M5, the real path contains the complete
+  legacy-passing set except explicit program non-goals, with all additional
+  native-node passes ratcheted. Workers (~8%) and genuinely unsupported flags
+  remain reasoned exclusions. The ledger states exact counts and set diffs at
+  every milestone.
 - **Expected-state ledger** (checked-in JSON per category): `pass`,
   `fail-accepted(reason, issue)`, `skip(reason)`. CI fails on regression
   AND on unexpected pass (forces ledger updates; progress visible in
@@ -696,9 +787,10 @@ and the "behave like Linux" north star. They form a **parallel workstream
   linked upstream tests (§6.7).
 
 ### 10.4 worker_threads stance
-- Cutover ships without workers; binding is inert data (§4), `new Worker`
-  throws typed. Suite marks skip(worker). Later design sketch: host-side
-  multi-isolate + MessagePort over kernel channels — out of scope. **[OQ 3]**
+- **Decision 6:** cutover ships without workers; binding is inert data (§4),
+  `new Worker` throws typed. Suite marks `skip(worker)`. A future host-side
+  multi-isolate + MessagePort design is a separate program and does not gate
+  this cutover.
 
 ### 10.5 execPath and self-spawn (DECIDED — Decision 3)
 - 643 suite tests (and real-world tools: npm lifecycle scripts, node-gyp
@@ -777,7 +869,7 @@ and the "behave like Linux" north star. They form a **parallel workstream
 
 ## 12. Migration, cutover, deletion
 
-### 12.1 Deletion inventory (review-corrected; the definition of "done")
+### 12.1 Deletion inventory (review-corrected; native definition of "done")
 **Deleted:**
 - `packages/build-tools/bridge-src/**` — 30,486 LOC TS (41 files), its
   esbuild pipeline `packages/build-tools/scripts/build-v8-bridge.mjs`, the
@@ -798,13 +890,14 @@ and the "behave like Linux" north star. They form a **parallel workstream
   `AGENTOS_ALLOWED_NODE_BUILTINS` host-node path.
 - CJS export-name extraction + CJS shim generation in
   `crates/v8-runtime/src/execution.rs`.
-- Browser polyfill generators consuming bridge-src:
-  `build-browser-util-polyfill.mjs` (+path/buffer siblings) and
-  `packages/runtime-browser/src/generated/*-polyfill.ts` — **in the gate**;
-  browser migrates together with native (Decision 4, §12.3).
-- The RustCrypto-backed `_crypto*` bridge globals and their sidecar
-  handlers (Decision 2) — protocol-lockstep removal at M5, after the
-  OpenSSL-wasm binding is the only crypto path.
+- Browser runtime sources and its polyfill generators are **kept but disabled,
+  not migrated** (Decision 4, §12.3). They are removed from CI/release/publish
+  matrices in M0 and may cease to build after native `bridge-src/**` deletion;
+  browser buildability is not a gate for this program.
+- The RustCrypto-backed `_crypto*`, host TLS-upgrade, and
+  `rustls-native-certs` bridge globals/handlers (Decision 2) —
+  protocol-lockstep removal at M5, after shared OpenSSL-wasm is the only
+  crypto/TLS path.
 - Collateral retargeted or deleted with owners named in the milestone PRs:
   `scripts/verify-check-types.mjs` undici-shims reference; native-sidecar
   suites keyed to the legacy layer (`builtin_conformance`,
@@ -826,81 +919,70 @@ substrate), `~/.agents/recovery/secure-exec/` porting stops.
   per flavor (coldstart budget accounts for it).
 - Sessions are homogeneous (no per-module runtime mixing) — with the single
   sanctioned, expiring M0→M1 loader exception (§5). Migration granularity
-  lives in the suite ledger; the default flips per §13 criteria measured on
-  the real path only.
+  lives in the suite ledger. The default flips only after the real path
+  contains the measured legacy supported-test set and meets the same-day
+  legacy performance gate (Decision 7, §§8.3, 10.1, 12.5).
 
-### 12.3 Browser runtime (DECIDED — Decision 4: browser profile, migrate together)
-- Ground truth: the browser runtime consumes bridge-src twice — generated
-  polyfills and the bridge bundle in `packages/runtime-browser/src/worker.ts`
-  (which also implements `_getPendingTimerCount`/`_waitForActiveHandles`
-  ~line 1899). **HOST (rusty_v8) bindings cannot exist in a browser
-  worker.**
-- **Decided: browser and native migrate together; browser stays in the
-  deletion gate.** Committed scope — every HOST binding gets one of:
-  - **JS fallback** where feasible: `types` via brand checks (POC-proven
-    adequate), `util` introspection via JS approximations, `process.env` as
-    a sealed Proxy validated against the same parity fixture as the native
-    interceptor (§4.5), `task_queue` via the browser engine's own
-    queueMicrotask/rejection events where semantics allow.
-  - **Wasm/web-native fallback** where compute: `serdes` structured clone
-    via the worker's native `structuredClone`; leaf-lib wasm (simdutf, ada,
-    llhttp, zlib, **OpenSSL**) runs unmodified in the browser's wasm engine
-    — same blobs, same import contract; the leaf-lib strategy is what makes
-    Decision 4 tractable.
-  - **Documented typed degradation** where neither exists: full
-    `contextify`/`vm` semantics, CPED-backed AsyncLocalStorage (browser
-    path uses the promise-hook-less best effort or typed unsupported).
-  - The complete per-binding browser matrix (fallback vs degradation, with
-    the typed error for each degradation) is an **M0 deliverable**
-    (`docs-internal/node-stdlib-browser-profile.md`).
-- Browser event loop: `worker.ts` loop-accounting hooks reimplemented
-  against the same HandleRegistry contract (§6.2) so `lib/` sees one loop
-  semantics in both runtimes.
-- Every milestone M1–M5 carries a **browser-parity acceptance item** for
-  that milestone's module families (same suite categories run under the
-  browser harness, ledgered separately with the browser-profile
-  degradations as sanctioned skips). Schedule impact acknowledged in §14.
+### 12.3 Browser runtime (DECIDED — Decision 4: disabled, retained)
+- Keep `packages/runtime-browser/**` and browser-specific generators in the
+  repository; do not delete or migrate them in this program.
+- In M0, remove browser build, test, publish, and release jobs from the active
+  matrices. Browser failures cannot block CI or release, and the browser
+  package is not shipped while disabled.
+- Native cutover may delete shared legacy inputs the disabled browser source
+  still references. This program makes no browser-buildability promise and
+  carries no browser profile/design-doc deliverable. Re-enabling the browser
+  runtime requires a separately approved migration and restores its own CI and
+  release gates then.
 
 ### 12.4 Client-visible changes (review-corrected: NOT "none")
 - `allowed_node_builtins` denial error shape/timing changes (§5): lockstep
   same-change updates to Rust client (`crates/client/src/config.rs`), TS
   options schema, and docs; TS/Rust behavioral identity preserved.
-- **Platform tiering:** public `jsRuntime` option maps to
+- **Native V8 platform tiering (not the disabled browser runtime):** public `jsRuntime` option maps to
   `AGENTOS_JS_PLATFORM` (`javascript.rs:3186-3227`) which today
   *subtractively scrubs* process/Buffer/require per execution. Real node's
   bootstrap makes `process` load-bearing — subtractive scrubbing does not
-  transfer. Spec: tiering becomes **bootstrap profiles** (e.g. `browser`
-  profile = web globals only, node bootstrap not run; `node` profile =
-  full), implemented at context-build time, with a parity gate asserting
-  each tier's global surface matches its documented contract. Guest-visible
+  transfer. Spec: preserve the existing public option values as
+  **context-build bootstrap profiles**; M0 captures a global-surface fixture
+  for every current value, and implementation must preserve that contract
+  while the full-node value runs node bootstrap. This concerns native V8
+  sessions only and does not reintroduce browser-runtime scope. Guest-visible
   behavior change → docs + both clients in the same change.
 - Everything else (ACP/protocol, bridge globals) unchanged; bridge
   *additions* follow normal protocol-lockstep rules.
 
 ### 12.5 Done means
-1. Deletion inventory empty on `main` (browser included, Decision 4);
-2. node-suite ledger ≥ agreed per-category thresholds, no `fail-accepted`
-   without an issue link; 3. §8.3 budgets met with published same-machine
+1. Native deletion inventory empty on `main`; the retained, disabled browser
+   runtime is explicitly outside it (Decision 4); 2. the real node-suite set
+   includes every legacy-passing test except explicit non-goals, and no
+   `fail-accepted` lacks an issue link; 3. §8.3 legacy-parity and native
+   budgets met with published same-machine
    before/after (§11.2); 4. docs + client schemas current; 5. vendor
    manifest + upgrade runbook in `docs-internal/`; 6. flag removed.
 
 ## 13. Phasing
 
+**Cross-workspace entry gate:** before M0 implementation begins, finish and
+forklift the ordered reg-tests handoff work: unskipped git-over-SSH clone/push,
+then the procps-driven `/proc` completion. Read the current state and proof
+requirements in `docs-internal/registry-networking-handoff.md` in the
+`reg-tests` workspace. Do not move either workspace's `@` to inspect the other.
+
 Cutover track:
 
 | M | Scope | Acceptance |
 |---|---|---|
-| **M0** | Vendor node (pinned tag) + leaf-lib sources + empty `vendor/patches/` tooling; binding-grep reconcile vs tag; `crates/node-stdlib` skeleton; snapshot integration (flavor-keyed cache, defined fallback); **all 69 bindings + process object load inert** (every public module `require`s clean); interim loader exception documented; CPED build-flag verified; §11.2 measurement deliverables (floors, dual-target runner, A/B + PR-delta tooling, snapshot + wasm microbenches); budgets restated as floor×headroom; suite harness + honest initial ledger (runnable fraction stated); **`toolchain/` lands on main + sysroot CI cache (§9.4)** + policy text on main (§9.5); **browser-profile matrix doc (§12.3)** | real-stdlib session boots eager set from snapshot; `require` of all public modules succeeds; ledger + bench baselines published; toolchain builds green on main |
+| **M0** | Vendor pinned Node 24 LTS JS + leaf-lib sources; create the shared `toolchain/c/openssl` manifest/build/patch layout (§9.4) and Node adapter skeleton without a private OpenSSL copy; binding-grep reconcile vs the v26 POC; `crates/node-stdlib` skeleton; snapshot integration (flavor-keyed cache, defined fallback); **every pinned-v24 binding + process object loads inert** (every public module `require`s clean); interim loader exception documented; CPED build-flag verified; §11.2 measurement deliverables (legacy + real floors, dual-target runner, A/B + PR-delta tooling, snapshot + wasm microbenches); budgets restated as floor×headroom; suite harness + exact legacy/real set-diff ledger; **shared OpenSSL build spike (§7.4)**; **`toolchain/` lands on main + sysroot CI cache (§9.4)** + policy text on main (§9.5); **browser runtime removed from active CI/release/publish matrices but source retained (§12.3)** | real-stdlib session boots eager set from snapshot; `require` of all public modules succeeds; exact legacy/real ledger + bench baselines published; shared OpenSSL `libcrypto.a`/`libssl.a` compiles, emits a reproducibility manifest, and completes an in-guest handshake; toolchain builds green on main; browser cannot block CI/release |
 | **M1** | fs complete: fd-level 1:1 bridge, base64-kill + backing-store transport (A/B in acceptance), stat truth, statfs/access/utimes/mkdtemp/copyFile/opendir, uv errno fixture, blob, permission row final; kernel readdir-ENOENT fix; GC/detach stress test; real CJS loader for user code (module_wrap minimal + compileFunctionForCJSLoader) — loader exception expires | `test-fs-*` sync+async ledger green (watch excluded); fs micro within budget; transport A/B published |
 | **M2** | Event loop phases + HandleRegistry + explicit-microtask policy + MakeCallback discipline + loop-turn clock; async_wrap/async_context_frame HOST (ALS works); task_queue HOST pieces (unhandledRejection); messaging (DOMException, transferables, structuredClone); streams at suite depth; fs.watch kernel primitive + `fs_event_wrap`; limits table live | streams/timers/ALS suite categories green; ordering parity ledger clean; limits enforced with typed errors |
-| **M3** | net (StreamBase contract incl. sync-write fast path, streamBaseState, accepted-handle hydration; kernel readiness push + accept events), dns/dgram, tty (guessHandleType fixture); http via llhttp-wasm + real `_http_*` + real undici fetch | net/http suite categories green (native + browser ledgers); http RPS/p99 + stream-throughput budgets met |
-| **M4** | crypto: **OpenSSL-wasm build + binding (Decision 2)**, real `versions.openssl`, entropy host import; zlib/brotli/zstd (wasm, new encoder rules); child_process + **guest `node` command / self-spawn (Decision 3)**; TLS per OQ 2 resolution; os/process_methods, sqlite, http2 | respective categories green with the ~85–90% denominator (§10.1); crypto-blob + lazy-instantiation budgets met |
-| **M5** | ESM loader + vm/contextify completeness; platform-tiering bootstrap profiles; flag default→real then **flag removed**; **deletion inventory executed** (incl. split-file surgery + `_crypto*` bridge removal §12.1, browser included); bridge-call census (§8.2); final same-machine before/after report; docs/clients lockstep | §12.5 "done" |
+| **M3** | net (StreamBase contract incl. sync-write fast path, streamBaseState, accepted-handle hydration; kernel readiness push + accept events), dns/dgram, tty (guessHandleType fixture); http via llhttp-wasm + real `_http_*` + real undici fetch | net/http suite categories green (native ledger); http RPS/p99 + stream-throughput budgets met |
+| **M4** | crypto + TLS adapters over the **one shared OpenSSL 3.5.x wasm build (Decision 2)**, real `versions.openssl`, entropy host import, shared VM CA; migrate registry C consumers and delete per-tool TLS adapters; zlib/brotli/zstd (wasm, new encoder rules); child_process + **guest `node` command / self-spawn (Decision 3)**; os/process_methods, sqlite, nghttp2-wasm | respective categories preserve the complete legacy-passing set and ratchet native passes (§10.1); cross-runtime shared-TLS e2e green; crypto-blob + lazy-instantiation budgets met |
+| **M5** | ESM loader + vm/contextify completeness; native-V8 platform-tiering bootstrap profiles; flag default→real only after legacy functional/perf parity, then **flag removed**; **native deletion inventory executed** (incl. split-file surgery + `_crypto*`, host TLS, and host trust-store removal §12.1); bridge-call census (§8.2); final same-machine before/after report; docs/clients lockstep | §12.5 "done" |
 
-Every milestone M1–M5 additionally carries the **browser-parity acceptance
-item** for its module families (Decision 4, §12.3): same suite categories
-under the browser harness, separate ledger, browser-profile degradations as
-sanctioned skips.
+Browser (Decision 4): source is retained but disabled from CI, release, and
+publish in M0. It has no migration deliverable or acceptance gate in this
+program and cannot block any milestone.
 
 Parallel libc track (does not gate M5): **L1** eventfd (kernel fd object +
 host import + pollable + conformance), **L2** epoll (libc emulation over
@@ -915,40 +997,33 @@ ready; consumed by future registry-software work.
 | StreamBase sync/async duality subtleties | M3 | contract specced from `stream_base_commons.js`/`stream_wrap.cc`; errno fixtures; sync fast path in design not retrofit |
 | Bridge chattiness dominates fs/net/loader perf | M1/M3/M5 | floors measured M0; backing-store transport; batching; census at M5 entry; ratio-gated nightly |
 | CPED flag absent from our V8 build | M0 | verify first (M0 task); fallback = SetPromiseHooks path (slower, HOST already specced) |
-| OpenSSL-wasm build + binding scale (Decision 2) | M4 | edgejs build recipe as starting point; mbedTLS static-lib precedent in-toolchain; ~174-prop inventory as checklist; lazy instantiation + blob budget; crypto is the single largest leaf-lib workstream — start the build spike in M1, not M4 |
+| Shared OpenSSL 3.5.x wasm build + binding scale (Decision 2) | M0–M4 | edgejs build recipe and the proven mbedTLS/sysroot/socket/CA plumbing as starting points; inventory pinned-v24 binding surface; build + handshake spike in M0; lazy instantiation + blob budget; one content-addressed build and cross-runtime e2e prevent backend drift |
 | Suite harness realism (Flags emulation, common/ deps) | M0+ | quantified up front (§10.1); Decisions 2+3 remove the two biggest self-skip categories; honest denominator per milestone |
 | Snapshot bloat / lazy-compile latency | M0+ | size/build-time/lazy-compile metrics + budgets from M0; code-cache follow-up |
-| Browser-profile scope (Decision 4) — every HOST binding needs a fallback/degradation, browser ledgers per milestone; **this is the largest scope addition of the decisions and extends every milestone** | M0–M5 | M0 browser matrix makes the cost visible before commitment deepens; leaf-lib wasm runs natively in browser (no port); degradations are typed + documented, not parity-blocking; schedule re-estimate at M1 exit with the matrix in hand |
 | Toolchain-on-main CI cost (Decision 1) | M0+ | content-hash sysroot cache; cold rebuild off the PR path; pins make cache correct by construction |
 | Node-version upgrades churn binding ABI | post-cutover | pinned vendor manifest; upgrade runbook = suite ledger diff |
 | Sysroot/artifact supply chain (unpinned inputs) | M0 | §9.4 pin-everything + content-hash metadata |
 | Legacy/real dual maintenance drags | M1–M5 | legacy frozen (bugfix-only) at M1; flag removal is M5 exit |
 
-## 15. Open questions for the user
+## 15. Resolved questions and implementation decision gates
 
-Resolved 2026-07-09 (see §0 Decisions log): sysroot/toolchain delivery,
-crypto backend, execPath/self-spawn, browser runtime, and the old
-`versions.openssl` synthesis question (mooted by real OpenSSL). Remaining:
+No user product decision remains open as of 2026-07-09. §0 records the
+answers: Node 24.15.0 LTS; one real shared OpenSSL 3.5.x wasm backend with in-guest
+TLS; workers unsupported; empirical legacy functional/performance parity;
+dependency-driven sequencing; browser source retained but disabled and wholly
+outside this program.
 
-1. **Node version pin** — latest v26.x stable tag (recommended; POC-aligned,
-   LTS Oct 2026) vs v24 LTS now.
-2. **TLS shape** (reframed by Decision 2) — **in-guest TLS**: node's real
-   `tls_wrap` over the in-isolate OpenSSL, TLS records over kernel-owned
-   TCP (recommended: wholesale fidelity for SecureContext/ALPN/session-
-   reuse semantics; kernel keeps socket + egress policy and sees ciphertext
-   exactly as a real Linux kernel does) vs **kernel-owned TLS upgrade**
-   (smaller guest; every TLS API knob re-marshalled, deviations likely).
-   Also inherits the Decision 2 sub-choice: OpenSSL 3.x (recommended,
-   proceeding) vs BoringSSL.
-3. **worker_threads at cutover** — inert binding + typed `new Worker` error
-   (recommended) vs making a worker story a cutover requirement.
-4. **Initial runnable suite fraction** — accept ~55–65% at M0 ratcheting to
-   ~85–90% by M4 as Decisions 2+3 land (recommended) vs pulling the guest
-   `node` command and/or OpenSSL work earlier to raise the denominator
-   before the M0 baseline.
-5. **Sequencing** — M3 net/http as specced (recommended; with the M1
-   OpenSSL build spike per §14) vs pulling http earlier at the cost of fs
-   polish.
+The following are engineering gates, not user preference questions:
+1. M0 pins the exact Node 24 tag and reconciles the binding inventory.
+2. M0 proves the shared OpenSSL build + handshake. A failure is escalated only
+   with concrete sysroot/OpenSSL-patch evidence (§7.4), never by silently
+   adding another TLS backend.
+3. M0 measures exact legacy/real suite sets and benchmark floors; those
+   measurements replace guessed denominators and provisional budgets.
+4. URLPattern uses JS-RegExp wasm imports or a HOST provider based on the M0
+   prototype; either must pass the same native-node differential fixtures.
+5. nghttp2-wasm is the M4 path; a host fallback requires a measured,
+   documented blocker (§4).
 
 ---
 
@@ -1075,13 +1150,15 @@ resolution — in both cases because the resolving input (user repo-strategy
 preference; M0 floor measurements) does not exist yet; the spec now says
 exactly how and when each gets resolved. No finding was rejected.
 
-**Post-review update (v3):** the C2 open question was subsequently resolved
+**Post-review update (v4):** the C2 open question was subsequently resolved
 by the user (Decision 1, §0 — toolchain in the monorepo), superseding the
 prebuilt-artifact recommendation; the reviewer's caching and pinning
-requirements are retained in full in §9.4. Decisions 2–4 (§0) also
-supersede the v2 recommendations for crypto (was RustCrypto — now
-OpenSSL-wasm), browser (was freeze-and-decide — now committed profile), and
-self-spawn (recommendation adopted).
+requirements are retained in full in §9.4. The final §0 decisions also
+supersede the v2 recommendations: crypto/TLS now use one real shared OpenSSL
+3.5.x wasm build, browser source is retained but disabled and removed from
+this program, self-spawn is adopted, Node is pinned to v24.15.0 LTS, workers
+are unsupported at cutover, and functional/performance acceptance is measured
+against the legacy implementation rather than a guessed suite fraction.
 
 ---
 *Grounded against: `crates/bridge/bridge-contract.json` (178 globals),
