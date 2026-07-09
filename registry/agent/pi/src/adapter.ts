@@ -103,7 +103,31 @@ Object.defineProperty(process, "stdin", {
 
 type SessionManagerLike = {
 	inMemory(cwd?: string): unknown;
+	continueRecent(cwd: string, sessionDir: string): unknown;
 };
+
+/**
+ * Choose the Pi `SessionManager` for a new session.
+ *
+ * By default sessions are in-memory (nothing is written to disk), so a
+ * conversation is lost when the adapter process restarts. When the embedder
+ * provides a session directory via the `PI_SESSION_DIR` env var, use pi's
+ * `continueRecent` instead: it persists the session's `.jsonl` under that
+ * directory and resumes the most recent one, so conversations survive an adapter
+ * restart. No behavior change unless `PI_SESSION_DIR` is set.
+ *
+ * Exported for unit testing (the real `newSession` path needs the Pi SDK).
+ */
+export function resolveSessionManager(
+	SessionManager: SessionManagerLike,
+	cwd: string,
+	env: Record<string, string | undefined> = process.env,
+): unknown {
+	const sessionDir = env.PI_SESSION_DIR?.trim();
+	return sessionDir
+		? SessionManager.continueRecent(cwd, sessionDir)
+		: SessionManager.inMemory(cwd);
+}
 
 type ModelLike = {
 	id: string;
@@ -873,7 +897,7 @@ export class PiSdkAgent implements Agent {
 		const { session } = await __trace.span("createAgentSession", () =>
 			createAgentSession({
 				cwd: params.cwd,
-				sessionManager: SessionManager.inMemory(params.cwd),
+				sessionManager: resolveSessionManager(SessionManager, params.cwd),
 				resourceLoader,
 				tools: this.wrapTools(
 					createCodingTools(params.cwd, {
