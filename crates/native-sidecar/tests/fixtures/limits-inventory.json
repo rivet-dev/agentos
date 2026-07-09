@@ -1114,5 +1114,11 @@
 		"path": "crates/execution/src/wasm.rs",
 		"class": "invariant",
 		"rationale": "Host-side LRU entry cap for cached wasm module bytes; process-wide cache sizing, not per-VM policy."
+	},
+	{
+		"name": "MAX_PENDING_KERNEL_STDIN_BYTES",
+		"path": "crates/native-sidecar/src/execution.rs",
+		"class": "policy-deferred",
+		"rationale": "Host-side backlog cap for child stdin awaiting kernel pipe capacity; mirrors resource.max_fd_write_bytes, not yet wired to VmLimits."
 	}
 ]

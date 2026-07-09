@@ -41,7 +41,8 @@ use crate::state::{
     JavascriptTlsDataValue, JavascriptTlsMaterial, JavascriptUdpFamily, JavascriptUdpSocketEvent,
     JavascriptUnixListenerEvent, KernelSocketReadinessEvent, KernelSocketReadinessRegistry,
     KernelSocketReadinessTarget, LoopbackTlsPendingWriteHandle, LoopbackTlsPendingWriteState,
-    NetworkResourceCounts, PendingTcpSocket, PendingUnixSocket, ProcNetEntry, ProcessEventEnvelope,
+    NetworkResourceCounts, PendingKernelStdin, PendingTcpSocket, PendingUnixSocket, ProcNetEntry,
+    ProcessEventEnvelope,
     PythonHostSocket, ResolvedChildProcessExecution, ResolvedTcpConnectAddr, SharedBridge,
     SharedSidecarRequestClient, SidecarKernel, SocketQueryKind, ToolExecution, VmDnsConfig,
     VmListenPolicy, VmState, DEFAULT_JAVASCRIPT_NET_BACKLOG, EXECUTION_DRIVER_NAME,
@@ -471,6 +472,7 @@ impl ActiveProcess {
             kernel_pid,
             kernel_handle,
             kernel_stdin_writer_fd: None,
+            pending_kernel_stdin: PendingKernelStdin::default(),
             tty_master_fd: None,
             runtime,
             detached: false,
@@ -7885,6 +7887,11 @@ where
         {
             return Ok(false);
         }
+        // Top off the child's stdin pipe from any host-side backlog before
+        // probing readiness: the child draining the pipe is exactly what frees
+        // capacity for the next queued stdin bytes (and, once the backlog is
+        // empty, executes a deferred stdin close so EOF arrives in order).
+        flush_pending_kernel_stdin(kernel, child)?;
         let now = Instant::now();
         let requested_timeout_ms = match request.method.as_str() {
             "__kernel_stdin_read" => parse_kernel_stdin_read_args(request)?.1,
@@ -19509,6 +19516,20 @@ fn install_kernel_stdin_pipe(kernel: &mut SidecarKernel, pid: u32) -> Result<u32
             agentos_kernel::fd_table::FD_CLOEXEC,
         )
         .map_err(kernel_error)?;
+    // Non-blocking writes only: the sidecar dispatch thread feeds this pipe
+    // from `write_kernel_process_stdin` / `flush_pending_kernel_stdin`, and a
+    // blocking pipe write would deadlock — the child's pipe reads are parked
+    // sync RPCs serviced by this same thread. A full pipe surfaces EAGAIN and
+    // the remainder is queued in `ActiveProcess::pending_kernel_stdin`.
+    kernel
+        .fd_fcntl(
+            EXECUTION_DRIVER_NAME,
+            pid,
+            write_fd,
+            agentos_kernel::fd_table::F_SETFL,
+            agentos_kernel::fd_table::O_NONBLOCK,
+        )
+        .map_err(kernel_error)?;
     Ok(write_fd)
 }
 
@@ -19533,6 +19554,13 @@ fn javascript_child_process_stdin_mode(request: &JavascriptChildProcessSpawnRequ
         .unwrap_or("pipe")
 }
 
+/// Host-side cap on stdin bytes queued for a child's kernel pipe. Matches the
+/// kernel's default per-write bound (`resource.max_fd_write_bytes`); a parent
+/// cannot park more than this behind a slow child before getting a typed
+/// error.
+const MAX_PENDING_KERNEL_STDIN_BYTES: usize =
+    agentos_kernel::resource_accounting::DEFAULT_MAX_FD_WRITE_BYTES;
+
 pub(crate) fn write_kernel_process_stdin(
     kernel: &mut SidecarKernel,
     process: &mut ActiveProcess,
@@ -19548,17 +19576,103 @@ pub(crate) fn write_kernel_process_stdin(
     let Some(writer_fd) = process.kernel_stdin_writer_fd else {
         return Ok(());
     };
-    kernel
-        .fd_write(EXECUTION_DRIVER_NAME, process.kernel_pid, writer_fd, chunk)
-        .map_err(kernel_error)?;
-    // For a TTY process the master write above drives line-discipline echo into
-    // the master output buffer. Drain it now and surface it as the single
-    // ordered Stdout stream so typed-character echo reaches the host even while
-    // the guest is blocked in read() and not producing output of its own.
-    if let Some(echo) = drain_tty_master_output(kernel, process)? {
-        process.queue_pending_execution_event(ActiveExecutionEvent::Stdout(echo))?;
+    if process.tty_master_fd.is_some() {
+        kernel
+            .fd_write(EXECUTION_DRIVER_NAME, process.kernel_pid, writer_fd, chunk)
+            .map_err(kernel_error)?;
+        // For a TTY process the master write above drives line-discipline echo
+        // into the master output buffer. Drain it now and surface it as the
+        // single ordered Stdout stream so typed-character echo reaches the
+        // host even while the guest is blocked in read() and not producing
+        // output of its own.
+        if let Some(echo) = drain_tty_master_output(kernel, process)? {
+            process.queue_pending_execution_event(ActiveExecutionEvent::Stdout(echo))?;
+        }
+        forward_tty_slave_input_to_javascript(kernel, process)?;
+        return Ok(());
     }
-    forward_tty_slave_input_to_javascript(kernel, process)?;
+    // Pipe-backed stdin. The kernel pipe caps at MAX_PIPE_BUFFER_BYTES and
+    // fd_write reports POSIX partial writes, so anything the pipe cannot take
+    // right now is queued and flushed as the child drains (see
+    // `flush_pending_kernel_stdin`). Silently dropping the remainder is how
+    // multi-buffer stdin payloads (e.g. git's spooled pack piped into
+    // `index-pack --stdin`) used to truncate at 64 KiB.
+    let pending_total = process.pending_kernel_stdin.total;
+    if pending_total.saturating_add(chunk.len()) > MAX_PENDING_KERNEL_STDIN_BYTES {
+        return Err(SidecarError::InvalidState(format!(
+            "child process stdin backlog limit exceeded: {pending_total} pending + {} new bytes \
+             > {MAX_PENDING_KERNEL_STDIN_BYTES} (MAX_PENDING_KERNEL_STDIN_BYTES); the child is \
+             not draining stdin — write smaller chunks after the child consumes them, or raise \
+             this bound together with the kernel resource.max_fd_write_bytes limit",
+            chunk.len(),
+        )));
+    }
+    process.pending_kernel_stdin.push(chunk);
+    flush_pending_kernel_stdin(kernel, process)
+}
+
+/// Write as much queued stdin as the child's kernel pipe can take right now.
+/// Called on every stdin write and from the child kernel-wait servicing path
+/// (each parked `__kernel_stdin_read` / `__kernel_poll` re-check), so the
+/// backlog drains in lockstep with the child's reads. Executes the deferred
+/// stdin close once the backlog is empty.
+pub(crate) fn flush_pending_kernel_stdin(
+    kernel: &mut SidecarKernel,
+    process: &mut ActiveProcess,
+) -> Result<(), SidecarError> {
+    if process.tty_master_fd.is_some() {
+        return Ok(());
+    }
+    let Some(writer_fd) = process.kernel_stdin_writer_fd else {
+        process.pending_kernel_stdin.clear();
+        process.pending_kernel_stdin.close_requested = false;
+        return Ok(());
+    };
+    while let Some(front) = process.pending_kernel_stdin.chunks.pop_front() {
+        let offset = process.pending_kernel_stdin.front_offset;
+        let slice = &front[offset..];
+        match kernel.fd_write(EXECUTION_DRIVER_NAME, process.kernel_pid, writer_fd, slice) {
+            Ok(written) if written >= slice.len() => {
+                process.pending_kernel_stdin.total =
+                    process.pending_kernel_stdin.total.saturating_sub(slice.len());
+                process.pending_kernel_stdin.front_offset = 0;
+            }
+            Ok(written) => {
+                // Pipe is full mid-chunk; keep the remainder queued.
+                process.pending_kernel_stdin.total =
+                    process.pending_kernel_stdin.total.saturating_sub(written);
+                process.pending_kernel_stdin.front_offset = offset + written;
+                process.pending_kernel_stdin.chunks.push_front(front);
+                break;
+            }
+            Err(error) if error.code() == "EAGAIN" => {
+                process.pending_kernel_stdin.chunks.push_front(front);
+                break;
+            }
+            Err(error) if error.code() == "EPIPE" => {
+                // Reader side is gone (child exited or closed stdin): drop the
+                // backlog and release the writer, mirroring a SIGPIPE'd POSIX
+                // writer.
+                process.pending_kernel_stdin.clear();
+                process.pending_kernel_stdin.close_requested = false;
+                process.kernel_stdin_writer_fd = None;
+                let _ = kernel.fd_close(EXECUTION_DRIVER_NAME, process.kernel_pid, writer_fd);
+                return Ok(());
+            }
+            Err(error) => {
+                process.pending_kernel_stdin.chunks.push_front(front);
+                return Err(kernel_error(error));
+            }
+        }
+    }
+    if process.pending_kernel_stdin.is_empty() && process.pending_kernel_stdin.close_requested {
+        process.pending_kernel_stdin.close_requested = false;
+        if let Some(writer_fd) = process.kernel_stdin_writer_fd.take() {
+            kernel
+                .fd_close(EXECUTION_DRIVER_NAME, process.kernel_pid, writer_fd)
+                .map_err(kernel_error)?;
+        }
+    }
     Ok(())
 }
 
@@ -19605,6 +19719,13 @@ pub(crate) fn close_kernel_process_stdin(
     kernel: &mut SidecarKernel,
     process: &mut ActiveProcess,
 ) -> Result<(), SidecarError> {
+    if !process.pending_kernel_stdin.is_empty() && process.kernel_stdin_writer_fd.is_some() {
+        // Queued stdin has not reached the pipe yet; closing now would hand
+        // the child a premature EOF. `flush_pending_kernel_stdin` performs the
+        // close once the backlog drains.
+        process.pending_kernel_stdin.close_requested = true;
+        return Ok(());
+    }
     let Some(writer_fd) = process.kernel_stdin_writer_fd.take() else {
         return Ok(());
     };
