@@ -1571,7 +1571,7 @@ const ColdStartModal = ({ open, onClose }: { open: boolean; onClose: () => void 
 					animate={{ opacity: 1 }}
 					exit={{ opacity: 0 }}
 					transition={{ duration: 0.2 }}
-					className='fixed inset-0 z-[60] flex items-center justify-center bg-ink/40 p-4 backdrop-blur-[2px] md:p-8'
+					className='fixed inset-0 z-[60] flex items-center justify-center bg-ink/50 p-4 md:p-8'
 					onClick={onClose}
 				>
 					<motion.div

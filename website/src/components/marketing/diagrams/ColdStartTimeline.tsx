@@ -1,7 +1,7 @@
 'use client';
 
 import { animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion } from 'framer-motion';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { COLDSTART_P99_MS, SANDBOX_COLDSTART_MS } from '../../../data/bench';
 
 // ---------------------------------------------------------------------------
@@ -52,9 +52,13 @@ export const ColdStartTimeline = () => {
 	const reduced = useReducedMotion();
 	const [run, setRun] = useState(false);
 	const clock = useMotionValue(0);
-	const [clockText, setClockText] = useState('0');
+	// The clock writes straight to the DOM node: a per-frame setState here
+	// would re-render the whole timeline ~60 times a second and drop frames.
+	const clockRef = useRef<HTMLSpanElement>(null);
 
-	useMotionValueEvent(clock, 'change', (v) => setClockText(Math.round(v).toLocaleString('en-US')));
+	useMotionValueEvent(clock, 'change', (v) => {
+		if (clockRef.current) clockRef.current.textContent = Math.round(v).toLocaleString('en-US');
+	});
 
 	// The component mounts when the modal opens, so the sequence starts on
 	// mount rather than on scroll.
@@ -68,14 +72,14 @@ export const ColdStartTimeline = () => {
 		return () => controls.stop();
 	}, [reduced, clock]);
 
-	// With reduced motion bars render at their final width; otherwise the
-	// animation is a single linear fill per step, sequenced by delay.
+	// Fills animate scaleX (compositor-only) instead of width, with the final
+	// width set statically; with reduced motion bars render settled.
 	const bar = (startMs: number, durMs: number) =>
 		reduced
-			? { initial: { width: pct(durMs) }, animate: { width: pct(durMs) } }
+			? { initial: { scaleX: 1 }, animate: { scaleX: 1 } }
 			: {
-					initial: { width: 0 },
-					animate: run ? { width: pct(durMs) } : { width: 0 },
+					initial: { scaleX: 0 },
+					animate: run ? { scaleX: 1 } : { scaleX: 0 },
 					transition: { duration: durMs * K, delay: 0.2 + startMs * K, ease: 'linear' as const },
 				};
 
@@ -93,7 +97,9 @@ export const ColdStartTimeline = () => {
 			{/* Header: title + running clock */}
 			<div className='mb-4 flex items-baseline justify-between'>
 				<span className='text-sm font-medium text-ink'>Cold-start timeline</span>
-				<span className='font-mono text-xs tabular-nums text-ink-soft'>t = {clockText} ms</span>
+				<span className='font-mono text-xs tabular-nums text-ink-soft'>
+					t = <span ref={clockRef}>0</span> ms
+				</span>
 			</div>
 
 			{/* Sandbox waterfall */}
@@ -125,7 +131,7 @@ export const ColdStartTimeline = () => {
 								/>
 								<motion.span
 									className='absolute inset-y-0.5 rounded-[3px] bg-ink/75'
-									style={{ left: pct(step.start) }}
+									style={{ left: pct(step.start), width: pct(step.dur), transformOrigin: 'left', willChange: 'transform' }}
 									{...bar(step.start, step.dur)}
 								/>
 								<motion.span
@@ -199,8 +205,9 @@ export const ColdStartTimeline = () => {
 							    timeline above, so the fill runs the full clock duration. */}
 							<motion.span
 								className='absolute inset-y-1 rounded-[3px] bg-accent ring-1 ring-accent-deep/50'
-								initial={reduced ? { width: `${(COLDSTART_P99_MS / INSET_MAX_MS) * 100}%` } : { width: 0 }}
-								animate={reduced || !run ? undefined : { width: `${(COLDSTART_P99_MS / INSET_MAX_MS) * 100}%` }}
+								style={{ width: `${(COLDSTART_P99_MS / INSET_MAX_MS) * 100}%`, transformOrigin: 'left', willChange: 'transform' }}
+								initial={reduced ? { scaleX: 1 } : { scaleX: 0 }}
+								animate={reduced || !run ? undefined : { scaleX: 1 }}
 								transition={{ duration: INSET_FILL_SEC, delay: reduced ? 0 : 0.35, ease: 'linear' }}
 							/>
 							<motion.span

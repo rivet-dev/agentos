@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RotateCcw, SquarePen } from 'lucide-react';
+import { FileText, RotateCcw, SquarePen } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { InkPanel } from '../editorial/InkPanel';
 
@@ -159,13 +159,15 @@ const SessionRow = ({ line, chars, typing }: { line: ScheduledLine; chars: numbe
 				);
 			case 'out':
 				return <span className='block whitespace-pre-wrap pl-[1.35rem] text-cream/45'>{text}</span>;
-			case 'tool':
+			case 'tool': {
+				const ToolIcon = line.text.startsWith('Read') ? FileText : SquarePen;
 				return (
 					<span className='ml-[1.35rem] inline-flex items-center gap-1.5 rounded-md border border-cream/[0.12] bg-cream/[0.05] px-2 py-0.5 text-[12px] text-cream/70'>
-						<SquarePen aria-hidden='true' className='h-3 w-3 text-cream/45' />
+						<ToolIcon aria-hidden='true' className='h-3 w-3 text-cream/45' />
 						{text}
 					</span>
 				);
+			}
 		}
 	})();
 
@@ -223,7 +225,9 @@ export const AgentSessionDemo = () => {
 					)}
 				</div>
 
-				<div ref={scrollRef} className='h-[420px] overflow-y-auto scroll-p-6 p-6 font-code text-[13px] leading-[1.75]'>
+				{/* Tall enough on desktop to hold the whole session; on small screens
+				    the auto-scroll keeps the newest line in view instead. */}
+				<div ref={scrollRef} className='h-[420px] overflow-y-auto p-6 font-code text-[13px] leading-[1.75] md:h-[600px]'>
 					<div className='flex flex-col gap-0.5'>
 						{visible.map((line, i) => {
 							const typing = line.dur > 0 && clock < line.start + line.dur;
