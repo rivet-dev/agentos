@@ -458,12 +458,13 @@ const Hero = () => {
 	const [autoPlayComplete, setAutoPlayComplete] = useState(false);
 
 	// Highlight stats — best-case "up to" figures, sourced from bench.ts.
-	// Median and mid-range figures, not best-case tails: the chart a chip links
-	// to must show the same number the chip claims.
+	// Figures match the benchmark section's default view (the shell/execution
+	// workload, p50, AWS ARM): the chart a chip links to must show the same
+	// number the chip claims.
 	const heroStats = [
 		{ value: `${Math.round(benchColdStart[0].sandbox / benchColdStart[0].agentOS)}×`, label: 'faster cold starts', sub: `p50 · vs. ${SANDBOX_COLDSTART_PROVIDER}`, href: '#bench-cold-start' },
-		{ value: `${benchWorkloads.agent.memory.multiplier.split('x')[0]}×`, label: 'less memory', sub: 'vs. 1 GiB sandbox minimum', href: '#bench-memory' },
-		{ value: `${benchWorkloads.agent.cost.find((tier) => tier.label === 'AWS ARM')?.ratio ?? Math.min(...benchWorkloads.agent.cost.map((tier) => tier.ratio))}×`, label: 'cheaper per agent', sub: `self-hosted vs. ${SANDBOX_COST_PROVIDER}`, href: '#bench-cost' },
+		{ value: `${benchWorkloads.shell.memory.multiplier.split('x')[0]}×`, label: 'less memory', sub: 'vs. 1 GiB sandbox minimum', href: '#bench-memory' },
+		{ value: `${benchWorkloads.shell.cost.find((tier) => tier.label === 'AWS ARM')?.ratio ?? Math.min(...benchWorkloads.shell.cost.map((tier) => tier.ratio))}×`, label: 'cheaper to run', sub: `self-hosted vs. ${SANDBOX_COST_PROVIDER}`, href: '#bench-cost' },
 	];
 
 	// Auto-cycle through agents starting 2.5s before stroke animation ends
@@ -1442,7 +1443,7 @@ function BenchCostChart({ workload }: { workload: WorkloadKey }) {
 }
 
 function BenchmarkSection() {
-	const [workload, setWorkload] = useState<WorkloadKey>('agent');
+	const [workload, setWorkload] = useState<WorkloadKey>('shell');
 	const wl = benchWorkloads[workload];
 
 	return (
