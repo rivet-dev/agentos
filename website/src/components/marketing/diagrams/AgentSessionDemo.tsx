@@ -493,7 +493,6 @@ export const AgentSessionDemo = () => {
 		<motion.div
 			onViewportEnter={() => setStarted(true)}
 			viewport={{ once: true, margin: '-20% 0px' }}
-			className='mx-auto max-w-5xl'
 		>
 			<RuntimeCardTabs active={active} onChange={handleTabChange} />
 

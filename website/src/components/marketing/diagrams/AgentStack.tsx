@@ -7,8 +7,10 @@ import { EASE, VIEWPORT } from '../motion';
 // The architecture as containment, gVisor-diagram style: your backend is the
 // outer box; inside it sit per-agent VMs, each pairing a guest (agent +
 // runtimes) with its own virtual kernel that services every syscall; the VMs
-// rest on the agentOS library bar spanning the bottom of the process. Dark
-// bars mark the agentOS layers, dashed connectors carry the syscall flow.
+// rest on the agentOS library bar. The library hosts VMs in a sidecar
+// process it manages, so "your backend" is the deployment boundary rather
+// than a literal single process. Dark bars mark the agentOS layers, dashed
+// connectors carry the syscall flow.
 // ---------------------------------------------------------------------------
 
 const VMS = [
@@ -52,10 +54,10 @@ export const AgentStack = () => {
 	return (
 		<div
 			role='img'
-			aria-label='agentOS architecture: inside your backend process, each agent runs in its own VM where a guest (the agent on Node, Python, and shell runtimes) makes syscalls against a per-VM virtual kernel; the VMs sit on the agentOS library with no hypervisor in the path.'
+			aria-label='agentOS architecture: each agent runs in its own VM where a guest (the agent on Node, Python, and shell runtimes) makes syscalls against a per-VM virtual kernel; the VMs are hosted by a sidecar process the agentOS library manages inside your backend, with no hypervisor in the path.'
 			className='rounded-2xl bg-white/45 p-4 ring-1 ring-ink/[0.09] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_8px_24px_-14px_rgba(20,20,22,0.20)] md:p-5'
 		>
-			{/* Outer box: your backend process */}
+			{/* Outer box: your backend */}
 			<div className='mb-3 flex items-baseline justify-between gap-4'>
 				<span className='text-sm font-medium text-ink'>Your backend</span>
 				<div className='flex items-center gap-2.5' title='Works with Eve, Flue, and RivetKit'>
@@ -91,12 +93,12 @@ export const AgentStack = () => {
 				))}
 			</div>
 
-			{/* Kernel -> library: still inside the same process */}
+			{/* Kernel -> library: no hypervisor between them */}
 			<div className='relative grid grid-cols-2 gap-3'>
 				<Connector reduced={reduced} delay={1.1} />
 				<Connector reduced={reduced} delay={1.6} />
 				<span className='absolute inset-x-0 top-1/2 -translate-y-1/2 text-center font-mono text-[10px] text-ink-faint'>
-					<span className='bg-[#efefef] px-2'>in-process · no hypervisor</span>
+					<span className='bg-[#efefef] px-2'>in your backend · no hypervisor</span>
 				</span>
 			</div>
 
@@ -104,7 +106,7 @@ export const AgentStack = () => {
 			<Appear at={0.35} reduced={reduced}>
 				<div className='flex items-baseline justify-between gap-4 rounded-lg bg-ink px-4 py-2.5'>
 					<span className='text-[13px] font-medium text-cream'>agentOS library</span>
-					<span className='font-mono text-[10px] text-cream/55'>runs as a Rivet Actor</span>
+					<span className='font-mono text-[10px] text-cream/55'>each VM runs as a Rivet Actor</span>
 				</div>
 			</Appear>
 		</div>

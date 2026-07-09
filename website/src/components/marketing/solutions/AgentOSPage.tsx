@@ -1517,7 +1517,7 @@ const WhatItIsSection = () => (
 						subtitle={
 							<>
 								agentOS is an open-source library that boots a small virtual operating system
-								for every agent you run: a virtual kernel with a file system, processes,
+								for each agent VM you run: a virtual kernel with a file system, processes,
 								networking, and deny-by-default permissions, inside your backend. Agents like
 								Pi, Claude Code, Codex, and OpenCode run in it, and your code, or a framework
 								like Eve or Flue, drives them through sessions, bindings, and workflows.
@@ -1527,7 +1527,7 @@ const WhatItIsSection = () => (
 				</Reveal>
 				<Reveal>
 					<div className='mt-8'>
-						<InkChip command='npm install @rivet-dev/agentos' className='w-fit' />
+						<InkChip command='npm install @rivet-dev/agentos @agentos-software/pi' className='w-fit' />
 					</div>
 				</Reveal>
 			</div>
