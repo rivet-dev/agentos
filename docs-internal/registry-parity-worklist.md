@@ -1,6 +1,6 @@
 # Registry Linux-Parity Worklist
 
-Status: worklist · Owner: registry · Last updated: 2026-07-08
+Status: worklist · Owner: registry · Last updated: 2026-07-09 (PST)
 
 ## Goal (hand this to the driver agent)
 
@@ -119,16 +119,14 @@ external build (tracked separately in #9).
 **Objective:** replace each ❌ with a real/established implementation built to
 `wasm32-wasip1` and patched only where WASI forces it. The ✅ rows stay.
 
-**⚠️ Networking is a separate, still-open gap (curl/wget/git BUILD but lack real
-TLS).** The tools compile and do real HTTP, but: **curl** uses a host-brokered TLS
-shim (no real cert verify, ignores `--cacert`, wrong exit codes) and lacks
-gzip/brotli/zstd; **wget** is HTTP-only (`--without-ssl`); **git** is `NO_CURL`
-(no HTTPS clone/fetch/push — `git-remote-https` is a dead symlink). Full plan —
-in-guest **mbedTLS** + a Debian-shaped **CA bundle at `/etc/ssl/certs/
-ca-certificates.crt`** + real `git-remote-http` helper, with all refuted theses —
-is in **`docs-internal/networking-parity-spec.md`**. Acceptance: `curl`/`wget`/`git`
-do real HTTPS (verify, `--cacert`, exit 60, clone/fetch/push) with native Linux
-semantics.
+**✅ Original networking gap is closed; final backend convergence remains.**
+curl/wget/git now perform real in-guest HTTPS with mbedTLS, the VM CA bundle,
+decompression, and smart-HTTP clone/fetch/push. The Node-stdlib program later
+selected one real OpenSSL 3.5.5 wasm build as the final backend for Node and the
+registry consumers. Preserve the green mbedTLS proof while migrating forward;
+do not reintroduce host-brokered TLS or retain mbedTLS as a second final backend.
+Current status, proof, and normative order are in
+`docs-internal/registry-networking-handoff.md`.
 
 **Approach:** one command at a time, one jj rev each: swap our custom code for the
 established source (fetched + pinned like sqlite/duckdb), wire into the toolchain,
@@ -850,14 +848,15 @@ above).
   (kill, sleep, timeout, env, nohup, nproc, nice/renice are coreutils — confirm
   they're shipped via uutils rather than re-adding.)
 
-**⚙️ Runtime prerequisite — implement `/proc` (process-table-backed):** procps
-reads `/proc/<pid>/{stat,cmdline,status,comm}` and enumerates `/proc/<pid>/`. The
-**kernel already owns the process table** (`crates/kernel/src/process_table.rs`),
-so expose a read-only procfs view of it to the guest (per-PID stat/cmdline/status
-+ directory enumeration). Scope it minimal — just the fields procps parses, backed
-by the existing process table, not a full Linux procfs. Unlocks the whole
-ps/pkill/pgrep family (and top/htop later if ever wanted). **This is a runtime/VFS
-item, do it before the procps packages.**
+**⚙️ Runtime prerequisite — `/proc` is PARTIAL, not done.** The kernel already
+exposes a process-table-backed `/proc`, including per-PID `stat`, `status`,
+`cmdline`, `environ`, `cwd`, and `fd`, plus several system files. Completion
+still requires the procps-consumed gaps (`comm`, `/proc/stat`, and anything else
+demonstrated by the real parser), authoritative `proc(5)` + Linux
+`fs/proc/array.c` + procps-ng `readproc.c` citations at the emitters, a captured
+real-Linux golden fixture, and unskipped real procps-ng/psmisc e2e for at least
+`ps`, `pgrep`, and `pkill`. Unit tests of the synthetic files are necessary but
+not sufficient. Finish the runtime surface before packaging the consumers.
 
 **Excluded — not worth it / not possible here:**
 - **TUI / visual-only:** gitui, lazygit, eza, dust, ncdu, bat, delta, broot, k9s,

@@ -2,6 +2,17 @@
 
 Status: spec · Owner: registry/runtime · Last updated: 2026-07-08
 
+> **2026-07-09 convergence addendum:** this document records and justifies the
+> original curl/wget/git milestone, which correctly shipped in-guest mbedTLS
+> instead of host-brokered TLS. The later Node-stdlib decision does not undo
+> that proof, but it supersedes mbedTLS as the **final shared backend**: Node
+> v24.15.0 requires real OpenSSL 3.5.5 behavior, so `toolchain/c` will build one
+> pinned OpenSSL wasm archive set and migrate the registry consumers forward to
+> it. Read “OpenSSL in-guest — rejected” below as “rejected for the original
+> curl-only milestone,” not as a prohibition on the now-decided cross-runtime
+> unification. Normative current state and order live in
+> `registry-networking-handoff.md` §5 and the Node replacement spec §7.4.
+
 ## Goal
 
 `curl`, `wget`, and `git` must have **full networking with real TLS/SSL, using
@@ -174,9 +185,13 @@ current symlink `git-remote-https → git` is structurally broken (`git`'s
 - **Host-brokered TLS for parity** — works but never reaches native semantics
   (host cert store, ignored `--cacert`, wrong exit codes, no `-v` chain, shim
   treadmill). Rejected as the parity path; kept only for the JS runtime.
-- **OpenSSL in-guest** — its config/ENGINE/provider machinery expects `dlopen`,
-  threads, platform RNG; wasip1 builds are fragile forks. The curl build already
-  defines `CURL_DISABLE_OPENSSL_AUTO_LOAD_CONFIG` just to dodge it. Unnecessary.
+- **OpenSSL in-guest for the original curl-only milestone** — its
+  config/ENGINE/provider machinery expects `dlopen`, threads, and platform RNG;
+  wasip1 builds were more work than curl needed, while mbedTLS already satisfied
+  that milestone. **Superseded for final convergence:** Node 24 requires the
+  OpenSSL 3.5 contract, the sysroot is ours to extend, and the M0 OpenSSL build +
+  handshake spike now owns proving or refuting the remaining port gaps. Do not
+  reuse this historical rationale to introduce a second backend.
 - **GnuTLS in-guest** (wget's default) — drags nettle → GMP (asm) → libtasn1 →
   p11-kit (dlopen). Non-starter on WASI.
 - **rustls + aws-lc-rs in guest** — aws-lc-rs is C+asm, does **not** build for
