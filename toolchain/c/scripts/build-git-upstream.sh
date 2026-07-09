@@ -121,6 +121,15 @@ CURL_CFLAGS="-I$CURL_PREFIX/include"
 CURL_LDFLAGS="-L$CURL_PREFIX/lib -lcurl -L$MBEDTLS_LIBDIR -lmbedtls -lmbedx509 -lmbedcrypto -L$ZLIB_BUILD_DIR -lz -L$BROTLI_LIBDIR -lbrotlidec -lbrotlicommon -L$ZSTD_LIBDIR -lzstd"
 
 echo "Building upstream Git ${VERSION} for wasm32-wasip1 (with in-process libcurl)..."
+# Stack layout: wasm-ld defaults to a 64 KiB stack placed *above* the data
+# segment. Git assumes native-sized stacks (recv_sideband alone puts a
+# LARGE_PACKET_MAX (~64 KiB) buffer on the stack, reached several frames deep
+# on every sideband pack transfer), so with the default layout the buffer
+# silently overwrites static data and clones/fetches die with wild wasm traps
+# once packs carry payloads bigger than a few KiB. Give git an 8 MiB stack
+# (glibc-default sized) and --stack-first so any future overflow traps at the
+# faulting frame instead of corrupting the data segment.
+GIT_WASM_STACK_FLAGS="-Wl,-z,stack-size=8388608 -Wl,--stack-first"
 make -j"${MAKE_JOBS:-2}" \
   uname_S=WASI \
   CC="$CC_CMD" \
@@ -128,7 +137,7 @@ make -j"${MAKE_JOBS:-2}" \
   AR="$AR_CMD" \
   RANLIB="$RANLIB_CMD" \
   CFLAGS="--target=wasm32-wasip1 --sysroot=$SYSROOT -I$ZLIB_DIR -O2 -D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_MMAN" \
-  LDFLAGS="--target=wasm32-wasip1 --sysroot=$SYSROOT -L$ZLIB_BUILD_DIR -lwasi-emulated-process-clocks -lwasi-emulated-mman" \
+  LDFLAGS="--target=wasm32-wasip1 --sysroot=$SYSROOT -L$ZLIB_BUILD_DIR -lwasi-emulated-process-clocks -lwasi-emulated-mman $GIT_WASM_STACK_FLAGS" \
   CURL_CFLAGS="$CURL_CFLAGS" \
   CURL_LDFLAGS="$CURL_LDFLAGS" \
   CSPRNG_METHOD=getentropy \
@@ -148,8 +157,6 @@ make -j"${MAKE_JOBS:-2}" \
   NO_ICONV=1 \
   NO_PTHREADS=1 \
   NO_MMAP=1 \
-  NO_IPV6=1 \
-  NO_UNIX_SOCKETS=1 \
   NO_SYS_POLL_H=1 \
   NO_NSEC=1 \
   git git-remote-http
