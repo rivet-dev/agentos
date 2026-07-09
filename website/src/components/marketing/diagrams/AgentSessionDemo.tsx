@@ -38,6 +38,7 @@ interface SessionTab {
 	title: string;
 	description: string;
 	docsHref: string;
+	docsLabel: string;
 	iconSrc: string;
 	script: { fileName: string; lang: ScriptLang; code: string };
 	session: SessionLine[];
@@ -122,6 +123,7 @@ const TABS: SessionTab[] = [
 		title: 'JavaScript & TypeScript',
 		description: 'Node v22 compatible on native V8 isolates. node, npm, and npx on the PATH at full JIT speed.',
 		docsHref: '/docs/nodejs-runtime',
+		docsLabel: 'Node.js runtime docs',
 		iconSrc: '/images/registry/nodejs.svg',
 		script: { fileName: 'report.mjs', lang: 'js', code: REPORT_JS },
 		session: shellSession('node report.mjs', REPORT_OUT),
@@ -135,6 +137,7 @@ const TABS: SessionTab[] = [
 		title: 'Python',
 		description: 'CPython 3.13 with pip. Native wheels like numpy and pandas work.',
 		docsHref: '/docs/python-runtime',
+		docsLabel: 'Python runtime docs',
 		iconSrc: '/images/registry/python.svg',
 		script: { fileName: 'report.py', lang: 'python', code: REPORT_PY },
 		session: pythonSession,
@@ -148,6 +151,7 @@ const TABS: SessionTab[] = [
 		title: 'Linux shell',
 		description: 'A POSIX userland with a process table, PTYs, TCP and UDP with DNS, and deny-by-default permissions.',
 		docsHref: '/docs/architecture',
+		docsLabel: 'Kernel & shell docs',
 		iconSrc: '/images/registry/linux.svg',
 		script: { fileName: 'report.sh', lang: 'bash', code: REPORT_SH },
 		session: shellSession('bash report.sh', ['- api: 6', '- bug: 9', '- docs: 3', '- ui: 5']),
@@ -161,7 +165,6 @@ const TABS: SessionTab[] = [
 
 const WINDOW_TITLE = 'agentos vm · /home/agentos';
 const CAPTION = 'The agent writes one program instead of a chain of tool calls.';
-const CAPTION_ASIDE = 'node v22 · python 3.13';
 
 // --- Tiny dark-palette tokenizer for the script block ---------------------
 // The site's highlightCodeHtml is tuned for light panels and JS only; the
@@ -423,29 +426,23 @@ const FileRail = ({ files, schedule, clock }: { files: SessionFile[]; schedule: 
 	);
 };
 
-// The runtime cards are the tabs: picking a runtime replays the session in
-// that language. Cards keep their Docs links (clicks on the link don't switch
-// tabs, they navigate).
+// The runtime cards are the tabs: real buttons with no interactive content
+// nested inside them. The active runtime's docs link lives in the terminal's
+// caption instead, so a card is one target that does one thing.
 const RuntimeCardTabs = ({ active, onChange }: { active: number; onChange: (idx: number) => void }) => (
 	<div role='tablist' aria-label='Execution runtimes' className='mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3'>
 		{TABS.map((tab, idx) => {
 			const selected = active === idx;
 			return (
-				<div
+				<button
 					key={tab.key}
+					type='button'
 					role='tab'
 					aria-selected={selected}
-					tabIndex={0}
 					onClick={() => onChange(idx)}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							onChange(idx);
-						}
-					}}
-					className={`group flex cursor-pointer flex-col rounded-2xl bg-gradient-to-b from-white to-[#f9f9fa] p-5 transition-[box-shadow,--tw-ring-color] duration-300 motion-reduce:transition-none ${
+					className={`flex flex-col rounded-2xl bg-gradient-to-b from-white to-[#f9f9fa] p-5 text-left transition-[box-shadow,--tw-ring-color] duration-300 motion-reduce:transition-none ${
 						selected
-							? 'ring-2 ring-ink/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_2px_4px_-1px_rgba(20,20,22,0.12),0_12px_30px_-12px_rgba(20,20,22,0.26)]'
+							? 'ring-1 ring-ink/40 shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_2px_4px_-1px_rgba(20,20,22,0.12),0_12px_30px_-12px_rgba(20,20,22,0.26)]'
 							: 'ring-1 ring-ink/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_-1px_rgba(20,20,22,0.10),0_8px_24px_-14px_rgba(20,20,22,0.20)] hover:ring-ink/[0.16]'
 					}`}
 				>
@@ -454,16 +451,7 @@ const RuntimeCardTabs = ({ active, onChange }: { active: number; onChange: (idx:
 					</div>
 					<h3 className='mb-1.5 text-base font-medium tracking-[-0.015em] text-ink'>{tab.title}</h3>
 					<p className='text-sm leading-relaxed text-ink-soft'>{tab.description}</p>
-					<div className='mt-auto pt-3'>
-						<a
-							href={tab.docsHref}
-							onClick={(e) => e.stopPropagation()}
-							className='text-sm text-ink-soft hover:text-ink'
-						>
-							Docs <span aria-hidden='true'>→</span>
-						</a>
-					</div>
-				</div>
+				</button>
 			);
 		})}
 	</div>
@@ -509,7 +497,14 @@ export const AgentSessionDemo = () => {
 		>
 			<RuntimeCardTabs active={active} onChange={handleTabChange} />
 
-			<InkPanel caption={CAPTION} captionAside={CAPTION_ASIDE}>
+			<InkPanel
+				caption={CAPTION}
+				captionAside={
+					<a href={tab.docsHref} className='text-cream/60 underline underline-offset-2 transition-colors hover:text-cream'>
+						{tab.docsLabel} <span aria-hidden='true'>→</span>
+					</a>
+				}
+			>
 				<div className='flex items-center gap-2 border-b border-cream/10 px-4 py-3'>
 					<div className='h-3 w-3 rounded-full bg-cream/15' />
 					<div className='h-3 w-3 rounded-full bg-cream/15' />

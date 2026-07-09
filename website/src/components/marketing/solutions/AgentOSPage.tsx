@@ -24,7 +24,7 @@ import {
 	Server,
 } from 'lucide-react';
 import { AnimatePresence, motion, useMotionValue, useReducedMotion, useSpring, useTransform, type MotionValue } from 'framer-motion';
-import { InkPanel } from '../editorial/InkPanel';
+import { InkChip, InkPanel } from '../editorial/InkPanel';
 import { registry } from '../../../data/registry';
 import { REGISTRY_ICONS } from '../../../data/registry-icons';
 import { AGENT_PROMPT } from '../agentPrompt';
@@ -44,6 +44,11 @@ const CARD_SURFACE =
 	'transition-[box-shadow,--tw-ring-color] duration-300 ' +
 	'hover:ring-ink/[0.14] hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_2px_4px_-1px_rgba(20,20,22,0.12),0_12px_30px_-12px_rgba(20,20,22,0.26)] ' +
 	'motion-reduce:transition-none';
+
+// The page reads best at ~90% browser zoom, so it ships that density: zoom
+// scales layout (unlike transform), and browsers without support render at
+// 100%. The hero logo counter-zooms; see its wrapper.
+const PAGE_ZOOM = 0.9;
 
 interface HeroTabCode {
 	key: string;
@@ -506,6 +511,10 @@ const Hero = () => {
 						animate={{ opacity: 1, y: 0 }}
 						transition={{ duration: 0.5, delay: 0.05 }}
 						className='mb-7 flex'
+						// Counter-zoom back to effective 100%: the logo's stroke-draw mask
+						// (userSpaceOnUse) renders unreliably under an ancestor CSS zoom in
+						// some browsers, and this is the page's only masked SVG animation.
+						style={{ zoom: 1 / PAGE_ZOOM }}
 					>
 						<AnimatedAgentOSLogo className='h-11 w-auto md:h-12' displayedAgent={displayedAgent} />
 					</motion.div>
@@ -1493,6 +1502,37 @@ function BenchmarkSection() {
 	);
 }
 
+// --- What agentOS is (identity before comparison) ---
+// The hero names the category and the next section argues against sandboxes;
+// this beat in between says plainly what the product is, so the comparison
+// lands on a reader who knows what is being compared.
+const WhatItIsSection = () => (
+	<section className='border-t border-ink/10 px-6 py-16 md:py-24'>
+		<div className='mx-auto max-w-7xl'>
+			<Reveal>
+				<SectionHeading
+					title='What agentOS is.'
+					subtitle={
+						<>
+							agentOS is an open-source library that boots a small virtual operating system for
+							every agent you run: a virtual kernel with a file system, processes, networking,
+							and deny-by-default permissions, inside your backend. Agents like Pi, Claude Code,
+							Codex, and OpenCode run in it, and your code drives them through sessions,
+							bindings, and workflows.
+						</>
+					}
+					className='max-w-3xl'
+				/>
+			</Reveal>
+			<Reveal>
+				<div className='mt-8'>
+					<InkChip command='npm install @rivet-dev/agentos' className='w-fit' />
+				</div>
+			</Reveal>
+		</div>
+	</section>
+);
+
 // --- Argument (why an OS, not a sandbox) ---
 // The narrative pivot right under the hero: what sandboxes provide, what agents
 // actually use, and why that set ships better as a library. Rows come from
@@ -1834,12 +1874,10 @@ const ClosingCta = () => (
 // --- Main Page ---
 export default function AgentOSPage({ heroTabs }: AgentOSPageProps) {
 	return (
-		// The page reads best at ~90% browser zoom, so it ships that density:
-		// zoom scales layout (unlike transform), and browsers without support
-		// simply render at 100%.
-		<div className='paper-grain min-h-screen font-sans text-ink-soft' style={{ overflowX: 'clip', zoom: 0.9 }}>
+		<div className='paper-grain min-h-screen font-sans text-ink-soft' style={{ overflowX: 'clip', zoom: PAGE_ZOOM }}>
 			<main>
 				<Hero />
+				<WhatItIsSection />
 				<ArgumentSection />
 				<ExecutionLayersSection />
 				<OperatingSystemSection />
