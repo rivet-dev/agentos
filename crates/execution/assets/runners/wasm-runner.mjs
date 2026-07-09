@@ -3299,14 +3299,16 @@ const hostNetImport = {
   net_poll(fdsPtr, nfds, timeoutMs, retReadyPtr) {
     const n = Number(nfds) >>> 0;
     const base0 = Number(fdsPtr) >>> 0;
-    // The patched wasi sysroot's effective poll bits (bits/poll.h): POLLIN=POLLRDNORM=0x1,
-    // POLLOUT=POLLWRNORM=0x2 (NOT the 0x004 in legacy poll.h). Guests (X server + libxcb) use
-    // these, so net_poll must match or POLLOUT readiness is never reported and writers block.
+    // Match the owned sysroot ABI in __header_poll.h exactly. Its WASI event
+    // representation uses POLLIN=0x1, POLLOUT=0x2 and the widened exceptional
+    // bits below, rather than Linux's numeric values. poll(2) defines the
+    // behavior; the sysroot header defines the guest-visible wire values.
+    // https://man7.org/linux/man-pages/man2/poll.2.html
     const POLLIN = 0x001;
     const POLLOUT = 0x002;
-    const POLLERR = 0x008;
-    const POLLHUP = 0x010;
-    const POLLNVAL = 0x020;
+    const POLLERR = 0x1000;
+    const POLLHUP = 0x2000;
+    const POLLNVAL = 0x4000;
     const t = Number(timeoutMs) | 0;
     const deadline = t < 0 ? null : Date.now() + Math.max(0, t);
     const kernelManagedStdio =
@@ -3322,6 +3324,7 @@ const hostNetImport = {
         // comes from a batched __kernel_poll below, which doubles as the wait slice.
         const kernelTargets = [];
         const kernelEntries = [];
+        let hasHostNetWaitTarget = false;
         for (let i = 0; i < n; i++) {
           const base = base0 + i * 8;
           const fd = view.getInt32(base, true);
@@ -3330,6 +3333,7 @@ const hostNetImport = {
           const socket = getHostNetSocket(fd);
           const handle = fd >= 0 ? lookupFdHandle(fd >>> 0) : undefined;
           if (socket && !socket.closed) {
+            hasHostNetWaitTarget = true;
             if (socket.serverId) {
               if (events & POLLIN) {
                 // Report the listener readable only when a connection is actually pending.
@@ -3344,6 +3348,16 @@ const hostNetImport = {
               if (events & POLLIN && socket.readChunks && socket.readChunks.length > 0) {
                 revents |= POLLIN;
               }
+              // poll(2) reports peer shutdown as POLLHUP even when it was not
+              // requested, and a read after the queued data drains must return
+              // EOF without blocking. OpenSSH waits on this transition before
+              // exiting after the remote command closes its connection.
+              // https://man7.org/linux/man-pages/man2/poll.2.html
+              if (socket.readableEnded) {
+                revents |= POLLHUP;
+                if (events & POLLIN) revents |= POLLIN;
+              }
+              if (socket.lastError) revents |= POLLERR;
               if (events & POLLOUT) revents |= POLLOUT;
             }
           } else if (handle?.kind === 'pipe-read') {
@@ -3360,21 +3374,28 @@ const hostNetImport = {
             }
           } else if (handle?.kind === 'pipe-write') {
             if (events & POLLOUT) revents |= POLLOUT;
-          } else if (
-            fd >= 0 &&
-            fd <= 2 &&
-            kernelManagedStdio &&
-            (!handle || (handle.kind === 'passthrough' && handle.targetFd === fd))
-          ) {
-            // Kernel-managed stdio (PTY slave / stdio pipes): ask the kernel, like a
-            // native poll(2) on the terminal fd.
+          } else if (fd >= 0 && kernelManagedStdio && (
+            (!handle && fd <= 2) ||
+            (handle?.kind === 'passthrough' && Number(handle.targetFd) >= 0 &&
+              Number(handle.targetFd) <= 2)
+          )) {
+            // poll(2): readiness means the requested operation will not block.
+            // https://man7.org/linux/man-pages/man2/poll.2.html
+            // Kernel-managed stdio (PTY slave / stdio pipes), including dup'd
+            // aliases: ask the kernel instead of treating a high alias like a
+            // regular file that is always ready. A false POLLIN here makes a
+            // guest block on an empty stdin pipe before it services another
+            // ready fd (for example OpenSSH flushing an exec request).
+            const kernelFd = handle?.kind === 'passthrough'
+              ? Number(handle.targetFd) >>> 0
+              : fd;
             kernelTargets.push({
-              fd,
+              fd: kernelFd,
               events:
                 ((events & POLLIN) !== 0 ? KERNEL_POLLIN : 0) |
                 ((events & POLLOUT) !== 0 ? KERNEL_POLLOUT : 0),
             });
-            kernelEntries.push({ base, fd, events });
+            kernelEntries.push({ base, fd, kernelFd, events });
           } else if (handle) {
             // Regular files / other VFS-backed fds: always ready, as on Linux.
             revents |= events & (POLLIN | POLLOUT);
@@ -3391,10 +3412,13 @@ const hostNetImport = {
 
         if (kernelTargets.length > 0) {
           // If something is already ready (or this is a non-blocking poll), probe the
-          // kernel without waiting; otherwise let the kernel wait one slice for us.
+          // kernel without waiting. Mixed host-net + kernel polls must also keep
+          // this probe nonblocking: __kernel_poll cannot wake for a host socket,
+          // so sleeping here starves each queued SSH packet for a full 10s slice.
+          // The socket pump below supplies the bounded wait in that case.
           const remaining = deadline == null ? Infinity : deadline - Date.now();
           const sliceMs =
-            ready > 0 || t === 0
+            ready > 0 || t === 0 || hasHostNetWaitTarget
               ? 0
               : Math.max(0, Math.min(KERNEL_WAIT_SLICE_MS, remaining));
           let response = null;
@@ -3406,7 +3430,7 @@ const hostNetImport = {
           const responseEntries = Array.isArray(response?.fds) ? response.fds : [];
           for (const entry of kernelEntries) {
             const responseEntry = responseEntries.find(
-              (item) => (Number(item?.fd) >>> 0) === (entry.fd >>> 0),
+              (item) => (Number(item?.fd) >>> 0) === (entry.kernelFd >>> 0),
             );
             const kernelRevents = Number(responseEntry?.revents) >>> 0;
             let revents = 0;
@@ -5257,11 +5281,14 @@ wasiImport.fd_read = (fd, iovs, iovsLen, nreadPtr) => {
   }
 
   if (
-    numericFd === 0 &&
     handle?.kind === 'passthrough' &&
-    handle.targetFd === 0 &&
-    passthroughHandles.get(0) === handle
+    handle.targetFd === 0
   ) {
+    // dup(2) aliases share the same open file description as fd 0. In a
+    // sidecar-managed process they must therefore read the kernel stdin pipe,
+    // not the runner process's unrelated host stdin. OpenSSH duplicates stdin
+    // before its poll/read loop, so splitting these paths loses pipe EOF.
+    // https://man7.org/linux/man-pages/man2/dup.2.html
     const sidecarManagedProcess =
       typeof process?.env?.AGENTOS_SANDBOX_ROOT === 'string' &&
       process.env.AGENTOS_SANDBOX_ROOT.length > 0;

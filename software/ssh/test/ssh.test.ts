@@ -125,8 +125,8 @@ function installGitExecHandler(client: Connection, repoRoot: string) {
         const stream = acceptExec();
         const child = spawn('git', [service.replace(/^git-/, ''), repoPath]);
         stream.pipe(child.stdin);
-        child.stdout.pipe(stream);
-        child.stderr.pipe(stream.stderr);
+        child.stdout.pipe(stream, { end: false });
+        child.stderr.pipe(stream.stderr, { end: false });
         child.on('close', (code) => {
           stream.exit(code ?? 1);
           stream.end();
@@ -356,22 +356,9 @@ describeIf(hasSsh, 'ssh command', () => {
   // which tunnels git-upload-pack / git-receive-pack to the host-side bare
   // repo behind the ssh2 server.
   //
-  // Opt-in (AGENTOS_SSH_GIT_E2E=1). The ssh client itself is correct on this
-  // path — it connects, completes curve25519/ed25519 KEX, authenticates, and
-  // opens the session channel. The blocker is in the RUNTIME, not the port:
-  // when git spawns ssh as a child_process, ssh's stdio are the sidecar's
-  // child-process "synthetic" pipes and ssh dups its channel I/O onto high
-  // synthetic fds (>= 1<<20) which it then polls alongside the host-net
-  // socket. In that configuration the exec channel-request is queued by ssh
-  // but never flushed to the socket (the sidecar's net.write for the exec is
-  // never issued), so the server never runs upload-pack and both sides wait
-  // forever. The SAME ssh binary delivers the exec correctly for every other
-  // invocation shape, including a cross-process pipe to a sibling reader
-  // (`sleep | ssh … 'git-upload-pack …' | head` returns the ref
-  // advertisement). This is a child_process-synthetic-pipe + host-net + guest
-  // poll() interaction in crates/execution/assets/runners/wasm-runner.mjs /
-  // the sidecar, tracked separately; the cases below pass once it is fixed.
-  describeIf(hasGit && hasHostGit && process.env.AGENTOS_SSH_GIT_E2E === '1', 'git-over-ssh clone/push', () => {
+  // This also regresses mixed polling in the runtime: ssh polls a dup'd stdin
+  // pipe alongside its host-net socket while Git waits for the remote helper.
+  describeIf(hasGit && hasHostGit, 'git-over-ssh clone/push', () => {
     let keys: TestKeys;
     let server: SshServer;
     let port: number;
@@ -436,7 +423,7 @@ describeIf(hasSsh, 'ssh command', () => {
       const url = `ssh://${SSH_USER}@127.0.0.1:${port}/origin.git`;
 
       const cloned = await kernel.exec(git(`clone ${url} /tmp/clone`));
-      expect(cloned.exitCode).toBe(0);
+      expect(cloned.exitCode, cloned.stderr).toBe(0);
       const readme = new TextDecoder().decode(
         await kernel.readFile('/tmp/clone/README.md'),
       );

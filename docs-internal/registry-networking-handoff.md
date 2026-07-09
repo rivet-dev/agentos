@@ -7,9 +7,9 @@ This picks up an in-flight effort: give curl/wget/git **real HTTPS with native
 Linux semantics**, make the **codex build reproducible**, and then continue into
 **ssh**, **/proc**, and the Node stdlib migration. Current proof state:
 - curl/wget/git HTTPS is **done and green** on in-guest mbedTLS.
-- ssh is built and its direct suite is **7/7 green**, but the git-over-SSH
-  clone/push test is opt-in and blocked by a runtime synthetic-pipe + host-net
-  poll/flush bug (§4); the ssh rev is not yet forklifted.
+- ssh is built and its default suite is **8/8 green**, including real
+  git-over-SSH clone + push through the runtime's synthetic-pipe/host-net poll
+  path (§4).
 - the kernel already has a **partial synthetic procfs**, but it has not met this
   program's acceptance bar: no authoritative-format citations at the emitters,
   no real-Linux golden fixture, no real procps-ng/psmisc packages, and no real
@@ -128,7 +128,7 @@ files belong in a rev.
 
 ---
 
-## 4. ssh — BUILT + VERIFIED, needs forklift + one gap closed
+## 4. ssh — BUILT + VERIFIED, including git-over-SSH
 
 Rev `opqnkltx` (`feat(ssh)…`). **Real OpenSSH portable 10.4p1, `--without-openssl`**,
 built for wasm32-wasip1 (845 KB, at `software/ssh/bin/ssh`, `packages/runtime-core/
@@ -138,19 +138,14 @@ upstream.sh`, `toolchain/c/Makefile` target, `toolchain/std-patches/wasi-libc/
 overrides/openssh_compat.c` (the no-op `closefrom` + ENOSYS `socketpair`),
 `software/ssh/*`, `wasm-runner.mjs` setsockopt polish.
 
-**Verified — ssh e2e 7/7** (`~/progress/agent-os/2026-07-09-openssh/…-ssh-suite-
-final.log`): ed25519 publickey auth + known_hosts; exit-status propagation;
-unauthorized-key failure; host-key-verification failure; BatchMode fail-closed on
-unknown host; `StrictHostKeyChecking=accept-new`. **git 25/25 unregressed.**
-
-**Gap to close (state reconciled):** the git-over-SSH clone/push test now exists
-at `software/ssh/test/ssh.test.ts`, but is opt-in behind
-`AGENTOS_SSH_GIT_E2E=1`. It reaches the real ssh binary, completes KEX/auth, and
-opens the session; it then hangs because child-spawn synthetic pipes and a
-host-net socket are polled together but the queued exec channel request is not
-flushed. Fix that runtime poll/write interaction in the owning runtime layer,
-remove the opt-in gate, and require clone + push green by default. Do not weaken
-the test or patch git/OpenSSH around the runtime bug.
+**Verified — ssh e2e 8/8**
+(`~/progress/agent-os/2026-07-09-registry-networking/2026-07-09T17-00-20-0700-ssh-full-suite-pass.log`):
+the original seven direct cases plus real git-over-SSH clone + push. The runtime
+fix teaches mixed host-net/kernel polling to probe kernel stdio without starving
+the socket, routes duplicated stdio aliases to the kernel fd, and emits the owned
+sysroot's actual poll exceptional-bit ABI. The in-test SSH server also preserves
+the channel until it sends the child exit status. **git 25/25 unregressed**
+(`~/progress/agent-os/2026-07-09-registry-networking/2026-07-09T17-01-10-0700-git-full-suite-pass.log`).
 
 **Build/test commands:**
 ```
@@ -164,9 +159,9 @@ pnpm --dir software/ssh test           # with AGENTOS_SIDECAR_BIN pinned (see §
 
 ### 5.1 Finish the reg-tests stack
 
-1. **Close git-over-SSH:** fix the runtime synthetic-pipe + host-net poll/flush
-   bug described in §4, remove `AGENTOS_SSH_GIT_E2E`, and make real clone + push
-   pass by default with a pinned `AGENTOS_SIDECAR_BIN`.
+1. **DONE — close git-over-SSH:** the runtime synthetic-pipe + host-net poll/flush
+   bug is fixed, `AGENTOS_SSH_GIT_E2E` is removed, and real clone + push pass by
+   default with a pinned `AGENTOS_SIDECAR_BIN` (§4).
 2. **Finish `/proc` from the existing partial implementation:** retain the
    process-table-backed design in `crates/kernel/src/kernel.rs`, then add the
    missing consumer surface (`/proc/<pid>/comm`, `/proc/stat`, and any further
@@ -269,14 +264,11 @@ make the shim future `Send` or cfg-gate rmcp oauth off wasi).
 
 ## 8. Immediate next steps for the picking-up agent
 
-1. Forklift the pending policy/ssh/handoff revisions, preserving the shared
-   workspace and resolving only the known workflow conflicts if they recur.
-2. Fix the git-over-SSH runtime blocker and make clone + push unskipped and green.
-3. Complete and prove `/proc`, then ship real procps-ng/psmisc commands.
-4. Forklift the completed reg-tests revisions and update this status section.
-5. Switch to the existing `node-stdlib` workspace without moving `reg-tests`'s
+1. Complete and prove `/proc`, then ship real procps-ng/psmisc commands.
+2. Forklift each completed reg-tests revision and keep this status current.
+3. Switch to the existing `node-stdlib` workspace without moving `reg-tests`'s
    `@`; execute the Node spec M0→M5 with the shared real-OpenSSL decision.
-6. Optional after the ordered work: git credential-cache note and the codex
+4. Optional after the ordered work: git credential-cache note and the codex
    `rmcp` OAuth `Send` blocker.
 
 Everything real-tool must stay **real upstream, patch the sysroot not the app**

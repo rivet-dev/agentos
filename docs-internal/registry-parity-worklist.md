@@ -814,7 +814,7 @@ breadth; (2) `git` is **rare inside agent turns** (harnesses extract the diff
 out-of-band) but stays essential; (3) a **long tail of project-specific CLIs**
 (`dvc`, `sqlglot`, `sanic`, …) comes from pip/npm install, not the registry.
 
-**Requested (add):** ssh 🟡, rsync 🟡, tmux/screen 🟡 (PTY — session persistence),
+**Requested (add):** ssh ✅, rsync 🟡, tmux/screen 🟡 (PTY — session persistence),
 gpg 🟡, ffmpeg 🟡 (media transcode — heavy but headless), jj 🟢, dig 🟡,
 nslookup 🟡, less ⭐🟡 (pager), openssl ⭐🟡 (TLS/certs/keys/hashing).
 tail/head/cat are already in coreutils — confirm present.
@@ -823,7 +823,7 @@ tail/head/cat are already in coreutils — confirm present.
 big C runtime but real; 563 uses in history), miller `mlr` 🟢 (CSV/JSON),
 xmlstarlet 🟢, pcre2grep 🟢. (jq/yq/sed/awk/grep/head/tail already covered.)
 
-**Networking (host TCP/DNS bridge only):** openssl ⭐🟡, ssh 🟡, nc/netcat 🟡
+**Networking (host TCP/DNS bridge only):** openssl ⭐🟡, ssh ✅, nc/netcat 🟡
 (TCP/UDP), socat 🟡, whois 🟢, dig/nslookup 🟡, redis-cli / psql client 🟡,
 aria2 🟡 (C++ downloader), sshpass 🟢 (ssh password helper).
 
