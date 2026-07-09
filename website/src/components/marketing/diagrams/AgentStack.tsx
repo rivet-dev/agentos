@@ -4,11 +4,12 @@ import { motion, useReducedMotion } from 'framer-motion';
 import { EASE, VIEWPORT } from '../motion';
 
 // ---------------------------------------------------------------------------
-// How agentOS works as a stack, top to bottom: agents run inside per-agent
-// VMs, the VMs are booted and governed by the agentOS library, and the
-// library lives in the backend you already run, driven by your code or a
-// framework. The two agentOS layers carry the cream fill so the product's
-// slice of the stack reads at a glance.
+// The agentOS virtualization stack, top to bottom: agents run as guest
+// processes on guest runtimes (native V8 isolates, CPython, WASM tools), every
+// syscall those runtimes make lands in a per-agent virtual kernel, and the
+// kernel is booted by a library inside your backend process, with no
+// hypervisor anywhere in the path. The two agentOS layers carry the cream
+// fill so the product's slice of the stack reads at a glance.
 // ---------------------------------------------------------------------------
 
 interface StackLayer {
@@ -21,7 +22,7 @@ interface StackLayer {
 const LAYERS: StackLayer[] = [
 	{
 		name: 'Agents',
-		detail: 'Pi, Claude Code, Codex, and OpenCode run inside the VMs.',
+		detail: 'Pi, Claude Code, Codex, and OpenCode run as guest processes.',
 		logos: [
 			{ src: '/images/agent-logos/pi.svg', alt: 'Pi' },
 			{ src: '/images/agent-logos/claude-code.svg', alt: 'Claude Code' },
@@ -30,13 +31,22 @@ const LAYERS: StackLayer[] = [
 		],
 	},
 	{
-		name: 'agentOS VMs',
-		detail: 'One per agent: a file system, processes, networking, and deny-by-default permissions.',
+		name: 'Guest runtimes',
+		detail: 'JavaScript on native V8 isolates, CPython 3.13, and WebAssembly builds of the POSIX toolbox.',
+		logos: [
+			{ src: '/images/registry/nodejs.svg', alt: 'Node.js' },
+			{ src: '/images/registry/python.svg', alt: 'Python' },
+			{ src: '/images/registry/linux.svg', alt: 'Linux tools' },
+		],
+	},
+	{
+		name: 'Virtual kernel',
+		detail: 'One per agent VM. Every syscall lands here: file system, process table, sockets and DNS, PTYs, deny-by-default permissions.',
 		product: true,
 	},
 	{
 		name: 'agentOS library',
-		detail: 'Boots and governs the VMs; your code talks to it through sessions, bindings, and workflows.',
+		detail: 'Boots the VMs inside your process. No hypervisor, no microVM, nothing to pull or boot.',
 		product: true,
 	},
 	{
@@ -53,7 +63,7 @@ const LAYERS: StackLayer[] = [
 export const AgentStack = () => {
 	const reduced = useReducedMotion();
 	return (
-		<div role='img' aria-label='The agentOS stack: agents run inside per-agent VMs, the agentOS library boots and governs the VMs, and the library runs inside your backend alongside your code or a framework like Eve or Flue.'>
+		<div role='img' aria-label='The agentOS stack: agents run as guest processes on guest runtimes (native V8 isolates, CPython, and WebAssembly tools); every syscall lands in a per-agent virtual kernel; the agentOS library boots the VMs inside your backend with no hypervisor; your code or a framework like Eve or Flue drives it.'>
 			<div className='flex flex-col gap-2'>
 				{LAYERS.map((layer, i) => (
 					<motion.div
