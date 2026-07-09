@@ -608,6 +608,90 @@ $(MBEDTLS_LIBS): $(MBEDTLS_SRC_DIR)/library/ssl_tls.c \
 	@echo "=== mbedTLS libs built ==="
 	@ls -l $(MBEDTLS_LIBS)
 
+# --- brotli 1.1.0 (decoder) for wasm32-wasip1 ---
+# curl's --compressed brotli decode. Only the dependency-free portable C
+# `common` + `dec` sources are needed (no encoder). Mirrors the zlib rule:
+# cross-compile each .c against the wasi-sdk sysroot and archive into the two
+# canonical libs (libbrotlicommon.a, libbrotlidec.a; dec depends on common).
+BROTLI_VERSION := 1.1.0
+BROTLI_URL := https://github.com/google/brotli/archive/refs/tags/v$(BROTLI_VERSION).tar.gz
+BROTLI_SRC_DIR = $(LIBS_CACHE)/brotli-$(BROTLI_VERSION)
+BROTLI_BUILD_DIR := $(BUILD_DIR)/brotli
+BROTLI_INCLUDE_DIR = $(BROTLI_SRC_DIR)/c/include
+BROTLI_COMMON_SRCS := constants.c context.c dictionary.c platform.c shared_dictionary.c transform.c
+BROTLI_DEC_SRCS := bit_reader.c decode.c huffman.c state.c
+BROTLI_LIBS := $(BROTLI_BUILD_DIR)/libbrotlidec.a $(BROTLI_BUILD_DIR)/libbrotlicommon.a
+
+$(BROTLI_SRC_DIR)/c/dec/decode.c:
+	@echo "Fetching brotli $(BROTLI_VERSION)..."
+	@mkdir -p $(LIBS_CACHE)
+	@curl -fSL "$(BROTLI_URL)" -o "$(LIBS_CACHE)/brotli-$(BROTLI_VERSION).tar.gz"
+	@rm -rf "$(BROTLI_SRC_DIR)"
+	@tar -xzf "$(LIBS_CACHE)/brotli-$(BROTLI_VERSION).tar.gz" -C "$(LIBS_CACHE)"
+
+.PHONY: brotli
+brotli: $(BROTLI_LIBS)
+
+$(BROTLI_LIBS): $(BROTLI_SRC_DIR)/c/dec/decode.c $(WASI_SDK_DIR)/bin/clang
+	@echo "=== Building brotli $(BROTLI_VERSION) (dec) for wasm32-wasip1 ==="
+	@mkdir -p $(BROTLI_BUILD_DIR)/common $(BROTLI_BUILD_DIR)/dec
+	@for src in $(BROTLI_COMMON_SRCS); do \
+		$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -O2 \
+			-I$(BROTLI_INCLUDE_DIR) \
+			-c "$(BROTLI_SRC_DIR)/c/common/$$src" \
+			-o "$(BROTLI_BUILD_DIR)/common/$${src%.c}.o" || exit 1; \
+	done
+	@for src in $(BROTLI_DEC_SRCS); do \
+		$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) -O2 \
+			-I$(BROTLI_INCLUDE_DIR) \
+			-c "$(BROTLI_SRC_DIR)/c/dec/$$src" \
+			-o "$(BROTLI_BUILD_DIR)/dec/$${src%.c}.o" || exit 1; \
+	done
+	@rm -f $(BROTLI_LIBS)
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(BROTLI_BUILD_DIR)/libbrotlicommon.a $(BROTLI_BUILD_DIR)/common/*.o
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(BROTLI_BUILD_DIR)/libbrotlidec.a $(BROTLI_BUILD_DIR)/dec/*.o
+	@echo "=== brotli libs built ==="
+	@ls -l $(BROTLI_LIBS)
+
+# --- zstd 1.5.6 (decoder) for wasm32-wasip1 ---
+# curl's --compressed zstd decode. Single-threaded (ZSTD_MULTITHREAD off),
+# ZSTD_DISABLE_ASM=1 so the portable C huffman path is used instead of the
+# amd64 .S. Only lib/common + lib/decompress are needed for ZSTD_*DStream.
+ZSTD_VERSION := 1.5.6
+ZSTD_URL := https://github.com/facebook/zstd/releases/download/v$(ZSTD_VERSION)/zstd-$(ZSTD_VERSION).tar.gz
+ZSTD_SRC_DIR = $(LIBS_CACHE)/zstd-$(ZSTD_VERSION)
+ZSTD_BUILD_DIR := $(BUILD_DIR)/zstd
+ZSTD_INCLUDE_DIR = $(ZSTD_SRC_DIR)/lib
+ZSTD_LIB := $(ZSTD_BUILD_DIR)/libzstd.a
+# NB: leave ZSTD_MULTITHREAD *undefined* (not =0). zstd's threading.h keys the
+# pthread path off `#if defined(ZSTD_MULTITHREAD)`, so even =0 pulls in
+# pthread_create/join, which wasi-libc static-asserts away without threads.
+ZSTD_CFLAGS := -O2 -DZSTD_DISABLE_ASM=1 \
+               -I$(ZSTD_SRC_DIR)/lib -I$(ZSTD_SRC_DIR)/lib/common
+
+$(ZSTD_SRC_DIR)/lib/zstd.h:
+	@echo "Fetching zstd $(ZSTD_VERSION)..."
+	@mkdir -p $(LIBS_CACHE)
+	@curl -fSL "$(ZSTD_URL)" -o "$(LIBS_CACHE)/zstd-$(ZSTD_VERSION).tar.gz"
+	@rm -rf "$(ZSTD_SRC_DIR)"
+	@tar -xzf "$(LIBS_CACHE)/zstd-$(ZSTD_VERSION).tar.gz" -C "$(LIBS_CACHE)"
+
+.PHONY: zstd
+zstd: $(ZSTD_LIB)
+
+$(ZSTD_LIB): $(ZSTD_SRC_DIR)/lib/zstd.h $(WASI_SDK_DIR)/bin/clang
+	@echo "=== Building zstd $(ZSTD_VERSION) (decompress) for wasm32-wasip1 ==="
+	@mkdir -p $(ZSTD_BUILD_DIR)/obj
+	@for src in $(ZSTD_SRC_DIR)/lib/common/*.c $(ZSTD_SRC_DIR)/lib/decompress/*.c; do \
+		name=$$(basename "$${src%.c}"); \
+		$(CC) --target=wasm32-wasip1 --sysroot=$(SYSROOT) $(ZSTD_CFLAGS) \
+			-c "$$src" -o "$(ZSTD_BUILD_DIR)/obj/$$name.o" || exit 1; \
+	done
+	@rm -f $(ZSTD_LIB)
+	$(WASI_SDK_DIR)/bin/llvm-ar rcs $(ZSTD_LIB) $(ZSTD_BUILD_DIR)/obj/*.o
+	@echo "=== zstd lib built ==="
+	@ls -l $(ZSTD_LIB)
+
 # --- CA bundle (Mozilla / Debian ca-certificates) ---
 # Fetch the pinned Mozilla CA bundle into the sidecar asset staged by build.rs.
 # The blob is gitignored; run this once to enable real HTTPS verification.
@@ -681,7 +765,7 @@ CURL_SRCS := $(wildcard libs/curl/lib/*.c) $(wildcard libs/curl/lib/vauth/*.c) \
 CURL_INCLUDES := -Ilibs/curl/include -Ilibs/curl/lib -include libs/curl/lib/curl_setup.h -include libs/curl/lib/curl_printf.h
 CURL_LIB_DEFS := -DHAVE_CONFIG_H -DBUILDING_LIBCURL -D_WASI_EMULATED_SIGNAL -DHAVE_BASENAME -DHAVE_LIBGEN_H
 
-$(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES) $(MBEDTLS_LIBS) $(ZLIB_BUILD_DIR)/libz.a $(BROTLI_LIBS) $(ZSTD_LIB) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
 	bash scripts/build-curl-upstream.sh \
 		--version "$(CURL_RELEASE_VERSION)" \
@@ -693,6 +777,15 @@ $(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES)
 		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
 		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
+		--mbedtls-include "$(abspath $(MBEDTLS_SRC_DIR)/include)" \
+		--mbedtls-libdir "$(abspath $(MBEDTLS_BUILD_DIR))" \
+		--zlib-include "$(abspath $(LIBS_CACHE)/zlib-$(ZLIB_VERSION))" \
+		--zlib-libdir "$(abspath $(ZLIB_BUILD_DIR))" \
+		--brotli-include "$(abspath $(BROTLI_INCLUDE_DIR))" \
+		--brotli-libdir "$(abspath $(BROTLI_BUILD_DIR))" \
+		--zstd-include "$(abspath $(ZSTD_INCLUDE_DIR))" \
+		--zstd-libdir "$(abspath $(ZSTD_BUILD_DIR))" \
+		--ca-bundle "/etc/ssl/certs/ca-certificates.crt" \
 		--output "$(abspath $@)"
 
 $(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang

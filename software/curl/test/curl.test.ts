@@ -38,9 +38,17 @@ import {
   type Server as TcpServer,
 } from 'node:net';
 import { execSync } from 'node:child_process';
-import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { brotliCompressSync, gzipSync, zstdCompressSync } from 'node:zlib';
 
 // The upstream curl parity assertions below only hold for the C-built curl
 // artifact; the Rust fallback in COMMANDS_DIR intentionally supports a smaller
@@ -150,6 +158,44 @@ const externalNetworkSkipReason = runExternalNetwork
     })()
   : 'set AGENTOS_E2E_NETWORK=1 to enable external-network coverage';
 
+// A known, highly compressible payload used by the --compressed round-trip
+// tests. Long + repetitive so every codec produces a body distinct from the
+// plaintext (proving curl actually inflated it, not just passed it through).
+const COMPRESSION_PAYLOAD =
+  'agentos-compression-parity ' + 'the quick brown fox jumps over the lazy dog. '.repeat(64);
+
+// Build a real CA and a leaf server certificate signed by it, with a SAN that
+// covers the 127.0.0.1 loopback endpoint the tests connect to. This lets curl's
+// mbedTLS backend perform genuine chain + hostname verification, exactly like
+// Linux curl against a private CA.
+function makeCaSignedCert(caCommonName: string): {
+  caPem: string;
+  serverKey: string;
+  serverCert: string;
+} {
+  const dir = mkdtempSync(join(tmpdir(), 'curl-ca-'));
+  try {
+    execSync(`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${dir}/ca.key" 2>/dev/null`);
+    execSync(
+      `openssl req -x509 -new -key "${dir}/ca.key" -days 3650 -subj "/CN=${caCommonName}" -out "${dir}/ca.crt" 2>/dev/null`,
+    );
+    execSync(`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${dir}/srv.key" 2>/dev/null`);
+    execSync(`openssl req -new -key "${dir}/srv.key" -subj "/CN=localhost" -out "${dir}/srv.csr" 2>/dev/null`);
+    writeFileSync(`${dir}/ext.cnf`, 'subjectAltName=DNS:localhost,IP:127.0.0.1\n');
+    execSync(
+      `openssl x509 -req -in "${dir}/srv.csr" -CA "${dir}/ca.crt" -CAkey "${dir}/ca.key" ` +
+      `-CAcreateserial -days 3650 -extfile "${dir}/ext.cnf" -out "${dir}/srv.crt" 2>/dev/null`,
+    );
+    return {
+      caPem: readFileSync(`${dir}/ca.crt`, 'utf8'),
+      serverKey: readFileSync(`${dir}/srv.key`, 'utf8'),
+      serverCert: readFileSync(`${dir}/srv.crt`, 'utf8'),
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function generateSelfSignedCert(): { key: string; cert: string } {
   const keyPath = join(tmpdir(), `curl-test-key-${process.pid}-${Date.now()}.pem`);
   try {
@@ -176,10 +222,19 @@ describeIf(hasCurl || hasHttpGetTest, 'curl and socket layer', () => {
   let kernel: Kernel;
   let httpServer: HttpServer;
   let httpsServer: HttpsServer;
+  let validHttpsServer: HttpsServer;
+  let caHttpsServer: HttpsServer;
   let keepAliveServer: TcpServer;
   let httpPort: number;
   let httpsPort: number;
+  let validHttpsPort: number;
+  let caHttpsPort: number;
   let keepAlivePort: number;
+  // CA (PEM) trusted by the seeded /etc/ssl/certs/ca-certificates.crt bundle —
+  // it signs validHttpsServer's leaf. caOnlyPem signs caHttpsServer's leaf and
+  // is deliberately NOT in the bundle, so it verifies only via --cacert.
+  let seededCaPem = '';
+  let caOnlyPem = '';
   let flakyRequestCount = 0;
 
   beforeAll(async () => {
@@ -333,6 +388,29 @@ describeIf(hasCurl || hasHttpGetTest, 'curl and socket layer', () => {
         return;
       }
 
+      if (url === '/gzip' || url === '/brotli' || url === '/zstd') {
+        const raw = Buffer.from(COMPRESSION_PAYLOAD);
+        let encoding: string;
+        let body: Buffer;
+        if (url === '/gzip') {
+          encoding = 'gzip';
+          body = gzipSync(raw);
+        } else if (url === '/brotli') {
+          encoding = 'br';
+          body = brotliCompressSync(raw);
+        } else {
+          encoding = 'zstd';
+          body = zstdCompressSync(raw);
+        }
+        res.writeHead(200, {
+          'Content-Type': 'text/plain',
+          'Content-Encoding': encoding,
+          'Content-Length': String(body.length),
+        });
+        res.end(body);
+        return;
+      }
+
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('not found');
     });
@@ -372,6 +450,37 @@ describeIf(hasCurl || hasHttpGetTest, 'curl and socket layer', () => {
         httpsServer.listen(0, '127.0.0.1', resolveListen);
       });
       httpsPort = (httpsServer.address() as import('node:net').AddressInfo).port;
+
+      // HTTPS server whose leaf chains to a CA seeded into the guest's
+      // /etc/ssl/certs/ca-certificates.crt — verified with NO -k / --cacert.
+      const trusted = makeCaSignedCert('AgentOS Test Root CA');
+      seededCaPem = trusted.caPem;
+      validHttpsServer = createHttpsServer(
+        { key: trusted.serverKey, cert: trusted.serverCert },
+        (req, res) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ verified: true, path: req.url }));
+        },
+      );
+      await new Promise<void>((resolveListen) => {
+        validHttpsServer.listen(0, '127.0.0.1', resolveListen);
+      });
+      validHttpsPort = (validHttpsServer.address() as import('node:net').AddressInfo).port;
+
+      // HTTPS server whose CA is provided ONLY via --cacert (not in the bundle).
+      const caOnly = makeCaSignedCert('AgentOS Cacert-Only CA');
+      caOnlyPem = caOnly.caPem;
+      caHttpsServer = createHttpsServer(
+        { key: caOnly.serverKey, cert: caOnly.serverCert },
+        (req, res) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ cacert: true, path: req.url }));
+        },
+      );
+      await new Promise<void>((resolveListen) => {
+        caHttpsServer.listen(0, '127.0.0.1', resolveListen);
+      });
+      caHttpsPort = (caHttpsServer.address() as import('node:net').AddressInfo).port;
     }
 
     keepAliveServer = createTcpServer((socket) => {
@@ -403,6 +512,12 @@ describeIf(hasCurl || hasHttpGetTest, 'curl and socket layer', () => {
     if (httpsServer) {
       await new Promise<void>((resolveClose) => httpsServer.close(() => resolveClose()));
     }
+    if (validHttpsServer) {
+      await new Promise<void>((resolveClose) => validHttpsServer.close(() => resolveClose()));
+    }
+    if (caHttpsServer) {
+      await new Promise<void>((resolveClose) => caHttpsServer.close(() => resolveClose()));
+    }
     if (keepAliveServer) {
       await new Promise<void>((resolveClose) => keepAliveServer.close(() => resolveClose()));
     }
@@ -418,9 +533,23 @@ describeIf(hasCurl || hasHttpGetTest, 'curl and socket layer', () => {
     kernel = createKernel({
       filesystem,
       permissions: allowAll,
-      loopbackExemptPorts: [httpPort, httpsPort, keepAlivePort],
+      loopbackExemptPorts: [
+        httpPort,
+        httpsPort,
+        validHttpsPort,
+        caHttpsPort,
+        keepAlivePort,
+      ],
     });
     await kernel.mount(createWasmVmRuntime({ commandDirs: [C_BUILD_DIR, COMMANDS_DIR] }));
+
+    // Seed the Debian-shaped trust store the way the native VM bootstrap does,
+    // so curl's compile-time default CA bundle resolves in-guest. Only the
+    // "trusted" CA is placed here; the cacert-only CA is intentionally absent.
+    if (seededCaPem) {
+      await filesystem.mkdir('/etc/ssl/certs', { recursive: true });
+      await kernel.writeFile('/etc/ssl/certs/ca-certificates.crt', seededCaPem);
+    }
     return kernel;
   }
 
@@ -669,18 +798,67 @@ describeIf(hasCurl || hasHttpGetTest, 'curl and socket layer', () => {
     expect(Date.now() - startedAt).toBeLessThan(8000);
   }, 15000);
 
-  itIf(hasCurl && hasOpenssl, 'curl -k performs an HTTPS request through the WASI TLS backend', async () => {
+  itIf(hasCurl, 'curl --version reports the mbedTLS backend', async () => {
+    await createKernelWithNet();
+    const result = await kernel.exec('curl --version');
+    expect(result.exitCode).toBe(0);
+    // Real in-guest TLS: the SSL version line must name mbedTLS, and the
+    // retired host shim string must be gone.
+    expect(result.stdout).toMatch(/mbedTLS/i);
+    expect(result.stdout).not.toMatch(/WASI-TLS|wasi-tls/i);
+    expect(result.stdout).toMatch(/^Features:.*\bSSL\b/m);
+    expect(result.stdout).toMatch(/^Features:.*\bbrotli\b/m);
+    expect(result.stdout).toMatch(/^Features:.*\bzstd\b/m);
+  }, 15000);
+
+  itIf(hasCurl && hasOpenssl, 'curl verifies a CA-signed cert against the seeded CA bundle', async () => {
+    await createKernelWithNet();
+    // No -k, no --cacert: trust comes solely from the seeded
+    // /etc/ssl/certs/ca-certificates.crt, exactly like Debian curl.
+    const result = await kernel.exec(`curl -sS https://127.0.0.1:${validHttpsPort}/json`);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('"verified":true');
+  }, 15000);
+
+  itIf(hasCurl && hasOpenssl, 'curl fails with exit 60 and a real verify message on an untrusted cert', async () => {
+    await createKernelWithNet();
+    const result = await kernel.exec(`curl -sS https://127.0.0.1:${httpsPort}/json`);
+    // CURLE_PEER_FAILED_VERIFICATION == 60, the native Linux taxonomy. NOT 35
+    // (SSL connect error, the old host-shim behavior).
+    expect(result.exitCode).toBe(60);
+    expect(result.stderr).toMatch(/certificate|verify|self[- ]?signed|CA/i);
+    expect(result.stderr).not.toMatch(/WASI TLS|wasi-tls/i);
+    expect(result.stdout).toBe('');
+  }, 15000);
+
+  itIf(hasCurl && hasOpenssl, 'curl -k skips verification and succeeds on an untrusted cert', async () => {
     await createKernelWithNet();
     const result = await kernel.exec(`curl -ks https://127.0.0.1:${httpsPort}/json`);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('"secure":true');
   }, 15000);
 
-  itIf(hasCurl && hasOpenssl, 'curl fails TLS verification without -k on a self-signed endpoint', async () => {
+  itIf(hasCurl && hasOpenssl, 'curl --cacert accepts a server signed by that CA', async () => {
     await createKernelWithNet();
-    const result = await kernel.exec(`curl -sS https://127.0.0.1:${httpsPort}/json`);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toMatch(/certificate|tls|ssl|verify/i);
+    // caHttpsServer's CA is NOT in the seeded bundle, so this only passes if
+    // --cacert is honored (real file read + chain build in-guest).
+    await kernel.writeFile('/tmp/cacert-only.pem', caOnlyPem);
+    const result = await kernel.exec(
+      `curl -sS --cacert /tmp/cacert-only.pem https://127.0.0.1:${caHttpsPort}/json`,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('"cacert":true');
+  }, 15000);
+
+  itIf(hasCurl && hasOpenssl, 'curl --cacert with the wrong CA still fails verification (exit 60)', async () => {
+    await createKernelWithNet();
+    // Point --cacert at the seeded CA, which did NOT sign caHttpsServer's leaf.
+    await kernel.writeFile('/tmp/wrong-ca.pem', seededCaPem);
+    const result = await kernel.exec(
+      `curl -sS --cacert /tmp/wrong-ca.pem https://127.0.0.1:${caHttpsPort}/json`,
+    );
+    expect(result.exitCode).toBe(60);
+    expect(result.stderr).toMatch(/certificate|verify|CA/i);
   }, 15000);
 
   itIf(hasCurl && hasOpenssl, 'curl -k exits promptly after an HTTPS keep-alive response', async () => {
@@ -690,6 +868,27 @@ describeIf(hasCurl || hasHttpGetTest, 'curl and socket layer', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe('hello from tls keepalive');
     expect(Date.now() - startedAt).toBeLessThan(8000);
+  }, 15000);
+
+  itIf(hasCurl, 'curl --compressed round-trips a gzip response body', async () => {
+    await createKernelWithNet();
+    const result = await kernel.exec(`curl -s --compressed http://127.0.0.1:${httpPort}/gzip`);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(COMPRESSION_PAYLOAD);
+  }, 15000);
+
+  itIf(hasCurl, 'curl --compressed round-trips a brotli response body', async () => {
+    await createKernelWithNet();
+    const result = await kernel.exec(`curl -s --compressed http://127.0.0.1:${httpPort}/brotli`);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(COMPRESSION_PAYLOAD);
+  }, 15000);
+
+  itIf(hasCurl, 'curl --compressed round-trips a zstd response body', async () => {
+    await createKernelWithNet();
+    const result = await kernel.exec(`curl -s --compressed http://127.0.0.1:${httpPort}/zstd`);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(COMPRESSION_PAYLOAD);
   }, 15000);
 
   itIf(hasHttpGetTest && !externalNetworkSkipReason, 'http_get_test reaches an external host over real TCP', async () => {

@@ -1414,7 +1414,12 @@ function seekGuestFileHandle(handle, offset, whence) {
   } else if (numericWhence === WASI_WHENCE_CUR) {
     base = BigInt(handle.position ?? 0);
   } else if (numericWhence === WASI_WHENCE_END) {
-    base = BigInt(Number(fsModule.fstatSync(handle.targetFd).size ?? 0));
+    // Passthrough (read-only delegate) handles keep the real host fd in ioFd;
+    // targetFd is only a synthetic guest fd number and fstat'ing it reports
+    // size 0. Prefer ioFd so SEEK_END returns the true file size (e.g. mbedTLS
+    // sizing a CA bundle via fseek(SEEK_END)+ftell before reading it).
+    const sizeFd = typeof handle.ioFd === 'number' ? handle.ioFd : handle.targetFd;
+    base = BigInt(Number(fsModule.fstatSync(sizeFd).size ?? 0));
   } else {
     return null;
   }
