@@ -119,6 +119,17 @@ external build (tracked separately in #9).
 **Objective:** replace each ❌ with a real/established implementation built to
 `wasm32-wasip1` and patched only where WASI forces it. The ✅ rows stay.
 
+**⚠️ Networking is a separate, still-open gap (curl/wget/git BUILD but lack real
+TLS).** The tools compile and do real HTTP, but: **curl** uses a host-brokered TLS
+shim (no real cert verify, ignores `--cacert`, wrong exit codes) and lacks
+gzip/brotli/zstd; **wget** is HTTP-only (`--without-ssl`); **git** is `NO_CURL`
+(no HTTPS clone/fetch/push — `git-remote-https` is a dead symlink). Full plan —
+in-guest **mbedTLS** + a Debian-shaped **CA bundle at `/etc/ssl/certs/
+ca-certificates.crt`** + real `git-remote-http` helper, with all refuted theses —
+is in **`docs-internal/networking-parity-spec.md`**. Acceptance: `curl`/`wget`/`git`
+do real HTTPS (verify, `--cacert`, exit 60, clone/fetch/push) with native Linux
+semantics.
+
 **Approach:** one command at a time, one jj rev each: swap our custom code for the
 established source (fetched + pinned like sqlite/duckdb), wire into the toolchain,
 patch for WASI, prove parity with real e2e tests.
