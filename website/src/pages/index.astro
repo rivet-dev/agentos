@@ -111,68 +111,6 @@ await writer.sendPrompt(
   "Write a REST API at /home/agentos/api.ts, then run agentos-review submit --path /home/agentos/api.ts",
 );` },
 
-	{ key: 'nodejs', fileName: 'nodejs.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate("my-agent");
-
-await agent.writeFile("/home/agentos/demo.mjs", \`
-import fs from "fs";
-
-fs.mkdirSync("/home/agentos/project/src", { recursive: true });
-fs.writeFileSync("/home/agentos/project/src/index.js", 'console.log("hello");');
-
-const files = fs.readdirSync("/home/agentos/project", { recursive: true });
-console.log("Files:", files);
-\`);
-
-const result = await agent.exec("node /home/agentos/demo.mjs");
-console.log(result.stdout);` },
-
-	{ key: 'bash', fileName: 'bash.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate("my-agent");
-
-// Write a script to back up the working directory
-await agent.writeFile("/home/agentos/backup.sh", \`#!/bin/bash
-set -e
-mkdir -p /home/agentos/backups
-tar -czf /home/agentos/backups/backup_$(date +%s).tar.gz -C /home/agentos/project .
-echo "Done:" && ls -lh /home/agentos/backups/
-\`);
-
-const result = await agent.exec("bash /home/agentos/backup.sh");
-console.log(result.stdout);` },
-
-	{ key: 'python', fileName: 'python.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
-import type { registry } from "./server";
-
-const client = createClient<typeof registry>("http://localhost:6420");
-const agent = client.vm.getOrCreate("my-agent");
-
-// CPython 3.13: python and python3 are on the PATH
-await agent.exec('python -c "print(40 + 2)"');
-
-// pip installs persist on the VM filesystem across runs
-await agent.exec("pip install requests");
-
-// Write and run a script like any other file in the VM
-await agent.writeFile("/home/agentos/summary.py", \`
-import csv, statistics
-
-with open("/home/agentos/data.csv") as f:
-    rows = [float(row["value"]) for row in csv.DictReader(f)]
-
-print("count:", len(rows), "mean:", statistics.mean(rows))
-\`);
-
-await agent.writeFile("/home/agentos/data.csv", "value\\n12\\n18\\n7\\n41\\n");
-const result = await agent.exec("python /home/agentos/summary.py");
-console.log(result.stdout);` },
-
 	{ key: 'multiplayer', fileName: 'multiplayer.ts', code: `import { createClient } from "@rivet-dev/agentos/client";
 import type { registry } from "./server";
 

@@ -31,6 +31,7 @@ import { AGENT_PROMPT } from '../agentPrompt';
 import { HERO_H1_CLASS, SectionHeading } from '../typography';
 import { AgentOsTopologyCell, SandboxTopologyCell } from '../diagrams/TopologyCells';
 import { ColdStartTimeline } from '../diagrams/ColdStartTimeline';
+import { AgentSessionDemo } from '../diagrams/AgentSessionDemo';
 import { Reveal } from '../motion';
 
 // Premium porcelain card surface, shared by the architecture cards and the
@@ -438,12 +439,6 @@ const orchestrationTabMeta: HeroTabMeta[] = [
 	{ key: 'permissions', icon: ShieldCheck, label: 'Permissions', docsHref: '/docs/permissions' },
 ];
 
-const executionTabMeta: HeroTabMeta[] = [
-	{ key: 'nodejs', iconSrc: '/images/registry/nodejs.svg', label: 'Node.js', docsHref: '/docs/nodejs-runtime' },
-	{ key: 'python', iconSrc: '/images/registry/python.svg', label: 'Python', docsHref: '/docs/python-runtime' },
-	{ key: 'bash', iconSrc: '/images/registry/linux.svg', label: 'Bash', docsHref: '/docs/processes' },
-];
-
 // Joins tab metadata with the highlighted snippets rendered at Astro build
 // time, dropping any tab whose snippet is missing.
 const joinTabs = (meta: HeroTabMeta[], heroTabs: HeroTabCode[]) =>
@@ -717,7 +712,7 @@ const OrchestrationSection = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => (
 			<Reveal>
 				<SectionHeading
 					title='Orchestrate fleets of agents in a few lines of code.'
-					subtitle='Durable sessions, multiplayer, and agent-to-agent delegation are built in, and every event streams back to your code.'
+					subtitle='Durable sessions, multiplayer, and agent-to-agent delegation are built in, and every event streams back to your code. It works with the frameworks you already use, including Eve and Flue.'
 					className='mb-10 max-w-3xl md:mb-12'
 				/>
 			</Reveal>
@@ -733,7 +728,7 @@ const OrchestrationSection = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => (
 	</section>
 );
 
-// --- Any execution layer (runtimes + code panel) ---
+// --- Any execution layer (runtimes + recorded agent session) ---
 // Three shipped runtimes, each grounded in its docs page. The full-Linux story
 // stays in the argument section's sandbox-mounting footnote.
 const executionLayers = [
@@ -757,7 +752,7 @@ const executionLayers = [
 	},
 ];
 
-const ExecutionLayersSection = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => (
+const ExecutionLayersSection = () => (
 	<section className='border-t border-ink/10 px-6 py-16 md:py-32'>
 		<div className='mx-auto max-w-7xl'>
 			<Reveal>
@@ -772,8 +767,11 @@ const ExecutionLayersSection = ({ heroTabs }: { heroTabs: HeroTabCode[] }) => (
 					<CapabilityCard key={layer.title} {...layer} />
 				))}
 			</div>
+			{/* One recorded session instead of per-runtime SDK snippets: watching an
+			    agent move between shell, Python, and Node makes the "one exec API"
+			    claim in a way three tabs of client code can't. */}
 			<Reveal>
-				<CodePanel tabs={joinTabs(executionTabMeta, heroTabs)} />
+				<AgentSessionDemo />
 			</Reveal>
 		</div>
 	</section>
@@ -1868,7 +1866,7 @@ export default function AgentOSPage({ heroTabs }: AgentOSPageProps) {
 			<main>
 				<Hero />
 				<ArgumentSection />
-				<ExecutionLayersSection heroTabs={heroTabs} />
+				<ExecutionLayersSection />
 				<OperatingSystemSection />
 				<RegistryCallout />
 				<OrchestrationSection heroTabs={heroTabs} />
