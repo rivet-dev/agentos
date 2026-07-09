@@ -176,7 +176,11 @@ WGET_VERSION := 1.24.5
 WGET_URL := https://ftp.gnu.org/gnu/wget/wget-$(WGET_VERSION).tar.gz
 WGET_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/wget-upstream
 WGET_UPSTREAM_OVERLAY_INCLUDE_DIR := overlays/wget/include
-WGET_UPSTREAM_OVERLAY_FILES := $(wildcard $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR)/*.h)
+# mbedTLS backend overlay (mirrors the curl overlay layout): src/wasi_ssl.c
+# is copied into the wget source tree at configure time.
+WGET_UPSTREAM_OVERLAY_DIR := ../../software/wget/native/c/overlay
+WGET_UPSTREAM_OVERLAY_FILES := $(wildcard $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR)/*.h) \
+                               $(shell find $(WGET_UPSTREAM_OVERLAY_DIR) -type f 2>/dev/null)
 GIT_VERSION := 2.55.0
 GIT_URL := https://www.kernel.org/pub/software/scm/git/git-$(GIT_VERSION).tar.xz
 GIT_UPSTREAM_BUILD_DIR := $(BUILD_DIR)/git-upstream
@@ -788,7 +792,7 @@ $(BUILD_DIR)/curl: scripts/build-curl-upstream.sh $(CURL_UPSTREAM_OVERLAY_FILES)
 $(CURL_LIBCURL_ARTIFACT): $(BUILD_DIR)/curl
 	@test -f $@ || { echo "Error: libcurl artifact missing at $@ (curl build did not install it)"; exit 1; }
 
-$(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES) $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
+$(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES) $(MBEDTLS_LIBS) $(ZLIB_BUILD_DIR)/libz.a $(PATCHED_SYSROOT)/lib/wasm32-wasi/libc.a $(WASI_SDK_DIR)/bin/clang
 	@mkdir -p $(BUILD_DIR)
 	bash scripts/build-wget-upstream.sh \
 		--version "$(WGET_VERSION)" \
@@ -796,6 +800,11 @@ $(BUILD_DIR)/wget: scripts/build-wget-upstream.sh $(WGET_UPSTREAM_OVERLAY_FILES)
 		--cache-dir "$(abspath $(LIBS_CACHE))" \
 		--build-dir "$(abspath $(WGET_UPSTREAM_BUILD_DIR))" \
 		--overlay-include-dir "$(abspath $(WGET_UPSTREAM_OVERLAY_INCLUDE_DIR))" \
+		--overlay-dir "$(abspath $(WGET_UPSTREAM_OVERLAY_DIR))" \
+		--mbedtls-include "$(abspath $(MBEDTLS_SRC_DIR)/include)" \
+		--mbedtls-libdir "$(abspath $(MBEDTLS_BUILD_DIR))" \
+		--zlib-include "$(abspath $(LIBS_CACHE)/zlib-$(ZLIB_VERSION))" \
+		--zlib-libdir "$(abspath $(ZLIB_BUILD_DIR))" \
 		--cc "$(abspath $(CC)) --target=wasm32-wasip1 --sysroot=$(abspath $(SYSROOT))" \
 		--ar "$(abspath $(WASI_SDK_DIR)/bin/llvm-ar)" \
 		--ranlib "$(abspath $(WASI_SDK_DIR)/bin/llvm-ranlib)" \
