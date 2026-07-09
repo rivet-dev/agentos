@@ -419,9 +419,10 @@ const frameworks = [
 	{ src: '/images/frameworks/flue.svg', name: 'Flue', href: 'https://flueframework.com' },
 	{ src: '/rivet-icon.svg', name: 'RivetKit', href: 'https://rivet.dev' },
 ];
-// Tab metadata for the two code panels. Orchestration leads with agents
-// coordinating other agents; execution shows the three runtimes. Both filter
-// the single highlighted-snippet array passed from index.astro by key.
+// Tab metadata for the orchestration code panel, leading with agents
+// coordinating other agents. Filters the highlighted-snippet array passed
+// from index.astro by key. (The execution section renders recorded agent
+// sessions instead; see AgentSessionDemo.)
 interface HeroTabMeta {
 	key: string;
 	icon?: typeof Bot;
@@ -767,9 +768,10 @@ const ExecutionLayersSection = () => (
 					<CapabilityCard key={layer.title} {...layer} />
 				))}
 			</div>
-			{/* One recorded session instead of per-runtime SDK snippets: watching an
-			    agent move between shell, Python, and Node makes the "one exec API"
-			    claim in a way three tabs of client code can't. */}
+			{/* Recorded agent sessions instead of SDK snippets: each runtime tab
+			    replays the same task with the agent writing that language, so the
+			    demo shows an agent using the exec API rather than client code
+			    calling it. */}
 			<Reveal>
 				<AgentSessionDemo />
 			</Reveal>
