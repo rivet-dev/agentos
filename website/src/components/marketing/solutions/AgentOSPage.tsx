@@ -30,6 +30,7 @@ import { REGISTRY_ICONS } from '../../../data/registry-icons';
 import { AGENT_PROMPT } from '../agentPrompt';
 import { HERO_H1_CLASS, SectionHeading } from '../typography';
 import { AgentOsTopologyCell, SandboxTopologyCell } from '../diagrams/TopologyCells';
+import { AgentStack } from '../diagrams/AgentStack';
 import { ColdStartTimeline } from '../diagrams/ColdStartTimeline';
 import { AgentSessionDemo } from '../diagrams/AgentSessionDemo';
 import { Reveal } from '../motion';
@@ -1508,26 +1509,30 @@ function BenchmarkSection() {
 // lands on a reader who knows what is being compared.
 const WhatItIsSection = () => (
 	<section className='border-t border-ink/10 px-6 py-16 md:py-24'>
-		<div className='mx-auto max-w-7xl'>
+		<div className='mx-auto grid max-w-7xl items-center gap-12 md:grid-cols-2'>
+			<div>
+				<Reveal>
+					<SectionHeading
+						title='What agentOS is.'
+						subtitle={
+							<>
+								agentOS is an open-source library that boots a small virtual operating system
+								for every agent you run: a virtual kernel with a file system, processes,
+								networking, and deny-by-default permissions, inside your backend. Agents like
+								Pi, Claude Code, Codex, and OpenCode run in it, and your code, or a framework
+								like Eve or Flue, drives them through sessions, bindings, and workflows.
+							</>
+						}
+					/>
+				</Reveal>
+				<Reveal>
+					<div className='mt-8'>
+						<InkChip command='npm install @rivet-dev/agentos' className='w-fit' />
+					</div>
+				</Reveal>
+			</div>
 			<Reveal>
-				<SectionHeading
-					title='What agentOS is.'
-					subtitle={
-						<>
-							agentOS is an open-source library that boots a small virtual operating system for
-							every agent you run: a virtual kernel with a file system, processes, networking,
-							and deny-by-default permissions, inside your backend. Agents like Pi, Claude Code,
-							Codex, and OpenCode run in it, and your code drives them through sessions,
-							bindings, and workflows.
-						</>
-					}
-					className='max-w-3xl'
-				/>
-			</Reveal>
-			<Reveal>
-				<div className='mt-8'>
-					<InkChip command='npm install @rivet-dev/agentos' className='w-fit' />
-				</div>
+				<AgentStack />
 			</Reveal>
 		</div>
 	</section>
