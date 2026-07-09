@@ -1524,10 +1524,10 @@ function BenchmarkSection() {
 // --- Argument (why an OS, not a sandbox) ---
 // The narrative pivot right under the hero: what sandboxes provide, what agents
 // actually use, and why that set ships better as a library. Rows come from
-// docs/versus-sandbox.mdx; keep the two in sync.
+// docs/versus-sandbox.mdx (kept in sync in spirit); the docs table's Cost and
+// Startup rows are omitted here because the benchmark charts directly below
+// measure both.
 const SANDBOX_COMPARISON = [
-	{ label: 'Cost', agentOS: 'Very low. Runs in your process.', sandbox: 'Pay per second of uptime.' },
-	{ label: 'Startup', agentOS: 'Near-zero cold start (~6 ms).', sandbox: 'Seconds to spin up.' },
 	{ label: 'Backend integration', agentOS: 'Bindings call your functions directly.', sandbox: 'Network calls back to your backend.' },
 	{ label: 'Virtualization', agentOS: 'V8 isolates and WebAssembly: a kernel virtualized inside your process, nothing to boot.', sandbox: 'MicroVMs booted per agent on separate hosts.' },
 	{ label: 'Isolation', agentOS: 'One VM per customer or job. VMs share no file system, memory, or crash fate.', sandbox: 'One container or microVM per agent.' },
@@ -1549,8 +1549,8 @@ const SANDBOX_COMPARISON = [
 	{ label: 'Infrastructure', agentOS: 'npm install', sandbox: 'Vendor account and API keys.' },
 ];
 
-// Modal wrapper for the cold-start timeline, opened from the table's Startup
-// row. Mounting the timeline on open replays its sequence each time.
+// Modal wrapper for the cold-start timeline, opened from the benchmarks
+// header. Mounting the timeline on open replays its sequence each time.
 const ColdStartModal = ({ open, onClose }: { open: boolean; onClose: () => void }) => {
 	useEffect(() => {
 		if (!open) return;
@@ -1646,19 +1646,7 @@ const ArgumentSection = () => {
 							<span className='col-span-2 text-sm text-ink-faint sm:col-span-1 sm:self-center'>
 								{row.label}
 							</span>
-							<span className='text-sm leading-relaxed text-ink'>
-								{row.agentOS}
-								{row.label === 'Startup' && (
-									<button
-										type='button'
-										onClick={() => setShowColdStart(true)}
-										aria-label='See the cold-start timeline'
-										className='ml-2 inline-flex h-5 w-5 -translate-y-px items-center justify-center rounded-full border border-ink/20 align-middle text-[11px] leading-none text-ink-faint transition-colors hover:border-ink/45 hover:text-ink'
-									>
-										?
-									</button>
-								)}
-							</span>
+							<span className='text-sm leading-relaxed text-ink'>{row.agentOS}</span>
 							<span className='text-sm leading-relaxed text-ink-faint'>{row.sandbox}</span>
 						</div>
 					))}
@@ -1674,7 +1662,14 @@ const ArgumentSection = () => {
 							Faster starts, less memory, lower cost.
 						</h3>
 						<p className='text-base leading-relaxed text-ink-soft'>
-							{`Measured against ${SANDBOX_COLDSTART_PROVIDER}, the fastest mainstream sandbox cold start, and ${SANDBOX_COST_PROVIDER}, the cheapest per-second sandbox, as of ${BENCHMARK_DATE}.`}
+							{`Measured against ${SANDBOX_COLDSTART_PROVIDER}, the fastest mainstream sandbox cold start, and ${SANDBOX_COST_PROVIDER}, the cheapest per-second sandbox, as of ${BENCHMARK_DATE}.`}{' '}
+							<button
+								type='button'
+								onClick={() => setShowColdStart(true)}
+								className='text-ink underline underline-offset-2 transition-colors hover:text-ink/80'
+							>
+								Watch how a cold start breaks down
+							</button>
 						</p>
 					</div>
 				</Reveal>
